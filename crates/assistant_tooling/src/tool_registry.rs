@@ -5,6 +5,7 @@ use gpui::{
 };
 use schemars::{schema::RootSchema, schema_for, JsonSchema};
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
+use serde_json::value::RawValue;
 use std::{
     any::TypeId,
     collections::HashMap,
@@ -19,13 +20,20 @@ pub struct ToolRegistry {
     registered_tools: HashMap<String, RegisteredTool>,
 }
 
-#[derive(Default, Deserialize)]
+#[derive(Default)]
 pub struct ToolFunctionCall {
     pub id: String,
     pub name: String,
     pub arguments: String,
-    #[serde(skip)]
     pub result: Option<ToolFunctionCallResult>,
+}
+
+#[derive(Default, Serialize, Deserialize)]
+pub struct SavedToolFunctionCall {
+    pub id: String,
+    pub name: String,
+    pub arguments: String,
+    pub result: Option<SavedToolFunctionCallResult>,
 }
 
 pub enum ToolFunctionCallResult {
@@ -33,7 +41,17 @@ pub enum ToolFunctionCallResult {
     ParsingFailed,
     Finished {
         view: AnyView,
+        serialized_output: Result<Box<RawValue>, String>,
         generate_fn: fn(AnyView, &mut ProjectContext, &mut WindowContext) -> String,
+    },
+}
+
+#[derive(Serialize, Deserialize)]
+pub enum SavedToolFunctionCallResult {
+    NoSuchTool,
+    ParsingFailed,
+    Finished {
+        serialized_output: Result<Box<RawValue>, String>,
     },
 }
 
@@ -99,7 +117,8 @@ pub trait ToolOutput: Sized {
 struct RegisteredTool {
     enabled: AtomicBool,
     type_id: TypeId,
-    call: Box<dyn Fn(&ToolFunctionCall, &mut WindowContext) -> Task<Result<ToolFunctionCall>>>,
+    execute: Box<dyn Fn(&ToolFunctionCall, &mut WindowContext) -> Task<Result<ToolFunctionCall>>>,
+    deserialize: Box<dyn Fn(&SavedToolFunctionCall, &mut WindowContext) -> ToolFunctionCall>,
     render_running: fn(&mut WindowContext) -> gpui::AnyElement,
     definition: ToolFunctionDefinition,
 }
@@ -155,6 +174,43 @@ impl ToolRegistry {
         }
     }
 
+    pub fn serialize_tool_call(&self, call: &ToolFunctionCall) -> SavedToolFunctionCall {
+        SavedToolFunctionCall {
+            id: call.id.clone(),
+            name: call.name.clone(),
+            arguments: call.arguments.clone(),
+            result: call.result.as_ref().map(|result| match result {
+                ToolFunctionCallResult::NoSuchTool => SavedToolFunctionCallResult::NoSuchTool,
+                ToolFunctionCallResult::ParsingFailed => SavedToolFunctionCallResult::ParsingFailed,
+                ToolFunctionCallResult::Finished {
+                    serialized_output, ..
+                } => SavedToolFunctionCallResult::Finished {
+                    serialized_output: match serialized_output {
+                        Ok(value) => Ok(value.clone()),
+                        Err(e) => Err(e.to_string()),
+                    },
+                },
+            }),
+        }
+    }
+
+    pub fn deserialize_tool_call(
+        &self,
+        call: &SavedToolFunctionCall,
+        cx: &mut WindowContext,
+    ) -> ToolFunctionCall {
+        if let Some(tool) = &self.registered_tools.get(&call.name) {
+            (tool.deserialize)(call, cx)
+        } else {
+            ToolFunctionCall {
+                id: call.id.clone(),
+                name: call.name.clone(),
+                arguments: call.arguments.clone(),
+                result: Some(ToolFunctionCallResult::NoSuchTool),
+            }
+        }
+    }
+
     pub fn register<T: 'static + LanguageModelTool>(
         &mut self,
         tool: T,
@@ -166,13 +222,77 @@ impl ToolRegistry {
             type_id: TypeId::of::<T>(),
             definition: tool.definition(),
             enabled: AtomicBool::new(true),
-            call: Box::new(
-                move |tool_call: &ToolFunctionCall, cx: &mut WindowContext| {
+            deserialize: Box::new({
+                let tool = tool.clone();
+                move |tool_call: &SavedToolFunctionCall, cx: &mut WindowContext| {
+                    let id = tool_call.id.clone();
                     let name = tool_call.name.clone();
                     let arguments = tool_call.arguments.clone();
-                    let id = tool_call.id.clone();
 
-                    let Ok(input) = serde_json::from_str::<T::Input>(arguments.as_str()) else {
+                    let Ok(input) = serde_json::from_str::<T::Input>(&tool_call.arguments) else {
+                        return ToolFunctionCall {
+                            id,
+                            name: name.clone(),
+                            arguments,
+                            result: Some(ToolFunctionCallResult::ParsingFailed),
+                        };
+                    };
+
+                    let result = match &tool_call.result {
+                        Some(result) => match result {
+                            SavedToolFunctionCallResult::NoSuchTool => {
+                                Some(ToolFunctionCallResult::NoSuchTool)
+                            }
+                            SavedToolFunctionCallResult::ParsingFailed => {
+                                Some(ToolFunctionCallResult::ParsingFailed)
+                            }
+                            SavedToolFunctionCallResult::Finished { serialized_output } => {
+                                let output = match serialized_output {
+                                    Ok(value) => {
+                                        match serde_json::from_str::<T::Output>(value.get()) {
+                                            Ok(value) => Ok(value),
+                                            Err(_) => {
+                                                return ToolFunctionCall {
+                                                    id,
+                                                    name: name.clone(),
+                                                    arguments,
+                                                    result: Some(
+                                                        ToolFunctionCallResult::ParsingFailed,
+                                                    ),
+                                                };
+                                            }
+                                        }
+                                    }
+                                    Err(e) => Err(anyhow!("{e}")),
+                                };
+
+                                let view = tool.view(input, output, cx).into();
+                                Some(ToolFunctionCallResult::Finished {
+                                    serialized_output: serialized_output.clone(),
+                                    generate_fn: generate::<T>,
+                                    view,
+                                })
+                            }
+                        },
+                        None => None,
+                    };
+
+                    ToolFunctionCall {
+                        id: tool_call.id.clone(),
+                        name: name.clone(),
+                        arguments: tool_call.arguments.clone(),
+                        result,
+                    }
+                }
+            }),
+            execute: Box::new({
+                let tool = tool.clone();
+                move |tool_call: &ToolFunctionCall, cx: &mut WindowContext| {
+                    let id = tool_call.id.clone();
+                    let name = tool_call.name.clone();
+                    let arguments = tool_call.arguments.clone();
+
+                    let Ok(input) = serde_json::from_str::<T::Input>(&arguments) else {
                         return Task::ready(Ok(ToolFunctionCall {
                             id,
                             name: name.clone(),
@@ -184,7 +304,16 @@ impl ToolRegistry {
                     let result = tool.execute(&input, cx);
                     let tool = tool.clone();
                     cx.spawn(move |mut cx| async move {
-                        let result: Result<T::Output> = result.await;
+                        let result = result.await;
+                        let serialized_output = result
+                            .as_ref()
+                            .map_err(ToString::to_string)
+                            .and_then(|output| {
+                                Ok(RawValue::from_string(
+                                    serde_json::to_string(output).map_err(|e| e.to_string())?,
+                                )
+                                .unwrap())
+                            });
                         let view = cx.update(|cx| tool.view(input, result, cx))?;
 
                         Ok(ToolFunctionCall {
@@ -192,13 +321,14 @@ impl ToolRegistry {
                             name: name.clone(),
                             arguments,
                             result: Some(ToolFunctionCallResult::Finished {
+                                serialized_output,
                                 view: view.into(),
                                 generate_fn: generate::<T>,
                             }),
                         })
                     })
-                },
-            ),
+                }
+            }),
             render_running: render_running::<T>,
         };
 
@@ -247,7 +377,7 @@ impl ToolRegistry {
             }
         };
 
-        (tool.call)(tool_call, cx)
+        (tool.execute)(tool_call, cx)
     }
 }
 
@@ -263,9 +393,9 @@ impl ToolFunctionCallResult {
             ToolFunctionCallResult::ParsingFailed => {
                 format!("Unable to parse arguments for {name}")
             }
-            ToolFunctionCallResult::Finished { generate_fn, view } => {
-                (generate_fn)(view.clone(), project, cx)
-            }
+            ToolFunctionCallResult::Finished {
+                generate_fn, view, ..
+            } => (generate_fn)(view.clone(), project, cx),
         }
     }
 
