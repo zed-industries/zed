@@ -6,6 +6,7 @@ use project::ProjectPath;
 use schemars::JsonSchema;
 use semantic_index::{ProjectIndex, Status};
 use serde::Deserialize;
+use serde_json::Value;
 use std::{fmt::Write as _, ops::Range};
 use ui::{div, prelude::*, CollapsibleContainer, Color, Icon, IconName, Label, WindowContext};
 
@@ -202,8 +203,14 @@ impl LanguageModelTool for ProjectIndexTool {
         cx.new_view(|_cx| ProjectIndexView::new(input, output))
     }
 
-    fn render_running(_: &mut WindowContext) -> impl IntoElement {
-        CollapsibleContainer::new(ElementId::Name(nanoid::nanoid!().into()), false)
-            .start_slot("Searching code base")
+    fn render_running(arguments: &Option<Value>, _: &mut WindowContext) -> impl IntoElement {
+        let text: String = arguments
+            .as_ref()
+            .and_then(|arguments| arguments.get("query"))
+            .and_then(|query| query.as_str())
+            .map(|query| format!("Searching for: {}", query))
+            .unwrap_or_else(|| "Preparing search...".to_string());
+
+        CollapsibleContainer::new(ElementId::Name(nanoid::nanoid!().into()), false).start_slot(text)
     }
 }

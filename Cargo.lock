@@ -423,6 +423,7 @@ dependencies = [
  "serde_json",
  "settings",
  "sum_tree",
+ "ui",
  "unindent",
  "util",
 ]
