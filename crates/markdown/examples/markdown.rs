@@ -77,15 +77,6 @@ line break!
 
 ---
 
-## Tables
-Tables are created using pipes `|` and dashes `-`. Alignments are controlled by colons `:`.
-
-| Left-aligned | Center-aligned | Right-aligned |
-| :---         |      :----:    |          ---: |
-| Text         |      Text      | Text          |
-
----
-
 Remember, markdown processors may have slight differences and extensions, so always refer to the specific documentation or guides relevant to your platform or editor for the best practices and additional features.
 "#;
 
