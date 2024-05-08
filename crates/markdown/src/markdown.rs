@@ -10,7 +10,7 @@ use gpui::{
 };
 use language::{Language, LanguageRegistry, Rope};
 use parser::{parse_markdown, MarkdownEvent, MarkdownTag, MarkdownTagEnd};
-use std::{iter, mem, ops::Range, sync::Arc};
+use std::{iter, mem, ops::Range, rc::Rc, sync::Arc};
 use theme::SyntaxTheme;
 use ui::prelude::*;
 use util::{ResultExt, TryFutureExt};
@@ -283,7 +283,20 @@ impl MarkdownElement {
         rendered_text: &RenderedText,
         cx: &mut WindowContext,
     ) {
-        cx.set_cursor_style(CursorStyle::IBeam, hitbox);
+        if hitbox.contains(&cx.mouse_position()) {
+            if let Ok(hovered_index) = rendered_text.source_index_for_position(cx.mouse_position())
+            {
+                let is_selecting = self.markdown.read(cx).is_selecting;
+                if !is_selecting && rendered_text.link_for_source_index(hovered_index).is_some() {
+                    cx.set_cursor_style(CursorStyle::PointingHand, hitbox);
+                } else {
+                    cx.set_cursor_style(CursorStyle::IBeam, hitbox);
+                }
+            } else {
+                cx.set_cursor_style(CursorStyle::IBeam, hitbox);
+            }
+        }
+
         cx.on_mouse_event({
             let rendered_text = rendered_text.clone();
             let markdown = self.markdown.downgrade();
@@ -475,7 +488,8 @@ impl Element for MarkdownElement {
                                 ..Default::default()
                             })
                         }
-                        MarkdownTag::Link { .. } => {
+                        MarkdownTag::Link { dest_url, .. } => {
+                            builder.push_link(dest_url.clone(), range.clone());
                             builder.push_text_style(self.style.link.clone())
                         }
                         _ => log::error!("unsupported markdown tag {:?}", tag),
@@ -585,6 +599,7 @@ struct MarkdownElementBuilder {
     div_stack: Vec<Div>,
     rendered_lines: Vec<RenderedLine>,
     pending_line: PendingLine,
+    rendered_links: Vec<RenderedLink>,
     current_source_index: usize,
     base_text_style: TextStyle,
     text_style_stack: Vec<TextStyleRefinement>,
@@ -610,6 +625,7 @@ impl MarkdownElementBuilder {
             div_stack: vec![div().debug_selector(|| "inner".into())],
             rendered_lines: Vec::new(),
             pending_line: PendingLine::default(),
+            rendered_links: Vec::new(),
             current_source_index: 0,
             base_text_style,
             text_style_stack: Vec::new(),
@@ -668,6 +684,13 @@ impl MarkdownElementBuilder {
 
     fn pop_code_block(&mut self) {
         self.code_block_stack.pop();
+    }
+
+    fn push_link(&mut self, destination_url: SharedString, source_range: Range<usize>) {
+        self.rendered_links.push(RenderedLink {
+            source_range,
+            destination_url,
+        });
     }
 
     fn push_text(&mut self, text: &str, source_index: usize) {
@@ -739,6 +762,7 @@ impl MarkdownElementBuilder {
             element: self.div_stack.pop().unwrap().into_any(),
             text: RenderedText {
                 lines: self.rendered_lines.into(),
+                links: self.rendered_links.into(),
             },
         }
     }
@@ -808,7 +832,13 @@ pub struct RenderedMarkdown {
 
 #[derive(Clone)]
 struct RenderedText {
-    lines: Arc<[RenderedLine]>,
+    lines: Rc<[RenderedLine]>,
+    links: Rc<[RenderedLink]>,
+}
+
+struct RenderedLink {
+    source_range: Range<usize>,
+    destination_url: SharedString,
 }
 
 impl RenderedText {
@@ -848,5 +878,11 @@ impl RenderedText {
             }
         }
         None
+    }
+
+    fn link_for_source_index(&self, source_index: usize) -> Option<&RenderedLink> {
+        self.links
+            .iter()
+            .find(|link| link.source_range.contains(&source_index))
     }
 }
