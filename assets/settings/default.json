@@ -628,6 +628,9 @@
     "Make": {
       "hard_tabs": true
     },
+    "Markdown": {
+      "format_on_save": "off"
+    },
     "Prisma": {
       "tab_size": 2
     }
