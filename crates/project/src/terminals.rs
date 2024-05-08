@@ -31,13 +31,17 @@ impl Project {
             "creating terminals as a guest is not supported yet"
         );
 
-        let cwd = working_directory.as_deref().or_else(|| {
-            spawn_task
+        // used only for TerminalSettings::get
+        let worktree = {
+            let terminal_cwd = working_directory.as_deref();
+            let task_cwd = spawn_task
                 .as_ref()
-                .and_then(|spawn_task| spawn_task.cwd.as_deref())
-        });
+                .and_then(|spawn_task| spawn_task.cwd.as_deref());
 
-        let worktree = cwd.and_then(|cwd| self.find_local_worktree(cwd, cx));
+            terminal_cwd
+                .and_then(|terminal_cwd| self.find_local_worktree(terminal_cwd, cx))
+                .or_else(|| task_cwd.and_then(|spawn_cwd| self.find_local_worktree(spawn_cwd, cx)))
+        };
 
         let settings_location = worktree.as_ref().map(|(worktree, path)| SettingsLocation {
             worktree_id: worktree.read(cx).id().to_usize(),
