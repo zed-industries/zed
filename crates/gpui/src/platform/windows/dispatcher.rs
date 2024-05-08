@@ -81,9 +81,9 @@ impl WindowsDispatcher {
     }
 
     fn dispatch_on_threadpool(&self, runnable: Runnable) {
-        let runner = generate_handler!(WorkItemHandler, runnable, true);
+        let handler = generate_handler!(WorkItemHandler, runnable, true);
         ThreadPool::RunWithPriorityAndOptionsAsync(
-            &runner,
+            &handler,
             WorkItemPriority::High,
             WorkItemOptions::TimeSliced,
         )
@@ -91,13 +91,13 @@ impl WindowsDispatcher {
     }
 
     fn dispatch_on_threadpool_after(&self, runnable: Runnable, duration: Duration) {
-        let runner = generate_handler!(TimerElapsedHandler, runnable, true);
+        let handler = generate_handler!(TimerElapsedHandler, runnable, true);
         let delay = TimeSpan {
             // A time period expressed in 100-nanosecond units.
             // 10,000,000 ticks per second
             Duration: (duration.as_nanos() / 100) as i64,
         };
-        ThreadPoolTimer::CreateTimer(&runner, delay).log_err();
+        ThreadPoolTimer::CreateTimer(&handler, delay).log_err();
     }
 }
 
@@ -126,8 +126,8 @@ impl PlatformDispatcher for WindowsDispatcher {
     }
 
     fn dispatch_on_main_thread(&self, runnable: Runnable) {
-        let runner = generate_handler!(DispatcherQueueHandler, runnable, false);
-        self.main_queue.TryEnqueue(&runner).log_err();
+        let handler = generate_handler!(DispatcherQueueHandler, runnable, false);
+        self.main_queue.TryEnqueue(&handler).log_err();
     }
 
     fn dispatch_after(&self, duration: Duration, runnable: Runnable) {
