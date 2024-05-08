@@ -631,9 +631,7 @@ impl Workspace {
                     this.collaborator_left(*peer_id, cx);
                 }
 
-                project::Event::WorktreeRemoved(_)
-                | project::Event::WorktreeAdded
-                | project::Event::WorktreesSorted => {
+                project::Event::WorktreeRemoved(_) | project::Event::WorktreeAdded => {
                     this.update_window_title(cx);
                     this.serialize_workspace(cx);
                 }
