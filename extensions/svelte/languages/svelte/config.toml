@@ -14,7 +14,6 @@ brackets = [
     { start = "/*", end = " */", close = true, newline = false, not_in = ["string", "comment"] },
 ]
 scope_opt_in_language_servers = ["tailwindcss-language-server"]
-prettier_parser_name = "svelte"
 prettier_plugins = ["prettier-plugin-svelte"]
 
 [overrides.string]

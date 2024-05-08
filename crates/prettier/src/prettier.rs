@@ -225,14 +225,6 @@ impl Prettier {
                 let params = buffer
                     .update(cx, |buffer, cx| {
                         let buffer_language = buffer.language();
-                        let parser_with_plugins = buffer_language.and_then(|l| {
-                            let prettier_parser = l.prettier_parser_name()?;
-                            let mut prettier_plugins =
-                                local.language_registry.all_prettier_plugins();
-                            prettier_plugins.dedup();
-                            Some((prettier_parser, prettier_plugins))
-                        });
-
                         let prettier_node_modules = self.prettier_dir().join("node_modules");
                         anyhow::ensure!(
                             prettier_node_modules.is_dir(),
@@ -255,13 +247,17 @@ impl Prettier {
                             .into_iter()
                             .find(|possible_plugin_path| possible_plugin_path.is_file())
                         };
-                        let (parser, located_plugins) = match parser_with_plugins {
-                            Some((parser, plugins)) => {
+
+                        let (parser, located_plugins) = buffer_language
+                            .map(|l| {
                                 // Tailwind plugin requires being added last
                                 // https://github.com/tailwindlabs/prettier-plugin-tailwindcss#compatibility-with-other-prettier-plugins
                                 let mut add_tailwind_back = false;
 
-                                let mut plugins = plugins
+                                let mut prettier_plugins =
+                                    local.language_registry.all_prettier_plugins();
+                                prettier_plugins.dedup();
+                                let mut plugins = prettier_plugins
                                     .into_iter()
                                     .filter(|plugin_name| {
                                         if plugin_name.as_ref()
@@ -285,10 +281,9 @@ impl Prettier {
                                         ),
                                     ));
                                 }
-                                (Some(parser.to_string()), plugins)
-                            }
-                            None => (None, Vec::new()),
-                        };
+                                (l.prettier_parser_name().map(ToOwned::to_owned), plugins)
+                            })
+                            .unwrap_or_default();
 
                         let prettier_options = if self.is_default() {
                             let language_settings =
@@ -360,9 +355,19 @@ impl Prettier {
             #[cfg(any(test, feature = "test-support"))]
             Self::Test(_) => Ok(buffer
                 .update(cx, |buffer, cx| {
-                    let formatted_text = buffer.text() + FORMAT_SUFFIX;
-                    buffer.diff(formatted_text, cx)
-                })?
+                    match buffer
+                        .language()
+                        .map(|language| language.lsp_id())
+                        .as_deref()
+                    {
+                        Some("rust") => anyhow::bail!("prettier does not support Rust"),
+                        Some(_other) => {
+                            let formatted_text = buffer.text() + FORMAT_SUFFIX;
+                            Ok(buffer.diff(formatted_text, cx))
+                        }
+                        None => panic!("Should not format buffer without a language with prettier"),
+                    }
+                })??
                 .await),
         }
     }

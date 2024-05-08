@@ -30,15 +30,8 @@ pub fn prettier_plugins_for_language<'a>(
     language_settings: &LanguageSettings,
 ) -> Option<&'a Vec<Arc<str>>> {
     match &language_settings.formatter {
-        Formatter::Prettier { .. } | Formatter::Auto => {}
-        Formatter::LanguageServer | Formatter::External { .. } | Formatter::CodeActions(_) => {
-            return None
-        }
-    };
-    if language.prettier_parser_name().is_some() {
-        Some(language.prettier_plugins())
-    } else {
-        None
+        Formatter::Prettier { .. } | Formatter::Auto => Some(language.prettier_plugins()),
+        Formatter::LanguageServer | Formatter::External { .. } | Formatter::CodeActions(_) => None,
     }
 }
 
@@ -110,6 +103,7 @@ pub struct DefaultPrettier {
     installed_plugins: HashSet<Arc<str>>,
 }
 
+#[derive(Debug)]
 pub enum PrettierInstallation {
     NotInstalled {
         attempts: usize,
@@ -121,7 +115,7 @@ pub enum PrettierInstallation {
 
 pub type PrettierTask = Shared<Task<Result<Arc<Prettier>, Arc<anyhow::Error>>>>;
 
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct PrettierInstance {
     attempt: usize,
     prettier: Option<PrettierTask>,
@@ -526,10 +520,7 @@ impl Project {
         }
         let buffer = buffer.read(cx);
         let buffer_file = buffer.file();
-        let Some(buffer_language) = buffer.language() else {
-            return Task::ready(None);
-        };
-        if buffer_language.prettier_parser_name().is_none() {
+        if buffer.language().is_none() {
             return Task::ready(None);
         }
         let Some(node) = self.node.clone() else {

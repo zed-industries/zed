@@ -550,6 +550,7 @@ pub enum FormatTrigger {
 
 // Currently, formatting operations are represented differently depending on
 // whether they come from a language server or an external command.
+#[derive(Debug)]
 enum FormatOperation {
     Lsp(Vec<(Range<Anchor>, String)>),
     External(Diff),
@@ -4846,10 +4847,14 @@ impl Project {
                 }
                 (Formatter::Auto, FormatOnSave::On | FormatOnSave::Off) => {
                     let prettier =
-                        prettier_support::format_with_prettier(&project, buffer, &mut cx).await;
+                        prettier_support::format_with_prettier(&project, buffer, &mut cx)
+                            .await
+                            .transpose()
+                            .ok()
+                            .flatten();
 
                     if let Some(operation) = prettier {
-                        format_operation = Some(operation?);
+                        format_operation = Some(operation);
                     } else if let Some((language_server, buffer_abs_path)) = server_and_buffer {
                         format_operation = Some(FormatOperation::Lsp(
                             Self::format_via_lsp(
