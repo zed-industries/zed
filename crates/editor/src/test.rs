@@ -150,7 +150,7 @@ pub fn expanded_hunks(
 pub fn expanded_hunks_background_highlights(
     editor: &Editor,
     snapshot: &DisplaySnapshot,
-) -> Vec<core::ops::Range<u32>> {
+) -> Vec<std::ops::RangeInclusive<u32>> {
     use itertools::Itertools;
 
     editor
@@ -158,7 +158,8 @@ pub fn expanded_hunks_background_highlights(
         .into_iter()
         .flatten()
         .map(|(range, _)| {
-            range.start.to_display_point(snapshot).row()..range.end.to_display_point(snapshot).row()
+            range.start().to_display_point(snapshot).row()
+                ..=range.end().to_display_point(snapshot).row()
         })
         .unique()
         .collect()

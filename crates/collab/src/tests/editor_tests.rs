@@ -2136,7 +2136,7 @@ struct Row10;"#};
         let all_expanded_hunks = expanded_hunks(&editor, &snapshot, cx);
         assert_eq!(
             expanded_hunks_background_highlights(editor, &snapshot),
-            vec![1..3, 8..9],
+            vec![1..=3, 8..=9],
         );
         assert_eq!(
             all_hunks,

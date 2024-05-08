@@ -1,4 +1,7 @@
-use std::{ops::Range, sync::Arc};
+use std::{
+    ops::{Range, RangeInclusive},
+    sync::Arc,
+};
 
 use collections::{hash_map, HashMap, HashSet};
 use git::diff::{DiffHunk, DiffHunkStatus};
@@ -274,6 +277,9 @@ impl Editor {
                 );
                 self.insert_deleted_text_block(diff_base_buffer, deleted_text_lines, &hunk, cx)
             }
+        };
+        if hunk_start.cmp(&hunk_end, &multi_buffer_snapshot).is_gt() {
+            eprintln!("@######################!!!!!!!!!!!!!");
         };
         self.expanded_hunks.hunks.insert(
             block_insert_index,
@@ -573,7 +579,7 @@ fn editor_with_deleted_text(
             .buffer_snapshot
             .anchor_after(editor.buffer.read(cx).len(cx));
 
-        editor.highlight_rows::<DiffRowHighlight>(start..end, Some(deleted_color), cx);
+        editor.highlight_rows::<DiffRowHighlight>(start..=end, Some(deleted_color), cx);
         let hunk_related_subscription = cx.on_blur(&editor.focus_handle, |editor, cx| {
             editor.change_selections(None, cx, |s| {
                 s.try_cancel();
@@ -628,7 +634,10 @@ fn buffer_diff_hunk(
     None
 }
 
-fn to_inclusive_row_range(row_range: Range<Anchor>, snapshot: &EditorSnapshot) -> Range<Anchor> {
+fn to_inclusive_row_range(
+    row_range: Range<Anchor>,
+    snapshot: &EditorSnapshot,
+) -> RangeInclusive<Anchor> {
     let mut display_row_range =
         row_range.start.to_display_point(snapshot)..row_range.end.to_display_point(snapshot);
     if display_row_range.end.row() > display_row_range.start.row() {
@@ -636,5 +645,6 @@ fn to_inclusive_row_range(row_range: Range<Anchor>, snapshot: &EditorSnapshot) -
     }
     let point_range = display_row_range.start.to_point(&snapshot.display_snapshot)
         ..display_row_range.end.to_point(&snapshot.display_snapshot);
-    point_range.to_anchors(&snapshot.buffer_snapshot)
+    let new_range = point_range.to_anchors(&snapshot.buffer_snapshot);
+    new_range.start..=new_range.end
 }
