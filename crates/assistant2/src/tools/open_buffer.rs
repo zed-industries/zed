@@ -6,7 +6,7 @@ use editor::{
 };
 use gpui::{prelude::*, AnyElement, Model, Task, View, WeakView};
 use language::ToPoint;
-use project::{Project, ProjectPath};
+use project::{search::SearchQuery, Project, ProjectPath};
 use schemars::JsonSchema;
 use serde::Deserialize;
 use std::path::Path;
@@ -29,6 +29,7 @@ impl OpenBufferTool {
 pub struct ExplainInput {
     /// Name for this set of excerpts
     title: String,
+    /// Excerpts from the file to show to the user.
     excerpts: Vec<ExplainedExcerpt>,
 }
 
@@ -36,8 +37,8 @@ pub struct ExplainInput {
 struct ExplainedExcerpt {
     /// Path to the file
     path: String,
-    /// Name of a symbol in the buffer to show
-    symbol_name: String,
+    /// A short, distinctive string that appears at a certain location in the file.
+    text_passage: String,
     /// Text to display near the symbol definition
     comment: String,
 }
@@ -74,15 +75,16 @@ impl LanguageModelTool for OpenBufferTool {
         };
 
         let buffer_tasks = project.update(cx, |project, cx| {
-            let excerpts = excerpts.clone();
             excerpts
                 .iter()
                 .map(|excerpt| {
-                    let project_path = ProjectPath {
-                        worktree_id,
-                        path: Path::new(&excerpt.path).into(),
-                    };
-                    project.open_buffer(project_path.clone(), cx)
+                    project.open_buffer(
+                        ProjectPath {
+                            worktree_id,
+                            path: Path::new(&excerpt.path).into(),
+                        },
+                        cx,
+                    )
                 })
                 .collect::<Vec<_>>()
         });
@@ -99,39 +101,43 @@ impl LanguageModelTool for OpenBufferTool {
             for (excerpt, buffer) in excerpts.iter().zip(buffers.iter()) {
                 let snapshot = buffer.update(&mut cx, |buffer, _cx| buffer.snapshot())?;
 
-                if let Some(outline) = snapshot.outline(None) {
-                    let matches = outline
-                        .search(&excerpt.symbol_name, cx.background_executor().clone())
-                        .await;
-                    if let Some(mat) = matches.first() {
-                        let item = &outline.items[mat.candidate_id];
-                        let start = item.range.start.to_point(&snapshot);
-                        editor.update(&mut cx, |editor, cx| {
-                            let ranges = editor.buffer().update(cx, |multibuffer, cx| {
-                                multibuffer.push_excerpts_with_context_lines(
-                                    buffer.clone(),
-                                    vec![start..start],
-                                    5,
-                                    cx,
-                                )
-                            });
-                            let explanation = SharedString::from(excerpt.comment.clone());
-                            editor.insert_blocks(
-                                [BlockProperties {
-                                    position: ranges[0].start,
-                                    height: 1,
-                                    style: BlockStyle::Fixed,
-                                    render: Box::new(move |cx| {
-                                        Self::render_note_block(&explanation, cx)
-                                    }),
-                                    disposition: BlockDisposition::Above,
-                                }],
-                                None,
-                                cx,
-                            );
-                        })?;
-                    }
-                }
+                let query =
+                    SearchQuery::text(&excerpt.text_passage, false, false, false, vec![], vec![])?;
+
+                let matches = query.search(&snapshot, None).await;
+                let Some(first_match) = matches.first() else {
+                    log::warn!(
+                        "text {:?} does not appear in '{}'",
+                        excerpt.text_passage,
+                        excerpt.path
+                    );
+                    continue;
+                };
+                let mut start = first_match.start.to_point(&snapshot);
+                start.column = 0;
+
+                editor.update(&mut cx, |editor, cx| {
+                    let ranges = editor.buffer().update(cx, |multibuffer, cx| {
+                        multibuffer.push_excerpts_with_context_lines(
+                            buffer.clone(),
+                            vec![start..start],
+                            5,
+                            cx,
+                        )
+                    });
+                    let explanation = SharedString::from(excerpt.comment.clone());
+                    editor.insert_blocks(
+                        [BlockProperties {
+                            position: ranges[0].start,
+                            height: 1,
+                            style: BlockStyle::Fixed,
+                            render: Box::new(move |cx| Self::render_note_block(&explanation, cx)),
+                            disposition: BlockDisposition::Above,
+                        }],
+                        None,
+                        cx,
+                    );
+                })?;
             }
 
             workspace
