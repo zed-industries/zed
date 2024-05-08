@@ -684,7 +684,7 @@ impl Platform for WindowsPlatform {
 
     fn read_from_clipboard(&self) -> Option<ClipboardItem> {
         let mut ctx = ClipboardContext::new().unwrap();
-        let content = ctx.get_contents().unwrap();
+        let content = ctx.get_contents().ok()?;
         Some(ClipboardItem {
             text: content,
             metadata: None,
