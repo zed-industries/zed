@@ -58,7 +58,14 @@ struct DirectWriteState {
     custom_font_collection: IDWriteFontCollection1,
     fonts: Vec<FontInfo>,
     font_selections: HashMap<Font, FontId>,
-    font_id_by_postscript_name: HashMap<String, FontId>,
+    font_id_by_identifier: HashMap<FontIdentifier, FontId>,
+}
+
+#[derive(Debug, Clone, Hash, PartialEq, Eq)]
+struct FontIdentifier {
+    postscript_name: String,
+    weight: i32,
+    style: i32,
 }
 
 impl DirectWriteComponent {
@@ -118,7 +125,7 @@ impl DirectWriteTextSystem {
             custom_font_collection,
             fonts: Vec::new(),
             font_selections: HashMap::default(),
-            font_id_by_postscript_name: HashMap::default(),
+            font_id_by_identifier: HashMap::default(),
         })))
     }
 }
@@ -269,8 +276,7 @@ impl DirectWriteState {
             let Some(font_face) = font_face_ref.CreateFontFace().log_err() else {
                 continue;
             };
-            let Some(postscript_name) = get_postscript_name(&font_face, &self.components.locale)
-            else {
+            let Some(identifier) = get_font_identifier(&font_face, &self.components.locale) else {
                 continue;
             };
             let is_emoji = font_face.IsColorFont().as_bool();
@@ -287,8 +293,7 @@ impl DirectWriteState {
             };
             let font_id = FontId(self.fonts.len());
             self.fonts.push(font_info);
-            self.font_id_by_postscript_name
-                .insert(postscript_name, font_id);
+            self.font_id_by_identifier.insert(identifier, font_id);
             return Some(font_id);
         }
         None
@@ -945,8 +950,8 @@ impl IDWriteTextRenderer_Impl for TextRenderer {
             // This `cast()` action here should never fail since we are running on Win10+, and
             // `IDWriteFontFace3` requires Win10
             let font_face = &font_face.cast::<IDWriteFontFace3>().unwrap();
-            let Some((postscript_name, font_struct, is_emoji)) =
-                get_postscript_name_and_font(font_face, &self.locale)
+            let Some((font_identifier, font_struct, is_emoji)) =
+                get_font_identifier_and_font_struct(font_face, &self.locale)
             else {
                 log::error!("none postscript name found");
                 return Ok(());
@@ -954,8 +959,8 @@ impl IDWriteTextRenderer_Impl for TextRenderer {
 
             let font_id = if let Some(id) = context
                 .text_system
-                .font_id_by_postscript_name
-                .get(&postscript_name)
+                .font_id_by_identifier
+                .get(&font_identifier)
             {
                 *id
             } else {
@@ -1121,11 +1126,11 @@ fn get_font_names_from_collection(
     }
 }
 
-unsafe fn get_postscript_name_and_font(
+unsafe fn get_font_identifier_and_font_struct(
     font_face: &IDWriteFontFace3,
     locale: &str,
-) -> Option<(String, Font, bool)> {
-    let Some(postscript_name) = get_postscript_name(font_face, locale) else {
+) -> Option<(FontIdentifier, Font, bool)> {
+    let Some(identifier) = get_font_identifier(font_face, locale) else {
         return None;
     };
     let Some(localized_family_name) = font_face.GetFamilyNames().log_err() else {
@@ -1141,7 +1146,17 @@ unsafe fn get_postscript_name_and_font(
         style: font_face.GetStyle().into(),
     };
     let is_emoji = font_face.IsColorFont().as_bool();
-    Some((postscript_name, font_struct, is_emoji))
+    Some((identifier, font_struct, is_emoji))
+}
+
+fn get_font_identifier(font_face: &IDWriteFontFace3, locale: &str) -> Option<FontIdentifier> {
+    let weight = unsafe { font_face.GetWeight().0 };
+    let style = unsafe { font_face.GetStyle().0 };
+    unsafe { get_postscript_name(font_face, locale) }.map(|postscript_name| FontIdentifier {
+        postscript_name,
+        weight,
+        style,
+    })
 }
 
 unsafe fn get_postscript_name(font_face: &IDWriteFontFace3, locale: &str) -> Option<String> {
