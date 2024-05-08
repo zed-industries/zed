@@ -60,7 +60,6 @@ unsafe impl Sync for WindowsDispatcher {}
 
 impl WindowsDispatcher {
     pub(crate) fn new() -> Self {
-        // Windows 10 Fall Creators Update (introduced in 10.0.16299.0)
         let controller = unsafe {
             let options = DispatcherQueueOptions {
                 dwSize: std::mem::size_of::<DispatcherQueueOptions>() as u32,
