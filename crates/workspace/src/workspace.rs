@@ -32,7 +32,7 @@ use gpui::{
     ElementId, Entity as _, EntityId, EventEmitter, FocusHandle, FocusableView, Global,
     GlobalElementId, KeyContext, Keystroke, LayoutId, ManagedView, Model, ModelContext,
     PathPromptOptions, Point, PromptLevel, Render, Size, Subscription, Task, View, WeakView,
-    WindowHandle, WindowOptions,
+    WindowBounds, WindowHandle, WindowOptions,
 };
 use item::{
     FollowableItem, FollowableItemHandle, Item, ItemHandle, ItemSettings, PreviewTabsSettings,
@@ -46,7 +46,7 @@ use node_runtime::NodeRuntime;
 use notifications::{simple_message_notification::MessageNotification, NotificationHandle};
 pub use pane::*;
 pub use pane_group::*;
-use persistence::{model::SerializedWorkspace, SerializedWindowsBounds, DB};
+use persistence::{model::SerializedWorkspace, SerializedWindowBounds, DB};
 pub use persistence::{
     model::{ItemId, LocalPaths, SerializedDevServerProject, SerializedWorkspaceLocation},
     WorkspaceDb, DB as WORKSPACE_DB,
@@ -785,29 +785,15 @@ impl Workspace {
                         .await;
                     this.update(&mut cx, |this, cx| {
                         if let Some(display) = cx.display() {
-                            let window_bounds = cx.window_bounds();
-                            let fullscreen = cx.is_fullscreen();
-
                             if let Some(display_uuid) = display.uuid().log_err() {
-                                // Only update the window bounds when not full screen,
-                                // so we can remember the last non-fullscreen bounds
-                                // across restarts
-                                if fullscreen {
-                                    cx.background_executor()
-                                        .spawn(DB.set_fullscreen(workspace_id, true))
-                                        .detach_and_log_err(cx);
-                                } else if !cx.is_minimized() {
-                                    cx.background_executor()
-                                        .spawn(DB.set_fullscreen(workspace_id, false))
-                                        .detach_and_log_err(cx);
-                                    cx.background_executor()
-                                        .spawn(DB.set_window_bounds(
-                                            workspace_id,
-                                            SerializedWindowsBounds(window_bounds),
-                                            display_uuid,
-                                        ))
-                                        .detach_and_log_err(cx);
-                                }
+                                let window_bounds = cx.window_bounds();
+                                cx.background_executor()
+                                    .spawn(DB.set_window_open_status(
+                                        workspace_id,
+                                        SerializedWindowBounds(window_bounds),
+                                        display_uuid,
+                                    ))
+                                    .detach_and_log_err(cx);
                             }
                         }
                         this.bounds_save_task_queued.take();
@@ -947,30 +933,27 @@ impl Workspace {
             } else {
                 let window_bounds_override = window_bounds_env_override();
 
-                let (bounds, display, fullscreen) = if let Some(bounds) = window_bounds_override {
-                    (Some(bounds), None, false)
+                let (window_bounds, display) = if let Some(bounds) = window_bounds_override {
+                    (Some(WindowBounds::Windowed(bounds)), None)
                 } else {
                     let restorable_bounds = serialized_workspace
                         .as_ref()
-                        .and_then(|workspace| {
-                            Some((workspace.display?, workspace.bounds?, workspace.fullscreen))
-                        })
+                        .and_then(|workspace| Some((workspace.display?, workspace.window_bounds?)))
                         .or_else(|| {
-                            let (display, bounds, fullscreen) = DB.last_window().log_err()?;
-                            Some((display?, bounds?.0, fullscreen.unwrap_or(false)))
+                            let (display, window_bounds) = DB.last_window().log_err()?;
+                            Some((display?, window_bounds?))
                         });
 
-                    if let Some((serialized_display, bounds, fullscreen)) = restorable_bounds {
-                        (Some(bounds), Some(serialized_display), fullscreen)
+                    if let Some((serialized_display, serialized_status)) = restorable_bounds {
+                        (Some(serialized_status.0), Some(serialized_display))
                     } else {
-                        (None, None, false)
+                        (None, None)
                     }
                 };
 
                 // Use the serialized workspace to construct the new window
                 let mut options = cx.update(|cx| (app_state.build_window_options)(display, cx))?;
-                options.bounds = bounds;
-                options.fullscreen = fullscreen;
+                options.window_bounds = window_bounds;
                 let centered_layout = serialized_workspace
                     .as_ref()
                     .map(|w| w.centered_layout)
@@ -3667,14 +3650,14 @@ impl Workspace {
         if let Some(location) = location {
             let center_group = build_serialized_pane_group(&self.center.root, cx);
             let docks = build_serialized_docks(self, cx);
+            let window_bounds = Some(SerializedWindowBounds(cx.window_bounds()));
             let serialized_workspace = SerializedWorkspace {
                 id: self.database_id,
                 location,
                 center_group,
-                bounds: Default::default(),
+                window_bounds,
                 display: Default::default(),
                 docks,
-                fullscreen: cx.is_fullscreen(),
                 centered_layout: self.centered_layout,
             };
             return cx.spawn(|_| persistence::DB.save_workspace(serialized_workspace));
@@ -4867,7 +4850,8 @@ pub fn join_hosted_project(
             let window_bounds_override = window_bounds_env_override();
             cx.update(|cx| {
                 let mut options = (app_state.build_window_options)(None, cx);
-                options.bounds = window_bounds_override;
+                options.window_bounds =
+                    window_bounds_override.map(|bounds| WindowBounds::Windowed(bounds));
                 cx.open_window(options, |cx| {
                     cx.new_view(|cx| {
                         Workspace::new(Default::default(), project, app_state.clone(), cx)
@@ -4931,7 +4915,8 @@ pub fn join_dev_server_project(
                 let window_bounds_override = window_bounds_env_override();
                 cx.update(|cx| {
                     let mut options = (app_state.build_window_options)(None, cx);
-                    options.bounds = window_bounds_override;
+                    options.window_bounds =
+                        window_bounds_override.map(|bounds| WindowBounds::Windowed(bounds));
                     cx.open_window(options, |cx| {
                         cx.new_view(|cx| {
                             Workspace::new(Default::default(), project, app_state.clone(), cx)
@@ -4993,7 +4978,8 @@ pub fn join_in_room_project(
             let window_bounds_override = window_bounds_env_override();
             cx.update(|cx| {
                 let mut options = (app_state.build_window_options)(None, cx);
-                options.bounds = window_bounds_override;
+                options.window_bounds =
+                    window_bounds_override.map(|bounds| WindowBounds::Windowed(bounds));
                 cx.open_window(options, |cx| {
                     cx.new_view(|cx| {
                         Workspace::new(Default::default(), project, app_state.clone(), cx)
