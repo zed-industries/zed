@@ -37,6 +37,7 @@
                 (visibility_modifier)? @visibility
                 (#eq? @visibility "public")
                 name: (_) @run
+                (#not-match? @run "^test.*")
             ))
         )
     )
