@@ -317,7 +317,7 @@
   // Settings related to the editor's tab bar.
   "tab_bar": {
     // Whether or not to show the tab bar in the editor
-    "show": false,
+    "show": true,
     // Whether or not to show the navigation history buttons.
     "show_nav_history_buttons": true
   },
