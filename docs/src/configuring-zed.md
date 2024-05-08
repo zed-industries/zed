@@ -406,7 +406,7 @@ To override settings for a language, add an entry for that language server's nam
 
 - Description: How to perform a buffer format.
 - Setting: `formatter`
-- Default: `language_server`
+- Default: `auto`
 
 **Options**
 
