@@ -211,7 +211,13 @@ pub async fn handle_cli_connection(
                 paths,
                 wait,
                 open_new_workspace,
+                dev_server_token,
             } => {
+                if dev_server_token.is_some() {
+                    // NOTE: we need to change the order of initialization a bit as we
+                    // can't determine if we're in dev-server mode until inside app.run()
+                    todo!();
+                }
                 let paths = if paths.is_empty() {
                     if open_new_workspace == Some(true) {
                         vec![]
