@@ -47,7 +47,7 @@ pub(crate) struct WindowsPlatform {
     foreground_executor: ForegroundExecutor,
     text_system: Arc<dyn PlatformTextSystem>,
     dispatch_event: OwnedHandle,
-    clipboard: RefCell<ClipboardContext>
+    clipboard: RefCell<ClipboardContext>,
 }
 
 pub(crate) struct WindowsPlatformState {
