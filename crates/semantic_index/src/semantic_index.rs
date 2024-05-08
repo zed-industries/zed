@@ -450,7 +450,7 @@ pub struct WorktreeSearchResult {
     pub score: f32,
 }
 
-#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+#[derive(Copy, Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub enum Status {
     Idle,
     Loading,

@@ -86,7 +86,8 @@ impl LanguageModelTool for CreateBufferTool {
         })
     }
 
-    fn output_view(
+    fn view(
+        &self,
         input: Self::Input,
         output: Result<Self::Output>,
         cx: &mut WindowContext,

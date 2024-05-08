@@ -1,13 +1,13 @@
-use anyhow::Result;
+use anyhow::{anyhow, Result};
 use assistant_tooling::{LanguageModelTool, ToolOutput};
 use collections::BTreeMap;
 use gpui::{prelude::*, Model, Task};
 use project::ProjectPath;
 use schemars::JsonSchema;
 use semantic_index::{ProjectIndex, Status};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use std::{fmt::Write as _, ops::Range};
+use std::{fmt::Write as _, ops::Range, path::Path, sync::Arc};
 use ui::{div, prelude::*, CollapsibleContainer, Color, Icon, IconName, Label, WindowContext};
 
 const DEFAULT_SEARCH_LIMIT: usize = 20;
@@ -29,28 +29,24 @@ pub struct CodebaseQuery {
 
 pub struct ProjectIndexView {
     input: CodebaseQuery,
-    output: Result<ProjectIndexOutput>,
+    status: Status,
+    excerpts: Result<BTreeMap<ProjectPath, Vec<Range<usize>>>>,
     element_id: ElementId,
     expanded_header: bool,
 }
 
+#[derive(Serialize, Deserialize)]
 pub struct ProjectIndexOutput {
     status: Status,
-    excerpts: BTreeMap<ProjectPath, Vec<Range<usize>>>,
+    worktrees: BTreeMap<Arc<Path>, WorktreeIndexOutput>,
+}
+
+#[derive(Serialize, Deserialize)]
+struct WorktreeIndexOutput {
+    excerpts: BTreeMap<Arc<Path>, Vec<Range<usize>>>,
 }
 
 impl ProjectIndexView {
-    fn new(input: CodebaseQuery, output: Result<ProjectIndexOutput>) -> Self {
-        let element_id = ElementId::Name(nanoid::nanoid!().into());
-
-        Self {
-            input,
-            output,
-            element_id,
-            expanded_header: false,
-        }
-    }
-
     fn toggle_header(&mut self, cx: &mut ViewContext<Self>) {
         self.expanded_header = !self.expanded_header;
         cx.notify();
@@ -60,18 +56,14 @@ impl ProjectIndexView {
 impl Render for ProjectIndexView {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         let query = self.input.query.clone();
-
-        let result = &self.output;
-
-        let output = match result {
+        let excerpts = match &self.excerpts {
             Err(err) => {
                 return div().child(Label::new(format!("Error: {}", err)).color(Color::Error));
             }
-            Ok(output) => output,
+            Ok(excerpts) => excerpts,
         };
 
-        let file_count = output.excerpts.len();
-
+        let file_count = excerpts.len();
         let header = h_flex()
             .gap_2()
             .child(Icon::new(IconName::File))
@@ -97,16 +89,12 @@ impl Render for ProjectIndexView {
                                 .child(Icon::new(IconName::MagnifyingGlass))
                                 .child(Label::new(format!("`{}`", query)).color(Color::Muted)),
                         )
-                        .child(
-                            v_flex()
-                                .gap_2()
-                                .children(output.excerpts.keys().map(|path| {
-                                    h_flex().gap_2().child(Icon::new(IconName::File)).child(
-                                        Label::new(path.path.to_string_lossy().to_string())
-                                            .color(Color::Muted),
-                                    )
-                                })),
-                        ),
+                        .child(v_flex().gap_2().children(excerpts.keys().map(|path| {
+                            h_flex().gap_2().child(Icon::new(IconName::File)).child(
+                                Label::new(path.path.to_string_lossy().to_string())
+                                    .color(Color::Muted),
+                            )
+                        }))),
                 ),
         )
     }
@@ -118,16 +106,16 @@ impl ToolOutput for ProjectIndexView {
         context: &mut assistant_tooling::ProjectContext,
         _: &mut WindowContext,
     ) -> String {
-        match &self.output {
-            Ok(output) => {
+        match &self.excerpts {
+            Ok(excerpts) => {
                 let mut body = "found results in the following paths:\n".to_string();
 
-                for (project_path, ranges) in &output.excerpts {
+                for (project_path, ranges) in excerpts {
                     context.add_excerpts(project_path.clone(), ranges);
                     writeln!(&mut body, "* {}", &project_path.path.display()).unwrap();
                 }
 
-                if output.status != Status::Idle {
+                if self.status != Status::Idle {
                     body.push_str("Still indexing. Results may be incomplete.\n");
                 }
 
@@ -172,16 +160,20 @@ impl LanguageModelTool for ProjectIndexTool {
             cx.update(|cx| {
                 let mut output = ProjectIndexOutput {
                     status,
-                    excerpts: Default::default(),
+                    worktrees: Default::default(),
                 };
 
                 for search_result in search_results {
-                    let path = ProjectPath {
-                        worktree_id: search_result.worktree.read(cx).id(),
-                        path: search_result.path.clone(),
-                    };
+                    let worktree_path = search_result.worktree.read(cx).abs_path();
+                    let excerpts = &mut output
+                        .worktrees
+                        .entry(worktree_path)
+                        .or_insert(WorktreeIndexOutput {
+                            excerpts: Default::default(),
+                        })
+                        .excerpts;
 
-                    let excerpts_for_path = output.excerpts.entry(path).or_default();
+                    let excerpts_for_path = excerpts.entry(search_result.path).or_default();
                     let ix = match excerpts_for_path
                         .binary_search_by_key(&search_result.range.start, |r| r.start)
                     {
@@ -195,12 +187,57 @@ impl LanguageModelTool for ProjectIndexTool {
         })
     }
 
-    fn output_view(
+    fn view(
+        &self,
         input: Self::Input,
         output: Result<Self::Output>,
         cx: &mut WindowContext,
     ) -> gpui::View<Self::View> {
-        cx.new_view(|_cx| ProjectIndexView::new(input, output))
+        cx.new_view(|cx| {
+            let status;
+            let excerpts;
+            match output {
+                Ok(output) => {
+                    status = output.status;
+                    let project_index = self.project_index.read(cx);
+                    if let Some(project) = project_index.project().upgrade() {
+                        let project = project.read(cx);
+                        excerpts = Ok(output
+                            .worktrees
+                            .into_iter()
+                            .filter_map(|(abs_path, output)| {
+                                for worktree in project.worktrees() {
+                                    let worktree = worktree.read(cx);
+                                    if worktree.abs_path() == abs_path {
+                                        return Some((worktree.id(), output.excerpts));
+                                    }
+                                }
+                                None
+                            })
+                            .flat_map(|(worktree_id, excerpts)| {
+                                excerpts.into_iter().map(move |(path, ranges)| {
+                                    (ProjectPath { worktree_id, path }, ranges)
+                                })
+                            })
+                            .collect::<BTreeMap<_, _>>());
+                    } else {
+                        excerpts = Err(anyhow!("project was dropped"));
+                    }
+                }
+                Err(err) => {
+                    status = Status::Idle;
+                    excerpts = Err(err);
+                }
+            };
+
+            ProjectIndexView {
+                input,
+                status,
+                excerpts,
+                element_id: ElementId::Name(nanoid::nanoid!().into()),
+                expanded_header: false,
+            }
+        })
     }
 
     fn render_running(arguments: &Option<Value>, _: &mut WindowContext) -> impl IntoElement {
