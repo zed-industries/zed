@@ -7738,12 +7738,7 @@ impl Editor {
                         }
                     })
                     .await;
-            let rows = Self::refresh_runnable_display_rows(
-                project,
-                display_snapshot,
-                new_rows,
-                cx.clone(),
-            );
+            let rows = Self::runnable_rows(project, display_snapshot, new_rows, cx.clone());
 
             this.update(&mut cx, |this, _| {
                 this.clear_tasks();
@@ -7760,7 +7755,8 @@ impl Editor {
     ) -> Vec<(Range<usize>, Runnable)> {
         snapshot.buffer_snapshot.runnable_ranges(range).collect()
     }
-    fn refresh_runnable_display_rows(
+
+    fn runnable_rows(
         project: Model<Project>,
         snapshot: DisplaySnapshot,
         runnable_ranges: Vec<(Range<usize>, Runnable)>,
@@ -7775,12 +7771,12 @@ impl Editor {
                 if tasks.is_empty() {
                     return None;
                 }
-                let point = multi_buffer_range.start.to_display_point(&snapshot);
+                let point = multi_buffer_range.start.to_point(&snapshot.buffer_snapshot);
                 Some((
-                    point.row(),
+                    point.row,
                     RunnableTasks {
                         templates: tasks,
-                        column: point.column(),
+                        column: point.column,
                     },
                 ))
             })
