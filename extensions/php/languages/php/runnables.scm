@@ -31,7 +31,7 @@
         (#match? @name ".*Test$")
         body: (declaration_list
             ((comment) @comment
-                (#match? @comment ".*@test.*")
+                (#match? @comment ".*@test\\b.*")
             .
             (method_declaration
                 (visibility_modifier)? @visibility
