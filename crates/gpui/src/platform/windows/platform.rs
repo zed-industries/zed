@@ -47,7 +47,6 @@ pub(crate) struct WindowsPlatform {
     foreground_executor: ForegroundExecutor,
     text_system: Arc<dyn PlatformTextSystem>,
     dispatch_event: OwnedHandle,
-    clipboard: RefCell<ClipboardContext>,
 }
 
 pub(crate) struct WindowsPlatformState {
@@ -102,7 +101,6 @@ impl WindowsPlatform {
         let icon = load_icon().unwrap_or_default();
         let state = RefCell::new(WindowsPlatformState::new());
         let raw_window_handles = RwLock::new(SmallVec::new());
-        let clipboard = RefCell::new(ClipboardContext::new().unwrap());
 
         Self {
             state,
@@ -113,7 +111,6 @@ impl WindowsPlatform {
             foreground_executor,
             text_system,
             dispatch_event,
-            clipboard,
         }
     }
 
@@ -676,8 +673,8 @@ impl Platform for WindowsPlatform {
 
     fn write_to_clipboard(&self, item: ClipboardItem) {
         if item.text.len() > 0 {
-            let mut clipboard = self.clipboard.borrow_mut();
-            clipboard.set_contents(item.text().to_owned()).unwrap();
+            let mut ctx = ClipboardContext::new().unwrap();
+            ctx.set_contents(item.text().to_owned()).unwrap();
         }
     }
 
@@ -686,8 +683,8 @@ impl Platform for WindowsPlatform {
     }
 
     fn read_from_clipboard(&self) -> Option<ClipboardItem> {
-        let mut clipboard = self.clipboard.borrow_mut();
-        let content = clipboard.get_contents().unwrap_or_default();
+        let mut ctx = ClipboardContext::new().unwrap();
+        let content = ctx.get_contents().unwrap_or_default();
         Some(ClipboardItem {
             text: content,
             metadata: None,
