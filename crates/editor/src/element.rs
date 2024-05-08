@@ -4022,11 +4022,13 @@ impl Element for EditorElement {
                             cx,
                         );
                         if gutter_settings.code_actions {
+                            let newest_selection_point =
+                                newest_selection_head.to_point(&snapshot.display_snapshot);
                             let has_test_indicator = self
                                 .editor
                                 .read(cx)
                                 .tasks
-                                .contains_key(&newest_selection_head.row());
+                                .contains_key(&newest_selection_point.row);
                             if !has_test_indicator {
                                 code_actions_indicator = self.layout_code_actions_indicator(
                                     line_height,

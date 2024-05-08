@@ -3851,22 +3851,10 @@ impl Editor {
 
             let spawned_test_task = this.update(&mut cx, |this, cx| {
                 if this.focus_handle.is_focused(cx) {
-                    let snapshot = this.snapshot(cx);
-                    let display_row = action.deployed_from_indicator.unwrap_or_else(|| {
-                        this.selections
-                            .newest::<Point>(cx)
-                            .head()
-                            .to_display_point(&snapshot.display_snapshot)
-                            .row()
-                    });
-
-                    let buffer_point =
-                        DisplayPoint::new(display_row, 0).to_point(&snapshot.display_snapshot);
-                    let buffer_row = snapshot
-                        .buffer_snapshot
-                        .buffer_line_for_row(buffer_point.row)
-                        .map(|(_, Range { start, .. })| start);
-                    let tasks = this.tasks.get(&display_row).map(|t| Arc::new(t.to_owned()));
+                    let buffer_row = action
+                        .deployed_from_indicator
+                        .unwrap_or_else(|| this.selections.newest::<Point>(cx).head().row);
+                    let tasks = this.tasks.get(&buffer_row).map(|t| Arc::new(t.to_owned()));
                     let (location, code_actions) = this
                         .available_code_actions
                         .clone()
@@ -3874,7 +3862,7 @@ impl Editor {
                             let snapshot = location.buffer.read(cx).snapshot();
                             let point_range = location.range.to_point(&snapshot);
                             let point_range = point_range.start.row..=point_range.end.row;
-                            if buffer_row.map_or(false, |row| point_range.contains(&row.row)) {
+                            if point_range.contains(&buffer_row) {
                                 Some((location, code_actions))
                             } else {
                                 None
@@ -3888,7 +3876,7 @@ impl Editor {
                     let buffer = location.map(|location| location.buffer).or_else(|| {
                         let snapshot = this.snapshot(cx);
                         let (buffer_snapshot, _) =
-                            snapshot.buffer_snapshot.buffer_line_for_row(display_row)?;
+                            snapshot.buffer_snapshot.buffer_line_for_row(buffer_row)?;
                         let buffer_id = buffer_snapshot.remote_id();
                         this.buffer().read(cx).buffer(buffer_id)
                     });
@@ -3899,22 +3887,18 @@ impl Editor {
                     this.discard_inline_completion(cx);
                     let task_context = tasks.as_ref().zip(this.workspace.clone()).and_then(
                         |(tasks, (workspace, _))| {
-                            if let Some(buffer_point) = buffer_row {
-                                let position = Point::new(buffer_point.row, tasks.column);
-                                let range_start = buffer.read(cx).anchor_at(position, Bias::Right);
-                                let location = Location {
-                                    buffer: buffer.clone(),
-                                    range: range_start..range_start,
-                                };
-                                workspace
-                                    .update(cx, |workspace, cx| {
-                                        tasks::task_context_for_location(workspace, location, cx)
-                                    })
-                                    .ok()
-                                    .flatten()
-                            } else {
-                                None
-                            }
+                            let position = Point::new(buffer_row, tasks.column);
+                            let range_start = buffer.read(cx).anchor_at(position, Bias::Right);
+                            let location = Location {
+                                buffer: buffer.clone(),
+                                range: range_start..range_start,
+                            };
+                            workspace
+                                .update(cx, |workspace, cx| {
+                                    tasks::task_context_for_location(workspace, location, cx)
+                                })
+                                .ok()
+                                .flatten()
                         },
                     );
                     let tasks = tasks
@@ -3930,7 +3914,7 @@ impl Editor {
                                             .map(|task| (kind.clone(), task))
                                     })
                                     .collect(),
-                                position: Point::new(display_row, tasks.column),
+                                position: Point::new(buffer_row, tasks.column),
                             })
                         });
                     let spawn_straight_away = tasks
