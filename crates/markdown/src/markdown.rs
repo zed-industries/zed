@@ -228,90 +228,91 @@ impl Element for MarkdownElement {
         let parsed_markdown = self.markdown.read(cx).parsed_markdown.clone();
         for (range, event) in parsed_markdown.events.iter() {
             match event {
-                MarkdownEvent::Start(tag) => match tag {
-                    MarkdownTag::Paragraph => {
-                        builder.push_div(div().mb_4().line_height(rems(1.3)));
-                    }
-                    MarkdownTag::Heading { level, .. } => {
-                        let mut heading = div().mt_2();
-                        heading = match level {
-                            pulldown_cmark::HeadingLevel::H1 => heading.text_3xl(),
-                            pulldown_cmark::HeadingLevel::H2 => heading.text_2xl(),
-                            pulldown_cmark::HeadingLevel::H3 => heading.text_xl(),
-                            pulldown_cmark::HeadingLevel::H4 => heading.text_lg(),
-                            _ => heading,
-                        };
-                        builder.push_div(heading);
-                    }
-                    MarkdownTag::BlockQuote => {
-                        builder.push_text_style(self.style.block_quote.clone());
-                        builder.push_div(
-                            div()
-                                .pl_4()
-                                .my_2()
-                                .border_l_4()
-                                .border_color(self.style.block_quote_border_color),
-                        );
-                    }
-                    MarkdownTag::CodeBlock(kind) => {
-                        let language = if let CodeBlockKind::Fenced(language) = kind {
-                            self.load_language(language.as_ref(), cx)
-                        } else {
-                            None
-                        };
+                MarkdownEvent::Start(tag) => {
+                    match tag {
+                        MarkdownTag::Paragraph => {
+                            builder.push_div(div().mb_4().line_height(rems(1.3)));
+                        }
+                        MarkdownTag::Heading { level, .. } => {
+                            let mut heading = div().mt_2();
+                            heading = match level {
+                                pulldown_cmark::HeadingLevel::H1 => heading.text_3xl(),
+                                pulldown_cmark::HeadingLevel::H2 => heading.text_2xl(),
+                                pulldown_cmark::HeadingLevel::H3 => heading.text_xl(),
+                                pulldown_cmark::HeadingLevel::H4 => heading.text_lg(),
+                                _ => heading,
+                            };
+                            builder.push_div(heading);
+                        }
+                        MarkdownTag::BlockQuote => {
+                            builder.push_text_style(self.style.block_quote.clone());
+                            builder.push_div(
+                                div()
+                                    .pl_4()
+                                    .my_2()
+                                    .border_l_4()
+                                    .border_color(self.style.block_quote_border_color),
+                            );
+                        }
+                        MarkdownTag::CodeBlock(kind) => {
+                            let language = if let CodeBlockKind::Fenced(language) = kind {
+                                self.load_language(language.as_ref(), cx)
+                            } else {
+                                None
+                            };
 
-                        builder.push_code_block(language);
-                        builder.push_text_style(self.style.code_block.clone());
-                        builder.push_div(
-                            div()
-                                .p_4()
-                                .my_2()
-                                .w_full()
-                                .when_some(self.style.code_block.background_color, |div, color| {
-                                    div.bg(color)
-                                }),
-                        );
-                    }
-                    MarkdownTag::HtmlBlock => builder.push_div(div()),
-                    MarkdownTag::List(bullet_index) => {
-                        builder.push_list(*bullet_index);
-                        builder.push_div(div().pl_4());
-                    }
-                    MarkdownTag::Item => {
-                        let bullet = if let Some(bullet_index) = builder.next_bullet_index() {
-                            format!("{}.", bullet_index)
-                        } else {
-                            "•".to_string()
-                        };
-                        builder.push_div(
-                            div()
-                                .h_flex()
-                                .line_height(rems(1.3))
-                                .items_start()
-                                .gap_1()
-                                .child(bullet),
-                        );
-                        // Without `w_0`, text doesn't wrap to the width of the container.
-                        builder.push_div(div().flex_1().w_0());
-                    }
-                    MarkdownTag::Emphasis => builder.push_text_style(TextStyleRefinement {
-                        font_style: Some(FontStyle::Italic),
-                        ..Default::default()
-                    }),
-                    MarkdownTag::Strong => builder.push_text_style(TextStyleRefinement {
-                        font_weight: Some(FontWeight::BOLD),
-                        ..Default::default()
-                    }),
-                    MarkdownTag::Strikethrough => builder.push_text_style(TextStyleRefinement {
-                        strikethrough: Some(StrikethroughStyle {
-                            thickness: px(1.),
-                            color: None,
+                            builder.push_code_block(language);
+                            builder.push_text_style(self.style.code_block.clone());
+                            builder.push_div(div().rounded_lg().p_4().my_2().w_full().when_some(
+                                self.style.code_block.background_color,
+                                |div, color| div.bg(color),
+                            ));
+                        }
+                        MarkdownTag::HtmlBlock => builder.push_div(div()),
+                        MarkdownTag::List(bullet_index) => {
+                            builder.push_list(*bullet_index);
+                            builder.push_div(div().pl_4());
+                        }
+                        MarkdownTag::Item => {
+                            let bullet = if let Some(bullet_index) = builder.next_bullet_index() {
+                                format!("{}.", bullet_index)
+                            } else {
+                                "•".to_string()
+                            };
+                            builder.push_div(
+                                div()
+                                    .h_flex()
+                                    .line_height(rems(1.3))
+                                    .items_start()
+                                    .gap_1()
+                                    .child(bullet),
+                            );
+                            // Without `w_0`, text doesn't wrap to the width of the container.
+                            builder.push_div(div().flex_1().w_0());
+                        }
+                        MarkdownTag::Emphasis => builder.push_text_style(TextStyleRefinement {
+                            font_style: Some(FontStyle::Italic),
+                            ..Default::default()
                         }),
-                        ..Default::default()
-                    }),
-                    MarkdownTag::Link { .. } => builder.push_text_style(self.style.link.clone()),
-                    _ => log::error!("unsupported markdown tag {:?}", tag),
-                },
+                        MarkdownTag::Strong => builder.push_text_style(TextStyleRefinement {
+                            font_weight: Some(FontWeight::BOLD),
+                            ..Default::default()
+                        }),
+                        MarkdownTag::Strikethrough => {
+                            builder.push_text_style(TextStyleRefinement {
+                                strikethrough: Some(StrikethroughStyle {
+                                    thickness: px(1.),
+                                    color: None,
+                                }),
+                                ..Default::default()
+                            })
+                        }
+                        MarkdownTag::Link { .. } => {
+                            builder.push_text_style(self.style.link.clone())
+                        }
+                        _ => log::error!("unsupported markdown tag {:?}", tag),
+                    }
+                }
                 MarkdownEvent::End(tag) => match tag {
                     MarkdownTagEnd::Paragraph => {
                         builder.pop_div();
