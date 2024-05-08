@@ -2082,6 +2082,10 @@ impl EditorElement {
             crate::ContextMenuOrigin::GutterIndicator(row) => {
                 // Context menu was spawned via a click on a gutter. Ensure it's a bit closer to the indicator than just a plain first column of the
                 // text field.
+                let snapshot = self.editor.update(cx, |this, cx| this.snapshot(cx));
+                let row = Point::new(row, 0)
+                    .to_display_point(&snapshot.display_snapshot)
+                    .row();
                 let x = -gutter_overshoot;
                 let y = (row + 1) as f32 * line_height - scroll_pixel_position.y;
                 (x, y)
