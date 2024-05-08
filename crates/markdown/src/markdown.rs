@@ -62,6 +62,10 @@ impl Markdown {
         self.parse(cx);
     }
 
+    pub fn source(&self) -> &str {
+        &self.source
+    }
+
     fn parse(&mut self, cx: &mut ViewContext<Self>) {
         if self.source.is_empty() {
             return;
@@ -226,7 +230,7 @@ impl Element for MarkdownElement {
             match event {
                 MarkdownEvent::Start(tag) => match tag {
                     MarkdownTag::Paragraph => {
-                        builder.push_div(div().line_height(rems(1.3)));
+                        builder.push_div(div().mb_4().line_height(rems(1.3)));
                     }
                     MarkdownTag::Heading { level, .. } => {
                         let mut heading = div().mt_2();
@@ -274,12 +278,21 @@ impl Element for MarkdownElement {
                         builder.push_div(div().pl_4());
                     }
                     MarkdownTag::Item => {
-                        builder.push_div(div());
-                        if let Some(item_index) = builder.next_list_item_index() {
-                            builder.push_text(&format!("{}. ", item_index), range.start);
+                        let item_index = if let Some(item_index) = builder.next_list_item_index() {
+                            format!("{}.", item_index)
                         } else {
-                            builder.push_text("• ", range.start);
+                            "•".to_string()
                         };
+                        builder.push_div(
+                            div()
+                                .h_flex()
+                                .line_height(rems(1.3))
+                                .items_start()
+                                .gap_1()
+                                .child(item_index),
+                        );
+                        // Without `w_0`, text doesn't wrap to the width of the container.
+                        builder.push_div(div().flex_1().w_0());
                     }
                     MarkdownTag::Emphasis => builder.push_text_style(TextStyleRefinement {
                         font_style: Some(FontStyle::Italic),
@@ -320,7 +333,10 @@ impl Element for MarkdownElement {
                         builder.pop_list();
                         builder.pop_div();
                     }
-                    MarkdownTagEnd::Item => builder.pop_div(),
+                    MarkdownTagEnd::Item => {
+                        builder.pop_div();
+                        builder.pop_div();
+                    }
                     MarkdownTagEnd::Emphasis => builder.pop_text_style(),
                     MarkdownTagEnd::Strong => builder.pop_text_style(),
                     MarkdownTagEnd::Strikethrough => builder.pop_text_style(),
@@ -393,15 +409,17 @@ impl Element for MarkdownElement {
 
                 markdown
                     .update(cx, |markdown, cx| {
-                        if let Some(index) =
-                            rendered_text.source_index_for_position(event.position).ok()
-                        {
+                        if let Ok(index) = rendered_text.source_index_for_position(event.position) {
                             markdown.selection = Selection {
                                 start: index,
                                 end: index,
                                 reversed: false,
                             };
                             markdown.is_selecting = true;
+                            cx.notify();
+                        } else {
+                            markdown.selection = Selection::default();
+                            markdown.is_selecting = false;
                             cx.notify();
                         }
                     })
