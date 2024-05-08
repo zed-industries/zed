@@ -32,6 +32,7 @@ util.workspace = true
 
 [dev-dependencies]
 assets.workspace = true
+env_logger.workspace = true
 gpui = { workspace = true, features = ["test-support"] }
 languages.workspace = true
 node_runtime.workspace = true

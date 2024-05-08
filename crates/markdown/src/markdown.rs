@@ -310,8 +310,7 @@ impl Element for MarkdownElement {
                         ..Default::default()
                     }),
                     MarkdownTag::Link { .. } => builder.push_text_style(self.style.link.clone()),
-                    MarkdownTag::Image { .. } => todo!(),
-                    _ => log::info!("unsupported markdown tag {:?}", tag),
+                    _ => log::error!("unsupported markdown tag {:?}", tag),
                 },
                 MarkdownEvent::End(tag) => match tag {
                     MarkdownTagEnd::Paragraph => {
@@ -341,8 +340,7 @@ impl Element for MarkdownElement {
                     MarkdownTagEnd::Strong => builder.pop_text_style(),
                     MarkdownTagEnd::Strikethrough => builder.pop_text_style(),
                     MarkdownTagEnd::Link => builder.pop_text_style(),
-                    MarkdownTagEnd::Image => todo!(),
-                    _ => log::info!("unsupported markdown tag end: {:?}", tag),
+                    _ => log::error!("unsupported markdown tag end: {:?}", tag),
                 },
                 MarkdownEvent::Text => {
                     builder.push_text(&parsed_markdown.source[range.clone()], range.start);
@@ -358,7 +356,6 @@ impl Element for MarkdownElement {
                 MarkdownEvent::InlineHtml => {
                     builder.push_text(&parsed_markdown.source[range.clone()], range.start);
                 }
-
                 MarkdownEvent::Rule => {
                     builder.push_div(
                         div()
@@ -368,10 +365,9 @@ impl Element for MarkdownElement {
                     );
                     builder.pop_div()
                 }
-                MarkdownEvent::FootnoteReference => todo!(),
-                MarkdownEvent::SoftBreak => todo!(),
-                MarkdownEvent::HardBreak => todo!(),
-                MarkdownEvent::TaskListMarker(_) => todo!(),
+                MarkdownEvent::SoftBreak => builder.push_text("\n", range.start),
+                MarkdownEvent::HardBreak => builder.push_text("\n", range.start),
+                _ => log::error!("unsupported markdown event {:?}", event),
             }
         }
 

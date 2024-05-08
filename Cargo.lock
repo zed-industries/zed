@@ -5957,6 +5957,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "assets",
+ "env_logger",
  "futures 0.3.30",
  "gpui",
  "language",
