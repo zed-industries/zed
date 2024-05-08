@@ -423,10 +423,10 @@ impl Element for MarkdownElement {
                 MarkdownEvent::Start(tag) => {
                     match tag {
                         MarkdownTag::Paragraph => {
-                            builder.push_div(div().mb_4().line_height(rems(1.3)));
+                            builder.push_div(div().mb_2().line_height(rems(1.3)));
                         }
                         MarkdownTag::Heading { level, .. } => {
-                            let mut heading = div().mt_2();
+                            let mut heading = div().mb_2();
                             heading = match level {
                                 pulldown_cmark::HeadingLevel::H1 => heading.text_3xl(),
                                 pulldown_cmark::HeadingLevel::H2 => heading.text_2xl(),
@@ -441,7 +441,7 @@ impl Element for MarkdownElement {
                             builder.push_div(
                                 div()
                                     .pl_4()
-                                    .my_2()
+                                    .mb_2()
                                     .border_l_4()
                                     .border_color(self.style.block_quote_border_color),
                             );
@@ -455,7 +455,7 @@ impl Element for MarkdownElement {
 
                             builder.push_code_block(language);
                             builder.push_text_style(self.style.code_block.clone());
-                            builder.push_div(div().rounded_lg().p_4().my_2().w_full().when_some(
+                            builder.push_div(div().rounded_lg().p_4().mb_2().w_full().when_some(
                                 self.style.code_block.background_color,
                                 |div, color| div.bg(color),
                             ));
@@ -474,6 +474,7 @@ impl Element for MarkdownElement {
                             builder.push_div(
                                 div()
                                     .h_flex()
+                                    .mb_2()
                                     .line_height(rems(1.3))
                                     .items_start()
                                     .gap_1()
