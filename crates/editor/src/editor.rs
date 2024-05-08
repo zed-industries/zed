@@ -3997,7 +3997,7 @@ impl Editor {
                         cx,
                     );
 
-                    None
+                    Some(Task::ready(Ok(())))
                 })
             }
             CodeActionsItem::CodeAction(action) => {
