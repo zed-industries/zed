@@ -9,7 +9,6 @@ use parking_lot::{Mutex, MutexGuard};
 use smallvec::SmallVec;
 use std::{
     cell::{Cell, RefCell},
-    cmp::Ordering,
     mem,
     ops::Range,
     rc::Rc,

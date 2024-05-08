@@ -9,7 +9,7 @@ pub fn parse_markdown(text: &str) -> Vec<(Range<usize>, MarkdownEvent)> {
         .map(|(pulldown_event, mut range)| {
             let event = match pulldown_event {
                 pulldown_cmark::Event::Start(tag) => MarkdownEvent::Start(tag.into()),
-                pulldown_cmark::Event::End(tag) => MarkdownEvent::End(MarkdownTagEnd::from(tag)),
+                pulldown_cmark::Event::End(tag) => MarkdownEvent::End(tag),
                 pulldown_cmark::Event::Text(_) => MarkdownEvent::Text,
                 pulldown_cmark::Event::Code(_) => {
                     range.start += 1;

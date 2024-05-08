@@ -290,7 +290,7 @@ impl WrappedLineLayout {
 
         let mut position_in_unwrapped_line = position;
         position_in_unwrapped_line.x += wrapped_line_start_x;
-        if position_in_unwrapped_line.x <= wrapped_line_start_x {
+        if position_in_unwrapped_line.x < wrapped_line_start_x {
             Err(wrapped_line_start_index)
         } else if position_in_unwrapped_line.x >= wrapped_line_end_x {
             Err(wrapped_line_end_index)

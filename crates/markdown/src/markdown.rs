@@ -47,7 +47,7 @@ impl Markdown {
         cx: &mut ViewContext<Self>,
     ) -> Self {
         let mut this = Self {
-            source: source.into(),
+            source,
             selection: Selection::default(),
             pressed_link: None,
             autoscroll_request: None,
