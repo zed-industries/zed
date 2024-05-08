@@ -1381,6 +1381,7 @@ impl EditorElement {
         scroll_pixel_position: gpui::Point<Pixels>,
         gutter_dimensions: &GutterDimensions,
         gutter_hitbox: &Hitbox,
+        snapshot: &EditorSnapshot,
         cx: &mut WindowContext,
     ) -> Vec<AnyElement> {
         self.editor.update(cx, |editor, cx| {
@@ -1409,10 +1410,12 @@ impl EditorElement {
                         *row,
                         cx,
                     );
-
+                    let display_row = Point::new(*row, 0)
+                        .to_display_point(&snapshot.display_snapshot)
+                        .row();
                     let button = prepaint_gutter_button(
                         button,
-                        *row,
+                        display_row,
                         line_height,
                         gutter_dimensions,
                         scroll_pixel_position,
@@ -4043,6 +4046,7 @@ impl Element for EditorElement {
                     scroll_pixel_position,
                     &gutter_dimensions,
                     &gutter_hitbox,
+                    &snapshot,
                     cx,
                 );
 
