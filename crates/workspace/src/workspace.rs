@@ -130,7 +130,6 @@ actions!(
         NewCenterTerminal,
         NewSearch,
         Feedback,
-        Restart,
         Welcome,
         ToggleZoom,
         ToggleLeftDock,
@@ -185,6 +184,11 @@ pub struct CloseInactiveTabsAndPanes {
 #[derive(Clone, Deserialize, PartialEq)]
 pub struct SendKeystrokes(pub String);
 
+#[derive(Clone, Deserialize, PartialEq, Default)]
+pub struct Restart {
+    pub binary_path: Option<PathBuf>,
+}
+
 impl_actions!(
     workspace,
     [
@@ -194,6 +198,7 @@ impl_actions!(
         CloseInactiveTabsAndPanes,
         NewFileInDirection,
         OpenTerminal,
+        Restart,
         Save,
         SaveAll,
         SwapPaneInDirection,
@@ -5020,7 +5025,7 @@ pub fn join_in_room_project(
     })
 }
 
-pub fn restart(_: &Restart, cx: &mut AppContext) {
+pub fn restart(restart: &Restart, cx: &mut AppContext) {
     let should_confirm = WorkspaceSettings::get_global(cx).confirm_quit;
     let mut workspace_windows = cx
         .windows()
@@ -5046,6 +5051,7 @@ pub fn restart(_: &Restart, cx: &mut AppContext) {
             .ok();
     }
 
+    let binary_path = restart.binary_path.clone();
     cx.spawn(|mut cx| async move {
         if let Some(prompt) = prompt {
             let answer = prompt.await?;
@@ -5065,7 +5071,7 @@ pub fn restart(_: &Restart, cx: &mut AppContext) {
             }
         }
 
-        cx.update(|cx| cx.restart())
+        cx.update(|cx| cx.restart(binary_path))
     })
     .detach_and_log_err(cx);
 }
