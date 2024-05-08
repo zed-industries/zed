@@ -305,7 +305,6 @@ impl WrappedLineLayout {
     /// todo!()
     pub fn position_for_index(&self, index: usize, line_height: Pixels) -> Option<Point<Pixels>> {
         let mut line_start_ix = 0;
-
         let mut line_end_indices = self
             .wrap_boundaries
             .iter()
@@ -318,14 +317,16 @@ impl WrappedLineLayout {
             .enumerate();
         for (ix, line_end_ix) in line_end_indices {
             let line_y = ix as f32 * line_height;
-
-            if (line_start_ix..=line_end_ix).contains(&index) {
+            if index < line_start_ix {
+                break;
+            } else if index > line_end_ix {
+                line_start_ix = line_end_ix;
+                continue;
+            } else {
                 let line_start_x = self.unwrapped_layout.x_for_index(line_start_ix);
                 let x = self.unwrapped_layout.x_for_index(index) - line_start_x;
                 return Some(point(x, line_y));
             }
-
-            line_start_ix = line_end_ix;
         }
 
         None

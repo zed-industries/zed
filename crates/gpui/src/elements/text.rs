@@ -408,16 +408,17 @@ impl TextLayout {
         let mut line_start_ix = 0;
 
         for line in &element_state.lines {
-            let line_bottom = line_origin.y + line.size(line_height).height;
             let line_end_ix = line_start_ix + line.len();
-
-            if (line_start_ix..=line_end_ix).contains(&index) {
+            if index < line_start_ix {
+                break;
+            } else if index > line_end_ix {
+                line_origin.y += line.size(line_height).height;
+                line_start_ix = line_end_ix + 1;
+                continue;
+            } else {
                 let ix_within_line = index - line_start_ix;
                 return Some(line_origin + line.position_for_index(ix_within_line, line_height)?);
             }
-
-            line_origin.y = line_bottom;
-            line_start_ix = line_end_ix + 1;
         }
 
         None

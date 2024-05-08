@@ -31,6 +31,7 @@ pub struct Markdown {
     source: String,
     selection: Selection,
     is_selecting: bool,
+    autoscroll_request: Option<usize>,
     style: MarkdownStyle,
     parsed_markdown: ParsedMarkdown,
     should_reparse: bool,
@@ -49,6 +50,7 @@ impl Markdown {
             source: source.into(),
             selection: Selection::default(),
             is_selecting: false,
+            autoscroll_request: None,
             style,
             should_reparse: false,
             parsed_markdown: ParsedMarkdown::default(),
@@ -219,31 +221,8 @@ impl MarkdownElement {
         cx: &mut WindowContext,
     ) {
         let selection = self.markdown.read(cx).selection;
-
-        let mut selection_start: Option<(Point<Pixels>, Pixels)> = None;
-        let mut selection_end: Option<(Point<Pixels>, Pixels)> = None;
-
-        for line in rendered_text.lines.iter() {
-            let line_height = line.layout.line_height();
-            let line_source_start = line.source_mappings.first().unwrap().source_index;
-            let line_source_range = line_source_start..=line.source_end;
-
-            if line_source_range.contains(&selection.start) {
-                let selection_start_position = line
-                    .layout
-                    .position_for_index(line.rendered_index_for_source_index(selection.start))
-                    .unwrap();
-                selection_start = Some((selection_start_position, line_height));
-            }
-
-            if line_source_range.contains(&selection.end) {
-                let selection_end_position = line
-                    .layout
-                    .position_for_index(line.rendered_index_for_source_index(selection.end))
-                    .unwrap();
-                selection_end = Some((selection_end_position, line_height));
-            }
-        }
+        let selection_start = rendered_text.position_for_source_index(selection.start);
+        let selection_end = rendered_text.position_for_source_index(selection.end);
 
         if let Some(((start_position, start_line_height), (end_position, end_line_height))) =
             selection_start.zip(selection_end)
@@ -351,6 +330,7 @@ impl MarkdownElement {
                                     Ok(ix) | Err(ix) => ix,
                                 };
                             markdown.selection.set_head(index);
+                            markdown.autoscroll_request = Some(index);
                             cx.notify();
                         }
                     })
@@ -374,6 +354,28 @@ impl MarkdownElement {
                     .log_err();
             }
         });
+    }
+
+    fn autoscroll(&mut self, rendered_text: &RenderedText, cx: &mut WindowContext) -> Option<()> {
+        let autoscroll_index = self
+            .markdown
+            .update(cx, |markdown, _| markdown.autoscroll_request.take())?;
+        let (position, line_height) = rendered_text.position_for_source_index(autoscroll_index)?;
+
+        let text_style = cx.text_style();
+        let font_id = cx.text_system().resolve_font(&text_style.font());
+        let font_size = text_style.font_size.to_pixels(cx.rem_size());
+        let em_width = cx
+            .text_system()
+            .typographic_bounds(font_id, font_size, 'm')
+            .unwrap()
+            .size
+            .width;
+        cx.request_autoscroll(Bounds::from_corners(
+            point(position.x - 3. * em_width, position.y - 3. * line_height),
+            point(position.x + 3. * em_width, position.y + 3. * line_height),
+        ));
+        Some(())
     }
 }
 
@@ -553,6 +555,7 @@ impl Element for MarkdownElement {
     ) -> Self::PrepaintState {
         let hitbox = cx.insert_hitbox(bounds, false);
         rendered_markdown.element.prepaint(cx);
+        self.autoscroll(&rendered_markdown.text, cx);
         hitbox
     }
 
@@ -759,27 +762,31 @@ impl RenderedLine {
         mapping.rendered_index + (source_index - mapping.source_index)
     }
 
-    fn source_index_for_position(&self, position: Point<Pixels>) -> Result<usize, usize> {
-        let index_within_line;
-        let out_of_bounds;
-        match self.layout.index_for_position(position) {
-            Ok(ix) => {
-                index_within_line = ix;
-                out_of_bounds = false;
-            }
-            Err(ix) => {
-                index_within_line = ix;
-                out_of_bounds = true;
-            }
-        };
+    fn source_index_for_rendered_index(&self, rendered_index: usize) -> usize {
         let mapping = match self
             .source_mappings
-            .binary_search_by_key(&index_within_line, |probe| probe.rendered_index)
+            .binary_search_by_key(&rendered_index, |probe| probe.rendered_index)
         {
             Ok(ix) => &self.source_mappings[ix],
             Err(ix) => &self.source_mappings[ix - 1],
         };
-        let source_index = mapping.source_index + (index_within_line - mapping.rendered_index);
+        mapping.source_index + (rendered_index - mapping.rendered_index)
+    }
+
+    fn source_index_for_position(&self, position: Point<Pixels>) -> Result<usize, usize> {
+        let line_rendered_index;
+        let out_of_bounds;
+        match self.layout.index_for_position(position) {
+            Ok(ix) => {
+                line_rendered_index = ix;
+                out_of_bounds = false;
+            }
+            Err(ix) => {
+                line_rendered_index = ix;
+                out_of_bounds = true;
+            }
+        };
+        let source_index = self.source_index_for_rendered_index(line_rendered_index);
         if out_of_bounds {
             Err(source_index)
         } else {
@@ -824,5 +831,22 @@ impl RenderedText {
         }
 
         Err(self.lines.last().map_or(0, |line| line.source_end))
+    }
+
+    fn position_for_source_index(&self, source_index: usize) -> Option<(Point<Pixels>, Pixels)> {
+        for line in self.lines.iter() {
+            let line_source_start = line.source_mappings.first().unwrap().source_index;
+            if source_index < line_source_start {
+                break;
+            } else if source_index > line.source_end {
+                continue;
+            } else {
+                let line_height = line.layout.line_height();
+                let rendered_index_within_line = line.rendered_index_for_source_index(source_index);
+                let position = line.layout.position_for_index(rendered_index_within_line)?;
+                return Some((position, line_height));
+            }
+        }
+        None
     }
 }
