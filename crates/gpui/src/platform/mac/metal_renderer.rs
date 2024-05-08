@@ -412,7 +412,7 @@ impl MetalRenderer {
 
             let tile = self
                 .sprite_atlas
-                .allocate(clipped_bounds.size.map(Into::into), AtlasTextureKind::Path);
+                .allocate(clipped_bounds.size.map(Into::into), AtlasTextureKind::Path)?;
             vertices_by_texture_id
                 .entry(tile.texture_id)
                 .or_insert(Vec::new())
