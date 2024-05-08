@@ -273,13 +273,13 @@ impl Element for MarkdownElement {
                         );
                     }
                     MarkdownTag::HtmlBlock => builder.push_div(div()),
-                    MarkdownTag::List(number) => {
-                        builder.push_list(*number);
+                    MarkdownTag::List(bullet_index) => {
+                        builder.push_list(*bullet_index);
                         builder.push_div(div().pl_4());
                     }
                     MarkdownTag::Item => {
-                        let item_index = if let Some(item_index) = builder.next_list_item_index() {
-                            format!("{}.", item_index)
+                        let bullet = if let Some(bullet_index) = builder.next_bullet_index() {
+                            format!("{}.", bullet_index)
                         } else {
                             "•".to_string()
                         };
@@ -289,7 +289,7 @@ impl Element for MarkdownElement {
                                 .line_height(rems(1.3))
                                 .items_start()
                                 .gap_1()
-                                .child(item_index),
+                                .child(bullet),
                         );
                         // Without `w_0`, text doesn't wrap to the width of the container.
                         builder.push_div(div().flex_1().w_0());
@@ -580,7 +580,7 @@ struct PendingLine {
 }
 
 struct ListStackEntry {
-    item_index: Option<u64>,
+    bullet_index: Option<u64>,
 }
 
 impl MarkdownElementBuilder {
@@ -625,13 +625,13 @@ impl MarkdownElementBuilder {
         self.div_stack.last_mut().unwrap().extend(iter::once(div));
     }
 
-    fn push_list(&mut self, item_index: Option<u64>) {
-        self.list_stack.push(ListStackEntry { item_index });
+    fn push_list(&mut self, bullet_index: Option<u64>) {
+        self.list_stack.push(ListStackEntry { bullet_index });
     }
 
-    fn next_list_item_index(&mut self) -> Option<u64> {
+    fn next_bullet_index(&mut self) -> Option<u64> {
         self.list_stack.last_mut().and_then(|entry| {
-            let item_index = entry.item_index.as_mut()?;
+            let item_index = entry.bullet_index.as_mut()?;
             *item_index += 1;
             Some(*item_index - 1)
         })
