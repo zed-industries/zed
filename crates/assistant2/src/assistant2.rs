@@ -36,7 +36,7 @@ use semantic_index::{CloudEmbeddingProvider, ProjectIndex, ProjectIndexDebugView
 use serde::{Deserialize, Serialize};
 use settings::Settings;
 use std::sync::Arc;
-use tools::OpenBufferTool;
+use tools::AnnotationTool;
 use ui::{ActiveFileButton, Composer, ProjectIndexButton};
 use util::paths::CONVERSATIONS_DIR;
 use util::{maybe, paths::EMBEDDINGS_DIR, ResultExt};
@@ -150,7 +150,7 @@ impl AssistantPanel {
                     )
                     .unwrap();
                 tool_registry
-                    .register(OpenBufferTool::new(workspace.clone(), project.clone()), cx)
+                    .register(AnnotationTool::new(workspace.clone(), project.clone()), cx)
                     .unwrap();
 
                 let mut attachment_registry = AttachmentRegistry::new();
