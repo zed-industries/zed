@@ -5,7 +5,7 @@ use crate::{
 use editor::{Editor, EditorElement, EditorStyle};
 use gpui::{AnyElement, FontStyle, FontWeight, TextStyle, View, WeakView, WhiteSpace};
 use settings::Settings;
-use theme::{Appearance, ThemeSettings};
+use theme::ThemeSettings;
 use ui::{popover_menu, prelude::*, ButtonLike, ContextMenu, Divider, TextSize, Tooltip};
 
 #[derive(IntoElement)]
