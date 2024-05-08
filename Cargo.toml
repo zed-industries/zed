@@ -256,8 +256,8 @@ async-recursion = "1.0.0"
 async-tar = "0.4.2"
 async-trait = "0.1"
 bitflags = "2.4.2"
-blade-graphics = { git = "https://github.com/kvark/blade", rev = "f5766863de9dcc092e90fdbbc5e0007a99e7f9bf" }
-blade-macros = { git = "https://github.com/kvark/blade", rev = "f5766863de9dcc092e90fdbbc5e0007a99e7f9bf" }
+blade-graphics = { git = "https://github.com/kvark/blade", rev = "e35b2d41f221a48b75f7cf2e78a81e7ecb7a383c" }
+blade-macros = { git = "https://github.com/kvark/blade", rev = "e35b2d41f221a48b75f7cf2e78a81e7ecb7a383c" }
 cap-std = "3.0"
 chrono = { version = "0.4", features = ["serde"] }
 clap = { version = "4.4", features = ["derive"] }
