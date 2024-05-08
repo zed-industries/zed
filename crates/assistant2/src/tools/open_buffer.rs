@@ -144,7 +144,8 @@ impl LanguageModelTool for OpenBufferTool {
         })
     }
 
-    fn output_view(
+    fn view(
+        &self,
         _: Self::Input,
         output: Result<Self::Output>,
         cx: &mut WindowContext,

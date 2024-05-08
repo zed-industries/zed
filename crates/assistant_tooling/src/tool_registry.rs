@@ -1,17 +1,19 @@
+use crate::ProjectContext;
 use anyhow::{anyhow, Result};
 use gpui::{
     div, AnyElement, AnyView, IntoElement, ParentElement, Render, Styled, Task, View, WindowContext,
 };
 use schemars::{schema::RootSchema, schema_for, JsonSchema};
-use serde::Deserialize;
+use serde::{de::DeserializeOwned, Deserialize};
 use std::{
     any::TypeId,
     collections::HashMap,
     fmt::Display,
-    sync::atomic::{AtomicBool, Ordering::SeqCst},
+    sync::{
+        atomic::{AtomicBool, Ordering::SeqCst},
+        Arc,
+    },
 };
-
-use crate::ProjectContext;
 
 pub struct ToolRegistry {
     registered_tools: HashMap<String, RegisteredTool>,
@@ -45,7 +47,7 @@ pub struct ToolFunctionDefinition {
 pub trait LanguageModelTool {
     /// The input type that will be passed in to `execute` when the tool is called
     /// by the language model.
-    type Input: for<'de> Deserialize<'de> + JsonSchema;
+    type Input: DeserializeOwned + JsonSchema;
 
     /// The output returned by executing the tool.
     type Output: 'static;
@@ -78,7 +80,8 @@ pub trait LanguageModelTool {
     /// Executes the tool with the given input.
     fn execute(&self, input: &Self::Input, cx: &mut WindowContext) -> Task<Result<Self::Output>>;
 
-    fn output_view(
+    fn view(
+        &self,
         input: Self::Input,
         output: Result<Self::Output>,
         cx: &mut WindowContext,
@@ -158,6 +161,7 @@ impl ToolRegistry {
         _cx: &mut WindowContext,
     ) -> Result<()> {
         let name = tool.name();
+        let tool = Arc::new(tool);
         let registered_tool = RegisteredTool {
             type_id: TypeId::of::<T>(),
             definition: tool.definition(),
@@ -178,10 +182,10 @@ impl ToolRegistry {
                     };
 
                     let result = tool.execute(&input, cx);
-
+                    let tool = tool.clone();
                     cx.spawn(move |mut cx| async move {
                         let result: Result<T::Output> = result.await;
-                        let view = cx.update(|cx| T::output_view(input, result, cx))?;
+                        let view = cx.update(|cx| tool.view(input, result, cx))?;
 
                         Ok(ToolFunctionCall {
                             id,
@@ -357,7 +361,8 @@ mod test {
             Task::ready(Ok(weather))
         }
 
-        fn output_view(
+        fn view(
+            &self,
             _input: Self::Input,
             result: Result<Self::Output>,
             cx: &mut WindowContext,

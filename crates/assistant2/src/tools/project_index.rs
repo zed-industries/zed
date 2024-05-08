@@ -194,7 +194,8 @@ impl LanguageModelTool for ProjectIndexTool {
         })
     }
 
-    fn output_view(
+    fn view(
+        &self,
         input: Self::Input,
         output: Result<Self::Output>,
         cx: &mut WindowContext,

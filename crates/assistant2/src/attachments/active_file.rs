@@ -106,7 +106,7 @@ impl LanguageModelAttachment for ActiveEditorAttachmentTool {
         }))
     }
 
-    fn view(output: Result<Self::Output>, cx: &mut WindowContext) -> View<Self::View> {
+    fn view(&self, output: Result<Self::Output>, cx: &mut WindowContext) -> View<Self::View> {
         cx.new_view(|_cx| FileAttachmentView { output })
     }
 }

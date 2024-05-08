@@ -22,7 +22,7 @@ pub trait LanguageModelAttachment {
 
     fn run(&self, cx: &mut WindowContext) -> Task<Result<Self::Output>>;
 
-    fn view(output: Result<Self::Output>, cx: &mut WindowContext) -> View<Self::View>;
+    fn view(&self, output: Result<Self::Output>, cx: &mut WindowContext) -> View<Self::View>;
 }
 
 /// A collected attachment from running an attachment tool
@@ -45,12 +45,13 @@ impl AttachmentRegistry {
     }
 
     pub fn register<A: LanguageModelAttachment + 'static>(&mut self, attachment: A) {
+        let attachment = Arc::new(attachment);
         let call = Box::new(move |cx: &mut WindowContext| {
             let result = attachment.run(cx);
-
+            let attachment = attachment.clone();
             cx.spawn(move |mut cx| async move {
                 let result: Result<A::Output> = result.await;
-                let view = cx.update(|cx| A::view(result, cx))?;
+                let view = cx.update(|cx| attachment.view(result, cx))?;
 
                 Ok(UserAttachment {
                     view: view.into(),
