@@ -53,3 +53,39 @@
         (#match? @run ".*Test$")
     )
 ) @phpunit-test
+
+; Add support for Pest runnable (non chainable method)
+; Function expression that has `it`, `test` or `describe` as the function name
+; And does not have chained methods
+(
+    (expression_statement
+        (function_call_expression
+            function: (_) @name
+            (#any-of? @name "it" "test" "describe")
+            arguments: (arguments
+                (argument
+                    (encapsed_string (string_value) @run)
+                )
+            )
+        )
+    )
+) @pest-test
+
+; Add support for Pest runnable (chainable method)
+; Function expression that has `it`, `test` or `describe` as the function name
+; And has chained methods
+(
+    (expression_statement
+        (member_call_expression
+            object: (function_call_expression
+                function: (_) @name
+                (#any-of? @name "it" "test" "describe")
+                arguments: (arguments
+                    (argument
+                        (encapsed_string (string_value) @run)
+                    )
+                )
+            )
+        )
+    )
+) @pest-test

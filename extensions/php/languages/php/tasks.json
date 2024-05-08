@@ -4,5 +4,11 @@
     "command": "./vendor/bin/phpunit",
     "args": ["--filter=$ZED_SYMBOL $ZED_FILE"],
     "tags": ["phpunit-test"]
+  },
+  {
+    "label": "pest test $ZED_SYMBOL",
+    "command": "./vendor/bin/pest",
+    "args": ["--filter=$ZED_SYMBOL $ZED_FILE"],
+    "tags": ["pest-test"]
   }
 ]
