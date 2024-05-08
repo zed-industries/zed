@@ -1381,6 +1381,7 @@ impl EditorElement {
         scroll_pixel_position: gpui::Point<Pixels>,
         gutter_dimensions: &GutterDimensions,
         gutter_hitbox: &Hitbox,
+        snapshot: &EditorSnapshot,
         cx: &mut WindowContext,
     ) -> Vec<AnyElement> {
         self.editor.update(cx, |editor, cx| {
@@ -1409,10 +1410,12 @@ impl EditorElement {
                         *row,
                         cx,
                     );
-
+                    let display_row = Point::new(*row, 0)
+                        .to_display_point(&snapshot.display_snapshot)
+                        .row();
                     let button = prepaint_gutter_button(
                         button,
-                        *row,
+                        display_row,
                         line_height,
                         gutter_dimensions,
                         scroll_pixel_position,
@@ -2079,6 +2082,10 @@ impl EditorElement {
             crate::ContextMenuOrigin::GutterIndicator(row) => {
                 // Context menu was spawned via a click on a gutter. Ensure it's a bit closer to the indicator than just a plain first column of the
                 // text field.
+                let snapshot = self.editor.update(cx, |this, cx| this.snapshot(cx));
+                let row = Point::new(row, 0)
+                    .to_display_point(&snapshot.display_snapshot)
+                    .row();
                 let x = -gutter_overshoot;
                 let y = (row + 1) as f32 * line_height - scroll_pixel_position.y;
                 (x, y)
@@ -4019,11 +4026,13 @@ impl Element for EditorElement {
                             cx,
                         );
                         if gutter_settings.code_actions {
+                            let newest_selection_point =
+                                newest_selection_head.to_point(&snapshot.display_snapshot);
                             let has_test_indicator = self
                                 .editor
                                 .read(cx)
                                 .tasks
-                                .contains_key(&newest_selection_head.row());
+                                .contains_key(&newest_selection_point.row);
                             if !has_test_indicator {
                                 code_actions_indicator = self.layout_code_actions_indicator(
                                     line_height,
@@ -4043,6 +4052,7 @@ impl Element for EditorElement {
                     scroll_pixel_position,
                     &gutter_dimensions,
                     &gutter_hitbox,
+                    &snapshot,
                     cx,
                 );
 
