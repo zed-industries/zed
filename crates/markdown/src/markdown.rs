@@ -187,7 +187,7 @@ impl MarkdownElement {
         let language = self
             .language_registry
             .language_for_name(name)
-            .log_err()
+            .map(|language| language.ok())
             .shared();
 
         match language.clone().now_or_never() {
