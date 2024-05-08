@@ -3,9 +3,9 @@ mod parser;
 use crate::parser::CodeBlockKind;
 use futures::FutureExt;
 use gpui::{
-    point, quad, AnyElement, Bounds, CursorStyle, Edges, FontStyle, FontWeight, GlobalElementId,
-    Hitbox, Hsla, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Point, Render,
-    StrikethroughStyle, Style, StyledText, Task, TextLayout, TextRun, TextStyle,
+    point, quad, AnyElement, Bounds, CursorStyle, DispatchPhase, Edges, FontStyle, FontWeight,
+    GlobalElementId, Hitbox, Hsla, MouseDownEvent, MouseEvent, MouseMoveEvent, MouseUpEvent, Point,
+    Render, StrikethroughStyle, Style, StyledText, Task, TextLayout, TextRun, TextStyle,
     TextStyleRefinement, View,
 };
 use language::{Language, LanguageRegistry, Rope};
@@ -30,7 +30,7 @@ pub struct MarkdownStyle {
 pub struct Markdown {
     source: String,
     selection: Selection,
-    is_selecting: bool,
+    pressed_link: Option<RenderedLink>,
     autoscroll_request: Option<usize>,
     style: MarkdownStyle,
     parsed_markdown: ParsedMarkdown,
@@ -49,7 +49,7 @@ impl Markdown {
         let mut this = Self {
             source: source.into(),
             selection: Selection::default(),
-            is_selecting: false,
+            pressed_link: None,
             autoscroll_request: None,
             style,
             should_reparse: false,
@@ -125,6 +125,7 @@ struct Selection {
     start: usize,
     end: usize,
     reversed: bool,
+    pending: bool,
 }
 
 impl Selection {
@@ -197,16 +198,10 @@ impl MarkdownElement {
         match language.clone().now_or_never() {
             Some(language) => language,
             None => {
-                let view_id = cx.parent_view_id();
+                let markdown = self.markdown.downgrade();
                 cx.spawn(|mut cx| async move {
                     language.await;
-                    cx.update(|cx| {
-                        if let Some(view_id) = view_id {
-                            cx.notify(view_id);
-                        } else {
-                            cx.refresh();
-                        }
-                    })
+                    markdown.update(&mut cx, |_, cx| cx.notify())
                 })
                 .detach_and_log_err(cx);
                 None
@@ -283,88 +278,89 @@ impl MarkdownElement {
         rendered_text: &RenderedText,
         cx: &mut WindowContext,
     ) {
-        if hitbox.contains(&cx.mouse_position()) {
-            if let Ok(hovered_index) = rendered_text.source_index_for_position(cx.mouse_position())
-            {
-                let is_selecting = self.markdown.read(cx).is_selecting;
-                if !is_selecting && rendered_text.link_for_source_index(hovered_index).is_some() {
-                    cx.set_cursor_style(CursorStyle::PointingHand, hitbox);
-                } else {
-                    cx.set_cursor_style(CursorStyle::IBeam, hitbox);
-                }
-            } else {
-                cx.set_cursor_style(CursorStyle::IBeam, hitbox);
-            }
+        let is_hovering_link = hitbox.is_hovered(cx)
+            && !self.markdown.read(cx).selection.pending
+            && rendered_text
+                .link_for_position(cx.mouse_position())
+                .is_some();
+
+        if is_hovering_link {
+            cx.set_cursor_style(CursorStyle::PointingHand, hitbox);
+        } else {
+            cx.set_cursor_style(CursorStyle::IBeam, hitbox);
         }
 
-        cx.on_mouse_event({
+        self.on_mouse_event(cx, {
             let rendered_text = rendered_text.clone();
-            let markdown = self.markdown.downgrade();
             let hitbox = hitbox.clone();
-            move |event: &MouseDownEvent, phase, cx| {
-                markdown
-                    .update(cx, |markdown, cx| {
-                        if hitbox.is_hovered(cx) {
-                            if phase.bubble() {
-                                let index =
-                                    match rendered_text.source_index_for_position(event.position) {
-                                        Ok(index) | Err(index) => index,
-                                    };
-                                markdown.selection = Selection {
-                                    start: index,
-                                    end: index,
-                                    reversed: false,
-                                };
-                                markdown.is_selecting = true;
-                                cx.notify();
-                            }
+            move |markdown, event: &MouseDownEvent, phase, cx| {
+                if hitbox.is_hovered(cx) {
+                    if phase.bubble() {
+                        if let Some(link) = rendered_text.link_for_position(event.position) {
+                            markdown.pressed_link = Some(link.clone());
                         } else {
-                            markdown.selection = Selection::default();
-                            markdown.is_selecting = false;
-                            cx.notify();
-                        }
-                    })
-                    .log_err();
-            }
-        });
-        cx.on_mouse_event({
-            let rendered_text = rendered_text.clone();
-            let markdown = self.markdown.downgrade();
-            move |event: &MouseMoveEvent, phase, cx| {
-                if phase.capture() || event.pressed_button != Some(MouseButton::Left) {
-                    return;
-                }
-
-                markdown
-                    .update(cx, |markdown, cx| {
-                        if markdown.is_selecting {
-                            let index =
+                            let source_index =
                                 match rendered_text.source_index_for_position(event.position) {
                                     Ok(ix) | Err(ix) => ix,
                                 };
-                            markdown.selection.set_head(index);
-                            markdown.autoscroll_request = Some(index);
-                            cx.notify();
+                            markdown.selection = Selection {
+                                start: source_index,
+                                end: source_index,
+                                reversed: false,
+                                pending: true,
+                            };
                         }
-                    })
-                    .log_err();
+
+                        cx.notify();
+                    }
+                } else if phase.capture() {
+                    markdown.selection = Selection::default();
+                    markdown.pressed_link = None;
+                    cx.notify();
+                }
             }
         });
-        cx.on_mouse_event({
-            let markdown = self.markdown.downgrade();
-            move |_event: &MouseUpEvent, phase, cx| {
-                if phase.bubble() {
+        self.on_mouse_event(cx, {
+            let rendered_text = rendered_text.clone();
+            let hitbox = hitbox.clone();
+            let was_hovering_link = is_hovering_link;
+            move |markdown, event: &MouseMoveEvent, phase, cx| {
+                if phase.capture() {
                     return;
                 }
 
-                markdown
-                    .update(cx, |markdown, cx| {
-                        if markdown.is_selecting {
-                            markdown.is_selecting = false;
-                            cx.notify();
+                if markdown.selection.pending {
+                    let source_index = match rendered_text.source_index_for_position(event.position)
+                    {
+                        Ok(ix) | Err(ix) => ix,
+                    };
+                    markdown.selection.set_head(source_index);
+                    markdown.autoscroll_request = Some(source_index);
+                    cx.notify();
+                } else {
+                    let is_hovering_link = hitbox.is_hovered(cx)
+                        && rendered_text.link_for_position(event.position).is_some();
+                    if is_hovering_link != was_hovering_link {
+                        cx.notify();
+                    }
+                }
+            }
+        });
+        self.on_mouse_event(cx, {
+            let rendered_text = rendered_text.clone();
+            move |markdown, event: &MouseUpEvent, phase, cx| {
+                if phase.bubble() {
+                    if let Some(pressed_link) = markdown.pressed_link.take() {
+                        if Some(&pressed_link) == rendered_text.link_for_position(event.position) {
+                            cx.open_url(&pressed_link.destination_url);
                         }
-                    })
-                    .log_err();
+                    }
+                } else {
+                    if markdown.selection.pending {
+                        markdown.selection.pending = false;
+                        cx.notify();
+                    }
+                }
             }
         });
     }
@@ -389,6 +385,21 @@ impl MarkdownElement {
             point(position.x + 3. * em_width, position.y + 3. * line_height),
         ));
         Some(())
+    }
+
+    fn on_mouse_event<T: MouseEvent>(
+        &self,
+        cx: &mut WindowContext,
+        mut f: impl 'static + FnMut(&mut Markdown, &T, DispatchPhase, &mut ViewContext<Markdown>),
+    ) {
+        cx.on_mouse_event({
+            let markdown = self.markdown.downgrade();
+            move |event, phase, cx| {
+                markdown
+                    .update(cx, |markdown, cx| f(markdown, event, phase, cx))
+                    .log_err();
+            }
+        });
     }
 }
 
@@ -836,6 +847,7 @@ struct RenderedText {
     links: Rc<[RenderedLink]>,
 }
 
+#[derive(Clone, Eq, PartialEq)]
 struct RenderedLink {
     source_range: Range<usize>,
     destination_url: SharedString,
@@ -880,7 +892,8 @@ impl RenderedText {
         None
     }
 
-    fn link_for_source_index(&self, source_index: usize) -> Option<&RenderedLink> {
+    fn link_for_position(&self, position: Point<Pixels>) -> Option<&RenderedLink> {
+        let source_index = self.source_index_for_position(position).ok()?;
         self.links
             .iter()
             .find(|link| link.source_range.contains(&source_index))
