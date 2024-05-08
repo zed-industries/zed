@@ -1089,9 +1089,15 @@ mod tests {
         };
 
         db.save_workspace(workspace.clone()).await;
-        let round_trip_workspace = db.workspace_for_roots(&["/tmp2", "/tmp"]);
 
-        assert_eq!(workspace, round_trip_workspace.unwrap());
+        // todo: revisit this test with setting in place to auto-sort roots, unless we want to treat them
+        // as different workspaces in the db?
+
+        let round_trip_workspace = db.workspace_for_roots(&["/tmp2", "/tmp"]);
+        assert_eq!(None, round_trip_workspace, "wrong order");
+
+        let round_trip_workspace = db.workspace_for_roots(&["/tmp", "/tmp2"]);
+        assert_eq!(workspace, round_trip_workspace.unwrap(), "correct order");
 
         // Test guaranteed duplicate IDs
         db.save_workspace(workspace.clone()).await;
