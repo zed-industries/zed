@@ -694,7 +694,7 @@ impl PlatformWindow for WaylandWindow {
     }
 
     fn toggle_fullscreen(&self) {
-        let mut state = self.borrow();
+        let mut state = self.borrow_mut();
         state.restore_bounds = state.bounds.map(|p| DevicePixels(p as i32));
         if !state.fullscreen {
             state.toplevel.set_fullscreen(None);
