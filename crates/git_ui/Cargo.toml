@@ -1,0 +1,20 @@
+[package]
+name = "git_ui"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+path = "./src/git_ui.rs"
+
+[dependencies]
+gpui.workspace = true
+git.workspace = true
+workspace.workspace = true
+serde.workspace = true
+
+[dev-dependencies]
+gpui = { workspace = true, features = ["test-support"] }
+workspace = { workspace = true, features = ["test-support"] }
+
+[lints]
+workspace = true

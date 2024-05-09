@@ -1,7 +1,7 @@
 use crate::blame::Blame;
 use crate::GitHostingProviderRegistry;
 use anyhow::{Context, Result};
-use collections::HashMap;
+use collections::{HashMap, HashSet};
 use git2::{BranchType, StatusShow};
 use parking_lot::Mutex;
 use rope::Rope;
@@ -62,6 +62,8 @@ pub trait GitRepository: Send {
     fn create_branch(&self, _: &str) -> Result<()>;
 
     fn blame(&self, path: &Path, content: Rope) -> Result<crate::blame::Blame>;
+
+    fn recently_changed_paths(&self, max: usize) -> Result<Vec<(SystemTime, PathBuf)>>;
 }
 
 impl std::fmt::Debug for dyn GitRepository {
@@ -259,6 +261,44 @@ impl GitRepository for RealGitRepository {
             self.hosting_provider_registry.clone(),
         )
     }
+
+    fn recently_changed_paths(&self, max: usize) -> Result<Vec<(SystemTime, PathBuf)>> {
+        let mut revwalk = self.repository.revwalk()?;
+        revwalk.push_head()?;
+
+        let mut included = HashSet::<PathBuf>::default();
+        let mut changed_paths = Vec::new();
+        for oid in revwalk {
+            let oid = oid?;
+            let commit = self.repository.find_commit(oid)?;
+            let tree = commit.tree()?;
+            let diff = self.repository.diff_tree_to_tree(None, Some(&tree), None)?;
+            diff.foreach(
+                &mut |delta, _| {
+                    if let Some(path) = delta.new_file().path() {
+                        if !included.contains(path) {
+                            included.insert(path.into());
+                            let time = commit.time().seconds();
+                            let system_time =
+                                SystemTime::UNIX_EPOCH + std::time::Duration::new(time as u64, 0);
+                            changed_paths.push((system_time, path.to_path_buf()));
+                        }
+                    }
+                    true
+                },
+                None,
+                None,
+                None,
+            )?;
+
+            if included.len() >= max {
+                break;
+            }
+        }
+
+        changed_paths.truncate(max);
+        Ok(changed_paths)
+    }
 }
 
 fn matches_index(repo: &LibGitRepository, path: &RepoPath, mtime: SystemTime) -> bool {
@@ -376,6 +416,10 @@ impl GitRepository for FakeGitRepository {
             .get(path)
             .with_context(|| format!("failed to get blame for {:?}", path))
             .cloned()
+    }
+
+    fn recently_changed_paths(&self, max: usize) -> Result<Vec<(SystemTime, PathBuf)>> {
+        todo!()
     }
 }
 

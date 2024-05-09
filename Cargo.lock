@@ -4452,6 +4452,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "git_ui"
+version = "0.1.0"
+dependencies = [
+ "git",
+ "gpui",
+ "serde",
+ "workspace",
+]
+
+[[package]]
 name = "glob"
 version = "0.3.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"

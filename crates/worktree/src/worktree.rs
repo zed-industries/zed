@@ -3139,6 +3139,7 @@ impl File {
 pub struct Entry {
     pub id: ProjectEntryId,
     pub kind: EntryKind,
+    /// Relative path of the entry in the worktree.
     pub path: Arc<Path>,
     pub inode: u64,
     pub mtime: Option<SystemTime>,
