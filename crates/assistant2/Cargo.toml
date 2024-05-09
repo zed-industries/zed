@@ -34,6 +34,7 @@ open_ai.workspace = true
 picker.workspace = true
 project.workspace = true
 regex.workspace = true
+repair_json.workspace = true
 rich_text.workspace = true
 schemars.workspace = true
 semantic_index.workspace = true
