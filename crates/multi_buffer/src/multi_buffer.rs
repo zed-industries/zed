@@ -1603,6 +1603,11 @@ impl MultiBuffer {
         "untitled".into()
     }
 
+    pub fn set_title(&mut self, title: String, cx: &mut ModelContext<Self>) {
+        self.title = Some(title);
+        cx.notify();
+    }
+
     #[cfg(any(test, feature = "test-support"))]
     pub fn is_parsing(&self, cx: &AppContext) -> bool {
         self.as_singleton().unwrap().read(cx).is_parsing()

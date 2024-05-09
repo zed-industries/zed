@@ -63,7 +63,7 @@ pub enum SavedToolFunctionCallState {
     ExecutedTool(Box<RawValue>),
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct ToolFunctionDefinition {
     pub name: String,
     pub description: String,
@@ -198,8 +198,8 @@ impl ToolRegistry {
             call.arguments.push_str(arguments);
 
             if let ToolFunctionCallState::KnownTool(view) = &call.state {
-                if let Ok(arguments) = repair(call.arguments.clone()) {
-                    view.set_input(&arguments, cx)
+                if let Ok(repaired_arguments) = repair(call.arguments.clone()) {
+                    view.set_input(&repaired_arguments, cx)
                 }
             }
         }
