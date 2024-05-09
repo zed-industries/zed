@@ -2,10 +2,11 @@ mod assistant_settings;
 mod attachments;
 mod completion_provider;
 mod saved_conversation;
-mod saved_conversation_picker;
+mod saved_conversations;
 mod tools;
 pub mod ui;
 
+use crate::saved_conversation::SavedConversationMetadata;
 use crate::ui::UserOrAssistant;
 use ::ui::{div, prelude::*, Color, Tooltip, ViewContext};
 use anyhow::{Context, Result};
@@ -29,7 +30,7 @@ use language::{language_settings::SoftWrap, LanguageRegistry};
 use open_ai::{FunctionContent, ToolCall, ToolCallContent};
 use rich_text::RichText;
 use saved_conversation::{SavedAssistantMessagePart, SavedChatMessage, SavedConversation};
-use saved_conversation_picker::SavedConversationPicker;
+use saved_conversations::SavedConversations;
 use semantic_index::{CloudEmbeddingProvider, ProjectIndex, ProjectIndexDebugView, SemanticIndex};
 use serde::{Deserialize, Serialize};
 use settings::Settings;
@@ -61,15 +62,7 @@ pub enum SubmitMode {
     Codebase,
 }
 
-gpui::actions!(
-    assistant2,
-    [
-        Cancel,
-        ToggleFocus,
-        DebugProjectIndex,
-        ToggleSavedConversations
-    ]
-);
+gpui::actions!(assistant2, [Cancel, ToggleFocus, DebugProjectIndex,]);
 gpui::impl_actions!(assistant2, [Submit]);
 
 pub fn init(client: Arc<Client>, cx: &mut AppContext) {
@@ -109,8 +102,6 @@ pub fn init(client: Arc<Client>, cx: &mut AppContext) {
         },
     )
     .detach();
-    cx.observe_new_views(SavedConversationPicker::register)
-        .detach();
 }
 
 pub fn enabled(cx: &AppContext) -> bool {
@@ -262,6 +253,8 @@ pub struct AssistantChat {
     fs: Arc<dyn Fs>,
     language_registry: Arc<LanguageRegistry>,
     composer_editor: View<Editor>,
+    saved_conversations: View<SavedConversations>,
+    saved_conversations_open: bool,
     project_index_button: View<ProjectIndexButton>,
     active_file_button: Option<View<ActiveFileButton>>,
     user_store: Model<UserStore>,
@@ -317,6 +310,24 @@ impl AssistantChat {
             _ => None,
         };
 
+        let saved_conversations = cx.new_view(|cx| SavedConversations::new(cx));
+        cx.spawn({
+            let fs = fs.clone();
+            let saved_conversations = saved_conversations.downgrade();
+            |_assistant_chat, mut cx| async move {
+                let saved_conversation_metadata = SavedConversationMetadata::list(fs).await?;
+
+                cx.update(|cx| {
+                    saved_conversations.update(cx, |this, cx| {
+                        this.init(saved_conversation_metadata, cx);
+                    })
+                })??;
+
+                anyhow::Ok(())
+            }
+        })
+        .detach_and_log_err(cx);
+
         Self {
             model,
             messages: Vec::new(),
@@ -326,6 +337,8 @@ impl AssistantChat {
                 editor.set_placeholder_text("Send a message…", cx);
                 editor
             }),
+            saved_conversations,
+            saved_conversations_open: false,
             list_state,
             user_store,
             fs,
@@ -355,6 +368,10 @@ impl AssistantChat {
                 .then_some(message.id),
             ChatMessage::Assistant(_) => None,
         })
+    }
+
+    fn toggle_saved_conversations(&mut self) {
+        self.saved_conversations_open = !self.saved_conversations_open;
     }
 
     fn cancel(&mut self, _: &Cancel, cx: &mut ViewContext<Self>) {
@@ -1017,18 +1034,18 @@ impl Render for AssistantChat {
                     .h(header_height)
                     .p(Spacing::Small.rems(cx))
                     .child(
-                        IconButton::new("open-saved-conversations", IconName::ChevronLeft)
-                            .on_click(|_event, cx| {
-                                cx.dispatch_action(Box::new(ToggleSavedConversations))
-                            })
-                            .tooltip(move |cx| {
-                                Tooltip::with_meta(
-                                    "Switch Conversations",
-                                    Some(&ToggleSavedConversations),
-                                    "UI will change, temporary.",
-                                    cx,
-                                )
-                            }),
+                        IconButton::new(
+                            "toggle-saved-conversations",
+                            if self.saved_conversations_open {
+                                IconName::ChevronRight
+                            } else {
+                                IconName::ChevronLeft
+                            },
+                        )
+                        .on_click(cx.listener(|this, _event, _cx| {
+                            this.toggle_saved_conversations();
+                        }))
+                        .tooltip(move |cx| Tooltip::text("Switch Conversations", cx)),
                     )
                     .child(
                         h_flex()
@@ -1052,6 +1069,15 @@ impl Render for AssistantChat {
                             ),
                     ),
             )
+            .when(self.saved_conversations_open, |element| {
+                element.child(
+                    h_flex()
+                        .absolute()
+                        .top(header_height)
+                        .w_full()
+                        .child(self.saved_conversations.clone()),
+                )
+            })
             .child(Composer::new(
                 self.composer_editor.clone(),
                 self.project_index_button.clone(),
