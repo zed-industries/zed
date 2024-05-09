@@ -448,7 +448,7 @@ pub struct Editor {
     show_wrap_guides: Option<bool>,
     placeholder_text: Option<Arc<str>>,
     highlight_order: usize,
-    highlighted_rows: HashMap<TypeId, Vec<(usize, Range<Anchor>, Hsla)>>,
+    highlighted_rows: HashMap<TypeId, Vec<(usize, RangeInclusive<Anchor>, Option<Hsla>)>>,
     background_highlights: TreeMap<TypeId, BackgroundHighlight>,
     scrollbar_marker_state: ScrollbarMarkerState,
     nav_history: Option<ItemNavHistory>,
@@ -9667,7 +9667,7 @@ impl Editor {
     /// If multiple anchor ranges will produce highlights for the same row, the last range added will be used.
     pub fn highlight_rows<T: 'static>(
         &mut self,
-        rows: Range<Anchor>,
+        rows: RangeInclusive<Anchor>,
         color: Option<Hsla>,
         cx: &mut ViewContext<Self>,
     ) {
@@ -9678,9 +9678,13 @@ impl Editor {
                 let existing_highlight_index =
                     row_highlights.binary_search_by(|(_, highlight_range, _)| {
                         highlight_range
-                            .start
-                            .cmp(&rows.start, &multi_buffer_snapshot)
-                            .then(highlight_range.end.cmp(&rows.end, &multi_buffer_snapshot))
+                            .start()
+                            .cmp(&rows.start(), &multi_buffer_snapshot)
+                            .then(
+                                highlight_range
+                                    .end()
+                                    .cmp(&rows.end(), &multi_buffer_snapshot),
+                            )
                     });
                 match color {
                     Some(color) => {
@@ -9690,20 +9694,22 @@ impl Editor {
                         };
                         row_highlights.insert(
                             insert_index,
-                            (post_inc(&mut self.highlight_order), rows, color),
+                            (post_inc(&mut self.highlight_order), rows, Some(color)),
                         );
                     }
-                    None => {
-                        if let Ok(i) = existing_highlight_index {
+                    None => match existing_highlight_index {
+                        Ok(i) => {
                             row_highlights.remove(i);
                         }
-                    }
+                        Err(i) => {
+                            row_highlights
+                                .insert(i, (post_inc(&mut self.highlight_order), rows, None));
+                        }
+                    },
                 }
             }
             hash_map::Entry::Vacant(v) => {
-                if let Some(color) = color {
-                    v.insert(vec![(post_inc(&mut self.highlight_order), rows, color)]);
-                }
+                v.insert(vec![(post_inc(&mut self.highlight_order), rows, color)]);
             }
         }
     }
@@ -9716,12 +9722,12 @@ impl Editor {
     /// For a highlight given context type, gets all anchor ranges that will be used for row highlighting.
     pub fn highlighted_rows<T: 'static>(
         &self,
-    ) -> Option<impl Iterator<Item = (&Range<Anchor>, &Hsla)>> {
+    ) -> Option<impl Iterator<Item = (&RangeInclusive<Anchor>, Option<&Hsla>)>> {
         Some(
             self.highlighted_rows
                 .get(&TypeId::of::<T>())?
                 .iter()
-                .map(|(_, range, color)| (range, color)),
+                .map(|(_, range, color)| (range, color.as_ref())),
         )
     }
 
@@ -9742,14 +9748,21 @@ impl Editor {
             .fold(
                 BTreeMap::<u32, Hsla>::new(),
                 |mut unique_rows, (highlight_order, anchor_range, hsla)| {
-                    let start_row = anchor_range.start.to_display_point(&snapshot).row();
-                    let end_row = anchor_range.end.to_display_point(&snapshot).row();
+                    let start_row = anchor_range.start().to_display_point(&snapshot).row();
+                    let end_row = anchor_range.end().to_display_point(&snapshot).row();
                     for row in start_row..=end_row {
                         let used_index =
                             used_highlight_orders.entry(row).or_insert(*highlight_order);
                         if highlight_order >= used_index {
                             *used_index = *highlight_order;
-                            unique_rows.insert(row, *hsla);
+                            match hsla {
+                                Some(hsla) => {
+                                    unique_rows.insert(row, *hsla);
+                                }
+                                None => {
+                                    unique_rows.remove(&row);
+                                }
+                            }
                         }
                     }
                     unique_rows
@@ -11548,6 +11561,12 @@ trait RangeToAnchorExt {
 
 impl<T: ToOffset> RangeToAnchorExt for Range<T> {
     fn to_anchors(self, snapshot: &MultiBufferSnapshot) -> Range<Anchor> {
-        snapshot.anchor_after(self.start)..snapshot.anchor_before(self.end)
+        let start_offset = self.start.to_offset(snapshot);
+        let end_offset = self.end.to_offset(snapshot);
+        if start_offset == end_offset {
+            snapshot.anchor_before(start_offset)..snapshot.anchor_before(end_offset)
+        } else {
+            snapshot.anchor_after(self.start)..snapshot.anchor_before(self.end)
+        }
     }
 }

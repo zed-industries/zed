@@ -120,7 +120,7 @@ impl GoToLine {
                 let anchor = snapshot.buffer_snapshot.anchor_before(point);
                 active_editor.clear_row_highlights::<GoToLineRowHighlights>();
                 active_editor.highlight_rows::<GoToLineRowHighlights>(
-                    anchor..anchor,
+                    anchor..=anchor,
                     Some(cx.theme().colors().editor_highlighted_line_background),
                     cx,
                 );

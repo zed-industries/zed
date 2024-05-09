@@ -2110,10 +2110,7 @@ struct Row10;"#};
         let snapshot = editor.snapshot(cx);
         let all_hunks = editor_hunks(editor, &snapshot, cx);
         let all_expanded_hunks = expanded_hunks(&editor, &snapshot, cx);
-        assert_eq!(
-            expanded_hunks_background_highlights(editor, &snapshot),
-            Vec::new(),
-        );
+        assert_eq!(expanded_hunks_background_highlights(editor, cx), Vec::new());
         assert_eq!(
             all_hunks,
             vec![
@@ -2135,8 +2132,8 @@ struct Row10;"#};
         let all_hunks = editor_hunks(editor, &snapshot, cx);
         let all_expanded_hunks = expanded_hunks(&editor, &snapshot, cx);
         assert_eq!(
-            expanded_hunks_background_highlights(editor, &snapshot),
-            vec![1..3, 8..9],
+            expanded_hunks_background_highlights(editor, cx),
+            vec![1..=2, 8..=8],
         );
         assert_eq!(
             all_hunks,
@@ -2170,10 +2167,7 @@ struct Row10;"#};
         let snapshot = editor.snapshot(cx);
         let all_hunks = editor_hunks(editor, &snapshot, cx);
         let all_expanded_hunks = expanded_hunks(&editor, &snapshot, cx);
-        assert_eq!(
-            expanded_hunks_background_highlights(editor, &snapshot),
-            Vec::new(),
-        );
+        assert_eq!(expanded_hunks_background_highlights(editor, cx), Vec::new());
         assert_eq!(
             all_hunks,
             vec![(
@@ -2189,8 +2183,8 @@ struct Row10;"#};
         let all_hunks = editor_hunks(editor, &snapshot, cx);
         let all_expanded_hunks = expanded_hunks(&editor, &snapshot, cx);
         assert_eq!(
-            expanded_hunks_background_highlights(editor, &snapshot),
-            Vec::new(),
+            expanded_hunks_background_highlights(editor, cx),
+            vec![5..=5]
         );
         assert_eq!(
             all_hunks,
