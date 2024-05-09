@@ -43,7 +43,7 @@ use workspace::{
     Workspace,
 };
 
-use chrono::{DateTime, Datelike, Duration, DurationRound, Local, TimeZone, Utc};
+use chrono::{DateTime, Duration, Local, Utc};
 
 pub use assistant_settings::AssistantSettings;
 
@@ -1035,36 +1035,74 @@ impl Render for AssistantChat {
                             .border_color(cx.theme().colors().border)
                             .child(
                                 h_flex()
+                                    .gap(Spacing::Small.rems(cx))
                                     .child(
-                                        IconButton::new("toggle-show-pinned", IconName::Hash)
-                                            .disabled(true),
+                                        IconButton::new("set-view-list", IconName::List)
+                                            .selected(true)
+                                            .selected_style(ButtonStyle::Filled)
+                                            .tooltip(move |cx| {
+                                                Tooltip::text("View conversations as a list", cx)
+                                            }),
                                     )
                                     .child(
-                                        IconButton::new("set-view-list", IconName::Hash)
-                                            .disabled(true),
-                                    )
-                                    .child(
-                                        IconButton::new("set-view-details", IconName::FileTree)
-                                            .disabled(true),
+                                        IconButton::new("set-view-details", IconName::Text)
+                                            .tooltip(move |cx| {
+                                                Tooltip::text(
+                                                    "View conversations with summaries",
+                                                    cx,
+                                                )
+                                            }),
                                     ),
                             )
                             .child(
                                 h_flex()
-                                    // Opens the conversation in finder/file explorer, etc
+                                    .gap(Spacing::XXLarge.rems(cx))
                                     .child(
-                                        IconButton::new("reveal-conversation", IconName::Folder)
-                                            .disabled(true),
+                                        h_flex()
+                                            .gap(Spacing::Small.rems(cx))
+                                            // Pin Conversation
+                                            .child(
+                                                IconButton::new("pin-conversation", IconName::Pin)
+                                                    .disabled(true)
+                                                    .tooltip(move |cx| {
+                                                        Tooltip::text("Pin this conversation", cx)
+                                                    }),
+                                            )
+                                            // Opens the conversation in finder/file explorer, etc
+                                            .child(
+                                                IconButton::new(
+                                                    "reveal-conversation",
+                                                    IconName::Folder,
+                                                )
+                                                .tooltip(move |cx| {
+                                                    Tooltip::text(
+                                                        // TODO: this should be localized to the platform
+                                                        "Reveal conversation in Finder",
+                                                        cx,
+                                                    )
+                                                }),
+                                            )
+                                            .child(
+                                                IconButton::new(
+                                                    "delete-conversation",
+                                                    IconName::Trash,
+                                                )
+                                                .tooltip(move |cx| {
+                                                    Tooltip::text("Delete this conversation", cx)
+                                                }),
+                                            ),
                                     )
-                                    // Pin Conversation
                                     .child(
-                                        IconButton::new("pin-conversation", IconName::Hash)
-                                            .disabled(true),
-                                    )
-                                    .child(
-                                        IconButton::new("delete-conversation", IconName::Trash)
-                                            .disabled(true),
-                                    )
-                                    .child(IconButton::new("new-conversation", IconName::Plus)),
+                                        h_flex().gap(Spacing::Small.rems(cx)).child(
+                                            IconButton::new("new-conversation", IconName::Plus)
+                                                .on_click(cx.listener(move |this, _event, cx| {
+                                                    this.new_conversation(cx);
+                                                }))
+                                                .tooltip(move |cx| {
+                                                    Tooltip::text("New Conversation", cx)
+                                                }),
+                                        ),
+                                    ),
                             ),
                     )
                     .child(v_flex().flex_1().children({
