@@ -40,7 +40,6 @@ use std::{
 use taffy::style::Overflow;
 use util::ResultExt;
 
-const DRAG_THRESHOLD: f64 = 2.;
 pub(crate) const TOOLTIP_DELAY: Duration = Duration::from_millis(500);
 
 /// The styling information for a given group.
@@ -1502,10 +1501,9 @@ impl Interactivity {
                                 #[cfg(debug_assertions)]
                                 self.paint_debug_info(global_id, hitbox, &style, cx);
 
-                                if !cx.has_active_drag() {
-                                    if let Some(mouse_cursor) = style.mouse_cursor {
-                                        cx.set_cursor_style(mouse_cursor, hitbox);
-                                    }
+                                println!("Style cursor: {:?}", style.mouse_cursor);
+                                if let Some(mouse_cursor) = style.mouse_cursor {
+                                    cx.set_cursor_style(mouse_cursor, hitbox);
                                 }
 
                                 if let Some(group) = self.group.clone() {
@@ -1782,11 +1780,8 @@ impl Interactivity {
                         }
 
                         let mut pending_mouse_down = pending_mouse_down.borrow_mut();
-                        if let Some(mouse_down) = pending_mouse_down.clone() {
-                            if !cx.has_active_drag()
-                                && (event.position - mouse_down.position).magnitude()
-                                    > DRAG_THRESHOLD
-                            {
+                        if pending_mouse_down.is_some() {
+                            if !cx.has_active_drag() {
                                 if let Some((drag_value, drag_listener)) = drag_listener.take() {
                                     *clicked_state.borrow_mut() = ElementClickedState::default();
                                     let cursor_offset = event.position - hitbox.origin;
