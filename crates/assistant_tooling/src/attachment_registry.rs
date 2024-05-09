@@ -1,4 +1,4 @@
-use crate::{ProjectContext, ToolOutput};
+use crate::ProjectContext;
 use anyhow::{anyhow, Result};
 use collections::HashMap;
 use futures::future::join_all;
@@ -18,9 +18,13 @@ pub struct AttachmentRegistry {
     registered_attachments: HashMap<TypeId, RegisteredAttachment>,
 }
 
+pub trait AttachmentOutput {
+    fn generate(&self, project: &mut ProjectContext, cx: &mut WindowContext) -> String;
+}
+
 pub trait LanguageModelAttachment {
     type Output: DeserializeOwned + Serialize + 'static;
-    type View: Render + ToolOutput;
+    type View: Render + AttachmentOutput;
 
     fn name(&self) -> Arc<str>;
     fn run(&self, cx: &mut WindowContext) -> Task<Result<Self::Output>>;

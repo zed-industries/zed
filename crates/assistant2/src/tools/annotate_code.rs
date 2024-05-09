@@ -25,7 +25,7 @@ impl AnnotationTool {
     }
 }
 
-#[derive(Debug, Deserialize, JsonSchema, Clone)]
+#[derive(Default, Debug, Deserialize, JsonSchema, Clone)]
 pub struct AnnotationInput {
     /// Name for this set of annotations
     title: String,
@@ -44,8 +44,6 @@ struct Excerpt {
 }
 
 impl LanguageModelTool for AnnotationTool {
-    type Input = AnnotationInput;
-    type Output = String;
     type View = AnnotationResultView;
 
     fn name(&self) -> String {
@@ -56,11 +54,84 @@ impl LanguageModelTool for AnnotationTool {
         "Dynamically annotate symbols in the current codebase. Opens a buffer in a panel in their editor, to the side of the conversation. The annotations are shown in the editor as a block decoration.".to_string()
     }
 
-    fn execute(&self, input: &Self::Input, cx: &mut WindowContext) -> Task<Result<Self::Output>> {
+    fn view(&self, cx: &mut WindowContext) -> View<Self::View> {
+        cx.new_view(|_cx| AnnotationResultView {
+            project: self.project.clone(),
+            workspace: self.workspace.clone(),
+            input: Default::default(),
+            error: None,
+        })
+    }
+}
+
+impl AnnotationResultView {
+    fn render_note_block(explanation: &SharedString, cx: &mut BlockContext) -> AnyElement {
+        let anchor_x = cx.anchor_x;
+        let gutter_width = cx.gutter_dimensions.width;
+
+        h_flex()
+            .w_full()
+            .py_2()
+            .border_y_1()
+            .border_color(cx.theme().colors().border)
+            .child(
+                h_flex()
+                    .justify_center()
+                    .w(gutter_width)
+                    .child(Icon::new(IconName::Ai).color(Color::Hint)),
+            )
+            .child(
+                h_flex()
+                    .w_full()
+                    .ml(anchor_x - gutter_width)
+                    .child(explanation.clone()),
+            )
+            .into_any_element()
+    }
+}
+
+pub struct AnnotationResultView {
+    workspace: WeakView<Workspace>,
+    project: Model<Project>,
+    input: AnnotationInput,
+    error: Option<anyhow::Error>,
+}
+
+impl Render for AnnotationResultView {
+    fn render(&mut self, _cx: &mut ViewContext<Self>) -> impl IntoElement {
+        if let Some(error) = &self.error {
+            div().child(error.to_string())
+        } else {
+            div().child(SharedString::from(format!(
+                "opened {} excerpts in a buffer",
+                self.input.excerpts.len()
+            )))
+        }
+    }
+}
+
+impl ToolOutput for AnnotationResultView {
+    type Input = AnnotationInput;
+    type SerializedState = Option<String>;
+
+    fn generate(&self, _: &mut ProjectContext, _: &mut ViewContext<Self>) -> String {
+        if let Some(error) = &self.error {
+            format!("Failed to create buffer: {error:?}")
+        } else {
+            format!("opened {} excerpts in a buffer", self.input.excerpts.len())
+        }
+    }
+
+    fn set_input(&mut self, input: Self::Input, cx: &mut ViewContext<Self>) {
+        self.input = input;
+        cx.notify();
+    }
+
+    fn execute(&mut self, cx: &mut ViewContext<Self>) -> Task<Result<()>> {
         let workspace = self.workspace.clone();
         let project = self.project.clone();
-        let excerpts = input.excerpts.clone();
-        let title = input.title.clone();
+        let excerpts = self.input.excerpts.clone();
+        let title = self.input.title.clone();
 
         let worktree_id = project.update(cx, |project, cx| {
             let worktree = project.worktrees().next()?;
@@ -89,8 +160,16 @@ impl LanguageModelTool for AnnotationTool {
                 .collect::<Vec<_>>()
         });
 
-        cx.spawn(move |mut cx| async move {
-            let buffers = futures::future::try_join_all(buffer_tasks).await?;
+        cx.spawn(move |this, mut cx| async move {
+            let buffers = match futures::future::try_join_all(buffer_tasks).await {
+                Ok(buffers) => buffers,
+                Err(error) => {
+                    return this.update(&mut cx, |this, cx| {
+                        this.error = Some(error);
+                        cx.notify();
+                    })
+                }
+            };
 
             let multibuffer = cx.new_model(|_cx| {
                 MultiBuffer::new(0, language::Capability::ReadWrite).with_title(title)
@@ -146,64 +225,22 @@ impl LanguageModelTool for AnnotationTool {
                 })
                 .log_err();
 
-            anyhow::Ok("showed comments to users in a new view".into())
+            Ok(())
         })
     }
 
-    fn view(
-        &self,
-        _: Self::Input,
-        output: Result<Self::Output>,
-        cx: &mut WindowContext,
-    ) -> View<Self::View> {
-        cx.new_view(|_cx| AnnotationResultView { output })
+    fn serialize(&self, _cx: &mut ViewContext<Self>) -> Self::SerializedState {
+        self.error.as_ref().map(|error| error.to_string())
     }
-}
 
-impl AnnotationTool {
-    fn render_note_block(explanation: &SharedString, cx: &mut BlockContext) -> AnyElement {
-        let anchor_x = cx.anchor_x;
-        let gutter_width = cx.gutter_dimensions.width;
-
-        h_flex()
-            .w_full()
-            .py_2()
-            .border_y_1()
-            .border_color(cx.theme().colors().border)
-            .child(
-                h_flex()
-                    .justify_center()
-                    .w(gutter_width)
-                    .child(Icon::new(IconName::Ai).color(Color::Hint)),
-            )
-            .child(
-                h_flex()
-                    .w_full()
-                    .ml(anchor_x - gutter_width)
-                    .child(explanation.clone()),
-            )
-            .into_any_element()
-    }
-}
-
-pub struct AnnotationResultView {
-    output: Result<String>,
-}
-
-impl Render for AnnotationResultView {
-    fn render(&mut self, _cx: &mut ViewContext<Self>) -> impl IntoElement {
-        match &self.output {
-            Ok(output) => div().child(output.clone().into_any_element()),
-            Err(error) => div().child(format!("failed to open path: {:?}", error)),
+    fn deserialize(
+        &mut self,
+        output: Self::SerializedState,
+        _cx: &mut ViewContext<Self>,
+    ) -> Result<()> {
+        if let Some(error_message) = output {
+            self.error = Some(anyhow::anyhow!("{}", error_message));
         }
-    }
-}
-
-impl ToolOutput for AnnotationResultView {
-    fn generate(&self, _: &mut ProjectContext, _: &mut WindowContext) -> String {
-        match &self.output {
-            Ok(output) => output.clone(),
-            Err(err) => format!("Failed to create buffer: {err:?}"),
-        }
+        Ok(())
     }
 }

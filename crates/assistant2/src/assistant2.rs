@@ -10,8 +10,8 @@ use crate::ui::UserOrAssistant;
 use ::ui::{div, prelude::*, Color, Tooltip, ViewContext};
 use anyhow::{Context, Result};
 use assistant_tooling::{
-    tool_running_placeholder, AttachmentRegistry, ProjectContext, ToolFunctionCall, ToolRegistry,
-    UserAttachment,
+    tool_running_placeholder, AttachmentRegistry, ProjectContext, ToolFunctionCall,
+    ToolFunctionCallState, ToolRegistry, UserAttachment,
 };
 use attachments::ActiveEditorAttachmentTool;
 use client::{proto, Client, UserStore};
@@ -536,6 +536,16 @@ impl AssistantChat {
                                             call.name.push_str(name);
                                         }
                                         if let Some(arguments) = &tool_call.arguments {
+                                            if call.arguments.is_empty() {
+                                                if let Some(view) =
+                                                    this.tool_registry.view_for_tool(&call.name, cx)
+                                                {
+                                                    call.state =
+                                                        ToolFunctionCallState::KnownTool(view);
+                                                } else {
+                                                    call.state = ToolFunctionCallState::NoSuchTool;
+                                                }
+                                            }
                                             call.arguments.push_str(arguments);
                                         }
                                     }
@@ -570,34 +580,22 @@ impl AssistantChat {
                     } else {
                         if let Some(current_message) = messages.last_mut() {
                             for tool_call in current_message.tool_calls.iter() {
-                                tool_tasks.push(this.tool_registry.call(tool_call, cx));
+                                if let ToolFunctionCallState::KnownTool(view) = &tool_call.state {
+                                    view.set_input(&tool_call.arguments, cx);
+                                    tool_tasks.push(view.execute(cx));
+                                }
                             }
                         }
                     }
                 }
             })?;
 
+            // This ends recursion on calling for responses after tools
             if tool_tasks.is_empty() {
                 return Ok(());
             }
 
-            let tools = join_all(tool_tasks.into_iter()).await;
-            // If the WindowContext went away for any tool's view we don't include it
-            // especially since the below call would fail for the same reason.
-            let tools = tools.into_iter().filter_map(|tool| tool.ok()).collect();
-
-            this.update(cx, |this, cx| {
-                if let Some(ChatMessage::Assistant(AssistantMessage { messages, .. })) =
-                    this.messages.last_mut()
-                {
-                    if let Some(current_message) = messages.last_mut() {
-                        current_message.tool_calls = tools;
-                        cx.notify();
-                    } else {
-                        unreachable!()
-                    }
-                }
-            })?;
+            join_all(tool_tasks.into_iter()).await;
         }
     }
 
@@ -931,11 +929,15 @@ impl AssistantChat {
 
                         for tool_call in &message.tool_calls {
                             // Every tool call _must_ have a result by ID, otherwise OpenAI will error.
-                            let content = match &tool_call.result {
-                                Some(result) => {
-                                    result.generate(&tool_call.name, &mut project_context, cx)
+                            let content = match &tool_call.state {
+                                ToolFunctionCallState::Initializing => String::new(),
+                                ToolFunctionCallState::NoSuchTool => {
+                                    format!("No such tool: {}", tool_call.name)
                                 }
-                                None => "".to_string(),
+                                ToolFunctionCallState::KnownTool(view)
+                                | ToolFunctionCallState::ExecutedTool(view) => {
+                                    view.generate(&mut project_context, cx)
+                                }
                             };
 
                             completion_messages.push(CompletionMessage::Tool {
@@ -986,7 +988,11 @@ impl AssistantChat {
                         tool_calls: message
                             .tool_calls
                             .iter()
-                            .map(|tool_call| self.tool_registry.serialize_tool_call(tool_call))
+                            .filter_map(|tool_call| {
+                                self.tool_registry
+                                    .serialize_tool_call(tool_call, cx)
+                                    .log_err()
+                            })
                             .collect(),
                     })
                     .collect(),

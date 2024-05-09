@@ -1,4 +1,4 @@
-use anyhow::Result;
+use anyhow::{anyhow, Result};
 use assistant_tooling::{LanguageModelTool, ProjectContext, ToolOutput};
 use editor::Editor;
 use gpui::{prelude::*, Model, Task, View, WeakView};
@@ -20,7 +20,7 @@ impl CreateBufferTool {
     }
 }
 
-#[derive(Debug, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Deserialize, JsonSchema)]
 pub struct CreateBufferInput {
     /// The contents of the buffer.
     text: String,
@@ -32,8 +32,6 @@ pub struct CreateBufferInput {
 }
 
 impl LanguageModelTool for CreateBufferTool {
-    type Input = CreateBufferInput;
-    type Output = ();
     type View = CreateBufferView;
 
     fn name(&self) -> String {
@@ -44,13 +42,59 @@ impl LanguageModelTool for CreateBufferTool {
         "Create a new buffer in the current codebase".to_string()
     }
 
-    fn execute(&self, input: &Self::Input, cx: &mut WindowContext) -> Task<Result<Self::Output>> {
+    fn view(&self, cx: &mut WindowContext) -> View<Self::View> {
+        cx.new_view(|_cx| CreateBufferView {
+            workspace: self.workspace.clone(),
+            project: self.project.clone(),
+            input: None,
+            error: None,
+        })
+    }
+}
+
+pub struct CreateBufferView {
+    workspace: WeakView<Workspace>,
+    project: Model<Project>,
+    input: Option<CreateBufferInput>,
+    error: Option<anyhow::Error>,
+}
+
+impl Render for CreateBufferView {
+    fn render(&mut self, _cx: &mut ViewContext<Self>) -> impl IntoElement {
+        div().child("Opening a buffer")
+    }
+}
+
+impl ToolOutput for CreateBufferView {
+    type Input = CreateBufferInput;
+
+    type SerializedState = ();
+
+    fn generate(&self, _project: &mut ProjectContext, _cx: &mut ViewContext<Self>) -> String {
+        let Some(input) = self.input.as_ref() else {
+            return "No input".to_string();
+        };
+
+        match &self.error {
+            None => format!("Created a new {} buffer", input.language),
+            Some(err) => format!("Failed to create buffer: {err:?}"),
+        }
+    }
+
+    fn set_input(&mut self, input: Self::Input, _cx: &mut ViewContext<Self>) {
+        self.input = Some(input);
+    }
+
+    fn execute(&mut self, cx: &mut ViewContext<Self>) -> Task<Result<()>> {
         cx.spawn({
             let workspace = self.workspace.clone();
             let project = self.project.clone();
-            let text = input.text.clone();
-            let language_name = input.language.clone();
-            |mut cx| async move {
+            let input = self.input.clone();
+            |_this, mut cx| async move {
+                let input = input.ok_or_else(|| anyhow!("no input"))?;
+
+                let text = input.text.clone();
+                let language_name = input.language.clone();
                 let language = cx
                     .update(|cx| {
                         project
@@ -86,35 +130,15 @@ impl LanguageModelTool for CreateBufferTool {
         })
     }
 
-    fn view(
-        &self,
-        input: Self::Input,
-        output: Result<Self::Output>,
-        cx: &mut WindowContext,
-    ) -> View<Self::View> {
-        cx.new_view(|_cx| CreateBufferView {
-            language: input.language,
-            output,
-        })
+    fn serialize(&self, _cx: &mut ViewContext<Self>) -> Self::SerializedState {
+        ()
     }
-}
 
-pub struct CreateBufferView {
-    language: String,
-    output: Result<()>,
-}
-
-impl Render for CreateBufferView {
-    fn render(&mut self, _cx: &mut ViewContext<Self>) -> impl IntoElement {
-        div().child("Opening a buffer")
-    }
-}
-
-impl ToolOutput for CreateBufferView {
-    fn generate(&self, _: &mut ProjectContext, _: &mut WindowContext) -> String {
-        match &self.output {
-            Ok(_) => format!("Created a new {} buffer", self.language),
-            Err(err) => format!("Failed to create buffer: {err:?}"),
-        }
+    fn deserialize(
+        &mut self,
+        _output: Self::SerializedState,
+        _cx: &mut ViewContext<Self>,
+    ) -> Result<()> {
+        Ok(())
     }
 }

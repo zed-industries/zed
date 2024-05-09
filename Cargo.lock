@@ -419,6 +419,7 @@ dependencies = [
  "collections",
  "futures 0.3.28",
  "gpui",
+ "log",
  "project",
  "schemars",
  "serde",
