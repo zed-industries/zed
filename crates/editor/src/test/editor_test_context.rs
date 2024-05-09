@@ -148,6 +148,10 @@ impl EditorTestContext {
         self.multibuffer(|buffer, cx| buffer.snapshot(cx).text())
     }
 
+    pub fn display_text(&mut self) -> String {
+        self.update_editor(|editor, cx| editor.display_text(cx))
+    }
+
     pub fn buffer<F, T>(&mut self, read: F) -> T
     where
         F: FnOnce(&Buffer, &AppContext) -> T,

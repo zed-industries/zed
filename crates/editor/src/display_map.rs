@@ -1468,7 +1468,7 @@ pub mod tests {
         let font_size = px(14.0);
 
         let map = cx.new_model(|cx| {
-            DisplayMap::new(buffer, font("Helvetica"), font_size, None, 1, 1, 0, cx)
+            DisplayMap::new(buffer, font("Helvetica"), font_size, None, 1, 1, 1, cx)
         });
         assert_eq!(
             cx.update(|cx| syntax_chunks(0..5, &map, &theme, cx)),
@@ -1630,7 +1630,7 @@ pub mod tests {
 
         let font_size = px(16.0);
         let map = cx
-            .new_model(|cx| DisplayMap::new(buffer, font("Courier"), font_size, None, 1, 1, 0, cx));
+            .new_model(|cx| DisplayMap::new(buffer, font("Courier"), font_size, None, 1, 1, 1, cx));
 
         enum MyType {}
 

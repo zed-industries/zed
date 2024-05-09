@@ -36,7 +36,7 @@ pub fn marked_display_snapshot(
 
     let buffer = MultiBuffer::build_simple(&unmarked_text, cx);
     let display_map =
-        cx.new_model(|cx| DisplayMap::new(buffer, font, font_size, None, 1, 1, 0, cx));
+        cx.new_model(|cx| DisplayMap::new(buffer, font, font_size, None, 1, 1, 1, cx));
     let snapshot = display_map.update(cx, |map, cx| map.snapshot(cx));
     let markers = markers
         .into_iter()

@@ -7901,7 +7901,7 @@ impl Editor {
     pub fn expand_excerpts(&mut self, action: &ExpandExcerpts, cx: &mut ViewContext<Self>) {
         let selections = self.selections.disjoint_anchors();
 
-        let lines = if action.lines == 0 { 3 } else { action.lines };
+        let lines = if action.lines == 0 { 1 } else { action.lines };
 
         self.buffer.update(cx, |buffer, cx| {
             buffer.expand_excerpts(

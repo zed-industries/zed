@@ -2871,6 +2871,7 @@ pub mod tests {
                 "main hint #5".to_string(),
                 "other hint(edited) #0".to_string(),
                 "other hint(edited) #1".to_string(),
+                "other hint(edited) #2".to_string(),
             ];
             assert_eq!(
                 expected_hints,
@@ -2881,8 +2882,8 @@ pub mod tests {
             assert_eq!(expected_hints, visible_hint_labels(editor, cx));
 
             let current_cache_version = editor.inlay_hint_cache().version;
-            // We expect two new hints for the excerpts from `other.rs`:
-            let expected_version = last_scroll_update_version + 2;
+            // We expect three new hints for the excerpts from `other.rs`:
+            let expected_version = last_scroll_update_version + 3;
             assert_eq!(
                 current_cache_version,
                 expected_version,
