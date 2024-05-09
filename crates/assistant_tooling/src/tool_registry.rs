@@ -526,11 +526,6 @@ mod test {
             })
         );
 
-        let args = json!({
-            "location": "San Francisco",
-            "unit": "Celsius"
-        });
-
         let view = cx.update(|cx| tool.view(cx));
 
         cx.update(|cx| {
