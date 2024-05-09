@@ -1406,20 +1406,24 @@ impl EditorElement {
                 };
             editor
                 .tasks
-                .keys()
-                .filter_map(|row| {
+                .iter()
+                .filter_map(|((_, row), (multibuffer_offset, _))| {
                     if snapshot.is_line_folded(*row) {
                         return None;
                     }
+                    let display_row = snapshot
+                        .buffer_snapshot
+                        .offset_to_point(*multibuffer_offset)
+                        .to_display_point(&snapshot.display_snapshot)
+                        .row();
+
                     let button = editor.render_run_indicator(
                         &self.style,
                         Some(*row) == active_task_indicator_row,
-                        *row,
+                        display_row,
                         cx,
                     );
-                    let display_row = Point::new(*row, 0)
-                        .to_display_point(&snapshot.display_snapshot)
-                        .row();
+
                     let button = prepaint_gutter_button(
                         button,
                         display_row,
@@ -4035,20 +4039,25 @@ impl Element for EditorElement {
                         if gutter_settings.code_actions {
                             let newest_selection_point =
                                 newest_selection_head.to_point(&snapshot.display_snapshot);
-                            let has_test_indicator = self
-                                .editor
-                                .read(cx)
-                                .tasks
-                                .contains_key(&newest_selection_point.row);
-                            if !has_test_indicator {
-                                code_actions_indicator = self.layout_code_actions_indicator(
-                                    line_height,
-                                    newest_selection_head,
-                                    scroll_pixel_position,
-                                    &gutter_dimensions,
-                                    &gutter_hitbox,
-                                    cx,
-                                );
+                            let buffer = snapshot
+                                .buffer_snapshot
+                                .buffer_line_for_row(newest_selection_point.row);
+                            if let Some((buffer, range)) = buffer {
+                                let buffer_id = buffer.remote_id();
+                                let row = range.start.row;
+                                let has_test_indicator =
+                                    self.editor.read(cx).tasks.contains_key(&(buffer_id, row));
+
+                                if !has_test_indicator {
+                                    code_actions_indicator = self.layout_code_actions_indicator(
+                                        line_height,
+                                        newest_selection_head,
+                                        scroll_pixel_position,
+                                        &gutter_dimensions,
+                                        &gutter_hitbox,
+                                        cx,
+                                    );
+                                }
                             }
                         }
                     }
