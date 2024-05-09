@@ -93,8 +93,8 @@ impl LanguageModel {
 
     pub fn display_name(&self) -> String {
         match self {
-            LanguageModel::OpenAi(model) => format!("openai/{}", model.display_name()),
-            LanguageModel::ZedDotDev(model) => format!("zed.dev/{}", model.display_name()),
+            LanguageModel::OpenAi(model) => model.display_name().into(),
+            LanguageModel::ZedDotDev(model) => model.display_name().into(),
         }
     }
 

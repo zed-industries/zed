@@ -887,29 +887,6 @@ impl AssistantPanel {
             .tooltip(|cx| Tooltip::text("Conversation History", cx))
     }
 
-    fn render_auto_context_toggles(&self, cx: &mut ViewContext<Self>) -> Vec<IconButton> {
-        if self.active_conversation_editor().is_some() {
-            vec![
-                IconButton::new("include_file", IconName::File)
-                    .icon_size(IconSize::Small)
-                    .tooltip(|cx| Tooltip::text("Include Open Files", cx)),
-                IconButton::new("include_terminal", IconName::Terminal)
-                    .icon_size(IconSize::Small)
-                    .disabled(true)
-                    .tooltip(|cx| Tooltip::text("Include Terminal", cx)),
-                IconButton::new("include_edit_history", IconName::FileGit)
-                    .icon_size(IconSize::Small)
-                    .tooltip(|cx| Tooltip::text("Include Edit History", cx)),
-                IconButton::new("include_file_trees", IconName::FileTree)
-                    .icon_size(IconSize::Small)
-                    .disabled(true)
-                    .tooltip(|cx| Tooltip::text("Include File Trees", cx)),
-            ]
-        } else {
-            Default::default()
-        }
-    }
-
     fn render_context_injector_buttons(&self, cx: &mut ViewContext<Self>) -> Vec<IconButton> {
         // Right - Inject context:
         //     - Search
@@ -1083,29 +1060,29 @@ impl AssistantPanel {
                     .px_2()
                     .child(Label::new(editor.read(cx).title(cx)).into_element())
             }))
-            .when(self.focus_handle.contains_focused(cx), |this| {
-                this.end_child(
-                    h_flex()
-                        .gap_2()
-                        .when(self.active_conversation_editor().is_some(), |this| {
-                            this.child(
-                                h_flex()
-                                    .gap_1()
-                                    .children(self.render_auto_context_toggles(cx)),
-                            )
-                            .child(
-                                ui::Divider::vertical()
-                                    .inset()
-                                    .color(ui::DividerColor::Border),
-                            )
-                        })
-                        .child(
+            .end_child(
+                h_flex()
+                    .gap_2()
+                    .when_some(self.active_conversation_editor(), |this, editor| {
+                        let conversation = editor.read(cx).conversation.clone();
+                        this.child(
                             h_flex()
                                 .gap_1()
-                                .children(self.render_context_injector_buttons(cx)),
-                        ),
-                )
-            });
+                                .child(self.render_model(&conversation, cx))
+                                .children(self.render_remaining_tokens(&conversation, cx)),
+                        )
+                        .child(
+                            ui::Divider::vertical()
+                                .inset()
+                                .color(ui::DividerColor::Border),
+                        )
+                    })
+                    .child(
+                        h_flex()
+                            .gap_1()
+                            .children(self.render_context_injector_buttons(cx)),
+                    ),
+            );
 
         let contents = if self.active_conversation_editor().is_some() {
             let mut registrar = DivRegistrar::new(
@@ -1169,19 +1146,7 @@ impl AssistantPanel {
                 } else if let Some(editor) = self.active_conversation_editor() {
                     let editor = editor.clone();
                     let conversation = editor.read(cx).conversation.clone();
-                    div()
-                        .size_full()
-                        .child(editor.clone())
-                        .child(
-                            h_flex()
-                                .absolute()
-                                .gap_1()
-                                .top_3()
-                                .right_5()
-                                .child(self.render_model(&conversation, cx))
-                                .children(self.render_remaining_tokens(&conversation, cx)),
-                        )
-                        .into_any_element()
+                    div().size_full().child(editor.clone()).into_any_element()
                 } else {
                     div().into_any_element()
                 },
@@ -1210,9 +1175,13 @@ impl AssistantPanel {
         } else if remaining_tokens <= 500 {
             Color::Warning
         } else {
-            Color::Default
+            Color::Muted
         };
-        Some(Label::new(remaining_tokens.to_string()).color(remaining_tokens_color))
+        Some(
+            Label::new(remaining_tokens.to_string())
+                .size(LabelSize::Small)
+                .color(remaining_tokens_color),
+        )
     }
 }
 
@@ -2310,7 +2279,8 @@ impl ConversationEditor {
                 .conversation
                 .read(cx)
                 .messages(cx)
-                .map(|message| BlockProperties {
+                .enumerate()
+                .map(|(ix, message)| BlockProperties {
                     position: buffer
                         .anchor_in_excerpt(excerpt_id, message.anchor)
                         .unwrap(),
@@ -2350,22 +2320,10 @@ impl ConversationEditor {
                             h_flex()
                                 .id(("message_header", message_id.0))
                                 .h_11()
+                                .w_full()
                                 .relative()
                                 .gap_1()
                                 .child(sender)
-                                // TODO: Only show this if the message if the message has been sent
-                                .child(
-                                    Label::new(
-                                        FormatDistance::from_now(DateTimeType::Local(
-                                            message.sent_at,
-                                        ))
-                                        .hide_prefix(true)
-                                        .add_suffix(true)
-                                        .to_string(),
-                                    )
-                                    .size(LabelSize::XSmall)
-                                    .color(Color::Muted),
-                                )
                                 .children(
                                     if let MessageStatus::Error(error) = message.status.clone() {
                                         Some(
@@ -2378,6 +2336,49 @@ impl ConversationEditor {
                                         None
                                     },
                                 )
+                                .children((ix == 0).then(|| {
+                                    div()
+                                        .h_flex()
+                                        .flex_1()
+                                        .justify_end()
+                                        .pr_4()
+                                        .gap_1()
+                                        .child(
+                                            IconButton::new("include_file", IconName::File)
+                                                .icon_size(IconSize::Small)
+                                                .tooltip(|cx| {
+                                                    Tooltip::text("Include Open Files", cx)
+                                                }),
+                                        )
+                                        .child(
+                                            IconButton::new("include_terminal", IconName::Terminal)
+                                                .icon_size(IconSize::Small)
+                                                .disabled(true)
+                                                .tooltip(|cx| {
+                                                    Tooltip::text("Include Terminal", cx)
+                                                }),
+                                        )
+                                        .child(
+                                            IconButton::new(
+                                                "include_edit_history",
+                                                IconName::FileGit,
+                                            )
+                                            .icon_size(IconSize::Small)
+                                            .tooltip(
+                                                |cx| Tooltip::text("Include Edit History", cx),
+                                            ),
+                                        )
+                                        .child(
+                                            IconButton::new(
+                                                "include_file_trees",
+                                                IconName::FileTree,
+                                            )
+                                            .icon_size(IconSize::Small)
+                                            .disabled(true)
+                                            .tooltip(|cx| Tooltip::text("Include File Trees", cx)),
+                                        )
+                                        .into_any()
+                                }))
                                 .into_any_element()
                         }
                     }),
