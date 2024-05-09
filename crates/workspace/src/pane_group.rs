@@ -810,7 +810,7 @@ mod element {
             style.flex_basis = relative(0.).into();
             style.size.width = relative(1.).into();
             style.size.height = relative(1.).into();
-            (cx.request_layout(&style, None), ())
+            (cx.request_layout(style, None), ())
         }
 
         fn prepaint(
@@ -983,7 +983,7 @@ mod element {
     }
 
     impl ParentElement for PaneAxisElement {
-        fn extend(&mut self, elements: impl Iterator<Item = AnyElement>) {
+        fn extend(&mut self, elements: impl IntoIterator<Item = AnyElement>) {
             self.children.extend(elements)
         }
     }

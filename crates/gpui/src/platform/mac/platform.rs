@@ -396,7 +396,7 @@ impl Platform for MacPlatform {
         }
     }
 
-    fn restart(&self) {
+    fn restart(&self, _binary_path: Option<PathBuf>) {
         use std::os::unix::process::CommandExt as _;
 
         let app_pid = std::process::id().to_string();

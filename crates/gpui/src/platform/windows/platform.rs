@@ -268,7 +268,7 @@ impl Platform for WindowsPlatform {
             .detach();
     }
 
-    fn restart(&self) {
+    fn restart(&self, _: Option<PathBuf>) {
         let pid = std::process::id();
         let Some(app_path) = self.app_path().log_err() else {
             return;
@@ -684,7 +684,7 @@ impl Platform for WindowsPlatform {
 
     fn read_from_clipboard(&self) -> Option<ClipboardItem> {
         let mut ctx = ClipboardContext::new().unwrap();
-        let content = ctx.get_contents().unwrap();
+        let content = ctx.get_contents().ok()?;
         Some(ClipboardItem {
             text: content,
             metadata: None,
@@ -813,8 +813,8 @@ unsafe fn show_savefile_dialog(directory: PathBuf) -> Result<IFileSaveDialog> {
 
 fn begin_vsync_timer(vsync_event: HANDLE, timer_stop_event: OwnedHandle) {
     let vsync_fn = select_vsync_fn();
-    std::thread::spawn(move || {
-        while vsync_fn(timer_stop_event.to_raw()) {
+    std::thread::spawn(move || loop {
+        if vsync_fn(timer_stop_event.to_raw()) {
             if unsafe { SetEvent(vsync_event) }.log_err().is_none() {
                 break;
             }

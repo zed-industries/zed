@@ -48,68 +48,73 @@ impl RenderOnce for Composer {
     fn render(mut self, cx: &mut WindowContext) -> impl IntoElement {
         let font_size = TextSize::Default.rems(cx);
         let line_height = font_size.to_pixels(cx.rem_size()) * 1.3;
+        let mut editor_border = cx.theme().colors().text;
+        editor_border.fade_out(0.90);
+
+        // Remove the extra 1px added by the border
+        let padding = Spacing::XLarge.rems(cx) - rems_from_px(1.);
 
         h_flex()
             .p(Spacing::Small.rems(cx))
             .w_full()
             .items_start()
             .child(
-                v_flex().size_full().gap_1().child(
-                    v_flex()
-                        .w_full()
-                        .p_3()
-                        .bg(cx.theme().colors().editor_background)
-                        .rounded_lg()
-                        .child(
-                            v_flex()
-                                .justify_between()
-                                .w_full()
-                                .gap_2()
-                                .child({
-                                    let settings = ThemeSettings::get_global(cx);
-                                    let text_style = TextStyle {
-                                        color: cx.theme().colors().editor_foreground,
-                                        font_family: settings.buffer_font.family.clone(),
-                                        font_features: settings.buffer_font.features.clone(),
-                                        font_size: font_size.into(),
-                                        font_weight: FontWeight::NORMAL,
-                                        font_style: FontStyle::Normal,
-                                        line_height: line_height.into(),
-                                        background_color: None,
-                                        underline: None,
-                                        strikethrough: None,
-                                        white_space: WhiteSpace::Normal,
-                                    };
+                v_flex()
+                    .w_full()
+                    .rounded_lg()
+                    .p(padding)
+                    .border_1()
+                    .border_color(editor_border)
+                    .bg(cx.theme().colors().editor_background)
+                    .child(
+                        v_flex()
+                            .justify_between()
+                            .w_full()
+                            .gap_2()
+                            .child({
+                                let settings = ThemeSettings::get_global(cx);
+                                let text_style = TextStyle {
+                                    color: cx.theme().colors().editor_foreground,
+                                    font_family: settings.buffer_font.family.clone(),
+                                    font_features: settings.buffer_font.features.clone(),
+                                    font_size: font_size.into(),
+                                    font_weight: FontWeight::NORMAL,
+                                    font_style: FontStyle::Normal,
+                                    line_height: line_height.into(),
+                                    background_color: None,
+                                    underline: None,
+                                    strikethrough: None,
+                                    white_space: WhiteSpace::Normal,
+                                };
 
-                                    EditorElement::new(
-                                        &self.editor,
-                                        EditorStyle {
-                                            background: cx.theme().colors().editor_background,
-                                            local_player: cx.theme().players().local(),
-                                            text: text_style,
-                                            ..Default::default()
-                                        },
+                                EditorElement::new(
+                                    &self.editor,
+                                    EditorStyle {
+                                        background: cx.theme().colors().editor_background,
+                                        local_player: cx.theme().players().local(),
+                                        text: text_style,
+                                        ..Default::default()
+                                    },
+                                )
+                            })
+                            .child(
+                                h_flex()
+                                    .flex_none()
+                                    .gap_2()
+                                    .justify_between()
+                                    .w_full()
+                                    .child(
+                                        h_flex().gap_1().child(
+                                            h_flex()
+                                                .gap_2()
+                                                .child(self.render_tools(cx))
+                                                .child(Divider::vertical())
+                                                .child(self.render_attachment_tools(cx)),
+                                        ),
                                     )
-                                })
-                                .child(
-                                    h_flex()
-                                        .flex_none()
-                                        .gap_2()
-                                        .justify_between()
-                                        .w_full()
-                                        .child(
-                                            h_flex().gap_1().child(
-                                                h_flex()
-                                                    .gap_2()
-                                                    .child(self.render_tools(cx))
-                                                    .child(Divider::vertical())
-                                                    .child(self.render_attachment_tools(cx)),
-                                            ),
-                                        )
-                                        .child(h_flex().gap_1().child(self.model_selector)),
-                                ),
-                        ),
-                ),
+                                    .child(h_flex().gap_1().child(self.model_selector)),
+                            ),
+                    ),
             )
     }
 }

@@ -642,8 +642,8 @@ impl AppContext {
     }
 
     /// Restart the application.
-    pub fn restart(&self) {
-        self.platform.restart()
+    pub fn restart(&self, binary_path: Option<PathBuf>) {
+        self.platform.restart(binary_path)
     }
 
     /// Returns the local timezone at the platform level.

@@ -69,7 +69,7 @@ impl InteractiveElement for TitleBar {
 impl StatefulInteractiveElement for TitleBar {}
 
 impl ParentElement for TitleBar {
-    fn extend(&mut self, elements: impl Iterator<Item = AnyElement>) {
+    fn extend(&mut self, elements: impl IntoIterator<Item = AnyElement>) {
         self.children.extend(elements)
     }
 }

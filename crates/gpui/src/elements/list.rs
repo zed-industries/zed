@@ -766,7 +766,7 @@ impl Element for List {
                 let mut style = Style::default();
                 style.refine(&self.style);
                 cx.with_text_style(style.text_style().cloned(), |cx| {
-                    cx.request_layout(&style, None)
+                    cx.request_layout(style, None)
                 })
             }
         };

@@ -118,12 +118,14 @@ pub(crate) fn load_cursor(style: CursorStyle) -> HCURSOR {
         CursorStyle::IBeam | CursorStyle::IBeamCursorForVerticalLayout => (&IBEAM, IDC_IBEAM),
         CursorStyle::Crosshair => (&CROSS, IDC_CROSS),
         CursorStyle::PointingHand | CursorStyle::DragLink => (&HAND, IDC_HAND),
-        CursorStyle::ResizeLeft | CursorStyle::ResizeRight | CursorStyle::ResizeLeftRight => {
-            (&SIZEWE, IDC_SIZEWE)
-        }
-        CursorStyle::ResizeUp | CursorStyle::ResizeDown | CursorStyle::ResizeUpDown => {
-            (&SIZENS, IDC_SIZENS)
-        }
+        CursorStyle::ResizeLeft
+        | CursorStyle::ResizeRight
+        | CursorStyle::ResizeLeftRight
+        | CursorStyle::ResizeColumn => (&SIZEWE, IDC_SIZEWE),
+        CursorStyle::ResizeUp
+        | CursorStyle::ResizeDown
+        | CursorStyle::ResizeUpDown
+        | CursorStyle::ResizeRow => (&SIZENS, IDC_SIZENS),
         CursorStyle::OperationNotAllowed => (&NO, IDC_NO),
         _ => (&ARROW, IDC_ARROW),
     };
