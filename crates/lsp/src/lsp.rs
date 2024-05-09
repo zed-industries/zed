@@ -578,12 +578,12 @@ impl LanguageServer {
         options: Option<Value>,
         cx: &AppContext,
     ) -> Task<Result<Arc<Self>>> {
-        let root_uri = Url::from_file_path(&self.root_path).unwrap();
+        let root_uri = Url::from_file_path(&self.root_path).ok();
         #[allow(deprecated)]
         let params = InitializeParams {
             process_id: None,
             root_path: None,
-            root_uri: Some(root_uri.clone()),
+            root_uri: root_uri.clone(),
             initialization_options: options,
             capabilities: ClientCapabilities {
                 workspace: Some(WorkspaceClientCapabilities {
@@ -713,10 +713,12 @@ impl LanguageServer {
                 general: None,
             },
             trace: None,
-            workspace_folders: Some(vec![WorkspaceFolder {
-                uri: root_uri,
-                name: Default::default(),
-            }]),
+            workspace_folders: root_uri.map(|root_uri| {
+                vec![WorkspaceFolder {
+                    uri: root_uri,
+                    name: Default::default(),
+                }]
+            }),
             client_info: release_channel::ReleaseChannel::try_global(cx).map(|release_channel| {
                 ClientInfo {
                     name: release_channel.display_name().to_string(),
