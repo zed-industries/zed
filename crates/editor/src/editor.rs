@@ -3859,11 +3859,16 @@ impl Editor {
                                 .row
                         })
                         .unwrap_or_else(|| this.selections.newest::<Point>(cx).head().row);
-                    let buffer_row = snapshot
+                    let (buffer, buffer_row) = snapshot
                         .buffer_snapshot
                         .buffer_line_for_row(display_row)
-                        .map(|(_, range)| range.start.row)?;
-                    let (location, code_actions) = this
+                        .and_then(|(buffer_snapshot, range)| {
+                            this.buffer
+                                .read(cx)
+                                .buffer(buffer_snapshot.remote_id())
+                                .map(|buffer| (buffer, range.start.row))
+                        })?;
+                    let (_, code_actions) = this
                         .available_code_actions
                         .clone()
                         .and_then(|(location, code_actions)| {
@@ -3877,19 +3882,6 @@ impl Editor {
                             }
                         })
                         .unzip();
-                    let buffer = location.map(|location| location.buffer).or_else(|| {
-                        let snapshot = this.snapshot(cx);
-                        let (buffer_snapshot, _) =
-                            snapshot.buffer_snapshot.buffer_line_for_row(buffer_row)?;
-                        let buffer_id = buffer_snapshot.remote_id();
-                        this.buffer().read(cx).buffer(buffer_id)
-                    });
-                    let Some(buffer) = buffer else {
-                        return None;
-                    };
-                    let offset = snapshot
-                        .buffer_snapshot
-                        .point_to_offset(Point::new(buffer_row, 0));
                     let buffer_id = buffer.read(cx).remote_id();
                     let tasks = this
                         .tasks
