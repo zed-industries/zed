@@ -3,6 +3,7 @@ mod attachments;
 mod completion_provider;
 mod saved_conversation;
 mod saved_conversation_picker;
+mod saved_conversations;
 mod tools;
 pub mod ui;
 
@@ -28,8 +29,11 @@ use gpui::{
 use language::{language_settings::SoftWrap, LanguageRegistry};
 use open_ai::{FunctionContent, ToolCall, ToolCallContent};
 use rich_text::RichText;
-use saved_conversation::{SavedAssistantMessagePart, SavedChatMessage, SavedConversation};
+use saved_conversation::{
+    SavedAssistantMessagePart, SavedChatMessage, SavedConversation, SavedConversationMetadata,
+};
 use saved_conversation_picker::SavedConversationPicker;
+use saved_conversations::SavedConversations;
 use semantic_index::{CloudEmbeddingProvider, ProjectIndex, ProjectIndexDebugView, SemanticIndex};
 use serde::{Deserialize, Serialize};
 use settings::Settings;
@@ -264,6 +268,7 @@ pub struct AssistantChat {
     fs: Arc<dyn Fs>,
     language_registry: Arc<LanguageRegistry>,
     composer_editor: View<Editor>,
+    saved_conversations: View<SavedConversations>,
     project_index_button: View<ProjectIndexButton>,
     active_file_button: Option<View<ActiveFileButton>>,
     user_store: Model<UserStore>,
@@ -321,6 +326,36 @@ impl AssistantChat {
             _ => None,
         };
 
+        let saved_conversations = cx.new_view(|cx| SavedConversations::new(cx));
+        let weak_saved_conversations = saved_conversations.downgrade();
+
+        cx.spawn(|assistant_chat, mut cx| async move {
+            let saved_conversations = SavedConversationMetadata::list(fs).await?;
+
+            cx.update(|cx| {
+                weak_saved_conversations.update(cx, |saved_conversations, cx| {
+                    saved_conversations.init(
+                        saved_conversations.downgrade(),
+                        saved_conversations,
+                        cx,
+                    );
+                });
+
+                // workspace.update(cx, |workspace, cx| {
+                //     workspace.toggle_modal(cx, move |cx| {
+                //         let delegate = SavedConversationPickerDelegate::new(
+                //             cx.view().downgrade(),
+                //             saved_conversations,
+                //         );
+                //         Self::new(delegate, cx)
+                //     });
+                // })
+            })?;
+
+            anyhow::Ok(())
+        })
+        .detach_and_log_err(cx);
+
         Self {
             model,
             messages: Vec::new(),
@@ -330,6 +365,7 @@ impl AssistantChat {
                 editor.set_placeholder_text("Send a message…", cx);
                 editor
             }),
+            saved_conversations,
             list_state,
             user_store,
             fs,
@@ -1022,105 +1058,17 @@ impl Render for AssistantChat {
             .relative()
             .flex_1()
             .v_flex()
-            .key_context("AssistantChat")
-            .on_action(cx.listener(Self::submit))
-            .on_action(cx.listener(Self::cancel))
             .text_color(Color::Default.color(cx));
 
         if self.conversations_open {
             // Conversations View
-            view = view.child(
-                v_flex()
-                    .child(
-                        header
-                            .border_b_1()
-                            .border_color(cx.theme().colors().border)
-                            .child(
-                                h_flex()
-                                    .gap(Spacing::Small.rems(cx))
-                                    .child(
-                                        IconButton::new("set-view-list", IconName::List)
-                                            .icon_color(if !show_conversation_details {
-                                                Color::Accent
-                                            } else {
-                                                Color::Default
-                                            })
-                                            .tooltip(move |cx| {
-                                                Tooltip::text("View conversations as a list", cx)
-                                            }),
-                                    )
-                                    .child(
-                                        IconButton::new("set-view-details", IconName::Text)
-                                            .icon_color(if show_conversation_details {
-                                                Color::Accent
-                                            } else {
-                                                Color::Default
-                                            })
-                                            .selected(true)
-                                            .tooltip(move |cx| {
-                                                Tooltip::text(
-                                                    "View conversations with summaries",
-                                                    cx,
-                                                )
-                                            }),
-                                    ),
-                            )
-                            .child(
-                                IconButton::new("new-conversation", IconName::Plus)
-                                    .on_click(cx.listener(move |this, _event, cx| {
-                                        this.new_conversation(cx);
-                                    }))
-                                    .tooltip(move |cx| Tooltip::text("New Conversation", cx)),
-                            ),
-                    )
-                    .child(v_flex().flex_1().children({
-                        let last_index = (self.conversations.len() - 1).max(0);
-
-                        let line_height = rems(1.15);
-
-                        self.conversations.iter().enumerate().map({
-                            move |(ix, conversation)| {
-                                let max_preview_height = line_height.clone() * 3.0;
-
-                                let preview_string: SharedString = format!(
-                                    "{}  {}",
-                                    render_relative_date(conversation.last_message.into()),
-                                    conversation.message_preview
-                                )
-                                .into();
-
-                                v_flex()
-                                    .id(ElementId::Name(format!("conversation-{}", ix).into()))
-                                    .flex_none()
-                                    .w_full()
-                                    .line_height(line_height)
-                                    .p(Spacing::Large.rems(cx))
-                                    .when(ix != last_index, |this| this.border_b_1())
-                                    .border_color(cx.theme().colors().border)
-                                    .on_click(cx.listener(|this, _event, _cx| {
-                                        this.toggle_conversations_open();
-                                    }))
-                                    .child(
-                                        Headline::new(conversation.title.clone())
-                                            .size(HeadlineSize::XSmall),
-                                    )
-                                    .child(
-                                        div()
-                                            .w_full()
-                                            .min_h(cx.line_height())
-                                            .max_h(max_preview_height)
-                                            .text_color(cx.theme().colors().text_muted)
-                                            .text_sm()
-                                            .overflow_hidden()
-                                            .child(preview_string),
-                                    )
-                            }
-                        })
-                    })),
-            )
+            view = view.child(self.saved_conversations.clone());
         } else {
             // Chat View
             view = view
+                .key_context("AssistantChat")
+                .on_action(cx.listener(Self::submit))
+                .on_action(cx.listener(Self::cancel))
                 .child(list(self.list_state.clone()).flex_1().pt(header_height))
                 .child(
                     header

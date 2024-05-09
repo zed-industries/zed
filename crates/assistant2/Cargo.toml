@@ -18,7 +18,6 @@ stories = ["dep:story"]
 [dependencies]
 anyhow.workspace = true
 assistant_tooling.workspace = true
-chrono.workspace = true
 client.workspace = true
 chrono.workspace = true
 collections.workspace = true
