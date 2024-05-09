@@ -1,6 +1,4 @@
-use util::{maybe, ResultExt as _};
-
-use crate::rpc::ResultExt as _;
+use util::ResultExt;
 
 use super::*;
 
@@ -147,44 +145,42 @@ impl Database {
         connection: ConnectionId,
         user_id: Option<UserId>,
     ) -> Result<TransactionGuard<(bool, Option<proto::Room>, Vec<ConnectionId>)>> {
-        self
-            .project_transaction(project_id, |tx| async move {
-                let guest_connection_ids =
-                    self.project_guest_connection_ids(project_id, &tx).await?;
-                let project = project::Entity::find_by_id(project_id)
-                    .one(&*tx)
-                    .await?
-                    .ok_or_else(|| anyhow!("project not found"))?;
-                let room = if let Some(room_id) = project.room_id {
-                    Some(self.get_room(room_id, &tx).await?)
-                } else {
-                    None
-                };
-                if project.host_connection()? == connection {
-                    return Ok((true, room, guest_connection_ids));
-                }
-                if let Some(dev_server_project_id) = project.dev_server_project_id {
-                    if let Some(user_id) = user_id {
-                        if user_id
-                            != self
-                                .owner_for_dev_server_project(dev_server_project_id, &tx)
-                                .await?
-                        {
-                            Err(anyhow!("cannot unshare a project hosted by another user"))?
-                        }
-                        project::Entity::update(project::ActiveModel {
-                            room_id: ActiveValue::Set(None),
-                            ..project.into_active_model()
-                        })
-                        .exec(&*tx)
-                        .await?;
-                        return Ok((false, room, guest_connection_ids));
+        self.project_transaction(project_id, |tx| async move {
+            let guest_connection_ids = self.project_guest_connection_ids(project_id, &tx).await?;
+            let project = project::Entity::find_by_id(project_id)
+                .one(&*tx)
+                .await?
+                .ok_or_else(|| anyhow!("project not found"))?;
+            let room = if let Some(room_id) = project.room_id {
+                Some(self.get_room(room_id, &tx).await?)
+            } else {
+                None
+            };
+            if project.host_connection()? == connection {
+                return Ok((true, room, guest_connection_ids));
+            }
+            if let Some(dev_server_project_id) = project.dev_server_project_id {
+                if let Some(user_id) = user_id {
+                    if user_id
+                        != self
+                            .owner_for_dev_server_project(dev_server_project_id, &tx)
+                            .await?
+                    {
+                        Err(anyhow!("cannot unshare a project hosted by another user"))?
                     }
+                    project::Entity::update(project::ActiveModel {
+                        room_id: ActiveValue::Set(None),
+                        ..project.into_active_model()
+                    })
+                    .exec(&*tx)
+                    .await?;
+                    return Ok((false, room, guest_connection_ids));
                 }
+            }
 
-                Err(anyhow!("cannot unshare a project hosted by another user"))?
-            })
-            .await
+            Err(anyhow!("cannot unshare a project hosted by another user"))?
+        })
+        .await
     }
 
     /// Updates the worktrees associated with the given project.
