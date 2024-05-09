@@ -9,7 +9,7 @@ use gpui::{
 };
 use picker::{highlighted_match_with_paths::HighlightedText, Picker, PickerDelegate};
 use project::{Inventory, TaskSourceKind};
-use task::{ResolvedTask, TaskContext, TaskTemplate, VariableName};
+use task::{ResolvedTask, TaskContext, TaskTemplate};
 use ui::{
     div, v_flex, ButtonCommon, ButtonSize, Clickable, Color, FluentBuilder as _, Icon, IconButton,
     IconButtonShape, IconName, IconSize, ListItem, ListItemSpacing, RenderOnce, Selectable,
