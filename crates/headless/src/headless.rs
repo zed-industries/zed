@@ -13,9 +13,6 @@ use postage::stream::Stream;
 use project::{Project, WorktreeSettings};
 use rpc::{proto, ErrorCode, TypedEnvelope};
 use settings::{Settings, SettingsStore};
-use signal_hook::consts::{SIGINT, SIGTERM};
-use signal_hook::iterator::Signals;
-use std::thread;
 use std::{collections::HashMap, sync::Arc};
 use util::{ResultExt, TryFutureExt};
 
@@ -52,24 +49,29 @@ pub fn init(client: Arc<Client>, app_state: AppState, cx: &mut AppContext) -> Ta
         });
     });
 
-    // Set up a handler when the dev server is shut down
-    // with ctrl-c or kill
-    let (tx, rx) = futures::channel::oneshot::channel();
-    let mut signals = Signals::new(&[SIGTERM, SIGINT]).unwrap();
-    thread::spawn({
-        move || {
-            if let Some(sig) = signals.forever().next() {
-                tx.send(sig).log_err();
+    #[cfg(not(target_os = "windows"))]
+    {
+        use signal_hook::consts::{SIGINT, SIGTERM};
+        use signal_hook::iterator::Signals;
+        // Set up a handler when the dev server is shut down
+        // with ctrl-c or kill
+        let (tx, rx) = futures::channel::oneshot::channel();
+        let mut signals = Signals::new(&[SIGTERM, SIGINT]).unwrap();
+        std::thread::spawn({
+            move || {
+                if let Some(sig) = signals.forever().next() {
+                    tx.send(sig).log_err();
+                }
             }
-        }
-    });
-    cx.spawn(|cx| async move {
-        if let Ok(sig) = rx.await {
-            log::info!("received signal {sig:?}");
-            cx.update(|cx| cx.quit()).log_err();
-        }
-    })
-    .detach();
+        });
+        cx.spawn(|cx| async move {
+            if let Ok(sig) = rx.await {
+                log::info!("received signal {sig:?}");
+                cx.update(|cx| cx.quit()).log_err();
+            }
+        })
+        .detach();
+    }
 
     let server_url = ClientSettings::get_global(&cx).server_url.clone();
     cx.spawn(|cx| async move {

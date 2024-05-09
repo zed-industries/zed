@@ -259,9 +259,19 @@ mod windows {
     use crate::{Detect, InstalledApp};
     use std::path::Path;
 
+    struct App;
+    impl InstalledApp for App {
+        fn zed_version_string(&self) -> String {
+            unimplemented!()
+        }
+        fn launch(&self, _ipc_url: String) -> anyhow::Result<()> {
+            unimplemented!()
+        }
+    }
+
     impl Detect {
         pub fn detect(_path: Option<&Path>) -> anyhow::Result<impl InstalledApp> {
-            unimplemented!()
+            Ok(App)
         }
     }
 }
