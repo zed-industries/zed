@@ -449,7 +449,7 @@ pub struct Editor {
     show_wrap_guides: Option<bool>,
     placeholder_text: Option<Arc<str>>,
     highlight_order: usize,
-    highlighted_rows: HashMap<TypeId, Vec<(usize, RangeInclusive<Anchor>, Hsla)>>,
+    highlighted_rows: HashMap<TypeId, Vec<(usize, RangeInclusive<Anchor>, Option<Hsla>)>>,
     background_highlights: TreeMap<TypeId, BackgroundHighlight>,
     scrollbar_marker_state: ScrollbarMarkerState,
     nav_history: Option<ItemNavHistory>,
@@ -9732,24 +9732,22 @@ impl Editor {
                         };
                         row_highlights.insert(
                             insert_index,
-                            (post_inc(&mut self.highlight_order), rows, color),
+                            (post_inc(&mut self.highlight_order), rows, Some(color)),
                         );
                     }
-                    None => match dbg!(existing_highlight_index) {
+                    None => match existing_highlight_index {
                         Ok(i) => {
                             row_highlights.remove(i);
                         }
                         Err(i) => {
-                            // TODO kb add another hashmap entry without the color, and remove those when converting to display points
-                            dbg!(i, &row_highlights, &rows);
+                            row_highlights
+                                .insert(i, (post_inc(&mut self.highlight_order), rows, None));
                         }
                     },
                 }
             }
             hash_map::Entry::Vacant(v) => {
-                if let Some(color) = color {
-                    v.insert(vec![(post_inc(&mut self.highlight_order), rows, color)]);
-                }
+                v.insert(vec![(post_inc(&mut self.highlight_order), rows, color)]);
             }
         }
     }
@@ -9762,12 +9760,12 @@ impl Editor {
     /// For a highlight given context type, gets all anchor ranges that will be used for row highlighting.
     pub fn highlighted_rows<T: 'static>(
         &self,
-    ) -> Option<impl Iterator<Item = (&RangeInclusive<Anchor>, &Hsla)>> {
+    ) -> Option<impl Iterator<Item = (&RangeInclusive<Anchor>, Option<&Hsla>)>> {
         Some(
             self.highlighted_rows
                 .get(&TypeId::of::<T>())?
                 .iter()
-                .map(|(_, range, color)| (range, color)),
+                .map(|(_, range, color)| (range, color.as_ref())),
         )
     }
 
@@ -9795,7 +9793,14 @@ impl Editor {
                             used_highlight_orders.entry(row).or_insert(*highlight_order);
                         if highlight_order >= used_index {
                             *used_index = *highlight_order;
-                            unique_rows.insert(row, *hsla);
+                            match hsla {
+                                Some(hsla) => {
+                                    unique_rows.insert(row, *hsla);
+                                }
+                                None => {
+                                    unique_rows.remove(&row);
+                                }
+                            }
                         }
                     }
                     unique_rows
