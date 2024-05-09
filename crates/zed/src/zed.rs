@@ -1,7 +1,7 @@
 mod app_menus;
 pub mod inline_completion_registry;
 #[cfg(not(target_os = "linux"))]
-mod only_instance;
+pub(crate) mod only_instance;
 mod open_listener;
 
 pub use app_menus::*;
