@@ -203,6 +203,7 @@ pub struct Pane {
     custom_drop_handle:
         Option<Arc<dyn Fn(&mut Pane, &dyn Any, &mut ViewContext<Pane>) -> ControlFlow<(), ()>>>,
     can_split: bool,
+    should_display_tab_bar: Rc<dyn Fn(&ViewContext<Pane>) -> bool>,
     render_tab_bar_buttons: Rc<dyn Fn(&mut Pane, &mut ViewContext<Pane>) -> AnyElement>,
     _subscriptions: Vec<Subscription>,
     tab_bar_scroll_handle: ScrollHandle,
@@ -312,6 +313,7 @@ impl Pane {
             can_drop_predicate,
             custom_drop_handle: None,
             can_split: true,
+            should_display_tab_bar: Rc::new(|cx| TabBarSettings::get_global(cx).show),
             render_tab_bar_buttons: Rc::new(move |pane, cx| {
                 // Ideally we would return a vec of elements here to pass directly to the [TabBar]'s
                 // `end_slot`, but due to needing a view here that isn't possible.
@@ -466,6 +468,13 @@ impl Pane {
 
     pub fn activation_history(&self) -> &Vec<EntityId> {
         &self.activation_history
+    }
+
+    pub fn set_should_display_tab_bar<F>(&mut self, should_display_tab_bar: F)
+    where
+        F: 'static + Fn(&ViewContext<Pane>) -> bool,
+    {
+        self.should_display_tab_bar = Rc::new(should_display_tab_bar);
     }
 
     pub fn set_can_split(&mut self, can_split: bool, cx: &mut ViewContext<Self>) {
@@ -1963,6 +1972,9 @@ impl Render for Pane {
             key_context.add("EmptyPane");
         }
 
+        let should_display_tab_bar = self.should_display_tab_bar.clone();
+        let display_tab_bar = should_display_tab_bar(cx);
+
         v_flex()
             .key_context(key_context)
             .track_focus(&self.focus_handle)
@@ -2061,7 +2073,7 @@ impl Render for Pane {
                     }
                 }),
             )
-            .when(self.active_item().is_some(), |pane| {
+            .when(self.active_item().is_some() && display_tab_bar, |pane| {
                 pane.child(self.render_tab_bar(cx))
             })
             .child({

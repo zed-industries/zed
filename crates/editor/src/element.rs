@@ -638,7 +638,11 @@ impl EditorElement {
             editor.update_hovered_link(point_for_position, &position_map.snapshot, modifiers, cx);
 
             if let Some(point) = point_for_position.as_valid() {
-                hover_at(editor, Some((point, &position_map.snapshot)), cx);
+                let anchor = position_map
+                    .snapshot
+                    .buffer_snapshot
+                    .anchor_before(point.to_offset(&position_map.snapshot, Bias::Left));
+                hover_at(editor, Some(anchor), cx);
                 Self::update_visible_cursor(editor, point, position_map, cx);
             } else {
                 hover_at(editor, None, cx);
@@ -4499,20 +4503,26 @@ fn layout_line(
 ) -> Result<ShapedLine> {
     let mut line = snapshot.line(row);
 
-    if line.len() > MAX_LINE_LEN {
-        let mut len = MAX_LINE_LEN;
-        while !line.is_char_boundary(len) {
-            len -= 1;
-        }
+    let len = {
+        let line_len = line.len();
+        if line_len > MAX_LINE_LEN {
+            let mut len = MAX_LINE_LEN;
+            while !line.is_char_boundary(len) {
+                len -= 1;
+            }
 
-        line.truncate(len);
-    }
+            line.truncate(len);
+            len
+        } else {
+            line_len
+        }
+    };
 
     cx.text_system().shape_line(
         line.into(),
         style.text.font_size.to_pixels(cx.rem_size()),
         &[TextRun {
-            len: snapshot.line_len(row) as usize,
+            len,
             font: style.text.font(),
             color: Hsla::default(),
             background_color: None,

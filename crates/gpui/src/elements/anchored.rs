@@ -63,7 +63,7 @@ impl Anchored {
 }
 
 impl ParentElement for Anchored {
-    fn extend(&mut self, elements: impl Iterator<Item = AnyElement>) {
+    fn extend(&mut self, elements: impl IntoIterator<Item = AnyElement>) {
         self.children.extend(elements)
     }
 }

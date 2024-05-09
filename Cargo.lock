@@ -423,6 +423,7 @@ dependencies = [
  "serde_json",
  "settings",
  "sum_tree",
+ "ui",
  "unindent",
  "util",
 ]
@@ -1490,7 +1491,7 @@ dependencies = [
 [[package]]
 name = "blade-graphics"
 version = "0.4.0"
-source = "git+https://github.com/kvark/blade?rev=f5766863de9dcc092e90fdbbc5e0007a99e7f9bf#f5766863de9dcc092e90fdbbc5e0007a99e7f9bf"
+source = "git+https://github.com/kvark/blade?rev=e35b2d41f221a48b75f7cf2e78a81e7ecb7a383c#e35b2d41f221a48b75f7cf2e78a81e7ecb7a383c"
 dependencies = [
  "ash",
  "ash-window",
@@ -1520,7 +1521,7 @@ dependencies = [
 [[package]]
 name = "blade-macros"
 version = "0.2.1"
-source = "git+https://github.com/kvark/blade?rev=f5766863de9dcc092e90fdbbc5e0007a99e7f9bf#f5766863de9dcc092e90fdbbc5e0007a99e7f9bf"
+source = "git+https://github.com/kvark/blade?rev=e35b2d41f221a48b75f7cf2e78a81e7ecb7a383c#e35b2d41f221a48b75f7cf2e78a81e7ecb7a383c"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -5971,6 +5972,27 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "62bb907fe88d54d8d9ce32a3cceab4218ed2f6b7d35617cafe9adf84e43919cb"
 dependencies = [
  "libc",
+]
+
+[[package]]
+name = "markdown"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "assets",
+ "env_logger",
+ "futures 0.3.28",
+ "gpui",
+ "language",
+ "languages",
+ "linkify",
+ "log",
+ "node_runtime",
+ "pulldown-cmark",
+ "settings",
+ "theme",
+ "ui",
+ "util",
 ]
 
 [[package]]

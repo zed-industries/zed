@@ -6,7 +6,7 @@ use editor::{
 };
 use gpui::{prelude::*, AnyElement, Model, Task, View, WeakView};
 use language::ToPoint;
-use project::{Project, ProjectPath};
+use project::{search::SearchQuery, Project, ProjectPath};
 use schemars::JsonSchema;
 use serde::Deserialize;
 use std::path::Path;
@@ -29,17 +29,18 @@ impl AnnotationTool {
 pub struct AnnotationInput {
     /// Name for this set of annotations
     title: String,
-    annotations: Vec<Annotation>,
+    /// Excerpts from the file to show to the user.
+    excerpts: Vec<Excerpt>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema, Clone)]
-struct Annotation {
+struct Excerpt {
     /// Path to the file
     path: String,
-    /// Name of a symbol in the code
-    symbol_name: String,
-    /// Text to display near the symbol definition
-    text: String,
+    /// A short, distinctive string that appears in the file, used to define a location in the file.
+    text_passage: String,
+    /// Text to display above the code excerpt
+    annotation: String,
 }
 
 impl LanguageModelTool for AnnotationTool {
@@ -58,7 +59,7 @@ impl LanguageModelTool for AnnotationTool {
     fn execute(&self, input: &Self::Input, cx: &mut WindowContext) -> Task<Result<Self::Output>> {
         let workspace = self.workspace.clone();
         let project = self.project.clone();
-        let excerpts = input.annotations.clone();
+        let excerpts = input.excerpts.clone();
         let title = input.title.clone();
 
         let worktree_id = project.update(cx, |project, cx| {
@@ -74,15 +75,16 @@ impl LanguageModelTool for AnnotationTool {
         };
 
         let buffer_tasks = project.update(cx, |project, cx| {
-            let excerpts = excerpts.clone();
             excerpts
                 .iter()
                 .map(|excerpt| {
-                    let project_path = ProjectPath {
-                        worktree_id,
-                        path: Path::new(&excerpt.path).into(),
-                    };
-                    project.open_buffer(project_path.clone(), cx)
+                    project.open_buffer(
+                        ProjectPath {
+                            worktree_id,
+                            path: Path::new(&excerpt.path).into(),
+                        },
+                        cx,
+                    )
                 })
                 .collect::<Vec<_>>()
         });
@@ -99,39 +101,43 @@ impl LanguageModelTool for AnnotationTool {
             for (excerpt, buffer) in excerpts.iter().zip(buffers.iter()) {
                 let snapshot = buffer.update(&mut cx, |buffer, _cx| buffer.snapshot())?;
 
-                if let Some(outline) = snapshot.outline(None) {
-                    let matches = outline
-                        .search(&excerpt.symbol_name, cx.background_executor().clone())
-                        .await;
-                    if let Some(mat) = matches.first() {
-                        let item = &outline.items[mat.candidate_id];
-                        let start = item.range.start.to_point(&snapshot);
-                        editor.update(&mut cx, |editor, cx| {
-                            let ranges = editor.buffer().update(cx, |multibuffer, cx| {
-                                multibuffer.push_excerpts_with_context_lines(
-                                    buffer.clone(),
-                                    vec![start..start],
-                                    5,
-                                    cx,
-                                )
-                            });
-                            let explanation = SharedString::from(excerpt.text.clone());
-                            editor.insert_blocks(
-                                [BlockProperties {
-                                    position: ranges[0].start,
-                                    height: 2,
-                                    style: BlockStyle::Fixed,
-                                    render: Box::new(move |cx| {
-                                        Self::render_note_block(&explanation, cx)
-                                    }),
-                                    disposition: BlockDisposition::Above,
-                                }],
-                                None,
-                                cx,
-                            );
-                        })?;
-                    }
-                }
+                let query =
+                    SearchQuery::text(&excerpt.text_passage, false, false, false, vec![], vec![])?;
+
+                let matches = query.search(&snapshot, None).await;
+                let Some(first_match) = matches.first() else {
+                    log::warn!(
+                        "text {:?} does not appear in '{}'",
+                        excerpt.text_passage,
+                        excerpt.path
+                    );
+                    continue;
+                };
+                let mut start = first_match.start.to_point(&snapshot);
+                start.column = 0;
+
+                editor.update(&mut cx, |editor, cx| {
+                    let ranges = editor.buffer().update(cx, |multibuffer, cx| {
+                        multibuffer.push_excerpts_with_context_lines(
+                            buffer.clone(),
+                            vec![start..start],
+                            5,
+                            cx,
+                        )
+                    });
+                    let annotation = SharedString::from(excerpt.annotation.clone());
+                    editor.insert_blocks(
+                        [BlockProperties {
+                            position: ranges[0].start,
+                            height: annotation.split('\n').count() as u8 + 1,
+                            style: BlockStyle::Fixed,
+                            render: Box::new(move |cx| Self::render_note_block(&annotation, cx)),
+                            disposition: BlockDisposition::Above,
+                        }],
+                        None,
+                        cx,
+                    );
+                })?;
             }
 
             workspace
@@ -144,7 +150,8 @@ impl LanguageModelTool for AnnotationTool {
         })
     }
 
-    fn output_view(
+    fn view(
+        &self,
         _: Self::Input,
         output: Result<Self::Output>,
         cx: &mut WindowContext,

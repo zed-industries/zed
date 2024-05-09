@@ -1,64 +1,68 @@
+use std::{path::PathBuf, sync::Arc};
+
 use anyhow::{anyhow, Result};
 use assistant_tooling::{LanguageModelAttachment, ProjectContext, ToolOutput};
 use editor::Editor;
 use gpui::{Render, Task, View, WeakModel, WeakView};
 use language::Buffer;
 use project::ProjectPath;
+use serde::{Deserialize, Serialize};
 use ui::{prelude::*, ButtonLike, Tooltip, WindowContext};
 use util::maybe;
 use workspace::Workspace;
 
+#[derive(Serialize, Deserialize)]
 pub struct ActiveEditorAttachment {
-    buffer: WeakModel<Buffer>,
-    path: Option<ProjectPath>,
+    #[serde(skip)]
+    buffer: Option<WeakModel<Buffer>>,
+    path: Option<PathBuf>,
 }
 
 pub struct FileAttachmentView {
-    output: Result<ActiveEditorAttachment>,
+    project_path: Option<ProjectPath>,
+    buffer: Option<WeakModel<Buffer>>,
+    error: Option<anyhow::Error>,
 }
 
 impl Render for FileAttachmentView {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
-        match &self.output {
-            Ok(attachment) => {
-                let filename: SharedString = attachment
-                    .path
-                    .as_ref()
-                    .and_then(|p| p.path.file_name()?.to_str())
-                    .unwrap_or("Untitled")
-                    .to_string()
-                    .into();
-
-                // todo!(): make the button link to the actual file to open
-                ButtonLike::new("file-attachment")
-                    .child(
-                        h_flex()
-                            .gap_1()
-                            .bg(cx.theme().colors().editor_background)
-                            .rounded_md()
-                            .child(ui::Icon::new(IconName::File))
-                            .child(filename.clone()),
-                    )
-                    .tooltip({
-                        move |cx| Tooltip::with_meta("File Attached", None, filename.clone(), cx)
-                    })
-                    .into_any_element()
-            }
-            Err(err) => div().child(err.to_string()).into_any_element(),
+        if let Some(error) = &self.error {
+            return div().child(error.to_string()).into_any_element();
         }
+
+        let filename: SharedString = self
+            .project_path
+            .as_ref()
+            .and_then(|p| p.path.file_name()?.to_str())
+            .unwrap_or("Untitled")
+            .to_string()
+            .into();
+
+        ButtonLike::new("file-attachment")
+            .child(
+                h_flex()
+                    .gap_1()
+                    .bg(cx.theme().colors().editor_background)
+                    .rounded_md()
+                    .child(ui::Icon::new(IconName::File))
+                    .child(filename.clone()),
+            )
+            .tooltip(move |cx| Tooltip::with_meta("File Attached", None, filename.clone(), cx))
+            .into_any_element()
     }
 }
 
 impl ToolOutput for FileAttachmentView {
     fn generate(&self, project: &mut ProjectContext, cx: &mut WindowContext) -> String {
-        if let Ok(result) = &self.output {
-            if let Some(path) = &result.path {
-                project.add_file(path.clone());
-                return format!("current file: {}", path.path.display());
-            } else if let Some(buffer) = result.buffer.upgrade() {
-                return format!("current untitled buffer text:\n{}", buffer.read(cx).text());
-            }
+        if let Some(path) = &self.project_path {
+            project.add_file(path.clone());
+            return format!("current file: {}", path.path.display());
         }
+
+        if let Some(buffer) = self.buffer.as_ref().and_then(|buffer| buffer.upgrade()) {
+            return format!("current untitled buffer text:\n{}", buffer.read(cx).text());
+        }
+
         String::new()
     }
 }
@@ -77,6 +81,10 @@ impl LanguageModelAttachment for ActiveEditorAttachmentTool {
     type Output = ActiveEditorAttachment;
     type View = FileAttachmentView;
 
+    fn name(&self) -> Arc<str> {
+        "active-editor-attachment".into()
+    }
+
     fn run(&self, cx: &mut WindowContext) -> Task<Result<ActiveEditorAttachment>> {
         Task::ready(maybe!({
             let active_buffer = self
@@ -91,13 +99,10 @@ impl LanguageModelAttachment for ActiveEditorAttachmentTool {
             let buffer = active_buffer.read(cx);
 
             if let Some(buffer) = buffer.as_singleton() {
-                let path =
-                    project::File::from_dyn(buffer.read(cx).file()).map(|file| ProjectPath {
-                        worktree_id: file.worktree_id(cx),
-                        path: file.path.clone(),
-                    });
+                let path = project::File::from_dyn(buffer.read(cx).file())
+                    .and_then(|file| file.worktree.read(cx).absolutize(&file.path).ok());
                 return Ok(ActiveEditorAttachment {
-                    buffer: buffer.downgrade(),
+                    buffer: Some(buffer.downgrade()),
                     path,
                 });
             } else {
@@ -106,7 +111,34 @@ impl LanguageModelAttachment for ActiveEditorAttachmentTool {
         }))
     }
 
-    fn view(output: Result<Self::Output>, cx: &mut WindowContext) -> View<Self::View> {
-        cx.new_view(|_cx| FileAttachmentView { output })
+    fn view(
+        &self,
+        output: Result<ActiveEditorAttachment>,
+        cx: &mut WindowContext,
+    ) -> View<Self::View> {
+        let error;
+        let project_path;
+        let buffer;
+        match output {
+            Ok(output) => {
+                error = None;
+                let workspace = self.workspace.upgrade().unwrap();
+                let project = workspace.read(cx).project();
+                project_path = output
+                    .path
+                    .and_then(|path| project.read(cx).project_path_for_absolute_path(&path, cx));
+                buffer = output.buffer;
+            }
+            Err(err) => {
+                error = Some(err);
+                buffer = None;
+                project_path = None;
+            }
+        }
+        cx.new_view(|_cx| FileAttachmentView {
+            project_path,
+            buffer,
+            error,
+        })
     }
 }
