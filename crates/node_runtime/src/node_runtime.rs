@@ -1,13 +1,10 @@
-mod archive;
-
 use anyhow::{anyhow, bail, Context, Result};
 use async_compression::futures::bufread::GzipDecoder;
 use async_tar::Archive;
 use futures::AsyncReadExt;
 use semver::Version;
 use serde::Deserialize;
-use smol::io::BufReader;
-use smol::{fs, lock::Mutex, process::Command};
+use smol::{fs, io::BufReader, lock::Mutex, process::Command};
 use std::io;
 use std::process::{Output, Stdio};
 use std::{
@@ -18,25 +15,7 @@ use std::{
 use util::http::HttpClient;
 use util::ResultExt;
 
-#[cfg(windows)]
-use smol::process::windows::CommandExt;
-
 const VERSION: &str = "v18.15.0";
-
-#[cfg(not(windows))]
-const NODE_PATH: &str = "bin/node";
-#[cfg(windows)]
-const NODE_PATH: &str = "node.exe";
-
-#[cfg(not(windows))]
-const NPM_PATH: &str = "bin/npm";
-#[cfg(windows)]
-const NPM_PATH: &str = "node_modules/npm/bin/npm-cli.js";
-
-enum ArchiveType {
-    TarGz,
-    Zip,
-}
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "kebab-case")]
@@ -140,12 +119,10 @@ impl RealNodeRuntime {
         let folder_name = format!("node-{VERSION}-{os}-{arch}");
         let node_containing_dir = util::paths::SUPPORT_DIR.join("node");
         let node_dir = node_containing_dir.join(folder_name);
-        let node_binary = node_dir.join(NODE_PATH);
-        let npm_file = node_dir.join(NPM_PATH);
+        let node_binary = node_dir.join("bin/node");
+        let npm_file = node_dir.join("bin/npm");
 
-        let mut command = Command::new(&node_binary);
-
-        command
+        let result = Command::new(&node_binary)
             .env_clear()
             .arg(npm_file)
             .arg("--version")
@@ -154,12 +131,9 @@ impl RealNodeRuntime {
             .stderr(Stdio::null())
             .args(["--cache".into(), node_dir.join("cache")])
             .args(["--userconfig".into(), node_dir.join("blank_user_npmrc")])
-            .args(["--globalconfig".into(), node_dir.join("blank_global_npmrc")]);
-
-        #[cfg(windows)]
-        command.creation_flags(windows::Win32::System::Threading::CREATE_NO_WINDOW.0);
-
-        let result = command.status().await;
+            .args(["--globalconfig".into(), node_dir.join("blank_global_npmrc")])
+            .status()
+            .await;
         let valid = matches!(result, Ok(status) if status.success());
 
         if !valid {
@@ -168,19 +142,7 @@ impl RealNodeRuntime {
                 .await
                 .context("error creating node containing dir")?;
 
-            let archive_type = match consts::OS {
-                "macos" | "linux" => ArchiveType::TarGz,
-                "windows" => ArchiveType::Zip,
-                other => bail!("Running on unsupported os: {other}"),
-            };
-
-            let file_name = format!(
-                "node-{VERSION}-{os}-{arch}.{extension}",
-                extension = match archive_type {
-                    ArchiveType::TarGz => "tar.gz",
-                    ArchiveType::Zip => "zip",
-                }
-            );
+            let file_name = format!("node-{VERSION}-{os}-{arch}.tar.gz");
             let url = format!("https://nodejs.org/dist/{VERSION}/{file_name}");
             let mut response = self
                 .http
@@ -188,15 +150,9 @@ impl RealNodeRuntime {
                 .await
                 .context("error downloading Node binary tarball")?;
 
-            let body = response.body_mut();
-            match archive_type {
-                ArchiveType::TarGz => {
-                    let decompressed_bytes = GzipDecoder::new(BufReader::new(response.body_mut()));
-                    let archive = Archive::new(decompressed_bytes);
-                    archive.unpack(&node_containing_dir).await?;
-                }
-                ArchiveType::Zip => archive::extract_zip(&node_containing_dir, body).await?,
-            }
+            let decompressed_bytes = GzipDecoder::new(BufReader::new(response.body_mut()));
+            let archive = Archive::new(decompressed_bytes);
+            archive.unpack(&node_containing_dir).await?;
         }
 
         // Note: Not in the `if !valid {}` so we can populate these for existing installations
@@ -212,7 +168,7 @@ impl RealNodeRuntime {
 impl NodeRuntime for RealNodeRuntime {
     async fn binary_path(&self) -> Result<PathBuf> {
         let installation_path = self.install_if_needed().await?;
-        Ok(installation_path.join(NODE_PATH))
+        Ok(installation_path.join("bin/node"))
     }
 
     async fn run_npm_subcommand(
@@ -224,19 +180,16 @@ impl NodeRuntime for RealNodeRuntime {
         let attempt = || async move {
             let installation_path = self.install_if_needed().await?;
 
-            let node_binary = installation_path.join(NODE_PATH);
-            let npm_file = installation_path.join(NPM_PATH);
-            let mut env_path = node_binary
-                .parent()
-                .expect("invalid node binary path")
-                .to_path_buf();
-
+            let mut env_path = installation_path.join("bin").into_os_string();
             if let Some(existing_path) = std::env::var_os("PATH") {
                 if !existing_path.is_empty() {
                     env_path.push(":");
                     env_path.push(&existing_path);
                 }
             }
+
+            let node_binary = installation_path.join("bin/node");
+            let npm_file = installation_path.join("bin/npm");
 
             if smol::fs::metadata(&node_binary).await.is_err() {
                 return Err(anyhow!("missing node binary file"));
@@ -266,9 +219,6 @@ impl NodeRuntime for RealNodeRuntime {
                 command.args(["--prefix".into(), directory.to_path_buf()]);
             }
 
-            #[cfg(windows)]
-            command.creation_flags(windows::Win32::System::Threading::CREATE_NO_WINDOW.0);
-
             command.output().await.map_err(|e| anyhow!("{e}"))
         };
 
@@ -277,8 +227,7 @@ impl NodeRuntime for RealNodeRuntime {
             output = attempt().await;
             if output.is_err() {
                 return Err(anyhow!(
-                    "failed to launch npm subcommand {subcommand} subcommand\nerr: {:?}",
-                    output.err()
+                    "failed to launch npm subcommand {subcommand} subcommand"
                 ));
             }
         }
