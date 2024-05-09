@@ -96,7 +96,9 @@ jobs:
   bundle-deb:
     name: Create a Linux *.tar.gz bundle
     if: github.repository_owner == 'zed-industries'
-    runs-on: ubuntu-22.04 # keep the version fixed to avoid libc and dynamic linked library issues
+    runs-on:
+      - self-hosted
+      - deploy
     needs: tests
     env:
       DIGITALOCEAN_SPACES_ACCESS_KEY: ${{ secrets.DIGITALOCEAN_SPACES_ACCESS_KEY }}
@@ -109,14 +111,8 @@ jobs:
           clean: false
           submodules: "recursive"
 
-      - name: Cache dependencies
-        uses: swatinem/rust-cache@v2
-        with:
-          save-if: ${{ github.ref == 'refs/heads/main' }}
-
-      - name: Configure linux
-        shell: bash -euxo pipefail {0}
-        run: script/linux
+      - name: Add Rust to the PATH
+        run: echo "$HOME/.cargo/bin" >> $GITHUB_PATH
 
       - name: Set release channel to nightly
         run: |
