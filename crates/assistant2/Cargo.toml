@@ -33,7 +33,6 @@ nanoid.workspace = true
 open_ai.workspace = true
 picker.workspace = true
 project.workspace = true
-rich_text.workspace = true
 schemars.workspace = true
 semantic_index.workspace = true
 serde.workspace = true

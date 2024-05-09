@@ -28,7 +28,6 @@ use gpui::{
 use language::{language_settings::SoftWrap, LanguageRegistry};
 use markdown::{Markdown, MarkdownStyle};
 use open_ai::{FunctionContent, ToolCall, ToolCallContent};
-use rich_text::RichText;
 use saved_conversation::{SavedAssistantMessagePart, SavedChatMessage, SavedConversation};
 use saved_conversation_picker::SavedConversationPicker;
 use semantic_index::{CloudEmbeddingProvider, ProjectIndex, ProjectIndexDebugView, SemanticIndex};
@@ -278,7 +277,6 @@ pub struct AssistantChat {
 
 struct EditingMessage {
     id: MessageId,
-    old_body: Arc<str>,
     body: View<Editor>,
 }
 
@@ -380,27 +378,17 @@ impl AssistantChat {
         }
     }
 
-    fn editing_message_id(&self) -> Option<MessageId> {
-        self.editing_message.as_ref().map(|message| message.id)
-    }
-
-    fn focused_message_id(&self, cx: &WindowContext) -> Option<MessageId> {
-        self.messages.iter().find_map(|message| match message {
-            ChatMessage::User(message) => message
-                .body
-                .focus_handle(cx)
-                .contains_focused(cx)
-                .then_some(message.id),
-            ChatMessage::Assistant(_) => None,
+    fn message_for_id(&self, id: MessageId) -> Option<&ChatMessage> {
+        self.messages.iter().find(|message| match message {
+            ChatMessage::User(message) => message.id == id,
+            ChatMessage::Assistant(message) => message.id == id,
         })
     }
 
     fn cancel(&mut self, _: &Cancel, cx: &mut ViewContext<Self>) {
         // If we're currently editing a message, cancel the edit.
-        if let Some(editing_message) = self.editing_message.take() {
-            editing_message
-                .body
-                .update(cx, |body, cx| body.set_text(editing_message.old_body, cx));
+        if self.editing_message.take().is_some() {
+            cx.notify();
             return;
         }
 
@@ -417,14 +405,7 @@ impl AssistantChat {
     }
 
     fn submit(&mut self, Submit(mode): &Submit, cx: &mut ViewContext<Self>) {
-        if let Some(focused_message_id) = self.focused_message_id(cx) {
-            self.truncate_messages(focused_message_id, cx);
-            self.pending_completion.take();
-            self.composer_editor.focus_handle(cx).focus(cx);
-            if self.editing_message_id() == Some(focused_message_id) {
-                self.editing_message.take();
-            }
-        } else if self.composer_editor.focus_handle(cx).is_focused(cx) {
+        if self.composer_editor.focus_handle(cx).is_focused(cx) {
             // Don't allow multiple concurrent completions.
             if self.pending_completion.is_some() {
                 cx.propagate();
@@ -435,10 +416,12 @@ impl AssistantChat {
                 let text = composer_editor.text(cx);
                 let id = self.next_message_id.post_inc();
                 let body = cx.new_view(|cx| {
-                    let mut editor = Editor::auto_height(80, cx);
-                    editor.set_text(text, cx);
-                    editor.set_soft_wrap_mode(SoftWrap::EditorWidth, cx);
-                    editor
+                    Markdown::new(
+                        text,
+                        self.markdown_style.clone(),
+                        self.language_registry.clone(),
+                        cx,
+                    )
                 });
                 composer_editor.clear(cx);
 
@@ -449,6 +432,26 @@ impl AssistantChat {
                 })
             });
             self.push_message(message, cx);
+        } else if let Some(editing_message) = self.editing_message.as_ref() {
+            let focus_handle = editing_message.body.focus_handle(cx);
+            if focus_handle.contains_focused(cx) {
+                if let Some(ChatMessage::User(user_message)) =
+                    self.message_for_id(editing_message.id)
+                {
+                    user_message.body.update(cx, |body, cx| {
+                        body.reset(editing_message.body.read(cx).text(cx), cx);
+                    });
+                }
+
+                self.truncate_messages(editing_message.id, cx);
+
+                self.pending_completion.take();
+                self.composer_editor.focus_handle(cx).focus(cx);
+                self.editing_message.take();
+            } else {
+                log::error!("unexpected state: no user message editor is focused.");
+                return;
+            }
         } else {
             log::error!("unexpected state: no user message editor is focused.");
             return;
@@ -817,66 +820,69 @@ impl AssistantChat {
                 .id(SharedString::from(format!("message-{}-container", id.0)))
                 .when(is_first, |this| this.pt(padding))
                 .map(|element| {
-                    if self.editing_message_id() == Some(*id) {
-                        element.child(Composer::new(
-                            body.clone(),
-                            self.project_index_button.clone(),
-                            self.active_file_button.clone(),
-                            crate::ui::ModelSelector::new(
-                                cx.view().downgrade(),
-                                self.model.clone(),
-                            )
-                            .into_any_element(),
-                        ))
-                    } else {
-                        element
-                            .on_click(cx.listener({
-                                let id = *id;
-                                let body = body.clone();
-                                move |assistant_chat, event: &ClickEvent, cx| {
-                                    if event.up.click_count == 2 {
-                                        assistant_chat.editing_message = Some(EditingMessage {
-                                            id,
-                                            body: body.clone(),
-                                            old_body: body.read(cx).text(cx).into(),
-                                        });
-                                        body.focus_handle(cx).focus(cx);
-                                    }
-                                }
-                            }))
-                            .child(
-                                crate::ui::ChatMessage::new(
-                                    *id,
-                                    UserOrAssistant::User(self.user_store.read(cx).current_user()),
-                                    // todo!(): clean up the vec usage
-                                    vec![
-                                        RichText::new(
-                                            body.read(cx).text(cx),
-                                            &[],
-                                            &self.language_registry,
-                                        )
-                                        .element(ElementId::from(id.0), cx),
-                                        h_flex()
-                                            .gap_2()
-                                            .children(
-                                                attachments
-                                                    .iter()
-                                                    .map(|attachment| attachment.view.clone()),
-                                            )
-                                            .into_any_element(),
-                                    ],
-                                    self.is_message_collapsed(id),
-                                    Box::new(cx.listener({
-                                        let id = *id;
-                                        move |assistant_chat, _event, _cx| {
-                                            assistant_chat.toggle_message_collapsed(id)
-                                        }
-                                    })),
+                    if let Some(editing_message) = self.editing_message.as_ref() {
+                        if editing_message.id == *id {
+                            return element.child(Composer::new(
+                                editing_message.body.clone(),
+                                self.project_index_button.clone(),
+                                self.active_file_button.clone(),
+                                crate::ui::ModelSelector::new(
+                                    cx.view().downgrade(),
+                                    self.model.clone(),
                                 )
-                                // TODO: Wire up selections.
-                                .selected(is_last),
-                            )
+                                .into_any_element(),
+                            ));
+                        }
                     }
+
+                    element
+                        .on_click(cx.listener({
+                            let id = *id;
+                            let body = body.clone();
+                            move |assistant_chat, event: &ClickEvent, cx| {
+                                if event.up.click_count == 2 {
+                                    let body = cx.new_view(|cx| {
+                                        let mut editor = Editor::auto_height(80, cx);
+                                        let source = Arc::from(body.read(cx).source());
+                                        editor.set_text(source, cx);
+                                        editor.set_soft_wrap_mode(SoftWrap::EditorWidth, cx);
+                                        editor
+                                    });
+                                    assistant_chat.editing_message = Some(EditingMessage {
+                                        id,
+                                        body: body.clone(),
+                                    });
+                                    body.focus_handle(cx).focus(cx);
+                                }
+                            }
+                        }))
+                        .child(
+                            crate::ui::ChatMessage::new(
+                                *id,
+                                UserOrAssistant::User(self.user_store.read(cx).current_user()),
+                                // todo!(): clean up the vec usage
+                                vec![
+                                    body.clone().into_any_element(),
+                                    h_flex()
+                                        .gap_2()
+                                        .children(
+                                            attachments
+                                                .iter()
+                                                .map(|attachment| attachment.view.clone()),
+                                        )
+                                        .into_any_element(),
+                                ],
+                                self.is_message_collapsed(id),
+                                Box::new(cx.listener({
+                                    let id = *id;
+                                    move |assistant_chat, _event, _cx| {
+                                        assistant_chat.toggle_message_collapsed(id)
+                                    }
+                                })),
+                            )
+                            // TODO: Wire up selections.
+                            .selected(is_last),
+                        )
                 })
                 .into_any(),
             ChatMessage::Assistant(AssistantMessage {
@@ -952,7 +958,7 @@ impl AssistantChat {
 
                     // Show user's message last so that the assistant is grounded in the user's request
                     completion_messages.push(CompletionMessage::User {
-                        content: body.read(cx).text(cx),
+                        content: body.read(cx).source().to_string(),
                     });
                 }
                 ChatMessage::Assistant(AssistantMessage { messages, .. }) => {
@@ -1018,7 +1024,7 @@ impl AssistantChat {
         match message {
             ChatMessage::User(message) => SavedChatMessage::User {
                 id: message.id,
-                body: message.body.read(cx).text(cx),
+                body: message.body.read(cx).source().into(),
                 attachments: message
                     .attachments
                     .iter()
@@ -1134,7 +1140,7 @@ enum ChatMessage {
 impl ChatMessage {
     fn focus_handle(&self, cx: &AppContext) -> Option<FocusHandle> {
         match self {
-            ChatMessage::User(UserMessage { body, .. }) => Some(body.focus_handle(cx)),
+            ChatMessage::User(message) => Some(message.body.focus_handle(cx)),
             ChatMessage::Assistant(_) => None,
         }
     }
@@ -1142,7 +1148,7 @@ impl ChatMessage {
 
 struct UserMessage {
     pub id: MessageId,
-    pub body: View<Editor>,
+    pub body: View<Markdown>,
     pub attachments: Vec<UserAttachment>,
 }
 

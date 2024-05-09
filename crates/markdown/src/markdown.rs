@@ -69,6 +69,16 @@ impl Markdown {
         self.parse(cx);
     }
 
+    pub fn reset(&mut self, source: String, cx: &mut ViewContext<Self>) {
+        self.source = source;
+        self.selection = Selection::default();
+        self.autoscroll_request = None;
+        self.pending_parse = None;
+        self.should_reparse = false;
+        self.parsed_markdown = ParsedMarkdown::default();
+        self.parse(cx);
+    }
+
     pub fn source(&self) -> &str {
         &self.source
     }
