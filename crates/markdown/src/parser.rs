@@ -1,35 +1,80 @@
 use gpui::SharedString;
+use linkify::LinkFinder;
 pub use pulldown_cmark::TagEnd as MarkdownTagEnd;
 use pulldown_cmark::{Alignment, HeadingLevel, LinkType, MetadataBlockKind, Options, Parser};
 use std::ops::Range;
 
 pub fn parse_markdown(text: &str) -> Vec<(Range<usize>, MarkdownEvent)> {
-    Parser::new_ext(text, Options::all())
-        .into_offset_iter()
-        .map(|(pulldown_event, mut range)| {
-            let event = match pulldown_event {
-                pulldown_cmark::Event::Start(tag) => MarkdownEvent::Start(tag.into()),
-                pulldown_cmark::Event::End(tag) => MarkdownEvent::End(tag),
-                pulldown_cmark::Event::Text(_) => MarkdownEvent::Text,
-                pulldown_cmark::Event::Code(_) => {
-                    range.start += 1;
-                    range.end -= 1;
-                    MarkdownEvent::Code
+    let mut events = Vec::new();
+    let mut within_link = false;
+    for (pulldown_event, mut range) in Parser::new_ext(text, Options::all()).into_offset_iter() {
+        match pulldown_event {
+            pulldown_cmark::Event::Start(tag) => {
+                if let pulldown_cmark::Tag::Link { .. } = tag {
+                    within_link = true;
                 }
-                pulldown_cmark::Event::Html(_) => MarkdownEvent::Html,
-                pulldown_cmark::Event::InlineHtml(_) => MarkdownEvent::InlineHtml,
-                pulldown_cmark::Event::FootnoteReference(_) => MarkdownEvent::FootnoteReference,
-                pulldown_cmark::Event::SoftBreak => MarkdownEvent::SoftBreak,
-                pulldown_cmark::Event::HardBreak => MarkdownEvent::HardBreak,
-                pulldown_cmark::Event::Rule => MarkdownEvent::Rule,
-                pulldown_cmark::Event::TaskListMarker(checked) => {
-                    MarkdownEvent::TaskListMarker(checked)
+                events.push((range, MarkdownEvent::Start(tag.into())))
+            }
+            pulldown_cmark::Event::End(tag) => {
+                if let pulldown_cmark::TagEnd::Link = tag {
+                    within_link = false;
                 }
-            };
+                events.push((range, MarkdownEvent::End(tag)));
+            }
+            pulldown_cmark::Event::Text(_) => {
+                // Automatically detect links in text if we're not already within a markdown
+                // link.
+                if !within_link {
+                    let mut finder = LinkFinder::new();
+                    finder.kinds(&[linkify::LinkKind::Url]);
+                    let text_range = range.clone();
+                    for link in finder.links(&text[text_range.clone()]) {
+                        let link_range =
+                            text_range.start + link.start()..text_range.start + link.end();
 
-            (range, event)
-        })
-        .collect()
+                        if link_range.start > range.start {
+                            events.push((range.start..link_range.start, MarkdownEvent::Text));
+                        }
+
+                        events.push((
+                            link_range.clone(),
+                            MarkdownEvent::Start(MarkdownTag::Link {
+                                link_type: LinkType::Autolink,
+                                dest_url: SharedString::from(link.as_str().to_string()),
+                                title: SharedString::default(),
+                                id: SharedString::default(),
+                            }),
+                        ));
+                        events.push((link_range.clone(), MarkdownEvent::Text));
+                        events.push((link_range.clone(), MarkdownEvent::End(MarkdownTagEnd::Link)));
+
+                        range.start = link_range.end;
+                    }
+                }
+
+                if range.start < range.end {
+                    events.push((range, MarkdownEvent::Text));
+                }
+            }
+            pulldown_cmark::Event::Code(_) => {
+                range.start += 1;
+                range.end -= 1;
+                events.push((range, MarkdownEvent::Code))
+            }
+            pulldown_cmark::Event::Html(_) => events.push((range, MarkdownEvent::Html)),
+            pulldown_cmark::Event::InlineHtml(_) => events.push((range, MarkdownEvent::InlineHtml)),
+            pulldown_cmark::Event::FootnoteReference(_) => {
+                events.push((range, MarkdownEvent::FootnoteReference))
+            }
+            pulldown_cmark::Event::SoftBreak => events.push((range, MarkdownEvent::SoftBreak)),
+            pulldown_cmark::Event::HardBreak => events.push((range, MarkdownEvent::HardBreak)),
+            pulldown_cmark::Event::Rule => events.push((range, MarkdownEvent::Rule)),
+            pulldown_cmark::Event::TaskListMarker(checked) => {
+                events.push((range, MarkdownEvent::TaskListMarker(checked)))
+            }
+        }
+    }
+    events
 }
 
 /// A static-lifetime equivalent of pulldown_cmark::Event so we can cache the

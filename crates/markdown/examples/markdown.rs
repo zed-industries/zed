@@ -38,7 +38,9 @@ Ordered lists use numbers followed by a period.
    2. Item 3b
 
 ## Links
-Links are created using the format [zed.dev](https://zed.dev).
+Links are created using the format [http://zed.dev](https://zed.dev).
+
+They can also be detected automatically, for example https://zed.dev/blog.
 
 ## Images
 Images are like links, but with an exclamation mark `!` in front.
