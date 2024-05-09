@@ -52,11 +52,7 @@ fn open_recently_changed(
         });
 
         cx.spawn(|this, cx| async move {
-            let recent_paths =
-
-
-
+            // let recent_paths =
         })
-
     }
 }
