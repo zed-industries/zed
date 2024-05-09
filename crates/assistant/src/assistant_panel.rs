@@ -887,22 +887,45 @@ impl AssistantPanel {
             .tooltip(|cx| Tooltip::text("Conversation History", cx))
     }
 
-    fn render_editor_tools(&self, cx: &mut ViewContext<Self>) -> Vec<AnyElement> {
+    fn render_auto_context_toggles(&self, cx: &mut ViewContext<Self>) -> Vec<IconButton> {
         if self.active_conversation_editor().is_some() {
             vec![
-                // IconButton::new("include_file", IconName::File)
-                //     .icon_size(IconSize::Small)
-                //     .tooltip(|cx| Tooltip::for_action("Split Message", &Split, cx)),
-                // IconButton::new("split_button", IconName::Snip)
-                //     .icon_size(IconSize::Small)
-                //     .tooltip(|cx| Tooltip::for_action("Split Message", &Split, cx)),
-                // IconButton::new("split_button", IconName::Snip)
-                //     .icon_size(IconSize::Small)
-                //     .tooltip(|cx| Tooltip::for_action("Split Message", &Split, cx)),
+                IconButton::new("include_file", IconName::File)
+                    .icon_size(IconSize::Small)
+                    .tooltip(|cx| Tooltip::text("Include Open Files", cx)),
+                IconButton::new("include_terminal", IconName::Terminal)
+                    .icon_size(IconSize::Small)
+                    .disabled(true)
+                    .tooltip(|cx| Tooltip::text("Include Terminal", cx)),
+                IconButton::new("include_edit_history", IconName::FileGit)
+                    .icon_size(IconSize::Small)
+                    .tooltip(|cx| Tooltip::text("Include Edit History", cx)),
+                IconButton::new("include_file_trees", IconName::FileTree)
+                    .icon_size(IconSize::Small)
+                    .disabled(true)
+                    .tooltip(|cx| Tooltip::text("Include File Trees", cx)),
             ]
         } else {
             Default::default()
         }
+    }
+
+    fn render_context_injector_buttons(&self, cx: &mut ViewContext<Self>) -> Vec<IconButton> {
+        // Right - Inject context:
+        //     - Search
+        //     - Documentation - Built in for the current language or enter a URL
+        //     - Quote selection
+        vec![
+            IconButton::new("search", IconName::MagnifyingGlass)
+                .icon_size(IconSize::Small)
+                .tooltip(|cx| Tooltip::text("Include Search Results", cx)),
+            IconButton::new("documentation", IconName::FileDoc)
+                .icon_size(IconSize::Small)
+                .tooltip(|cx| Tooltip::text("Include Documentation", cx)),
+            IconButton::new("quote_selection", IconName::Quote)
+                .icon_size(IconSize::Small)
+                .tooltip(|cx| Tooltip::text("Quote Selection", cx)),
+        ]
     }
 
     fn render_split_button(cx: &mut ViewContext<Self>) -> impl IntoElement {
@@ -1039,6 +1062,11 @@ impl AssistantPanel {
                 h_flex()
                     .gap_1()
                     .child(
+                        IconButton::new("zoom", IconName::Maximize)
+                            .icon_size(IconSize::XSmall)
+                            .tooltip(|cx| Tooltip::text("Zoom Panel", cx)),
+                    )
+                    .child(
                         IconButton::new("new_conversation", IconName::Plus)
                             .tooltip(|cx| Tooltip::text("New Context", cx)),
                     )
@@ -1060,18 +1088,21 @@ impl AssistantPanel {
                     h_flex()
                         .gap_2()
                         .when(self.active_conversation_editor().is_some(), |this| {
-                            this.child(h_flex().gap_1().children(self.render_editor_tools(cx)))
-                                .child(
-                                    ui::Divider::vertical()
-                                        .inset()
-                                        .color(ui::DividerColor::Border),
-                                )
+                            this.child(
+                                h_flex()
+                                    .gap_1()
+                                    .children(self.render_auto_context_toggles(cx)),
+                            )
+                            .child(
+                                ui::Divider::vertical()
+                                    .inset()
+                                    .color(ui::DividerColor::Border),
+                            )
                         })
                         .child(
                             h_flex()
                                 .gap_1()
-                                .child(Self::render_plus_button(cx))
-                                .child(self.render_zoom_button(cx)),
+                                .children(self.render_context_injector_buttons(cx)),
                         ),
                 )
             });
