@@ -11,8 +11,7 @@ use crate::ui::UserOrAssistant;
 use ::ui::{div, prelude::*, Color, Tooltip, ViewContext};
 use anyhow::{Context, Result};
 use assistant_tooling::{
-    tool_running_placeholder, AttachmentRegistry, ProjectContext, ToolFunctionCall, ToolRegistry,
-    UserAttachment,
+    AttachmentRegistry, ProjectContext, ToolFunctionCall, ToolRegistry, UserAttachment,
 };
 use attachments::ActiveEditorAttachmentTool;
 use client::{proto, Client, UserStore};
@@ -130,16 +129,13 @@ impl AssistantPanel {
 
                 let mut tool_registry = ToolRegistry::new();
                 tool_registry
-                    .register(ProjectIndexTool::new(project_index.clone()), cx)
+                    .register(ProjectIndexTool::new(project_index.clone()))
                     .unwrap();
                 tool_registry
-                    .register(
-                        CreateBufferTool::new(workspace.clone(), project.clone()),
-                        cx,
-                    )
+                    .register(CreateBufferTool::new(workspace.clone(), project.clone()))
                     .unwrap();
                 tool_registry
-                    .register(AnnotationTool::new(workspace.clone(), project.clone()), cx)
+                    .register(AnnotationTool::new(workspace.clone(), project.clone()))
                     .unwrap();
 
                 let mut attachment_registry = AttachmentRegistry::new();
@@ -588,9 +584,9 @@ impl AssistantChat {
                         cx.notify();
                     } else {
                         if let Some(current_message) = messages.last_mut() {
-                            for tool_call in current_message.tool_calls.iter() {
+                            for tool_call in current_message.tool_calls.iter_mut() {
                                 tool_tasks
-                                    .extend(this.tool_registry.execute_tool_call(&tool_call, cx));
+                                    .extend(this.tool_registry.execute_tool_call(tool_call, cx));
                             }
                         }
                     }
@@ -847,7 +843,7 @@ impl AssistantChat {
                     let tools = message
                         .tool_calls
                         .iter()
-                        .map(|tool_call| self.tool_registry.render_tool_call(tool_call, cx))
+                        .filter_map(|tool_call| self.tool_registry.render_tool_call(tool_call, cx))
                         .collect::<Vec<AnyElement>>();
 
                     if !tools.is_empty() {
@@ -856,7 +852,7 @@ impl AssistantChat {
                 }
 
                 if message_elements.is_empty() {
-                    message_elements.push(tool_running_placeholder());
+                    message_elements.push(::ui::Label::new("Researching...").into_any_element())
                 }
 
                 div()
