@@ -890,9 +890,15 @@ impl AssistantPanel {
     fn render_editor_tools(&self, cx: &mut ViewContext<Self>) -> Vec<AnyElement> {
         if self.active_conversation_editor().is_some() {
             vec![
-                Self::render_split_button(cx).into_any_element(),
-                Self::render_quote_button(cx).into_any_element(),
-                Self::render_assist_button(cx).into_any_element(),
+                // IconButton::new("include_file", IconName::File)
+                //     .icon_size(IconSize::Small)
+                //     .tooltip(|cx| Tooltip::for_action("Split Message", &Split, cx)),
+                // IconButton::new("split_button", IconName::Snip)
+                //     .icon_size(IconSize::Small)
+                //     .tooltip(|cx| Tooltip::for_action("Split Message", &Split, cx)),
+                // IconButton::new("split_button", IconName::Snip)
+                //     .icon_size(IconSize::Small)
+                //     .tooltip(|cx| Tooltip::for_action("Split Message", &Split, cx)),
             ]
         } else {
             Default::default()
@@ -937,12 +943,12 @@ impl AssistantPanel {
     }
 
     fn render_plus_button(cx: &mut ViewContext<Self>) -> impl IntoElement {
-        IconButton::new("plus_button", IconName::Plus)
+        IconButton::new("plus_button", IconName::Quote)
             .on_click(cx.listener(|this, _event, cx| {
                 this.new_conversation(cx);
             }))
             .icon_size(IconSize::Small)
-            .tooltip(|cx| Tooltip::for_action("New Conversation", &NewConversation, cx))
+            .tooltip(|cx| Tooltip::for_action("Add Context", &NewConversation, cx))
     }
 
     fn render_zoom_button(&self, cx: &mut ViewContext<Self>) -> impl IntoElement {
@@ -1030,7 +1036,17 @@ impl AssistantPanel {
     fn render_signed_in(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         let header = TabBar::new("assistant_header")
             .start_child(
-                h_flex().gap_1().child(Self::render_hamburger_button(cx)), // .children(title),
+                h_flex()
+                    .gap_1()
+                    .child(
+                        IconButton::new("new_conversation", IconName::Plus)
+                            .tooltip(|cx| Tooltip::text("New Context", cx)),
+                    )
+                    .child(
+                        IconButton::new("conversation_history", IconName::CountdownTimer)
+                            .icon_size(IconSize::XSmall)
+                            .tooltip(|cx| Tooltip::text("Context History", cx)),
+                    ),
             )
             .children(self.active_conversation_editor().map(|editor| {
                 h_flex()
