@@ -3,7 +3,9 @@ use std::{ops::Range, sync::Arc};
 use collections::HashSet;
 use editor::{
     display_map::{DisplaySnapshot, ToDisplayPoint},
-    movement, Anchor, Bias, DisplayPoint,
+    movement,
+    scroll::Autoscroll,
+    Anchor, Bias, DisplayPoint,
 };
 use gpui::WindowContext;
 use language::SelectionGoal;
@@ -24,7 +26,6 @@ pub fn create_mark(vim: &mut Vim, text: Arc<str>, tail: bool, cx: &mut WindowCon
     }) else {
         return;
     };
-
     vim.update_state(|state| state.marks.insert(text.to_string(), anchors));
     vim.clear_operator(cx);
 }
@@ -123,7 +124,9 @@ pub fn jump(text: Arc<str>, line: bool, cx: &mut WindowContext) {
                     }
                     ranges.insert(anchor..anchor);
                 }
-                editor.change_selections(None, cx, |s| s.select_anchor_ranges(ranges))
+                editor.change_selections(Some(Autoscroll::fit()), cx, |s| {
+                    s.select_anchor_ranges(ranges)
+                })
             });
         })
     }
