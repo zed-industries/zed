@@ -9,10 +9,8 @@ use std::{
     any::TypeId,
     collections::HashMap,
     fmt::Display,
-    sync::{
-        atomic::{AtomicBool, Ordering::SeqCst},
-        Arc,
-    },
+    mem,
+    sync::atomic::{AtomicBool, Ordering::SeqCst},
 };
 use ui::ViewContext;
 
@@ -48,14 +46,14 @@ trait ToolView {
 
 #[derive(Default, Serialize, Deserialize)]
 pub struct SavedToolFunctionCall {
-    pub id: String,
-    pub name: String,
-    pub arguments: String,
-    pub state: SavedToolFunctionCallState,
+    id: String,
+    name: String,
+    arguments: String,
+    state: SavedToolFunctionCallState,
 }
 
 #[derive(Default, Serialize, Deserialize)]
-pub enum SavedToolFunctionCallState {
+enum SavedToolFunctionCallState {
     #[default]
     Initializing,
     NoSuchTool,
@@ -63,7 +61,7 @@ pub enum SavedToolFunctionCallState {
     ExecutedTool(Box<RawValue>),
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct ToolFunctionDefinition {
     pub name: String,
     pub description: String,
@@ -191,11 +189,13 @@ impl ToolRegistry {
 
     pub fn execute_tool_call(
         &self,
-        tool_call: &ToolFunctionCall,
+        tool_call: &mut ToolFunctionCall,
         cx: &mut WindowContext,
     ) -> Option<Task<Result<()>>> {
-        if let ToolFunctionCallState::KnownTool(view) = &tool_call.state {
-            Some(view.execute(cx))
+        if let ToolFunctionCallState::KnownTool(view) = mem::take(&mut tool_call.state) {
+            let task = view.execute(cx);
+            tool_call.state = ToolFunctionCallState::ExecutedTool(view);
+            Some(task)
         } else {
             None
         }
@@ -286,13 +286,8 @@ impl ToolRegistry {
         })
     }
 
-    pub fn register<T: 'static + LanguageModelTool>(
-        &mut self,
-        tool: T,
-        _cx: &mut WindowContext,
-    ) -> Result<()> {
+    pub fn register<T: 'static + LanguageModelTool>(&mut self, tool: T) -> Result<()> {
         let name = tool.name();
-        let tool = Arc::new(tool);
         let registered_tool = RegisteredTool {
             type_id: TypeId::of::<T>(),
             definition: tool.definition(),
@@ -358,7 +353,6 @@ mod test {
     use super::*;
     use gpui::{div, prelude::*, Render, TestAppContext};
     use gpui::{EmptyView, View};
-    use schemars::schema_for;
     use schemars::JsonSchema;
     use serde::{Deserialize, Serialize};
     use serde_json::json;
@@ -469,57 +463,64 @@ mod test {
 
     #[gpui::test]
     async fn test_openai_weather_example(cx: &mut TestAppContext) {
-        cx.background_executor.run_until_parked();
         let (_, cx) = cx.add_window_view(|_cx| EmptyView);
 
-        let tool = WeatherTool {
-            current_weather: WeatherResult {
-                location: "San Francisco".to_string(),
-                temperature: 21.0,
-                unit: "Celsius".to_string(),
-            },
-        };
-
-        let tools = vec![tool.definition()];
-        assert_eq!(tools.len(), 1);
-
-        let expected = ToolFunctionDefinition {
-            name: "get_current_weather".to_string(),
-            description: "Fetches the current weather for a given location.".to_string(),
-            parameters: schema_for!(WeatherQuery),
-        };
-
-        assert_eq!(tools[0].name, expected.name);
-        assert_eq!(tools[0].description, expected.description);
-
-        let expected_schema = serde_json::to_value(&tools[0].parameters).unwrap();
-
-        assert_eq!(
-            expected_schema,
-            json!({
-                "$schema": "http://json-schema.org/draft-07/schema#",
-                "title": "WeatherQuery",
-                "type": "object",
-                "properties": {
-                    "location": {
-                        "type": "string"
-                    },
-                    "unit": {
-                        "type": "string"
-                    }
+        let mut registry = ToolRegistry::new();
+        registry
+            .register(WeatherTool {
+                current_weather: WeatherResult {
+                    location: "San Francisco".to_string(),
+                    temperature: 21.0,
+                    unit: "Celsius".to_string(),
                 },
-                "required": ["location", "unit"]
             })
+            .unwrap();
+
+        let definitions = registry.definitions();
+        assert_eq!(
+            definitions,
+            [ToolFunctionDefinition {
+                name: "get_current_weather".to_string(),
+                description: "Fetches the current weather for a given location.".to_string(),
+                parameters: serde_json::from_value(json!({
+                    "$schema": "http://json-schema.org/draft-07/schema#",
+                    "title": "WeatherQuery",
+                    "type": "object",
+                    "properties": {
+                        "location": {
+                            "type": "string"
+                        },
+                        "unit": {
+                            "type": "string"
+                        }
+                    },
+                    "required": ["location", "unit"]
+                }))
+                .unwrap(),
+            }]
         );
 
-        let view = cx.update(|cx| tool.view(cx));
+        let mut call = ToolFunctionCall {
+            id: "the-id".to_string(),
+            name: "get_cur".to_string(),
+            ..Default::default()
+        };
 
-        cx.update(|cx| {
-            view.try_set_input(&r#"{"location": "San Francisco", "unit": "Celsius"}"#, cx);
+        let task = cx.update(|cx| {
+            registry.update_tool_call(
+                &mut call,
+                Some("rent_weather"),
+                Some(r#"{"location": "San Francisco","#),
+                cx,
+            );
+            registry.update_tool_call(&mut call, None, Some(r#" "unit": "Celsius"}"#), cx);
+            registry.execute_tool_call(&mut call, cx).unwrap()
         });
+        task.await.unwrap();
 
-        let finished = cx.update(|cx| view.execute(cx)).await;
-
-        assert!(finished.is_ok());
+        match &call.state {
+            ToolFunctionCallState::ExecutedTool(_view) => {}
+            _ => panic!(),
+        }
     }
 }
