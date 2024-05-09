@@ -438,11 +438,7 @@ mod test {
             cx.notify();
         }
 
-        fn execute(
-            &mut self,
-            // input: &Self::Input,
-            _cx: &mut ViewContext<Self>,
-        ) -> Task<Result<()>> {
+        fn execute(&mut self, _cx: &mut ViewContext<Self>) -> Task<Result<()>> {
             let input = self.input.as_ref().unwrap();
 
             let _location = input.location.clone();
@@ -535,14 +531,14 @@ mod test {
             "unit": "Celsius"
         });
 
-        let _query: WeatherQuery = serde_json::from_value(args).unwrap();
-
         let view = cx.update(|cx| tool.view(cx));
+
+        cx.update(|cx| {
+            view.set_input(&r#"{"location": "San Francisco", "unit": "Celsius"}"#, cx);
+        });
 
         let finished = cx.update(|cx| view.execute(cx)).await;
 
         assert!(finished.is_ok());
-
-        // let result = cx.update(|cx| view.generate(project, cx));
     }
 }
