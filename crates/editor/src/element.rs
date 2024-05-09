@@ -1407,12 +1407,16 @@ impl EditorElement {
             editor
                 .tasks
                 .iter()
-                .map(|((_, row), (multibuffer_offset, _))| {
+                .filter_map(|((_, row), (multibuffer_offset, _))| {
+                    if snapshot.is_line_folded(*row) {
+                        return None;
+                    }
                     let display_row = snapshot
                         .buffer_snapshot
                         .offset_to_point(*multibuffer_offset)
                         .to_display_point(&snapshot.display_snapshot)
                         .row();
+
                     let button = editor.render_run_indicator(
                         &self.style,
                         Some(*row) == active_task_indicator_row,
@@ -1429,7 +1433,7 @@ impl EditorElement {
                         gutter_hitbox,
                         cx,
                     );
-                    button
+                    Some(button)
                 })
                 .collect_vec()
         })
@@ -3664,7 +3668,7 @@ impl Element for EditorElement {
                     let mut style = Style::default();
                     style.size.width = relative(1.).into();
                     style.size.height = self.style.text.line_height_in_pixels(rem_size).into();
-                    cx.request_layout(&style, None)
+                    cx.request_layout(style, None)
                 }
                 EditorMode::AutoHeight { max_lines } => {
                     let editor_handle = cx.view().clone();
@@ -3688,7 +3692,7 @@ impl Element for EditorElement {
                     let mut style = Style::default();
                     style.size.width = relative(1.).into();
                     style.size.height = relative(1.).into();
-                    cx.request_layout(&style, None)
+                    cx.request_layout(style, None)
                 }
             };
 

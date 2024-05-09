@@ -51,7 +51,7 @@ impl Element for Svg {
     ) -> (LayoutId, Self::RequestLayoutState) {
         let layout_id = self
             .interactivity
-            .request_layout(global_id, cx, |style, cx| cx.request_layout(&style, None));
+            .request_layout(global_id, cx, |style, cx| cx.request_layout(style, None));
         (layout_id, ())
     }
 
