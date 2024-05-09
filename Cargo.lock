@@ -817,6 +817,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "async_zip"
+version = "0.0.17"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "00b9f7252833d5ed4b00aa9604b563529dd5e11de9c23615de2dcdf91eb87b52"
+dependencies = [
+ "async-compression",
+ "crc32fast",
+ "futures-lite 2.2.0",
+ "pin-project",
+ "thiserror",
+]
+
+[[package]]
 name = "atoi"
 version = "2.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6363,6 +6376,7 @@ dependencies = [
  "async-compression",
  "async-tar",
  "async-trait",
+ "async_zip",
  "futures 0.3.28",
  "log",
  "semver",

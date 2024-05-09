@@ -1,12 +1,16 @@
 use anyhow::{anyhow, bail, Context, Result};
 use async_compression::futures::bufread::GzipDecoder;
 use async_tar::Archive;
-use futures::AsyncReadExt;
+use async_zip::base::read::stream::ZipFileReader;
+use async_zip::ZipString;
+use futures::{AsyncBufRead, AsyncReadExt};
 use semver::Version;
 use serde::Deserialize;
+use smol::io;
 use smol::{fs, io::BufReader, lock::Mutex, process::Command};
-use std::io;
-use std::process::{Output, Stdio};
+use std::ffi::{OsStr, OsString};
+use std::process::Output;
+use std::str::from_utf8;
 use std::{
     env::consts,
     path::{Path, PathBuf},
@@ -99,60 +103,195 @@ impl RealNodeRuntime {
         })
     }
 
+    fn get_node_bin(node_dir: &Path) -> PathBuf {
+        if consts::OS != "windows" {
+            node_dir.join("bin")
+        } else {
+            node_dir.to_path_buf()
+        }
+    }
+
+    fn get_node_executable(node_dir: &Path) -> PathBuf {
+        Self::get_node_bin(node_dir).join(if consts::OS != "windows" {
+            "node"
+        } else {
+            "node.exe"
+        })
+    }
+
+    fn get_npm_executable(node_dir: &Path) -> PathBuf {
+        Self::get_node_bin(node_dir).join(if consts::OS != "windows" {
+            "npm"
+        } else {
+            "npm.cmd"
+        })
+    }
+
+    fn get_node_env_path(node_dir: &Path) -> OsString {
+        let mut env_path = Self::get_node_bin(node_dir).into_os_string();
+
+        if let Some(existing_path) = std::env::var_os("PATH") {
+            if !existing_path.is_empty() {
+                env_path.push(if consts::OS != "windows" { ":" } else { ";" });
+                env_path.push(existing_path);
+            }
+        }
+
+        env_path
+    }
+
+    fn create_command(node_dir: &Path, program: impl AsRef<OsStr>) -> Command {
+        let mut command = Command::new(program);
+        command.env_clear();
+        command.env("PATH", Self::get_node_env_path(node_dir));
+        command
+    }
+
+    fn create_node_command(node_dir: &Path) -> Command {
+        Self::create_command(node_dir, Self::get_node_executable(node_dir))
+    }
+
+    fn create_npm_command(node_dir: &Path) -> Command {
+        let mut command = if consts::OS != "windows" {
+            let mut command = Self::create_command(node_dir, Self::get_node_executable(node_dir));
+            command.arg(Self::get_npm_executable(node_dir));
+            command
+        } else {
+            Self::create_command(node_dir, Self::get_npm_executable(node_dir))
+        };
+
+        command
+            .arg("--cache")
+            .arg(node_dir.join("cache"))
+            .arg("--userconfig")
+            .arg(node_dir.join("blank_user_npmrc"))
+            .arg("--globalconfig")
+            .arg(node_dir.join("blank_global_npmrc"));
+
+        command
+    }
+
     async fn install_if_needed(&self) -> Result<PathBuf> {
         let _lock = self.installation_lock.lock().await;
-        log::info!("Node runtime install_if_needed");
+        log::info!("checking if Node is installed...");
 
         let os = match consts::OS {
             "macos" => "darwin",
             "linux" => "linux",
             "windows" => "win",
-            other => bail!("Running on unsupported os: {other}"),
+            other => bail!("unsupported operating system: {other}"),
         };
 
         let arch = match consts::ARCH {
             "x86_64" => "x64",
             "aarch64" => "arm64",
-            other => bail!("Running on unsupported architecture: {other}"),
+            other => bail!("unsupported CPU architecture: {other}"),
         };
 
-        let folder_name = format!("node-{VERSION}-{os}-{arch}");
-        let node_containing_dir = util::paths::SUPPORT_DIR.join("node");
-        let node_dir = node_containing_dir.join(folder_name);
-        let node_binary = node_dir.join("bin/node");
-        let npm_file = node_dir.join("bin/npm");
+        let nodes_dir = util::paths::SUPPORT_DIR.join("node");
+        let node_dir = nodes_dir.join(format!("node-{VERSION}-{os}-{arch}"));
+        log::info!("node directory: {}", node_dir.display());
 
-        let result = Command::new(&node_binary)
-            .env_clear()
-            .arg(npm_file)
+        let node_valid = match Self::create_node_command(&node_dir)
             .arg("--version")
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .args(["--cache".into(), node_dir.join("cache")])
-            .args(["--userconfig".into(), node_dir.join("blank_user_npmrc")])
-            .args(["--globalconfig".into(), node_dir.join("blank_global_npmrc")])
-            .status()
-            .await;
-        let valid = matches!(result, Ok(status) if status.success());
+            .output()
+            .await
+        {
+            Ok(output) => {
+                if output.status.success() {
+                    match from_utf8(&output.stdout).ok() {
+                        Some(version) => {
+                            log::info!("`node --version`: {}", version.trim());
+                            true
+                        }
+                        None => {
+                            log::warn!("`node --version` succeeded, but returned invalid UTF-8");
+                            false
+                        }
+                    }
+                } else {
+                    log::warn!("node returned non-zero exit code: {}", output.status);
+                    false
+                }
+            }
 
-        if !valid {
-            _ = fs::remove_dir_all(&node_containing_dir).await;
-            fs::create_dir(&node_containing_dir)
+            Err(error) => {
+                log::warn!("failed to execute node subprocess: {}", error);
+                false
+            }
+        };
+
+        let npm_valid = match Self::create_npm_command(&node_dir)
+            .arg("--version")
+            .output()
+            .await
+        {
+            Ok(output) => {
+                if output.status.success() {
+                    match from_utf8(&output.stdout).ok() {
+                        Some(version) => {
+                            log::info!("`npm --version`: {}", version.trim());
+                            true
+                        }
+                        None => {
+                            log::warn!("`npm --version` succeeded, but returned invalid UTF-8");
+                            false
+                        }
+                    }
+                } else {
+                    log::warn!("npm returned non-zero exit code: {}", output.status);
+                    false
+                }
+            }
+
+            Err(error) => {
+                log::warn!("failed to execute npm subprocess: {}", error);
+                false
+            }
+        };
+
+        if !node_valid || !npm_valid {
+            log::info!("maybe node needs a reinstall...");
+
+            // nuke from orbit and reinstall
+            _ = fs::remove_dir_all(&nodes_dir).await;
+
+            fs::create_dir(&nodes_dir)
                 .await
-                .context("error creating node containing dir")?;
+                .context("creating node versions directory")?;
 
-            let file_name = format!("node-{VERSION}-{os}-{arch}.tar.gz");
-            let url = format!("https://nodejs.org/dist/{VERSION}/{file_name}");
-            let mut response = self
+            let is_windows = os == "win";
+            let archive_is_zip = is_windows;
+            let archive_ext = if is_windows { ".zip" } else { ".tar.gz" };
+            let archive_name = format!("node-{VERSION}-{os}-{arch}{archive_ext}");
+            let archive_url = format!("https://nodejs.org/dist/{VERSION}/{archive_name}");
+            log::info!("fetching node distribution from {}", archive_url);
+
+            let stream = self
                 .http
-                .get(&url, Default::default(), true)
+                .get(&archive_url, Default::default(), true)
                 .await
-                .context("error downloading Node binary tarball")?;
+                .context("fetching node distribution")?
+                .into_body();
 
-            let decompressed_bytes = GzipDecoder::new(BufReader::new(response.body_mut()));
-            let archive = Archive::new(decompressed_bytes);
-            archive.unpack(&node_containing_dir).await?;
+            log::info!(
+                "extracting node distribution {} to {}",
+                archive_name,
+                nodes_dir.display()
+            );
+
+            if !archive_is_zip {
+                let decompressed_bytes = GzipDecoder::new(BufReader::new(stream));
+                let archive = Archive::new(decompressed_bytes);
+                archive
+                    .unpack(&nodes_dir)
+                    .await
+                    .context("extracting node distribution tar archive")?;
+            } else {
+                Self::extract_zip_stream_to_directory(BufReader::new(stream), &nodes_dir)
+                    .await
+                    .context("extracting node distribution zip archive")?;
+            }
         }
 
         // Note: Not in the `if !valid {}` so we can populate these for existing installations
@@ -162,13 +301,138 @@ impl RealNodeRuntime {
 
         anyhow::Ok(node_dir)
     }
+
+    fn resolve_zip_path(path: &ZipString, base: &mut PathBuf) -> Result<usize> {
+        const WINDOWS_ILLEGAL_CHARS: &[char] = &['<', '>', ':', '"', '|', '?', '*'];
+        const WINDOWS_ILLEGAL_NAMES: &[&str] = &[
+            "CON", "PRN", "AUX", "NUL", "COM1", "COM2", "COM3", "COM4", "COM5", "COM6", "COM7",
+            "COM8", "COM9", "LPT1", "LPT2", "LPT3", "LPT4", "LPT5", "LPT6", "LPT7", "LPT8", "LPT9",
+        ];
+
+        let path = path
+            .as_str()
+            .ok()
+            .or_else(|| from_utf8(path.as_bytes()).ok())
+            .context("encountered non-UTF-8 path")?;
+
+        let mut depth = 0usize;
+
+        for component in path.split(&['/', '\\']) {
+            match component {
+                "" | "." => {}
+
+                ".." => {
+                    if depth > 0 {
+                        depth -= 1;
+                        base.pop();
+                    }
+                }
+
+                component => {
+                    depth = depth
+                        .checked_add(1)
+                        .ok_or(anyhow!("path is too long: {}", path))?;
+
+                    for illegal in WINDOWS_ILLEGAL_NAMES.into_iter() {
+                        if component.eq_ignore_ascii_case(illegal) {
+                            bail!("path contains illegal component {}: {}", illegal, path);
+                        }
+                    }
+
+                    base.push(component.replace(WINDOWS_ILLEGAL_CHARS, "_"));
+                }
+            }
+        }
+
+        Ok(depth)
+    }
+
+    async fn extract_zip_stream_to_directory(
+        stream: impl AsyncBufRead + Unpin,
+        destination: &Path,
+    ) -> Result<()> {
+        let destination = destination
+            .to_owned()
+            .canonicalize()
+            .context("resolving destination directory")?;
+
+        let mut stream = ZipFileReader::new(stream);
+
+        while let Some(mut file_reader) = stream
+            .next_with_entry()
+            .await
+            .context("reading zip stream")?
+        {
+            let entry_reader = file_reader.reader_mut();
+            let entry = entry_reader.entry();
+
+            let mut path = destination.clone();
+            let depth = Self::resolve_zip_path(entry.filename(), &mut path)
+                .context("resolving item path")?;
+
+            if entry
+                .dir()
+                .context(anyhow!("checking if item is directory: {}", path.display()))?
+            {
+                log::info!("creating directory from zip archive: {}", path.display());
+                fs::DirBuilder::new()
+                    .recursive(true)
+                    .create(&path)
+                    .await
+                    .context(anyhow!("creating directory item: {}", path.display()))?;
+                stream = file_reader.skip().await.context("reading zip archive")?;
+            } else {
+                if depth < 1 {
+                    stream = file_reader.skip().await?;
+                } else {
+                    log::info!("extracting file from zip archive: {}", path.display());
+
+                    if let Some(parent) = (depth > 1).then(|| path.parent()).flatten() {
+                        fs::DirBuilder::new()
+                            .recursive(true)
+                            .create(parent)
+                            .await
+                            .context(anyhow!(
+                                "creating parent directories: {}",
+                                parent.display()
+                            ))?;
+                    }
+
+                    match fs::OpenOptions::new()
+                        .create_new(true)
+                        .write(true)
+                        .open(&path)
+                        .await
+                    {
+                        Err(e) if e.kind() == io::ErrorKind::AlreadyExists => {
+                            log::info!("destination file already exists, skipping");
+                            stream = file_reader.skip().await.context("reading zip archive")?;
+                        }
+
+                        result => {
+                            let mut file = result
+                                .context(anyhow!("creating file item: {}", path.display()))?;
+
+                            io::copy(entry_reader, &mut file)
+                                .await
+                                .context(anyhow!("writing file content: {}", path.display()))?;
+
+                            stream = file_reader.done().await.context("reading zip archive")?;
+                        }
+                    };
+                }
+            }
+        }
+
+        Ok(())
+    }
 }
 
 #[async_trait::async_trait]
 impl NodeRuntime for RealNodeRuntime {
     async fn binary_path(&self) -> Result<PathBuf> {
-        let installation_path = self.install_if_needed().await?;
-        Ok(installation_path.join("bin/node"))
+        let node_dir = self.install_if_needed().await?;
+        Ok(Self::get_node_executable(&node_dir))
     }
 
     async fn run_npm_subcommand(
@@ -178,71 +442,71 @@ impl NodeRuntime for RealNodeRuntime {
         args: &[&str],
     ) -> Result<Output> {
         let attempt = || async move {
-            let installation_path = self.install_if_needed().await?;
+            let node_dir = self
+                .install_if_needed()
+                .await
+                .context("install node if needed")?;
 
-            let mut env_path = installation_path.join("bin").into_os_string();
-            if let Some(existing_path) = std::env::var_os("PATH") {
-                if !existing_path.is_empty() {
-                    env_path.push(":");
-                    env_path.push(&existing_path);
-                }
+            let node_executable = Self::get_node_executable(&node_dir);
+            let npm_executable = Self::get_npm_executable(&node_dir);
+
+            if let Err(e) = smol::fs::metadata(&node_executable).await {
+                return Err(
+                    anyhow!("missing node executable: {}", node_executable.display()).context(e),
+                );
             }
 
-            let node_binary = installation_path.join("bin/node");
-            let npm_file = installation_path.join("bin/npm");
-
-            if smol::fs::metadata(&node_binary).await.is_err() {
-                return Err(anyhow!("missing node binary file"));
+            if let Err(e) = smol::fs::metadata(&npm_executable).await {
+                return Err(
+                    anyhow!("missing npm executable: {}", npm_executable.display()).context(e),
+                );
             }
 
-            if smol::fs::metadata(&npm_file).await.is_err() {
-                return Err(anyhow!("missing npm file"));
-            }
-
-            let mut command = Command::new(node_binary);
-            command.env_clear();
-            command.env("PATH", env_path);
-            command.arg(npm_file).arg(subcommand);
-            command.args(["--cache".into(), installation_path.join("cache")]);
-            command.args([
-                "--userconfig".into(),
-                installation_path.join("blank_user_npmrc"),
-            ]);
-            command.args([
-                "--globalconfig".into(),
-                installation_path.join("blank_global_npmrc"),
-            ]);
-            command.args(args);
+            let mut command = Self::create_npm_command(&node_dir);
 
             if let Some(directory) = directory {
+                fs::DirBuilder::new()
+                    .recursive(true)
+                    .create(directory)
+                    .await
+                    .context(anyhow!(
+                        "creating working directory: {}",
+                        directory.display()
+                    ))?;
+
                 command.current_dir(directory);
-                command.args(["--prefix".into(), directory.to_path_buf()]);
+                command.args([OsStr::new("--prefix"), directory.as_os_str()]);
             }
 
-            command.output().await.map_err(|e| anyhow!("{e}"))
+            command.arg(subcommand);
+            command.args(args);
+            log::info!("{command:?}");
+
+            match command.output().await.context("executing npm subprocess")? {
+                output if !output.status.success() => {
+                    bail!("subprocess returned exit code {}", output.status)
+                }
+
+                output => Ok(output),
+            }
         };
 
-        let mut output = attempt().await;
-        if output.is_err() {
-            output = attempt().await;
-            if output.is_err() {
-                return Err(anyhow!(
-                    "failed to launch npm subcommand {subcommand} subcommand"
-                ));
-            }
+        let mut output = attempt()
+            .await
+            .context("first attempt to execute the command");
+
+        if let Err(e) = output {
+            output = attempt()
+                .await
+                .context(e)
+                .context("second and final attempt to execute the command");
         }
 
-        if let Ok(output) = &output {
-            if !output.status.success() {
-                return Err(anyhow!(
-                    "failed to execute npm {subcommand} subcommand:\nstdout: {:?}\nstderr: {:?}",
-                    String::from_utf8_lossy(&output.stdout),
-                    String::from_utf8_lossy(&output.stderr)
-                ));
-            }
-        }
-
-        output.map_err(|e| anyhow!("{e}"))
+        output.context(anyhow!(
+            "executing `npm {:?}` with args {:?}",
+            subcommand,
+            args
+        ))
     }
 
     async fn npm_package_latest_version(&self, name: &str) -> Result<String> {
@@ -281,7 +545,7 @@ impl NodeRuntime for RealNodeRuntime {
         let mut file = match fs::File::open(package_json_path).await {
             Ok(file) => file,
             Err(err) => {
-                if err.kind() == io::ErrorKind::NotFound {
+                if err.kind() == std::io::ErrorKind::NotFound {
                     return Ok(None);
                 }
 
