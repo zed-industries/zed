@@ -3168,7 +3168,7 @@ impl MultiBufferSnapshot {
     pub fn runnable_ranges(
         &self,
         range: Range<Anchor>,
-    ) -> impl Iterator<Item = (Range<usize>, Runnable)> + '_ {
+    ) -> impl Iterator<Item = (BufferId, Range<usize>, Runnable)> + '_ {
         let range = range.start.to_offset(self)..range.end.to_offset(self);
         self.excerpts_for_range(range.clone())
             .flat_map(move |(excerpt, excerpt_offset)| {
@@ -3183,10 +3183,10 @@ impl MultiBufferSnapshot {
                             excerpt_offset + (match_range.start - excerpt_buffer_start);
                         match_range.end = excerpt_offset + (match_range.end - excerpt_buffer_start);
 
-                        (match_range, runnable)
+                        (excerpt.buffer_id, match_range, runnable)
                     })
-                    .skip_while(move |(match_range, _)| match_range.end < range.start)
-                    .take_while(move |(match_range, _)| match_range.start < range.end)
+                    .skip_while(move |(_, match_range, _)| match_range.end < range.start)
+                    .take_while(move |(_, match_range, _)| match_range.start < range.end)
             })
     }
 

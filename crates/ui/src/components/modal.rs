@@ -35,7 +35,7 @@ impl ModalHeader {
 }
 
 impl ParentElement for ModalHeader {
-    fn extend(&mut self, elements: impl Iterator<Item = AnyElement>) {
+    fn extend(&mut self, elements: impl IntoIterator<Item = AnyElement>) {
         self.children.extend(elements)
     }
 }
@@ -86,7 +86,7 @@ impl ModalContent {
 }
 
 impl ParentElement for ModalContent {
-    fn extend(&mut self, elements: impl Iterator<Item = AnyElement>) {
+    fn extend(&mut self, elements: impl IntoIterator<Item = AnyElement>) {
         self.children.extend(elements)
     }
 }
@@ -111,7 +111,7 @@ impl ModalRow {
 }
 
 impl ParentElement for ModalRow {
-    fn extend(&mut self, elements: impl Iterator<Item = AnyElement>) {
+    fn extend(&mut self, elements: impl IntoIterator<Item = AnyElement>) {
         self.children.extend(elements)
     }
 }

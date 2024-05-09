@@ -26,7 +26,7 @@ impl CollabNotification {
 }
 
 impl ParentElement for CollabNotification {
-    fn extend(&mut self, elements: impl Iterator<Item = AnyElement>) {
+    fn extend(&mut self, elements: impl IntoIterator<Item = AnyElement>) {
         self.children.extend(elements)
     }
 }

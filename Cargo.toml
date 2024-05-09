@@ -4,8 +4,8 @@ members = [
     "crates/anthropic",
     "crates/assets",
     "crates/assistant",
-    "crates/assistant_tooling",
     "crates/assistant2",
+    "crates/assistant_tooling",
     "crates/audio",
     "crates/auto_update",
     "crates/breadcrumbs",
@@ -52,6 +52,7 @@ members = [
     "crates/live_kit_client",
     "crates/live_kit_server",
     "crates/lsp",
+    "crates/markdown",
     "crates/markdown_preview",
     "crates/media",
     "crates/menu",
@@ -192,6 +193,7 @@ languages = { path = "crates/languages" }
 live_kit_client = { path = "crates/live_kit_client" }
 live_kit_server = { path = "crates/live_kit_server" }
 lsp = { path = "crates/lsp" }
+markdown = { path = "crates/markdown" }
 markdown_preview = { path = "crates/markdown_preview" }
 media = { path = "crates/media" }
 menu = { path = "crates/menu" }
@@ -255,6 +257,7 @@ async-fs = "1.6"
 async-recursion = "1.0.0"
 async-tar = "0.4.2"
 async-trait = "0.1"
+async_zip = { version = "0.0.17", features = ["deflate", "deflate64"] }
 bitflags = "2.4.2"
 blade-graphics = { git = "https://github.com/kvark/blade", rev = "e35b2d41f221a48b75f7cf2e78a81e7ecb7a383c" }
 blade-macros = { git = "https://github.com/kvark/blade", rev = "e35b2d41f221a48b75f7cf2e78a81e7ecb7a383c" }

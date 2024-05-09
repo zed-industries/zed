@@ -2503,7 +2503,7 @@ impl<'a> WindowContext<'a> {
     /// This method should only be called as part of the request_layout or prepaint phase of element drawing.
     pub fn request_layout(
         &mut self,
-        style: &Style,
+        style: Style,
         children: impl IntoIterator<Item = LayoutId>,
     ) -> LayoutId {
         debug_assert_eq!(
