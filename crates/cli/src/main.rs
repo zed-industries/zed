@@ -39,7 +39,7 @@ struct Args {
     version: bool,
     /// Custom path to Zed.app or the zed binary
     #[arg(long)]
-    path: Option<PathBuf>,
+    zed: Option<PathBuf>,
     /// Run zed in dev-server mode
     #[arg(long)]
     dev_server_token: Option<String>,
@@ -66,7 +66,7 @@ fn main() -> Result<()> {
     }
     let args = Args::parse();
 
-    let app = Detect::detect(args.path.as_deref()).context("Bundle detection")?;
+    let app = Detect::detect(args.zed.as_deref()).context("Bundle detection")?;
 
     if args.version {
         println!("{}", app.zed_version_string());

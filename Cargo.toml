@@ -263,7 +263,7 @@ chrono = { version = "0.4", features = ["serde"] }
 clap = { version = "4.4", features = ["derive"] }
 clickhouse = { version = "0.11.6" }
 ctor = "0.2.6"
-ctrlc = "3.4.4"
+signal-hook = "0.3.17"
 core-foundation = { version = "0.9.3" }
 core-foundation-sys = "0.8.6"
 derive_more = "0.99.17"

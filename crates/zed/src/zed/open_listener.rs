@@ -13,8 +13,8 @@ use language::{Bias, Point};
 use std::path::Path;
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::thread;
 use std::time::Duration;
+use std::{process, thread};
 use util::paths::PathLikeWithPosition;
 use util::ResultExt;
 use workspace::item::ItemHandle;
@@ -242,6 +242,11 @@ pub async fn handle_cli_connection(
                         .await
                     {
                         Ok(_) => {
+                            responses
+                                .send(CliResponse::Stdout {
+                                    message: format!("zed (pid {}) connected!", process::id()),
+                                })
+                                .log_err();
                             responses.send(CliResponse::Exit { status: 0 }).log_err();
                         }
                         Err(error) => {
@@ -251,6 +256,7 @@ pub async fn handle_cli_connection(
                                 })
                                 .log_err();
                             responses.send(CliResponse::Exit { status: 1 }).log_err();
+                            cx.update(|cx| cx.quit()).log_err();
                         }
                     }
                     return;

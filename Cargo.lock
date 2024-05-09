@@ -4808,7 +4808,6 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "client",
- "ctrlc",
  "fs",
  "futures 0.3.28",
  "gpui",
@@ -4820,6 +4819,7 @@ dependencies = [
  "rpc",
  "settings",
  "shellexpand",
+ "signal-hook",
  "util",
 ]
 

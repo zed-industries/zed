@@ -13,6 +13,9 @@ use postage::stream::Stream;
 use project::{Project, WorktreeSettings};
 use rpc::{proto, ErrorCode, TypedEnvelope};
 use settings::{Settings, SettingsStore};
+use signal_hook::consts::{SIGINT, SIGTERM};
+use signal_hook::iterator::Signals;
+use std::thread;
 use std::{collections::HashMap, sync::Arc};
 use util::{ResultExt, TryFutureExt};
 
@@ -49,14 +52,23 @@ pub fn init(client: Arc<Client>, app_state: AppState, cx: &mut AppContext) -> Ta
         });
     });
 
-    // Set up a handler when the dev server is shut down by the user pressing Ctrl-C
+    // Set up a handler when the dev server is shut down
+    // with ctrl-c or kill
     let (tx, rx) = futures::channel::oneshot::channel();
-    set_ctrlc_handler(move || tx.send(()).log_err().unwrap()).log_err();
-
+    let mut signals = Signals::new(&[SIGTERM, SIGINT]).unwrap();
+    thread::spawn({
+        move || {
+            for sig in &mut signals.forever() {
+                tx.send(sig).log_err();
+                break;
+            }
+        }
+    });
     cx.spawn(|cx| async move {
-        rx.await.log_err();
-        log::info!("Received interrupt signal");
-        cx.update(|cx| cx.quit()).log_err();
+        if let Ok(sig) = rx.await {
+            log::info!("received signal {sig:?}");
+            cx.update(|cx| cx.quit()).log_err();
+        }
     })
     .detach();
 
@@ -66,19 +78,6 @@ pub fn init(client: Arc<Client>, app_state: AppState, cx: &mut AppContext) -> Ta
             .authenticate_and_connect(false, &cx)
             .await
             .map_err(|e| anyhow!("Error connecting to '{}': {}", server_url, e))
-    })
-}
-
-fn set_ctrlc_handler<F>(f: F) -> Result<(), ctrlc::Error>
-where
-    F: FnOnce() + 'static + Send,
-{
-    let f = std::sync::Mutex::new(Some(f));
-    ctrlc::set_handler(move || {
-        if let Ok(mut guard) = f.lock() {
-            let f = guard.take().expect("f can only be taken once");
-            f();
-        }
     })
 }
 

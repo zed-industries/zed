@@ -409,7 +409,7 @@ fn main() {
                             log::error!("{}", e);
                             cx.update(|cx| cx.quit()).log_err();
                         } else {
-                            log::info!("Connected!");
+                            log::info!("connected!");
                         }
                     })
                     .detach();
