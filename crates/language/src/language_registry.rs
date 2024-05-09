@@ -732,6 +732,7 @@ impl LanguageRegistry {
         self.lsp_binary_status_tx.send(server_name, status);
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn create_pending_language_server(
         self: &Arc<Self>,
         stdout_capture: Arc<Mutex<Option<String>>>,
