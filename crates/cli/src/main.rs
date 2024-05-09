@@ -133,7 +133,9 @@ fn main() -> Result<()> {
 #[cfg(target_os = "linux")]
 mod linux {
     use std::{
-        env, io,
+        env,
+        ffi::OsString,
+        io,
         os::{
             linux::net::SocketAddrExt,
             unix::net::{SocketAddr, UnixDatagram},
@@ -146,8 +148,9 @@ mod linux {
     use anyhow::anyhow;
     use cli::FORCE_CLI_MODE_ENV_VAR_NAME;
     use fork::Fork;
+    use once_cell::sync::Lazy;
 
-    use crate::{Detect, InstalledApp, RELEASE_CHANNEL};
+    use crate::{Detect, InstalledApp};
 
     static RELEASE_CHANNEL: Lazy<String> =
         Lazy::new(|| include_str!("../../zed/RELEASE_CHANNEL").trim().to_string());
@@ -197,7 +200,7 @@ mod linux {
             let sock_addr =
                 SocketAddr::from_abstract_name(format!("zed-{}-{}", *RELEASE_CHANNEL, uid))?;
 
-            let mut sock = UnixDatagram::unbound()?;
+            let sock = UnixDatagram::unbound()?;
             if sock.connect_addr(&sock_addr).is_err() {
                 self.boot_background(ipc_url)?;
             } else {
@@ -225,7 +228,7 @@ mod linux {
                         }
                     }
                     let error =
-                        exec::execvp(path.clone(), &[path.as_os_str(), OsString::from(ipc_url)]);
+                        exec::execvp(path.clone(), &[path.as_os_str(), &OsString::from(ipc_url)]);
                     // if exec succeeded, we never get here.
                     eprintln!("failed to exec {:?}: {}", path, error);
                     process::exit(1)

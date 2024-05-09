@@ -47,9 +47,8 @@ use uuid::Uuid;
 use welcome::{show_welcome_view, BaseKeymap, FIRST_OPEN};
 use workspace::{AppState, WorkspaceSettings, WorkspaceStore};
 use zed::{
-    app_menus, build_window_options, ensure_only_instance, handle_cli_connection,
-    handle_keymap_file_changes, initialize_workspace, open_paths_with_positions, IsOnlyInstance,
-    OpenListener, OpenRequest,
+    app_menus, build_window_options, handle_cli_connection, handle_keymap_file_changes,
+    initialize_workspace, open_paths_with_positions, OpenListener, OpenRequest,
 };
 
 use crate::zed::inline_completion_registry;
@@ -271,6 +270,7 @@ fn main() {
     }
     #[cfg(not(target_os = "linux"))]
     {
+        use zed::only_instance::*;
         if ensure_only_instance() != IsOnlyInstance::Yes {
             println!("zed is already running");
             return;

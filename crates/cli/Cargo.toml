@@ -23,10 +23,10 @@ anyhow.workspace = true
 clap.workspace = true
 libc.workspace = true
 ipc-channel = "0.18"
+once_cell.workspace = true
 release_channel.workspace = true
 serde.workspace = true
 util.workspace = true
-once_cell.workspace = true
 
 [target.'cfg(target_os = "macos")'.dependencies]
 core-foundation.workspace = true

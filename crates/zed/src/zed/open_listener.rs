@@ -121,7 +121,7 @@ impl OpenListener {
 #[cfg(target_os = "linux")]
 pub fn listen_for_cli_connections(opener: Arc<OpenListener>) -> Result<()> {
     use release_channel::RELEASE_CHANNEL_NAME;
-    use std::os::linux::net::SocketAddrExt;
+    use std::os::{linux::net::SocketAddrExt, unix::net::SocketAddr, unix::net::UnixDatagram};
 
     let uid: u32 = unsafe { libc::getuid() };
     let sock_addr =

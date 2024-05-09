@@ -1,5 +1,6 @@
 mod app_menus;
 pub mod inline_completion_registry;
+#[cfg(not(target_os = "linux"))]
 mod only_instance;
 mod open_listener;
 
@@ -12,7 +13,6 @@ use gpui::{
     actions, point, px, AppContext, AsyncAppContext, Context, FocusableView, PromptLevel,
     TitlebarOptions, View, ViewContext, VisualContext, WindowKind, WindowOptions,
 };
-pub use only_instance::*;
 pub use open_listener::*;
 
 use anyhow::Context as _;

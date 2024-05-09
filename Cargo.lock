@@ -12817,7 +12817,6 @@ dependencies = [
  "clap 4.4.4",
  "cli",
  "client",
- "clock",
  "collab_ui",
  "collections",
  "command_palette",
