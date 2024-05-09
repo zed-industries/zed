@@ -17,9 +17,6 @@ trait InstalledApp {
     fn launch(&self, ipc_url: String) -> anyhow::Result<()>;
 }
 
-static RELEASE_CHANNEL: Lazy<String> =
-    Lazy::new(|| include_str!("../../zed/RELEASE_CHANNEL").trim().to_string());
-
 #[derive(Parser, Debug)]
 #[command(name = "zed", disable_version_flag = true)]
 struct Args {
@@ -153,6 +150,9 @@ mod linux {
 
     use crate::{Detect, InstalledApp, RELEASE_CHANNEL};
 
+    static RELEASE_CHANNEL: Lazy<String> =
+        Lazy::new(|| include_str!("../../zed/RELEASE_CHANNEL").trim().to_string());
+
     struct App(PathBuf);
 
     impl Detect {
@@ -200,16 +200,16 @@ mod linux {
 
             let mut sock = UnixDatagram::unbound()?;
             if sock.connect_addr(&sock_addr).is_err() {
-                self.boot_background()?;
-                self.wait_for_socket(&sock_addr, &mut sock)?;
+                self.boot_background(ipc_url)?;
+            } else {
+                sock.send(ipc_url.as_bytes())?;
             }
-            sock.send(ipc_url.as_bytes())?;
             Ok(())
         }
     }
 
     impl App {
-        fn boot_background(&self) -> anyhow::Result<()> {
+        fn boot_background(&self, ipc_url: String) -> anyhow::Result<()> {
             let path = &self.0;
 
             match fork::fork() {
@@ -225,7 +225,8 @@ mod linux {
                             eprintln!("failed to close_fd: {}", std::io::Error::last_os_error());
                         }
                     }
-                    let error = exec::execvp(path.clone(), &[path.as_os_str()]);
+                    let error =
+                        exec::execvp(path.clone(), &[path.as_os_str(), OsString::from(ipc_url)]);
                     // if exec succeeded, we never get here.
                     eprintln!("failed to exec {:?}: {}", path, error);
                     process::exit(1)
