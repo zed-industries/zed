@@ -2402,9 +2402,9 @@ impl EditorElement {
     fn paint_indent_guides(&mut self, layout: &mut EditorLayout, cx: &mut WindowContext) {
         for indent_guide in layout.indent_guides.iter() {
             let color = if indent_guide.active {
-                cx.theme().colors().editor_active_wrap_guide
+                cx.theme().colors().editor_active_indent_guide
             } else {
-                cx.theme().colors().editor_wrap_guide
+                cx.theme().colors().editor_indent_guide
             };
             cx.paint_quad(fill(
                 Bounds {

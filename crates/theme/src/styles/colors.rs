@@ -154,6 +154,8 @@ pub struct ThemeColors {
     pub editor_invisible: Hsla,
     pub editor_wrap_guide: Hsla,
     pub editor_active_wrap_guide: Hsla,
+    pub editor_indent_guide: Hsla,
+    pub editor_active_indent_guide: Hsla,
     /// Read-access of a symbol, like reading a variable.
     ///
     /// A document highlight is a range inside a text document which deserves

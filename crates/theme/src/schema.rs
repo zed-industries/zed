@@ -381,6 +381,12 @@ pub struct ThemeColorsContent {
     #[serde(rename = "editor.active_wrap_guide")]
     pub editor_active_wrap_guide: Option<String>,
 
+    #[serde(rename = "editor.indent_guide")]
+    pub editor_indent_guide: Option<String>,
+
+    #[serde(rename = "editor.active_indent_guide")]
+    pub editor_active_indent_guide: Option<String>,
+
     /// Read-access of a symbol, like reading a variable.
     ///
     /// A document highlight is a range inside a text document which deserves
@@ -745,6 +751,14 @@ impl ThemeColorsContent {
                 .and_then(|color| try_parse_color(color).ok()),
             editor_active_wrap_guide: self
                 .editor_active_wrap_guide
+                .as_ref()
+                .and_then(|color| try_parse_color(color).ok()),
+            editor_indent_guide: self
+                .editor_indent_guide
+                .as_ref()
+                .and_then(|color| try_parse_color(color).ok()),
+            editor_active_indent_guide: self
+                .editor_active_indent_guide
                 .as_ref()
                 .and_then(|color| try_parse_color(color).ok()),
             editor_document_highlight_read_background: self
