@@ -16,7 +16,8 @@ use std::{
 };
 use util::{maybe, ResultExt};
 
-const SERVER_PATH: &str = "node_modules/.bin/tailwindcss-language-server";
+const SERVER_PATH: &str =
+    "node_modules/@tailwindcss/language-server/bin/tailwindcss-language-server";
 
 fn server_binary_arguments(server_path: &Path) -> Vec<OsString> {
     vec![server_path.into(), "--stdio".into()]

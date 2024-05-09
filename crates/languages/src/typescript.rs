@@ -1,4 +1,4 @@
-use anyhow::{anyhow, Result};
+use anyhow::{anyhow, bail, Result};
 use async_compression::futures::bufread::GzipDecoder;
 use async_tar::Archive;
 use async_trait::async_trait;
@@ -13,6 +13,7 @@ use settings::Settings;
 use smol::{fs, io::BufReader, stream::StreamExt};
 use std::{
     any::Any,
+    env::consts,
     ffi::OsString,
     path::{Path, PathBuf},
     sync::Arc,
@@ -376,9 +377,32 @@ impl LspAdapter for EsLintLspAdapter {
                 .run_npm_subcommand(Some(&repo_root), "install", &[])
                 .await?;
 
+            if consts::OS == "windows" {
+                for symlink in ["client/src/shared", "server/src/shared"].into_iter() {
+                    fs::remove_file(repo_root.join(symlink)).await?;
+                }
+
+                let mut shared = fs::read_dir(repo_root.join("$shared")).await?;
+
+                while let Some(entry) = shared.next().await.transpose()? {
+                    for dest in ["client/src/shared", "server/src/shared"].into_iter() {
+                        let dest_shared = repo_root.join(dest);
+                        fs::DirBuilder::new()
+                            .recursive(true)
+                            .create(&dest_shared)
+                            .await?;
+                        fs::copy(entry.path(), dest_shared.join(entry.file_name())).await?;
+                    }
+                }
+            }
+
             self.node
                 .run_npm_subcommand(Some(&repo_root), "run-script", &["compile"])
                 .await?;
+        }
+
+        if fs::metadata(&server_path).await.is_err() {
+            bail!("failed to compile vscode-eslint for some reason");
         }
 
         Ok(LanguageServerBinary {

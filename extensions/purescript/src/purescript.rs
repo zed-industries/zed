@@ -1,7 +1,7 @@
 use std::{env, fs};
 use zed_extension_api::{self as zed, Result};
 
-const SERVER_PATH: &str = "node_modules/.bin/purescript-language-server";
+const SERVER_PATH: &str = "node_modules/purescript-language-server/bin/purescript-language-server";
 const PACKAGE_NAME: &str = "purescript-language-server";
 
 struct PurescriptExtension {
