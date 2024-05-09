@@ -52,6 +52,7 @@ members = [
     "crates/live_kit_client",
     "crates/live_kit_server",
     "crates/lsp",
+    "crates/markdown",
     "crates/markdown_preview",
     "crates/media",
     "crates/menu",
@@ -192,6 +193,7 @@ languages = { path = "crates/languages" }
 live_kit_client = { path = "crates/live_kit_client" }
 live_kit_server = { path = "crates/live_kit_server" }
 lsp = { path = "crates/lsp" }
+markdown = { path = "crates/markdown" }
 markdown_preview = { path = "crates/markdown_preview" }
 media = { path = "crates/media" }
 menu = { path = "crates/menu" }

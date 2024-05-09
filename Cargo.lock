@@ -5975,6 +5975,27 @@ dependencies = [
 ]
 
 [[package]]
+name = "markdown"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "assets",
+ "env_logger",
+ "futures 0.3.28",
+ "gpui",
+ "language",
+ "languages",
+ "linkify",
+ "log",
+ "node_runtime",
+ "pulldown-cmark",
+ "settings",
+ "theme",
+ "ui",
+ "util",
+]
+
+[[package]]
 name = "markdown_preview"
 version = "0.1.0"
 dependencies = [

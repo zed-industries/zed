@@ -140,7 +140,7 @@ pub trait RenderOnce: 'static {
 /// can accept any number of any kind of child elements
 pub trait ParentElement {
     /// Extend this element's children with the given child elements.
-    fn extend(&mut self, elements: impl Iterator<Item = AnyElement>);
+    fn extend(&mut self, elements: impl IntoIterator<Item = AnyElement>);
 
     /// Add a single child element to this element.
     fn child(mut self, child: impl IntoElement) -> Self
