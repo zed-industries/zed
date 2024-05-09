@@ -536,25 +536,27 @@ impl AssistantChat {
                                 body.push_str(content);
                             }
 
-                            for tool_call in delta.tool_calls {
-                                let index = tool_call.index as usize;
+                            for tool_call_delta in delta.tool_calls {
+                                let index = tool_call_delta.index as usize;
                                 if index >= message.tool_calls.len() {
                                     message.tool_calls.resize_with(index + 1, Default::default);
                                 }
-                                let call = &mut message.tool_calls[index];
+                                let tool_call = &mut message.tool_calls[index];
 
-                                if let Some(id) = &tool_call.id {
-                                    call.id.push_str(id);
+                                if let Some(id) = &tool_call_delta.id {
+                                    tool_call.id.push_str(id);
                                 }
 
-                                match tool_call.variant {
-                                    Some(proto::tool_call_delta::Variant::Function(tool_call)) => {
-                                        if let Some(name) = &tool_call.name {
-                                            call.name.push_str(name);
-                                        }
-                                        if let Some(arguments) = &tool_call.arguments {
-                                            call.arguments.push_str(arguments);
-                                        }
+                                match tool_call_delta.variant {
+                                    Some(proto::tool_call_delta::Variant::Function(
+                                        tool_call_delta,
+                                    )) => {
+                                        this.tool_registry.update_tool_call(
+                                            tool_call,
+                                            tool_call_delta.name.as_deref(),
+                                            tool_call_delta.arguments.as_deref(),
+                                            cx,
+                                        );
                                     }
                                     None => {}
                                 }
@@ -587,34 +589,20 @@ impl AssistantChat {
                     } else {
                         if let Some(current_message) = messages.last_mut() {
                             for tool_call in current_message.tool_calls.iter() {
-                                tool_tasks.push(this.tool_registry.call(tool_call, cx));
+                                tool_tasks
+                                    .extend(this.tool_registry.execute_tool_call(&tool_call, cx));
                             }
                         }
                     }
                 }
             })?;
 
+            // This ends recursion on calling for responses after tools
             if tool_tasks.is_empty() {
                 return Ok(());
             }
 
-            let tools = join_all(tool_tasks.into_iter()).await;
-            // If the WindowContext went away for any tool's view we don't include it
-            // especially since the below call would fail for the same reason.
-            let tools = tools.into_iter().filter_map(|tool| tool.ok()).collect();
-
-            this.update(cx, |this, cx| {
-                if let Some(ChatMessage::Assistant(AssistantMessage { messages, .. })) =
-                    this.messages.last_mut()
-                {
-                    if let Some(current_message) = messages.last_mut() {
-                        current_message.tool_calls = tools;
-                        cx.notify();
-                    } else {
-                        unreachable!()
-                    }
-                }
-            })?;
+            join_all(tool_tasks.into_iter()).await;
         }
     }
 
@@ -948,13 +936,11 @@ impl AssistantChat {
 
                         for tool_call in &message.tool_calls {
                             // Every tool call _must_ have a result by ID, otherwise OpenAI will error.
-                            let content = match &tool_call.result {
-                                Some(result) => {
-                                    result.generate(&tool_call.name, &mut project_context, cx)
-                                }
-                                None => "".to_string(),
-                            };
-
+                            let content = self.tool_registry.content_for_tool_call(
+                                tool_call,
+                                &mut project_context,
+                                cx,
+                            );
                             completion_messages.push(CompletionMessage::Tool {
                                 content,
                                 tool_call_id: tool_call.id.clone(),
@@ -1003,7 +989,11 @@ impl AssistantChat {
                         tool_calls: message
                             .tool_calls
                             .iter()
-                            .map(|tool_call| self.tool_registry.serialize_tool_call(tool_call))
+                            .filter_map(|tool_call| {
+                                self.tool_registry
+                                    .serialize_tool_call(tool_call, cx)
+                                    .log_err()
+                            })
                             .collect(),
                     })
                     .collect(),

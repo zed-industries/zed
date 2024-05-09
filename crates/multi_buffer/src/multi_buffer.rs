@@ -1603,6 +1603,11 @@ impl MultiBuffer {
         "untitled".into()
     }
 
+    pub fn set_title(&mut self, title: String, cx: &mut ModelContext<Self>) {
+        self.title = Some(title);
+        cx.notify();
+    }
+
     #[cfg(any(test, feature = "test-support"))]
     pub fn is_parsing(&self, cx: &AppContext) -> bool {
         self.as_singleton().unwrap().read(cx).is_parsing()
@@ -3151,10 +3156,10 @@ impl MultiBufferSnapshot {
                         .redacted_ranges(excerpt.range.context.clone())
                         .map(move |mut redacted_range| {
                             // Re-base onto the excerpts coordinates in the multibuffer
-                            redacted_range.start =
-                                excerpt_offset + (redacted_range.start - excerpt_buffer_start);
-                            redacted_range.end =
-                                excerpt_offset + (redacted_range.end - excerpt_buffer_start);
+                            redacted_range.start = excerpt_offset
+                                + redacted_range.start.saturating_sub(excerpt_buffer_start);
+                            redacted_range.end = excerpt_offset
+                                + redacted_range.end.saturating_sub(excerpt_buffer_start);
 
                             redacted_range
                         })
@@ -3179,10 +3184,13 @@ impl MultiBufferSnapshot {
                     .runnable_ranges(excerpt.range.context.clone())
                     .map(move |mut runnable| {
                         // Re-base onto the excerpts coordinates in the multibuffer
-                        runnable.run_range.start =
-                            excerpt_offset + (runnable.run_range.start - excerpt_buffer_start);
-                        runnable.run_range.end =
-                            excerpt_offset + (runnable.run_range.end - excerpt_buffer_start);
+                        runnable.run_range.start = excerpt_offset
+                            + runnable
+                                .run_range
+                                .start
+                                .saturating_sub(excerpt_buffer_start);
+                        runnable.run_range.end = excerpt_offset
+                            + runnable.run_range.end.saturating_sub(excerpt_buffer_start);
                         runnable
                     })
                     .skip_while(move |runnable| runnable.run_range.end < range.start)
