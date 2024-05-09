@@ -1320,6 +1320,9 @@ impl<'a> WindowContext<'a> {
                 .retain(&(), |listener| listener(&event, self));
         }
 
+        if !self.has_active_drag() {
+            self.reset_cursor_style();
+        }
         self.window.refreshing = false;
         self.window.draw_phase = DrawPhase::None;
         self.window.needs_present.set(true);
@@ -2922,9 +2925,11 @@ impl<'a> WindowContext<'a> {
 
     fn dispatch_mouse_event(&mut self, event: &dyn Any) {
         let hit_test = self.window.rendered_frame.hit_test(self.mouse_position());
-        if hit_test != self.window.mouse_hit_test && !self.has_active_drag() {
+        if hit_test != self.window.mouse_hit_test {
             self.window.mouse_hit_test = hit_test;
-            self.reset_cursor_style();
+            if !self.has_active_drag() {
+                self.reset_cursor_style();
+            }
         }
 
         let mut mouse_listeners = mem::take(&mut self.window.rendered_frame.mouse_listeners);
