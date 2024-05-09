@@ -256,6 +256,7 @@ mod linux {
 // todo("windows")
 #[cfg(target_os = "windows")]
 mod windows {
+    use crate::{Detect, InstalledApp};
     use std::path::Path;
 
     impl Detect {

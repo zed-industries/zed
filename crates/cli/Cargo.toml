@@ -17,8 +17,6 @@ name = "cli"
 path = "src/main.rs"
 
 [dependencies]
-exec.workspace =  true
-fork.workspace = true
 anyhow.workspace = true
 clap.workspace = true
 libc.workspace = true
@@ -27,6 +25,10 @@ once_cell.workspace = true
 release_channel.workspace = true
 serde.workspace = true
 util.workspace = true
+
+[target.'cfg(target_os = "linux")'.dependencies]
+exec.workspace =  true
+fork.workspace = true
 
 [target.'cfg(target_os = "macos")'.dependencies]
 core-foundation.workspace = true
