@@ -638,7 +638,11 @@ impl EditorElement {
             editor.update_hovered_link(point_for_position, &position_map.snapshot, modifiers, cx);
 
             if let Some(point) = point_for_position.as_valid() {
-                hover_at(editor, Some((point, &position_map.snapshot)), cx);
+                let anchor = position_map
+                    .snapshot
+                    .buffer_snapshot
+                    .anchor_before(point.to_offset(&position_map.snapshot, Bias::Left));
+                hover_at(editor, Some(anchor), cx);
                 Self::update_visible_cursor(editor, point, position_map, cx);
             } else {
                 hover_at(editor, None, cx);
@@ -1381,6 +1385,7 @@ impl EditorElement {
         scroll_pixel_position: gpui::Point<Pixels>,
         gutter_dimensions: &GutterDimensions,
         gutter_hitbox: &Hitbox,
+        snapshot: &EditorSnapshot,
         cx: &mut WindowContext,
     ) -> Vec<AnyElement> {
         self.editor.update(cx, |editor, cx| {
@@ -1401,25 +1406,34 @@ impl EditorElement {
                 };
             editor
                 .tasks
-                .keys()
-                .map(|row| {
+                .iter()
+                .filter_map(|((_, row), (multibuffer_offset, _))| {
+                    if snapshot.is_line_folded(*row) {
+                        return None;
+                    }
+                    let display_row = snapshot
+                        .buffer_snapshot
+                        .offset_to_point(*multibuffer_offset)
+                        .to_display_point(&snapshot.display_snapshot)
+                        .row();
+
                     let button = editor.render_run_indicator(
                         &self.style,
                         Some(*row) == active_task_indicator_row,
-                        *row,
+                        display_row,
                         cx,
                     );
 
                     let button = prepaint_gutter_button(
                         button,
-                        *row,
+                        display_row,
                         line_height,
                         gutter_dimensions,
                         scroll_pixel_position,
                         gutter_hitbox,
                         cx,
                     );
-                    button
+                    Some(button)
                 })
                 .collect_vec()
         })
@@ -2079,6 +2093,10 @@ impl EditorElement {
             crate::ContextMenuOrigin::GutterIndicator(row) => {
                 // Context menu was spawned via a click on a gutter. Ensure it's a bit closer to the indicator than just a plain first column of the
                 // text field.
+                let snapshot = self.editor.update(cx, |this, cx| this.snapshot(cx));
+                let row = Point::new(row, 0)
+                    .to_display_point(&snapshot.display_snapshot)
+                    .row();
                 let x = -gutter_overshoot;
                 let y = (row + 1) as f32 * line_height - scroll_pixel_position.y;
                 (x, y)
@@ -2848,7 +2866,6 @@ impl EditorElement {
             let snapshot = layout.position_map.snapshot.clone();
             let theme = cx.theme().clone();
             let scrollbar_settings = EditorSettings::get_global(cx).scrollbar;
-            let max_row = layout.max_row;
 
             editor.scrollbar_marker_state.dirty = false;
             editor.scrollbar_marker_state.pending_refresh =
@@ -2857,12 +2874,12 @@ impl EditorElement {
                     let scrollbar_markers = cx
                         .background_executor()
                         .spawn(async move {
+                            let max_point = snapshot.display_snapshot.buffer_snapshot.max_point();
                             let mut marker_quads = Vec::new();
-
                             if scrollbar_settings.git_diff {
                                 let marker_row_ranges = snapshot
                                     .buffer_snapshot
-                                    .git_diff_hunks_in_range(0..max_row)
+                                    .git_diff_hunks_in_range(0..max_point.row)
                                     .map(|hunk| {
                                         let start_display_row =
                                             Point::new(hunk.associated_range.start, 0)
@@ -2931,9 +2948,6 @@ impl EditorElement {
                             }
 
                             if scrollbar_settings.diagnostics {
-                                let max_point =
-                                    snapshot.display_snapshot.buffer_snapshot.max_point();
-
                                 let diagnostics = snapshot
                                     .buffer_snapshot
                                     .diagnostics_in_range::<_, Point>(
@@ -3360,8 +3374,7 @@ fn render_blame_entry(
 
     let relative_timestamp = blame_entry_relative_timestamp(&blame_entry, cx);
 
-    let pretty_commit_id = format!("{}", blame_entry.sha);
-    let short_commit_id = pretty_commit_id.chars().take(6).collect::<String>();
+    let short_commit_id = blame_entry.sha.display_short();
 
     let author_name = blame_entry.author.as_deref().unwrap_or("<no name>");
     let name = util::truncate_and_trailoff(author_name, 20);
@@ -3651,7 +3664,7 @@ impl Element for EditorElement {
                     let mut style = Style::default();
                     style.size.width = relative(1.).into();
                     style.size.height = self.style.text.line_height_in_pixels(rem_size).into();
-                    cx.request_layout(&style, None)
+                    cx.request_layout(style, None)
                 }
                 EditorMode::AutoHeight { max_lines } => {
                     let editor_handle = cx.view().clone();
@@ -3675,7 +3688,7 @@ impl Element for EditorElement {
                     let mut style = Style::default();
                     style.size.width = relative(1.).into();
                     style.size.height = relative(1.).into();
-                    cx.request_layout(&style, None)
+                    cx.request_layout(style, None)
                 }
             };
 
@@ -4020,20 +4033,27 @@ impl Element for EditorElement {
                             cx,
                         );
                         if gutter_settings.code_actions {
-                            let has_test_indicator = self
-                                .editor
-                                .read(cx)
-                                .tasks
-                                .contains_key(&newest_selection_head.row());
-                            if !has_test_indicator {
-                                code_actions_indicator = self.layout_code_actions_indicator(
-                                    line_height,
-                                    newest_selection_head,
-                                    scroll_pixel_position,
-                                    &gutter_dimensions,
-                                    &gutter_hitbox,
-                                    cx,
-                                );
+                            let newest_selection_point =
+                                newest_selection_head.to_point(&snapshot.display_snapshot);
+                            let buffer = snapshot
+                                .buffer_snapshot
+                                .buffer_line_for_row(newest_selection_point.row);
+                            if let Some((buffer, range)) = buffer {
+                                let buffer_id = buffer.remote_id();
+                                let row = range.start.row;
+                                let has_test_indicator =
+                                    self.editor.read(cx).tasks.contains_key(&(buffer_id, row));
+
+                                if !has_test_indicator {
+                                    code_actions_indicator = self.layout_code_actions_indicator(
+                                        line_height,
+                                        newest_selection_head,
+                                        scroll_pixel_position,
+                                        &gutter_dimensions,
+                                        &gutter_hitbox,
+                                        cx,
+                                    );
+                                }
                             }
                         }
                     }
@@ -4044,6 +4064,7 @@ impl Element for EditorElement {
                     scroll_pixel_position,
                     &gutter_dimensions,
                     &gutter_hitbox,
+                    &snapshot,
                     cx,
                 );
 
@@ -4132,7 +4153,6 @@ impl Element for EditorElement {
                     gutter_dimensions,
                     content_origin,
                     scrollbar_layout,
-                    max_row,
                     active_rows,
                     highlighted_rows,
                     highlighted_ranges,
@@ -4265,7 +4285,6 @@ pub struct EditorLayout {
     cursors: Vec<(DisplayPoint, Hsla)>,
     visible_cursors: Vec<CursorLayout>,
     selections: Vec<(PlayerColor, Vec<SelectionLayout>)>,
-    max_row: u32,
     code_actions_indicator: Option<AnyElement>,
     test_indicators: Vec<AnyElement>,
     fold_indicators: Vec<Option<AnyElement>>,
@@ -4482,20 +4501,26 @@ fn layout_line(
 ) -> Result<ShapedLine> {
     let mut line = snapshot.line(row);
 
-    if line.len() > MAX_LINE_LEN {
-        let mut len = MAX_LINE_LEN;
-        while !line.is_char_boundary(len) {
-            len -= 1;
-        }
+    let len = {
+        let line_len = line.len();
+        if line_len > MAX_LINE_LEN {
+            let mut len = MAX_LINE_LEN;
+            while !line.is_char_boundary(len) {
+                len -= 1;
+            }
 
-        line.truncate(len);
-    }
+            line.truncate(len);
+            len
+        } else {
+            line_len
+        }
+    };
 
     cx.text_system().shape_line(
         line.into(),
         style.text.font_size.to_pixels(cx.rem_size()),
         &[TextRun {
-            len: snapshot.line_len(row) as usize,
+            len,
             font: style.text.font(),
             color: Hsla::default(),
             background_color: None,

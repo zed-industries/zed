@@ -145,8 +145,7 @@ mod tests {
                         1.five
                         1.six
                     "
-                    .unindent()
-                    .into(),
+                    .unindent(),
                 ),
                 cx,
             );
@@ -182,8 +181,7 @@ mod tests {
                         2.four
                         2.six
                     "
-                    .unindent()
-                    .into(),
+                    .unindent(),
                 ),
                 cx,
             );

@@ -1,12 +1,12 @@
-#!/usr/bin/bash
+#!/usr/bin/env bash
 
-set -e
+set -ex
 
 # Install our submodule dependencies
 git submodule update --init --recursive
 
 # install the wasm toolchain
-rustup target add wasm32-wasi
+which rustup > /dev/null 2>&1 || curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
 
 # if sudo is not installed, define an empty alias
 maysudo=$(command -v sudo || command -v doas || true)

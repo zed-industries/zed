@@ -1,0 +1,40 @@
+[package]
+name = "markdown"
+version = "0.1.0"
+edition = "2021"
+publish = false
+license = "GPL-3.0-or-later"
+
+[lints]
+workspace = true
+
+[lib]
+path = "src/markdown.rs"
+doctest = false
+
+[features]
+test-support = [
+    "gpui/test-support",
+    "util/test-support"
+]
+
+[dependencies]
+anyhow.workspace = true
+futures.workspace = true
+gpui.workspace = true
+language.workspace = true
+linkify.workspace = true
+log.workspace = true
+pulldown-cmark.workspace = true
+theme.workspace = true
+ui.workspace = true
+util.workspace = true
+
+[dev-dependencies]
+assets.workspace = true
+env_logger.workspace = true
+gpui = { workspace = true, features = ["test-support"] }
+languages.workspace = true
+node_runtime.workspace = true
+settings = { workspace = true, features = ["test-support"] }
+util = { workspace = true, features = ["test-support"] }

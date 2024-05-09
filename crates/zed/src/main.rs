@@ -542,10 +542,12 @@ fn handle_open_request(
 
 async fn authenticate(client: Arc<Client>, cx: &AsyncAppContext) -> Result<()> {
     if stdout_is_a_pty() {
-        if client::IMPERSONATE_LOGIN.is_some() {
+        if *client::ZED_DEVELOPMENT_AUTH {
+            client.authenticate_and_connect(true, &cx).await?;
+        } else if client::IMPERSONATE_LOGIN.is_some() {
             client.authenticate_and_connect(false, &cx).await?;
         }
-    } else if client.has_keychain_credentials(&cx).await {
+    } else if client.has_credentials(&cx).await {
         client.authenticate_and_connect(true, &cx).await?;
     }
     Ok::<_, anyhow::Error>(())

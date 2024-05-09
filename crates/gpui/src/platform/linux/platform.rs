@@ -136,17 +136,21 @@ impl<P: LinuxClient + 'static> Platform for P {
         self.with_common(|common| common.signal.stop());
     }
 
-    fn restart(&self) {
+    fn restart(&self, binary_path: Option<PathBuf>) {
         use std::os::unix::process::CommandExt as _;
 
         // get the process id of the current process
         let app_pid = std::process::id().to_string();
         // get the path to the executable
-        let app_path = match self.app_path() {
-            Ok(path) => path,
-            Err(err) => {
-                log::error!("Failed to get app path: {:?}", err);
-                return;
+        let app_path = if let Some(path) = binary_path {
+            path
+        } else {
+            match self.app_path() {
+                Ok(path) => path,
+                Err(err) => {
+                    log::error!("Failed to get app path: {:?}", err);
+                    return;
+                }
             }
         };
 
@@ -348,7 +352,12 @@ impl<P: LinuxClient + 'static> Platform for P {
     }
 
     fn app_version(&self) -> Result<SemanticVersion> {
-        Ok(SemanticVersion::new(1, 0, 0))
+        const VERSION: Option<&str> = option_env!("RELEASE_VERSION");
+        if let Some(version) = VERSION {
+            version.parse()
+        } else {
+            Ok(SemanticVersion::new(1, 0, 0))
+        }
     }
 
     fn app_path(&self) -> Result<PathBuf> {

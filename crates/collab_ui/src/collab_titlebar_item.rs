@@ -677,7 +677,7 @@ impl CollabTitlebarItem {
             client::Status::UpgradeRequired => {
                 let auto_updater = auto_update::AutoUpdater::get(cx);
                 let label = match auto_updater.map(|auto_update| auto_update.read(cx).status()) {
-                    Some(AutoUpdateStatus::Updated) => "Please restart Zed to Collaborate",
+                    Some(AutoUpdateStatus::Updated { .. }) => "Please restart Zed to Collaborate",
                     Some(AutoUpdateStatus::Installing)
                     | Some(AutoUpdateStatus::Downloading)
                     | Some(AutoUpdateStatus::Checking) => "Updating...",
@@ -691,7 +691,7 @@ impl CollabTitlebarItem {
                         .label_size(LabelSize::Small)
                         .on_click(|_, cx| {
                             if let Some(auto_updater) = auto_update::AutoUpdater::get(cx) {
-                                if auto_updater.read(cx).status() == AutoUpdateStatus::Updated {
+                                if auto_updater.read(cx).status().is_updated() {
                                     workspace::restart(&Default::default(), cx);
                                     return;
                                 }

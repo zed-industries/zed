@@ -377,21 +377,25 @@ dependencies = [
  "anyhow",
  "assets",
  "assistant_tooling",
+ "chrono",
  "client",
  "collections",
  "editor",
  "env_logger",
  "feature_flags",
+ "fs",
  "futures 0.3.28",
+ "fuzzy",
  "gpui",
  "language",
  "languages",
  "log",
- "nanoid",
  "node_runtime",
  "open_ai",
+ "picker",
  "project",
  "rand 0.8.5",
+ "regex",
  "release_channel",
  "rich_text",
  "schemars",
@@ -414,12 +418,15 @@ dependencies = [
  "collections",
  "futures 0.3.28",
  "gpui",
+ "log",
  "project",
+ "repair_json",
  "schemars",
  "serde",
  "serde_json",
  "settings",
  "sum_tree",
+ "ui",
  "unindent",
  "util",
 ]
@@ -479,6 +486,7 @@ version = "0.4.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a116f46a969224200a0a97f29cfd4c50e7534e4b4826bd23ea2c3c533039c82c"
 dependencies = [
+ "deflate64",
  "flate2",
  "futures-core",
  "futures-io",
@@ -810,6 +818,19 @@ dependencies = [
  "log",
  "pin-project-lite",
  "tungstenite 0.16.0",
+]
+
+[[package]]
+name = "async_zip"
+version = "0.0.17"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "00b9f7252833d5ed4b00aa9604b563529dd5e11de9c23615de2dcdf91eb87b52"
+dependencies = [
+ "async-compression",
+ "crc32fast",
+ "futures-lite 2.2.0",
+ "pin-project",
+ "thiserror",
 ]
 
 [[package]]
@@ -1487,7 +1508,7 @@ dependencies = [
 [[package]]
 name = "blade-graphics"
 version = "0.4.0"
-source = "git+https://github.com/kvark/blade?rev=f5766863de9dcc092e90fdbbc5e0007a99e7f9bf#f5766863de9dcc092e90fdbbc5e0007a99e7f9bf"
+source = "git+https://github.com/kvark/blade?rev=e35b2d41f221a48b75f7cf2e78a81e7ecb7a383c#e35b2d41f221a48b75f7cf2e78a81e7ecb7a383c"
 dependencies = [
  "ash",
  "ash-window",
@@ -1517,7 +1538,7 @@ dependencies = [
 [[package]]
 name = "blade-macros"
 version = "0.2.1"
-source = "git+https://github.com/kvark/blade?rev=f5766863de9dcc092e90fdbbc5e0007a99e7f9bf#f5766863de9dcc092e90fdbbc5e0007a99e7f9bf"
+source = "git+https://github.com/kvark/blade?rev=e35b2d41f221a48b75f7cf2e78a81e7ecb7a383c#e35b2d41f221a48b75f7cf2e78a81e7ecb7a383c"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -3106,6 +3127,12 @@ dependencies = [
  "adler32",
  "byteorder",
 ]
+
+[[package]]
+name = "deflate64"
+version = "0.1.8"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "83ace6c86376be0b6cdcf3fb41882e81d94b31587573d1cfa9d01cd06bba210d"
 
 [[package]]
 name = "der"
@@ -5971,6 +5998,27 @@ dependencies = [
 ]
 
 [[package]]
+name = "markdown"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "assets",
+ "env_logger",
+ "futures 0.3.28",
+ "gpui",
+ "language",
+ "languages",
+ "linkify",
+ "log",
+ "node_runtime",
+ "pulldown-cmark",
+ "settings",
+ "theme",
+ "ui",
+ "util",
+]
+
+[[package]]
 name = "markdown_preview"
 version = "0.1.0"
 dependencies = [
@@ -6336,15 +6384,20 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "async-compression",
+ "async-std",
  "async-tar",
  "async-trait",
+ "async_zip",
  "futures 0.3.28",
  "log",
  "semver",
  "serde",
  "serde_json",
  "smol",
+ "tempfile",
  "util",
+ "walkdir",
+ "windows 0.53.0",
 ]
 
 [[package]]
@@ -7996,6 +8049,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "581008d2099240d37fb08d77ad713bcaec2c4d89d50b5b21a8bb1996bbab68ab"
 dependencies = [
  "bytecheck",
+]
+
+[[package]]
+name = "repair_json"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5ee191e184125fe72cb59b74160e25584e3908f2aaa84cbda1e161347102aa15"
+dependencies = [
+ "thiserror",
 ]
 
 [[package]]
@@ -10135,18 +10197,18 @@ dependencies = [
 
 [[package]]
 name = "thiserror"
-version = "1.0.48"
+version = "1.0.60"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9d6d7a740b8a666a7e828dd00da9c0dc290dff53154ea77ac109281de90589b7"
+checksum = "579e9083ca58dd9dcf91a9923bb9054071b9ebbd800b342194c9feb0ee89fc18"
 dependencies = [
  "thiserror-impl",
 ]
 
 [[package]]
 name = "thiserror-impl"
-version = "1.0.48"
+version = "1.0.60"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "49922ecae66cc8a249b77e68d1d0623c1b2c514f0060c27cdc68bd62a1219d35"
+checksum = "e2470041c06ec3ac1ab38d0356a6119054dedaea53e12fbefc0de730a1c08524"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -11292,9 +11354,9 @@ checksum = "9d5b2c62b4012a3e1eca5a7e077d13b3bf498c4073e33ccd58626607748ceeca"
 
 [[package]]
 name = "walkdir"
-version = "2.4.0"
+version = "2.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d71d857dc86794ca4c280d616f7da00d2dbfd8cd788846559a6813e6aa4b54ee"
+checksum = "29790946404f91d9c5d06f9874efddea1dc06c5efe94541a7d6863108e3a5e4b"
 dependencies = [
  "same-file",
  "winapi-util",
@@ -12755,7 +12817,7 @@ dependencies = [
 
 [[package]]
 name = "zed"
-version = "0.135.0"
+version = "0.136.0"
 dependencies = [
  "activity_indicator",
  "anyhow",

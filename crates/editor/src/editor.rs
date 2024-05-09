@@ -79,7 +79,6 @@ use inlay_hint_cache::{InlayHintCache, InlaySplice, InvalidationStrategy};
 pub use inline_completion_provider::*;
 pub use items::MAX_TAB_TITLE_LEN;
 use itertools::Itertools;
-use language::Runnable;
 use language::{
     char_kind,
     language_settings::{self, all_language_settings, InlayHintSettings},
@@ -87,7 +86,8 @@ use language::{
     CursorShape, Diagnostic, Documentation, IndentKind, IndentSize, Language, OffsetRangeExt,
     Point, Selection, SelectionGoal, TransactionId,
 };
-use task::{ResolvedTask, TaskTemplate};
+use language::{Runnable, RunnableRange};
+use task::{ResolvedTask, TaskTemplate, TaskVariables};
 
 use hover_links::{HoverLink, HoveredLinkState, InlayHighlight};
 use lsp::{DiagnosticSeverity, LanguageServerId};
@@ -404,6 +404,7 @@ struct RunnableTasks {
     templates: Vec<(TaskSourceKind, TaskTemplate)>,
     // We need the column at which the task context evaluation should take place.
     column: u32,
+    extra_variables: HashMap<String, String>,
 }
 
 #[derive(Clone)]
@@ -458,7 +459,7 @@ pub struct Editor {
     find_all_references_task_sources: Vec<Anchor>,
     next_completion_id: CompletionId,
     completion_documentation_pre_resolve_debounce: DebouncedDelay,
-    available_code_actions: Option<(Model<Buffer>, Arc<[CodeAction]>)>,
+    available_code_actions: Option<(Location, Arc<[CodeAction]>)>,
     code_actions_task: Option<Task<()>>,
     document_highlights_task: Option<Task<()>>,
     pending_rename: Option<RenameState>,
@@ -504,7 +505,7 @@ pub struct Editor {
     >,
     last_bounds: Option<Bounds<Pixels>>,
     expect_bounds_change: Option<Bounds<Pixels>>,
-    tasks: HashMap<u32, RunnableTasks>,
+    tasks: HashMap<(BufferId, u32), (usize, RunnableTasks)>,
     tasks_update_task: Option<Task<()>>,
 }
 
@@ -3839,7 +3840,7 @@ impl Editor {
             }
         }
         drop(context_menu);
-
+        let snapshot = self.snapshot(cx);
         let deployed_from_indicator = action.deployed_from_indicator;
         let mut task = self.code_actions_task.take();
         let action = action.clone();
@@ -3851,74 +3852,91 @@ impl Editor {
 
             let spawned_test_task = this.update(&mut cx, |this, cx| {
                 if this.focus_handle.is_focused(cx) {
-                    let snapshot = this.snapshot(cx);
-                    let display_row = action.deployed_from_indicator.unwrap_or_else(|| {
-                        this.selections
-                            .newest::<Point>(cx)
-                            .head()
-                            .to_display_point(&snapshot.display_snapshot)
-                            .row()
-                    });
-
-                    let buffer_point =
-                        DisplayPoint::new(display_row, 0).to_point(&snapshot.display_snapshot);
-                    let buffer_row = snapshot
+                    let display_row = action
+                        .deployed_from_indicator
+                        .map(|row| {
+                            DisplayPoint::new(row, 0)
+                                .to_point(&snapshot.display_snapshot)
+                                .row
+                        })
+                        .unwrap_or_else(|| this.selections.newest::<Point>(cx).head().row);
+                    let (buffer, buffer_row) = snapshot
                         .buffer_snapshot
-                        .buffer_line_for_row(buffer_point.row)
-                        .map(|(_, Range { start, .. })| start);
-                    let tasks = this.tasks.get(&display_row).map(|t| Arc::new(t.to_owned()));
-                    let (buffer, code_actions) = this.available_code_actions.clone().unzip();
+                        .buffer_line_for_row(display_row)
+                        .and_then(|(buffer_snapshot, range)| {
+                            this.buffer
+                                .read(cx)
+                                .buffer(buffer_snapshot.remote_id())
+                                .map(|buffer| (buffer, range.start.row))
+                        })?;
+                    let (_, code_actions) = this
+                        .available_code_actions
+                        .clone()
+                        .and_then(|(location, code_actions)| {
+                            let snapshot = location.buffer.read(cx).snapshot();
+                            let point_range = location.range.to_point(&snapshot);
+                            let point_range = point_range.start.row..=point_range.end.row;
+                            if point_range.contains(&buffer_row) {
+                                Some((location, code_actions))
+                            } else {
+                                None
+                            }
+                        })
+                        .unzip();
+                    let buffer_id = buffer.read(cx).remote_id();
+                    let tasks = this
+                        .tasks
+                        .get(&(buffer_id, buffer_row))
+                        .map(|t| Arc::new(t.to_owned()));
                     if tasks.is_none() && code_actions.is_none() {
                         return None;
                     }
-                    let buffer = buffer.or_else(|| {
-                        let snapshot = this.snapshot(cx);
-                        let (buffer_snapshot, _) =
-                            snapshot.buffer_snapshot.buffer_line_for_row(display_row)?;
-                        let buffer_id = buffer_snapshot.remote_id();
-                        this.buffer().read(cx).buffer(buffer_id)
-                    });
-                    let Some(buffer) = buffer else {
-                        return None;
-                    };
+
                     this.completion_tasks.clear();
                     this.discard_inline_completion(cx);
                     let task_context = tasks.as_ref().zip(this.workspace.clone()).and_then(
                         |(tasks, (workspace, _))| {
-                            if let Some(buffer_point) = buffer_row {
-                                let position = Point::new(buffer_point.row, tasks.column);
-                                let range_start = buffer.read(cx).anchor_at(position, Bias::Right);
-                                let location = Location {
-                                    buffer: buffer.clone(),
-                                    range: range_start..range_start,
-                                };
-                                workspace
-                                    .update(cx, |workspace, cx| {
-                                        tasks::task_context_for_location(workspace, location, cx)
-                                    })
-                                    .ok()
-                                    .flatten()
-                            } else {
-                                None
-                            }
+                            let position = Point::new(buffer_row, tasks.1.column);
+                            let range_start = buffer.read(cx).anchor_at(position, Bias::Right);
+                            let location = Location {
+                                buffer: buffer.clone(),
+                                range: range_start..range_start,
+                            };
+                            workspace
+                                .update(cx, |workspace, cx| {
+                                    tasks::task_context_for_location(workspace, location, cx)
+                                })
+                                .ok()
+                                .flatten()
                         },
                     );
-                    let tasks = tasks
-                        .zip(task_context.as_ref())
-                        .map(|(tasks, task_context)| {
-                            Arc::new(ResolvedTasks {
-                                templates: tasks
-                                    .templates
-                                    .iter()
-                                    .filter_map(|(kind, template)| {
-                                        template
-                                            .resolve_task(&kind.to_id_base(), &task_context)
-                                            .map(|task| (kind.clone(), task))
-                                    })
-                                    .collect(),
-                                position: Point::new(display_row, tasks.column),
-                            })
-                        });
+                    let tasks = tasks.zip(task_context).map(|(tasks, mut task_context)| {
+                        // Fill in the environmental variables from the tree-sitter captures
+                        let mut additional_task_variables = TaskVariables::default();
+                        for (capture_name, value) in tasks.1.extra_variables.clone() {
+                            additional_task_variables.insert(
+                                task::VariableName::Custom(capture_name.into()),
+                                value.clone(),
+                            );
+                        }
+                        task_context
+                            .task_variables
+                            .extend(additional_task_variables);
+
+                        Arc::new(ResolvedTasks {
+                            templates: tasks
+                                .1
+                                .templates
+                                .iter()
+                                .filter_map(|(kind, template)| {
+                                    template
+                                        .resolve_task(&kind.to_id_base(), &task_context)
+                                        .map(|task| (kind.clone(), task))
+                                })
+                                .collect(),
+                            position: Point::new(buffer_row, tasks.1.column),
+                        })
+                    });
                     let spawn_straight_away = tasks
                         .as_ref()
                         .map_or(false, |tasks| tasks.templates.len() == 1)
@@ -3983,7 +4001,7 @@ impl Editor {
                         cx,
                     );
 
-                    None
+                    Some(Task::ready(Ok(())))
                 })
             }
             CodeActionsItem::CodeAction(action) => {
@@ -4124,7 +4142,13 @@ impl Editor {
                 this.available_code_actions = if actions.is_empty() {
                     None
                 } else {
-                    Some((start_buffer, actions.into()))
+                    Some((
+                        Location {
+                            buffer: start_buffer,
+                            range: start..end,
+                        },
+                        actions.into(),
+                    ))
                 };
                 cx.notify();
             })
@@ -4356,6 +4380,7 @@ impl Editor {
                 text: completion.text.to_string().into(),
             });
             self.insert_with_autoindent_mode(&completion.text.to_string(), None, cx);
+            self.refresh_inline_completion(true, cx);
             cx.notify();
             true
         } else {
@@ -4500,8 +4525,8 @@ impl Editor {
         self.tasks.clear()
     }
 
-    fn insert_tasks(&mut self, row: u32, tasks: RunnableTasks) {
-        if let Some(_) = self.tasks.insert(row, tasks) {
+    fn insert_tasks(&mut self, key: (BufferId, u32), value: (usize, RunnableTasks)) {
+        if let Some(_) = self.tasks.insert(key, value) {
             // This case should hopefully be rare, but just in case...
             log::error!("multiple different run targets found on a single line, only the last target will be rendered")
         }
@@ -7717,17 +7742,12 @@ impl Editor {
                         }
                     })
                     .await;
-            let rows = Self::refresh_runnable_display_rows(
-                project,
-                display_snapshot,
-                new_rows,
-                cx.clone(),
-            );
+            let rows = Self::runnable_rows(project, display_snapshot, new_rows, cx.clone());
 
             this.update(&mut cx, |this, _| {
                 this.clear_tasks();
-                for (row, tasks) in rows {
-                    this.insert_tasks(row, tasks);
+                for (key, value) in rows {
+                    this.insert_tasks(key, value);
                 }
             })
             .ok();
@@ -7736,31 +7756,47 @@ impl Editor {
     fn fetch_runnable_ranges(
         snapshot: &DisplaySnapshot,
         range: Range<Anchor>,
-    ) -> Vec<(Range<usize>, Runnable)> {
+    ) -> Vec<language::RunnableRange> {
         snapshot.buffer_snapshot.runnable_ranges(range).collect()
     }
-    fn refresh_runnable_display_rows(
+
+    fn runnable_rows(
         project: Model<Project>,
         snapshot: DisplaySnapshot,
-        runnable_ranges: Vec<(Range<usize>, Runnable)>,
+        runnable_ranges: Vec<RunnableRange>,
         mut cx: AsyncWindowContext,
-    ) -> Vec<(u32, RunnableTasks)> {
+    ) -> Vec<((BufferId, u32), (usize, RunnableTasks))> {
         runnable_ranges
             .into_iter()
-            .filter_map(|(multi_buffer_range, mut runnable)| {
+            .filter_map(|mut runnable| {
                 let (tasks, _) = cx
-                    .update(|cx| Self::resolve_runnable(project.clone(), &mut runnable, cx))
+                    .update(|cx| {
+                        Self::resolve_runnable(project.clone(), &mut runnable.runnable, cx)
+                    })
                     .ok()?;
                 if tasks.is_empty() {
                     return None;
                 }
-                let point = multi_buffer_range.start.to_display_point(&snapshot);
+
+                let point = runnable.run_range.start.to_point(&snapshot.buffer_snapshot);
+
+                let row = snapshot
+                    .buffer_snapshot
+                    .buffer_line_for_row(point.row)?
+                    .1
+                    .start
+                    .row;
+
                 Some((
-                    point.row(),
-                    RunnableTasks {
-                        templates: tasks,
-                        column: point.column(),
-                    },
+                    (runnable.buffer_id, row),
+                    (
+                        runnable.run_range.start,
+                        RunnableTasks {
+                            templates: tasks,
+                            column: point.column,
+                            extra_variables: runnable.extra_captures,
+                        },
+                    ),
                 ))
             })
             .collect()
@@ -9206,6 +9242,8 @@ impl Editor {
                     self.active_diagnostics = Some(active_diagnostics);
                 }
             }
+
+            self.scrollbar_marker_state.dirty = true;
         }
     }
 
@@ -9239,6 +9277,7 @@ impl Editor {
             }
 
             cx.notify();
+            self.scrollbar_marker_state.dirty = true;
         }
     }
 
@@ -10101,6 +10140,7 @@ impl Editor {
                 predecessor,
                 excerpts,
             } => {
+                self.tasks_update_task = Some(self.refresh_runnables(cx));
                 cx.emit(EditorEvent::ExcerptsAdded {
                     buffer: buffer.clone(),
                     predecessor: *predecessor,

@@ -1,4 +1,4 @@
-use super::SerializedAxis;
+use super::{SerializedAxis, SerializedWindowBounds};
 use crate::{item::ItemHandle, ItemDeserializers, Member, Pane, PaneAxis, Workspace, WorkspaceId};
 use anyhow::{Context, Result};
 use async_recursion::async_recursion;
@@ -7,7 +7,7 @@ use db::sqlez::{
     bindable::{Bind, Column, StaticColumnCount},
     statement::Statement,
 };
-use gpui::{AsyncWindowContext, Bounds, DevicePixels, Model, Task, View, WeakView};
+use gpui::{AsyncWindowContext, Model, Task, View, WeakView};
 use project::Project;
 use serde::{Deserialize, Serialize};
 use std::{
@@ -110,8 +110,7 @@ pub(crate) struct SerializedWorkspace {
     pub(crate) id: WorkspaceId,
     pub(crate) location: SerializedWorkspaceLocation,
     pub(crate) center_group: SerializedPaneGroup,
-    pub(crate) bounds: Option<Bounds<DevicePixels>>,
-    pub(crate) fullscreen: bool,
+    pub(crate) window_bounds: Option<SerializedWindowBounds>,
     pub(crate) centered_layout: bool,
     pub(crate) display: Option<Uuid>,
     pub(crate) docks: DockStructure,

@@ -10,9 +10,10 @@ use gpui::{
     ParentElement, Pixels, SharedString, Size, StatefulInteractiveElement, Styled, Task,
     ViewContext, WeakView,
 };
-use language::{markdown, Bias, DiagnosticEntry, Language, LanguageRegistry, ParsedMarkdown};
+use language::{markdown, DiagnosticEntry, Language, LanguageRegistry, ParsedMarkdown};
 
 use lsp::DiagnosticSeverity;
+use multi_buffer::ToOffset;
 use project::{HoverBlock, HoverBlockKind, InlayHintLabelPart};
 use settings::Settings;
 use smol::stream::StreamExt;
@@ -30,21 +31,16 @@ pub const HOVER_POPOVER_GAP: Pixels = px(10.);
 
 /// Bindable action which uses the most recent selection head to trigger a hover
 pub fn hover(editor: &mut Editor, _: &Hover, cx: &mut ViewContext<Editor>) {
-    let head = editor.selections.newest_display(cx).head();
-    let snapshot = editor.snapshot(cx);
-    show_hover(editor, head, &snapshot, true, cx);
+    let head = editor.selections.newest_anchor().head();
+    show_hover(editor, head, true, cx);
 }
 
 /// The internal hover action dispatches between `show_hover` or `hide_hover`
 /// depending on whether a point to hover over is provided.
-pub fn hover_at(
-    editor: &mut Editor,
-    point: Option<(DisplayPoint, &EditorSnapshot)>,
-    cx: &mut ViewContext<Editor>,
-) {
+pub fn hover_at(editor: &mut Editor, anchor: Option<Anchor>, cx: &mut ViewContext<Editor>) {
     if EditorSettings::get_global(cx).hover_popover_enabled {
-        if let Some((point, snapshot)) = point {
-            show_hover(editor, point, snapshot, false, cx);
+        if let Some(anchor) = anchor {
+            show_hover(editor, anchor, false, cx);
         } else {
             hide_hover(editor, cx);
         }
@@ -164,8 +160,7 @@ pub fn hide_hover(editor: &mut Editor, cx: &mut ViewContext<Editor>) -> bool {
 /// Triggered by the `Hover` action when the cursor may be over a symbol.
 fn show_hover(
     editor: &mut Editor,
-    point: DisplayPoint,
-    snapshot: &EditorSnapshot,
+    anchor: Anchor,
     ignore_timeout: bool,
     cx: &mut ViewContext<Editor>,
 ) {
@@ -173,27 +168,21 @@ fn show_hover(
         return;
     }
 
-    let multibuffer_offset = point.to_offset(&snapshot.display_snapshot, Bias::Left);
+    let snapshot = editor.snapshot(cx);
 
-    let (buffer, buffer_position) = if let Some(output) = editor
-        .buffer
-        .read(cx)
-        .text_anchor_for_position(multibuffer_offset, cx)
-    {
-        output
-    } else {
-        return;
-    };
+    let (buffer, buffer_position) =
+        if let Some(output) = editor.buffer.read(cx).text_anchor_for_position(anchor, cx) {
+            output
+        } else {
+            return;
+        };
 
-    let excerpt_id = if let Some((excerpt_id, _, _)) = editor
-        .buffer()
-        .read(cx)
-        .excerpt_containing(multibuffer_offset, cx)
-    {
-        excerpt_id
-    } else {
-        return;
-    };
+    let excerpt_id =
+        if let Some((excerpt_id, _, _)) = editor.buffer().read(cx).excerpt_containing(anchor, cx) {
+            excerpt_id
+        } else {
+            return;
+        };
 
     let project = if let Some(project) = editor.project.clone() {
         project
@@ -211,9 +200,10 @@ fn show_hover(
                     .as_text_range()
                     .map(|range| {
                         let hover_range = range.to_offset(&snapshot.buffer_snapshot);
+                        let offset = anchor.to_offset(&snapshot.buffer_snapshot);
                         // LSP returns a hover result for the end index of ranges that should be hovered, so we need to
                         // use an inclusive range here to check if we should dismiss the popover
-                        (hover_range.start..=hover_range.end).contains(&multibuffer_offset)
+                        (hover_range.start..=hover_range.end).contains(&offset)
                     })
                     .unwrap_or(false)
             })
@@ -225,11 +215,6 @@ fn show_hover(
         }
     }
 
-    // Get input anchor
-    let anchor = snapshot
-        .buffer_snapshot
-        .anchor_at(multibuffer_offset, Bias::Left);
-
     // Don't request again if the location is the same as the previous request
     if let Some(triggered_from) = &editor.hover_state.triggered_from {
         if triggered_from
@@ -239,7 +224,6 @@ fn show_hover(
             return;
         }
     }
-    let snapshot = snapshot.clone();
 
     let task = cx.spawn(|this, mut cx| {
         async move {
@@ -273,7 +257,7 @@ fn show_hover(
             // If there's a diagnostic, assign it on the hover state and notify
             let local_diagnostic = snapshot
                 .buffer_snapshot
-                .diagnostics_in_range::<_, usize>(multibuffer_offset..multibuffer_offset, false)
+                .diagnostics_in_range::<_, usize>(anchor..anchor, false)
                 // Find the entry with the most specific range
                 .min_by_key(|entry| entry.range.end - entry.range.start)
                 .map(|entry| DiagnosticEntry {
@@ -641,6 +625,7 @@ mod tests {
     use lsp::LanguageServerId;
     use project::{HoverBlock, HoverBlockKind};
     use smol::stream::StreamExt;
+    use text::Bias;
     use unindent::Unindent;
     use util::test::marked_text_ranges;
 
@@ -667,7 +652,10 @@ mod tests {
 
         cx.update_editor(|editor, cx| {
             let snapshot = editor.snapshot(cx);
-            hover_at(editor, Some((hover_point, &snapshot)), cx)
+            let anchor = snapshot
+                .buffer_snapshot
+                .anchor_before(hover_point.to_offset(&snapshot, Bias::Left));
+            hover_at(editor, Some(anchor), cx)
         });
         assert!(!cx.editor(|editor, _| editor.hover_state.visible()));
 
@@ -716,7 +704,10 @@ mod tests {
             .handle_request::<lsp::request::HoverRequest, _, _>(|_, _| async move { Ok(None) });
         cx.update_editor(|editor, cx| {
             let snapshot = editor.snapshot(cx);
-            hover_at(editor, Some((hover_point, &snapshot)), cx)
+            let anchor = snapshot
+                .buffer_snapshot
+                .anchor_before(hover_point.to_offset(&snapshot, Bias::Left));
+            hover_at(editor, Some(anchor), cx)
         });
         cx.background_executor
             .advance_clock(Duration::from_millis(HOVER_DELAY_MILLIS + 100));

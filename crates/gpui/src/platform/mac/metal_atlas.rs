@@ -2,7 +2,7 @@ use crate::{
     AtlasKey, AtlasTextureId, AtlasTextureKind, AtlasTile, Bounds, DevicePixels, PlatformAtlas,
     Point, Size,
 };
-use anyhow::Result;
+use anyhow::{anyhow, Result};
 use collections::FxHashMap;
 use derive_more::{Deref, DerefMut};
 use etagere::BucketedAtlasAllocator;
@@ -31,7 +31,7 @@ impl MetalAtlas {
         &self,
         size: Size<DevicePixels>,
         texture_kind: AtlasTextureKind,
-    ) -> AtlasTile {
+    ) -> Option<AtlasTile> {
         self.0.lock().allocate(size, texture_kind)
     }
 
@@ -67,7 +67,9 @@ impl PlatformAtlas for MetalAtlas {
             Ok(tile.clone())
         } else {
             let (size, bytes) = build()?;
-            let tile = lock.allocate(size, key.texture_kind());
+            let tile = lock
+                .allocate(size, key.texture_kind())
+                .ok_or_else(|| anyhow!("failed to allocate"))?;
             let texture = lock.texture(tile.texture_id);
             texture.upload(tile.bounds, &bytes);
             lock.tiles_by_key.insert(key.clone(), tile.clone());
@@ -77,7 +79,11 @@ impl PlatformAtlas for MetalAtlas {
 }
 
 impl MetalAtlasState {
-    fn allocate(&mut self, size: Size<DevicePixels>, texture_kind: AtlasTextureKind) -> AtlasTile {
+    fn allocate(
+        &mut self,
+        size: Size<DevicePixels>,
+        texture_kind: AtlasTextureKind,
+    ) -> Option<AtlasTile> {
         let textures = match texture_kind {
             AtlasTextureKind::Monochrome => &mut self.monochrome_textures,
             AtlasTextureKind::Polychrome => &mut self.polychrome_textures,
@@ -88,9 +94,9 @@ impl MetalAtlasState {
             .iter_mut()
             .rev()
             .find_map(|texture| texture.allocate(size))
-            .unwrap_or_else(|| {
+            .or_else(|| {
                 let texture = self.push_texture(size, texture_kind);
-                texture.allocate(size).unwrap()
+                texture.allocate(size)
             })
     }
 

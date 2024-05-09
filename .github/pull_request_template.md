@@ -6,6 +6,8 @@ Release Notes:
 
 Optionally, include screenshots / media showcasing your addition that can be included in the release notes.
 
-**or**
+### Or...
+
+Release Notes:
 
 - N/A
