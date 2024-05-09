@@ -18,6 +18,7 @@ use language::{
 };
 use smallvec::SmallVec;
 use std::{
+    any::type_name,
     borrow::Cow,
     cell::{Ref, RefCell},
     cmp, fmt,
@@ -169,7 +170,18 @@ pub struct ExcerptInfo {
     pub range: ExcerptRange<text::Anchor>,
 }
 
+impl std::fmt::Debug for ExcerptInfo {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct(type_name::<Self>())
+            .field("id", &self.id)
+            .field("buffer_id", &self.buffer_id)
+            .field("range", &self.range)
+            .finish()
+    }
+}
+
 /// A boundary between [`Excerpt`]s in a [`MultiBuffer`]
+#[derive(Debug)]
 pub struct ExcerptBoundary {
     pub prev: Option<ExcerptInfo>,
     pub next: Option<ExcerptInfo>,
@@ -4500,15 +4512,16 @@ where
         .peekable();
     while let Some(range) = range_iter.next() {
         let excerpt_start = Point::new(range.start.row.saturating_sub(context_line_count), 0);
-        // These + 1s ensure that we select the whole next line
-        let mut excerpt_end = Point::new(range.end.row + 1 + context_line_count, 0).min(max_point);
+        let row = (range.end.row + context_line_count).min(max_point.row);
+        let mut excerpt_end = Point::new(row, buffer.line_len(row));
 
         let mut ranges_in_excerpt = 1;
 
         while let Some(next_range) = range_iter.peek() {
             if next_range.start.row <= excerpt_end.row + context_line_count {
-                excerpt_end =
-                    Point::new(next_range.end.row + 1 + context_line_count, 0).min(max_point);
+                let row = (next_range.end.row + context_line_count).min(max_point.row);
+                excerpt_end = Point::new(row, buffer.line_len(row));
+
                 ranges_in_excerpt += 1;
                 range_iter.next();
             } else {

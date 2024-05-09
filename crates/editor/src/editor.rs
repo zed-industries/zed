@@ -1553,7 +1553,7 @@ impl Editor {
         let style = cx.text_style();
         let font_size = style.font_size.to_pixels(cx.rem_size());
         let display_map = cx.new_model(|cx| {
-            DisplayMap::new(buffer.clone(), style.font(), font_size, None, 2, 1, 1, cx)
+            DisplayMap::new(buffer.clone(), style.font(), font_size, None, 3, 1, 1, cx)
         });
 
         let selections = SelectionsCollection::new(display_map.clone(), buffer.clone());

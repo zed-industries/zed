@@ -119,6 +119,7 @@ pub enum TransformBlock {
     },
     ExcerptFooter {
         id: ExcerptId,
+        disposition: BlockDisposition,
         height: u8,
     },
 }
@@ -128,7 +129,7 @@ impl TransformBlock {
         match self {
             TransformBlock::Custom(block) => block.disposition,
             TransformBlock::ExcerptHeader { .. } => BlockDisposition::Above,
-            TransformBlock::ExcerptFooter { .. } => BlockDisposition::Above,
+            TransformBlock::ExcerptFooter { disposition, .. } => *disposition,
         }
     }
 
@@ -392,6 +393,11 @@ impl BlockMap {
                                         TransformBlock::ExcerptFooter {
                                             id: prev.id,
                                             height: self.excerpt_footer_height,
+                                            disposition: if excerpt_boundary.next.is_none() {
+                                                BlockDisposition::Below
+                                            } else {
+                                                BlockDisposition::Above
+                                            },
                                         },
                                     )
                                 }),

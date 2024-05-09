@@ -26,7 +26,7 @@ use gpui::{
     anchored, deferred, div, fill, outline, point, px, quad, relative, size, svg,
     transparent_black, Action, AnchorCorner, AnyElement, AvailableSpace, Bounds, ClipboardItem,
     ContentMask, Corners, CursorStyle, DispatchPhase, Edges, Element, ElementInputHandler, Entity,
-    GlobalElementId, Hitbox, Hsla, InteractiveElement, IntoElement, ModifiersChangedEvent,
+    GlobalElementId, Hitbox, Hsla, InteractiveElement, IntoElement, Length, ModifiersChangedEvent,
     MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, PaintQuad, ParentElement, Pixels,
     ScrollDelta, ScrollWheelEvent, ShapedLine, SharedString, Size, Stateful,
     StatefulInteractiveElement, Style, Styled, TextRun, TextStyle, TextStyleRefinement, View,
@@ -1796,6 +1796,9 @@ impl EditorElement {
                         }
                     });
 
+                    let icon_offset = gutter_dimensions.width
+                        - (gutter_dimensions.left_padding + gutter_dimensions.margin);
+
                     let element = if *starts_new_buffer {
                         let path = buffer.resolve_file_path(cx, include_root);
                         let mut filename = None;
@@ -1808,15 +1811,16 @@ impl EditorElement {
                                 .map(|p| SharedString::from(p.to_string_lossy().to_string() + "/"));
                         }
 
+                        let header_padding = px(6.0);
+
                         v_flex()
                             .id(("path excerpt header", block_id))
                             .size_full()
-                            .justify_center()
-                            .p(gpui::px(6.))
+                            .p(header_padding)
                             .child(
                                 h_flex()
+                                    .flex_basis(Length::Definite(DefiniteLength::Fraction(0.667)))
                                     .id("path header block")
-                                    .size_full()
                                     .pl(gpui::px(12.))
                                     .pr(gpui::px(8.))
                                     .rounded_md()
@@ -1869,6 +1873,49 @@ impl EditorElement {
                                             }))
                                     }),
                             )
+                            .child(
+                                h_flex()
+                                    .flex_basis(Length::Definite(DefiniteLength::Fraction(0.333)))
+                                    .pt_1()
+                                    .justify_end()
+                                    .flex_none()
+                                    .w(icon_offset - header_padding)
+                                    .child(
+                                        ButtonLike::new("expand-icon")
+                                            .style(ButtonStyle::Transparent)
+                                            .child(
+                                                svg()
+                                                    .path(IconName::ExpandVertical.path())
+                                                    .size(IconSize::XSmall.rems())
+                                                    .text_color(
+                                                        cx.theme().colors().editor_line_number,
+                                                    )
+                                                    .group("")
+                                                    .hover(|style| {
+                                                        style.text_color(
+                                                            cx.theme()
+                                                                .colors()
+                                                                .editor_active_line_number,
+                                                        )
+                                                    }),
+                                            )
+                                            .on_click(cx.listener_for(&self.editor, {
+                                                let id = *id;
+                                                move |editor, _, cx| {
+                                                    editor.expand_excerpt(id, cx);
+                                                }
+                                            }))
+                                            .tooltip({
+                                                move |cx| {
+                                                    Tooltip::for_action(
+                                                        "Expand Excerpt",
+                                                        &ExpandExcerpts { lines: 0 },
+                                                        cx,
+                                                    )
+                                                }
+                                            }),
+                                    ),
+                            )
                     } else {
                         v_flex()
                             .id(("excerpt header", block_id))
@@ -1895,7 +1942,7 @@ impl EditorElement {
                                 h_flex()
                                     .justify_end()
                                     .flex_none()
-                                    .w(gutter_dimensions.width - (gutter_dimensions.left_padding))
+                                    .w(icon_offset)
                                     .h_full()
                                     .child(
                                         ButtonLike::new("expand-icon")
@@ -1971,7 +2018,8 @@ impl EditorElement {
                         h_flex()
                             .justify_end()
                             .flex_none()
-                            .w(gutter_dimensions.width - (gutter_dimensions.left_padding))
+                            .w(gutter_dimensions.width
+                                - (gutter_dimensions.left_padding + gutter_dimensions.margin))
                             .h_full()
                             .child(
                                 ButtonLike::new("expand-icon")
