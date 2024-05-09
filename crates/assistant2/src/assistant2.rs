@@ -24,7 +24,7 @@ use fs::Fs;
 use futures::{future::join_all, StreamExt};
 use gpui::{
     list, AnyElement, AppContext, AsyncWindowContext, ClickEvent, EventEmitter, FocusHandle,
-    FocusableView, List, ListAlignment, ListState, Model, Render, Task, View, WeakView,
+    FocusableView, ListAlignment, ListState, Model, Render, Task, View, WeakView,
 };
 use language::{language_settings::SoftWrap, LanguageRegistry};
 use open_ai::{FunctionContent, ToolCall, ToolCallContent};
@@ -43,8 +43,6 @@ use workspace::{
     dock::{DockPosition, Panel, PanelEvent},
     Workspace,
 };
-
-use chrono::{DateTime, Duration, Local, Utc};
 
 pub use assistant_settings::AssistantSettings;
 

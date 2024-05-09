@@ -3,13 +3,21 @@ use std::sync::Arc;
 use fuzzy::{match_strings, StringMatch, StringMatchCandidate};
 use gpui::{AppContext, DismissEvent, EventEmitter, FocusHandle, FocusableView, View, WeakView};
 use picker::{Picker, PickerDelegate};
-use ui::{prelude::*, HighlightedLabel, ListItem, ListItemSpacing};
+use serde::Deserialize;
+use ui::{prelude::*, HighlightedLabel, ListItem, ListItemSpacing, Tooltip};
 use util::ResultExt;
 
 use crate::saved_conversation::SavedConversationMetadata;
 
+#[derive(Eq, PartialEq, Copy, Clone, Deserialize)]
+pub enum ConversationViewStyle {
+    List,
+    Details,
+}
+
 pub struct SavedConversations {
     focus_handle: FocusHandle,
+    view_style: ConversationViewStyle,
     picker: Option<View<Picker<SavedConversationPickerDelegate>>>,
 }
 
@@ -29,6 +37,7 @@ impl SavedConversations {
     pub fn new(cx: &mut ViewContext<Self>) -> Self {
         Self {
             focus_handle: cx.focus_handle(),
+            view_style: ConversationViewStyle::List,
             picker: None,
         }
     }
@@ -46,10 +55,84 @@ impl SavedConversations {
 
 impl Render for SavedConversations {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
-        v_flex()
-            .w_full()
-            .bg(cx.theme().colors().panel_background)
-            .children(self.picker.clone())
+        let header_height = Spacing::Small.rems(cx) * 2.0 + ButtonSize::Default.rems();
+
+        let view_style = self.view_style;
+
+        div()
+            .relative()
+            .flex_1()
+            .v_flex()
+            .key_context("AssistantConversations")
+            .text_color(Color::Default.color(cx))
+            .child(
+                v_flex()
+                    .child(
+                        h_flex()
+                            .flex_none()
+                            .justify_between()
+                            .w_full()
+                            .h(header_height)
+                            .p(Spacing::Small.rems(cx))
+                            .border_b_1()
+                            .border_color(cx.theme().colors().border)
+                            .child(
+                                h_flex()
+                                    .gap(Spacing::Small.rems(cx))
+                                    .child(
+                                        IconButton::new("set-view-list", IconName::List)
+                                            .icon_color(
+                                                if view_style == ConversationViewStyle::List {
+                                                    Color::Accent
+                                                } else {
+                                                    Color::Default
+                                                },
+                                            )
+                                            .selected(view_style == ConversationViewStyle::List)
+                                            .tooltip(move |cx| {
+                                                Tooltip::text("View conversations as a list", cx)
+                                            }),
+                                    )
+                                    .child(
+                                        IconButton::new("set-view-details", IconName::Text)
+                                            .icon_color(
+                                                if view_style == ConversationViewStyle::Details {
+                                                    Color::Accent
+                                                } else {
+                                                    Color::Default
+                                                },
+                                            )
+                                            .selected(view_style == ConversationViewStyle::Details)
+                                            .tooltip(move |cx| {
+                                                Tooltip::text(
+                                                    "View conversations with summaries",
+                                                    cx,
+                                                )
+                                            }),
+                                    ),
+                            )
+                            .child(
+                                IconButton::new("new-conversation", IconName::Plus)
+                                    .tooltip(move |cx| Tooltip::text("New Conversation", cx)),
+                            ),
+                    )
+                    // .child(
+                    //     v_flex()
+                    //         .flex_1()
+                    //         .child(Headline::new("Pinned").size(HeadlineSize::XSmall))
+                    //         .children(
+                    //             pinned_conversations
+                    //                 .into_iter()
+                    //                 .map(|conversation| ConversationPreview::new(conversation)),
+                    //         ),
+                    // )
+                    .child(
+                        v_flex()
+                            .flex_1()
+                            .child(Headline::new("All Conversations").size(HeadlineSize::XSmall))
+                            .children(self.picker.clone()),
+                    ),
+            )
     }
 }
 
