@@ -24,25 +24,6 @@ use windows::{
 
 use crate::{PlatformDispatcher, TaskLabel};
 
-macro_rules! generate_func {
-    ($handler_type: tt, true, $function: block) => {
-        $handler_type::new(move |_| $function)
-    };
-    ($handler_type: tt, false, $function: block) => {
-        $handler_type::new(move || $function)
-    };
-}
-
-macro_rules! generate_handler {
-    ($handler_type: tt, $runnable: ident, $has_param: ident) => {{
-        let mut task_wrapper = Some($runnable);
-        generate_func!($handler_type, $has_param, {
-            task_wrapper.take().unwrap().run();
-            Ok(())
-        })
-    }};
-}
-
 pub(crate) struct WindowsDispatcher {
     controller: DispatcherQueueController,
     main_queue: DispatcherQueue,
@@ -76,7 +57,13 @@ impl WindowsDispatcher {
     }
 
     fn dispatch_on_threadpool(&self, runnable: Runnable) {
-        let handler = generate_handler!(WorkItemHandler, runnable, true);
+        let handler = {
+            let mut task_wrapper = Some(runnable);
+            WorkItemHandler::new(move |_| {
+                task_wrapper.take().unwrap().run();
+                Ok(())
+            })
+        };
         ThreadPool::RunWithPriorityAndOptionsAsync(
             &handler,
             WorkItemPriority::High,
@@ -86,7 +73,13 @@ impl WindowsDispatcher {
     }
 
     fn dispatch_on_threadpool_after(&self, runnable: Runnable, duration: Duration) {
-        let handler = generate_handler!(TimerElapsedHandler, runnable, true);
+        let handler = {
+            let mut task_wrapper = Some(runnable);
+            TimerElapsedHandler::new(move |_| {
+                task_wrapper.take().unwrap().run();
+                Ok(())
+            })
+        };
         let delay = TimeSpan {
             // A time period expressed in 100-nanosecond units.
             // 10,000,000 ticks per second
@@ -115,7 +108,13 @@ impl PlatformDispatcher for WindowsDispatcher {
     }
 
     fn dispatch_on_main_thread(&self, runnable: Runnable) {
-        let handler = generate_handler!(DispatcherQueueHandler, runnable, false);
+        let handler = {
+            let mut task_wrapper = Some(runnable);
+            DispatcherQueueHandler::new(move || {
+                task_wrapper.take().unwrap().run();
+                Ok(())
+            })
+        };
         self.main_queue.TryEnqueue(&handler).log_err();
     }
 
