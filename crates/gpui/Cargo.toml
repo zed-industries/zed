@@ -61,7 +61,7 @@ slotmap = "1.0.6"
 smallvec.workspace = true
 smol.workspace = true
 sum_tree.workspace = true
-taffy = { git = "https://github.com/DioxusLabs/taffy", rev = "1876f72bee5e376023eaa518aa7b8a34c769bd1b" }
+taffy = "0.4.3"
 thiserror.workspace = true
 time.workspace = true
 util.workspace = true
