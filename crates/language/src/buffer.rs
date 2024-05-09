@@ -51,7 +51,6 @@ pub use text::{
     Transaction, TransactionId, Unclipped,
 };
 use theme::SyntaxTheme;
-use tree_sitter::QueryCapture;
 #[cfg(any(test, feature = "test-support"))]
 use util::RandomCharIter;
 use util::RangeExt;
