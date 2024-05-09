@@ -9225,6 +9225,8 @@ impl Editor {
                     self.active_diagnostics = Some(active_diagnostics);
                 }
             }
+
+            self.scrollbar_marker_state.dirty = true;
         }
     }
 
@@ -9258,6 +9260,7 @@ impl Editor {
             }
 
             cx.notify();
+            self.scrollbar_marker_state.dirty = true;
         }
     }
 
