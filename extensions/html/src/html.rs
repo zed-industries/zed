@@ -2,7 +2,7 @@ use std::{env, fs};
 use zed_extension_api::{self as zed, Result};
 
 const SERVER_PATH: &str =
-    "node_modules/vscode-langservers-extracted/bin/vscode-html-language-server";
+    "/Users/hiro/Projects/vscode-langservers-extracted/bin/vscode-html-language-server";
 const PACKAGE_NAME: &str = "vscode-langservers-extracted";
 
 struct HtmlExtension {
@@ -15,43 +15,39 @@ impl HtmlExtension {
     }
 
     fn server_script_path(&mut self, config: zed::LanguageServerConfig) -> Result<String> {
-        let server_exists = self.server_exists();
-        if self.did_find_server && server_exists {
-            return Ok(SERVER_PATH.to_string());
-        }
+        return Ok(SERVER_PATH.to_string());
+        // zed::set_language_server_installation_status(
+        //     &config.name,
+        //     &zed::LanguageServerInstallationStatus::CheckingForUpdate,
+        // );
+        // let version = zed::npm_package_latest_version(PACKAGE_NAME)?;
 
-        zed::set_language_server_installation_status(
-            &config.name,
-            &zed::LanguageServerInstallationStatus::CheckingForUpdate,
-        );
-        let version = zed::npm_package_latest_version(PACKAGE_NAME)?;
+        // if !server_exists
+        //     || zed::npm_package_installed_version(PACKAGE_NAME)?.as_ref() != Some(&version)
+        // {
+        //     zed::set_language_server_installation_status(
+        //         &config.name,
+        //         &zed::LanguageServerInstallationStatus::Downloading,
+        //     );
+        //     let result = zed::npm_install_package(PACKAGE_NAME, &version);
+        //     match result {
+        //         Ok(()) => {
+        //             if !self.server_exists() {
+        //                 Err(format!(
+        //                     "installed package '{PACKAGE_NAME}' did not contain expected path '{SERVER_PATH}'",
+        //                 ))?;
+        //             }
+        //         }
+        //         Err(error) => {
+        //             if !self.server_exists() {
+        //                 Err(error)?;
+        //             }
+        //         }
+        //     }
+        // }
 
-        if !server_exists
-            || zed::npm_package_installed_version(PACKAGE_NAME)?.as_ref() != Some(&version)
-        {
-            zed::set_language_server_installation_status(
-                &config.name,
-                &zed::LanguageServerInstallationStatus::Downloading,
-            );
-            let result = zed::npm_install_package(PACKAGE_NAME, &version);
-            match result {
-                Ok(()) => {
-                    if !self.server_exists() {
-                        Err(format!(
-                            "installed package '{PACKAGE_NAME}' did not contain expected path '{SERVER_PATH}'",
-                        ))?;
-                    }
-                }
-                Err(error) => {
-                    if !self.server_exists() {
-                        Err(error)?;
-                    }
-                }
-            }
-        }
-
-        self.did_find_server = true;
-        Ok(SERVER_PATH.to_string())
+        // self.did_find_server = true;
+        // Ok(SERVER_PATH.to_string())
     }
 }
 
