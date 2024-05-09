@@ -10563,7 +10563,6 @@ impl Editor {
             for server in all_language_servers.values() {
                 server.remove_request_handler::<ApplyWorkspaceEdit>();
                 let tx = tx.clone();
-                dbg!("handling focus");
                 server
                     .on_request::<ApplyWorkspaceEdit, _, _>({
                         let tx = tx.clone();
@@ -10572,7 +10571,7 @@ impl Editor {
                             async move {
                                 let tx = tx;
                                 let _ = tx.unbounded_send(params).unwrap();
-                                dbg!("Sent params");
+
                                 Ok(ApplyWorkspaceEditResponse {
                                     applied: true,
                                     failed_change: None,
@@ -10584,9 +10583,7 @@ impl Editor {
                     .detach();
             }
             cx.spawn(|this, mut cx| async move {
-                dbg!("Hey?");
                 while let Some(params) = rx.next().await {
-                    dbg!("new params");
                     this.update(&mut cx, |this, cx| {
                         if let Some(changes) = params.edit.document_changes {
                             match changes {
@@ -10615,7 +10612,6 @@ impl Editor {
                         Result::<(), anyhow::Error>::Ok(())
                     })??;
                 }
-                dbg!("bye?");
                 Result::<(), anyhow::Error>::Ok(())
             })
             .detach();

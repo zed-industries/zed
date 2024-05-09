@@ -209,7 +209,6 @@ pub struct Project {
     hosted_project_id: Option<ProjectId>,
     dev_server_project_id: Option<client::DevServerProjectId>,
     search_history: SearchHistory,
-    buffer_snippets_listeners: HashMap<Model<Buffer>, Vec<Box<dyn FnMut(Snippet) -> bool>>>,
 }
 
 pub enum LanguageServerToQuery {
@@ -741,7 +740,6 @@ impl Project {
                 hosted_project_id: None,
                 dev_server_project_id: None,
                 search_history: Self::new_search_history(),
-                buffer_snippets_listeners: Default::default(),
             }
         })
     }
@@ -897,7 +895,6 @@ impl Project {
                     .dev_server_project_id
                     .map(|dev_server_project_id| DevServerProjectId(dev_server_project_id)),
                 search_history: Self::new_search_history(),
-                buffer_snippets_listeners: Default::default(),
             };
             this.set_role(role, cx);
             for worktree in worktrees {
@@ -5893,13 +5890,6 @@ impl Project {
         }
     }
 
-    pub fn register_snippet_listener(
-        &mut self,
-        buffer: Model<Buffer>,
-        callback: Box<dyn FnMut(Snippet) -> bool>,
-        cx: &mut ModelContext<Self>,
-    ) {
-    }
     fn code_actions_impl(
         &mut self,
         buffer_handle: &Model<Buffer>,
