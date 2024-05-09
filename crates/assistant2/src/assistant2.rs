@@ -7,7 +7,7 @@ mod tools;
 pub mod ui;
 
 use crate::ui::UserOrAssistant;
-use ::ui::{div, prelude::*, Color, Tooltip, ViewContext};
+use ::ui::{div, prelude::*, Color, TintColor, Tooltip, ViewContext};
 use anyhow::{Context, Result};
 use assistant_tooling::{
     tool_running_placeholder, AttachmentRegistry, ProjectContext, ToolFunctionCall, ToolRegistry,
@@ -1007,6 +1007,8 @@ impl AssistantChat {
 
 impl Render for AssistantChat {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+        let show_conversation_details = true;
+
         let header_height = Spacing::Small.rems(cx) * 2.0 + ButtonSize::Default.rems();
 
         let header = h_flex()
@@ -1038,14 +1040,23 @@ impl Render for AssistantChat {
                                     .gap(Spacing::Small.rems(cx))
                                     .child(
                                         IconButton::new("set-view-list", IconName::List)
-                                            .selected(true)
-                                            .selected_style(ButtonStyle::Filled)
+                                            .icon_color(if !show_conversation_details {
+                                                Color::Accent
+                                            } else {
+                                                Color::Default
+                                            })
                                             .tooltip(move |cx| {
                                                 Tooltip::text("View conversations as a list", cx)
                                             }),
                                     )
                                     .child(
                                         IconButton::new("set-view-details", IconName::Text)
+                                            .icon_color(if show_conversation_details {
+                                                Color::Accent
+                                            } else {
+                                                Color::Default
+                                            })
+                                            .selected(true)
                                             .tooltip(move |cx| {
                                                 Tooltip::text(
                                                     "View conversations with summaries",
@@ -1055,62 +1066,21 @@ impl Render for AssistantChat {
                                     ),
                             )
                             .child(
-                                h_flex()
-                                    .gap(Spacing::XXLarge.rems(cx))
-                                    .child(
-                                        h_flex()
-                                            .gap(Spacing::Small.rems(cx))
-                                            // Pin Conversation
-                                            .child(
-                                                IconButton::new("pin-conversation", IconName::Pin)
-                                                    .disabled(true)
-                                                    .tooltip(move |cx| {
-                                                        Tooltip::text("Pin this conversation", cx)
-                                                    }),
-                                            )
-                                            // Opens the conversation in finder/file explorer, etc
-                                            .child(
-                                                IconButton::new(
-                                                    "reveal-conversation",
-                                                    IconName::Folder,
-                                                )
-                                                .tooltip(move |cx| {
-                                                    Tooltip::text(
-                                                        // TODO: this should be localized to the platform
-                                                        "Reveal conversation in Finder",
-                                                        cx,
-                                                    )
-                                                }),
-                                            )
-                                            .child(
-                                                IconButton::new(
-                                                    "delete-conversation",
-                                                    IconName::Trash,
-                                                )
-                                                .tooltip(move |cx| {
-                                                    Tooltip::text("Delete this conversation", cx)
-                                                }),
-                                            ),
-                                    )
-                                    .child(
-                                        h_flex().gap(Spacing::Small.rems(cx)).child(
-                                            IconButton::new("new-conversation", IconName::Plus)
-                                                .on_click(cx.listener(move |this, _event, cx| {
-                                                    this.new_conversation(cx);
-                                                }))
-                                                .tooltip(move |cx| {
-                                                    Tooltip::text("New Conversation", cx)
-                                                }),
-                                        ),
-                                    ),
+                                IconButton::new("new-conversation", IconName::Plus)
+                                    .on_click(cx.listener(move |this, _event, cx| {
+                                        this.new_conversation(cx);
+                                    }))
+                                    .tooltip(move |cx| Tooltip::text("New Conversation", cx)),
                             ),
                     )
                     .child(v_flex().flex_1().children({
                         let last_index = (self.conversations.len() - 1).max(0);
 
+                        let line_height = rems(1.15);
+
                         self.conversations.iter().enumerate().map({
                             move |(ix, conversation)| {
-                                let max_preview_height = cx.line_height() * 3.0;
+                                let max_preview_height = line_height.clone() * 3.0;
 
                                 let preview_string: SharedString = format!(
                                     "{}  {}",
@@ -1120,12 +1090,16 @@ impl Render for AssistantChat {
                                 .into();
 
                                 v_flex()
+                                    .id(ElementId::Name(format!("conversation-{}", ix).into()))
                                     .flex_none()
                                     .w_full()
-                                    .line_height(rems(1.15))
+                                    .line_height(line_height)
                                     .p(Spacing::Large.rems(cx))
                                     .when(ix != last_index, |this| this.border_b_1())
                                     .border_color(cx.theme().colors().border)
+                                    .on_click(cx.listener(|this, _event, _cx| {
+                                        this.toggle_conversations_open();
+                                    }))
                                     .child(
                                         Headline::new(conversation.title.clone())
                                             .size(HeadlineSize::XSmall),
@@ -1136,7 +1110,7 @@ impl Render for AssistantChat {
                                             .min_h(cx.line_height())
                                             .max_h(max_preview_height)
                                             .text_color(cx.theme().colors().text_muted)
-                                            .text_xs()
+                                            .text_sm()
                                             .overflow_hidden()
                                             .child(preview_string),
                                     )

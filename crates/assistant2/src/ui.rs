@@ -2,6 +2,7 @@ mod active_file_button;
 mod chat_message;
 mod chat_notice;
 mod composer;
+mod conversations;
 mod project_index_button;
 
 #[cfg(feature = "stories")]
@@ -11,6 +12,7 @@ pub use active_file_button::*;
 pub use chat_message::*;
 pub use chat_notice::*;
 pub use composer::*;
+pub use conversations::*;
 pub use project_index_button::*;
 
 #[cfg(feature = "stories")]
