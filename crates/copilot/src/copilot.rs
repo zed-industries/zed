@@ -429,17 +429,11 @@ impl Copilot {
                     env: None,
                 };
 
-                let root_path = if cfg!(target_os = "windows") {
-                    Path::new("C:/")
-                } else {
-                    Path::new("/")
-                };
-
                 let server = LanguageServer::new(
                     Arc::new(Mutex::new(None)),
                     new_server_id,
                     binary,
-                    root_path,
+                    Path::new("/"),
                     None,
                     cx.clone(),
                 )?;
