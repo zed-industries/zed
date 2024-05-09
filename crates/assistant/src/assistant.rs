@@ -35,6 +35,7 @@ actions!(
         ResetKey,
         InlineAssist,
         ToggleIncludeConversation,
+        InjectSearch
     ]
 );
 

@@ -3,7 +3,7 @@ use crate::{
     codegen::{self, Codegen, CodegenKind},
     embedded_scope::EmbeddedScope,
     prompts::generate_content_prompt,
-    Assist, CompletionProvider, CycleMessageRole, InlineAssist, LanguageModel,
+    Assist, CompletionProvider, CycleMessageRole, InjectSearch, InlineAssist, LanguageModel,
     LanguageModelRequest, LanguageModelRequestMessage, MessageId, MessageMetadata, MessageStatus,
     NewConversation, QuoteSelection, ResetKey, Role, SavedConversation, SavedConversationMetadata,
     SavedMessage, Split, ToggleFocus, ToggleIncludeConversation,
@@ -888,10 +888,6 @@ impl AssistantPanel {
     }
 
     fn render_context_injector_buttons(&self, cx: &mut ViewContext<Self>) -> Vec<IconButton> {
-        // Right - Inject context:
-        //     - Search
-        //     - Documentation - Built in for the current language or enter a URL
-        //     - Quote selection
         vec![
             IconButton::new("search", IconName::MagnifyingGlass)
                 .icon_size(IconSize::Small)
@@ -2502,6 +2498,22 @@ impl ConversationEditor {
         });
     }
 
+    fn inject_search(&mut self, _: &InjectSearch, cx: &mut ViewContext<Self>) {
+        self.editor.update(cx, |editor, cx| {
+            editor.insert_blocks(
+                [BlockProperties {
+                    position: editor.selections.newest_anchor().head(),
+                    height: todo!(),
+                    style: todo!(),
+                    render: todo!(),
+                    disposition: todo!(),
+                }],
+                Some(Autoscroll::newest()),
+                cx,
+            );
+        })
+    }
+
     fn save(&mut self, _: &Save, cx: &mut ViewContext<Self>) {
         self.conversation.update(cx, |conversation, cx| {
             conversation.save(None, self.fs.clone(), cx)
@@ -2638,6 +2650,7 @@ impl Render for ConversationEditor {
             .capture_action(cx.listener(ConversationEditor::cycle_message_role))
             .on_action(cx.listener(ConversationEditor::assist))
             .on_action(cx.listener(ConversationEditor::split))
+            .on_action(cx.listener(ConversationEditor::inject_search))
             .size_full()
             .v_flex()
             .child(
