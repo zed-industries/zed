@@ -16,7 +16,7 @@ impl Render for CheckboxStory {
                     .p_2()
                     .gap_2()
                     .rounded_md()
-                    .border()
+                    .border_1()
                     .border_color(cx.theme().colors().border)
                     .child(Checkbox::new("checkbox-enabled", Selection::Unselected))
                     .child(Checkbox::new(
@@ -31,7 +31,7 @@ impl Render for CheckboxStory {
                     .p_2()
                     .gap_2()
                     .rounded_md()
-                    .border()
+                    .border_1()
                     .border_color(cx.theme().colors().border)
                     .child(Checkbox::new("checkbox-disabled", Selection::Unselected).disabled(true))
                     .child(

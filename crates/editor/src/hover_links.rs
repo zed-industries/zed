@@ -732,7 +732,7 @@ mod tests {
 
         cx.cx
             .cx
-            .simulate_mouse_move(screen_coord.unwrap(), Modifiers::command_shift());
+            .simulate_mouse_move(screen_coord.unwrap(), None, Modifiers::command_shift());
 
         requests.next().await;
         cx.run_until_parked();
@@ -802,7 +802,7 @@ mod tests {
             ])))
         });
 
-        cx.simulate_mouse_move(hover_point, Modifiers::secondary_key());
+        cx.simulate_mouse_move(hover_point, None, Modifiers::secondary_key());
         requests.next().await;
         cx.background_executor.run_until_parked();
         cx.assert_editor_text_highlights::<HoveredLinkState>(indoc! {"
@@ -828,7 +828,7 @@ mod tests {
             ])))
         });
 
-        cx.simulate_mouse_move(hover_point, Modifiers::secondary_key());
+        cx.simulate_mouse_move(hover_point, None, Modifiers::secondary_key());
         requests.next().await;
         cx.background_executor.run_until_parked();
         cx.assert_editor_text_highlights::<HoveredLinkState>(indoc! {"
@@ -847,7 +847,7 @@ mod tests {
                 // No definitions returned
                 Ok(Some(lsp::GotoDefinitionResponse::Link(vec![])))
             });
-        cx.simulate_mouse_move(hover_point, Modifiers::secondary_key());
+        cx.simulate_mouse_move(hover_point, None, Modifiers::secondary_key());
 
         requests.next().await;
         cx.background_executor.run_until_parked();
@@ -863,7 +863,7 @@ mod tests {
                 fn test() { do_work(); }
                 fn do_work() { teˇst(); }
             "});
-        cx.simulate_mouse_move(hover_point, Modifiers::none());
+        cx.simulate_mouse_move(hover_point, None, Modifiers::none());
 
         // Assert no link highlights
         cx.assert_editor_text_highlights::<HoveredLinkState>(indoc! {"
@@ -907,7 +907,7 @@ mod tests {
                 fn do_work() { test(); }
             "});
 
-        cx.simulate_mouse_move(hover_point, Modifiers::secondary_key());
+        cx.simulate_mouse_move(hover_point, None, Modifiers::secondary_key());
         cx.background_executor.run_until_parked();
         cx.assert_editor_text_highlights::<HoveredLinkState>(indoc! {"
                 fn test() { do_work(); }
@@ -919,7 +919,7 @@ mod tests {
                 fn test() { do_work(); }
                 fn do_work() { tesˇt(); }
             "});
-        cx.simulate_mouse_move(hover_point, Modifiers::secondary_key());
+        cx.simulate_mouse_move(hover_point, None, Modifiers::secondary_key());
         cx.background_executor.run_until_parked();
         cx.assert_editor_text_highlights::<HoveredLinkState>(indoc! {"
                 fn test() { do_work(); }
@@ -1009,7 +1009,7 @@ mod tests {
                 s.set_pending_anchor_range(anchor_range, crate::SelectMode::Character)
             });
         });
-        cx.simulate_mouse_move(hover_point, Modifiers::secondary_key());
+        cx.simulate_mouse_move(hover_point, None, Modifiers::secondary_key());
         cx.background_executor.run_until_parked();
         assert!(requests.try_next().is_err());
         cx.assert_editor_text_highlights::<HoveredLinkState>(indoc! {"
@@ -1123,7 +1123,7 @@ mod tests {
         });
         // Press cmd to trigger highlight
         let hover_point = cx.pixel_position_for(midpoint);
-        cx.simulate_mouse_move(hover_point, Modifiers::secondary_key());
+        cx.simulate_mouse_move(hover_point, None, Modifiers::secondary_key());
         cx.background_executor.run_until_parked();
         cx.update_editor(|editor, cx| {
             let snapshot = editor.snapshot(cx);
@@ -1142,7 +1142,7 @@ mod tests {
             assert_set_eq!(actual_highlights, vec![&expected_highlight]);
         });
 
-        cx.simulate_mouse_move(hover_point, Modifiers::none());
+        cx.simulate_mouse_move(hover_point, None, Modifiers::none());
         // Assert no link highlights
         cx.update_editor(|editor, cx| {
                 let snapshot = editor.snapshot(cx);
@@ -1186,7 +1186,7 @@ mod tests {
             Let's test a [complex](https://zed.dev/channel/had-(ˇoops)) case.
             "});
 
-        cx.simulate_mouse_move(screen_coord, Modifiers::secondary_key());
+        cx.simulate_mouse_move(screen_coord, None, Modifiers::secondary_key());
         cx.assert_editor_text_highlights::<HoveredLinkState>(indoc! {"
             Let's test a [complex](«https://zed.dev/channel/had-(oops)ˇ») case.
         "});
@@ -1214,7 +1214,7 @@ mod tests {
         let screen_coord =
             cx.pixel_position(indoc! {"https://zed.dev/relˇeases is a cool webpage."});
 
-        cx.simulate_mouse_move(screen_coord, Modifiers::secondary_key());
+        cx.simulate_mouse_move(screen_coord, None, Modifiers::secondary_key());
         cx.assert_editor_text_highlights::<HoveredLinkState>(
             indoc! {"«https://zed.dev/releasesˇ» is a cool webpage."},
         );
@@ -1239,7 +1239,7 @@ mod tests {
         let screen_coord =
             cx.pixel_position(indoc! {"A cool webpage is https://zed.dev/releˇases"});
 
-        cx.simulate_mouse_move(screen_coord, Modifiers::secondary_key());
+        cx.simulate_mouse_move(screen_coord, None, Modifiers::secondary_key());
         cx.assert_editor_text_highlights::<HoveredLinkState>(
             indoc! {"A cool webpage is «https://zed.dev/releasesˇ»"},
         );

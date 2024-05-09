@@ -749,7 +749,7 @@ mod element {
             }
 
             workspace
-                .update(cx, |this, cx| this.schedule_serialize(cx))
+                .update(cx, |this, cx| this.serialize_workspace(cx))
                 .log_err();
             cx.stop_propagation();
             cx.refresh();
@@ -810,7 +810,7 @@ mod element {
             style.flex_basis = relative(0.).into();
             style.size.width = relative(1.).into();
             style.size.height = relative(1.).into();
-            (cx.request_layout(&style, None), ())
+            (cx.request_layout(style, None), ())
         }
 
         fn prepaint(
@@ -914,8 +914,8 @@ mod element {
             for (ix, child) in &mut layout.children.iter_mut().enumerate() {
                 if let Some(handle) = child.handle.as_mut() {
                     let cursor_style = match self.axis {
-                        Axis::Vertical => CursorStyle::ResizeUpDown,
-                        Axis::Horizontal => CursorStyle::ResizeLeftRight,
+                        Axis::Vertical => CursorStyle::ResizeRow,
+                        Axis::Horizontal => CursorStyle::ResizeColumn,
                     };
                     cx.set_cursor_style(cursor_style, &handle.hitbox);
                     cx.paint_quad(gpui::fill(
@@ -935,7 +935,7 @@ mod element {
                                     let mut borrow = flexes.lock();
                                     *borrow = vec![1.; borrow.len()];
                                     workspace
-                                        .update(cx, |this, cx| this.schedule_serialize(cx))
+                                        .update(cx, |this, cx| this.serialize_workspace(cx))
                                         .log_err();
 
                                     cx.refresh();
@@ -983,7 +983,7 @@ mod element {
     }
 
     impl ParentElement for PaneAxisElement {
-        fn extend(&mut self, elements: impl Iterator<Item = AnyElement>) {
+        fn extend(&mut self, elements: impl IntoIterator<Item = AnyElement>) {
             self.children.extend(elements)
         }
     }

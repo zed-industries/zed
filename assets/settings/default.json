@@ -12,8 +12,8 @@
   "base_keymap": "VSCode",
   // Features that can be globally enabled or disabled
   "features": {
-    // Show Copilot icon in status bar
-    "copilot": true
+    // Which inline completion provider to use.
+    "inline_completion_provider": "copilot"
   },
   // The name of a font to use for rendering text in the editor
   "buffer_font_family": "Zed Mono",
@@ -299,7 +299,9 @@
   // The list of language servers to use (or disable) for all languages.
   //
   // This is typically customized on a per-language basis.
-  "language_servers": ["..."],
+  "language_servers": [
+    "..."
+  ],
   // When to automatically save edited buffers. This setting can
   // take four values.
   //
@@ -314,6 +316,8 @@
   "autosave": "off",
   // Settings related to the editor's tab bar.
   "tab_bar": {
+    // Whether or not to show the tab bar in the editor
+    "show": true,
     // Whether or not to show the navigation history buttons.
     "show_nav_history_buttons": true
   },
@@ -331,8 +335,10 @@
     // when you switch to another file unless you explicitly pin them.
     // This is useful for quickly viewing files without cluttering your workspace.
     "enabled": true,
-    // Whether to open files in preview mode when selected from the file finder.
-    "enable_preview_from_file_finder": false
+    // Whether to open tabs in preview mode when selected from the file finder.
+    "enable_preview_from_file_finder": false,
+    // Whether a preview tab gets replaced when code navigation is used to navigate away from the tab.
+    "enable_preview_from_code_navigation": false
   },
   // Whether or not to remove any trailing whitespace from lines of a buffer
   // before saving it.
@@ -366,11 +372,13 @@
   //
   // 1. Do not soft wrap.
   //      "soft_wrap": "none",
-  // 2. Soft wrap lines that overflow the editor:
+  // 2. Prefer a single line generally, unless an overly long line is encountered.
+  //      "soft_wrap": "prefer_line",
+  // 3. Soft wrap lines that overflow the editor:
   //      "soft_wrap": "editor_width",
-  // 3. Soft wrap lines at the preferred line length
+  // 4. Soft wrap lines at the preferred line length
   //      "soft_wrap": "preferred_line_length",
-  "soft_wrap": "none",
+  "soft_wrap": "prefer_line",
   // The column at which to soft-wrap lines, for buffers where soft-wrap
   // is enabled.
   "preferred_line_length": 80,
@@ -426,7 +434,9 @@
   "copilot": {
     // The set of glob patterns for which copilot should be disabled
     // in any matching file.
-    "disabled_globs": [".env"]
+    "disabled_globs": [
+      ".env"
+    ]
   },
   // Settings specific to journaling
   "journal": {
@@ -537,7 +547,12 @@
         // Default directories to search for virtual environments, relative
         // to the current working directory. We recommend overriding this
         // in your project's settings, rather than globally.
-        "directories": [".env", "env", ".venv", "venv"],
+        "directories": [
+          ".env",
+          "env",
+          ".venv",
+          "venv"
+        ],
         // Can also be 'csh', 'fish', and `nushell`
         "activate_script": "default"
       }
@@ -586,6 +601,14 @@
     "C": {
       "format_on_save": "off"
     },
+    "Elixir": {
+      "language_servers": [
+        "elixir-ls",
+        "!next-ls",
+        "!lexical",
+        "..."
+      ]
+    },
     "Gleam": {
       "tab_size": 2
     },
@@ -594,8 +617,19 @@
         "source.organizeImports": true
       }
     },
+    "HEEX": {
+      "language_servers": [
+        "elixir-ls",
+        "!next-ls",
+        "!lexical",
+        "..."
+      ]
+    },
     "Make": {
       "hard_tabs": true
+    },
+    "Markdown": {
+      "format_on_save": "off"
     },
     "Prisma": {
       "tab_size": 2

@@ -1,4 +1,5 @@
 use anyhow::{anyhow, Result};
+use git::GitHostingProviderRegistry;
 
 #[cfg(unix)]
 use std::os::unix::fs::MetadataExt;
@@ -117,12 +118,19 @@ pub struct Metadata {
 
 #[derive(Default)]
 pub struct RealFs {
+    git_hosting_provider_registry: Arc<GitHostingProviderRegistry>,
     git_binary_path: Option<PathBuf>,
 }
 
 impl RealFs {
-    pub fn new(git_binary_path: Option<PathBuf>) -> Self {
-        Self { git_binary_path }
+    pub fn new(
+        git_hosting_provider_registry: Arc<GitHostingProviderRegistry>,
+        git_binary_path: Option<PathBuf>,
+    ) -> Self {
+        Self {
+            git_hosting_provider_registry,
+            git_binary_path,
+        }
     }
 }
 
@@ -474,6 +482,7 @@ impl Fs for RealFs {
                 Arc::new(Mutex::new(RealGitRepository::new(
                     libgit_repository,
                     self.git_binary_path.clone(),
+                    self.git_hosting_provider_registry.clone(),
                 )))
             })
     }

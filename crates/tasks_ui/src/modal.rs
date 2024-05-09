@@ -1,11 +1,11 @@
 use std::sync::Arc;
 
-use crate::{active_item_selection_properties, schedule_resolved_task};
+use crate::active_item_selection_properties;
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{
-    impl_actions, rems, AppContext, DismissEvent, EventEmitter, FocusableView, Global,
-    InteractiveElement, Model, ParentElement, Render, SharedString, Styled, Subscription, View,
-    ViewContext, VisualContext, WeakView,
+    impl_actions, rems, AppContext, DismissEvent, EventEmitter, FocusableView, InteractiveElement,
+    Model, ParentElement, Render, SharedString, Styled, Subscription, View, ViewContext,
+    VisualContext, WeakView,
 };
 use picker::{highlighted_match_with_paths::HighlightedText, Picker, PickerDelegate};
 use project::{Inventory, TaskSourceKind};
@@ -16,7 +16,7 @@ use ui::{
     Tooltip, WindowContext,
 };
 use util::ResultExt;
-use workspace::{ModalView, Workspace};
+use workspace::{tasks::schedule_resolved_task, ModalView, Workspace};
 
 use serde::Deserialize;
 
@@ -211,12 +211,11 @@ impl PickerDelegate for TasksModalDelegate {
                                 return Vec::new();
                             };
                             let (used, current) =
-                                picker.delegate.inventory.update(cx, |inventory, cx| {
+                                picker.delegate.inventory.update(cx, |inventory, _| {
                                     inventory.used_and_current_resolved_tasks(
                                         language,
                                         worktree,
                                         &picker.delegate.task_context,
-                                        cx,
                                     )
                                 });
                             picker.delegate.last_used_candidate_index = if used.is_empty() {

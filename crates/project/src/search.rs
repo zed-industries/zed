@@ -250,6 +250,7 @@ impl SearchQuery {
             }
         }
     }
+
     pub async fn search(
         &self,
         buffer: &BufferSnapshot,

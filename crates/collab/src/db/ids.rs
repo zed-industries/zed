@@ -84,7 +84,7 @@ id_type!(NotificationId);
 id_type!(NotificationKindId);
 id_type!(ProjectCollaboratorId);
 id_type!(ProjectId);
-id_type!(RemoteProjectId);
+id_type!(DevServerProjectId);
 id_type!(ReplicaId);
 id_type!(RoomId);
 id_type!(RoomParticipantId);

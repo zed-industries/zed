@@ -203,6 +203,7 @@ pub struct Pane {
     custom_drop_handle:
         Option<Arc<dyn Fn(&mut Pane, &dyn Any, &mut ViewContext<Pane>) -> ControlFlow<(), ()>>>,
     can_split: bool,
+    should_display_tab_bar: Rc<dyn Fn(&ViewContext<Pane>) -> bool>,
     render_tab_bar_buttons: Rc<dyn Fn(&mut Pane, &mut ViewContext<Pane>) -> AnyElement>,
     _subscriptions: Vec<Subscription>,
     tab_bar_scroll_handle: ScrollHandle,
@@ -312,13 +313,16 @@ impl Pane {
             can_drop_predicate,
             custom_drop_handle: None,
             can_split: true,
+            should_display_tab_bar: Rc::new(|cx| TabBarSettings::get_global(cx).show),
             render_tab_bar_buttons: Rc::new(move |pane, cx| {
+                // Ideally we would return a vec of elements here to pass directly to the [TabBar]'s
+                // `end_slot`, but due to needing a view here that isn't possible.
                 h_flex()
-                    .gap_2()
+                    // Instead we need to replicate the spacing from the [TabBar]'s `end_slot` here.
+                    .gap(Spacing::Small.rems(cx))
                     .child(
                         IconButton::new("plus", IconName::Plus)
                             .icon_size(IconSize::Small)
-                            .icon_color(Color::Muted)
                             .on_click(cx.listener(|pane, _, cx| {
                                 let menu = ContextMenu::build(cx, |menu, _| {
                                     menu.action("New File", NewFile.boxed_clone())
@@ -340,7 +344,6 @@ impl Pane {
                     .child(
                         IconButton::new("split", IconName::Split)
                             .icon_size(IconSize::Small)
-                            .icon_color(Color::Muted)
                             .on_click(cx.listener(|pane, _, cx| {
                                 let menu = ContextMenu::build(cx, |menu, _| {
                                     menu.action("Split Right", SplitRight.boxed_clone())
@@ -361,7 +364,6 @@ impl Pane {
                         let zoomed = pane.is_zoomed();
                         IconButton::new("toggle_zoom", IconName::Maximize)
                             .icon_size(IconSize::Small)
-                            .icon_color(Color::Muted)
                             .selected(zoomed)
                             .selected_icon(IconName::Minimize)
                             .on_click(cx.listener(|pane, _, cx| {
@@ -466,6 +468,13 @@ impl Pane {
 
     pub fn activation_history(&self) -> &Vec<EntityId> {
         &self.activation_history
+    }
+
+    pub fn set_should_display_tab_bar<F>(&mut self, should_display_tab_bar: F)
+    where
+        F: 'static + Fn(&ViewContext<Pane>) -> bool,
+    {
+        self.should_display_tab_bar = Rc::new(should_display_tab_bar);
     }
 
     pub fn set_can_split(&mut self, can_split: bool, cx: &mut ViewContext<Self>) {
@@ -623,21 +632,13 @@ impl Pane {
             self.activate_item(index, focus_item, focus_item, cx);
             existing_item
         } else {
-            let mut destination_index = None;
-            if allow_preview {
-                // If we are opening a new item as preview and we have an existing preview tab, remove it.
-                if let Some(item_idx) = self.preview_item_idx() {
-                    let prev_active_item_index = self.active_item_index;
-                    self.remove_item(item_idx, false, false, cx);
-                    self.active_item_index = prev_active_item_index;
-
-                    // If the item is being opened as preview and we have an existing preview tab,
-                    // open the new item in the position of the existing preview tab.
-                    if item_idx < self.items.len() {
-                        destination_index = Some(item_idx);
-                    }
-                }
-            }
+            // If the item is being opened as preview and we have an existing preview tab,
+            // open the new item in the position of the existing preview tab.
+            let destination_index = if allow_preview {
+                self.close_current_preview_item(cx)
+            } else {
+                None
+            };
 
             let new_item = build_item(cx);
 
@@ -648,6 +649,22 @@ impl Pane {
             self.add_item(new_item.clone(), true, focus_item, destination_index, cx);
 
             new_item
+        }
+    }
+
+    pub fn close_current_preview_item(&mut self, cx: &mut ViewContext<Self>) -> Option<usize> {
+        let Some(item_idx) = self.preview_item_idx() else {
+            return None;
+        };
+
+        let prev_active_item_index = self.active_item_index;
+        self.remove_item(item_idx, false, false, cx);
+        self.active_item_index = prev_active_item_index;
+
+        if item_idx < self.items.len() {
+            Some(item_idx)
+        } else {
+            None
         }
     }
 
@@ -1660,38 +1677,31 @@ impl Pane {
     }
 
     fn render_tab_bar(&mut self, cx: &mut ViewContext<'_, Pane>) -> impl IntoElement {
+        let navigate_backward = IconButton::new("navigate_backward", IconName::ArrowLeft)
+            .shape(IconButtonShape::Square)
+            .icon_size(IconSize::Small)
+            .on_click({
+                let view = cx.view().clone();
+                move |_, cx| view.update(cx, Self::navigate_backward)
+            })
+            .disabled(!self.can_navigate_backward())
+            .tooltip(|cx| Tooltip::for_action("Go Back", &GoBack, cx));
+
+        let navigate_forward = IconButton::new("navigate_forward", IconName::ArrowRight)
+            .shape(IconButtonShape::Square)
+            .icon_size(IconSize::Small)
+            .on_click({
+                let view = cx.view().clone();
+                move |_, cx| view.update(cx, Self::navigate_forward)
+            })
+            .disabled(!self.can_navigate_forward())
+            .tooltip(|cx| Tooltip::for_action("Go Forward", &GoForward, cx));
+
         TabBar::new("tab_bar")
             .track_scroll(self.tab_bar_scroll_handle.clone())
             .when(
                 self.display_nav_history_buttons.unwrap_or_default(),
-                |tab_bar| {
-                    tab_bar.start_child(
-                        h_flex()
-                            .gap_2()
-                            .child(
-                                IconButton::new("navigate_backward", IconName::ArrowLeft)
-                                    .icon_size(IconSize::Small)
-                                    .on_click({
-                                        let view = cx.view().clone();
-                                        move |_, cx| view.update(cx, Self::navigate_backward)
-                                    })
-                                    .disabled(!self.can_navigate_backward())
-                                    .tooltip(|cx| Tooltip::for_action("Go Back", &GoBack, cx)),
-                            )
-                            .child(
-                                IconButton::new("navigate_forward", IconName::ArrowRight)
-                                    .icon_size(IconSize::Small)
-                                    .on_click({
-                                        let view = cx.view().clone();
-                                        move |_, cx| view.update(cx, Self::navigate_forward)
-                                    })
-                                    .disabled(!self.can_navigate_forward())
-                                    .tooltip(|cx| {
-                                        Tooltip::for_action("Go Forward", &GoForward, cx)
-                                    }),
-                            ),
-                    )
-                },
+                |tab_bar| tab_bar.start_children(vec![navigate_backward, navigate_forward]),
             )
             .when(self.has_focus(cx), |tab_bar| {
                 tab_bar.end_child({
@@ -1883,6 +1893,24 @@ impl Pane {
         let mut to_pane = cx.view().clone();
         let mut split_direction = self.drag_split_direction;
         let paths = paths.paths().to_vec();
+        let is_remote = self
+            .workspace
+            .update(cx, |workspace, cx| {
+                if workspace.project().read(cx).is_remote() {
+                    workspace.show_error(
+                        &anyhow::anyhow!("Cannot drop files on a remote project"),
+                        cx,
+                    );
+                    true
+                } else {
+                    false
+                }
+            })
+            .unwrap_or(true);
+        if is_remote {
+            return;
+        }
+
         self.workspace
             .update(cx, |workspace, cx| {
                 let fs = Arc::clone(workspace.project().read(cx).fs());
@@ -1943,6 +1971,9 @@ impl Render for Pane {
         if self.active_item().is_none() {
             key_context.add("EmptyPane");
         }
+
+        let should_display_tab_bar = self.should_display_tab_bar.clone();
+        let display_tab_bar = should_display_tab_bar(cx);
 
         v_flex()
             .key_context(key_context)
@@ -2042,7 +2073,7 @@ impl Render for Pane {
                     }
                 }),
             )
-            .when(self.active_item().is_some(), |pane| {
+            .when(self.active_item().is_some() && display_tab_bar, |pane| {
                 pane.child(self.render_tab_bar(cx))
             })
             .child({

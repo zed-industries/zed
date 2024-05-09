@@ -98,6 +98,8 @@ struct OutlineViewDelegate {
     last_query: String,
 }
 
+enum OutlineRowHighlights {}
+
 impl OutlineViewDelegate {
     fn new(
         outline_view: WeakView<OutlineView>,
@@ -149,8 +151,6 @@ impl OutlineViewDelegate {
         }
     }
 }
-
-enum OutlineRowHighlights {}
 
 impl PickerDelegate for OutlineViewDelegate {
     type ListItem = ListItem;
@@ -316,6 +316,7 @@ impl PickerDelegate for OutlineViewDelegate {
 
 #[cfg(test)]
 mod tests {
+    use collections::HashSet;
     use gpui::{TestAppContext, VisualTestContext};
     use indoc::indoc;
     use language::{Language, LanguageConfig, LanguageMatcher};
@@ -482,7 +483,10 @@ mod tests {
 
     fn highlighted_display_rows(editor: &View<Editor>, cx: &mut VisualTestContext) -> Vec<u32> {
         editor.update(cx, |editor, cx| {
-            editor.highlighted_display_rows(cx).into_keys().collect()
+            editor
+                .highlighted_display_rows(HashSet::default(), cx)
+                .into_keys()
+                .collect()
         })
     }
 

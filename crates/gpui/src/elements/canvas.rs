@@ -49,7 +49,7 @@ impl<T: 'static> Element for Canvas<T> {
     ) -> (crate::LayoutId, Self::RequestLayoutState) {
         let mut style = Style::default();
         style.refine(&self.style);
-        let layout_id = cx.request_layout(&style, []);
+        let layout_id = cx.request_layout(style.clone(), []);
         (layout_id, style)
     }
 

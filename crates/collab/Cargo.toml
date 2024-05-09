@@ -39,6 +39,7 @@ live_kit_server.workspace = true
 log.workspace = true
 nanoid.workspace = true
 open_ai.workspace = true
+supermaven_api.workspace = true
 parking_lot.workspace = true
 prometheus = "0.13"
 prost.workspace = true
@@ -82,6 +83,7 @@ env_logger.workspace = true
 file_finder.workspace = true
 fs = { workspace = true, features = ["test-support"] }
 git = { workspace = true, features = ["test-support"] }
+git_hosting_providers.workspace = true
 gpui = { workspace = true, features = ["test-support"] }
 indoc.workspace = true
 language = { workspace = true, features = ["test-support"] }
@@ -93,7 +95,7 @@ notifications = { workspace = true, features = ["test-support"] }
 pretty_assertions.workspace = true
 project = { workspace = true, features = ["test-support"] }
 release_channel.workspace = true
-remote_projects.workspace = true
+dev_server_projects.workspace = true
 rpc = { workspace = true, features = ["test-support"] }
 sea-orm = { version = "0.12.x", features = ["sqlx-sqlite"] }
 serde_json.workspace = true

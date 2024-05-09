@@ -67,7 +67,7 @@ impl StoryContainer {
 }
 
 impl ParentElement for StoryContainer {
-    fn extend(&mut self, elements: impl Iterator<Item = AnyElement>) {
+    fn extend(&mut self, elements: impl IntoIterator<Item = AnyElement>) {
         self.children.extend(elements)
     }
 }
@@ -88,7 +88,7 @@ impl RenderOnce for StoryContainer {
                     .justify_between()
                     .p_2()
                     .bg(story_color().background)
-                    .border_b()
+                    .border_b_1()
                     .border_color(story_color().border)
                     .child(Story::title(self.title))
                     .child(
@@ -145,7 +145,7 @@ impl Story {
                         .flex()
                         .justify_between()
                         .p_2()
-                        .border_b()
+                        .border_b_1()
                         .border_color(story_color().border)
                         .child(Story::title_for::<T>())
                         .child(
@@ -202,7 +202,7 @@ impl Story {
         div()
             .p_4()
             .m_4()
-            .border()
+            .border_1()
             .border_color(story_color().border)
     }
 
@@ -307,7 +307,7 @@ impl RenderOnce for StoryItem {
                         div()
                             .rounded_md()
                             .bg(story_color().card_background)
-                            .border()
+                            .border_1()
                             .border_color(story_color().border)
                             .py_1()
                             .px_2()
@@ -372,7 +372,7 @@ impl RenderOnce for StorySection {
 }
 
 impl ParentElement for StorySection {
-    fn extend(&mut self, elements: impl Iterator<Item = AnyElement>) {
+    fn extend(&mut self, elements: impl IntoIterator<Item = AnyElement>) {
         self.children.extend(elements)
     }
 }

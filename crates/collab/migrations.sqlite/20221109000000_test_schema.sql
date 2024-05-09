@@ -51,7 +51,7 @@ CREATE TABLE "projects" (
     "host_connection_server_id" INTEGER REFERENCES servers (id) ON DELETE CASCADE,
     "unregistered" BOOLEAN NOT NULL DEFAULT FALSE,
     "hosted_project_id" INTEGER REFERENCES hosted_projects (id),
-    "remote_project_id" INTEGER REFERENCES remote_projects(id)
+    "dev_server_project_id" INTEGER REFERENCES dev_server_projects(id)
 );
 CREATE INDEX "index_projects_on_host_connection_server_id" ON "projects" ("host_connection_server_id");
 CREATE INDEX "index_projects_on_host_connection_id_and_host_connection_server_id" ON "projects" ("host_connection_id", "host_connection_server_id");
@@ -410,10 +410,8 @@ CREATE TABLE dev_servers (
     hashed_token TEXT NOT NULL
 );
 
-CREATE TABLE remote_projects (
+CREATE TABLE dev_server_projects (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     dev_server_id INTEGER NOT NULL REFERENCES dev_servers(id),
     path TEXT NOT NULL
 );
-
-ALTER TABLE hosted_projects ADD COLUMN remote_project_id INTEGER REFERENCES remote_projects(id);

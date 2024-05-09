@@ -172,6 +172,11 @@ spec:
                 secretKeyRef:
                   name: slack
                   key: panics_webhook
+            - name: SUPERMAVEN_ADMIN_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: supermaven
+                  key: api_key
             - name: INVITE_LINK_PREFIX
               value: ${INVITE_LINK_PREFIX}
             - name: RUST_BACKTRACE

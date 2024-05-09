@@ -72,6 +72,15 @@ pub struct AnimationElement<E> {
     animator: Box<dyn Fn(E, f32) -> E + 'static>,
 }
 
+impl<E> AnimationElement<E> {
+    /// Returns a new [`AnimationElement<E>`] after applying the given function
+    /// to the element being animated.
+    pub fn map_element(mut self, f: impl FnOnce(E) -> E) -> AnimationElement<E> {
+        self.element = self.element.map(f);
+        self
+    }
+}
+
 impl<E: IntoElement + 'static> IntoElement for AnimationElement<E> {
     type Element = AnimationElement<E>;
 

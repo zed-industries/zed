@@ -63,7 +63,7 @@ impl Anchored {
 }
 
 impl ParentElement for Anchored {
-    fn extend(&mut self, elements: impl Iterator<Item = AnyElement>) {
+    fn extend(&mut self, elements: impl IntoIterator<Item = AnyElement>) {
         self.children.extend(elements)
     }
 }
@@ -93,7 +93,7 @@ impl Element for Anchored {
             ..Style::default()
         };
 
-        let layout_id = cx.request_layout(&anchored_style, child_layout_ids.iter().copied());
+        let layout_id = cx.request_layout(anchored_style, child_layout_ids.iter().copied());
 
         (layout_id, AnchoredState { child_layout_ids })
     }

@@ -1,3 +1,4 @@
+use crate::Empty;
 use crate::{
     seal::Sealed, AnyElement, AnyModel, AnyWeakModel, AppContext, Bounds, ContentMask, Element,
     ElementId, Entity, EntityId, Flatten, FocusHandle, FocusableView, GlobalElementId, IntoElement,
@@ -295,7 +296,7 @@ impl Element for AnyView {
         if let Some(style) = self.cached_style.as_ref() {
             let mut root_style = Style::default();
             root_style.refine(style);
-            let layout_id = cx.request_layout(&root_style, None);
+            let layout_id = cx.request_layout(root_style, None);
             (layout_id, None)
         } else {
             let mut element = (self.render)(self, cx);
@@ -455,5 +456,14 @@ mod any_view {
     ) -> AnyElement {
         let view = view.clone().downcast::<V>().unwrap();
         view.update(cx, |view, cx| view.render(cx).into_any_element())
+    }
+}
+
+/// A view that renders nothing
+pub struct EmptyView;
+
+impl Render for EmptyView {
+    fn render(&mut self, _cx: &mut ViewContext<Self>) -> impl IntoElement {
+        Empty
     }
 }
