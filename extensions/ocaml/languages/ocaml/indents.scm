@@ -3,7 +3,7 @@
   (type_binding)
 
   (method_definition)
-  
+
   (external)
   (value_specification)
   (method_specification)

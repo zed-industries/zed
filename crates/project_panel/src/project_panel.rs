@@ -8,6 +8,7 @@ use file_icons::FileIcons;
 
 use anyhow::{anyhow, Result};
 use collections::{hash_map, HashMap};
+use git::repository::GitFileStatus;
 use gpui::{
     actions, anchored, deferred, div, impl_actions, px, uniform_list, Action, AppContext,
     AssetSource, AsyncWindowContext, ClipboardItem, DismissEvent, Div, EventEmitter, FocusHandle,
@@ -15,11 +16,8 @@ use gpui::{
     ParentElement, Pixels, Point, PromptLevel, Render, Stateful, Styled, Subscription, Task,
     UniformListScrollHandle, View, ViewContext, VisualContext as _, WeakView, WindowContext,
 };
-use menu::{Confirm, SelectNext, SelectPrev};
-use project::{
-    repository::GitFileStatus, Entry, EntryKind, Fs, Project, ProjectEntryId, ProjectPath,
-    Worktree, WorktreeId,
-};
+use menu::{Confirm, SelectFirst, SelectLast, SelectNext, SelectPrev};
+use project::{Entry, EntryKind, Fs, Project, ProjectEntryId, ProjectPath, Worktree, WorktreeId};
 use project_panel_settings::{ProjectPanelDockPosition, ProjectPanelSettings};
 use serde::{Deserialize, Serialize};
 use std::{
@@ -113,7 +111,13 @@ pub struct Delete {
     pub skip_prompt: bool,
 }
 
-impl_actions!(project_panel, [Delete]);
+#[derive(PartialEq, Clone, Default, Debug, Deserialize)]
+pub struct Trash {
+    #[serde(default)]
+    pub skip_prompt: bool,
+}
+
+impl_actions!(project_panel, [Delete, Trash]);
 
 actions!(
     project_panel,
@@ -136,6 +140,7 @@ actions!(
         NewSearchInDirectory,
         UnfoldDirectory,
         FoldDirectory,
+        SelectParent,
     ]
 );
 
@@ -425,6 +430,7 @@ impl ProjectPanel {
             let worktree_id = worktree.id();
             let is_local = project.is_local();
             let is_read_only = project.is_read_only();
+            let is_remote = project.is_remote();
 
             let context_menu = ContextMenu::build(cx, |menu, cx| {
                 menu.context(self.focus_handle.clone()).when_else(
@@ -466,14 +472,17 @@ impl ProjectPanel {
                             .separator()
                             .action("Rename", Box::new(Rename))
                             .when(!is_root, |menu| {
-                                menu.action("Delete", Box::new(Delete { skip_prompt: false }))
+                                menu.action("Trash", Box::new(Trash { skip_prompt: false }))
+                                    .action("Delete", Box::new(Delete { skip_prompt: false }))
                             })
                             .when(is_local & is_root, |menu| {
                                 menu.separator()
-                                    .action(
-                                        "Add Folder to Project…",
-                                        Box::new(workspace::AddFolderToProject),
-                                    )
+                                    .when(!is_remote, |menu| {
+                                        menu.action(
+                                            "Add Folder to Project…",
+                                            Box::new(workspace::AddFolderToProject),
+                                        )
+                                    })
                                     .entry(
                                         "Remove from Project",
                                         None,
@@ -646,7 +655,7 @@ impl ProjectPanel {
             self.autoscroll(cx);
             cx.notify();
         } else {
-            self.select_first(cx);
+            self.select_first(&SelectFirst {}, cx);
         }
     }
 
@@ -881,18 +890,27 @@ impl ProjectPanel {
         }
     }
 
+    fn trash(&mut self, action: &Trash, cx: &mut ViewContext<Self>) {
+        self.remove(true, action.skip_prompt, cx);
+    }
+
     fn delete(&mut self, action: &Delete, cx: &mut ViewContext<Self>) {
+        self.remove(false, action.skip_prompt, cx);
+    }
+
+    fn remove(&mut self, trash: bool, skip_prompt: bool, cx: &mut ViewContext<'_, ProjectPanel>) {
         maybe!({
             let Selection { entry_id, .. } = self.selection?;
             let path = self.project.read(cx).path_for_entry(entry_id, cx)?.path;
             let file_name = path.file_name()?;
 
-            let answer = (!action.skip_prompt).then(|| {
+            let operation = if trash { "Trash" } else { "Delete" };
+            let answer = (!skip_prompt).then(|| {
                 cx.prompt(
                     PromptLevel::Info,
-                    &format!("Delete {file_name:?}?"),
+                    &format!("{operation} {file_name:?}?",),
                     None,
-                    &["Delete", "Cancel"],
+                    &[operation, "Cancel"],
                 )
             });
 
@@ -904,7 +922,7 @@ impl ProjectPanel {
                 }
                 this.update(&mut cx, |this, cx| {
                     this.project
-                        .update(cx, |project, cx| project.delete_entry(entry_id, cx))
+                        .update(cx, |project, cx| project.delete_entry(entry_id, trash, cx))
                         .ok_or_else(|| anyhow!("no such entry"))
                 })??
                 .await
@@ -991,11 +1009,28 @@ impl ProjectPanel {
                 }
             }
         } else {
-            self.select_first(cx);
+            self.select_first(&SelectFirst {}, cx);
         }
     }
 
-    fn select_first(&mut self, cx: &mut ViewContext<Self>) {
+    fn select_parent(&mut self, _: &SelectParent, cx: &mut ViewContext<Self>) {
+        if let Some((worktree, entry)) = self.selected_entry(cx) {
+            if let Some(parent) = entry.path.parent() {
+                if let Some(parent_entry) = worktree.entry_for_path(parent) {
+                    self.selection = Some(Selection {
+                        worktree_id: worktree.id(),
+                        entry_id: parent_entry.id,
+                    });
+                    self.autoscroll(cx);
+                    cx.notify();
+                }
+            }
+        } else {
+            self.select_first(&SelectFirst {}, cx);
+        }
+    }
+
+    fn select_first(&mut self, _: &SelectFirst, cx: &mut ViewContext<Self>) {
         let worktree = self
             .visible_entries
             .first()
@@ -1007,6 +1042,25 @@ impl ProjectPanel {
                 self.selection = Some(Selection {
                     worktree_id,
                     entry_id: root_entry.id,
+                });
+                self.autoscroll(cx);
+                cx.notify();
+            }
+        }
+    }
+
+    fn select_last(&mut self, _: &SelectLast, cx: &mut ViewContext<Self>) {
+        let worktree = self
+            .visible_entries
+            .last()
+            .and_then(|(worktree_id, _)| self.project.read(cx).worktree_for_id(*worktree_id, cx));
+        if let Some(worktree) = worktree {
+            let worktree = worktree.read(cx);
+            let worktree_id = worktree.id();
+            if let Some(last_entry) = worktree.entries(true).last() {
+                self.selection = Some(Selection {
+                    worktree_id,
+                    entry_id: last_entry.id,
                 });
                 self.autoscroll(cx);
                 cx.notify();
@@ -1700,7 +1754,7 @@ impl ProjectPanel {
     }
 
     fn dispatch_context(&self, cx: &ViewContext<Self>) -> KeyContext {
-        let mut dispatch_context = KeyContext::default();
+        let mut dispatch_context = KeyContext::new_with_defaults();
         dispatch_context.add("ProjectPanel");
         dispatch_context.add("menu");
 
@@ -1753,6 +1807,9 @@ impl Render for ProjectPanel {
                 .key_context(self.dispatch_context(cx))
                 .on_action(cx.listener(Self::select_next))
                 .on_action(cx.listener(Self::select_prev))
+                .on_action(cx.listener(Self::select_first))
+                .on_action(cx.listener(Self::select_last))
+                .on_action(cx.listener(Self::select_parent))
                 .on_action(cx.listener(Self::expand_selected_entry))
                 .on_action(cx.listener(Self::collapse_selected_entry))
                 .on_action(cx.listener(Self::collapse_all_entries))
@@ -1770,6 +1827,7 @@ impl Render for ProjectPanel {
                         .on_action(cx.listener(Self::new_directory))
                         .on_action(cx.listener(Self::rename))
                         .on_action(cx.listener(Self::delete))
+                        .on_action(cx.listener(Self::trash))
                         .on_action(cx.listener(Self::cut))
                         .on_action(cx.listener(Self::copy))
                         .on_action(cx.listener(Self::paste))
@@ -1845,7 +1903,7 @@ impl Render for DraggedProjectEntryView {
         let settings = ProjectPanelSettings::get_global(cx);
         let ui_font = ThemeSettings::get_global(cx).ui_font.family.clone();
         h_flex()
-            .font(ui_font)
+            .font_family(ui_font)
             .bg(cx.theme().colors().background)
             .w(self.width)
             .child(
@@ -3339,7 +3397,9 @@ mod tests {
             })
             .unwrap();
 
-        // "Save as"" the buffer, creating a new backing file for it
+        cx.executor().run_until_parked();
+
+        // "Save as" the buffer, creating a new backing file for it
         let save_task = workspace
             .update(cx, |workspace, cx| {
                 workspace.save_active_item(workspace::SaveIntent::Save, cx)

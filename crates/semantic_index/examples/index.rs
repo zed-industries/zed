@@ -1,24 +1,15 @@
 use client::Client;
 use futures::channel::oneshot;
-use gpui::{App, Global, TestAppContext};
+use gpui::App;
 use language::language_settings::AllLanguageSettings;
 use project::Project;
 use semantic_index::{OpenAiEmbeddingModel, OpenAiEmbeddingProvider, SemanticIndex};
 use settings::SettingsStore;
-use std::{path::Path, sync::Arc};
+use std::{
+    path::{Path, PathBuf},
+    sync::Arc,
+};
 use util::http::HttpClientWithUrl;
-
-pub fn init_test(cx: &mut TestAppContext) {
-    _ = cx.update(|cx| {
-        let store = SettingsStore::test(cx);
-        cx.set_global(store);
-        language::init(cx);
-        Project::init_settings(cx);
-        SettingsStore::update(cx, |store, cx| {
-            store.update_user_settings::<AllLanguageSettings>(cx, |_| {});
-        });
-    });
-}
 
 fn main() {
     env_logger::init();
@@ -50,20 +41,21 @@ fn main() {
         // let embedding_provider = semantic_index::FakeEmbeddingProvider;
 
         let api_key = std::env::var("OPENAI_API_KEY").expect("OPENAI_API_KEY not set");
-        let embedding_provider = OpenAiEmbeddingProvider::new(
+
+        let embedding_provider = Arc::new(OpenAiEmbeddingProvider::new(
             http.clone(),
             OpenAiEmbeddingModel::TextEmbedding3Small,
             open_ai::OPEN_AI_API_URL.to_string(),
             api_key,
-        );
-
-        let semantic_index = SemanticIndex::new(
-            Path::new("/tmp/semantic-index-db.mdb"),
-            Arc::new(embedding_provider),
-            cx,
-        );
+        ));
 
         cx.spawn(|mut cx| async move {
+            let semantic_index = SemanticIndex::new(
+                PathBuf::from("/tmp/semantic-index-db.mdb"),
+                embedding_provider,
+                &mut cx,
+            );
+
             let mut semantic_index = semantic_index.await.unwrap();
 
             let project_path = Path::new(&args[1]);
@@ -100,10 +92,11 @@ fn main() {
                 .update(|cx| {
                     let project_index = project_index.read(cx);
                     let query = "converting an anchor to a point";
-                    project_index.search(query, 4, cx)
+                    project_index.search(query.into(), 4, cx)
                 })
                 .unwrap()
-                .await;
+                .await
+                .unwrap();
 
             for search_result in results {
                 let path = search_result.path.clone();

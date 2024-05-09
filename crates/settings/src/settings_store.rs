@@ -116,16 +116,25 @@ impl<'a, T: Serialize> SettingsSources<'a, T> {
             .chain(self.project.iter().copied())
     }
 
+    /// Returns the settings after performing a JSON merge of the provided customizations.
+    ///
+    /// Customizations later in the iterator win out over the earlier ones.
+    pub fn json_merge_with<O: DeserializeOwned>(
+        customizations: impl Iterator<Item = &'a T>,
+    ) -> Result<O> {
+        let mut merged = serde_json::Value::Null;
+        for value in customizations {
+            merge_non_null_json_value_into(serde_json::to_value(value).unwrap(), &mut merged);
+        }
+        Ok(serde_json::from_value(merged)?)
+    }
+
     /// Returns the settings after performing a JSON merge of the customizations into the
     /// default settings.
     ///
     /// More-specific customizations win out over the less-specific ones.
-    pub fn json_merge<O: DeserializeOwned>(&self) -> Result<O> {
-        let mut merged = serde_json::Value::Null;
-        for value in self.defaults_and_customizations() {
-            merge_non_null_json_value_into(serde_json::to_value(value).unwrap(), &mut merged);
-        }
-        Ok(serde_json::from_value(merged)?)
+    pub fn json_merge<O: DeserializeOwned>(&'a self) -> Result<O> {
+        Self::json_merge_with(self.defaults_and_customizations())
     }
 }
 
@@ -198,6 +207,13 @@ trait AnySettingValue: 'static + Send + Sync {
 struct DeserializedSetting(Box<dyn Any>);
 
 impl SettingsStore {
+    pub fn update<C, R>(cx: &mut C, f: impl FnOnce(&mut Self, &mut C) -> R) -> R
+    where
+        C: BorrowAppContext,
+    {
+        cx.update_global(f)
+    }
+
     /// Add a new type of setting to the store.
     pub fn register_setting<T: Settings>(&mut self, cx: &mut AppContext) {
         let setting_type_id = TypeId::of::<T>();
@@ -414,7 +430,11 @@ impl SettingsStore {
         user_settings_content: &str,
         cx: &mut AppContext,
     ) -> Result<()> {
-        let settings: serde_json::Value = parse_json_with_comments(user_settings_content)?;
+        let settings: serde_json::Value = if user_settings_content.is_empty() {
+            parse_json_with_comments("{}")?
+        } else {
+            parse_json_with_comments(user_settings_content)?
+        };
         if settings.is_object() {
             self.raw_user_settings = settings;
             self.recompute_values(None, cx)?;
@@ -432,9 +452,11 @@ impl SettingsStore {
         settings_content: Option<&str>,
         cx: &mut AppContext,
     ) -> Result<()> {
-        if let Some(content) = settings_content {
-            self.raw_local_settings
-                .insert((root_id, path.clone()), parse_json_with_comments(content)?);
+        if settings_content.is_some_and(|content| !content.is_empty()) {
+            self.raw_local_settings.insert(
+                (root_id, path.clone()),
+                parse_json_with_comments(settings_content.unwrap())?,
+            );
         } else {
             self.raw_local_settings.remove(&(root_id, path.clone()));
         }

@@ -2,17 +2,18 @@
 
 pub use gpui::prelude::*;
 pub use gpui::{
-    div, px, relative, rems, AbsoluteLength, DefiniteLength, Div, Element, ElementContext,
-    ElementId, InteractiveElement, ParentElement, Pixels, Rems, RenderOnce, SharedString, Styled,
-    ViewContext, WindowContext,
+    div, px, relative, rems, AbsoluteLength, DefiniteLength, Div, Element, ElementId,
+    InteractiveElement, ParentElement, Pixels, Rems, RenderOnce, SharedString, Styled, ViewContext,
+    WindowContext,
 };
 
 pub use crate::clickable::*;
 pub use crate::disableable::*;
 pub use crate::fixed::*;
 pub use crate::selectable::*;
-pub use crate::styles::{rems_from_px, vh, vw, PlatformStyle};
+pub use crate::styles::{rems_from_px, vh, vw, PlatformStyle, StyledTypography};
 pub use crate::visible_on_hover::*;
+pub use crate::Spacing;
 pub use crate::{h_flex, v_flex};
 pub use crate::{Button, ButtonSize, ButtonStyle, IconButton, SelectableButton};
 pub use crate::{ButtonCommon, Color, StyledExt};

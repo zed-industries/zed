@@ -138,6 +138,8 @@
       "ctrl-alt-space": "editor::ShowCharacterPalette",
       "ctrl-;": "editor::ToggleLineNumbers",
       "ctrl-k ctrl-r": "editor::RevertSelectedHunks",
+      "ctrl-'": "editor::ToggleHunkDiff",
+      "ctrl-\"": "editor::ExpandAllHunkDiffs",
       "ctrl-alt-g b": "editor::ToggleGitBlame"
     }
   },
@@ -297,13 +299,8 @@
       "ctrl-shift-k": "editor::DeleteLine",
       "alt-up": "editor::MoveLineUp",
       "alt-down": "editor::MoveLineDown",
-      "ctrl-alt-shift-up": [
-        "editor::DuplicateLine",
-        {
-          "move_upwards": true
-        }
-      ],
-      "ctrl-alt-shift-down": "editor::DuplicateLine",
+      "ctrl-alt-shift-up": "editor::DuplicateLineUp",
+      "ctrl-alt-shift-down": "editor::DuplicateLineDown",
       "ctrl-shift-left": "editor::SelectToPreviousWordStart",
       "ctrl-shift-right": "editor::SelectToNextWordEnd",
       "ctrl-shift-up": "editor::SelectLargerSyntaxNode", //todo(linux) tmp keybinding
@@ -527,6 +524,7 @@
     "context": "Editor && mode == full",
     "bindings": {
       "alt-enter": "editor::OpenExcerpts",
+      "shift-enter": "editor::ExpandExcerpts",
       "ctrl-k enter": "editor::OpenExcerptsSplit",
       "ctrl-f8": "editor::GoToHunk",
       "ctrl-shift-f8": "editor::GoToPrevHunk",
@@ -553,8 +551,8 @@
       "alt-ctrl-shift-c": "project_panel::CopyRelativePath",
       "f2": "project_panel::Rename",
       "enter": "project_panel::Rename",
-      "backspace": "project_panel::Delete",
-      "delete": "project_panel::Delete",
+      "backspace": "project_panel::Trash",
+      "delete": "project_panel::Trash",
       "ctrl-backspace": ["project_panel::Delete", { "skip_prompt": true }],
       "ctrl-delete": ["project_panel::Delete", { "skip_prompt": true }],
       "alt-ctrl-r": "project_panel::RevealInFinder",
@@ -590,12 +588,6 @@
     "context": "ChannelModal > Picker > Editor",
     "bindings": {
       "tab": "channel_modal::ToggleMode"
-    }
-  },
-  {
-    "context": "ChatPanel > MessageEditor",
-    "bindings": {
-      "escape": "chat_panel::CloseReplyPreview"
     }
   },
   {

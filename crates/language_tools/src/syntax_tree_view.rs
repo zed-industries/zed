@@ -365,7 +365,7 @@ impl Render for SyntaxTreeView {
             rendered = rendered.child(
                 canvas(
                     move |bounds, cx| {
-                        list.layout(bounds.origin, bounds.size.into(), cx);
+                        list.prepaint_as_root(bounds.origin, bounds.size.into(), cx);
                         list
                     },
                     |_, mut list, cx| list.paint(cx),

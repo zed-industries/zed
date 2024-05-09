@@ -234,10 +234,11 @@ impl ChatPanel {
             let channel_id = chat.read(cx).channel_id;
             {
                 self.markdown_data.clear();
-                let chat = chat.read(cx);
-                self.message_list.reset(chat.message_count());
 
+                let chat = chat.read(cx);
                 let channel_name = chat.channel(cx).map(|channel| channel.name.clone());
+                let message_count = chat.message_count();
+                self.message_list.reset(message_count);
                 self.message_editor.update(cx, |editor, cx| {
                     editor.set_channel(channel_id, channel_name, cx);
                     editor.clear_reply_to_message_id();
@@ -314,7 +315,7 @@ impl ChatPanel {
             None => {
                 return div().child(
                     h_flex()
-                        .text_ui_xs()
+                        .text_ui_xs(cx)
                         .my_0p5()
                         .px_0p5()
                         .gap_x_1()
@@ -349,7 +350,7 @@ impl ChatPanel {
         div().child(
             h_flex()
                 .id(message_element_id)
-                .text_ui_xs()
+                .text_ui_xs(cx)
                 .my_0p5()
                 .px_0p5()
                 .gap_x_1()
@@ -494,7 +495,7 @@ impl ChatPanel {
                         |this| {
                             this.child(
                                 h_flex()
-                                    .text_ui_sm()
+                                    .text_ui_sm(cx)
                                     .child(
                                         div().absolute().child(
                                             Avatar::new(message.sender.avatar_uri.clone())
@@ -538,7 +539,7 @@ impl ChatPanel {
                         el.child(
                             v_flex()
                                 .w_full()
-                                .text_ui_sm()
+                                .text_ui_sm(cx)
                                 .id(element_id)
                                 .child(text.element("body".into(), cx)),
                         )
@@ -561,7 +562,7 @@ impl ChatPanel {
                                 div()
                                     .px_1()
                                     .rounded_md()
-                                    .text_ui_xs()
+                                    .text_ui_xs(cx)
                                     .bg(cx.theme().colors().background)
                                     .child("New messages"),
                             )
@@ -571,7 +572,7 @@ impl ChatPanel {
             )
             .child(
                 self.render_popover_buttons(&cx, message_id, can_delete_message, can_edit_message)
-                    .neg_mt_2p5(),
+                    .mt_neg_2p5(),
             )
     }
 
@@ -766,7 +767,7 @@ impl ChatPanel {
             body.push_str(MESSAGE_EDITED);
         }
 
-        let mut rich_text = rich_text::render_rich_text(body, &mentions, language_registry, None);
+        let mut rich_text = RichText::new(body, &mentions, language_registry);
 
         if message.edited_at.is_some() {
             let range = (rich_text.text.len() - MESSAGE_EDITED.len())..rich_text.text.len();
@@ -1002,7 +1003,7 @@ impl Render for ChatPanel {
                 el.child(
                     h_flex()
                         .px_2()
-                        .text_ui_xs()
+                        .text_ui_xs(cx)
                         .justify_between()
                         .border_t_1()
                         .border_color(cx.theme().colors().border)

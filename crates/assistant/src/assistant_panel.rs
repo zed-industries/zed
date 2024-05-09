@@ -1108,7 +1108,7 @@ impl AssistantPanel {
                             )
                             .track_scroll(scroll_handle)
                             .into_any_element();
-                            saved_conversations.layout(
+                            saved_conversations.prepaint_as_root(
                                 bounds.origin,
                                 bounds.size.map(AvailableSpace::Definite),
                                 cx,
@@ -2873,7 +2873,7 @@ impl InlineAssistant {
                 cx.theme().colors().text
             },
             font_family: settings.ui_font.family.clone(),
-            font_features: settings.ui_font.features,
+            font_features: settings.ui_font.features.clone(),
             font_size: rems(0.875).into(),
             font_weight: FontWeight::NORMAL,
             font_style: FontStyle::Normal,

@@ -37,10 +37,10 @@ impl Render for StatusBar {
         h_flex()
             .w_full()
             .justify_between()
-            .gap_2()
-            .py_0p5()
-            .px_1()
-            .h_8()
+            .gap(Spacing::Large.rems(cx))
+            .py(Spacing::Small.rems(cx))
+            .px(Spacing::Large.rems(cx))
+            // .h_8()
             .bg(cx.theme().colors().status_bar_background)
             .child(self.render_left_tools(cx))
             .child(self.render_right_tools(cx))
@@ -48,16 +48,16 @@ impl Render for StatusBar {
 }
 
 impl StatusBar {
-    fn render_left_tools(&self, _: &mut ViewContext<Self>) -> impl IntoElement {
+    fn render_left_tools(&self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         h_flex()
-            .gap_2()
+            .gap(Spacing::Large.rems(cx))
             .overflow_x_hidden()
             .children(self.left_items.iter().map(|item| item.to_any()))
     }
 
-    fn render_right_tools(&self, _: &mut ViewContext<Self>) -> impl IntoElement {
+    fn render_right_tools(&self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         h_flex()
-            .gap_2()
+            .gap(Spacing::Large.rems(cx))
             .children(self.right_items.iter().rev().map(|item| item.to_any()))
     }
 }

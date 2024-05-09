@@ -1,21 +1,24 @@
 use std::cell::RefCell;
 use std::ops::Deref;
-use std::rc::Rc;
+use std::rc::{Rc, Weak};
 use std::time::{Duration, Instant};
 
-use calloop::{EventLoop, LoopHandle};
+use calloop::generic::{FdWrapper, Generic};
+use calloop::{EventLoop, LoopHandle, RegistrationToken};
 use collections::HashMap;
 use copypasta::x11_clipboard::{Clipboard, Primary, X11ClipboardContext};
 use copypasta::ClipboardProvider;
 
 use util::ResultExt;
 use x11rb::connection::{Connection, RequestConnection};
+use x11rb::cursor;
 use x11rb::errors::ConnectionError;
 use x11rb::protocol::randr::ConnectionExt as _;
-use x11rb::protocol::xinput::ConnectionExt;
+use x11rb::protocol::xinput::{ConnectionExt, ScrollClass};
 use x11rb::protocol::xkb::ConnectionExt as _;
-use x11rb::protocol::xproto::ConnectionExt as _;
-use x11rb::protocol::{randr, xinput, xkb, xproto, Event};
+use x11rb::protocol::xproto::{ChangeWindowAttributesAux, ConnectionExt as _};
+use x11rb::protocol::{randr, render, xinput, xkb, xproto, Event};
+use x11rb::resource_manager::Database;
 use x11rb::xcb_ffi::XCBConnection;
 use xkbc::x11::ffi::{XKB_X11_MIN_MAJOR_XKB_VERSION, XKB_X11_MIN_MINOR_XKB_VERSION};
 use xkbcommon::xkb as xkbc;
@@ -23,26 +26,26 @@ use xkbcommon::xkb as xkbc;
 use crate::platform::linux::LinuxClient;
 use crate::platform::{LinuxCommon, PlatformWindow};
 use crate::{
-    px, AnyWindowHandle, Bounds, CursorStyle, DisplayId, Modifiers, ModifiersChangedEvent, Pixels,
-    PlatformDisplay, PlatformInput, Point, ScrollDelta, Size, TouchPhase, WindowParams,
+    modifiers_from_xinput_info, point, px, AnyWindowHandle, Bounds, CursorStyle, DisplayId,
+    Modifiers, ModifiersChangedEvent, Pixels, PlatformDisplay, PlatformInput, Point, ScrollDelta,
+    Size, TouchPhase, WindowParams, X11Window,
 };
 
-use super::{super::SCROLL_LINES, X11Display, X11Window, XcbAtoms};
-use super::{button_of_key, modifiers_from_state};
+use super::{
+    super::{open_uri_internal, SCROLL_LINES},
+    X11Display, X11WindowStatePtr, XcbAtoms,
+};
+use super::{button_from_mask, button_of_key, modifiers_from_state};
 use crate::platform::linux::is_within_click_distance;
 use crate::platform::linux::platform::DOUBLE_CLICK_INTERVAL;
-use calloop::{
-    generic::{FdWrapper, Generic},
-    RegistrationToken,
-};
 
 pub(crate) struct WindowRef {
-    window: X11Window,
+    window: X11WindowStatePtr,
     refresh_event_token: RegistrationToken,
 }
 
 impl Deref for WindowRef {
-    type Target = X11Window;
+    type Target = X11WindowStatePtr;
 
     fn deref(&self) -> &Self::Target {
         &self.window
@@ -57,20 +60,47 @@ pub struct X11ClientState {
     pub(crate) last_location: Point<Pixels>,
     pub(crate) current_count: usize,
 
+    pub(crate) scale_factor: f32,
+
     pub(crate) xcb_connection: Rc<XCBConnection>,
     pub(crate) x_root_index: usize,
+    pub(crate) resource_database: Database,
     pub(crate) atoms: XcbAtoms,
     pub(crate) windows: HashMap<xproto::Window, WindowRef>,
     pub(crate) focused_window: Option<xproto::Window>,
     pub(crate) xkb: xkbc::State,
 
-    pub(crate) scroll_devices: Vec<xinput::DeviceInfo>,
+    pub(crate) cursor_handle: cursor::Handle,
+    pub(crate) cursor_styles: HashMap<xproto::Window, CursorStyle>,
+    pub(crate) cursor_cache: HashMap<CursorStyle, xproto::Cursor>,
+
+    pub(crate) scroll_class_data: Vec<xinput::DeviceClassDataScroll>,
     pub(crate) scroll_x: Option<f32>,
     pub(crate) scroll_y: Option<f32>,
 
     pub(crate) common: LinuxCommon,
     pub(crate) clipboard: X11ClipboardContext<Clipboard>,
     pub(crate) primary: X11ClipboardContext<Primary>,
+}
+
+#[derive(Clone)]
+pub struct X11ClientStatePtr(pub Weak<RefCell<X11ClientState>>);
+
+impl X11ClientStatePtr {
+    pub fn drop_window(&self, x_window: u32) {
+        let client = X11Client(self.0.upgrade().expect("client already dropped"));
+        let mut state = client.0.borrow_mut();
+
+        if let Some(window_ref) = state.windows.remove(&x_window) {
+            state.loop_handle.remove(window_ref.refresh_event_token);
+        }
+
+        state.cursor_styles.remove(&x_window);
+
+        if state.windows.is_empty() {
+            state.common.signal.stop();
+        }
+    }
 }
 
 #[derive(Clone)]
@@ -98,6 +128,9 @@ impl X11Client {
             .prefetch_extension_information(randr::X11_EXTENSION_NAME)
             .unwrap();
         xcb_connection
+            .prefetch_extension_information(render::X11_EXTENSION_NAME)
+            .unwrap();
+        xcb_connection
             .prefetch_extension_information(xinput::X11_EXTENSION_NAME)
             .unwrap();
 
@@ -110,6 +143,22 @@ impl X11Client {
             xinput_version.major_version >= 2,
             "XInput Extension v2 not supported."
         );
+
+        let master_device_query = xcb_connection
+            .xinput_xi_query_device(1_u16)
+            .unwrap()
+            .reply()
+            .unwrap();
+        let scroll_class_data = master_device_query
+            .infos
+            .iter()
+            .find(|info| info.type_ == xinput::DeviceType::MASTER_POINTER)
+            .unwrap()
+            .classes
+            .iter()
+            .filter_map(|class| class.data.as_scroll())
+            .map(|class| *class)
+            .collect::<Vec<_>>();
 
         let atoms = XcbAtoms::new(&xcb_connection).unwrap();
         let xkb = xcb_connection
@@ -143,45 +192,35 @@ impl X11Client {
             xkbc::x11::state_new_from_device(&xkb_keymap, &xcb_connection, xkb_device_id)
         };
 
-        let device_list = xcb_connection
-            .xinput_list_input_devices()
+        let screen = xcb_connection.setup().roots.get(x_root_index).unwrap();
+
+        // Values from `Database::GET_RESOURCE_DATABASE`
+        let resource_manager = xcb_connection
+            .get_property(
+                false,
+                screen.root,
+                xproto::AtomEnum::RESOURCE_MANAGER,
+                xproto::AtomEnum::STRING,
+                0,
+                100_000_000,
+            )
+            .unwrap();
+        let resource_manager = resource_manager.reply().unwrap();
+
+        // todo(linux): read hostname
+        let resource_database = Database::new_from_default(&resource_manager, "HOSTNAME".into());
+
+        let scale_factor = resource_database
+            .get_value("Xft.dpi", "Xft.dpi")
+            .ok()
+            .flatten()
+            .map(|dpi: f32| dpi / 96.0)
+            .unwrap_or(1.0);
+
+        let cursor_handle = cursor::Handle::new(&xcb_connection, x_root_index, &resource_database)
             .unwrap()
             .reply()
             .unwrap();
-        let scroll_devices = device_list
-            .devices
-            .iter()
-            .scan(0, |class_info_idx, device_info| {
-                Some(*class_info_idx + device_info.num_class_info as usize)
-            })
-            .zip(device_list.devices.iter())
-            .map(|(class_info_idx, device_info)| {
-                (
-                    device_info,
-                    device_list.infos
-                        [(class_info_idx - device_info.num_class_info as usize)..(class_info_idx)]
-                        .to_vec(),
-                )
-            })
-            .filter(|(device_info, class_info)| {
-                device_info.device_use == xinput::DeviceUse::IS_X_EXTENSION_POINTER
-                    && class_info.iter().any(|class_info| match class_info.info {
-                        xinput::InputInfoInfo::Valuator(xinput::InputInfoInfoValuator {
-                            mode,
-                            ..
-                        }) => mode == xinput::ValuatorMode::RELATIVE,
-                        _ => false,
-                    })
-            })
-            .map(|(device_info, _)| *device_info)
-            .collect::<Vec<_>>();
-        for device in &scroll_devices {
-            xcb_connection
-                .xinput_open_device(device.device_id)
-                .unwrap()
-                .reply()
-                .unwrap();
-        }
 
         let clipboard = X11ClipboardContext::<Clipboard>::new().unwrap();
         let primary = X11ClipboardContext::<Primary>::new().unwrap();
@@ -217,15 +256,21 @@ impl X11Client {
             last_click: Instant::now(),
             last_location: Point::new(px(0.0), px(0.0)),
             current_count: 0,
+            scale_factor,
 
             xcb_connection,
             x_root_index,
+            resource_database,
             atoms,
             windows: HashMap::default(),
             focused_window: None,
             xkb: xkb_state,
 
-            scroll_devices,
+            cursor_handle,
+            cursor_styles: HashMap::default(),
+            cursor_cache: HashMap::default(),
+
+            scroll_class_data,
             scroll_x: None,
             scroll_y: None,
 
@@ -234,7 +279,7 @@ impl X11Client {
         })))
     }
 
-    fn get_window(&self, win: xproto::Window) -> Option<X11Window> {
+    fn get_window(&self, win: xproto::Window) -> Option<X11WindowStatePtr> {
         let state = self.0.borrow();
         state
             .windows
@@ -245,18 +290,16 @@ impl X11Client {
     fn handle_event(&self, event: Event) -> Option<()> {
         match event {
             Event::ClientMessage(event) => {
+                let window = self.get_window(event.window)?;
                 let [atom, ..] = event.data.as_data32();
                 let mut state = self.0.borrow_mut();
 
                 if atom == state.atoms.WM_DELETE_WINDOW {
-                    // window "x" button clicked by user, we gracefully exit
-                    let window_ref = state.windows.remove(&event.window)?;
-
-                    state.loop_handle.remove(window_ref.refresh_event_token);
-                    window_ref.window.destroy();
-
-                    if state.windows.is_empty() {
-                        state.common.signal.stop();
+                    // window "x" button clicked by user
+                    if window.should_close() {
+                        let window_ref = state.windows.remove(&event.window)?;
+                        state.loop_handle.remove(window_ref.refresh_event_token);
+                        // Rest of the close logic is handled in drop_window()
                     }
                 }
             }
@@ -347,14 +390,16 @@ impl X11Client {
                 drop(state);
                 window.handle_input(PlatformInput::KeyUp(crate::KeyUpEvent { keystroke }));
             }
-            Event::ButtonPress(event) => {
+            Event::XinputButtonPress(event) => {
                 let window = self.get_window(event.event)?;
                 let mut state = self.0.borrow_mut();
 
-                let modifiers = modifiers_from_state(event.state);
-                let position =
-                    Point::new((event.event_x as f32).into(), (event.event_y as f32).into());
-                if let Some(button) = button_of_key(event.detail) {
+                let modifiers = modifiers_from_xinput_info(event.mods);
+                let position = point(
+                    px(event.event_x as f32 / u16::MAX as f32 / state.scale_factor),
+                    px(event.event_y as f32 / u16::MAX as f32 / state.scale_factor),
+                );
+                if let Some(button) = button_of_key(event.detail.try_into().unwrap()) {
                     let click_elapsed = state.last_click.elapsed();
 
                     if click_elapsed < DOUBLE_CLICK_INTERVAL
@@ -381,61 +426,15 @@ impl X11Client {
                     log::warn!("Unknown button press: {event:?}");
                 }
             }
-            Event::XinputMotion(event) => {
-                let window = self.get_window(event.event)?;
-
-                let position = Point::new(
-                    (event.event_x as f32 / u16::MAX as f32).into(),
-                    (event.event_y as f32 / u16::MAX as f32).into(),
-                );
-
-                let axisvalues = event
-                    .axisvalues
-                    .iter()
-                    .map(|axisvalue| {
-                        axisvalue.integral as f32 + axisvalue.frac as f32 / u32::MAX as f32
-                    })
-                    .collect::<Vec<_>>();
-
-                if event.valuator_mask[0] & 4 == 4 {
-                    let new_scroll = axisvalues[0];
-                    let old_scroll = self.0.borrow().scroll_x;
-                    self.0.borrow_mut().scroll_x = Some(new_scroll);
-
-                    if let Some(old_scroll) = old_scroll {
-                        let delta_scroll = (old_scroll - new_scroll).into();
-                        window.handle_input(PlatformInput::ScrollWheel(crate::ScrollWheelEvent {
-                            position,
-                            delta: ScrollDelta::Pixels(Point::new(delta_scroll, 0.0.into())),
-                            modifiers: crate::Modifiers::none(),
-                            touch_phase: TouchPhase::default(),
-                        }));
-                    }
-                }
-
-                if event.valuator_mask[0] & 8 == 8 {
-                    let new_scroll = axisvalues[0] / 2.0;
-                    let old_scroll = self.0.borrow().scroll_y;
-                    self.0.borrow_mut().scroll_y = Some(new_scroll);
-
-                    if let Some(old_scroll) = old_scroll {
-                        let delta_scroll = (old_scroll - new_scroll).into();
-                        window.handle_input(PlatformInput::ScrollWheel(crate::ScrollWheelEvent {
-                            position,
-                            delta: ScrollDelta::Pixels(Point::new(0.0.into(), delta_scroll)),
-                            modifiers: crate::Modifiers::none(),
-                            touch_phase: TouchPhase::default(),
-                        }));
-                    }
-                }
-            }
-            Event::ButtonRelease(event) => {
+            Event::XinputButtonRelease(event) => {
                 let window = self.get_window(event.event)?;
                 let state = self.0.borrow();
-                let modifiers = modifiers_from_state(event.state);
-                let position =
-                    Point::new((event.event_x as f32).into(), (event.event_y as f32).into());
-                if let Some(button) = button_of_key(event.detail) {
+                let modifiers = modifiers_from_xinput_info(event.mods);
+                let position = point(
+                    px(event.event_x as f32 / u16::MAX as f32 / state.scale_factor),
+                    px(event.event_y as f32 / u16::MAX as f32 / state.scale_factor),
+                );
+                if let Some(button) = button_of_key(event.detail.try_into().unwrap()) {
                     let click_count = state.current_count;
                     drop(state);
                     window.handle_input(PlatformInput::MouseUp(crate::MouseUpEvent {
@@ -446,24 +445,100 @@ impl X11Client {
                     }));
                 }
             }
-            Event::MotionNotify(event) => {
+            Event::XinputMotion(event) => {
                 let window = self.get_window(event.event)?;
-                let pressed_button = super::button_from_state(event.state);
-                let position =
-                    Point::new((event.event_x as f32).into(), (event.event_y as f32).into());
-                let modifiers = modifiers_from_state(event.state);
-                window.handle_input(PlatformInput::MouseMove(crate::MouseMoveEvent {
-                    pressed_button,
-                    position,
-                    modifiers,
-                }));
+                let state = self.0.borrow();
+                let pressed_button = button_from_mask(event.button_mask[0]);
+                let position = point(
+                    px(event.event_x as f32 / u16::MAX as f32 / state.scale_factor),
+                    px(event.event_y as f32 / u16::MAX as f32 / state.scale_factor),
+                );
+                drop(state);
+                let modifiers = modifiers_from_xinput_info(event.mods);
+
+                let axisvalues = event
+                    .axisvalues
+                    .iter()
+                    .map(|axisvalue| fp3232_to_f32(*axisvalue))
+                    .collect::<Vec<_>>();
+
+                if event.valuator_mask[0] & 3 != 0 {
+                    window.handle_input(PlatformInput::MouseMove(crate::MouseMoveEvent {
+                        position,
+                        pressed_button,
+                        modifiers,
+                    }));
+                }
+
+                let mut valuator_idx = 0;
+                let scroll_class_data = self.0.borrow().scroll_class_data.clone();
+                for shift in 0..32 {
+                    if (event.valuator_mask[0] >> shift) & 1 == 0 {
+                        continue;
+                    }
+
+                    for scroll_class in &scroll_class_data {
+                        if scroll_class.scroll_type == xinput::ScrollType::HORIZONTAL
+                            && scroll_class.number == shift
+                        {
+                            let new_scroll = axisvalues[valuator_idx]
+                                / fp3232_to_f32(scroll_class.increment)
+                                * SCROLL_LINES as f32;
+                            let old_scroll = self.0.borrow().scroll_x;
+                            self.0.borrow_mut().scroll_x = Some(new_scroll);
+
+                            if let Some(old_scroll) = old_scroll {
+                                let delta_scroll = old_scroll - new_scroll;
+                                window.handle_input(PlatformInput::ScrollWheel(
+                                    crate::ScrollWheelEvent {
+                                        position,
+                                        delta: ScrollDelta::Lines(Point::new(delta_scroll, 0.0)),
+                                        modifiers,
+                                        touch_phase: TouchPhase::default(),
+                                    },
+                                ));
+                            }
+                        } else if scroll_class.scroll_type == xinput::ScrollType::VERTICAL
+                            && scroll_class.number == shift
+                        {
+                            // the `increment` is the valuator delta equivalent to one positive unit of scrolling. Here that means SCROLL_LINES lines.
+                            let new_scroll = axisvalues[valuator_idx]
+                                / fp3232_to_f32(scroll_class.increment)
+                                * SCROLL_LINES as f32;
+                            let old_scroll = self.0.borrow().scroll_y;
+                            self.0.borrow_mut().scroll_y = Some(new_scroll);
+
+                            if let Some(old_scroll) = old_scroll {
+                                let delta_scroll = old_scroll - new_scroll;
+                                window.handle_input(PlatformInput::ScrollWheel(
+                                    crate::ScrollWheelEvent {
+                                        position,
+                                        delta: ScrollDelta::Lines(Point::new(0.0, delta_scroll)),
+                                        modifiers,
+                                        touch_phase: TouchPhase::default(),
+                                    },
+                                ));
+                            }
+                        }
+                    }
+
+                    valuator_idx += 1;
+                }
             }
-            Event::LeaveNotify(event) => {
+            Event::XinputLeave(event) => {
+                self.0.borrow_mut().scroll_x = None; // Set last scroll to `None` so that a large delta isn't created if scrolling is done outside the window (the valuator is global)
+                self.0.borrow_mut().scroll_y = None;
+
                 let window = self.get_window(event.event)?;
-                let pressed_button = super::button_from_state(event.state);
-                let position =
-                    Point::new((event.event_x as f32).into(), (event.event_y as f32).into());
-                let modifiers = modifiers_from_state(event.state);
+                let state = self.0.borrow();
+                let pressed_button = button_from_mask(event.buttons[0]);
+                let position = point(
+                    px(event.event_x as f32 / u16::MAX as f32 / state.scale_factor),
+                    px(event.event_y as f32 / u16::MAX as f32 / state.scale_factor),
+                );
+                let modifiers = modifiers_from_xinput_info(event.mods);
+                drop(state);
+
                 window.handle_input(PlatformInput::MouseExited(crate::MouseExitEvent {
                     pressed_button,
                     position,
@@ -523,12 +598,14 @@ impl LinuxClient for X11Client {
         let x_window = state.xcb_connection.generate_id().unwrap();
 
         let window = X11Window::new(
+            X11ClientStatePtr(Rc::downgrade(&self.0)),
+            state.common.foreground_executor.clone(),
             params,
             &state.xcb_connection,
             state.x_root_index,
             x_window,
             &state.atoms,
-            &state.scroll_devices,
+            state.scale_factor,
         );
 
         let screen_resources = state
@@ -592,7 +669,7 @@ impl LinuxClient for X11Client {
             .expect("Failed to initialize refresh timer");
 
         let window_ref = WindowRef {
-            window: window.clone(),
+            window: window.0.clone(),
             refresh_event_token,
         };
 
@@ -600,8 +677,47 @@ impl LinuxClient for X11Client {
         Box::new(window)
     }
 
-    //todo(linux)
-    fn set_cursor_style(&self, _style: CursorStyle) {}
+    fn set_cursor_style(&self, style: CursorStyle) {
+        let mut state = self.0.borrow_mut();
+        let Some(focused_window) = state.focused_window else {
+            return;
+        };
+        let current_style = state
+            .cursor_styles
+            .get(&focused_window)
+            .unwrap_or(&CursorStyle::Arrow);
+        if *current_style == style {
+            return;
+        }
+
+        let cursor = match state.cursor_cache.get(&style) {
+            Some(cursor) => *cursor,
+            None => {
+                let cursor = state
+                    .cursor_handle
+                    .load_cursor(&state.xcb_connection, &style.to_icon_name())
+                    .expect("failed to load cursor");
+                state.cursor_cache.insert(style, cursor);
+                cursor
+            }
+        };
+
+        state.cursor_styles.insert(focused_window, style);
+        state
+            .xcb_connection
+            .change_window_attributes(
+                focused_window,
+                &ChangeWindowAttributesAux {
+                    cursor: Some(cursor),
+                    ..Default::default()
+                },
+            )
+            .expect("failed to change window cursor");
+    }
+
+    fn open_uri(&self, uri: &str) {
+        open_uri_internal(uri, None);
+    }
 
     fn write_to_primary(&self, item: crate::ClipboardItem) {
         self.0.borrow_mut().primary.set_contents(item.text);
@@ -654,4 +770,8 @@ pub fn mode_refresh_rate(mode: &randr::ModeInfo) -> Duration {
     let micros = 1_000_000_000 / millihertz;
     log::info!("Refreshing at {} micros", micros);
     Duration::from_micros(micros)
+}
+
+fn fp3232_to_f32(value: xinput::Fp3232) -> f32 {
+    value.integral as f32 + value.frac as f32 / u32::MAX as f32
 }

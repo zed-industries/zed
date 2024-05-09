@@ -45,7 +45,7 @@ pub fn init(cx: &mut AppContext) {
                     workspace.activate_item(&existing, cx);
                 } else {
                     let extensions_page = ExtensionsPage::new(workspace, cx);
-                    workspace.add_item_to_active_pane(Box::new(extensions_page), cx)
+                    workspace.add_item_to_active_pane(Box::new(extensions_page), None, cx)
                 }
             })
             .register_action(move |_, _: &InstallDevExtension, cx| {
@@ -700,7 +700,7 @@ impl ExtensionsPage {
     }
 
     fn render_search(&self, cx: &mut ViewContext<Self>) -> Div {
-        let mut key_context = KeyContext::default();
+        let mut key_context = KeyContext::new_with_defaults();
         key_context.add("BufferSearchBar");
 
         let editor_border = if self.query_contains_error {
@@ -739,7 +739,7 @@ impl ExtensionsPage {
                 cx.theme().colors().text
             },
             font_family: settings.ui_font.family.clone(),
-            font_features: settings.ui_font.features,
+            font_features: settings.ui_font.features.clone(),
             font_size: rems(0.875).into(),
             font_weight: FontWeight::NORMAL,
             font_style: FontStyle::Normal,
@@ -852,7 +852,7 @@ impl Render for ExtensionsPage {
                 v_flex()
                     .gap_4()
                     .p_4()
-                    .border_b()
+                    .border_b_1()
                     .border_color(cx.theme().colors().border)
                     .bg(cx.theme().colors().editor_background)
                     .child(
@@ -948,7 +948,7 @@ impl Render for ExtensionsPage {
                             .pb_4()
                             .track_scroll(scroll_handle)
                             .into_any_element();
-                            list.layout(bounds.origin, bounds.size.into(), cx);
+                            list.prepaint_as_root(bounds.origin, bounds.size.into(), cx);
                             list
                         },
                         |_bounds, mut list, cx| list.paint(cx),

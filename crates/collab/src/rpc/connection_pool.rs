@@ -13,6 +13,7 @@ pub struct ConnectionPool {
     connected_users: BTreeMap<UserId, ConnectedPrincipal>,
     connected_dev_servers: BTreeMap<DevServerId, ConnectionId>,
     channels: ChannelPool,
+    offline_dev_servers: HashSet<DevServerId>,
 }
 
 #[derive(Default, Serialize)]
@@ -20,7 +21,7 @@ struct ConnectedPrincipal {
     connection_ids: HashSet<ConnectionId>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Copy, Clone, Debug, Serialize, PartialOrd, PartialEq, Eq, Ord)]
 pub struct ZedVersion(pub SemanticVersion);
 
 impl fmt::Display for ZedVersion {
@@ -32,6 +33,32 @@ impl fmt::Display for ZedVersion {
 impl ZedVersion {
     pub fn can_collaborate(&self) -> bool {
         self.0 >= SemanticVersion::new(0, 129, 2)
+    }
+
+    pub fn with_save_as() -> ZedVersion {
+        ZedVersion(SemanticVersion::new(0, 134, 0))
+    }
+}
+
+pub trait VersionedMessage {
+    fn required_host_version(&self) -> Option<ZedVersion> {
+        None
+    }
+}
+
+impl VersionedMessage for proto::SaveBuffer {
+    fn required_host_version(&self) -> Option<ZedVersion> {
+        if self.new_path.is_some() {
+            Some(ZedVersion::with_save_as())
+        } else {
+            None
+        }
+    }
+}
+
+impl VersionedMessage for proto::OpenNewBuffer {
+    fn required_host_version(&self) -> Option<ZedVersion> {
+        Some(ZedVersion::with_save_as())
     }
 }
 
@@ -47,6 +74,10 @@ impl ConnectionPool {
         self.connections.clear();
         self.connected_users.clear();
         self.channels.clear();
+    }
+
+    pub fn connection(&mut self, connection_id: ConnectionId) -> Option<&Connection> {
+        self.connections.get(&connection_id)
     }
 
     #[instrument(skip(self))]
@@ -106,10 +137,15 @@ impl ConnectionPool {
             }
             PrincipalId::DevServerId(dev_server_id) => {
                 self.connected_dev_servers.remove(&dev_server_id);
+                self.offline_dev_servers.remove(&dev_server_id);
             }
         }
         self.connections.remove(&connection_id).unwrap();
         Ok(())
+    }
+
+    pub fn set_dev_server_offline(&mut self, dev_server_id: DevServerId) {
+        self.offline_dev_servers.insert(dev_server_id);
     }
 
     pub fn connections(&self) -> impl Iterator<Item = &Connection> {
@@ -137,7 +173,9 @@ impl ConnectionPool {
     }
 
     pub fn dev_server_status(&self, dev_server_id: DevServerId) -> proto::DevServerStatus {
-        if self.dev_server_connection_id(dev_server_id).is_some() {
+        if self.dev_server_connection_id(dev_server_id).is_some()
+            && !self.offline_dev_servers.contains(&dev_server_id)
+        {
             proto::DevServerStatus::Online
         } else {
             proto::DevServerStatus::Offline

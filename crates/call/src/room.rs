@@ -1203,14 +1203,25 @@ impl Room {
         project: Model<Project>,
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<u64>> {
-        if let Some(project_id) = project.read(cx).remote_id() {
-            return Task::ready(Ok(project_id));
-        }
+        let request = if let Some(dev_server_project_id) = project.read(cx).dev_server_project_id()
+        {
+            self.client.request(proto::ShareProject {
+                room_id: self.id(),
+                worktrees: vec![],
+                dev_server_project_id: Some(dev_server_project_id.0),
+            })
+        } else {
+            if let Some(project_id) = project.read(cx).remote_id() {
+                return Task::ready(Ok(project_id));
+            }
 
-        let request = self.client.request(proto::ShareProject {
-            room_id: self.id(),
-            worktrees: project.read(cx).worktree_metadata_protos(cx),
-        });
+            self.client.request(proto::ShareProject {
+                room_id: self.id(),
+                worktrees: project.read(cx).worktree_metadata_protos(cx),
+                dev_server_project_id: None,
+            })
+        };
+
         cx.spawn(|this, mut cx| async move {
             let response = request.await?;
 

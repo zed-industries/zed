@@ -31,6 +31,10 @@ pub fn init(assets: impl AssetSource, cx: &mut AppContext) {
 }
 
 impl FileIcons {
+    pub fn get(cx: &AppContext) -> &Self {
+        cx.global::<FileIcons>()
+    }
+
     pub fn new(assets: impl AssetSource) -> Self {
         assets
             .load("icons/file_icons/file_types.json")

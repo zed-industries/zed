@@ -4,7 +4,7 @@ use super::{
 };
 use crate::{EditorStyle, GutterDimensions};
 use collections::{Bound, HashMap, HashSet};
-use gpui::{AnyElement, ElementContext, Pixels};
+use gpui::{AnyElement, Pixels, WindowContext};
 use language::{BufferSnapshot, Chunk, Patch, Point};
 use multi_buffer::{Anchor, ExcerptId, ExcerptRange, ToPoint as _};
 use parking_lot::Mutex;
@@ -82,7 +82,7 @@ pub enum BlockStyle {
 }
 
 pub struct BlockContext<'a, 'b> {
-    pub context: &'b mut ElementContext<'a>,
+    pub context: &'b mut WindowContext<'a>,
     pub anchor_x: Pixels,
     pub max_width: Pixels,
     pub gutter_dimensions: &'b GutterDimensions,
@@ -364,28 +364,33 @@ impl BlockMap {
                         (position.row(), TransformBlock::Custom(block.clone()))
                     }),
             );
-            blocks_in_edit.extend(
-                buffer
-                    .excerpt_boundaries_in_range((start_bound, end_bound))
-                    .map(|excerpt_boundary| {
-                        (
-                            wrap_snapshot
-                                .make_wrap_point(Point::new(excerpt_boundary.row, 0), Bias::Left)
-                                .row(),
-                            TransformBlock::ExcerptHeader {
-                                id: excerpt_boundary.id,
-                                buffer: excerpt_boundary.buffer,
-                                range: excerpt_boundary.range,
-                                height: if excerpt_boundary.starts_new_buffer {
-                                    self.buffer_header_height
-                                } else {
-                                    self.excerpt_header_height
+            if buffer.show_headers() {
+                blocks_in_edit.extend(
+                    buffer
+                        .excerpt_boundaries_in_range((start_bound, end_bound))
+                        .map(|excerpt_boundary| {
+                            (
+                                wrap_snapshot
+                                    .make_wrap_point(
+                                        Point::new(excerpt_boundary.row, 0),
+                                        Bias::Left,
+                                    )
+                                    .row(),
+                                TransformBlock::ExcerptHeader {
+                                    id: excerpt_boundary.id,
+                                    buffer: excerpt_boundary.buffer,
+                                    range: excerpt_boundary.range,
+                                    height: if excerpt_boundary.starts_new_buffer {
+                                        self.buffer_header_height
+                                    } else {
+                                        self.excerpt_header_height
+                                    },
+                                    starts_new_buffer: excerpt_boundary.starts_new_buffer,
                                 },
-                                starts_new_buffer: excerpt_boundary.starts_new_buffer,
-                            },
-                        )
-                    }),
-            );
+                            )
+                        }),
+                );
+            }
 
             // Place excerpt headers above custom blocks on the same row.
             blocks_in_edit.sort_unstable_by(|(row_a, block_a), (row_b, block_b)| {
@@ -934,7 +939,7 @@ impl BlockDisposition {
 }
 
 impl<'a> Deref for BlockContext<'a, '_> {
-    type Target = ElementContext<'a>;
+    type Target = WindowContext<'a>;
 
     fn deref(&self) -> &Self::Target {
         self.context

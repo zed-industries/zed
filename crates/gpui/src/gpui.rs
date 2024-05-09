@@ -330,19 +330,12 @@ impl<T> Flatten<T> for Result<T> {
 
 /// A marker trait for types that can be stored in GPUI's global state.
 ///
+/// This trait exists to provide type-safe access to globals by restricting
+/// the scope from which they can be accessed. For instance, the actual type
+/// that implements [`Global`] can be private, with public accessor functions
+/// that enforce correct usage.
+///
 /// Implement this on types you want to store in the context as a global.
-pub trait Global: 'static + Sized {
-    /// Access the global of the implementing type. Panics if a global for that type has not been assigned.
-    fn get(cx: &AppContext) -> &Self {
-        cx.global()
-    }
-
-    /// Updates the global of the implementing type with a closure. Unlike `global_mut`, this method provides
-    /// your closure with mutable access to the `AppContext` and the global simultaneously.
-    fn update<C, R>(cx: &mut C, f: impl FnOnce(&mut Self, &mut C) -> R) -> R
-    where
-        C: BorrowAppContext,
-    {
-        cx.update_global(f)
-    }
+pub trait Global: 'static {
+    // This trait is intentionally left empty, by virtue of being a marker trait.
 }

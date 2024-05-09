@@ -4,8 +4,7 @@ use anyhow::Result;
 use collections::HashMap;
 use git::{
     blame::{Blame, BlameEntry},
-    permalink::{build_commit_permalink, parse_git_remote_url},
-    Oid,
+    parse_git_remote_url, GitHostingProvider, GitHostingProviderRegistry, Oid, PullRequest,
 };
 use gpui::{Model, ModelContext, Subscription, Task};
 use language::{markdown, Bias, Buffer, BufferSnapshot, Edit, LanguageRegistry, ParsedMarkdown};
@@ -13,6 +12,7 @@ use project::{Item, Project};
 use smallvec::SmallVec;
 use sum_tree::SumTree;
 use url::Url;
+use util::http::HttpClient;
 
 #[derive(Clone, Debug, Default)]
 pub struct GitBlameEntry {
@@ -47,11 +47,44 @@ impl<'a> sum_tree::Dimension<'a, GitBlameEntrySummary> for u32 {
     }
 }
 
+#[derive(Clone)]
+pub struct GitRemote {
+    pub host: Arc<dyn GitHostingProvider + Send + Sync + 'static>,
+    pub owner: String,
+    pub repo: String,
+}
+
+impl std::fmt::Debug for GitRemote {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("GitRemote")
+            .field("host", &self.host.name())
+            .field("owner", &self.owner)
+            .field("repo", &self.repo)
+            .finish()
+    }
+}
+
+impl GitRemote {
+    pub fn host_supports_avatars(&self) -> bool {
+        self.host.supports_avatars()
+    }
+
+    pub async fn avatar_url(&self, commit: Oid, client: Arc<dyn HttpClient>) -> Option<Url> {
+        self.host
+            .commit_author_avatar_url(&self.owner, &self.repo, commit, client)
+            .await
+            .ok()
+            .flatten()
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct CommitDetails {
     pub message: String,
     pub parsed_message: ParsedMarkdown,
     pub permalink: Option<Url>,
+    pub pull_request: Option<PullRequest>,
+    pub remote: Option<GitRemote>,
 }
 
 pub struct GitBlame {
@@ -62,7 +95,9 @@ pub struct GitBlame {
     buffer_snapshot: BufferSnapshot,
     buffer_edits: text::Subscription,
     task: Task<Result<()>>,
+    focused: bool,
     generated: bool,
+    changed_while_blurred: bool,
     user_triggered: bool,
     regenerate_on_edit_task: Task<Result<()>>,
     _regenerate_subscriptions: Vec<Subscription>,
@@ -73,6 +108,7 @@ impl GitBlame {
         buffer: Model<Buffer>,
         project: Model<Project>,
         user_triggered: bool,
+        focused: bool,
         cx: &mut ModelContext<Self>,
     ) -> Self {
         let entries = SumTree::from_item(
@@ -127,6 +163,8 @@ impl GitBlame {
             entries,
             buffer_edits,
             user_triggered,
+            focused,
+            changed_while_blurred: false,
             commit_details: HashMap::default(),
             task: Task::ready(Ok(())),
             generated: false,
@@ -158,6 +196,18 @@ impl GitBlame {
             cursor.seek_forward(&row, Bias::Right, &());
             cursor.item()?.blame.clone()
         })
+    }
+
+    pub fn blur(&mut self, _: &mut ModelContext<Self>) {
+        self.focused = false;
+    }
+
+    pub fn focus(&mut self, cx: &mut ModelContext<Self>) {
+        self.focused = true;
+        if self.changed_while_blurred {
+            self.changed_while_blurred = false;
+            self.generate(cx);
+        }
     }
 
     fn sync(&mut self, cx: &mut ModelContext<Self>) {
@@ -272,10 +322,15 @@ impl GitBlame {
     }
 
     fn generate(&mut self, cx: &mut ModelContext<Self>) {
+        if !self.focused {
+            self.changed_while_blurred = true;
+            return;
+        }
         let buffer_edits = self.buffer.update(cx, |buffer, _| buffer.subscribe());
         let snapshot = self.buffer.read(cx).snapshot();
         let blame = self.project.read(cx).blame_buffer(&self.buffer, None, cx);
         let languages = self.project.read(cx).languages().clone();
+        let provider_registry = GitHostingProviderRegistry::default_global(cx);
 
         self.task = cx.spawn(|this, mut cx| async move {
             let result = cx
@@ -291,9 +346,14 @@ impl GitBlame {
                         } = blame.await?;
 
                         let entries = build_blame_entry_sum_tree(entries, snapshot.max_point().row);
-                        let commit_details =
-                            parse_commit_messages(messages, remote_url, &permalinks, &languages)
-                                .await;
+                        let commit_details = parse_commit_messages(
+                            messages,
+                            remote_url,
+                            &permalinks,
+                            provider_registry,
+                            &languages,
+                        )
+                        .await;
 
                         anyhow::Ok((entries, commit_details))
                     }
@@ -337,7 +397,7 @@ impl GitBlame {
             this.update(&mut cx, |this, cx| {
                 this.generate(cx);
             })
-        });
+        })
     }
 }
 
@@ -384,19 +444,22 @@ async fn parse_commit_messages(
     messages: impl IntoIterator<Item = (Oid, String)>,
     remote_url: Option<String>,
     deprecated_permalinks: &HashMap<Oid, Url>,
+    provider_registry: Arc<GitHostingProviderRegistry>,
     languages: &Arc<LanguageRegistry>,
 ) -> HashMap<Oid, CommitDetails> {
     let mut commit_details = HashMap::default();
 
-    let parsed_remote_url = remote_url.as_deref().and_then(parse_git_remote_url);
+    let parsed_remote_url = remote_url
+        .as_deref()
+        .and_then(|remote_url| parse_git_remote_url(provider_registry, remote_url));
 
     for (oid, message) in messages {
         let parsed_message = parse_markdown(&message, &languages).await;
 
-        let permalink = if let Some(git_remote) = parsed_remote_url.as_ref() {
-            Some(build_commit_permalink(
-                git::permalink::BuildCommitPermalinkParams {
-                    remote: git_remote,
+        let permalink = if let Some((provider, git_remote)) = parsed_remote_url.as_ref() {
+            Some(provider.build_commit_permalink(
+                git_remote,
+                git::BuildCommitPermalinkParams {
                     sha: oid.to_string().as_str(),
                 },
             ))
@@ -408,12 +471,26 @@ async fn parse_commit_messages(
             deprecated_permalinks.get(&oid).cloned()
         };
 
+        let remote = parsed_remote_url
+            .as_ref()
+            .map(|(provider, remote)| GitRemote {
+                host: provider.clone(),
+                owner: remote.owner.to_string(),
+                repo: remote.repo.to_string(),
+            });
+
+        let pull_request = parsed_remote_url
+            .as_ref()
+            .and_then(|(provider, remote)| provider.extract_pull_request(remote, &message));
+
         commit_details.insert(
             oid,
             CommitDetails {
                 message,
                 parsed_message,
                 permalink,
+                remote,
+                pull_request,
             },
         );
     }
@@ -506,7 +583,8 @@ mod tests {
             .await
             .unwrap();
 
-        let blame = cx.new_model(|cx| GitBlame::new(buffer.clone(), project.clone(), true, cx));
+        let blame =
+            cx.new_model(|cx| GitBlame::new(buffer.clone(), project.clone(), true, true, cx));
 
         let event = project.next_event(cx).await;
         assert_eq!(
@@ -575,7 +653,7 @@ mod tests {
             .await
             .unwrap();
 
-        let git_blame = cx.new_model(|cx| GitBlame::new(buffer.clone(), project, false, cx));
+        let git_blame = cx.new_model(|cx| GitBlame::new(buffer.clone(), project, false, true, cx));
 
         cx.executor().run_until_parked();
 
@@ -655,7 +733,7 @@ mod tests {
             .await
             .unwrap();
 
-        let git_blame = cx.new_model(|cx| GitBlame::new(buffer.clone(), project, false, cx));
+        let git_blame = cx.new_model(|cx| GitBlame::new(buffer.clone(), project, false, true, cx));
 
         cx.executor().run_until_parked();
 
@@ -804,7 +882,7 @@ mod tests {
             .await
             .unwrap();
 
-        let git_blame = cx.new_model(|cx| GitBlame::new(buffer.clone(), project, false, cx));
+        let git_blame = cx.new_model(|cx| GitBlame::new(buffer.clone(), project, false, true, cx));
         cx.executor().run_until_parked();
         git_blame.update(cx, |blame, cx| blame.check_invariants(cx));
 

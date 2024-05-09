@@ -1,11 +1,11 @@
 use std::sync::Arc;
 
-use crate::{active_item_selection_properties, schedule_resolved_task};
+use crate::active_item_selection_properties;
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{
-    impl_actions, rems, AppContext, DismissEvent, EventEmitter, FocusableView, Global,
-    InteractiveElement, Model, ParentElement, Render, SharedString, Styled, Subscription, View,
-    ViewContext, VisualContext, WeakView,
+    impl_actions, rems, AppContext, DismissEvent, EventEmitter, FocusableView, InteractiveElement,
+    Model, ParentElement, Render, SharedString, Styled, Subscription, View, ViewContext,
+    VisualContext, WeakView,
 };
 use picker::{highlighted_match_with_paths::HighlightedText, Picker, PickerDelegate};
 use project::{Inventory, TaskSourceKind};
@@ -16,7 +16,7 @@ use ui::{
     Tooltip, WindowContext,
 };
 use util::ResultExt;
-use workspace::{ModalView, Workspace};
+use workspace::{tasks::schedule_resolved_task, ModalView, Workspace};
 
 use serde::Deserialize;
 
@@ -31,10 +31,11 @@ pub struct Spawn {
 }
 
 impl Spawn {
-    pub(crate) fn modal() -> Self {
+    pub fn modal() -> Self {
         Self { task_name: None }
     }
 }
+
 /// Rerun last task
 #[derive(PartialEq, Clone, Deserialize, Default)]
 pub struct Rerun {
@@ -61,6 +62,7 @@ pub(crate) struct TasksModalDelegate {
     inventory: Model<Inventory>,
     candidates: Option<Vec<(TaskSourceKind, ResolvedTask)>>,
     last_used_candidate_index: Option<usize>,
+    divider_index: Option<usize>,
     matches: Vec<StringMatch>,
     selected_index: usize,
     workspace: WeakView<Workspace>,
@@ -81,6 +83,7 @@ impl TasksModalDelegate {
             candidates: None,
             matches: Vec::new(),
             last_used_candidate_index: None,
+            divider_index: None,
             selected_index: 0,
             prompt: String::default(),
             task_context,
@@ -208,12 +211,11 @@ impl PickerDelegate for TasksModalDelegate {
                                 return Vec::new();
                             };
                             let (used, current) =
-                                picker.delegate.inventory.update(cx, |inventory, cx| {
+                                picker.delegate.inventory.update(cx, |inventory, _| {
                                     inventory.used_and_current_resolved_tasks(
                                         language,
                                         worktree,
                                         &picker.delegate.task_context,
-                                        cx,
                                     )
                                 });
                             picker.delegate.last_used_candidate_index = if used.is_empty() {
@@ -254,7 +256,17 @@ impl PickerDelegate for TasksModalDelegate {
                 .update(&mut cx, |picker, _| {
                     let delegate = &mut picker.delegate;
                     delegate.matches = matches;
+                    if let Some(index) = delegate.last_used_candidate_index {
+                        delegate.matches.sort_by_key(|m| m.candidate_id > index);
+                    }
+
                     delegate.prompt = query;
+                    delegate.divider_index = delegate.last_used_candidate_index.and_then(|index| {
+                        let index = delegate
+                            .matches
+                            .partition_point(|matching_task| matching_task.candidate_id <= index);
+                        Some(index).and_then(|index| (index != 0).then(|| index - 1))
+                    });
 
                     if delegate.matches.is_empty() {
                         delegate.selected_index = 0;
@@ -307,16 +319,18 @@ impl PickerDelegate for TasksModalDelegate {
         let display_label = resolved_task.display_label();
 
         let mut tooltip_label_text = if display_label != &template.label {
-            template.label.clone()
+            resolved_task.resolved_label.clone()
         } else {
             String::new()
         };
-        if let Some(resolved_command) = resolved_task.resolved_command() {
-            if display_label != resolved_command {
+        if let Some(resolved) = resolved_task.resolved.as_ref() {
+            if resolved.command_label != display_label
+                && resolved.command_label != resolved_task.resolved_label
+            {
                 if !tooltip_label_text.trim().is_empty() {
                     tooltip_label_text.push('\n');
                 }
-                tooltip_label_text.push_str(&resolved_command);
+                tooltip_label_text.push_str(&resolved.command_label);
             }
         }
         let tooltip_label = if tooltip_label_text.trim().is_empty() {
@@ -329,6 +343,7 @@ impl PickerDelegate for TasksModalDelegate {
             text: hit.string.clone(),
             highlight_positions: hit.positions.clone(),
             char_count: hit.string.chars().count(),
+            color: Color::Default,
         };
         let icon = match source_kind {
             TaskSourceKind::UserInput => Some(Icon::new(IconName::Terminal)),
@@ -348,7 +363,7 @@ impl PickerDelegate for TasksModalDelegate {
                 })
                 .map(|item| {
                     let item = if matches!(source_kind, TaskSourceKind::UserInput)
-                        || Some(ix) <= self.last_used_candidate_index
+                        || Some(ix) <= self.divider_index
                     {
                         let task_index = hit.candidate_id;
                         let delete_button = div().child(
@@ -392,7 +407,7 @@ impl PickerDelegate for TasksModalDelegate {
         let task_index = self.matches.get(self.selected_index())?.candidate_id;
         let tasks = self.candidates.as_ref()?;
         let (_, task) = tasks.get(task_index)?;
-        task.resolved_command()
+        Some(task.resolved.as_ref()?.command_label.clone())
     }
 
     fn confirm_input(&mut self, omit_history_entry: bool, cx: &mut ViewContext<Picker<Self>>) {
@@ -408,7 +423,7 @@ impl PickerDelegate for TasksModalDelegate {
     }
 
     fn separators_after_indices(&self) -> Vec<usize> {
-        if let Some(i) = self.last_used_candidate_index {
+        if let Some(i) = self.divider_index {
             vec![i]
         } else {
             Vec::new()
@@ -418,21 +433,23 @@ impl PickerDelegate for TasksModalDelegate {
 
 #[cfg(test)]
 mod tests {
-    use std::path::PathBuf;
+    use std::{path::PathBuf, sync::Arc};
 
     use editor::Editor;
     use gpui::{TestAppContext, VisualTestContext};
-    use language::Point;
+    use language::{ContextProviderWithTasks, Language, LanguageConfig, LanguageMatcher, Point};
     use project::{FakeFs, Project};
     use serde_json::json;
+    use task::TaskTemplates;
+    use workspace::CloseInactiveTabsAndPanes;
 
-    use crate::modal::Spawn;
+    use crate::{modal::Spawn, tests::init_test};
 
     use super::*;
 
     #[gpui::test]
     async fn test_spawn_tasks_modal_query_reuse(cx: &mut TestAppContext) {
-        crate::tests::init_test(cx);
+        init_test(cx);
         let fs = FakeFs::new(cx.executor());
         fs.insert_tree(
             "/dir",
@@ -580,7 +597,7 @@ mod tests {
 
     #[gpui::test]
     async fn test_basic_context_for_simple_files(cx: &mut TestAppContext) {
-        crate::tests::init_test(cx);
+        init_test(cx);
         let fs = FakeFs::new(cx.executor());
         fs.insert_tree(
             "/dir",
@@ -670,6 +687,200 @@ mod tests {
         });
         drop(tasks_picker);
         cx.executor().run_until_parked();
+    }
+
+    #[gpui::test]
+    async fn test_language_task_filtering(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            "/dir",
+            json!({
+                "a1.ts": "// a1",
+                "a2.ts": "// a2",
+                "b.rs": "// b",
+            }),
+        )
+        .await;
+
+        let project = Project::test(fs, ["/dir".as_ref()], cx).await;
+        project.read_with(cx, |project, _| {
+            let language_registry = project.languages();
+            language_registry.add(Arc::new(
+                Language::new(
+                    LanguageConfig {
+                        name: "TypeScript".into(),
+                        matcher: LanguageMatcher {
+                            path_suffixes: vec!["ts".to_string()],
+                            ..LanguageMatcher::default()
+                        },
+                        ..LanguageConfig::default()
+                    },
+                    None,
+                )
+                .with_context_provider(Some(Arc::new(
+                    ContextProviderWithTasks::new(TaskTemplates(vec![
+                        TaskTemplate {
+                            label: "Task without variables".to_string(),
+                            command: "npm run clean".to_string(),
+                            ..TaskTemplate::default()
+                        },
+                        TaskTemplate {
+                            label: "TypeScript task from file $ZED_FILE".to_string(),
+                            command: "npm run build".to_string(),
+                            ..TaskTemplate::default()
+                        },
+                        TaskTemplate {
+                            label: "Another task from file $ZED_FILE".to_string(),
+                            command: "npm run lint".to_string(),
+                            ..TaskTemplate::default()
+                        },
+                    ])),
+                ))),
+            ));
+            language_registry.add(Arc::new(
+                Language::new(
+                    LanguageConfig {
+                        name: "Rust".into(),
+                        matcher: LanguageMatcher {
+                            path_suffixes: vec!["rs".to_string()],
+                            ..LanguageMatcher::default()
+                        },
+                        ..LanguageConfig::default()
+                    },
+                    None,
+                )
+                .with_context_provider(Some(Arc::new(
+                    ContextProviderWithTasks::new(TaskTemplates(vec![TaskTemplate {
+                        label: "Rust task".to_string(),
+                        command: "cargo check".into(),
+                        ..TaskTemplate::default()
+                    }])),
+                ))),
+            ));
+        });
+        let (workspace, cx) = cx.add_window_view(|cx| Workspace::test_new(project.clone(), cx));
+
+        let _ts_file_1 = workspace
+            .update(cx, |workspace, cx| {
+                workspace.open_abs_path(PathBuf::from("/dir/a1.ts"), true, cx)
+            })
+            .await
+            .unwrap();
+        let tasks_picker = open_spawn_tasks(&workspace, cx);
+        assert_eq!(
+            task_names(&tasks_picker, cx),
+            vec![
+                "Another task from file /dir/a1.ts",
+                "TypeScript task from file /dir/a1.ts",
+                "Task without variables",
+            ],
+            "Should open spawn TypeScript tasks for the opened file, tasks with most template variables above, all groups sorted alphanumerically"
+        );
+        emulate_task_schedule(
+            tasks_picker,
+            &project,
+            "TypeScript task from file /dir/a1.ts",
+            cx,
+        );
+
+        let tasks_picker = open_spawn_tasks(&workspace, cx);
+        assert_eq!(
+            task_names(&tasks_picker, cx),
+            vec!["TypeScript task from file /dir/a1.ts", "Another task from file /dir/a1.ts", "Task without variables"],
+            "After spawning the task and getting it into the history, it should be up in the sort as recently used"
+        );
+        tasks_picker.update(cx, |_, cx| {
+            cx.emit(DismissEvent);
+        });
+        drop(tasks_picker);
+        cx.executor().run_until_parked();
+
+        let _ts_file_2 = workspace
+            .update(cx, |workspace, cx| {
+                workspace.open_abs_path(PathBuf::from("/dir/a2.ts"), true, cx)
+            })
+            .await
+            .unwrap();
+        let tasks_picker = open_spawn_tasks(&workspace, cx);
+        assert_eq!(
+            task_names(&tasks_picker, cx),
+            vec![
+                "TypeScript task from file /dir/a1.ts",
+                "Another task from file /dir/a2.ts",
+                "TypeScript task from file /dir/a2.ts",
+                "Task without variables"
+            ],
+            "Even when both TS files are open, should only show the history (on the top), and tasks, resolved for the current file"
+        );
+        tasks_picker.update(cx, |_, cx| {
+            cx.emit(DismissEvent);
+        });
+        drop(tasks_picker);
+        cx.executor().run_until_parked();
+
+        let _rs_file = workspace
+            .update(cx, |workspace, cx| {
+                workspace.open_abs_path(PathBuf::from("/dir/b.rs"), true, cx)
+            })
+            .await
+            .unwrap();
+        let tasks_picker = open_spawn_tasks(&workspace, cx);
+        assert_eq!(
+            task_names(&tasks_picker, cx),
+            vec!["Rust task"],
+            "Even when both TS files are open and one TS task spawned, opened file's language tasks should be displayed only"
+        );
+
+        cx.dispatch_action(CloseInactiveTabsAndPanes::default());
+        emulate_task_schedule(tasks_picker, &project, "Rust task", cx);
+        let _ts_file_2 = workspace
+            .update(cx, |workspace, cx| {
+                workspace.open_abs_path(PathBuf::from("/dir/a2.ts"), true, cx)
+            })
+            .await
+            .unwrap();
+        let tasks_picker = open_spawn_tasks(&workspace, cx);
+        assert_eq!(
+            task_names(&tasks_picker, cx),
+            vec![
+                "TypeScript task from file /dir/a1.ts",
+                "Another task from file /dir/a2.ts",
+                "TypeScript task from file /dir/a2.ts",
+                "Task without variables"
+            ],
+            "After closing all but *.rs tabs, running a Rust task and switching back to TS tasks, \
+            same TS spawn history should be restored"
+        );
+    }
+
+    fn emulate_task_schedule(
+        tasks_picker: View<Picker<TasksModalDelegate>>,
+        project: &Model<Project>,
+        scheduled_task_label: &str,
+        cx: &mut VisualTestContext,
+    ) {
+        let scheduled_task = tasks_picker.update(cx, |tasks_picker, _| {
+            tasks_picker
+                .delegate
+                .candidates
+                .iter()
+                .flatten()
+                .find(|(_, task)| task.resolved_label == scheduled_task_label)
+                .cloned()
+                .unwrap()
+        });
+        project.update(cx, |project, cx| {
+            project.task_inventory().update(cx, |inventory, _| {
+                let (kind, task) = scheduled_task;
+                inventory.task_scheduled(kind, task);
+            })
+        });
+        tasks_picker.update(cx, |_, cx| {
+            cx.emit(DismissEvent);
+        });
+        drop(tasks_picker);
+        cx.executor().run_until_parked()
     }
 
     fn open_spawn_tasks(

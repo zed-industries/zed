@@ -18,7 +18,7 @@ use project::{search::SearchQuery, Completion};
 use settings::Settings;
 use std::{ops::Range, sync::Arc, time::Duration};
 use theme::ThemeSettings;
-use ui::{prelude::*, UiTextSize};
+use ui::{prelude::*, TextSize};
 
 use crate::panel_settings::MessageEditorSettings;
 
@@ -59,6 +59,7 @@ impl CompletionProvider for MessageEditorCompletionProvider {
 
     fn resolve_completions(
         &self,
+        _buffer: Model<Buffer>,
         _completion_indices: Vec<usize>,
         _completions: Arc<RwLock<Box<[Completion]>>>,
         _cx: &mut ViewContext<Editor>,
@@ -522,8 +523,8 @@ impl Render for MessageEditor {
                 cx.theme().colors().text
             },
             font_family: settings.ui_font.family.clone(),
-            font_features: settings.ui_font.features,
-            font_size: UiTextSize::Small.rems().into(),
+            font_features: settings.ui_font.features.clone(),
+            font_size: TextSize::Small.rems(cx).into(),
             font_weight: FontWeight::NORMAL,
             font_style: FontStyle::Normal,
             line_height: relative(1.3),

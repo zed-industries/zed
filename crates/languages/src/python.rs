@@ -186,13 +186,7 @@ pub(super) fn python_task_context() -> ContextProviderWithTasks {
         TaskTemplate {
             label: "execute selection".to_owned(),
             command: "python3".to_owned(),
-            args: vec![
-                "-c".to_owned(),
-                format!(
-                    "exec(r'''{}''')",
-                    VariableName::SelectedText.template_value()
-                ),
-            ],
+            args: vec!["-c".to_owned(), VariableName::SelectedText.template_value()],
             ignore_previously_resolved: true,
             ..TaskTemplate::default()
         },

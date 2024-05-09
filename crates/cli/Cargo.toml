@@ -20,6 +20,7 @@ path = "src/main.rs"
 anyhow.workspace = true
 clap.workspace = true
 ipc-channel = "0.18"
+release_channel.workspace = true
 serde.workspace = true
 util.workspace = true
 

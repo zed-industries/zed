@@ -31,48 +31,42 @@ pub fn change_motion(vim: &mut Vim, motion: Motion, times: Option<usize>, cx: &m
             editor.set_clip_at_line_ends(false, cx);
             editor.change_selections(Some(Autoscroll::fit()), cx, |s| {
                 s.move_with(|map, selection| {
-                    motion_succeeded |= if let Motion::NextWordStart { ignore_punctuation } = motion
-                    {
-                        expand_changed_word_selection(
-                            map,
-                            selection,
-                            times,
-                            ignore_punctuation,
-                            &text_layout_details,
-                            false,
-                        )
-                    } else if let Motion::NextSubwordStart { ignore_punctuation } = motion {
-                        expand_changed_word_selection(
-                            map,
-                            selection,
-                            times,
-                            ignore_punctuation,
-                            &text_layout_details,
-                            true,
-                        )
-                    } else {
-                        let result = motion.expand_selection(
-                            map,
-                            selection,
-                            times,
-                            false,
-                            &text_layout_details,
-                        );
-                        if let Motion::CurrentLine = motion {
-                            let mut start_offset = selection.start.to_offset(map, Bias::Left);
-                            let scope = map
-                                .buffer_snapshot
-                                .language_scope_at(selection.start.to_point(&map));
-                            for (ch, offset) in map.buffer_chars_at(start_offset) {
-                                if ch == '\n' || char_kind(&scope, ch) != CharKind::Whitespace {
-                                    break;
-                                }
-                                start_offset = offset + ch.len_utf8();
-                            }
-                            selection.start = start_offset.to_display_point(map);
+                    motion_succeeded |= match motion {
+                        Motion::NextWordStart { ignore_punctuation }
+                        | Motion::NextSubwordStart { ignore_punctuation } => {
+                            expand_changed_word_selection(
+                                map,
+                                selection,
+                                times,
+                                ignore_punctuation,
+                                &text_layout_details,
+                                motion == Motion::NextSubwordStart { ignore_punctuation },
+                            )
                         }
-                        result
-                    };
+                        _ => {
+                            let result = motion.expand_selection(
+                                map,
+                                selection,
+                                times,
+                                false,
+                                &text_layout_details,
+                            );
+                            if let Motion::CurrentLine = motion {
+                                let mut start_offset = selection.start.to_offset(map, Bias::Left);
+                                let scope = map
+                                    .buffer_snapshot
+                                    .language_scope_at(selection.start.to_point(&map));
+                                for (ch, offset) in map.buffer_chars_at(start_offset) {
+                                    if ch == '\n' || char_kind(&scope, ch) != CharKind::Whitespace {
+                                        break;
+                                    }
+                                    start_offset = offset + ch.len_utf8();
+                                }
+                                selection.start = start_offset.to_display_point(map);
+                            }
+                            result
+                        }
+                    }
                 });
             });
             copy_selections_content(vim, editor, motion.linewise(), cx);
@@ -116,8 +110,8 @@ pub fn change_object(vim: &mut Vim, object: Object, around: bool, cx: &mut Windo
 // Special case: "cw" and "cW" are treated like "ce" and "cE" if the cursor is
 // on a non-blank.  This is because "cw" is interpreted as change-word, and a
 // word does not include the following white space.  {Vi: "cw" when on a blank
-//     followed by other blanks changes only the first blank; this is probably a
-//     bug, because "dw" deletes all the blanks}
+// followed by other blanks changes only the first blank; this is probably a
+// bug, because "dw" deletes all the blanks}
 fn expand_changed_word_selection(
     map: &DisplaySnapshot,
     selection: &mut Selection<DisplayPoint>,
@@ -126,7 +120,7 @@ fn expand_changed_word_selection(
     text_layout_details: &TextLayoutDetails,
     use_subword: bool,
 ) -> bool {
-    if times.is_none() || times.unwrap() == 1 {
+    let is_in_word = || {
         let scope = map
             .buffer_snapshot
             .language_scope_at(selection.start.to_point(map));
@@ -135,25 +129,28 @@ fn expand_changed_word_selection(
             .next()
             .map(|(c, _)| char_kind(&scope, c) != CharKind::Whitespace)
             .unwrap_or_default();
-
-        if in_word {
-            if use_subword {
-                selection.end =
-                    motion::next_subword_end(map, selection.end, ignore_punctuation, 1, false);
-            } else {
-                selection.end =
-                    motion::next_word_end(map, selection.end, ignore_punctuation, 1, false);
+        return in_word;
+    };
+    if (times.is_none() || times.unwrap() == 1) && is_in_word() {
+        let next_char = map
+            .buffer_chars_at(
+                motion::next_char(map, selection.end, false).to_offset(map, Bias::Left),
+            )
+            .next();
+        match next_char {
+            Some((' ', _)) => selection.end = motion::next_char(map, selection.end, false),
+            _ => {
+                if use_subword {
+                    selection.end =
+                        motion::next_subword_end(map, selection.end, ignore_punctuation, 1, false);
+                } else {
+                    selection.end =
+                        motion::next_word_end(map, selection.end, ignore_punctuation, 1, false);
+                }
+                selection.end = motion::next_char(map, selection.end, false);
             }
-            selection.end = motion::next_char(map, selection.end, false);
-            true
-        } else {
-            let motion = if use_subword {
-                Motion::NextSubwordStart { ignore_punctuation }
-            } else {
-                Motion::NextWordStart { ignore_punctuation }
-            };
-            motion.expand_selection(map, selection, None, false, &text_layout_details)
         }
+        true
     } else {
         let motion = if use_subword {
             Motion::NextSubwordStart { ignore_punctuation }
@@ -209,6 +206,7 @@ mod test {
         cx.assert("Teˇst").await;
         cx.assert("Tˇest test").await;
         cx.assert("Testˇ  test").await;
+        cx.assert("Tesˇt  test").await;
         cx.assert(indoc! {"
                 Test teˇst
                 test"})

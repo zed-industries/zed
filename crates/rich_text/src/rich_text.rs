@@ -43,6 +43,19 @@ pub struct RichText {
         Option<Arc<dyn Fn(usize, Range<usize>, &mut WindowContext) -> Option<AnyView>>>,
 }
 
+impl Default for RichText {
+    fn default() -> Self {
+        Self {
+            text: SharedString::default(),
+            highlights: Vec::new(),
+            link_ranges: Vec::new(),
+            link_urls: Arc::from([]),
+            custom_ranges: Vec::new(),
+            custom_ranges_tooltip_fn: None,
+        }
+    }
+}
+
 /// Allows one to specify extra links to the rendered markdown, which can be used
 /// for e.g. mentions.
 #[derive(Debug)]
@@ -52,6 +65,37 @@ pub struct Mention {
 }
 
 impl RichText {
+    pub fn new(
+        block: String,
+        mentions: &[Mention],
+        language_registry: &Arc<LanguageRegistry>,
+    ) -> Self {
+        let mut text = String::new();
+        let mut highlights = Vec::new();
+        let mut link_ranges = Vec::new();
+        let mut link_urls = Vec::new();
+        render_markdown_mut(
+            &block,
+            mentions,
+            language_registry,
+            None,
+            &mut text,
+            &mut highlights,
+            &mut link_ranges,
+            &mut link_urls,
+        );
+        text.truncate(text.trim_end().len());
+
+        RichText {
+            text: SharedString::from(text),
+            link_urls: link_urls.into(),
+            link_ranges,
+            highlights,
+            custom_ranges: Vec::new(),
+            custom_ranges_tooltip_fn: None,
+        }
+    }
+
     pub fn set_tooltip_builder_for_custom_ranges(
         &mut self,
         f: impl Fn(usize, Range<usize>, &mut WindowContext) -> Option<AnyView> + 'static,
@@ -344,38 +388,6 @@ pub fn render_markdown_mut(
             Event::SoftBreak => text.push('\n'),
             _ => {}
         }
-    }
-}
-
-pub fn render_rich_text(
-    block: String,
-    mentions: &[Mention],
-    language_registry: &Arc<LanguageRegistry>,
-    language: Option<&Arc<Language>>,
-) -> RichText {
-    let mut text = String::new();
-    let mut highlights = Vec::new();
-    let mut link_ranges = Vec::new();
-    let mut link_urls = Vec::new();
-    render_markdown_mut(
-        &block,
-        mentions,
-        language_registry,
-        language,
-        &mut text,
-        &mut highlights,
-        &mut link_ranges,
-        &mut link_urls,
-    );
-    text.truncate(text.trim_end().len());
-
-    RichText {
-        text: SharedString::from(text),
-        link_urls: link_urls.into(),
-        link_ranges,
-        highlights,
-        custom_ranges: Vec::new(),
-        custom_ranges_tooltip_fn: None,
     }
 }
 

@@ -1,12 +1,13 @@
 use crate::Project;
 use collections::HashMap;
 use gpui::{AnyWindowHandle, Context, Entity, Model, ModelContext, WeakModel};
-use settings::Settings;
+use settings::{Settings, SettingsLocation};
 use smol::channel::bounded;
 use std::path::{Path, PathBuf};
+use task::SpawnInTerminal;
 use terminal::{
     terminal_settings::{self, Shell, TerminalSettings, VenvSettingsContent},
-    SpawnTask, TaskState, TaskStatus, Terminal, TerminalBuilder,
+    TaskState, TaskStatus, Terminal, TerminalBuilder,
 };
 use util::ResultExt;
 
@@ -21,7 +22,7 @@ impl Project {
     pub fn create_terminal(
         &mut self,
         working_directory: Option<PathBuf>,
-        spawn_task: Option<SpawnTask>,
+        spawn_task: Option<SpawnInTerminal>,
         window: AnyWindowHandle,
         cx: &mut ModelContext<Self>,
     ) -> anyhow::Result<Model<Terminal>> {
@@ -30,8 +31,25 @@ impl Project {
             "creating terminals as a guest is not supported yet"
         );
 
+        // used only for TerminalSettings::get
+        let worktree = {
+            let terminal_cwd = working_directory.as_deref();
+            let task_cwd = spawn_task
+                .as_ref()
+                .and_then(|spawn_task| spawn_task.cwd.as_deref());
+
+            terminal_cwd
+                .and_then(|terminal_cwd| self.find_local_worktree(terminal_cwd, cx))
+                .or_else(|| task_cwd.and_then(|spawn_cwd| self.find_local_worktree(spawn_cwd, cx)))
+        };
+
+        let settings_location = worktree.as_ref().map(|(worktree, path)| SettingsLocation {
+            worktree_id: worktree.read(cx).id().to_usize(),
+            path,
+        });
+
         let is_terminal = spawn_task.is_none();
-        let settings = TerminalSettings::get_global(cx);
+        let settings = TerminalSettings::get(settings_location, cx);
         let python_settings = settings.detect_venv.clone();
         let (completion_tx, completion_rx) = bounded(1);
 
@@ -55,14 +73,7 @@ impl Project {
                     id: spawn_task.id,
                     full_label: spawn_task.full_label,
                     label: spawn_task.label,
-                    command_label: spawn_task.args.iter().fold(
-                        spawn_task.command.clone(),
-                        |mut command_label, new_arg| {
-                            command_label.push(' ');
-                            command_label.push_str(new_arg);
-                            command_label
-                        },
-                    ),
+                    command_label: spawn_task.command_label,
                     status: TaskStatus::Running,
                     completion_rx,
                 }),

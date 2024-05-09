@@ -4,9 +4,9 @@ use crate::{
     auth,
     db::{
         self, dev_server, BufferId, Capability, Channel, ChannelId, ChannelRole, ChannelsForUser,
-        CreatedChannelMessage, Database, DevServerId, InviteMemberResult, MembershipUpdated,
-        MessageId, NotificationId, PrincipalId, Project, ProjectId, RejoinedProject,
-        RemoteProjectId, RemoveChannelMemberResult, ReplicaId, RespondToChannelInvite, RoomId,
+        CreatedChannelMessage, Database, DevServerId, DevServerProjectId, InviteMemberResult,
+        MembershipUpdated, MessageId, NotificationId, PrincipalId, Project, ProjectId,
+        RejoinedProject, RemoveChannelMemberResult, ReplicaId, RespondToChannelInvite, RoomId,
         ServerId, UpdatedChannelMessage, User, UserId,
     },
     executor::Executor,
@@ -34,6 +34,7 @@ pub use connection_pool::{ConnectionPool, ZedVersion};
 use core::fmt::{self, Debug, Formatter};
 use open_ai::{OpenAiEmbeddingModel, OPEN_AI_API_URL};
 use sha2::Digest;
+use supermaven_api::{CreateExternalUserRequest, SupermavenAdminApi};
 
 use futures::{
     channel::oneshot,
@@ -73,6 +74,8 @@ use tracing::{
     info_span, instrument, Instrument,
 };
 use util::http::IsahcHttpClient;
+
+use self::connection_pool::VersionedMessage;
 
 pub const RECONNECT_TIMEOUT: Duration = Duration::from_secs(30);
 
@@ -146,7 +149,8 @@ struct Session {
     peer: Arc<Peer>,
     connection_pool: Arc<parking_lot::Mutex<ConnectionPool>>,
     live_kit_client: Option<Arc<dyn live_kit_server::api::Client>>,
-    http_client: IsahcHttpClient,
+    supermaven_client: Option<Arc<SupermavenAdminApi>>,
+    http_client: Arc<IsahcHttpClient>,
     rate_limiter: Arc<RateLimiter>,
     _executor: Executor,
 }
@@ -184,6 +188,14 @@ impl Session {
             Principal::User(user) => Some(user.id),
             Principal::Impersonated { user, .. } => Some(user.id),
             Principal::DevServer(_) => None,
+        }
+    }
+
+    fn is_staff(&self) -> bool {
+        match &self.principal {
+            Principal::User(user) => user.admin,
+            Principal::Impersonated { .. } => true,
+            Principal::DevServer(_) => false,
         }
     }
 
@@ -231,6 +243,14 @@ impl UserSession {
     pub fn user_id(&self) -> UserId {
         self.0.user_id().unwrap()
     }
+
+    pub fn email(&self) -> Option<String> {
+        match &self.0.principal {
+            Principal::User(user) => user.email_address.clone(),
+            Principal::Impersonated { user, .. } => user.email_address.clone(),
+            Principal::DevServer(..) => None,
+        }
+    }
 }
 
 impl Deref for UserSession {
@@ -254,6 +274,13 @@ impl DevServerSession {
     }
     pub fn dev_server_id(&self) -> DevServerId {
         self.0.dev_server_id().unwrap()
+    }
+
+    fn dev_server(&self) -> &dev_server::Model {
+        match &self.0.principal {
+            Principal::DevServer(dev_server) => dev_server,
+            _ => unreachable!(),
+        }
     }
 }
 
@@ -402,10 +429,14 @@ impl Server {
             .add_message_handler(unshare_project)
             .add_request_handler(user_handler(join_project))
             .add_request_handler(user_handler(join_hosted_project))
-            .add_request_handler(user_handler(rejoin_remote_projects))
-            .add_request_handler(user_handler(create_remote_project))
+            .add_request_handler(user_handler(rejoin_dev_server_projects))
+            .add_request_handler(user_handler(create_dev_server_project))
+            .add_request_handler(user_handler(delete_dev_server_project))
             .add_request_handler(user_handler(create_dev_server))
-            .add_request_handler(dev_server_handler(share_remote_project))
+            .add_request_handler(user_handler(regenerate_dev_server_token))
+            .add_request_handler(user_handler(rename_dev_server))
+            .add_request_handler(user_handler(delete_dev_server))
+            .add_request_handler(dev_server_handler(share_dev_server_project))
             .add_request_handler(dev_server_handler(shutdown_dev_server))
             .add_request_handler(dev_server_handler(reconnect_dev_server))
             .add_message_handler(user_message_handler(leave_project))
@@ -458,6 +489,9 @@ impl Server {
                 forward_mutating_project_request::<proto::ApplyCompletionAdditionalEdits>,
             ))
             .add_request_handler(user_handler(
+                forward_versioned_mutating_project_request::<proto::OpenNewBuffer>,
+            ))
+            .add_request_handler(user_handler(
                 forward_mutating_project_request::<proto::ResolveCompletionDocumentation>,
             ))
             .add_request_handler(user_handler(
@@ -497,7 +531,7 @@ impl Server {
                 forward_mutating_project_request::<proto::OnTypeFormatting>,
             ))
             .add_request_handler(user_handler(
-                forward_mutating_project_request::<proto::SaveBuffer>,
+                forward_versioned_mutating_project_request::<proto::SaveBuffer>,
             ))
             .add_request_handler(user_handler(
                 forward_mutating_project_request::<proto::BlameBuffer>,
@@ -547,6 +581,7 @@ impl Server {
             .add_request_handler(user_handler(get_private_user_info))
             .add_message_handler(user_message_handler(acknowledge_channel_message))
             .add_message_handler(user_message_handler(acknowledge_buffer_version))
+            .add_request_handler(user_handler(get_supermaven_api_key))
             .add_streaming_request_handler({
                 let app_state = app_state.clone();
                 move |request, response, session| {
@@ -767,9 +802,7 @@ impl Server {
             Box::new(move |envelope, session| {
                 let envelope = envelope.into_any().downcast::<TypedEnvelope<M>>().unwrap();
                 let received_at = envelope.received_at;
-                    tracing::info!(
-                        "message received"
-                    );
+                tracing::info!("message received");
                 let start_time = Instant::now();
                 let future = (handler)(*envelope, session);
                 async move {
@@ -778,12 +811,24 @@ impl Server {
                     let processing_duration_ms = start_time.elapsed().as_micros() as f64 / 1000.0;
                     let queue_duration_ms = total_duration_ms - processing_duration_ms;
                     let payload_type = M::NAME;
+
                     match result {
                         Err(error) => {
-                            // todo!(), why isn't this logged inside the span?
-                            tracing::error!(%error, total_duration_ms, processing_duration_ms, queue_duration_ms, payload_type, "error handling message")
+                            tracing::error!(
+                                ?error,
+                                total_duration_ms,
+                                processing_duration_ms,
+                                queue_duration_ms,
+                                payload_type,
+                                "error handling message"
+                            )
                         }
-                        Ok(()) => tracing::info!(total_duration_ms, processing_duration_ms, queue_duration_ms, "finished handling message"),
+                        Ok(()) => tracing::info!(
+                            total_duration_ms,
+                            processing_duration_ms,
+                            queue_duration_ms,
+                            "finished handling message"
+                        ),
                     }
                 }
                 .boxed()
@@ -914,11 +959,20 @@ impl Server {
             tracing::info!("connection opened");
 
             let http_client = match IsahcHttpClient::new() {
-                Ok(http_client) => http_client,
+                Ok(http_client) => Arc::new(http_client),
                 Err(error) => {
                     tracing::error!(?error, "failed to create HTTP client");
                     return;
                 }
+            };
+
+            let supermaven_client = if let Some(supermaven_admin_api_key) = this.app_state.config.supermaven_admin_api_key.clone() {
+                Some(Arc::new(SupermavenAdminApi::new(
+                    supermaven_admin_api_key.to_string(),
+                    http_client.clone(),
+                )))
+            } else {
+                None
             };
 
             let session = Session {
@@ -931,6 +985,7 @@ impl Server {
                 http_client,
                 rate_limiter: this.app_state.rate_limiter.clone(),
                 _executor: executor.clone(),
+                supermaven_client,
             };
 
             if let Err(error) = this.send_initial_client_update(connection_id, &principal, zed_version, send_connection_id, &session).await {
@@ -1044,12 +1099,14 @@ impl Server {
                         .await?;
                 }
 
-                let (contacts, channels_for_user, channel_invites) = future::try_join3(
-                    self.app_state.db.get_contacts(user.id),
-                    self.app_state.db.get_channels_for_user(user.id),
-                    self.app_state.db.get_channel_invites_for_user(user.id),
-                )
-                .await?;
+                let (contacts, channels_for_user, channel_invites, dev_server_projects) =
+                    future::try_join4(
+                        self.app_state.db.get_contacts(user.id),
+                        self.app_state.db.get_channels_for_user(user.id),
+                        self.app_state.db.get_channel_invites_for_user(user.id),
+                        self.app_state.db.dev_server_projects_update(user.id),
+                    )
+                    .await?;
 
                 {
                     let mut pool = self.connection_pool.lock();
@@ -1067,9 +1124,10 @@ impl Server {
                     )?;
                     self.peer.send(
                         connection_id,
-                        build_channels_update(channels_for_user, channel_invites, &pool),
+                        build_channels_update(channels_for_user, channel_invites),
                     )?;
                 }
+                send_dev_server_projects_update(user.id, dev_server_projects, session).await;
 
                 if let Some(incoming_call) =
                     self.app_state.db.incoming_call_for_user(user.id).await?
@@ -1087,17 +1145,21 @@ impl Server {
                     };
                     pool.add_dev_server(connection_id, dev_server.id, zed_version);
                 }
-                update_dev_server_status(dev_server, proto::DevServerStatus::Online, &session)
-                    .await;
-                // todo!() allow only one connection.
 
                 let projects = self
                     .app_state
                     .db
-                    .get_remote_projects_for_dev_server(dev_server.id)
+                    .get_projects_for_dev_server(dev_server.id)
                     .await?;
                 self.peer
                     .send(connection_id, proto::DevServerInstructions { projects })?;
+
+                let status = self
+                    .app_state
+                    .db
+                    .dev_server_projects_update(dev_server.user_id)
+                    .await?;
+                send_dev_server_projects_update(dev_server.user_id, status, &session).await;
             }
         }
 
@@ -1401,10 +1463,8 @@ async fn connection_lost(
 
                     update_user_contacts(session.user_id(), &session).await?;
                 },
-            Principal::DevServer(dev_server) => {
-                lost_dev_server_connection(&session).await?;
-                update_dev_server_status(&dev_server, proto::DevServerStatus::Offline, &session)
-                    .await;
+            Principal::DevServer(_) => {
+                lost_dev_server_connection(&session.for_dev_server().unwrap()).await?;
             },
         }
         },
@@ -1941,6 +2001,9 @@ async fn share_project(
             RoomId::from_proto(request.room_id),
             session.connection_id,
             &request.worktrees,
+            request
+                .dev_server_project_id
+                .map(|id| DevServerProjectId::from_proto(id)),
         )
         .await?;
     response.send(proto::ShareProjectResponse {
@@ -1954,14 +2017,25 @@ async fn share_project(
 /// Unshare a project from the room.
 async fn unshare_project(message: proto::UnshareProject, session: Session) -> Result<()> {
     let project_id = ProjectId::from_proto(message.project_id);
-    unshare_project_internal(project_id, &session).await
+    unshare_project_internal(
+        project_id,
+        session.connection_id,
+        session.user_id(),
+        &session,
+    )
+    .await
 }
 
-async fn unshare_project_internal(project_id: ProjectId, session: &Session) -> Result<()> {
+async fn unshare_project_internal(
+    project_id: ProjectId,
+    connection_id: ConnectionId,
+    user_id: Option<UserId>,
+    session: &Session,
+) -> Result<()> {
     let (room, guest_connection_ids) = &*session
         .db()
         .await
-        .unshare_project(project_id, session.connection_id)
+        .unshare_project(project_id, connection_id, user_id)
         .await?;
 
     let message = proto::UnshareProject {
@@ -1969,7 +2043,7 @@ async fn unshare_project_internal(project_id: ProjectId, session: &Session) -> R
     };
 
     broadcast(
-        Some(session.connection_id),
+        Some(connection_id),
         guest_connection_ids.iter().copied(),
         |conn_id| session.peer.send(conn_id, message.clone()),
     );
@@ -1980,42 +2054,27 @@ async fn unshare_project_internal(project_id: ProjectId, session: &Session) -> R
     Ok(())
 }
 
-/// Share a project into the room.
-async fn share_remote_project(
-    request: proto::ShareRemoteProject,
-    response: Response<proto::ShareRemoteProject>,
+/// DevServer makes a project available online
+async fn share_dev_server_project(
+    request: proto::ShareDevServerProject,
+    response: Response<proto::ShareDevServerProject>,
     session: DevServerSession,
 ) -> Result<()> {
-    let remote_project = session
+    let (dev_server_project, user_id, status) = session
         .db()
         .await
-        .share_remote_project(
-            RemoteProjectId::from_proto(request.remote_project_id),
+        .share_dev_server_project(
+            DevServerProjectId::from_proto(request.dev_server_project_id),
             session.dev_server_id(),
             session.connection_id,
             &request.worktrees,
         )
         .await?;
-    let Some(project_id) = remote_project.project_id else {
+    let Some(project_id) = dev_server_project.project_id else {
         return Err(anyhow!("failed to share remote project"))?;
     };
 
-    for (connection_id, _) in session
-        .connection_pool()
-        .await
-        .channel_connection_ids(ChannelId::from_proto(remote_project.channel_id))
-    {
-        session
-            .peer
-            .send(
-                connection_id,
-                proto::UpdateChannels {
-                    remote_projects: vec![remote_project.clone()],
-                    ..Default::default()
-                },
-            )
-            .trace_err();
-    }
+    send_dev_server_projects_update(user_id, status, &session).await;
 
     response.send(proto::ShareProjectResponse { project_id })?;
 
@@ -2081,19 +2140,21 @@ fn join_project_internal(
         })
         .collect::<Vec<_>>();
 
+    let add_project_collaborator = proto::AddProjectCollaborator {
+        project_id: project_id.to_proto(),
+        collaborator: Some(proto::Collaborator {
+            peer_id: Some(session.connection_id.into()),
+            replica_id: replica_id.0 as u32,
+            user_id: guest_user_id.to_proto(),
+        }),
+    };
+
     for collaborator in &collaborators {
         session
             .peer
             .send(
                 collaborator.peer_id.unwrap().into(),
-                proto::AddProjectCollaborator {
-                    project_id: project_id.to_proto(),
-                    collaborator: Some(proto::Collaborator {
-                        peer_id: Some(session.connection_id.into()),
-                        replica_id: replica_id.0 as u32,
-                        user_id: guest_user_id.to_proto(),
-                    }),
-                },
+                add_project_collaborator.clone(),
             )
             .trace_err();
     }
@@ -2105,7 +2166,10 @@ fn join_project_internal(
         replica_id: replica_id.0 as u32,
         collaborators: collaborators.clone(),
         language_servers: project.language_servers.clone(),
-        role: project.role.into(), // todo
+        role: project.role.into(),
+        dev_server_project_id: project
+            .dev_server_project_id
+            .map(|dev_server_project_id| dev_server_project_id.0 as u64),
     })?;
 
     for (worktree_id, worktree) in mem::take(&mut project.worktrees) {
@@ -2188,8 +2252,6 @@ async fn leave_project(request: proto::LeaveProject, session: UserSession) -> Re
     let (room, project) = &*db.leave_project(project_id, sender_id).await?;
     tracing::info!(
         %project_id,
-        host_user_id = ?project.host_user_id,
-        host_connection_id = ?project.host_connection_id,
         "leave project"
     );
 
@@ -2219,18 +2281,38 @@ async fn join_hosted_project(
     join_project_internal(response, session, &mut project, &replica_id)
 }
 
-async fn create_remote_project(
-    request: proto::CreateRemoteProject,
-    response: Response<proto::CreateRemoteProject>,
+async fn create_dev_server_project(
+    request: proto::CreateDevServerProject,
+    response: Response<proto::CreateDevServerProject>,
     session: UserSession,
 ) -> Result<()> {
-    let (channel, remote_project) = session
+    let dev_server_id = DevServerId(request.dev_server_id as i32);
+    let dev_server_connection_id = session
+        .connection_pool()
+        .await
+        .dev_server_connection_id(dev_server_id);
+    let Some(dev_server_connection_id) = dev_server_connection_id else {
+        Err(ErrorCode::DevServerOffline
+            .message("Cannot create a remote project when the dev server is offline".to_string())
+            .anyhow())?
+    };
+
+    let path = request.path.clone();
+    //Check that the path exists on the dev server
+    session
+        .peer
+        .forward_request(
+            session.connection_id,
+            dev_server_connection_id,
+            proto::ValidateDevServerProjectRequest { path: path.clone() },
+        )
+        .await?;
+
+    let (dev_server_project, update) = session
         .db()
         .await
-        .create_remote_project(
-            ChannelId(request.channel_id as i32),
+        .create_dev_server_project(
             DevServerId(request.dev_server_id as i32),
-            &request.name,
             &request.path,
             session.user_id(),
         )
@@ -2239,31 +2321,18 @@ async fn create_remote_project(
     let projects = session
         .db()
         .await
-        .get_remote_projects_for_dev_server(remote_project.dev_server_id)
+        .get_projects_for_dev_server(dev_server_project.dev_server_id)
         .await?;
 
-    let update = proto::UpdateChannels {
-        remote_projects: vec![remote_project.to_proto(None)],
-        ..Default::default()
-    };
-    let connection_pool = session.connection_pool().await;
-    for (connection_id, role) in connection_pool.channel_connection_ids(channel.root_id()) {
-        if role.can_see_all_descendants() {
-            session.peer.send(connection_id, update.clone())?;
-        }
-    }
+    session.peer.send(
+        dev_server_connection_id,
+        proto::DevServerInstructions { projects },
+    )?;
 
-    let dev_server_id = remote_project.dev_server_id;
-    let dev_server_connection_id = connection_pool.dev_server_connection_id(dev_server_id);
-    if let Some(dev_server_connection_id) = dev_server_connection_id {
-        session.peer.send(
-            dev_server_connection_id,
-            proto::DevServerInstructions { projects },
-        )?;
-    }
+    send_dev_server_projects_update(session.user_id(), update, &session).await;
 
-    response.send(proto::CreateRemoteProjectResponse {
-        remote_project: Some(remote_project.to_proto(None)),
+    response.send(proto::CreateDevServerProjectResponse {
+        dev_server_project: Some(dev_server_project.to_proto(None)),
     })?;
     Ok(())
 }
@@ -2276,45 +2345,198 @@ async fn create_dev_server(
     let access_token = auth::random_token();
     let hashed_access_token = auth::hash_access_token(&access_token);
 
-    let (channel, dev_server) = session
+    if request.name.is_empty() {
+        return Err(proto::ErrorCode::Forbidden
+            .message("Dev server name cannot be empty".to_string())
+            .anyhow())?;
+    }
+
+    let (dev_server, status) = session
         .db()
         .await
-        .create_dev_server(
-            ChannelId(request.channel_id as i32),
-            &request.name,
-            &hashed_access_token,
-            session.user_id(),
-        )
+        .create_dev_server(&request.name, &hashed_access_token, session.user_id())
         .await?;
 
-    let update = proto::UpdateChannels {
-        dev_servers: vec![dev_server.to_proto(proto::DevServerStatus::Offline)],
-        ..Default::default()
-    };
-    let connection_pool = session.connection_pool().await;
-    for (connection_id, role) in connection_pool.channel_connection_ids(channel.root_id()) {
-        if role.can_see_channel(channel.visibility) {
-            session.peer.send(connection_id, update.clone())?;
-        }
-    }
+    send_dev_server_projects_update(session.user_id(), status, &session).await;
 
     response.send(proto::CreateDevServerResponse {
         dev_server_id: dev_server.id.0 as u64,
-        channel_id: request.channel_id,
         access_token: auth::generate_dev_server_token(dev_server.id.0 as usize, access_token),
         name: request.name.clone(),
     })?;
     Ok(())
 }
 
-async fn rejoin_remote_projects(
+async fn regenerate_dev_server_token(
+    request: proto::RegenerateDevServerToken,
+    response: Response<proto::RegenerateDevServerToken>,
+    session: UserSession,
+) -> Result<()> {
+    let dev_server_id = DevServerId(request.dev_server_id as i32);
+    let access_token = auth::random_token();
+    let hashed_access_token = auth::hash_access_token(&access_token);
+
+    let connection_id = session
+        .connection_pool()
+        .await
+        .dev_server_connection_id(dev_server_id);
+    if let Some(connection_id) = connection_id {
+        shutdown_dev_server_internal(dev_server_id, connection_id, &session).await?;
+        session
+            .peer
+            .send(connection_id, proto::ShutdownDevServer {})?;
+        let _ = remove_dev_server_connection(dev_server_id, &session).await;
+    }
+
+    let status = session
+        .db()
+        .await
+        .update_dev_server_token(dev_server_id, &hashed_access_token, session.user_id())
+        .await?;
+
+    send_dev_server_projects_update(session.user_id(), status, &session).await;
+
+    response.send(proto::RegenerateDevServerTokenResponse {
+        dev_server_id: dev_server_id.to_proto(),
+        access_token: auth::generate_dev_server_token(dev_server_id.0 as usize, access_token),
+    })?;
+    Ok(())
+}
+
+async fn rename_dev_server(
+    request: proto::RenameDevServer,
+    response: Response<proto::RenameDevServer>,
+    session: UserSession,
+) -> Result<()> {
+    if request.name.trim().is_empty() {
+        return Err(proto::ErrorCode::Forbidden
+            .message("Dev server name cannot be empty".to_string())
+            .anyhow())?;
+    }
+
+    let dev_server_id = DevServerId(request.dev_server_id as i32);
+    let dev_server = session.db().await.get_dev_server(dev_server_id).await?;
+    if dev_server.user_id != session.user_id() {
+        return Err(anyhow!(ErrorCode::Forbidden))?;
+    }
+
+    let status = session
+        .db()
+        .await
+        .rename_dev_server(dev_server_id, &request.name, session.user_id())
+        .await?;
+
+    send_dev_server_projects_update(session.user_id(), status, &session).await;
+
+    response.send(proto::Ack {})?;
+    Ok(())
+}
+
+async fn delete_dev_server(
+    request: proto::DeleteDevServer,
+    response: Response<proto::DeleteDevServer>,
+    session: UserSession,
+) -> Result<()> {
+    let dev_server_id = DevServerId(request.dev_server_id as i32);
+    let dev_server = session.db().await.get_dev_server(dev_server_id).await?;
+    if dev_server.user_id != session.user_id() {
+        return Err(anyhow!(ErrorCode::Forbidden))?;
+    }
+
+    let connection_id = session
+        .connection_pool()
+        .await
+        .dev_server_connection_id(dev_server_id);
+    if let Some(connection_id) = connection_id {
+        shutdown_dev_server_internal(dev_server_id, connection_id, &session).await?;
+        session
+            .peer
+            .send(connection_id, proto::ShutdownDevServer {})?;
+        let _ = remove_dev_server_connection(dev_server_id, &session).await;
+    }
+
+    let status = session
+        .db()
+        .await
+        .delete_dev_server(dev_server_id, session.user_id())
+        .await?;
+
+    send_dev_server_projects_update(session.user_id(), status, &session).await;
+
+    response.send(proto::Ack {})?;
+    Ok(())
+}
+
+async fn delete_dev_server_project(
+    request: proto::DeleteDevServerProject,
+    response: Response<proto::DeleteDevServerProject>,
+    session: UserSession,
+) -> Result<()> {
+    let dev_server_project_id = DevServerProjectId(request.dev_server_project_id as i32);
+    let dev_server_project = session
+        .db()
+        .await
+        .get_dev_server_project(dev_server_project_id)
+        .await?;
+
+    let dev_server = session
+        .db()
+        .await
+        .get_dev_server(dev_server_project.dev_server_id)
+        .await?;
+    if dev_server.user_id != session.user_id() {
+        return Err(anyhow!(ErrorCode::Forbidden))?;
+    }
+
+    let dev_server_connection_id = session
+        .connection_pool()
+        .await
+        .dev_server_connection_id(dev_server.id);
+
+    if let Some(dev_server_connection_id) = dev_server_connection_id {
+        let project = session
+            .db()
+            .await
+            .find_dev_server_project(dev_server_project_id)
+            .await;
+        if let Ok(project) = project {
+            unshare_project_internal(
+                project.id,
+                dev_server_connection_id,
+                Some(session.user_id()),
+                &session,
+            )
+            .await?;
+        }
+    }
+
+    let (projects, status) = session
+        .db()
+        .await
+        .delete_dev_server_project(dev_server_project_id, dev_server.id, session.user_id())
+        .await?;
+
+    if let Some(dev_server_connection_id) = dev_server_connection_id {
+        session.peer.send(
+            dev_server_connection_id,
+            proto::DevServerInstructions { projects },
+        )?;
+    }
+
+    send_dev_server_projects_update(session.user_id(), status, &session).await;
+
+    response.send(proto::Ack {})?;
+    Ok(())
+}
+
+async fn rejoin_dev_server_projects(
     request: proto::RejoinRemoteProjects,
     response: Response<proto::RejoinRemoteProjects>,
     session: UserSession,
 ) -> Result<()> {
     let mut rejoined_projects = {
         let db = session.db().await;
-        db.rejoin_remote_projects(
+        db.rejoin_dev_server_projects(
             &request.rejoined_projects,
             session.user_id(),
             session.0.connection_id,
@@ -2338,7 +2560,7 @@ async fn reconnect_dev_server(
 ) -> Result<()> {
     let reshared_projects = {
         let db = session.db().await;
-        db.reshare_remote_projects(
+        db.reshare_dev_server_projects(
             &request.reshared_projects,
             session.dev_server_id(),
             session.0.connection_id,
@@ -2403,32 +2625,59 @@ async fn shutdown_dev_server(
     session: DevServerSession,
 ) -> Result<()> {
     response.send(proto::Ack {})?;
-    let (remote_projects, dev_server) = {
-        let dev_server_id = session.dev_server_id();
+    shutdown_dev_server_internal(session.dev_server_id(), session.connection_id, &session).await?;
+    remove_dev_server_connection(session.dev_server_id(), &session).await
+}
+
+async fn shutdown_dev_server_internal(
+    dev_server_id: DevServerId,
+    connection_id: ConnectionId,
+    session: &Session,
+) -> Result<()> {
+    let (dev_server_projects, dev_server) = {
         let db = session.db().await;
-        let remote_projects = db.get_remote_projects_for_dev_server(dev_server_id).await?;
+        let dev_server_projects = db.get_projects_for_dev_server(dev_server_id).await?;
         let dev_server = db.get_dev_server(dev_server_id).await?;
-        (remote_projects, dev_server)
+        (dev_server_projects, dev_server)
     };
 
-    for project_id in remote_projects.iter().filter_map(|p| p.project_id) {
-        unshare_project_internal(ProjectId::from_proto(project_id), &session.0).await?;
+    for project_id in dev_server_projects.iter().filter_map(|p| p.project_id) {
+        unshare_project_internal(
+            ProjectId::from_proto(project_id),
+            connection_id,
+            None,
+            session,
+        )
+        .await?;
     }
 
-    let update = proto::UpdateChannels {
-        remote_projects,
-        dev_servers: vec![dev_server.to_proto(proto::DevServerStatus::Offline)],
-        ..Default::default()
-    };
-
-    for (connection_id, _) in session
+    session
         .connection_pool()
         .await
-        .channel_connection_ids(dev_server.channel_id)
-    {
-        session.peer.send(connection_id, update.clone()).trace_err();
-    }
+        .set_dev_server_offline(dev_server_id);
 
+    let status = session
+        .db()
+        .await
+        .dev_server_projects_update(dev_server.user_id)
+        .await?;
+    send_dev_server_projects_update(dev_server.user_id, status, &session).await;
+
+    Ok(())
+}
+
+async fn remove_dev_server_connection(dev_server_id: DevServerId, session: &Session) -> Result<()> {
+    let dev_server_connection = session
+        .connection_pool()
+        .await
+        .dev_server_connection_id(dev_server_id);
+
+    if let Some(dev_server_connection) = dev_server_connection {
+        session
+            .connection_pool()
+            .await
+            .remove_connection(dev_server_connection)?;
+    }
     Ok(())
 }
 
@@ -2615,11 +2864,51 @@ where
     T: EntityMessage + RequestMessage,
 {
     let project_id = ProjectId::from_proto(request.remote_entity_id());
+
     let host_connection_id = session
         .db()
         .await
         .host_for_mutating_project_request(project_id, session.connection_id, session.user_id())
         .await?;
+    let payload = session
+        .peer
+        .forward_request(session.connection_id, host_connection_id, request)
+        .await?;
+    response.send(payload)?;
+    Ok(())
+}
+
+/// forward a project request to the host. These requests are disallowed
+/// for guests.
+async fn forward_versioned_mutating_project_request<T>(
+    request: T,
+    response: Response<T>,
+    session: UserSession,
+) -> Result<()>
+where
+    T: EntityMessage + RequestMessage + VersionedMessage,
+{
+    let project_id = ProjectId::from_proto(request.remote_entity_id());
+
+    let host_connection_id = session
+        .db()
+        .await
+        .host_for_mutating_project_request(project_id, session.connection_id, session.user_id())
+        .await?;
+    if let Some(host_version) = session
+        .connection_pool()
+        .await
+        .connection(host_connection_id)
+        .map(|c| c.zed_version)
+    {
+        if let Some(min_required_version) = request.required_host_version() {
+            if min_required_version > host_version {
+                return Err(anyhow!(ErrorCode::RemoteUpgradeRequired
+                    .with_tag("required", &min_required_version.to_string())))?;
+            }
+        }
+    }
+
     let payload = session
         .peer
         .forward_request(session.connection_id, host_connection_id, request)
@@ -4040,13 +4329,13 @@ async fn complete_with_open_ai(
     api_key: Arc<str>,
 ) -> Result<()> {
     let mut completion_stream = open_ai::stream_completion(
-        &session.http_client,
+        session.http_client.as_ref(),
         OPEN_AI_API_URL,
         &api_key,
         crate::ai::language_model_request_to_open_ai(request)?,
     )
     .await
-    .context("open_ai::stream_completion request failed")?;
+    .context("open_ai::stream_completion request failed within collab")?;
 
     while let Some(event) = completion_stream.next().await {
         let event = event?;
@@ -4061,8 +4350,32 @@ async fn complete_with_open_ai(
                             open_ai::Role::User => LanguageModelRole::LanguageModelUser,
                             open_ai::Role::Assistant => LanguageModelRole::LanguageModelAssistant,
                             open_ai::Role::System => LanguageModelRole::LanguageModelSystem,
+                            open_ai::Role::Tool => LanguageModelRole::LanguageModelTool,
                         } as i32),
                         content: choice.delta.content,
+                        tool_calls: choice
+                            .delta
+                            .tool_calls
+                            .into_iter()
+                            .map(|delta| proto::ToolCallDelta {
+                                index: delta.index as u32,
+                                id: delta.id,
+                                variant: match delta.function {
+                                    Some(function) => {
+                                        let name = function.name;
+                                        let arguments = function.arguments;
+
+                                        Some(proto::tool_call_delta::Variant::Function(
+                                            proto::tool_call_delta::FunctionCallDelta {
+                                                name,
+                                                arguments,
+                                            },
+                                        ))
+                                    }
+                                    None => None,
+                                },
+                            })
+                            .collect(),
                     }),
                     finish_reason: choice.finish_reason,
                 })
@@ -4080,7 +4393,7 @@ async fn complete_with_google_ai(
     api_key: Arc<str>,
 ) -> Result<()> {
     let mut stream = google_ai::stream_generate_content(
-        &session.http_client,
+        session.http_client.clone(),
         google_ai::API_URL,
         api_key.as_ref(),
         crate::ai::language_model_request_to_google_ai(request)?,
@@ -4113,6 +4426,8 @@ async fn complete_with_google_ai(
                                 })
                                 .collect(),
                         ),
+                        // Tool calls are not supported for Google
+                        tool_calls: Vec::new(),
                     }),
                     finish_reason: candidate.finish_reason.map(|reason| reason.to_string()),
                 })
@@ -4135,30 +4450,34 @@ async fn complete_with_anthropic(
     let messages = request
         .messages
         .into_iter()
-        .filter_map(|message| match message.role() {
-            LanguageModelRole::LanguageModelUser => Some(anthropic::RequestMessage {
-                role: anthropic::Role::User,
-                content: message.content,
-            }),
-            LanguageModelRole::LanguageModelAssistant => Some(anthropic::RequestMessage {
-                role: anthropic::Role::Assistant,
-                content: message.content,
-            }),
-            // Anthropic's API breaks system instructions out as a separate field rather
-            // than having a system message role.
-            LanguageModelRole::LanguageModelSystem => {
-                if !system_message.is_empty() {
-                    system_message.push_str("\n\n");
-                }
-                system_message.push_str(&message.content);
+        .filter_map(|message| {
+            match message.role() {
+                LanguageModelRole::LanguageModelUser => Some(anthropic::RequestMessage {
+                    role: anthropic::Role::User,
+                    content: message.content,
+                }),
+                LanguageModelRole::LanguageModelAssistant => Some(anthropic::RequestMessage {
+                    role: anthropic::Role::Assistant,
+                    content: message.content,
+                }),
+                // Anthropic's API breaks system instructions out as a separate field rather
+                // than having a system message role.
+                LanguageModelRole::LanguageModelSystem => {
+                    if !system_message.is_empty() {
+                        system_message.push_str("\n\n");
+                    }
+                    system_message.push_str(&message.content);
 
-                None
+                    None
+                }
+                // We don't yet support tool calls for Anthropic
+                LanguageModelRole::LanguageModelTool => None,
             }
         })
         .collect();
 
     let mut stream = anthropic::stream_completion(
-        &session.http_client,
+        session.http_client.clone(),
         "https://api.anthropic.com",
         &api_key,
         anthropic::Request {
@@ -4196,6 +4515,7 @@ async fn complete_with_anthropic(
                                     delta: Some(proto::LanguageModelResponseMessage {
                                         role: Some(current_role as i32),
                                         content: Some(text),
+                                        tool_calls: Vec::new(),
                                     }),
                                     finish_reason: None,
                                 }],
@@ -4212,6 +4532,7 @@ async fn complete_with_anthropic(
                             delta: Some(proto::LanguageModelResponseMessage {
                                 role: Some(current_role as i32),
                                 content: Some(text),
+                                tool_calls: Vec::new(),
                             }),
                             finish_reason: None,
                         }],
@@ -4280,7 +4601,7 @@ async fn count_tokens_with_language_model(
     let api_key = google_ai_api_key
         .ok_or_else(|| anyhow!("no Google AI API key configured on the server"))?;
     let tokens_response = google_ai::count_tokens(
-        &session.http_client,
+        session.http_client.as_ref(),
         google_ai::API_URL,
         &api_key,
         crate::ai::count_tokens_request_to_google_ai(request)?,
@@ -4299,7 +4620,7 @@ impl RateLimit for ComputeEmbeddingsRateLimit {
         std::env::var("EMBED_TEXTS_RATE_LIMIT_PER_HOUR")
             .ok()
             .and_then(|v| v.parse().ok())
-            .unwrap_or(120) // Picked arbitrarily
+            .unwrap_or(5000) // Picked arbitrarily
     }
 
     fn refill_duration() -> chrono::Duration {
@@ -4328,7 +4649,7 @@ async fn compute_embeddings(
     let embeddings = match request.model.as_str() {
         "openai/text-embedding-3-small" => {
             open_ai::embed(
-                &session.http_client,
+                session.http_client.as_ref(),
                 OPEN_AI_API_URL,
                 &api_key,
                 OpenAiEmbeddingModel::TextEmbedding3Small,
@@ -4371,36 +4692,12 @@ async fn compute_embeddings(
     Ok(())
 }
 
-struct GetCachedEmbeddingsRateLimit;
-
-impl RateLimit for GetCachedEmbeddingsRateLimit {
-    fn capacity() -> usize {
-        std::env::var("EMBED_TEXTS_RATE_LIMIT_PER_HOUR")
-            .ok()
-            .and_then(|v| v.parse().ok())
-            .unwrap_or(120) // Picked arbitrarily
-    }
-
-    fn refill_duration() -> chrono::Duration {
-        chrono::Duration::hours(1)
-    }
-
-    fn db_name() -> &'static str {
-        "get-cached-embeddings"
-    }
-}
-
 async fn get_cached_embeddings(
     request: proto::GetCachedEmbeddings,
     response: Response<proto::GetCachedEmbeddings>,
     session: UserSession,
 ) -> Result<()> {
     authorize_access_to_language_models(&session).await?;
-
-    session
-        .rate_limiter
-        .check::<GetCachedEmbeddingsRateLimit>(session.user_id())
-        .await?;
 
     let db = session.db().await;
     let embeddings = db.get_embeddings(&request.model, &request.digests).await?;
@@ -4422,6 +4719,37 @@ async fn authorize_access_to_language_models(session: &UserSession) -> Result<()
     } else {
         Err(anyhow!("permission denied"))?
     }
+}
+
+/// Get a Supermaven API key for the user
+async fn get_supermaven_api_key(
+    _request: proto::GetSupermavenApiKey,
+    response: Response<proto::GetSupermavenApiKey>,
+    session: UserSession,
+) -> Result<()> {
+    let user_id: String = session.user_id().to_string();
+    if !session.is_staff() {
+        return Err(anyhow!("supermaven not enabled for this account"))?;
+    }
+
+    let email = session
+        .email()
+        .ok_or_else(|| anyhow!("user must have an email"))?;
+
+    let supermaven_admin_api = session
+        .supermaven_client
+        .as_ref()
+        .ok_or_else(|| anyhow!("supermaven not configured"))?;
+
+    let result = supermaven_admin_api
+        .try_get_or_create_user(CreateExternalUserRequest { id: user_id, email })
+        .await?;
+
+    response.send(proto::GetSupermavenApiKeyResponse {
+        api_key: result.api_key,
+    })?;
+
+    Ok(())
 }
 
 /// Start receiving chat updates for a channel
@@ -4626,7 +4954,7 @@ fn notify_membership_updated(
         ..Default::default()
     };
 
-    let mut update = build_channels_update(result.new_channels, vec![], connection_pool);
+    let mut update = build_channels_update(result.new_channels, vec![]);
     update.delete_channels = result
         .removed_channels
         .into_iter()
@@ -4659,7 +4987,6 @@ fn build_update_user_channels(channels: &ChannelsForUser) -> proto::UpdateUserCh
 fn build_channels_update(
     channels: ChannelsForUser,
     channel_invites: Vec<db::Channel>,
-    pool: &ConnectionPool,
 ) -> proto::UpdateChannels {
     let mut update = proto::UpdateChannels::default();
 
@@ -4684,13 +5011,6 @@ fn build_channels_update(
     }
 
     update.hosted_projects = channels.hosted_projects;
-    update.dev_servers = channels
-        .dev_servers
-        .into_iter()
-        .map(|dev_server| dev_server.to_proto(pool.dev_server_status(dev_server.id)))
-        .collect();
-    update.remote_projects = channels.remote_projects;
-
     update
 }
 
@@ -4777,24 +5097,19 @@ fn channel_updated(
     );
 }
 
-async fn update_dev_server_status(
-    dev_server: &dev_server::Model,
-    status: proto::DevServerStatus,
+async fn send_dev_server_projects_update(
+    user_id: UserId,
+    mut status: proto::DevServerProjectsUpdate,
     session: &Session,
 ) {
     let pool = session.connection_pool().await;
-    let connections = pool.channel_connection_ids(dev_server.channel_id);
-    for (connection_id, _) in connections {
-        session
-            .peer
-            .send(
-                connection_id,
-                proto::UpdateChannels {
-                    dev_servers: vec![dev_server.to_proto(status)],
-                    ..Default::default()
-                },
-            )
-            .trace_err();
+    for dev_server in &mut status.dev_servers {
+        dev_server.status =
+            pool.dev_server_status(DevServerId(dev_server.dev_server_id as i32)) as i32;
+    }
+    let connections = pool.user_connection_ids(user_id);
+    for connection_id in connections {
+        session.peer.send(connection_id, status.clone()).trace_err();
     }
 }
 
@@ -4833,7 +5148,7 @@ async fn update_user_contacts(user_id: UserId, session: &Session) -> Result<()> 
     Ok(())
 }
 
-async fn lost_dev_server_connection(session: &Session) -> Result<()> {
+async fn lost_dev_server_connection(session: &DevServerSession) -> Result<()> {
     log::info!("lost dev server connection, unsharing projects");
     let project_ids = session
         .db()
@@ -4843,8 +5158,17 @@ async fn lost_dev_server_connection(session: &Session) -> Result<()> {
 
     for project_id in project_ids {
         // not unshare re-checks the connection ids match, so we get away with no transaction
-        unshare_project_internal(project_id, &session).await?;
+        unshare_project_internal(project_id, session.connection_id, None, &session).await?;
     }
+
+    let user_id = session.dev_server().user_id;
+    let update = session
+        .db()
+        .await
+        .dev_server_projects_update(user_id)
+        .await?;
+
+    send_dev_server_projects_update(user_id, update, session).await;
 
     Ok(())
 }
@@ -4947,7 +5271,7 @@ async fn leave_channel_buffers_for_session(session: &Session) -> Result<()> {
 
 fn project_left(project: &db::LeftProject, session: &UserSession) {
     for connection_id in &project.connection_ids {
-        if project.host_user_id == Some(session.user_id()) {
+        if project.should_unshare {
             session
                 .peer
                 .send(

@@ -10,6 +10,10 @@
 {"Key":"c"}
 {"Key":"w"}
 {"Get":{"state":"Testˇtest","mode":"Insert"}}
+{"Put":{"state":"Tesˇt  test"}}
+{"Key":"c"}
+{"Key":"w"}
+{"Get":{"state":"Tesˇ  test","mode":"Insert"}}
 {"Put":{"state":"Test teˇst\ntest"}}
 {"Key":"c"}
 {"Key":"w"}

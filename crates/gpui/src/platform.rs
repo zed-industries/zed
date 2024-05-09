@@ -41,7 +41,6 @@ use std::borrow::Cow;
 use std::hash::{Hash, Hasher};
 use std::time::Duration;
 use std::{
-    any::Any,
     fmt::{self, Debug},
     ops::Range,
     path::{Path, PathBuf},
@@ -99,7 +98,7 @@ pub(crate) trait Platform: 'static {
 
     fn run(&self, on_finish_launching: Box<dyn 'static + FnOnce()>);
     fn quit(&self);
-    fn restart(&self);
+    fn restart(&self, binary_path: Option<PathBuf>);
     fn activate(&self, ignoring_other_apps: bool);
     fn hide(&self);
     fn hide_other_apps(&self);
@@ -107,7 +106,6 @@ pub(crate) trait Platform: 'static {
 
     fn displays(&self) -> Vec<Rc<dyn PlatformDisplay>>;
     fn primary_display(&self) -> Option<Rc<dyn PlatformDisplay>>;
-    fn display(&self, id: DisplayId) -> Option<Rc<dyn PlatformDisplay>>;
     fn active_window(&self) -> Option<AnyWindowHandle>;
     fn open_window(
         &self,
@@ -129,11 +127,8 @@ pub(crate) trait Platform: 'static {
     fn prompt_for_new_path(&self, directory: &Path) -> oneshot::Receiver<Option<PathBuf>>;
     fn reveal_path(&self, path: &Path);
 
-    fn on_become_active(&self, callback: Box<dyn FnMut()>);
-    fn on_resign_active(&self, callback: Box<dyn FnMut()>);
     fn on_quit(&self, callback: Box<dyn FnMut()>);
     fn on_reopen(&self, callback: Box<dyn FnMut()>);
-    fn on_event(&self, callback: Box<dyn FnMut(PlatformInput) -> bool>);
 
     fn set_menus(&self, menus: Vec<Menu>, keymap: &Keymap);
     fn add_recent_document(&self, _path: &Path) {}
@@ -189,14 +184,13 @@ unsafe impl Send for DisplayId {}
 pub(crate) trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
     fn bounds(&self) -> Bounds<DevicePixels>;
     fn is_maximized(&self) -> bool;
-    fn is_minimized(&self) -> bool;
+    fn window_bounds(&self) -> WindowBounds;
     fn content_size(&self) -> Size<Pixels>;
     fn scale_factor(&self) -> f32;
     fn appearance(&self) -> WindowAppearance;
     fn display(&self) -> Rc<dyn PlatformDisplay>;
     fn mouse_position(&self) -> Point<Pixels>;
     fn modifiers(&self) -> Modifiers;
-    fn as_any_mut(&mut self) -> &mut dyn Any;
     fn set_input_handler(&mut self, input_handler: PlatformInputHandler);
     fn take_input_handler(&mut self) -> Option<PlatformInputHandler>;
     fn prompt(
@@ -209,6 +203,7 @@ pub(crate) trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
     fn activate(&self);
     fn is_active(&self) -> bool;
     fn set_title(&mut self, title: &str);
+    fn set_app_id(&mut self, app_id: &str);
     fn set_background_appearance(&mut self, background_appearance: WindowBackgroundAppearance);
     fn set_edited(&mut self, edited: bool);
     fn show_character_palette(&self);
@@ -220,12 +215,10 @@ pub(crate) trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
     fn on_input(&self, callback: Box<dyn FnMut(PlatformInput) -> DispatchEventResult>);
     fn on_active_status_change(&self, callback: Box<dyn FnMut(bool)>);
     fn on_resize(&self, callback: Box<dyn FnMut(Size<Pixels>, f32)>);
-    fn on_fullscreen(&self, callback: Box<dyn FnMut(bool)>);
     fn on_moved(&self, callback: Box<dyn FnMut()>);
     fn on_should_close(&self, callback: Box<dyn FnMut() -> bool>);
     fn on_close(&self, callback: Box<dyn FnOnce()>);
     fn on_appearance_changed(&self, callback: Box<dyn FnMut()>);
-    fn is_topmost_for_position(&self, position: Point<Pixels>) -> bool;
     fn draw(&self, scene: &Scene);
     fn completed_frame(&self) {}
     fn sprite_atlas(&self) -> Arc<dyn PlatformAtlas>;
@@ -273,13 +266,6 @@ pub(crate) trait PlatformTextSystem: Send + Sync {
         raster_bounds: Bounds<DevicePixels>,
     ) -> Result<(Size<DevicePixels>, Vec<u8>)>;
     fn layout_line(&self, text: &str, font_size: Pixels, runs: &[FontRun]) -> LineLayout;
-    fn wrap_line(
-        &self,
-        text: &str,
-        font_id: FontId,
-        font_size: Pixels,
-        width: Pixels,
-    ) -> Vec<usize>;
 }
 
 /// Basic metadata about the current application and operating system.
@@ -529,9 +515,10 @@ pub trait InputHandler: 'static {
 /// The variables that can be configured when creating a new window
 #[derive(Debug)]
 pub struct WindowOptions {
-    /// The bounds of the window in screen coordinates.
-    /// None -> inherit, Some(bounds) -> set bounds
-    pub bounds: Option<Bounds<DevicePixels>>,
+    /// Specifies the state and bounds of the window in screen coordinates.
+    /// - `None`: Inherit the bounds.
+    /// - `Some(WindowBounds)`: Open a window with corresponding state and its restore size.
+    pub window_bounds: Option<WindowBounds>,
 
     /// The titlebar configuration of the window
     pub titlebar: Option<TitlebarOptions>,
@@ -541,9 +528,6 @@ pub struct WindowOptions {
 
     /// Whether the window should be shown when created
     pub show: bool,
-
-    /// Whether the window should be fullscreen when created
-    pub fullscreen: bool,
 
     /// The kind of window to create
     pub kind: WindowKind,
@@ -557,12 +541,14 @@ pub struct WindowOptions {
 
     /// The appearance of the window background.
     pub window_background: WindowBackgroundAppearance,
+
+    /// Application identifier of the window. Can by used by desktop environments to group applications together.
+    pub app_id: Option<String>,
 }
 
 /// The variables that can be configured when creating a new window
 #[derive(Debug)]
 pub(crate) struct WindowParams {
-    ///
     pub bounds: Bounds<DevicePixels>,
 
     /// The titlebar configuration of the window
@@ -583,10 +569,40 @@ pub(crate) struct WindowParams {
     pub window_background: WindowBackgroundAppearance,
 }
 
+/// Represents the status of how a window should be opened.
+#[derive(Debug, Copy, Clone, PartialEq)]
+pub enum WindowBounds {
+    /// Indicates that the window should open in a windowed state with the given bounds.
+    Windowed(Bounds<DevicePixels>),
+    /// Indicates that the window should open in a maximized state.
+    /// The bounds provided here represent the restore size of the window.
+    Maximized(Bounds<DevicePixels>),
+    /// Indicates that the window should open in fullscreen mode.
+    /// The bounds provided here represent the restore size of the window.
+    Fullscreen(Bounds<DevicePixels>),
+}
+
+impl Default for WindowBounds {
+    fn default() -> Self {
+        WindowBounds::Windowed(Bounds::default())
+    }
+}
+
+impl WindowBounds {
+    /// Retrieve the inner bounds
+    pub fn get_bounds(&self) -> Bounds<DevicePixels> {
+        match self {
+            WindowBounds::Windowed(bounds) => *bounds,
+            WindowBounds::Maximized(bounds) => *bounds,
+            WindowBounds::Fullscreen(bounds) => *bounds,
+        }
+    }
+}
+
 impl Default for WindowOptions {
     fn default() -> Self {
         Self {
-            bounds: None,
+            window_bounds: None,
             titlebar: Some(TitlebarOptions {
                 title: Default::default(),
                 appears_transparent: Default::default(),
@@ -597,8 +613,8 @@ impl Default for WindowOptions {
             kind: WindowKind::Normal,
             is_movable: true,
             display_id: None,
-            fullscreen: false,
             window_background: WindowBackgroundAppearance::default(),
+            app_id: None,
         }
     }
 }
@@ -693,7 +709,7 @@ pub struct PathPromptOptions {
 }
 
 /// What kind of prompt styling to show
-#[derive(Copy, Clone, Debug)]
+#[derive(Copy, Clone, Debug, PartialEq)]
 pub enum PromptLevel {
     /// A prompt that is shown when the user should be notified of something
     Info,
@@ -703,10 +719,14 @@ pub enum PromptLevel {
 
     /// A prompt that is shown when a critical problem has occurred
     Critical,
+
+    /// A prompt that is shown when asking the user to confirm a potentially destructive action
+    /// (overwriting a file for example)
+    Destructive,
 }
 
 /// The style of the cursor (pointer)
-#[derive(Copy, Clone, Debug)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
 pub enum CursorStyle {
     /// The default cursor
     Arrow,
@@ -740,7 +760,7 @@ pub enum CursorStyle {
     ResizeRight,
 
     /// A resize cursor to the left and right
-    /// corresponds to the CSS cursor value `col-resize`
+    /// corresponds to the CSS cursor value `ew-resize`
     ResizeLeftRight,
 
     /// A resize up cursor
@@ -752,8 +772,16 @@ pub enum CursorStyle {
     ResizeDown,
 
     /// A resize cursor directing up and down
-    /// corresponds to the CSS cursor value `row-resize`
+    /// corresponds to the CSS cursor value `ns-resize`
     ResizeUpDown,
+
+    /// A cursor indicating that the item/column can be resized horizontally.
+    /// corresponds to the CSS curosr value `col-resize`
+    ResizeColumn,
+
+    /// A cursor indicating that the item/row can be resized vertically.
+    /// corresponds to the CSS curosr value `row-resize`
+    ResizeRow,
 
     /// A cursor indicating that something will disappear if moved here
     /// Does not correspond to a CSS cursor value

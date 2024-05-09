@@ -23,7 +23,7 @@ impl ExtensionCard {
 }
 
 impl ParentElement for ExtensionCard {
-    fn extend(&mut self, elements: impl Iterator<Item = AnyElement>) {
+    fn extend(&mut self, elements: impl IntoIterator<Item = AnyElement>) {
         self.children.extend(elements)
     }
 }

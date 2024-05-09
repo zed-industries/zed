@@ -2,7 +2,7 @@ use gpui::{relative, DefiniteLength, MouseButton};
 use gpui::{transparent_black, AnyElement, AnyView, ClickEvent, Hsla, Rems};
 use smallvec::SmallVec;
 
-use crate::prelude::*;
+use crate::{prelude::*, Spacing};
 
 /// A trait for buttons that can be Selected. Enables setting the [`ButtonStyle`] of a button when it is selected.
 pub trait SelectableButton: Selectable {
@@ -407,7 +407,7 @@ impl VisibleOnHover for ButtonLike {
 }
 
 impl ParentElement for ButtonLike {
-    fn extend(&mut self, elements: impl Iterator<Item = AnyElement>) {
+    fn extend(&mut self, elements: impl IntoIterator<Item = AnyElement>) {
         self.children.extend(elements)
     }
 }
@@ -431,10 +431,10 @@ impl RenderOnce for ButtonLike {
                 ButtonLikeRounding::Left => this.rounded_l_md(),
                 ButtonLikeRounding::Right => this.rounded_r_md(),
             })
-            .gap_1()
+            .gap(Spacing::Small.rems(cx))
             .map(|this| match self.size {
-                ButtonSize::Large => this.px_2(),
-                ButtonSize::Default | ButtonSize::Compact => this.px_1(),
+                ButtonSize::Large => this.px(Spacing::Medium.rems(cx)),
+                ButtonSize::Default | ButtonSize::Compact => this.px(Spacing::Small.rems(cx)),
                 ButtonSize::None => this,
             })
             .bg(style.enabled(cx).background)

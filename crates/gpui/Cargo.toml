@@ -14,7 +14,7 @@ workspace = true
 default = []
 test-support = ["backtrace", "collections/test-support", "util/test-support"]
 runtime_shaders = []
-macos-blade = ["blade-graphics", "blade-macros", "blade-rwh", "bytemuck"]
+macos-blade = ["blade-graphics", "blade-macros", "bytemuck"]
 
 [lib]
 path = "src/gpui.rs"
@@ -26,7 +26,6 @@ async-task = "4.7"
 backtrace = { version = "0.3", optional = true }
 blade-graphics = { workspace = true, optional = true }
 blade-macros = { workspace = true, optional = true }
-blade-rwh = { workspace = true, optional = true }
 bytemuck = { version = "1", optional = true }
 collections.workspace = true
 ctor.workspace = true
@@ -62,7 +61,7 @@ slotmap = "1.0.6"
 smallvec.workspace = true
 smol.workspace = true
 sum_tree.workspace = true
-taffy = { git = "https://github.com/DioxusLabs/taffy", rev = "1876f72bee5e376023eaa518aa7b8a34c769bd1b" }
+taffy = "0.4.3"
 thiserror.workspace = true
 time.workspace = true
 util.workspace = true
@@ -95,7 +94,6 @@ flume = "0.11"
 #TODO: use these on all platforms
 blade-graphics.workspace = true
 blade-macros.workspace = true
-blade-rwh.workspace = true
 bytemuck = "1"
 cosmic-text = "0.11.2"
 copypasta = "0.10.1"
@@ -113,13 +111,25 @@ wayland-protocols = { version = "0.31.2", features = [
     "staging",
     "unstable",
 ] }
+wayland-protocols-plasma = { version = "0.2.0", features = ["client"] }
 oo7 = "0.3.0"
 open = "5.1.2"
-x11rb = { version = "0.13.0", features = ["allow-unsafe-code", "xkb", "randr", "xinput"] }
+filedescriptor = "0.8.2"
+x11rb = { version = "0.13.0", features = [
+    "allow-unsafe-code",
+    "xkb",
+    "randr",
+    "xinput",
+    "cursor",
+    "resource_manager",
+] }
 xkbcommon = { version = "0.7", features = ["wayland", "x11"] }
 
 [target.'cfg(windows)'.dependencies]
 windows.workspace = true
+
+[target.'cfg(windows)'.build-dependencies]
+embed-resource = "2.4"
 
 [[example]]
 name = "hello_world"

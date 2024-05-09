@@ -1,13 +1,15 @@
-use super::SerializedAxis;
+use super::{SerializedAxis, SerializedWindowBounds};
 use crate::{item::ItemHandle, ItemDeserializers, Member, Pane, PaneAxis, Workspace, WorkspaceId};
 use anyhow::{Context, Result};
 use async_recursion::async_recursion;
+use client::DevServerProjectId;
 use db::sqlez::{
     bindable::{Bind, Column, StaticColumnCount},
     statement::Statement,
 };
-use gpui::{AsyncWindowContext, Bounds, DevicePixels, Model, Task, View, WeakView};
+use gpui::{AsyncWindowContext, Model, Task, View, WeakView};
 use project::Project;
+use serde::{Deserialize, Serialize};
 use std::{
     path::{Path, PathBuf},
     sync::Arc,
@@ -15,62 +17,100 @@ use std::{
 use util::ResultExt;
 use uuid::Uuid;
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct WorkspaceLocation(Arc<Vec<PathBuf>>);
+#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
+pub struct SerializedDevServerProject {
+    pub id: DevServerProjectId,
+    pub dev_server_name: String,
+    pub path: String,
+}
 
-impl WorkspaceLocation {
+#[derive(Debug, PartialEq, Clone)]
+pub struct LocalPaths(Arc<Vec<PathBuf>>);
+
+impl LocalPaths {
+    pub fn new<P: AsRef<Path>>(paths: impl IntoIterator<Item = P>) -> Self {
+        let mut paths: Vec<PathBuf> = paths
+            .into_iter()
+            .map(|p| p.as_ref().to_path_buf())
+            .collect();
+        paths.sort();
+        Self(Arc::new(paths))
+    }
+
     pub fn paths(&self) -> Arc<Vec<PathBuf>> {
         self.0.clone()
     }
+}
 
-    #[cfg(any(test, feature = "test-support"))]
-    pub fn new<P: AsRef<Path>>(paths: Vec<P>) -> Self {
-        Self(Arc::new(
-            paths
-                .into_iter()
-                .map(|p| p.as_ref().to_path_buf())
-                .collect(),
-        ))
+impl From<LocalPaths> for SerializedWorkspaceLocation {
+    fn from(local_paths: LocalPaths) -> Self {
+        Self::Local(local_paths)
     }
 }
 
-impl<P: AsRef<Path>, T: IntoIterator<Item = P>> From<T> for WorkspaceLocation {
-    fn from(iterator: T) -> Self {
-        let mut roots = iterator
-            .into_iter()
-            .map(|p| p.as_ref().to_path_buf())
-            .collect::<Vec<_>>();
-        roots.sort();
-        Self(Arc::new(roots))
-    }
-}
-
-impl StaticColumnCount for WorkspaceLocation {}
-impl Bind for &WorkspaceLocation {
+impl StaticColumnCount for LocalPaths {}
+impl Bind for &LocalPaths {
     fn bind(&self, statement: &Statement, start_index: i32) -> Result<i32> {
-        bincode::serialize(&self.0)
-            .expect("Bincode serialization of paths should not fail")
-            .bind(statement, start_index)
+        statement.bind(&bincode::serialize(&self.0)?, start_index)
     }
 }
 
-impl Column for WorkspaceLocation {
+impl Column for LocalPaths {
     fn column(statement: &mut Statement, start_index: i32) -> Result<(Self, i32)> {
-        let blob = statement.column_blob(start_index)?;
+        let path_blob = statement.column_blob(start_index)?;
+        let paths: Arc<Vec<PathBuf>> = if path_blob.is_empty() {
+            Default::default()
+        } else {
+            bincode::deserialize(path_blob).context("Bincode deserialization of paths failed")?
+        };
+
+        Ok((Self(paths), start_index + 1))
+    }
+}
+
+impl From<SerializedDevServerProject> for SerializedWorkspaceLocation {
+    fn from(dev_server_project: SerializedDevServerProject) -> Self {
+        Self::DevServer(dev_server_project)
+    }
+}
+
+impl StaticColumnCount for SerializedDevServerProject {}
+impl Bind for &SerializedDevServerProject {
+    fn bind(&self, statement: &Statement, start_index: i32) -> Result<i32> {
+        let next_index = statement.bind(&self.id.0, start_index)?;
+        let next_index = statement.bind(&self.dev_server_name, next_index)?;
+        statement.bind(&self.path, next_index)
+    }
+}
+
+impl Column for SerializedDevServerProject {
+    fn column(statement: &mut Statement, start_index: i32) -> Result<(Self, i32)> {
+        let id = statement.column_int64(start_index)?;
+        let dev_server_name = statement.column_text(start_index + 1)?.to_string();
+        let path = statement.column_text(start_index + 2)?.to_string();
         Ok((
-            WorkspaceLocation(bincode::deserialize(blob).context("Bincode failed")?),
-            start_index + 1,
+            Self {
+                id: DevServerProjectId(id as u64),
+                dev_server_name,
+                path,
+            },
+            start_index + 3,
         ))
     }
 }
 
 #[derive(Debug, PartialEq, Clone)]
+pub enum SerializedWorkspaceLocation {
+    Local(LocalPaths),
+    DevServer(SerializedDevServerProject),
+}
+
+#[derive(Debug, PartialEq, Clone)]
 pub(crate) struct SerializedWorkspace {
     pub(crate) id: WorkspaceId,
-    pub(crate) location: WorkspaceLocation,
+    pub(crate) location: SerializedWorkspaceLocation,
     pub(crate) center_group: SerializedPaneGroup,
-    pub(crate) bounds: Option<Bounds<DevicePixels>>,
-    pub(crate) fullscreen: bool,
+    pub(crate) window_bounds: Option<SerializedWindowBounds>,
     pub(crate) centered_layout: bool,
     pub(crate) display: Option<Uuid>,
     pub(crate) docks: DockStructure,

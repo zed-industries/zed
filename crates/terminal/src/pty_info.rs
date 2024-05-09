@@ -98,8 +98,14 @@ impl PtyProcessInfo {
 
     fn refresh(&mut self) -> Option<&Process> {
         let pid = self.pid_getter.pid()?;
-        self.system.refresh_processes_specifics(self.refresh_kind);
-        self.system.process(pid)
+        if self
+            .system
+            .refresh_process_specifics(pid, self.refresh_kind)
+        {
+            self.system.process(pid)
+        } else {
+            None
+        }
     }
 
     fn load(&mut self) -> Option<ProcessInfo> {

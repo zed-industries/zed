@@ -227,7 +227,7 @@ impl ExtensionImports for WasmState {
                     "lsp" => {
                         let settings = key
                             .and_then(|key| {
-                                ProjectSettings::get_global(cx)
+                                ProjectSettings::get(location, cx)
                                     .lsp
                                     .get(&Arc::<str>::from(key))
                             })

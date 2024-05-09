@@ -1,0 +1,28 @@
+// Taken from https://gist.github.com/josevalim/2e4f60a14ccd52728e3256571259d493#gistcomment-4995881
+[
+  {
+    "label": "mix test",
+    "command": "mix",
+    "args": ["test"]
+  },
+  {
+    "label": "mix test --failed",
+    "command": "mix",
+    "args": ["test", "--failed"]
+  },
+  {
+    "label": "mix test $ZED_SYMBOL",
+    "command": "mix",
+    "args": ["test", "$ZED_SYMBOL"]
+  },
+  {
+    "label": "mix test $ZED_FILE:$ZED_ROW",
+    "command": "mix",
+    "args": ["test", "$ZED_FILE:$ZED_ROW"]
+  },
+  {
+    "label": "Elixir: break line",
+    "command": "iex",
+    "args": ["-S", "mix", "test", "-b", "$ZED_FILE:$ZED_ROW"]
+  }
+]

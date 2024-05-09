@@ -160,7 +160,7 @@ impl RenderOnce for Key {
                 }
             })
             .h(rems_from_px(14.))
-            .text_ui()
+            .text_ui(cx)
             .line_height(relative(1.))
             .text_color(cx.theme().colors().text_muted)
             .child(self.key.clone())

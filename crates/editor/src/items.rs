@@ -1,11 +1,12 @@
 use crate::{
     editor_settings::SeedQuerySetting, persistence::DB, scroll::ScrollAnchor, Anchor, Autoscroll,
     Editor, EditorEvent, EditorSettings, ExcerptId, ExcerptRange, MultiBuffer, MultiBufferSnapshot,
-    NavigationData, ToPoint as _,
+    NavigationData, SearchWithinRange, ToPoint as _,
 };
 use anyhow::{anyhow, Context as _, Result};
 use collections::HashSet;
 use futures::future::try_join_all;
+use git::repository::GitFileStatus;
 use gpui::{
     point, AnyElement, AppContext, AsyncWindowContext, Context, Entity, EntityId, EventEmitter,
     IntoElement, Model, ParentElement, Pixels, SharedString, Styled, Task, View, ViewContext,
@@ -15,18 +16,19 @@ use language::{
     proto::serialize_anchor as serialize_text_anchor, Bias, Buffer, CharKind, OffsetRangeExt,
     Point, SelectionGoal,
 };
-use project::repository::GitFileStatus;
+use multi_buffer::AnchorRangeExt;
 use project::{search::SearchQuery, FormatTrigger, Item as _, Project, ProjectPath};
 use rpc::proto::{self, update_view, PeerId};
 use settings::Settings;
 use workspace::item::{ItemSettings, TabContentParams};
 
 use std::{
+    any::TypeId,
     borrow::Cow,
     cmp::{self, Ordering},
     iter,
     ops::Range,
-    path::{Path, PathBuf},
+    path::Path,
     sync::Arc,
 };
 use text::{BufferId, Selection};
@@ -81,6 +83,7 @@ impl FollowableItem for Editor {
             let mut buffers = futures::future::try_join_all(buffers?)
                 .await
                 .debug_assert_ok("leaders don't share views for unshared buffers")?;
+
             let editor = pane.update(&mut cx, |pane, cx| {
                 let mut editors = pane.items_of_type::<Self>();
                 editors.find(|editor| {
@@ -749,7 +752,7 @@ impl Item for Editor {
     fn save_as(
         &mut self,
         project: Model<Project>,
-        abs_path: PathBuf,
+        path: ProjectPath,
         cx: &mut ViewContext<Self>,
     ) -> Task<Result<()>> {
         let buffer = self
@@ -758,14 +761,13 @@ impl Item for Editor {
             .as_singleton()
             .expect("cannot call save_as on an excerpt list");
 
-        let file_extension = abs_path
+        let file_extension = path
+            .path
             .extension()
             .map(|a| a.to_string_lossy().to_string());
         self.report_editor_event("save", file_extension, cx);
 
-        project.update(cx, |project, cx| {
-            project.save_buffer_as(buffer, abs_path, cx)
-        })
+        project.update(cx, |project, cx| project.save_buffer_as(buffer, path, cx))
     }
 
     fn reload(&mut self, project: Model<Project>, cx: &mut ViewContext<Self>) -> Task<Result<()>> {
@@ -999,6 +1001,10 @@ impl SearchableItem for Editor {
         );
     }
 
+    fn has_filtered_search_ranges(&mut self) -> bool {
+        self.has_background_highlights::<SearchWithinRange>()
+    }
+
     fn query_suggestion(&mut self, cx: &mut ViewContext<Self>) -> String {
         let setting = EditorSettings::get_global(cx).seed_search_query_from_cursor;
         let snapshot = &self.snapshot(cx).buffer_snapshot;
@@ -1123,18 +1129,37 @@ impl SearchableItem for Editor {
         cx: &mut ViewContext<Self>,
     ) -> Task<Vec<Range<Anchor>>> {
         let buffer = self.buffer().read(cx).snapshot(cx);
+        let search_within_ranges = self
+            .background_highlights
+            .get(&TypeId::of::<SearchWithinRange>())
+            .map(|(_color, ranges)| {
+                ranges
+                    .iter()
+                    .map(|range| range.to_offset(&buffer))
+                    .collect::<Vec<_>>()
+            });
         cx.background_executor().spawn(async move {
             let mut ranges = Vec::new();
             if let Some((_, _, excerpt_buffer)) = buffer.as_singleton() {
-                ranges.extend(
-                    query
-                        .search(excerpt_buffer, None)
-                        .await
-                        .into_iter()
-                        .map(|range| {
-                            buffer.anchor_after(range.start)..buffer.anchor_before(range.end)
-                        }),
-                );
+                if let Some(search_within_ranges) = search_within_ranges {
+                    for range in search_within_ranges {
+                        let offset = range.start;
+                        ranges.extend(
+                            query
+                                .search(excerpt_buffer, Some(range))
+                                .await
+                                .into_iter()
+                                .map(|range| {
+                                    buffer.anchor_after(range.start + offset)
+                                        ..buffer.anchor_before(range.end + offset)
+                                }),
+                        );
+                    }
+                } else {
+                    ranges.extend(query.search(excerpt_buffer, None).await.into_iter().map(
+                        |range| buffer.anchor_after(range.start)..buffer.anchor_before(range.end),
+                    ));
+                }
             } else {
                 for excerpt in buffer.excerpt_boundaries_in_range(0..buffer.len()) {
                     let excerpt_range = excerpt.range.context.to_offset(&excerpt.buffer);

@@ -26,7 +26,7 @@ pub fn init(app_state: &Arc<AppState>, cx: &mut AppContext) {
             };
 
             for screen in cx.displays() {
-                let options = notification_window_options(screen, window_size);
+                let options = notification_window_options(screen, window_size, cx);
                 let window = cx.open_window(options, |cx| {
                     cx.new_view(|_| {
                         ProjectSharedNotification::new(
@@ -129,7 +129,7 @@ impl Render for ProjectSharedNotification {
 
         cx.set_rem_size(ui_font_size);
 
-        div().size_full().font(ui_font).child(
+        div().size_full().font_family(ui_font).child(
             CollabNotification::new(
                 self.owner.avatar_uri.clone(),
                 Button::new("open", "Open").on_click(cx.listener(move |this, _event, cx| {

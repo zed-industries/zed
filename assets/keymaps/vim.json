@@ -128,6 +128,7 @@
       "shift-v": "vim::ToggleVisualLine",
       "ctrl-v": "vim::ToggleVisualBlock",
       "ctrl-q": "vim::ToggleVisualBlock",
+      "shift-k": "editor::Hover",
       "shift-r": "vim::ToggleReplace",
       "0": "vim::StartOfLine", // When no number operator present, use start of line motion
       "ctrl-f": "vim::PageDown",
@@ -436,6 +437,12 @@
     }
   },
   {
+    "context": "Editor && vim_operator == ys",
+    "bindings": {
+      "s": "vim::CurrentLine"
+    }
+  },
+  {
     "context": "Editor && VimObject",
     "bindings": {
       "w": "vim::Word",
@@ -625,7 +632,10 @@
       "t": "project_panel::OpenPermanent",
       "v": "project_panel::OpenPermanent",
       "p": "project_panel::Open",
-      "x": "project_panel::RevealInFinder"
+      "x": "project_panel::RevealInFinder",
+      "shift-g": "menu::SelectLast",
+      "g g": "menu::SelectFirst",
+      "-": "project_panel::SelectParent"
     }
   }
 ]

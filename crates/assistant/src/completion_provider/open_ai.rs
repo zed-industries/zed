@@ -140,14 +140,24 @@ impl OpenAiCompletionProvider {
             messages: request
                 .messages
                 .into_iter()
-                .map(|msg| RequestMessage {
-                    role: msg.role.into(),
-                    content: msg.content,
+                .map(|msg| match msg.role {
+                    Role::User => RequestMessage::User {
+                        content: msg.content,
+                    },
+                    Role::Assistant => RequestMessage::Assistant {
+                        content: Some(msg.content),
+                        tool_calls: Vec::new(),
+                    },
+                    Role::System => RequestMessage::System {
+                        content: msg.content,
+                    },
                 })
                 .collect(),
             stream: true,
             stop: request.stop,
             temperature: request.temperature,
+            tools: Vec::new(),
+            tool_choice: None,
         }
     }
 }
@@ -231,7 +241,7 @@ impl AuthenticationPrompt {
         let text_style = TextStyle {
             color: cx.theme().colors().text,
             font_family: settings.ui_font.family.clone(),
-            font_features: settings.ui_font.features,
+            font_features: settings.ui_font.features.clone(),
             font_size: rems(0.875).into(),
             font_weight: FontWeight::NORMAL,
             font_style: FontStyle::Normal,

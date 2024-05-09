@@ -26,7 +26,7 @@ impl CollabNotification {
 }
 
 impl ParentElement for CollabNotification {
-    fn extend(&mut self, elements: impl Iterator<Item = AnyElement>) {
+    fn extend(&mut self, elements: impl IntoIterator<Item = AnyElement>) {
         self.children.extend(elements)
     }
 }
@@ -34,7 +34,7 @@ impl ParentElement for CollabNotification {
 impl RenderOnce for CollabNotification {
     fn render(self, cx: &mut WindowContext) -> impl IntoElement {
         h_flex()
-            .text_ui()
+            .text_ui(cx)
             .justify_between()
             .size_full()
             .overflow_hidden()

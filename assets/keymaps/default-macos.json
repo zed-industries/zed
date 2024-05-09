@@ -159,6 +159,8 @@
       "ctrl-cmd-space": "editor::ShowCharacterPalette",
       "cmd-;": "editor::ToggleLineNumbers",
       "cmd-alt-z": "editor::RevertSelectedHunks",
+      "cmd-'": "editor::ToggleHunkDiff",
+      "cmd-\"": "editor::ExpandAllHunkDiffs",
       "cmd-alt-g b": "editor::ToggleGitBlame"
     }
   },
@@ -209,7 +211,15 @@
     }
   },
   {
-    "context": "AssistantPanel",
+    "context": "AssistantChat > Editor", // Used in the assistant2 crate
+    "bindings": {
+      "enter": ["assistant2::Submit", "Simple"],
+      "cmd-enter": ["assistant2::Submit", "Codebase"],
+      "escape": "assistant2::Cancel"
+    }
+  },
+  {
+    "context": "AssistantPanel", // Used in the assistant crate, which we're replacing
     "bindings": {
       "cmd-g": "search::SelectNextMatch",
       "cmd-shift-g": "search::SelectPrevMatch"
@@ -541,6 +551,7 @@
     "context": "Editor && mode == full",
     "bindings": {
       "alt-enter": "editor::OpenExcerpts",
+      "shift-enter": "editor::ExpandExcerpts",
       "cmd-k enter": "editor::OpenExcerptsSplit",
       "cmd-f8": "editor::GoToHunk",
       "cmd-shift-f8": "editor::GoToPrevHunk",
@@ -567,8 +578,8 @@
       "alt-cmd-shift-c": "project_panel::CopyRelativePath",
       "f2": "project_panel::Rename",
       "enter": "project_panel::Rename",
-      "backspace": "project_panel::Delete",
-      "delete": "project_panel::Delete",
+      "backspace": "project_panel::Trash",
+      "delete": "project_panel::Trash",
       "cmd-backspace": ["project_panel::Delete", { "skip_prompt": true }],
       "cmd-delete": ["project_panel::Delete", { "skip_prompt": true }],
       "alt-cmd-r": "project_panel::RevealInFinder",

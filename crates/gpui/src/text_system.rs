@@ -311,6 +311,10 @@ impl WindowTextSystem {
         self.line_layout_cache.reuse_layouts(index)
     }
 
+    pub(crate) fn truncate_layouts(&self, index: LineLayoutIndex) {
+        self.line_layout_cache.truncate_layouts(index)
+    }
+
     /// Shape the given line, at the given font_size, for painting to the screen.
     /// Subsets of the line can be styled independently with the `runs` parameter.
     ///

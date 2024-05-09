@@ -114,7 +114,7 @@ impl BufferSearchBar {
                 color
             },
             font_family: settings.buffer_font.family.clone(),
-            font_features: settings.buffer_font.features,
+            font_features: settings.buffer_font.features.clone(),
             font_size: rems(0.875).into(),
             font_weight: FontWeight::NORMAL,
             font_style: FontStyle::Normal,
@@ -188,7 +188,7 @@ impl Render for BufferSearchBar {
         let should_show_replace_input = self.replace_enabled && supported_options.replacement;
         let in_replace = self.replacement_editor.focus_handle(cx).is_focused(cx);
 
-        let mut key_context = KeyContext::default();
+        let mut key_context = KeyContext::new_with_defaults();
         key_context.add("BufferSearchBar");
         if in_replace {
             key_context.add("in_replace");
@@ -425,10 +425,6 @@ impl ToolbarItemView for BufferSearchBar {
             }
         }
         ToolbarItemLocation::Hidden
-    }
-
-    fn row_count(&self, _: &WindowContext<'_>) -> usize {
-        1
     }
 }
 

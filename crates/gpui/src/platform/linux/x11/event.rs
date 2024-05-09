@@ -1,4 +1,7 @@
-use x11rb::protocol::xproto;
+use x11rb::protocol::{
+    xinput,
+    xproto::{self, ModMask},
+};
 
 use crate::{Modifiers, MouseButton, NavigationDirection};
 
@@ -23,12 +26,23 @@ pub(crate) fn modifiers_from_state(state: xproto::KeyButMask) -> Modifiers {
     }
 }
 
-pub(crate) fn button_from_state(state: xproto::KeyButMask) -> Option<MouseButton> {
-    Some(if state.contains(xproto::KeyButMask::BUTTON1) {
+pub(crate) fn modifiers_from_xinput_info(modifier_info: xinput::ModifierInfo) -> Modifiers {
+    Modifiers {
+        control: modifier_info.effective as u16 & ModMask::CONTROL.bits()
+            == ModMask::CONTROL.bits(),
+        alt: modifier_info.effective as u16 & ModMask::M1.bits() == ModMask::M1.bits(),
+        shift: modifier_info.effective as u16 & ModMask::SHIFT.bits() == ModMask::SHIFT.bits(),
+        platform: modifier_info.effective as u16 & ModMask::M4.bits() == ModMask::M4.bits(),
+        function: false,
+    }
+}
+
+pub(crate) fn button_from_mask(button_mask: u32) -> Option<MouseButton> {
+    Some(if button_mask & 2 == 2 {
         MouseButton::Left
-    } else if state.contains(xproto::KeyButMask::BUTTON2) {
+    } else if button_mask & 4 == 4 {
         MouseButton::Middle
-    } else if state.contains(xproto::KeyButMask::BUTTON3) {
+    } else if button_mask & 8 == 8 {
         MouseButton::Right
     } else {
         return None;
