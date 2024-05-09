@@ -1,9 +1,12 @@
 mod archive;
 
 use anyhow::{anyhow, bail, Context, Result};
+use async_compression::futures::bufread::GzipDecoder;
+use async_tar::Archive;
 use futures::AsyncReadExt;
 use semver::Version;
 use serde::Deserialize;
+use smol::io::BufReader;
 use smol::{fs, lock::Mutex, process::Command};
 use std::io;
 use std::process::{Output, Stdio};
@@ -20,15 +23,20 @@ use smol::process::windows::CommandExt;
 
 const VERSION: &str = "v18.15.0";
 
-#[cfg(windows)]
-const NODE_PATH: &str = "node.exe";
 #[cfg(not(windows))]
 const NODE_PATH: &str = "bin/node";
-
 #[cfg(windows)]
-const NPM_PATH: &str = "node_modules/npm/bin/npm-cli.js";
+const NODE_PATH: &str = "node.exe";
+
 #[cfg(not(windows))]
 const NPM_PATH: &str = "bin/npm";
+#[cfg(windows)]
+const NPM_PATH: &str = "node_modules/npm/bin/npm-cli.js";
+
+enum ArchiveType {
+    TarGz,
+    Zip,
+}
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "kebab-case")]
@@ -160,13 +168,19 @@ impl RealNodeRuntime {
                 .await
                 .context("error creating node containing dir")?;
 
-            let ext = match consts::OS {
-                "windows" => "zip",
-                "linux" | "macos" => "tar.gz",
+            let archive_type = match consts::OS {
+                "macos" | "linux" => ArchiveType::TarGz,
+                "windows" => ArchiveType::Zip,
                 other => bail!("Running on unsupported os: {other}"),
             };
 
-            let file_name = format!("node-{VERSION}-{os}-{arch}.{ext}");
+            let file_name = format!(
+                "node-{VERSION}-{os}-{arch}.{extension}",
+                extension = match archive_type {
+                    ArchiveType::TarGz => "tar.gz",
+                    ArchiveType::Zip => "zip",
+                }
+            );
             let url = format!("https://nodejs.org/dist/{VERSION}/{file_name}");
             let mut response = self
                 .http
@@ -175,10 +189,13 @@ impl RealNodeRuntime {
                 .context("error downloading Node binary tarball")?;
 
             let body = response.body_mut();
-            match ext {
-                "zip" => archive::extract_zip(&node_containing_dir, body).await?,
-                "tar.gz" => archive::extract_tar_gz(&node_containing_dir, body).await?,
-                other => bail!("Unsupported to extract: {other}"),
+            match archive_type {
+                ArchiveType::TarGz => {
+                    let decompressed_bytes = GzipDecoder::new(BufReader::new(response.body_mut()));
+                    let archive = Archive::new(decompressed_bytes);
+                    archive.unpack(&node_containing_dir).await?;
+                }
+                ArchiveType::Zip => archive::extract_zip(&node_containing_dir, body).await?,
             }
         }
 
