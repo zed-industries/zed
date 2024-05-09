@@ -389,6 +389,7 @@ dependencies = [
  "language",
  "languages",
  "log",
+ "markdown",
  "nanoid",
  "node_runtime",
  "open_ai",

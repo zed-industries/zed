@@ -26,6 +26,7 @@ use gpui::{
     FocusableView, ListAlignment, ListState, Model, Render, Task, View, WeakView,
 };
 use language::{language_settings::SoftWrap, LanguageRegistry};
+use markdown::{Markdown, MarkdownStyle};
 use open_ai::{FunctionContent, ToolCall, ToolCallContent};
 use rich_text::RichText;
 use saved_conversation::{SavedAssistantMessagePart, SavedChatMessage, SavedConversation};
@@ -272,6 +273,7 @@ pub struct AssistantChat {
     tool_registry: Arc<ToolRegistry>,
     attachment_registry: Arc<AttachmentRegistry>,
     project_index: Model<ProjectIndex>,
+    markdown_style: MarkdownStyle,
 }
 
 struct EditingMessage {
@@ -339,6 +341,42 @@ impl AssistantChat {
             pending_completion: None,
             attachment_registry,
             tool_registry,
+            markdown_style: MarkdownStyle {
+                code_block: gpui::TextStyleRefinement {
+                    font_family: Some("Zed Mono".into()),
+                    color: Some(cx.theme().colors().editor_foreground),
+                    background_color: Some(cx.theme().colors().editor_background),
+                    ..Default::default()
+                },
+                inline_code: gpui::TextStyleRefinement {
+                    font_family: Some("Zed Mono".into()),
+                    // @nate: Could we add inline-code specific styles to the theme?
+                    color: Some(cx.theme().colors().editor_foreground),
+                    background_color: Some(cx.theme().colors().editor_background),
+                    ..Default::default()
+                },
+                rule_color: Color::Muted.color(cx),
+                block_quote_border_color: Color::Muted.color(cx),
+                block_quote: gpui::TextStyleRefinement {
+                    color: Some(Color::Muted.color(cx)),
+                    ..Default::default()
+                },
+                link: gpui::TextStyleRefinement {
+                    color: Some(Color::Accent.color(cx)),
+                    underline: Some(gpui::UnderlineStyle {
+                        thickness: px(1.),
+                        color: Some(Color::Accent.color(cx)),
+                        wavy: false,
+                    }),
+                    ..Default::default()
+                },
+                syntax: cx.theme().syntax().clone(),
+                selection_background_color: {
+                    let mut selection = cx.theme().players().local().selection;
+                    selection.fade_out(0.7);
+                    selection
+                },
+            },
         }
     }
 
@@ -499,7 +537,6 @@ impl AssistantChat {
                 });
 
                 let mut stream = completion?.await?;
-                let mut body = String::new();
                 while let Some(delta) = stream.next().await {
                     let delta = delta?;
                     this.update(cx, |this, cx| {
@@ -508,7 +545,14 @@ impl AssistantChat {
                         {
                             if messages.is_empty() {
                                 messages.push(AssistantMessagePart {
-                                    body: RichText::default(),
+                                    body: cx.new_view(|cx| {
+                                        Markdown::new(
+                                            "".into(),
+                                            this.markdown_style.clone(),
+                                            this.language_registry.clone(),
+                                            cx,
+                                        )
+                                    }),
                                     tool_calls: Vec::new(),
                                 })
                             }
@@ -516,7 +560,9 @@ impl AssistantChat {
                             let message = messages.last_mut().unwrap();
 
                             if let Some(content) = &delta.content {
-                                body.push_str(content);
+                                message
+                                    .body
+                                    .update(cx, |message, cx| message.append(&content, cx));
                             }
 
                             for tool_call in delta.tool_calls {
@@ -543,8 +589,6 @@ impl AssistantChat {
                                 }
                             }
 
-                            message.body =
-                                RichText::new(body.clone(), &[], &this.language_registry);
                             cx.notify();
                         } else {
                             unreachable!()
@@ -607,7 +651,14 @@ impl AssistantChat {
             self.messages.last_mut()
         {
             messages.push(AssistantMessagePart {
-                body: RichText::default(),
+                body: cx.new_view(|cx| {
+                    Markdown::new(
+                        "".into(),
+                        self.markdown_style.clone(),
+                        self.language_registry.clone(),
+                        cx,
+                    )
+                }),
                 tool_calls: Vec::new(),
             });
             return;
@@ -616,7 +667,14 @@ impl AssistantChat {
         let message = ChatMessage::Assistant(AssistantMessage {
             id: self.next_message_id.post_inc(),
             messages: vec![AssistantMessagePart {
-                body: RichText::default(),
+                body: cx.new_view(|cx| {
+                    Markdown::new(
+                        "".into(),
+                        self.markdown_style.clone(),
+                        self.language_registry.clone(),
+                        cx,
+                    )
+                }),
                 tool_calls: Vec::new(),
             }],
             error: None,
@@ -830,13 +888,8 @@ impl AssistantChat {
                 let mut message_elements = Vec::new();
 
                 for message in messages {
-                    if !message.body.text.is_empty() {
-                        message_elements.push(
-                            div()
-                                // todo!(): The element Id will need to be a combo of the base ID and the index within the grouping
-                                .child(message.body.element(ElementId::from(id.0), cx))
-                                .into_any_element(),
-                        )
+                    if !message.body.read(cx).source().is_empty() {
+                        message_elements.push(div().child(message.body.clone()).into_any())
                     }
 
                     let tools = message
@@ -846,7 +899,7 @@ impl AssistantChat {
                         .collect::<Vec<AnyElement>>();
 
                     if !tools.is_empty() {
-                        message_elements.push(div().children(tools).into_any_element())
+                        message_elements.push(div().children(tools).into_any())
                     }
                 }
 
@@ -906,7 +959,7 @@ impl AssistantChat {
                     for message in messages {
                         let body = message.body.clone();
 
-                        if body.text.is_empty() && message.tool_calls.is_empty() {
+                        if body.read(cx).source().is_empty() && message.tool_calls.is_empty() {
                             continue;
                         }
 
@@ -925,7 +978,7 @@ impl AssistantChat {
                             .collect();
 
                         completion_messages.push(CompletionMessage::Assistant {
-                            content: Some(body.text.to_string()),
+                            content: Some(body.read(cx).source().to_string()),
                             tool_calls: tool_calls_from_assistant,
                         });
 
@@ -982,7 +1035,7 @@ impl AssistantChat {
                     .messages
                     .iter()
                     .map(|message| SavedAssistantMessagePart {
-                        body: message.body.text.clone(),
+                        body: message.body.read(cx).source().to_string().into(),
                         tool_calls: message
                             .tool_calls
                             .iter()
@@ -1094,7 +1147,7 @@ struct UserMessage {
 }
 
 struct AssistantMessagePart {
-    pub body: RichText,
+    pub body: View<Markdown>,
     pub tool_calls: Vec<ToolFunctionCall>,
 }
 
