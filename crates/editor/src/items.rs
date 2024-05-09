@@ -1019,10 +1019,36 @@ impl SearchableItem for Editor {
             self.clear_background_highlights::<SearchWithinRange>(cx);
         }
 
-        if enabled {
-            let ranges = self.selections.disjoint_anchor_ranges();
-            self.set_search_within_ranges(&ranges, cx);
+        if !enabled {
+            return;
         }
+
+        let snapshot = &self.snapshot(cx).buffer_snapshot;
+        let ranges = self
+            .selections
+            .disjoint_anchor_ranges()
+            .into_iter()
+            .map(|range| {
+                let point_range = range.to_point(snapshot);
+
+                let start_anchor = snapshot.anchor_before(Point {
+                    row: point_range.start.row,
+                    column: 0,
+                });
+
+                let end_anchor = if point_range.end.row == snapshot.max_buffer_row() {
+                    snapshot.anchor_after(snapshot.max_point())
+                } else {
+                    snapshot.anchor_before(Point {
+                        row: point_range.end.row + 1,
+                        column: 0,
+                    })
+                };
+
+                start_anchor..end_anchor
+            })
+            .collect::<Vec<_>>();
+        self.set_search_within_ranges(&ranges, cx);
     }
 
     fn query_suggestion(&mut self, cx: &mut ViewContext<Self>) -> String {
