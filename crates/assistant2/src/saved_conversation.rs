@@ -75,8 +75,6 @@ impl SavedConversationMetadata {
                     continue;
                 }
 
-                dbg!(&file_name);
-
                 let title = re.replace(file_name, "");
                 conversations.push(Self {
                     title: title.into_owned(),
