@@ -917,13 +917,11 @@ mod element {
                         Axis::Vertical => CursorStyle::ResizeRow,
                         Axis::Horizontal => CursorStyle::ResizeColumn,
                     };
-                    println!("panel setting cursor: {:?}", cursor_style);
                     cx.set_cursor_style(cursor_style, &handle.hitbox);
                     cx.paint_quad(gpui::fill(
                         handle.divider_bounds,
                         cx.theme().colors().pane_group_border,
                     ));
-                    println!("panel finish setting cursor");
 
                     cx.on_mouse_event({
                         let dragged_handle = layout.dragged_handle.clone();

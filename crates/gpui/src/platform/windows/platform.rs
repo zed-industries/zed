@@ -659,7 +659,6 @@ impl Platform for WindowsPlatform {
     }
 
     fn set_cursor_style(&self, style: CursorStyle) {
-        println!("Changing cursor: {:?}", style);
         let hcursor = load_cursor(style);
         self.post_message(CURSOR_STYLE_CHANGED, WPARAM(0), LPARAM(hcursor.0));
         self.state.borrow_mut().current_cursor = hcursor;
