@@ -25,29 +25,6 @@ use windows::{
 
 use crate::{PlatformDispatcher, TaskLabel};
 
-macro_rules! generate_handler {
-    ($handler_type: tt, $runnable: ident, $has_param: ident) => {{
-        macro_rules! generate_func {
-            (true, $function: block) => {
-                $handler_type::new(move |_| $function)
-            };
-            (false, $function: block) => {
-                $handler_type::new(move || $function)
-            };
-        }
-        let runnable = $runnable;
-        let task_wrapper = TaskWrapper(runnable.into_raw().as_ptr() as *mut c_void);
-        generate_func!($has_param, {
-            let task = unsafe {
-                let captured = task_wrapper;
-                Runnable::<()>::from_raw(std::ptr::NonNull::new_unchecked(captured.0 as *mut ()))
-            };
-            task.run();
-            Ok(())
-        })
-    }};
-}
-
 pub(crate) struct WindowsDispatcher {
     controller: DispatcherQueueController,
     main_queue: DispatcherQueue,
@@ -81,7 +58,19 @@ impl WindowsDispatcher {
     }
 
     fn dispatch_on_threadpool(&self, runnable: Runnable) {
-        let handler = generate_handler!(WorkItemHandler, runnable, true);
+        let handler = {
+            let task_wrapper = TaskWrapper(runnable.into_raw().as_ptr() as *mut c_void);
+            WorkItemHandler::new(move |_| {
+                let task = unsafe {
+                    let captured = task_wrapper;
+                    Runnable::<()>::from_raw(std::ptr::NonNull::new_unchecked(
+                        captured.0 as *mut (),
+                    ))
+                };
+                task.run();
+                Ok(())
+            })
+        };
         ThreadPool::RunWithPriorityAndOptionsAsync(
             &handler,
             WorkItemPriority::High,
@@ -91,7 +80,20 @@ impl WindowsDispatcher {
     }
 
     fn dispatch_on_threadpool_after(&self, runnable: Runnable, duration: Duration) {
-        let handler = generate_handler!(TimerElapsedHandler, runnable, true);
+        let handler = {
+            let runnable = runnable;
+            let task_wrapper = TaskWrapper(runnable.into_raw().as_ptr() as *mut c_void);
+            TimerElapsedHandler::new(move |_| {
+                let task = unsafe {
+                    let captured = task_wrapper;
+                    Runnable::<()>::from_raw(std::ptr::NonNull::new_unchecked(
+                        captured.0 as *mut (),
+                    ))
+                };
+                task.run();
+                Ok(())
+            })
+        };
         let delay = TimeSpan {
             // A time period expressed in 100-nanosecond units.
             // 10,000,000 ticks per second
@@ -126,7 +128,20 @@ impl PlatformDispatcher for WindowsDispatcher {
     }
 
     fn dispatch_on_main_thread(&self, runnable: Runnable) {
-        let handler = generate_handler!(DispatcherQueueHandler, runnable, false);
+        let handler = {
+            let runnable = runnable;
+            let task_wrapper = TaskWrapper(runnable.into_raw().as_ptr() as *mut c_void);
+            DispatcherQueueHandler::new(move || {
+                let task = unsafe {
+                    let captured = task_wrapper;
+                    Runnable::<()>::from_raw(std::ptr::NonNull::new_unchecked(
+                        captured.0 as *mut (),
+                    ))
+                };
+                task.run();
+                Ok(())
+            })
+        };
         self.main_queue.TryEnqueue(&handler).log_err();
     }
 
