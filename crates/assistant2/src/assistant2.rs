@@ -10,8 +10,8 @@ use crate::ui::UserOrAssistant;
 use ::ui::{div, prelude::*, Color, Tooltip, ViewContext};
 use anyhow::{Context, Result};
 use assistant_tooling::{
-    tool_running_placeholder, AttachmentRegistry, ProjectContext, ToolFunctionCall,
-    ToolFunctionCallState, ToolRegistry, UserAttachment,
+    tool_running_placeholder, AttachmentRegistry, ProjectContext, ToolFunctionCall, ToolRegistry,
+    UserAttachment,
 };
 use attachments::ActiveEditorAttachmentTool;
 use client::{proto, Client, UserStore};
@@ -519,35 +519,27 @@ impl AssistantChat {
                                 body.push_str(content);
                             }
 
-                            for tool_call in delta.tool_calls {
-                                let index = tool_call.index as usize;
+                            for tool_call_delta in delta.tool_calls {
+                                let index = tool_call_delta.index as usize;
                                 if index >= message.tool_calls.len() {
                                     message.tool_calls.resize_with(index + 1, Default::default);
                                 }
-                                let call = &mut message.tool_calls[index];
+                                let tool_call = &mut message.tool_calls[index];
 
-                                if let Some(id) = &tool_call.id {
-                                    call.id.push_str(id);
+                                if let Some(id) = &tool_call_delta.id {
+                                    tool_call.id.push_str(id);
                                 }
 
-                                match tool_call.variant {
-                                    Some(proto::tool_call_delta::Variant::Function(tool_call)) => {
-                                        if let Some(name) = &tool_call.name {
-                                            call.name.push_str(name);
-                                        }
-                                        if let Some(arguments) = &tool_call.arguments {
-                                            if call.arguments.is_empty() {
-                                                if let Some(view) =
-                                                    this.tool_registry.view_for_tool(&call.name, cx)
-                                                {
-                                                    call.state =
-                                                        ToolFunctionCallState::KnownTool(view);
-                                                } else {
-                                                    call.state = ToolFunctionCallState::NoSuchTool;
-                                                }
-                                            }
-                                            call.arguments.push_str(arguments);
-                                        }
+                                match tool_call_delta.variant {
+                                    Some(proto::tool_call_delta::Variant::Function(
+                                        tool_call_delta,
+                                    )) => {
+                                        this.tool_registry.update_tool_call(
+                                            tool_call,
+                                            tool_call_delta.name.as_deref(),
+                                            tool_call_delta.arguments.as_deref(),
+                                            cx,
+                                        );
                                     }
                                     None => {}
                                 }
@@ -580,10 +572,8 @@ impl AssistantChat {
                     } else {
                         if let Some(current_message) = messages.last_mut() {
                             for tool_call in current_message.tool_calls.iter() {
-                                if let ToolFunctionCallState::KnownTool(view) = &tool_call.state {
-                                    view.set_input(&tool_call.arguments, cx);
-                                    tool_tasks.push(view.execute(cx));
-                                }
+                                tool_tasks
+                                    .extend(this.tool_registry.execute_tool_call(&tool_call, cx));
                             }
                         }
                     }
@@ -929,17 +919,11 @@ impl AssistantChat {
 
                         for tool_call in &message.tool_calls {
                             // Every tool call _must_ have a result by ID, otherwise OpenAI will error.
-                            let content = match &tool_call.state {
-                                ToolFunctionCallState::Initializing => String::new(),
-                                ToolFunctionCallState::NoSuchTool => {
-                                    format!("No such tool: {}", tool_call.name)
-                                }
-                                ToolFunctionCallState::KnownTool(view)
-                                | ToolFunctionCallState::ExecutedTool(view) => {
-                                    view.generate(&mut project_context, cx)
-                                }
-                            };
-
+                            let content = self.tool_registry.content_for_tool_call(
+                                tool_call,
+                                &mut project_context,
+                                cx,
+                            );
                             completion_messages.push(CompletionMessage::Tool {
                                 content,
                                 tool_call_id: tool_call.id.clone(),

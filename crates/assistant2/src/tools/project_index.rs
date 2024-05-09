@@ -15,14 +15,23 @@ pub struct ProjectIndexTool {
     project_index: Model<ProjectIndex>,
 }
 
+#[derive(Default)]
+enum ProjectIndexToolState {
+    #[default]
+    CollectingQuery,
+    Searching,
+    Error(anyhow::Error),
+    Finished {
+        excerpts: BTreeMap<ProjectPath, Vec<Range<usize>>>,
+        index_status: Status,
+    },
+}
+
 pub struct ProjectIndexView {
-    error: Option<anyhow::Error>,
     project_index: Model<ProjectIndex>,
     input: CodebaseQuery,
-    status: Status,
-    excerpts: BTreeMap<ProjectPath, Vec<Range<usize>>>,
-    element_id: ElementId,
     expanded_header: bool,
+    state: ProjectIndexToolState,
 }
 
 #[derive(Default, Deserialize, JsonSchema)]
@@ -34,8 +43,9 @@ pub struct CodebaseQuery {
 }
 
 #[derive(Serialize, Deserialize)]
-pub struct ProjectIndexOutput {
-    status: Status,
+pub struct SerializedState {
+    index_status: Status,
+    error_message: Option<String>,
     worktrees: BTreeMap<Arc<Path>, WorktreeIndexOutput>,
 }
 
@@ -53,25 +63,43 @@ impl ProjectIndexView {
 
 impl Render for ProjectIndexView {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
-        if let Some(error) = &self.error {
-            return format!("failed to search: {error:?}").into_any_element();
-        }
-
         let query = self.input.query.clone();
-        let file_count = self.excerpts.len();
+
+        let (header_text, content) = match &self.state {
+            ProjectIndexToolState::Error(error) => {
+                return format!("failed to search: {error:?}").into_any_element()
+            }
+            ProjectIndexToolState::CollectingQuery | ProjectIndexToolState::Searching => {
+                ("Searching...".to_string(), div())
+            }
+            ProjectIndexToolState::Finished { excerpts, .. } => {
+                let file_count = excerpts.len();
+
+                let header_text = format!(
+                    "Read {} {}",
+                    file_count,
+                    if file_count == 1 { "file" } else { "files" }
+                );
+
+                let el = v_flex().gap_2().children(excerpts.keys().map(|path| {
+                    h_flex().gap_2().child(Icon::new(IconName::File)).child(
+                        Label::new(path.path.to_string_lossy().to_string()).color(Color::Muted),
+                    )
+                }));
+
+                (header_text, el)
+            }
+        };
+
         let header = h_flex()
             .gap_2()
             .child(Icon::new(IconName::File))
-            .child(format!(
-                "Read {} {}",
-                file_count,
-                if file_count == 1 { "file" } else { "files" }
-            ));
+            .child(header_text);
 
         v_flex()
             .gap_3()
             .child(
-                CollapsibleContainer::new(self.element_id.clone(), self.expanded_header)
+                CollapsibleContainer::new("collapsible-container", self.expanded_header)
                     .start_slot(header)
                     .on_click(cx.listener(move |this, _, cx| {
                         this.toggle_header(cx);
@@ -86,12 +114,7 @@ impl Render for ProjectIndexView {
                                     .child(Icon::new(IconName::MagnifyingGlass))
                                     .child(Label::new(format!("`{}`", query)).color(Color::Muted)),
                             )
-                            .child(v_flex().gap_2().children(self.excerpts.keys().map(|path| {
-                                h_flex().gap_2().child(Icon::new(IconName::File)).child(
-                                    Label::new(path.path.to_string_lossy().to_string())
-                                        .color(Color::Muted),
-                                )
-                            }))),
+                            .child(content),
                     ),
             )
             .into_any_element()
@@ -100,29 +123,35 @@ impl Render for ProjectIndexView {
 
 impl ToolOutput for ProjectIndexView {
     type Input = CodebaseQuery;
-    type SerializedState = ProjectIndexOutput;
+    type SerializedState = SerializedState;
 
     fn generate(
         &self,
         context: &mut assistant_tooling::ProjectContext,
         _: &mut ViewContext<Self>,
     ) -> String {
-        if let Some(error) = &self.error {
-            return format!("failed to search: {error:?}");
+        match &self.state {
+            ProjectIndexToolState::CollectingQuery => String::new(),
+            ProjectIndexToolState::Searching => String::new(),
+            ProjectIndexToolState::Error(error) => format!("failed to search: {error:?}"),
+            ProjectIndexToolState::Finished {
+                excerpts,
+                index_status,
+            } => {
+                let mut body = "found results in the following paths:\n".to_string();
+
+                for (project_path, ranges) in excerpts {
+                    context.add_excerpts(project_path.clone(), ranges);
+                    writeln!(&mut body, "* {}", &project_path.path.display()).unwrap();
+                }
+
+                if *index_status != Status::Idle {
+                    body.push_str("Still indexing. Results may be incomplete.\n");
+                }
+
+                body
+            }
         }
-
-        let mut body = "found results in the following paths:\n".to_string();
-
-        for (project_path, ranges) in &self.excerpts {
-            context.add_excerpts(project_path.clone(), ranges);
-            writeln!(&mut body, "* {}", &project_path.path.display()).unwrap();
-        }
-
-        if self.status != Status::Idle {
-            body.push_str("Still indexing. Results may be incomplete.\n");
-        }
-
-        body
     }
 
     fn set_input(&mut self, input: Self::Input, cx: &mut ViewContext<Self>) {
@@ -131,8 +160,11 @@ impl ToolOutput for ProjectIndexView {
     }
 
     fn execute(&mut self, cx: &mut ViewContext<Self>) -> Task<Result<()>> {
+        self.state = ProjectIndexToolState::Searching;
+        cx.notify();
+
         let project_index = self.project_index.read(cx);
-        let status = project_index.status();
+        let index_status = project_index.status();
         let search = project_index.search(
             self.input.query.clone(),
             self.input.limit.unwrap_or(DEFAULT_SEARCH_LIMIT),
@@ -144,20 +176,24 @@ impl ToolOutput for ProjectIndexView {
             this.update(&mut cx, |this, cx| {
                 match search_result {
                     Ok(search_results) => {
-                        this.status = status;
+                        let mut excerpts = BTreeMap::<ProjectPath, Vec<Range<usize>>>::new();
                         for search_result in search_results {
                             let project_path = ProjectPath {
                                 worktree_id: search_result.worktree.read(cx).id(),
                                 path: search_result.path,
                             };
-                            this.excerpts
+                            excerpts
                                 .entry(project_path)
                                 .or_default()
                                 .push(search_result.range);
                         }
+                        this.state = ProjectIndexToolState::Finished {
+                            excerpts,
+                            index_status,
+                        };
                     }
                     Err(error) => {
-                        this.error = Some(error);
+                        this.state = ProjectIndexToolState::Error(error);
                     }
                 }
                 cx.notify();
@@ -166,52 +202,67 @@ impl ToolOutput for ProjectIndexView {
     }
 
     fn serialize(&self, cx: &mut ViewContext<Self>) -> Self::SerializedState {
-        let mut state = ProjectIndexOutput {
-            status: self.status,
+        let mut serialized = SerializedState {
+            error_message: None,
+            index_status: Status::Idle,
             worktrees: Default::default(),
         };
-
-        if let Some(project) = self.project_index.read(cx).project().upgrade() {
-            let project = project.read(cx);
-            for (project_path, excerpts) in &self.excerpts {
-                if let Some(worktree) = project.worktree_for_id(project_path.worktree_id, cx) {
-                    let worktree_path = worktree.read(cx).abs_path();
-                    state
-                        .worktrees
-                        .entry(worktree_path)
-                        .or_default()
-                        .excerpts
-                        .insert(project_path.path.clone(), excerpts.clone());
+        match &self.state {
+            ProjectIndexToolState::Error(err) => serialized.error_message = Some(err.to_string()),
+            ProjectIndexToolState::Finished {
+                excerpts,
+                index_status,
+            } => {
+                serialized.index_status = *index_status;
+                if let Some(project) = self.project_index.read(cx).project().upgrade() {
+                    let project = project.read(cx);
+                    for (project_path, excerpts) in excerpts {
+                        if let Some(worktree) =
+                            project.worktree_for_id(project_path.worktree_id, cx)
+                        {
+                            let worktree_path = worktree.read(cx).abs_path();
+                            serialized
+                                .worktrees
+                                .entry(worktree_path)
+                                .or_default()
+                                .excerpts
+                                .insert(project_path.path.clone(), excerpts.clone());
+                        }
+                    }
                 }
             }
+            _ => {}
         }
-
-        state
+        serialized
     }
 
     fn deserialize(
         &mut self,
-        output: Self::SerializedState,
+        serialized: Self::SerializedState,
         cx: &mut ViewContext<Self>,
     ) -> Result<()> {
-        self.status = output.status;
-        self.excerpts.clear();
-        if let Some(project) = self.project_index.read(cx).project().upgrade() {
-            let project = project.read(cx);
-            for (worktree_path, state) in output.worktrees {
-                if let Some(worktree) = project
-                    .worktrees()
-                    .find(|worktree| worktree.read(cx).abs_path() == worktree_path)
-                {
-                    let worktree_id = worktree.read(cx).id();
-                    for (path, excerpts) in state.excerpts {
-                        self.excerpts
-                            .insert(ProjectPath { worktree_id, path }, excerpts);
+        if !serialized.worktrees.is_empty() {
+            let mut excerpts = BTreeMap::<ProjectPath, Vec<Range<usize>>>::new();
+            if let Some(project) = self.project_index.read(cx).project().upgrade() {
+                let project = project.read(cx);
+                for (worktree_path, worktree_state) in serialized.worktrees {
+                    if let Some(worktree) = project
+                        .worktrees()
+                        .find(|worktree| worktree.read(cx).abs_path() == worktree_path)
+                    {
+                        let worktree_id = worktree.read(cx).id();
+                        for (path, serialized_excerpts) in worktree_state.excerpts {
+                            excerpts.insert(ProjectPath { worktree_id, path }, serialized_excerpts);
+                        }
                     }
                 }
             }
+            self.state = ProjectIndexToolState::Finished {
+                excerpts,
+                index_status: serialized.index_status,
+            };
         }
-
+        cx.notify();
         Ok(())
     }
 }
@@ -235,11 +286,8 @@ impl LanguageModelTool for ProjectIndexTool {
 
     fn view(&self, cx: &mut WindowContext) -> gpui::View<Self::View> {
         cx.new_view(|_| ProjectIndexView {
-            error: None,
+            state: ProjectIndexToolState::CollectingQuery,
             input: Default::default(),
-            status: Status::Idle,
-            excerpts: Default::default(),
-            element_id: ElementId::Name(nanoid::nanoid!().into()),
             expanded_header: false,
             project_index: self.project_index.clone(),
         })

@@ -422,6 +422,7 @@ dependencies = [
  "gpui",
  "log",
  "project",
+ "repair_json",
  "schemars",
  "serde",
  "serde_json",

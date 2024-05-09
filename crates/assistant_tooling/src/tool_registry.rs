@@ -1,6 +1,7 @@
 use crate::ProjectContext;
 use anyhow::{anyhow, Result};
 use gpui::{AnyElement, AnyView, IntoElement, Render, Task, View, WindowContext};
+use repair_json::repair;
 use schemars::{schema::RootSchema, schema_for, JsonSchema};
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use serde_json::value::RawValue;
@@ -24,7 +25,7 @@ pub struct ToolFunctionCall {
     pub id: String,
     pub name: String,
     pub arguments: String,
-    pub state: ToolFunctionCallState,
+    state: ToolFunctionCallState,
 }
 
 #[derive(Default)]
@@ -135,9 +136,6 @@ struct RegisteredTool {
     enabled: AtomicBool,
     type_id: TypeId,
     build_view: Box<dyn Fn(&mut WindowContext) -> Box<dyn ToolView>>,
-    // execute: Box<dyn Fn(&ToolFunctionCall, &mut WindowContext) -> Task<Result<ToolFunctionCall>>>,
-    // deserialize: Box<dyn Fn(&SavedToolFunctionCall, &mut WindowContext) -> ToolFunctionCall>,
-    // render_running: fn(&ToolFunctionCall, &mut WindowContext) -> gpui::AnyElement,
     definition: ToolFunctionDefinition,
 }
 
@@ -179,6 +177,46 @@ impl ToolRegistry {
         Some((tool.build_view)(cx))
     }
 
+    pub fn update_tool_call(
+        &self,
+        call: &mut ToolFunctionCall,
+        name: Option<&str>,
+        arguments: Option<&str>,
+        cx: &mut WindowContext,
+    ) {
+        if let Some(name) = name {
+            call.name.push_str(name);
+        }
+        if let Some(arguments) = arguments {
+            if call.arguments.is_empty() {
+                if let Some(view) = self.view_for_tool(&call.name, cx) {
+                    call.state = ToolFunctionCallState::KnownTool(view);
+                } else {
+                    call.state = ToolFunctionCallState::NoSuchTool;
+                }
+            }
+            call.arguments.push_str(arguments);
+
+            if let ToolFunctionCallState::KnownTool(view) = &call.state {
+                if let Ok(arguments) = repair(call.arguments.clone()) {
+                    view.set_input(&arguments, cx)
+                }
+            }
+        }
+    }
+
+    pub fn execute_tool_call(
+        &self,
+        tool_call: &ToolFunctionCall,
+        cx: &mut WindowContext,
+    ) -> Option<Task<Result<()>>> {
+        if let ToolFunctionCallState::KnownTool(view) = &tool_call.state {
+            Some(view.execute(cx))
+        } else {
+            None
+        }
+    }
+
     pub fn render_tool_call(
         &self,
         tool_call: &ToolFunctionCall,
@@ -189,6 +227,23 @@ impl ToolRegistry {
             ToolFunctionCallState::Initializing => unknown_tool_placeholder(),
             ToolFunctionCallState::KnownTool(view) | ToolFunctionCallState::ExecutedTool(view) => {
                 view.view().into_any_element()
+            }
+        }
+    }
+
+    pub fn content_for_tool_call(
+        &self,
+        tool_call: &ToolFunctionCall,
+        project_context: &mut ProjectContext,
+        cx: &mut WindowContext,
+    ) -> String {
+        match &tool_call.state {
+            ToolFunctionCallState::Initializing => String::new(),
+            ToolFunctionCallState::NoSuchTool => {
+                format!("No such tool: {}", tool_call.name)
+            }
+            ToolFunctionCallState::KnownTool(view) | ToolFunctionCallState::ExecutedTool(view) => {
+                view.generate(project_context, cx)
             }
         }
     }
@@ -279,7 +334,10 @@ impl<T: ToolOutput> ToolView for View<T> {
 
     fn set_input(&self, input: &str, cx: &mut WindowContext) {
         if let Ok(input) = serde_json::from_str::<T::Input>(input) {
-            self.update(cx, |view, cx| view.set_input(input, cx));
+            self.update(cx, |view, cx| {
+                view.set_input(input, cx);
+                cx.notify();
+            });
         }
     }
 
