@@ -144,6 +144,14 @@ impl RealNodeRuntime {
         let mut command = Command::new(program);
         command.env_clear();
         command.env("PATH", Self::get_node_env_path(node_dir));
+
+        #[cfg(target_os = "windows")]
+        {
+            use smol::process::windows::CommandExt;
+            const CREATE_NO_WINDOW: u32 = 0x08000000;
+            command.creation_flags(CREATE_NO_WINDOW);
+        }
+
         command
     }
 
