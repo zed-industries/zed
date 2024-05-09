@@ -983,7 +983,6 @@ fn handle_nc_mouse_up_msg(
 }
 
 fn handle_cursor_changed(lparam: LPARAM, state_ptr: Rc<WindowsWindowStatePtr>) -> Option<isize> {
-    println!("  -> cursor changed: {}", lparam.0);
     state_ptr.state.borrow_mut().current_cursor = HCURSOR(lparam.0);
     Some(0)
 }
@@ -995,8 +994,6 @@ fn handle_set_cursor(lparam: LPARAM, state_ptr: Rc<WindowsWindowStatePtr>) -> Op
     ) {
         return None;
     }
-    let cur = state_ptr.state.borrow().current_cursor;
-    println!("  -> settgin cursor: {:?}", cur);
     unsafe { SetCursor(state_ptr.state.borrow().current_cursor) };
     Some(1)
 }
