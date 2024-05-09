@@ -268,10 +268,14 @@ mod tests {
     #[test]
     fn test_format_distance() {
         let date = DateTimeType::Naive(
-            NaiveDateTime::from_timestamp_opt(9600, 0).expect("Invalid NaiveDateTime for date"),
+            DateTime::from_timestamp(9600, 0)
+                .expect("Invalid NaiveDateTime for date")
+                .naive_utc(),
         );
         let base_date = DateTimeType::Naive(
-            NaiveDateTime::from_timestamp_opt(0, 0).expect("Invalid NaiveDateTime for base_date"),
+            DateTime::from_timestamp(0, 0)
+                .expect("Invalid NaiveDateTime for base_date")
+                .naive_utc(),
         );
 
         assert_eq!(
@@ -283,10 +287,14 @@ mod tests {
     #[test]
     fn test_format_distance_with_suffix() {
         let date = DateTimeType::Naive(
-            NaiveDateTime::from_timestamp_opt(9600, 0).expect("Invalid NaiveDateTime for date"),
+            DateTime::from_timestamp(9600, 0)
+                .expect("Invalid NaiveDateTime for date")
+                .naive_utc(),
         );
         let base_date = DateTimeType::Naive(
-            NaiveDateTime::from_timestamp_opt(0, 0).expect("Invalid NaiveDateTime for base_date"),
+            DateTime::from_timestamp(0, 0)
+                .expect("Invalid NaiveDateTime for base_date")
+                .naive_utc(),
         );
 
         assert_eq!(
