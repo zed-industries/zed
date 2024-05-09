@@ -483,14 +483,31 @@ impl NodeRuntime for RealNodeRuntime {
 
             command.arg(subcommand);
             command.args(args);
-            log::info!("{command:?}");
+            log::info!("executing command {command:?}");
 
             match command.output().await.context("executing npm subprocess")? {
                 output if !output.status.success() => {
-                    bail!("subprocess returned exit code {}", output.status)
+                    log::error!(
+                        "{} returned from command {:?}\nstdout: {:?}\nstderr: {:?}",
+                        output.status,
+                        command,
+                        String::from_utf8_lossy(&output.stdout),
+                        String::from_utf8_lossy(&output.stderr)
+                    );
+
+                    bail!("subprocess returned {}", output.status)
                 }
 
-                output => Ok(output),
+                output => {
+                    log::info!(
+                        "{} returned from command {:?}\nstderr: {:?}",
+                        output.status,
+                        command,
+                        String::from_utf8_lossy(&output.stderr)
+                    );
+
+                    Ok(output)
+                }
             }
         };
 
