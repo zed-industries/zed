@@ -3661,7 +3661,7 @@ impl Element for EditorElement {
                     let mut style = Style::default();
                     style.size.width = relative(1.).into();
                     style.size.height = self.style.text.line_height_in_pixels(rem_size).into();
-                    cx.request_layout(&style, None)
+                    cx.request_layout(style, None)
                 }
                 EditorMode::AutoHeight { max_lines } => {
                     let editor_handle = cx.view().clone();
@@ -3685,7 +3685,7 @@ impl Element for EditorElement {
                     let mut style = Style::default();
                     style.size.width = relative(1.).into();
                     style.size.height = relative(1.).into();
-                    cx.request_layout(&style, None)
+                    cx.request_layout(style, None)
                 }
             };
 

@@ -568,7 +568,7 @@ impl Element for MarkdownElement {
 
         let mut rendered_markdown = builder.build();
         let child_layout_id = rendered_markdown.element.request_layout(cx);
-        let layout_id = cx.request_layout(&Style::default(), [child_layout_id]);
+        let layout_id = cx.request_layout(Style::default(), [child_layout_id]);
         (layout_id, rendered_markdown)
     }
 
