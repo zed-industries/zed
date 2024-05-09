@@ -396,6 +396,7 @@ dependencies = [
  "picker",
  "project",
  "rand 0.8.5",
+ "regex",
  "release_channel",
  "rich_text",
  "schemars",

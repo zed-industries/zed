@@ -7,7 +7,7 @@ use ui::{prelude::*, HighlightedLabel, ListItem, ListItemSpacing};
 use util::ResultExt;
 use workspace::{ModalView, Workspace};
 
-use crate::saved_conversation::{self, SavedConversation};
+use crate::saved_conversation::SavedConversationMetadata;
 use crate::ToggleSavedConversations;
 
 pub struct SavedConversationPicker {
@@ -27,10 +27,26 @@ impl FocusableView for SavedConversationPicker {
 impl SavedConversationPicker {
     pub fn register(workspace: &mut Workspace, _cx: &mut ViewContext<Workspace>) {
         workspace.register_action(|workspace, _: &ToggleSavedConversations, cx| {
-            workspace.toggle_modal(cx, move |cx| {
-                let delegate = SavedConversationPickerDelegate::new(cx.view().downgrade());
-                Self::new(delegate, cx)
-            });
+            let fs = workspace.project().read(cx).fs().clone();
+
+            cx.spawn(|workspace, mut cx| async move {
+                let saved_conversations = SavedConversationMetadata::list(fs).await?;
+
+                cx.update(|cx| {
+                    workspace.update(cx, |workspace, cx| {
+                        workspace.toggle_modal(cx, move |cx| {
+                            let delegate = SavedConversationPickerDelegate::new(
+                                cx.view().downgrade(),
+                                saved_conversations,
+                            );
+                            Self::new(delegate, cx)
+                        });
+                    })
+                })??;
+
+                anyhow::Ok(())
+            })
+            .detach_and_log_err(cx);
         });
     }
 
@@ -48,14 +64,16 @@ impl Render for SavedConversationPicker {
 
 pub struct SavedConversationPickerDelegate {
     view: WeakView<SavedConversationPicker>,
-    saved_conversations: Vec<SavedConversation>,
+    saved_conversations: Vec<SavedConversationMetadata>,
     selected_index: usize,
     matches: Vec<StringMatch>,
 }
 
 impl SavedConversationPickerDelegate {
-    pub fn new(weak_view: WeakView<SavedConversationPicker>) -> Self {
-        let saved_conversations = saved_conversation::placeholder_conversations();
+    pub fn new(
+        weak_view: WeakView<SavedConversationPicker>,
+        saved_conversations: Vec<SavedConversationMetadata>,
+    ) -> Self {
         let matches = saved_conversations
             .iter()
             .map(|conversation| StringMatch {
