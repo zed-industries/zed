@@ -1,6 +1,5 @@
 use std::{ops::Range, sync::Arc};
 
-use collections::HashSet;
 use editor::{
     display_map::{DisplaySnapshot, ToDisplayPoint},
     movement,
@@ -112,7 +111,7 @@ pub fn jump(text: Arc<str>, line: bool, cx: &mut WindowContext) {
         Vim::update(cx, |vim, cx| {
             vim.update_active_editor(cx, |_, editor, cx| {
                 let map = editor.snapshot(cx);
-                let mut ranges: HashSet<Range<Anchor>> = HashSet::default();
+                let mut ranges: Vec<Range<Anchor>> = Vec::new();
                 for mut anchor in anchors {
                     if line {
                         let mut point = anchor.to_display_point(&map.display_snapshot);
@@ -122,7 +121,9 @@ pub fn jump(text: Arc<str>, line: bool, cx: &mut WindowContext) {
                             .buffer_snapshot
                             .anchor_before(point.to_point(&map.display_snapshot));
                     }
-                    ranges.insert(anchor..anchor);
+                    if ranges.last() != Some(&(anchor..anchor)) {
+                        ranges.push(anchor..anchor);
+                    }
                 }
                 editor.change_selections(Some(Autoscroll::fit()), cx, |s| {
                     s.select_anchor_ranges(ranges)
