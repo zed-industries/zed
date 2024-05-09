@@ -176,7 +176,7 @@ async fn get_cached_server_binary(
             arguments: server_binary_arguments(&server_path),
         })
     } else {
-        log::error!("missing executable in directory {:?}", server_path);
+        log::error!("missing executable in directory {:?}", container_dir);
         None
     }
 }
