@@ -509,7 +509,7 @@ fn parse_replace_all(query: &str) -> Replacement {
 
 #[cfg(test)]
 mod test {
-    use editor::DisplayPoint;
+    use editor::{display_map::DisplayRow, DisplayPoint};
     use indoc::indoc;
     use search::BufferSearchBar;
 
@@ -582,7 +582,7 @@ mod test {
             let highlights = editor.all_text_background_highlights(cx);
             assert_eq!(3, highlights.len());
             assert_eq!(
-                DisplayPoint::new(2, 0)..DisplayPoint::new(2, 2),
+                DisplayPoint::new(DisplayRow(2), 0)..DisplayPoint::new(DisplayRow(2), 2),
                 highlights[0].0
             )
         });

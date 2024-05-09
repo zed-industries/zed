@@ -93,11 +93,11 @@ use hover_links::{HoverLink, HoveredLinkState, InlayHighlight};
 use lsp::{DiagnosticSeverity, LanguageServerId};
 use mouse_context_menu::MouseContextMenu;
 use movement::TextLayoutDetails;
-use multi_buffer::ToOffsetUtf16;
 pub use multi_buffer::{
     Anchor, AnchorRangeExt, ExcerptId, ExcerptRange, MultiBuffer, MultiBufferSnapshot, ToOffset,
     ToPoint,
 };
+use multi_buffer::{MultiBufferPoint, MultiBufferRow, ToOffsetUtf16};
 use ordered_float::OrderedFloat;
 use parking_lot::{Mutex, RwLock};
 use project::project_settings::{GitGutterSetting, ProjectSettings};
@@ -505,7 +505,7 @@ pub struct Editor {
     >,
     last_bounds: Option<Bounds<Pixels>>,
     expect_bounds_change: Option<Bounds<Pixels>>,
-    tasks: HashMap<(BufferId, u32), (usize, RunnableTasks)>,
+    tasks: HashMap<(BufferId, MultiBufferRow), (usize, RunnableTasks)>,
     tasks_update_task: Option<Task<()>>,
 }
 
@@ -804,7 +804,7 @@ impl ContextMenu {
 
 enum ContextMenuOrigin {
     EditorPoint(DisplayPoint),
-    GutterIndicator(u32),
+    GutterIndicator(DisplayRow),
 }
 
 #[derive(Clone)]
@@ -1299,7 +1299,7 @@ struct CodeActionsMenu {
     buffer: Model<Buffer>,
     selected_item: usize,
     scroll_handle: UniformListScrollHandle,
-    deployed_from_indicator: Option<u32>,
+    deployed_from_indicator: Option<DisplayRow>,
 }
 
 impl CodeActionsMenu {
@@ -2498,7 +2498,9 @@ impl Editor {
         let end_column = cmp::max(tail.column(), goal_column);
         let reversed = start_column < tail.column();
 
-        let selection_ranges = (start_row..=end_row)
+        let selection_ranges = (start_row.0..=end_row.0)
+            .into_iter()
+            .map(DisplayRow)
             .filter_map(|row| {
                 if start_column <= display_map.line_len(row) && !display_map.is_block_line(row) {
                     let start = display_map
@@ -2898,7 +2900,8 @@ impl Editor {
                     .iter()
                     .map(|selection| {
                         let start_point = selection.start.to_point(&buffer);
-                        let mut indent = buffer.indent_size_for_line(start_point.row);
+                        let mut indent =
+                            buffer.indent_size_for_line(MultiBufferRow(start_point.row));
                         indent.len = cmp::min(indent.len, start_point.column);
                         let start = selection.start;
                         let end = selection.end;
@@ -2951,7 +2954,7 @@ impl Editor {
                                 let max_len_of_delimiter =
                                     delimiters.iter().map(|delimiter| delimiter.len()).max()?;
                                 let (snapshot, range) =
-                                    buffer.buffer_line_for_row(start_point.row)?;
+                                    buffer.buffer_line_for_row(MultiBufferRow(start_point.row))?;
 
                                 let mut index_of_first_non_whitespace = 0;
                                 let comment_candidate = snapshot
@@ -3015,7 +3018,7 @@ impl Editor {
                     let mut cursor = new_selection.end.to_point(&buffer);
                     if extra_newline_inserted {
                         cursor.row -= 1;
-                        cursor.column = buffer.line_len(cursor.row);
+                        cursor.column = buffer.line_len(MultiBufferRow(cursor.row));
                     }
                     new_selection.map(|_| cursor)
                 })
@@ -3075,7 +3078,7 @@ impl Editor {
                         IndentKind::Space => " ".repeat(indent.len as usize),
                         IndentKind::Tab => "\t".repeat(indent.len as usize),
                     };
-                    let point = Point::new(row, 0);
+                    let point = Point::new(row.0, 0);
                     indent_edits.push((point..point, text));
                 }
             }
@@ -3135,7 +3138,7 @@ impl Editor {
                         IndentKind::Space => " ".repeat(indent.len as usize),
                         IndentKind::Tab => "\t".repeat(indent.len as usize),
                     };
-                    let point = Point::new(row, 0);
+                    let point = Point::new(row.0, 0);
                     indent_edits.push((point..point, text));
                 }
             }
@@ -3855,11 +3858,15 @@ impl Editor {
                     let display_row = action
                         .deployed_from_indicator
                         .map(|row| {
-                            DisplayPoint::new(row, 0)
-                                .to_point(&snapshot.display_snapshot)
-                                .row
+                            MultiBufferRow(
+                                DisplayPoint::new(row, 0)
+                                    .to_point(&snapshot.display_snapshot)
+                                    .row,
+                            )
                         })
-                        .unwrap_or_else(|| this.selections.newest::<Point>(cx).head().row);
+                        .unwrap_or_else(|| {
+                            MultiBufferRow(this.selections.newest::<Point>(cx).head().row)
+                        });
                     let (buffer, buffer_row) = snapshot
                         .buffer_snapshot
                         .buffer_line_for_row(display_row)
@@ -4496,7 +4503,7 @@ impl Editor {
     fn render_code_actions_indicator(
         &self,
         _style: &EditorStyle,
-        row: u32,
+        row: DisplayRow,
         is_active: bool,
         cx: &mut ViewContext<Self>,
     ) -> Option<IconButton> {
@@ -4525,7 +4532,7 @@ impl Editor {
         self.tasks.clear()
     }
 
-    fn insert_tasks(&mut self, key: (BufferId, u32), value: (usize, RunnableTasks)) {
+    fn insert_tasks(&mut self, key: (BufferId, MultiBufferRow), value: (usize, RunnableTasks)) {
         if let Some(_) = self.tasks.insert(key, value) {
             // This case should hopefully be rare, but just in case...
             log::error!("multiple different run targets found on a single line, only the last target will be rendered")
@@ -4536,7 +4543,7 @@ impl Editor {
         &self,
         _style: &EditorStyle,
         is_active: bool,
-        row: u32,
+        row: DisplayRow,
         cx: &mut ViewContext<Self>,
     ) -> IconButton {
         IconButton::new("code_actions_indicator", ui::IconName::Play)
@@ -4556,7 +4563,7 @@ impl Editor {
 
     pub fn render_fold_indicators(
         &mut self,
-        fold_data: Vec<Option<(FoldStatus, u32, bool)>>,
+        fold_data: Vec<Option<(FoldStatus, MultiBufferRow, bool)>>,
         _style: &EditorStyle,
         gutter_hovered: bool,
         _line_height: Pixels,
@@ -4775,7 +4782,7 @@ impl Editor {
     pub fn backspace(&mut self, _: &Backspace, cx: &mut ViewContext<Self>) {
         self.transact(cx, |this, cx| {
             this.select_autoclose_pair(cx);
-            let mut selections = this.selections.all::<Point>(cx);
+            let mut selections = this.selections.all::<MultiBufferPoint>(cx);
             if !this.selections.line_mode {
                 let display_map = this.display_map.update(cx, |map, cx| map.snapshot(cx));
                 for selection in &mut selections {
@@ -4786,7 +4793,7 @@ impl Editor {
                                 .to_point(&display_map);
                         if let Some((buffer, line_buffer_range)) = display_map
                             .buffer_snapshot
-                            .buffer_line_for_row(old_head.row)
+                            .buffer_line_for_row(MultiBufferRow(old_head.row))
                         {
                             let indent_size =
                                 buffer.indent_size_for_line(line_buffer_range.start.row);
@@ -4800,7 +4807,7 @@ impl Editor {
                                 let indent_len = indent_len.get();
                                 new_head = cmp::min(
                                     new_head,
-                                    Point::new(
+                                    MultiBufferPoint::new(
                                         old_head.row,
                                         ((old_head.column - 1) / indent_len) * indent_len,
                                     ),
@@ -4875,8 +4882,10 @@ impl Editor {
             // If the selection is empty and the cursor is in the leading whitespace before the
             // suggested indentation, then auto-indent the line.
             let cursor = selection.head();
-            let current_indent = snapshot.indent_size_for_line(cursor.row);
-            if let Some(suggested_indent) = suggested_indents.get(&cursor.row).copied() {
+            let current_indent = snapshot.indent_size_for_line(MultiBufferRow(cursor.row));
+            if let Some(suggested_indent) =
+                suggested_indents.get(&MultiBufferRow(cursor.row)).copied()
+            {
                 if cursor.column < suggested_indent.len
                     && cursor.column <= current_indent.len
                     && current_indent.len <= suggested_indent.len
@@ -4996,7 +5005,7 @@ impl Editor {
         let mut delta_for_end_row = 0;
         let has_multiple_rows = start_row + 1 != end_row;
         for row in start_row..end_row {
-            let current_indent = snapshot.indent_size_for_line(row);
+            let current_indent = snapshot.indent_size_for_line(MultiBufferRow(row));
             let indent_delta = match (current_indent.kind, indent_kind) {
                 (IndentKind::Space, IndentKind::Space) => {
                     let columns_to_next_tab_stop = tab_size - (current_indent.len % tab_size);
@@ -5054,12 +5063,12 @@ impl Editor {
                 // previous selection.
                 if let Some(last_row) = last_outdent {
                     if last_row == rows.start {
-                        rows.start += 1;
+                        rows.start = MultiBufferRow(rows.start.0 + 1);
                     }
                 }
                 let has_multiple_rows = rows.len() > 1;
-                for row in rows {
-                    let indent_size = snapshot.indent_size_for_line(row);
+                for row in rows.start.0..rows.end.0 {
+                    let indent_size = snapshot.indent_size_for_line(MultiBufferRow(row));
                     if indent_size.len > 0 {
                         let deletion_len = match indent_size.kind {
                             IndentKind::Space => {
@@ -5082,7 +5091,7 @@ impl Editor {
                         };
                         deletion_ranges
                             .push(Point::new(row, start)..Point::new(row, start + deletion_len));
-                        last_outdent = Some(row);
+                        last_outdent = Some(MultiBufferRow(row));
                     }
                 }
             }
@@ -5127,23 +5136,23 @@ impl Editor {
             }
 
             let buffer = &display_map.buffer_snapshot;
-            let mut edit_start = Point::new(rows.start, 0).to_offset(buffer);
+            let mut edit_start = Point::new(rows.start.0, 0).to_offset(buffer);
             let edit_end;
             let cursor_buffer_row;
-            if buffer.max_point().row >= rows.end {
+            if buffer.max_point().row >= rows.end.0 {
                 // If there's a line after the range, delete the \n from the end of the row range
                 // and position the cursor on the next line.
-                edit_end = Point::new(rows.end, 0).to_offset(buffer);
+                edit_end = Point::new(rows.end.0, 0).to_offset(buffer);
                 cursor_buffer_row = rows.end;
             } else {
                 // If there isn't a line after the range, delete the \n from the line before the
                 // start of the row range and position the cursor there.
                 edit_start = edit_start.saturating_sub(1);
                 edit_end = buffer.len();
-                cursor_buffer_row = rows.start.saturating_sub(1);
+                cursor_buffer_row = MultiBufferRow(rows.start.0.saturating_sub(1));
             }
 
-            let mut cursor = Point::new(cursor_buffer_row, 0).to_display_point(&display_map);
+            let mut cursor = Point::new(cursor_buffer_row.0, 0).to_display_point(&display_map);
             *cursor.column_mut() =
                 cmp::min(goal_display_column, display_map.line_len(cursor.row()));
 
@@ -5190,13 +5199,13 @@ impl Editor {
         if self.read_only(cx) {
             return;
         }
-        let mut row_ranges = Vec::<Range<u32>>::new();
+        let mut row_ranges = Vec::<Range<MultiBufferRow>>::new();
         for selection in self.selections.all::<Point>(cx) {
-            let start = selection.start.row;
+            let start = MultiBufferRow(selection.start.row);
             let end = if selection.start.row == selection.end.row {
-                selection.start.row + 1
+                MultiBufferRow(selection.start.row + 1)
             } else {
-                selection.end.row
+                MultiBufferRow(selection.end.row)
             };
 
             if let Some(last_row_range) = row_ranges.last_mut() {
@@ -5212,20 +5221,20 @@ impl Editor {
         let mut cursor_positions = Vec::new();
         for row_range in &row_ranges {
             let anchor = snapshot.anchor_before(Point::new(
-                row_range.end - 1,
-                snapshot.line_len(row_range.end - 1),
+                row_range.end.0 - 1,
+                snapshot.line_len(MultiBufferRow(row_range.end.0 - 1)),
             ));
             cursor_positions.push(anchor..anchor);
         }
 
         self.transact(cx, |this, cx| {
             for row_range in row_ranges.into_iter().rev() {
-                for row in row_range.rev() {
-                    let end_of_line = Point::new(row, snapshot.line_len(row));
-                    let indent = snapshot.indent_size_for_line(row + 1);
+                for row in (row_range.start.0..row_range.end.0).rev() {
+                    let end_of_line = Point::new(row, snapshot.line_len(MultiBufferRow(row)));
+                    let indent = snapshot.indent_size_for_line(MultiBufferRow(row + 1));
                     let start_of_next_line = Point::new(row + 1, indent.len);
 
-                    let replace = if snapshot.line_len(row + 1) > indent.len {
+                    let replace = if snapshot.line_len(MultiBufferRow(row + 1)) > indent.len {
                         " "
                     } else {
                         ""
@@ -5342,7 +5351,7 @@ impl Editor {
     fn prepare_revert_change(
         revert_changes: &mut HashMap<BufferId, Vec<(Range<text::Anchor>, Rope)>>,
         multi_buffer: &MultiBuffer,
-        hunk: &DiffHunk<u32>,
+        hunk: &DiffHunk<MultiBufferRow>,
         cx: &mut AppContext,
     ) -> Option<()> {
         let buffer = multi_buffer.buffer(hunk.buffer_id)?;
@@ -5396,8 +5405,11 @@ impl Editor {
                 &mut selections,
             );
 
-            let start_point = Point::new(start_row, 0);
-            let end_point = Point::new(end_row - 1, buffer.line_len(end_row - 1));
+            let start_point = Point::new(start_row.0, 0);
+            let end_point = Point::new(
+                end_row.0 - 1,
+                buffer.line_len(MultiBufferRow(end_row.0 - 1)),
+            );
             let text = buffer
                 .text_for_range(start_point..end_point)
                 .collect::<String>();
@@ -5411,8 +5423,9 @@ impl Editor {
             edits.push((start_point..end_point, lines.join("\n")));
 
             // Selections must change based on added and removed line count
-            let start_row = start_point.row + added_lines as u32 - removed_lines as u32;
-            let end_row = start_row + lines_after.saturating_sub(1) as u32;
+            let start_row =
+                MultiBufferRow(start_point.row + added_lines as u32 - removed_lines as u32);
+            let end_row = MultiBufferRow(start_row.0 + lines_after.saturating_sub(1) as u32);
             new_selections.push(Selection {
                 id: selection.id,
                 start: start_row,
@@ -5438,8 +5451,8 @@ impl Editor {
             let new_selections = new_selections
                 .iter()
                 .map(|s| {
-                    let start_point = Point::new(s.start, 0);
-                    let end_point = Point::new(s.end, buffer.line_len(s.end));
+                    let start_point = Point::new(s.start.0, 0);
+                    let end_point = Point::new(s.end.0, buffer.line_len(s.end));
                     Selection {
                         id: s.id,
                         start: buffer.point_to_offset(start_point),
@@ -5602,14 +5615,17 @@ impl Editor {
 
             // Copy the text from the selected row region and splice it either at the start
             // or end of the region.
-            let start = Point::new(rows.start, 0);
-            let end = Point::new(rows.end - 1, buffer.line_len(rows.end - 1));
+            let start = Point::new(rows.start.0, 0);
+            let end = Point::new(
+                rows.end.0 - 1,
+                buffer.line_len(MultiBufferRow(rows.end.0 - 1)),
+            );
             let text = buffer
                 .text_for_range(start..end)
                 .chain(Some("\n"))
                 .collect::<String>();
             let insert_location = if upwards {
-                Point::new(rows.end, 0)
+                Point::new(rows.end.0, 0)
             } else {
                 start
             };
@@ -5656,11 +5672,17 @@ impl Editor {
             );
 
             // Move the text spanned by the row range to be before the line preceding the row range
-            if start_row > 0 {
-                let range_to_move = Point::new(start_row - 1, buffer.line_len(start_row - 1))
-                    ..Point::new(end_row - 1, buffer.line_len(end_row - 1));
+            if start_row.0 > 0 {
+                let range_to_move = Point::new(
+                    start_row.0 - 1,
+                    buffer.line_len(MultiBufferRow(start_row.0 - 1)),
+                )
+                    ..Point::new(
+                        end_row.0 - 1,
+                        buffer.line_len(MultiBufferRow(end_row.0 - 1)),
+                    );
                 let insertion_point = display_map
-                    .prev_line_boundary(Point::new(start_row - 1, 0))
+                    .prev_line_boundary(Point::new(start_row.0 - 1, 0))
                     .0;
 
                 // Don't move lines across excerpts
@@ -5754,9 +5776,12 @@ impl Editor {
             );
 
             // Move the text spanned by the row range to be after the last line of the row range
-            if end_row <= buffer.max_point().row {
-                let range_to_move = Point::new(start_row, 0)..Point::new(end_row, 0);
-                let insertion_point = display_map.next_line_boundary(Point::new(end_row, 0)).0;
+            if end_row.0 <= buffer.max_point().row {
+                let range_to_move =
+                    MultiBufferPoint::new(start_row.0, 0)..MultiBufferPoint::new(end_row.0, 0);
+                let insertion_point = display_map
+                    .next_line_boundary(MultiBufferPoint::new(end_row.0, 0))
+                    .0;
 
                 // Don't move lines across excerpt boundaries
                 if buffer
@@ -5906,7 +5931,9 @@ impl Editor {
                 clipboard_selections.push(ClipboardSelection {
                     len,
                     is_entire_line,
-                    first_line_indent: buffer.indent_size_for_line(selection.start.row).len,
+                    first_line_indent: buffer
+                        .indent_size_for_line(MultiBufferRow(selection.start.row))
+                        .len,
                 });
             }
         }
@@ -5950,7 +5977,7 @@ impl Editor {
                 clipboard_selections.push(ClipboardSelection {
                     len,
                     is_entire_line,
-                    first_line_indent: buffer.indent_size_for_line(start.row).len,
+                    first_line_indent: buffer.indent_size_for_line(MultiBufferRow(start.row)).len,
                 });
             }
         }
@@ -6847,8 +6874,8 @@ impl Editor {
         let max_point = display_map.buffer_snapshot.max_point();
         for selection in &mut selections {
             let rows = selection.spanned_rows(true, &display_map);
-            selection.start = Point::new(rows.start, 0);
-            selection.end = cmp::min(max_point, Point::new(rows.end, 0));
+            selection.start = Point::new(rows.start.0, 0);
+            selection.end = cmp::min(max_point, Point::new(rows.end.0, 0));
             selection.reversed = false;
         }
         self.change_selections(Some(Autoscroll::fit()), cx, |s| {
@@ -6868,7 +6895,7 @@ impl Editor {
             let buffer = self.buffer.read(cx).read(cx);
             for selection in selections {
                 for row in selection.start.row..selection.end.row {
-                    let cursor = Point::new(row, buffer.line_len(row));
+                    let cursor = Point::new(row, buffer.line_len(MultiBufferRow(row)));
                     new_selection_ranges.push(cursor..cursor);
                 }
                 new_selection_ranges.push(selection.end..selection.end);
@@ -6903,10 +6930,10 @@ impl Editor {
 
             selections.clear();
             let mut stack = Vec::new();
-            for row in range.start.row()..=range.end.row() {
+            for row in range.start.row().0..=range.end.row().0 {
                 if let Some(selection) = self.selections.build_columnar_selection(
                     &display_map,
-                    row,
+                    DisplayRow(row),
                     &positions,
                     oldest_selection.reversed,
                     &text_layout_details,
@@ -6927,7 +6954,7 @@ impl Editor {
         let mut new_selections = Vec::new();
         if above == state.above {
             let end_row = if above {
-                0
+                DisplayRow::default()
             } else {
                 display_map.max_point().row()
             };
@@ -6950,9 +6977,9 @@ impl Editor {
 
                     while row != end_row {
                         if above {
-                            row -= 1;
+                            row.0 -= 1;
                         } else {
-                            row += 1;
+                            row.0 += 1;
                         }
 
                         if let Some(new_selection) = self.selections.build_columnar_selection(
@@ -7386,7 +7413,7 @@ impl Editor {
     pub fn toggle_comments(&mut self, action: &ToggleComments, cx: &mut ViewContext<Self>) {
         let text_layout_details = &self.text_layout_details(cx);
         self.transact(cx, |this, cx| {
-            let mut selections = this.selections.all::<Point>(cx);
+            let mut selections = this.selections.all::<MultiBufferPoint>(cx);
             let mut edits = Vec::new();
             let mut selection_edit_ranges = Vec::new();
             let mut last_toggled_row = None;
@@ -7396,11 +7423,11 @@ impl Editor {
 
             fn comment_prefix_range(
                 snapshot: &MultiBufferSnapshot,
-                row: u32,
+                row: MultiBufferRow,
                 comment_prefix: &str,
                 comment_prefix_whitespace: &str,
             ) -> Range<Point> {
-                let start = Point::new(row, snapshot.indent_size_for_line(row).len);
+                let start = Point::new(row.0, snapshot.indent_size_for_line(row).len);
 
                 let mut line_bytes = snapshot
                     .bytes_in_range(start..snapshot.max_point())
@@ -7431,11 +7458,11 @@ impl Editor {
 
             fn comment_suffix_range(
                 snapshot: &MultiBufferSnapshot,
-                row: u32,
+                row: MultiBufferRow,
                 comment_suffix: &str,
                 comment_suffix_has_leading_space: bool,
             ) -> Range<Point> {
-                let end = Point::new(row, snapshot.line_len(row));
+                let end = Point::new(row.0, snapshot.line_len(row));
                 let suffix_start_column = end.column.saturating_sub(comment_suffix.len() as u32);
 
                 let mut line_end_bytes = snapshot
@@ -7464,7 +7491,9 @@ impl Editor {
 
             // TODO: Handle selections that cross excerpts
             for selection in &mut selections {
-                let start_column = snapshot.indent_size_for_line(selection.start.row).len;
+                let start_column = snapshot
+                    .indent_size_for_line(MultiBufferRow(selection.start.row))
+                    .len;
                 let language = if let Some(language) =
                     snapshot.language_scope_at(Point::new(selection.start.row, start_column))
                 {
@@ -7477,15 +7506,15 @@ impl Editor {
 
                 // If multiple selections contain a given row, avoid processing that
                 // row more than once.
-                let mut start_row = selection.start.row;
+                let mut start_row = MultiBufferRow(selection.start.row);
                 if last_toggled_row == Some(start_row) {
-                    start_row += 1;
+                    start_row.0 += 1;
                 }
                 let end_row =
                     if selection.end.row > selection.start.row && selection.end.column == 0 {
-                        selection.end.row - 1
+                        MultiBufferRow(selection.end.row - 1)
                     } else {
-                        selection.end.row
+                        MultiBufferRow(selection.end.row)
                     };
                 last_toggled_row = Some(end_row);
 
@@ -7506,7 +7535,8 @@ impl Editor {
 
                     let mut all_selection_lines_are_comments = true;
 
-                    for row in start_row..=end_row {
+                    for row in start_row.0..=end_row.0 {
+                        let row = MultiBufferRow(row);
                         if start_row < end_row && snapshot.is_line_blank(row) {
                             continue;
                         }
@@ -7596,7 +7626,7 @@ impl Editor {
             let snapshot = this.buffer.read(cx).read(cx);
             for selection in &mut selections {
                 while let Some((row, suffix_len)) = suffixes_inserted.peek().copied() {
-                    match row.cmp(&selection.end.row) {
+                    match row.cmp(&MultiBufferRow(selection.end.row)) {
                         Ordering::Less => {
                             suffixes_inserted.next();
                             continue;
@@ -7782,7 +7812,7 @@ impl Editor {
 
                 let row = snapshot
                     .buffer_snapshot
-                    .buffer_line_for_row(point.row)?
+                    .buffer_line_for_row(MultiBufferRow(point.row))?
                     .1
                     .start
                     .row;
@@ -8060,9 +8090,9 @@ impl Editor {
             &snapshot,
             selection.head(),
             false,
-            snapshot
-                .buffer_snapshot
-                .git_diff_hunks_in_range((selection.head().row + 1)..u32::MAX),
+            snapshot.buffer_snapshot.git_diff_hunks_in_range(
+                MultiBufferRow(selection.head().row + 1)..MultiBufferRow::MAX,
+            ),
             cx,
         ) {
             let wrapped_point = Point::zero();
@@ -8070,9 +8100,9 @@ impl Editor {
                 &snapshot,
                 wrapped_point,
                 true,
-                snapshot
-                    .buffer_snapshot
-                    .git_diff_hunks_in_range((wrapped_point.row + 1)..u32::MAX),
+                snapshot.buffer_snapshot.git_diff_hunks_in_range(
+                    MultiBufferRow(wrapped_point.row + 1)..MultiBufferRow::MAX,
+                ),
                 cx,
             );
         }
@@ -8088,9 +8118,9 @@ impl Editor {
             &snapshot,
             selection.head(),
             false,
-            snapshot
-                .buffer_snapshot
-                .git_diff_hunks_in_range_rev(0..selection.head().row),
+            snapshot.buffer_snapshot.git_diff_hunks_in_range_rev(
+                MultiBufferRow::MIN..MultiBufferRow(selection.head().row),
+            ),
             cx,
         ) {
             let wrapped_point = snapshot.buffer_snapshot.max_point();
@@ -8098,9 +8128,9 @@ impl Editor {
                 &snapshot,
                 wrapped_point,
                 true,
-                snapshot
-                    .buffer_snapshot
-                    .git_diff_hunks_in_range_rev(0..wrapped_point.row),
+                snapshot.buffer_snapshot.git_diff_hunks_in_range_rev(
+                    MultiBufferRow::MIN..MultiBufferRow(wrapped_point.row),
+                ),
                 cx,
             );
         }
@@ -8111,7 +8141,7 @@ impl Editor {
         snapshot: &DisplaySnapshot,
         initial_point: Point,
         is_wrapped: bool,
-        hunks: impl Iterator<Item = DiffHunk<u32>>,
+        hunks: impl Iterator<Item = DiffHunk<MultiBufferRow>>,
         cx: &mut ViewContext<Editor>,
     ) -> bool {
         let display_point = initial_point.to_display_point(snapshot);
@@ -8972,11 +9002,11 @@ impl Editor {
             let mut primary_message = None;
             let mut group_end = Point::zero();
             let diagnostic_group = buffer
-                .diagnostic_group::<Point>(group_id)
+                .diagnostic_group::<MultiBufferPoint>(group_id)
                 .filter_map(|entry| {
-                    if snapshot.is_line_folded(entry.range.start.row)
+                    if snapshot.is_line_folded(MultiBufferRow(entry.range.start.row))
                         && (entry.range.start.row == entry.range.end.row
-                            || snapshot.is_line_folded(entry.range.end.row))
+                            || snapshot.is_line_folded(MultiBufferRow(entry.range.end.row)))
                     {
                         return None;
                     }
@@ -9117,7 +9147,7 @@ impl Editor {
             let buffer_start_row = range.start.row;
 
             for row in (0..=range.end.row).rev() {
-                let fold_range = display_map.foldable_range(row);
+                let fold_range = display_map.foldable_range(MultiBufferRow(row));
 
                 if let Some(fold_range) = fold_range {
                     if fold_range.end.row >= buffer_start_row {
@@ -9159,7 +9189,7 @@ impl Editor {
                 let mut start = range.start.to_point(&display_map);
                 let mut end = range.end.to_point(&display_map);
                 start.column = 0;
-                end.column = buffer.line_len(end.row);
+                end.column = buffer.line_len(MultiBufferRow(end.row));
                 start..end
             })
             .collect::<Vec<_>>();
@@ -9170,9 +9200,9 @@ impl Editor {
     pub fn unfold_at(&mut self, unfold_at: &UnfoldAt, cx: &mut ViewContext<Self>) {
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
 
-        let intersection_range = Point::new(unfold_at.buffer_row, 0)
+        let intersection_range = Point::new(unfold_at.buffer_row.0, 0)
             ..Point::new(
-                unfold_at.buffer_row,
+                unfold_at.buffer_row.0,
                 display_map.buffer_snapshot.line_len(unfold_at.buffer_row),
             );
 
@@ -9192,7 +9222,12 @@ impl Editor {
         let ranges = selections.into_iter().map(|s| {
             if line_mode {
                 let start = Point::new(s.start.row, 0);
-                let end = Point::new(s.end.row, display_map.buffer_snapshot.line_len(s.end.row));
+                let end = Point::new(
+                    s.end.row,
+                    display_map
+                        .buffer_snapshot
+                        .line_len(MultiBufferRow(s.end.row)),
+                );
                 start..end
             } else {
                 s.start..s.end
@@ -9330,7 +9365,7 @@ impl Editor {
         }
     }
 
-    pub fn longest_row(&self, cx: &mut AppContext) -> u32 {
+    pub fn longest_row(&self, cx: &mut AppContext) -> DisplayRow {
         self.display_map
             .update(cx, |map, cx| map.snapshot(cx))
             .longest_row()
@@ -9595,7 +9630,7 @@ impl Editor {
         let cursor_anchor = self.selections.newest_anchor().head();
 
         let snapshot = self.buffer.read(cx).snapshot(cx);
-        let buffer_row = cursor_anchor.to_point(&snapshot).row;
+        let buffer_row = MultiBufferRow(cursor_anchor.to_point(&snapshot).row);
 
         snapshot.line_len(buffer_row) == 0
     }
@@ -9776,7 +9811,7 @@ impl Editor {
         &mut self,
         exclude_highlights: HashSet<TypeId>,
         cx: &mut WindowContext,
-    ) -> BTreeMap<u32, Hsla> {
+    ) -> BTreeMap<DisplayRow, Hsla> {
         let snapshot = self.snapshot(cx);
         let mut used_highlight_orders = HashMap::default();
         self.highlighted_rows
@@ -9784,18 +9819,18 @@ impl Editor {
             .filter(|(type_id, _)| !exclude_highlights.contains(type_id))
             .flat_map(|(_, highlighted_rows)| highlighted_rows.iter())
             .fold(
-                BTreeMap::<u32, Hsla>::new(),
+                BTreeMap::<DisplayRow, Hsla>::new(),
                 |mut unique_rows, (highlight_order, anchor_range, hsla)| {
                     let start_row = anchor_range.start().to_display_point(&snapshot).row();
                     let end_row = anchor_range.end().to_display_point(&snapshot).row();
-                    for row in start_row..=end_row {
+                    for row in start_row.0..=end_row.0 {
                         let used_index =
                             used_highlight_orders.entry(row).or_insert(*highlight_order);
                         if highlight_order >= used_index {
                             *used_index = *highlight_order;
                             match hsla {
                                 Some(hsla) => {
-                                    unique_rows.insert(row, *hsla);
+                                    unique_rows.insert(DisplayRow(row), *hsla);
                                 }
                                 None => {
                                     unique_rows.remove(&row);
@@ -10640,15 +10675,15 @@ impl Editor {
 fn hunks_for_selections(
     multi_buffer_snapshot: &MultiBufferSnapshot,
     selections: &[Selection<Anchor>],
-) -> Vec<DiffHunk<u32>> {
+) -> Vec<DiffHunk<MultiBufferRow>> {
     let mut hunks = Vec::with_capacity(selections.len());
     let mut processed_buffer_rows: HashMap<BufferId, HashSet<Range<text::Anchor>>> =
         HashMap::default();
-    let display_rows_for_selections = selections.iter().map(|selection| {
+    let buffer_rows_for_selections = selections.iter().map(|selection| {
         let head = selection.head();
         let tail = selection.tail();
-        let start = tail.to_point(&multi_buffer_snapshot).row;
-        let end = head.to_point(&multi_buffer_snapshot).row;
+        let start = MultiBufferRow(tail.to_point(&multi_buffer_snapshot).row);
+        let end = MultiBufferRow(head.to_point(&multi_buffer_snapshot).row);
         if start > end {
             end..start
         } else {
@@ -10656,12 +10691,14 @@ fn hunks_for_selections(
         }
     });
 
-    for selected_multi_buffer_rows in display_rows_for_selections {
-        let query_rows = selected_multi_buffer_rows.start..selected_multi_buffer_rows.end + 1;
+    for selected_multi_buffer_rows in buffer_rows_for_selections {
+        let query_rows =
+            selected_multi_buffer_rows.start..MultiBufferRow(selected_multi_buffer_rows.end.0 + 1);
         for hunk in multi_buffer_snapshot.git_diff_hunks_in_range(query_rows.clone()) {
             // Deleted hunk is an empty row range, no caret can be placed there and Zed allows to revert it
             // when the caret is just above or just below the deleted hunk.
-            let allow_adjacent = hunk.status() == DiffHunkStatus::Removed;
+            let allow_adjacent =
+                multi_buffer_associated_hunk_status(&hunk) == DiffHunkStatus::Removed;
             let related_to_selection = if allow_adjacent {
                 hunk.associated_range.overlaps(&query_rows)
                     || hunk.associated_range.start == query_rows.end
@@ -10798,13 +10835,13 @@ fn consume_contiguous_rows(
     selection: &Selection<Point>,
     display_map: &DisplaySnapshot,
     selections: &mut std::iter::Peekable<std::slice::Iter<Selection<Point>>>,
-) -> (u32, u32) {
+) -> (MultiBufferRow, MultiBufferRow) {
     contiguous_row_selections.push(selection.clone());
-    let start_row = selection.start.row;
+    let start_row = MultiBufferRow(selection.start.row);
     let mut end_row = ending_row(selection, display_map);
 
     while let Some(next_selection) = selections.peek() {
-        if next_selection.start.row <= end_row {
+        if next_selection.start.row <= end_row.0 {
             end_row = ending_row(next_selection, display_map);
             contiguous_row_selections.push(selections.next().unwrap().clone());
         } else {
@@ -10814,11 +10851,11 @@ fn consume_contiguous_rows(
     (start_row, end_row)
 }
 
-fn ending_row(next_selection: &Selection<Point>, display_map: &DisplaySnapshot) -> u32 {
+fn ending_row(next_selection: &Selection<Point>, display_map: &DisplaySnapshot) -> MultiBufferRow {
     if next_selection.end.column > 0 || next_selection.is_empty() {
-        display_map.next_line_boundary(next_selection.end).0.row + 1
+        MultiBufferRow(display_map.next_line_boundary(next_selection.end).0.row + 1)
     } else {
-        next_selection.end.row
+        MultiBufferRow(next_selection.end.row)
     }
 }
 
@@ -11300,7 +11337,7 @@ impl ViewInputHandler for Editor {
         let start = OffsetUtf16(range_utf16.start).to_display_point(&snapshot);
         let x = snapshot.x_for_display_point(start, &text_layout_details) - scroll_left
             + self.gutter_dimensions.width;
-        let y = line_height * (start.row() as f32 - scroll_position.y);
+        let y = line_height * (start.row().0 as f32 - scroll_position.y);
 
         Some(Bounds {
             origin: element_bounds.origin + point(x, y),
@@ -11311,8 +11348,11 @@ impl ViewInputHandler for Editor {
 
 trait SelectionExt {
     fn display_range(&self, map: &DisplaySnapshot) -> Range<DisplayPoint>;
-    fn spanned_rows(&self, include_end_if_at_line_start: bool, map: &DisplaySnapshot)
-        -> Range<u32>;
+    fn spanned_rows(
+        &self,
+        include_end_if_at_line_start: bool,
+        map: &DisplaySnapshot,
+    ) -> Range<MultiBufferRow>;
 }
 
 impl<T: ToPoint + ToOffset> SelectionExt for Selection<T> {
@@ -11336,7 +11376,7 @@ impl<T: ToPoint + ToOffset> SelectionExt for Selection<T> {
         &self,
         include_end_if_at_line_start: bool,
         map: &DisplaySnapshot,
-    ) -> Range<u32> {
+    ) -> Range<MultiBufferRow> {
         let start = self.start.to_point(&map.buffer_snapshot);
         let mut end = self.end.to_point(&map.buffer_snapshot);
         if !include_end_if_at_line_start && start.row != end.row && end.column == 0 {
@@ -11345,7 +11385,7 @@ impl<T: ToPoint + ToOffset> SelectionExt for Selection<T> {
 
         let buffer_start = map.prev_line_boundary(start).0;
         let buffer_end = map.next_line_boundary(end).0;
-        buffer_start.row..buffer_end.row + 1
+        MultiBufferRow(buffer_start.row)..MultiBufferRow(buffer_end.row + 1)
     }
 }
 
@@ -11607,5 +11647,41 @@ impl<T: ToOffset> RangeToAnchorExt for Range<T> {
         } else {
             snapshot.anchor_after(self.start)..snapshot.anchor_before(self.end)
         }
+    }
+}
+
+trait RowRangeExt {
+    fn len(&self) -> usize;
+}
+
+impl RowRangeExt for Range<MultiBufferRow> {
+    fn len(&self) -> usize {
+        (self.end.0 - self.start.0) as usize
+    }
+}
+
+impl RowRangeExt for Range<DisplayRow> {
+    fn len(&self) -> usize {
+        (self.end.0 - self.start.0) as usize
+    }
+}
+
+fn multi_buffer_associated_hunk_status(hunk: &DiffHunk<MultiBufferRow>) -> DiffHunkStatus {
+    if hunk.diff_base_byte_range.is_empty() {
+        DiffHunkStatus::Added
+    } else if hunk.associated_range.is_empty() {
+        DiffHunkStatus::Removed
+    } else {
+        DiffHunkStatus::Modified
+    }
+}
+
+fn buffer_associated_hunk_status(hunk: &DiffHunk<u32>) -> DiffHunkStatus {
+    if hunk.diff_base_byte_range.is_empty() {
+        DiffHunkStatus::Added
+    } else if hunk.associated_range.is_empty() {
+        DiffHunkStatus::Removed
+    } else {
+        DiffHunkStatus::Modified
     }
 }

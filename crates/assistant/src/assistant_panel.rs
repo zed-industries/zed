@@ -32,6 +32,7 @@ use gpui::{
     View, ViewContext, VisualContext, WeakModel, WeakView, WhiteSpace, WindowContext,
 };
 use language::{language_settings::SoftWrap, Buffer, LanguageRegistry, ToOffset as _};
+use multi_buffer::MultiBufferRow;
 use parking_lot::Mutex;
 use project::Project;
 use search::{buffer_search::DivRegistrar, BufferSearchBar};
@@ -306,7 +307,7 @@ impl AssistantPanel {
             if point_selection.end.column == 0 {
                 point_selection.end.row -= 1;
             }
-            point_selection.end.column = snapshot.line_len(point_selection.end.row);
+            point_selection.end.column = snapshot.line_len(MultiBufferRow(point_selection.end.row));
         }
 
         let codegen_kind = if point_selection.start == point_selection.end {

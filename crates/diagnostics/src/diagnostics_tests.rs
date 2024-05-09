@@ -1,7 +1,7 @@
 use super::*;
 use collections::HashMap;
 use editor::{
-    display_map::{BlockContext, TransformBlock},
+    display_map::{BlockContext, DisplayRow, TransformBlock},
     DisplayPoint, GutterDimensions,
 };
 use gpui::{px, AvailableSpace, Stateful, TestAppContext, VisualTestContext};
@@ -210,7 +210,7 @@ async fn test_diagnostics(cx: &mut TestAppContext) {
     editor.update(cx, |editor, cx| {
         assert_eq!(
             editor.selections.display_ranges(cx),
-            [DisplayPoint::new(12, 6)..DisplayPoint::new(12, 6)]
+            [DisplayPoint::new(DisplayRow(12), 6)..DisplayPoint::new(DisplayRow(12), 6)]
         );
     });
 
@@ -309,7 +309,7 @@ async fn test_diagnostics(cx: &mut TestAppContext) {
     editor.update(cx, |editor, cx| {
         assert_eq!(
             editor.selections.display_ranges(cx),
-            [DisplayPoint::new(19, 6)..DisplayPoint::new(19, 6)]
+            [DisplayPoint::new(DisplayRow(19), 6)..DisplayPoint::new(DisplayRow(19), 6)]
         );
     });
 
@@ -958,14 +958,17 @@ fn random_diagnostic(
     }
 }
 
-fn editor_blocks(editor: &View<Editor>, cx: &mut VisualTestContext) -> Vec<(u32, SharedString)> {
+fn editor_blocks(
+    editor: &View<Editor>,
+    cx: &mut VisualTestContext,
+) -> Vec<(DisplayRow, SharedString)> {
     let mut blocks = Vec::new();
     cx.draw(gpui::Point::default(), AvailableSpace::min_size(), |cx| {
         editor.update(cx, |editor, cx| {
             let snapshot = editor.snapshot(cx);
             blocks.extend(
                 snapshot
-                    .blocks_in_range(0..snapshot.max_point().row())
+                    .blocks_in_range(DisplayRow(0)..snapshot.max_point().row())
                     .enumerate()
                     .filter_map(|(ix, (row, block))| {
                         let name: SharedString = match block {

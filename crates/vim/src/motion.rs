@@ -1,5 +1,5 @@
 use editor::{
-    display_map::{DisplaySnapshot, FoldPoint, ToDisplayPoint},
+    display_map::{DisplayRow, DisplaySnapshot, FoldPoint, ToDisplayPoint},
     movement::{
         self, find_boundary, find_preceding_boundary_display_point, FindRange, TextLayoutDetails,
     },
@@ -843,7 +843,7 @@ impl Motion {
                         selection.end = map.clip_point(selection.end, Bias::Right);
                         // Don't reset the end here
                         return Some(selection.start..selection.end);
-                    } else if selection.start.row() > 0 {
+                    } else if selection.start.row().0 > 0 {
                         *selection.start.row_mut() -= 1;
                         *selection.start.column_mut() = map.line_len(selection.start.row());
                         selection.start = map.clip_point(selection.start, Bias::Left);
@@ -860,10 +860,10 @@ impl Motion {
                     ignore_punctuation: _,
                 } = self
                 {
-                    let start_row = selection.start.to_point(&map).row;
-                    if selection.end.to_point(&map).row > start_row {
+                    let start_row = MultiBufferRow(selection.start.to_point(&map).row);
+                    if selection.end.to_point(&map).row > start_row.0 {
                         selection.end =
-                            Point::new(start_row, map.buffer_snapshot.line_len(start_row))
+                            Point::new(start_row.0, map.buffer_snapshot.line_len(start_row))
                                 .to_display_point(&map)
                     }
                 }
@@ -1215,7 +1215,7 @@ fn previous_word_end(
     let scope = map.buffer_snapshot.language_scope_at(point.to_point(map));
     let mut point = point.to_point(map);
 
-    if point.column < map.buffer_snapshot.line_len(point.row) {
+    if point.column < map.buffer_snapshot.line_len(MultiBufferRow(point.row)) {
         point.column += 1;
     }
     for _ in 0..times {
@@ -1672,22 +1672,24 @@ fn window_top(
         .anchor
         .to_display_point(map);
 
-    if first_visible_line.row() != 0 && text_layout_details.vertical_scroll_margin as usize > times
+    if first_visible_line.row() != Default::default()
+        && text_layout_details.vertical_scroll_margin as usize > times
     {
         times = text_layout_details.vertical_scroll_margin.ceil() as usize;
     }
 
     if let Some(visible_rows) = text_layout_details.visible_rows {
-        let bottom_row = first_visible_line.row() + visible_rows as u32;
-        let new_row = (first_visible_line.row() + (times as u32))
+        let bottom_row = first_visible_line.row().0 + visible_rows as u32;
+        let new_row = (first_visible_line.row().0 + (times as u32))
             .min(bottom_row)
-            .min(map.max_point().row());
+            .min(map.max_point().row().0);
         let new_col = point.column().min(map.line_len(first_visible_line.row()));
 
-        let new_point = DisplayPoint::new(new_row, new_col);
+        let new_point = DisplayPoint::new(DisplayRow(new_row), new_col);
         (map.clip_point(new_point, Bias::Left), SelectionGoal::None)
     } else {
-        let new_row = (first_visible_line.row() + (times as u32)).min(map.max_point().row());
+        let new_row =
+            DisplayRow((first_visible_line.row().0 + (times as u32)).min(map.max_point().row().0));
         let new_col = point.column().min(map.line_len(first_visible_line.row()));
 
         let new_point = DisplayPoint::new(new_row, new_col);
@@ -1710,7 +1712,8 @@ fn window_middle(
             (visible_rows as u32).min(map.max_point().row() - first_visible_line.row());
 
         let new_row =
-            (first_visible_line.row() + (max_visible_rows / 2)).min(map.max_point().row());
+            (first_visible_line.row().0 + (max_visible_rows / 2)).min(map.max_point().row().0);
+        let new_row = DisplayRow(new_row);
         let new_col = point.column().min(map.line_len(new_row));
         let new_point = DisplayPoint::new(new_row, new_col);
         (map.clip_point(new_point, Bias::Left), SelectionGoal::None)
