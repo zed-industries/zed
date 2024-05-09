@@ -57,7 +57,9 @@ use std::{
 };
 use syntax_map::{QueryCursorHandle, SyntaxSnapshot};
 use task::RunnableTag;
-pub use task_context::{BasicContextProvider, ContextProvider, ContextProviderWithTasks};
+pub use task_context::{
+    BasicContextProvider, ContextProvider, ContextProviderWithTasks, RunnableRange,
+};
 use theme::SyntaxTheme;
 use tree_sitter::{self, wasmtime, Query, QueryCursor, WasmStore};
 use util::http::HttpClient;

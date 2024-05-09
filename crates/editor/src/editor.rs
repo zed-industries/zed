@@ -79,7 +79,6 @@ use inlay_hint_cache::{InlayHintCache, InlaySplice, InvalidationStrategy};
 pub use inline_completion_provider::*;
 pub use items::MAX_TAB_TITLE_LEN;
 use itertools::Itertools;
-use language::Runnable;
 use language::{
     char_kind,
     language_settings::{self, all_language_settings, InlayHintSettings},
@@ -87,7 +86,8 @@ use language::{
     CursorShape, Diagnostic, Documentation, IndentKind, IndentSize, Language, OffsetRangeExt,
     Point, Selection, SelectionGoal, TransactionId,
 };
-use task::{ResolvedTask, TaskTemplate};
+use language::{Runnable, RunnableRange};
+use task::{ResolvedTask, TaskTemplate, TaskVariables};
 
 use hover_links::{HoverLink, HoveredLinkState, InlayHighlight};
 use lsp::{DiagnosticSeverity, LanguageServerId};
@@ -404,6 +404,7 @@ struct RunnableTasks {
     templates: Vec<(TaskSourceKind, TaskTemplate)>,
     // We need the column at which the task context evaluation should take place.
     column: u32,
+    extra_variables: HashMap<String, String>,
 }
 
 #[derive(Clone)]
@@ -3909,23 +3910,33 @@ impl Editor {
                                 .flatten()
                         },
                     );
-                    let tasks = tasks
-                        .zip(task_context.as_ref())
-                        .map(|(tasks, task_context)| {
-                            Arc::new(ResolvedTasks {
-                                templates: tasks
-                                    .1
-                                    .templates
-                                    .iter()
-                                    .filter_map(|(kind, template)| {
-                                        template
-                                            .resolve_task(&kind.to_id_base(), &task_context)
-                                            .map(|task| (kind.clone(), task))
-                                    })
-                                    .collect(),
-                                position: Point::new(buffer_row, tasks.1.column),
-                            })
-                        });
+                    let tasks = tasks.zip(task_context).map(|(tasks, mut task_context)| {
+                        // Fill in the environmental variables from the tree-sitter captures
+                        let mut additional_task_variables = TaskVariables::default();
+                        for (capture_name, value) in tasks.1.extra_variables.clone() {
+                            additional_task_variables.insert(
+                                task::VariableName::Custom(capture_name.into()),
+                                value.clone(),
+                            );
+                        }
+                        task_context
+                            .task_variables
+                            .extend(additional_task_variables);
+
+                        Arc::new(ResolvedTasks {
+                            templates: tasks
+                                .1
+                                .templates
+                                .iter()
+                                .filter_map(|(kind, template)| {
+                                    template
+                                        .resolve_task(&kind.to_id_base(), &task_context)
+                                        .map(|task| (kind.clone(), task))
+                                })
+                                .collect(),
+                            position: Point::new(buffer_row, tasks.1.column),
+                        })
+                    });
                     let spawn_straight_away = tasks
                         .as_ref()
                         .map_or(false, |tasks| tasks.templates.len() == 1)
@@ -7745,39 +7756,45 @@ impl Editor {
     fn fetch_runnable_ranges(
         snapshot: &DisplaySnapshot,
         range: Range<Anchor>,
-    ) -> Vec<(BufferId, Range<usize>, Runnable)> {
+    ) -> Vec<language::RunnableRange> {
         snapshot.buffer_snapshot.runnable_ranges(range).collect()
     }
 
     fn runnable_rows(
         project: Model<Project>,
         snapshot: DisplaySnapshot,
-        runnable_ranges: Vec<(BufferId, Range<usize>, Runnable)>,
+        runnable_ranges: Vec<RunnableRange>,
         mut cx: AsyncWindowContext,
     ) -> Vec<((BufferId, u32), (usize, RunnableTasks))> {
         runnable_ranges
             .into_iter()
-            .filter_map(|(buffer_id, multi_buffer_range, mut runnable)| {
+            .filter_map(|mut runnable| {
                 let (tasks, _) = cx
-                    .update(|cx| Self::resolve_runnable(project.clone(), &mut runnable, cx))
+                    .update(|cx| {
+                        Self::resolve_runnable(project.clone(), &mut runnable.runnable, cx)
+                    })
                     .ok()?;
                 if tasks.is_empty() {
                     return None;
                 }
-                let point = multi_buffer_range.start.to_point(&snapshot.buffer_snapshot);
+
+                let point = runnable.run_range.start.to_point(&snapshot.buffer_snapshot);
+
                 let row = snapshot
                     .buffer_snapshot
                     .buffer_line_for_row(point.row)?
                     .1
                     .start
                     .row;
+
                 Some((
-                    (buffer_id, row),
+                    (runnable.buffer_id, row),
                     (
-                        multi_buffer_range.start,
+                        runnable.run_range.start,
                         RunnableTasks {
                             templates: tasks,
                             column: point.column,
+                            extra_variables: runnable.extra_captures,
                         },
                     ),
                 ))
