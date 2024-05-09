@@ -4,8 +4,8 @@ members = [
     "crates/anthropic",
     "crates/assets",
     "crates/assistant",
-    "crates/assistant_tooling",
     "crates/assistant2",
+    "crates/assistant_tooling",
     "crates/audio",
     "crates/auto_update",
     "crates/breadcrumbs",
@@ -257,6 +257,7 @@ async-fs = "1.6"
 async-recursion = "1.0.0"
 async-tar = "0.4.2"
 async-trait = "0.1"
+async_zip = { version = "0.0.17", features = ["deflate", "deflate64"] }
 bitflags = "2.4.2"
 blade-graphics = { git = "https://github.com/kvark/blade", rev = "e35b2d41f221a48b75f7cf2e78a81e7ecb7a383c" }
 blade-macros = { git = "https://github.com/kvark/blade", rev = "e35b2d41f221a48b75f7cf2e78a81e7ecb7a383c" }
