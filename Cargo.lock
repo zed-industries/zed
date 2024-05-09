@@ -377,6 +377,7 @@ dependencies = [
  "anyhow",
  "assets",
  "assistant_tooling",
+ "chrono",
  "client",
  "collections",
  "editor",

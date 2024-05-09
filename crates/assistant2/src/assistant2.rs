@@ -23,7 +23,7 @@ use fs::Fs;
 use futures::{future::join_all, StreamExt};
 use gpui::{
     list, AnyElement, AppContext, AsyncWindowContext, ClickEvent, EventEmitter, FocusHandle,
-    FocusableView, ListAlignment, ListState, Model, Render, Task, View, WeakView,
+    FocusableView, List, ListAlignment, ListState, Model, Render, Task, View, WeakView,
 };
 use language::{language_settings::SoftWrap, LanguageRegistry};
 use open_ai::{FunctionContent, ToolCall, ToolCallContent};
@@ -42,6 +42,8 @@ use workspace::{
     dock::{DockPosition, Panel, PanelEvent},
     Workspace,
 };
+
+use chrono::{DateTime, Datelike, Duration, DurationRound, Local, TimeZone, Utc};
 
 pub use assistant_settings::AssistantSettings;
 
@@ -272,6 +274,8 @@ pub struct AssistantChat {
     tool_registry: Arc<ToolRegistry>,
     attachment_registry: Arc<AttachmentRegistry>,
     project_index: Model<ProjectIndex>,
+    conversations: Vec<StaticConversation>,
+    conversations_open: bool,
 }
 
 struct EditingMessage {
@@ -339,7 +343,13 @@ impl AssistantChat {
             pending_completion: None,
             attachment_registry,
             tool_registry,
+            conversations: static_conversations(),
+            conversations_open: false,
         }
+    }
+
+    fn toggle_conversations_open(&mut self) {
+        self.conversations_open = !self.conversations_open;
     }
 
     fn editing_message_id(&self) -> Option<MessageId> {
@@ -999,66 +1009,155 @@ impl Render for AssistantChat {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         let header_height = Spacing::Small.rems(cx) * 2.0 + ButtonSize::Default.rems();
 
-        div()
+        let header = h_flex()
+            .flex_none()
+            .justify_between()
+            .w_full()
+            .h(header_height)
+            .p(Spacing::Small.rems(cx));
+
+        let mut view = div()
             .relative()
             .flex_1()
             .v_flex()
             .key_context("AssistantChat")
             .on_action(cx.listener(Self::submit))
             .on_action(cx.listener(Self::cancel))
-            .text_color(Color::Default.color(cx))
-            .child(list(self.list_state.clone()).flex_1().pt(header_height))
-            .child(
-                h_flex()
-                    .absolute()
-                    .top_0()
-                    .justify_between()
-                    .w_full()
-                    .h(header_height)
-                    .p(Spacing::Small.rems(cx))
+            .text_color(Color::Default.color(cx));
+
+        if self.conversations_open {
+            // Conversations View
+            view = view.child(
+                v_flex()
                     .child(
-                        IconButton::new("open-saved-conversations", IconName::ChevronLeft)
-                            .on_click(|_event, cx| {
-                                cx.dispatch_action(Box::new(ToggleSavedConversations))
-                            })
-                            .tooltip(move |cx| {
-                                Tooltip::with_meta(
-                                    "Switch Conversations",
-                                    Some(&ToggleSavedConversations),
-                                    "UI will change, temporary.",
-                                    cx,
-                                )
-                            }),
-                    )
-                    .child(
-                        h_flex()
-                            .gap(Spacing::Large.rems(cx))
+                        header
+                            .border_b_1()
+                            .border_color(cx.theme().colors().border)
                             .child(
-                                IconButton::new("new-conversation", IconName::Plus)
-                                    .on_click(cx.listener(move |this, _event, cx| {
-                                        this.new_conversation(cx);
-                                    }))
-                                    .tooltip(move |cx| Tooltip::text("New Conversation", cx)),
+                                h_flex()
+                                    .child(
+                                        IconButton::new("toggle-show-pinned", IconName::Hash)
+                                            .disabled(true),
+                                    )
+                                    .child(
+                                        IconButton::new("set-view-list", IconName::Hash)
+                                            .disabled(true),
+                                    )
+                                    .child(
+                                        IconButton::new("set-view-details", IconName::FileTree)
+                                            .disabled(true),
+                                    ),
                             )
                             .child(
-                                IconButton::new("assistant-menu", IconName::Menu)
-                                    .disabled(true)
-                                    .tooltip(move |cx| {
-                                        Tooltip::text(
-                                            "Coming soon – Assistant settings & controls",
-                                            cx,
-                                        )
-                                    }),
+                                h_flex()
+                                    // Opens the conversation in finder/file explorer, etc
+                                    .child(
+                                        IconButton::new("reveal-conversation", IconName::Folder)
+                                            .disabled(true),
+                                    )
+                                    // Pin Conversation
+                                    .child(
+                                        IconButton::new("pin-conversation", IconName::Hash)
+                                            .disabled(true),
+                                    )
+                                    .child(
+                                        IconButton::new("delete-conversation", IconName::Trash)
+                                            .disabled(true),
+                                    )
+                                    .child(IconButton::new("new-conversation", IconName::Plus)),
                             ),
-                    ),
+                    )
+                    .child(v_flex().flex_1().children({
+                        let last_index = (self.conversations.len() - 1).max(0);
+
+                        self.conversations.iter().enumerate().map({
+                            move |(ix, conversation)| {
+                                let max_preview_height = cx.line_height() * 3.0;
+
+                                let preview_string: SharedString = format!(
+                                    "{}  {}",
+                                    render_relative_date(conversation.last_message.into()),
+                                    conversation.message_preview
+                                )
+                                .into();
+
+                                v_flex()
+                                    .flex_none()
+                                    .w_full()
+                                    .line_height(rems(1.15))
+                                    .p(Spacing::Large.rems(cx))
+                                    .when(ix != last_index, |this| this.border_b_1())
+                                    .border_color(cx.theme().colors().border)
+                                    .child(
+                                        Headline::new(conversation.title.clone())
+                                            .size(HeadlineSize::XSmall),
+                                    )
+                                    .child(
+                                        div()
+                                            .w_full()
+                                            .min_h(cx.line_height())
+                                            .max_h(max_preview_height)
+                                            .text_color(cx.theme().colors().text_muted)
+                                            .text_xs()
+                                            .overflow_hidden()
+                                            .child(preview_string),
+                                    )
+                            }
+                        })
+                    })),
             )
-            .child(Composer::new(
-                self.composer_editor.clone(),
-                self.project_index_button.clone(),
-                self.active_file_button.clone(),
-                crate::ui::ModelSelector::new(cx.view().downgrade(), self.model.clone())
-                    .into_any_element(),
-            ))
+        } else {
+            // Chat View
+            view = view
+                .child(list(self.list_state.clone()).flex_1().pt(header_height))
+                .child(
+                    header
+                        .child(
+                            IconButton::new("open-saved-conversations", IconName::ChevronLeft)
+                                .on_click(cx.listener(|this, _event, _cx| {
+                                    this.toggle_conversations_open();
+                                }))
+                                .tooltip(move |cx| {
+                                    Tooltip::with_meta(
+                                        "Switch Conversations",
+                                        Some(&ToggleSavedConversations),
+                                        "UI will change, temporary.",
+                                        cx,
+                                    )
+                                }),
+                        )
+                        .child(
+                            h_flex()
+                                .gap(Spacing::Large.rems(cx))
+                                .child(
+                                    IconButton::new("new-conversation", IconName::Plus)
+                                        .on_click(cx.listener(move |this, _event, cx| {
+                                            this.new_conversation(cx);
+                                        }))
+                                        .tooltip(move |cx| Tooltip::text("New Conversation", cx)),
+                                )
+                                .child(
+                                    IconButton::new("assistant-menu", IconName::Menu)
+                                        .disabled(true)
+                                        .tooltip(move |cx| {
+                                            Tooltip::text(
+                                                "Coming soon – Assistant settings & controls",
+                                                cx,
+                                            )
+                                        }),
+                                ),
+                        ),
+                )
+                .child(Composer::new(
+                    self.composer_editor.clone(),
+                    self.project_index_button.clone(),
+                    self.active_file_button.clone(),
+                    crate::ui::ModelSelector::new(cx.view().downgrade(), self.model.clone())
+                        .into_any_element(),
+                ));
+        }
+
+        view
     }
 }
 
@@ -1102,4 +1201,113 @@ struct AssistantMessage {
     pub id: MessageId,
     pub messages: Vec<AssistantMessagePart>,
     pub error: Option<SharedString>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct StaticConversation {
+    title: SharedString,
+    message_preview: SharedString,
+    pinned: bool,
+    last_message: DateTime<Utc>,
+}
+
+fn render_relative_date(date: chrono::DateTime<Local>) -> String {
+    // if today: 12:01 PM
+    // if this week: Monday, Tues
+    // if older:  2021-01-01
+    let now = Local::now();
+
+    let duration_since = now.signed_duration_since(date);
+
+    if duration_since.num_hours() < 24 {
+        return date.format("%H:%M %P").to_string();
+    } else if duration_since.num_days() < 7 {
+        return date.format("%A").to_string();
+    } else {
+        return date.format("%Y-%m-%d").to_string();
+    }
+}
+
+fn static_conversations() -> Vec<StaticConversation> {
+    vec![
+        StaticConversation {
+            title: "Deep Dive 🕵️".into(),
+            message_preview: "Exploring the depths of Rust's ownership and borrowing rules.".into(),
+            pinned: true,
+            last_message: Utc::now() - Duration::minutes(5),
+        },
+        StaticConversation {
+            title: "Weekly Sync 📅".into(),
+            message_preview:
+                "Discussing weekly progress and blockers. Need updates on the API integration."
+                    .into(),
+            pinned: false,
+            last_message: Utc::now() - Duration::hours(3),
+        },
+        StaticConversation {
+            title: "Feature Brainstorm 💡".into(),
+            message_preview: "Ideas for the next big feature? Let's compile a list.".into(),
+            pinned: true,
+            last_message: Utc::now() - Duration::days(1),
+        },
+        StaticConversation {
+            title: "Bug Triage 🐞".into(),
+            message_preview: "Prioritizing the critical bugs reported last week.".into(),
+            pinned: false,
+            last_message: Utc::now() - Duration::days(1),
+        },
+        StaticConversation {
+            title: "Performance Review 🚀".into(),
+            message_preview:
+                "Identifying key areas for performance improvements in our current sprint.".into(),
+            pinned: true,
+            last_message: Utc::now() - Duration::days(3),
+        },
+        StaticConversation {
+            title: "UI/UX Updates 🎨".into(),
+            message_preview: "Finalizing the new design proposals for the dashboard.".into(),
+            pinned: false,
+            last_message: Utc::now() - Duration::days(3),
+        },
+        StaticConversation {
+            title: "DevOps Sync 🛠️".into(),
+            message_preview: "Planning the migration to Kubernetes, need everyone's input.".into(),
+            pinned: true,
+            last_message: Utc::now() - Duration::days(3),
+        },
+        StaticConversation {
+            title: "Client Feedback 🗣️".into(),
+            message_preview: "Reviewing feedback from our latest app release.".into(),
+            pinned: false,
+            last_message: Utc::now() - Duration::days(3),
+        },
+        StaticConversation {
+            title: "Team Building 👥".into(),
+            message_preview:
+                "Ideas for our next team building activity? Remote-friendly suggestions welcome."
+                    .into(),
+            pinned: true,
+            last_message: Utc::now() - Duration::weeks(3),
+        },
+        StaticConversation {
+            title: "Code Review 🔍".into(),
+            message_preview: "We have several MRs pending, let's aim to clear the queue by EOD."
+                .into(),
+            pinned: false,
+            last_message: Utc::now() - Duration::weeks(4),
+        },
+        StaticConversation {
+            title: "Onboarding Process 🆕".into(),
+            message_preview: "Improvements to the onboarding process for new developers.".into(),
+            pinned: true,
+            last_message: Utc::now() - Duration::weeks(7),
+        },
+        StaticConversation {
+            title: "Tech Stack Evaluation 🖥️".into(),
+            message_preview:
+                "Assessing the feasibility of integrating new technologies into our stack.".into(),
+            pinned: false,
+            last_message: Utc::now() - Duration::weeks(0),
+        },
+    ]
 }
