@@ -2337,7 +2337,7 @@ impl<E> ParentElement for Focusable<E>
 where
     E: ParentElement,
 {
-    fn extend(&mut self, elements: impl Iterator<Item = AnyElement>) {
+    fn extend(&mut self, elements: impl IntoIterator<Item = AnyElement>) {
         self.element.extend(elements)
     }
 }
@@ -2430,7 +2430,7 @@ impl<E> ParentElement for Stateful<E>
 where
     E: ParentElement,
 {
-    fn extend(&mut self, elements: impl Iterator<Item = AnyElement>) {
+    fn extend(&mut self, elements: impl IntoIterator<Item = AnyElement>) {
         self.element.extend(elements)
     }
 }

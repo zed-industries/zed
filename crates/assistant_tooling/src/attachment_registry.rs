@@ -3,6 +3,8 @@ use anyhow::{anyhow, Result};
 use collections::HashMap;
 use futures::future::join_all;
 use gpui::{AnyView, Render, Task, View, WindowContext};
+use serde::{de::DeserializeOwned, Deserialize, Serialize};
+use serde_json::value::RawValue;
 use std::{
     any::TypeId,
     sync::{
@@ -17,24 +19,34 @@ pub struct AttachmentRegistry {
 }
 
 pub trait LanguageModelAttachment {
-    type Output: 'static;
+    type Output: DeserializeOwned + Serialize + 'static;
     type View: Render + ToolOutput;
 
+    fn name(&self) -> Arc<str>;
     fn run(&self, cx: &mut WindowContext) -> Task<Result<Self::Output>>;
-
-    fn view(output: Result<Self::Output>, cx: &mut WindowContext) -> View<Self::View>;
+    fn view(&self, output: Result<Self::Output>, cx: &mut WindowContext) -> View<Self::View>;
 }
 
 /// A collected attachment from running an attachment tool
 pub struct UserAttachment {
     pub view: AnyView,
+    name: Arc<str>,
+    serialized_output: Result<Box<RawValue>, String>,
     generate_fn: fn(AnyView, &mut ProjectContext, cx: &mut WindowContext) -> String,
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct SavedUserAttachment {
+    name: Arc<str>,
+    serialized_output: Result<Box<RawValue>, String>,
 }
 
 /// Internal representation of an attachment tool to allow us to treat them dynamically
 struct RegisteredAttachment {
+    name: Arc<str>,
     enabled: AtomicBool,
     call: Box<dyn Fn(&mut WindowContext) -> Task<Result<UserAttachment>>>,
+    deserialize: Box<dyn Fn(&SavedUserAttachment, &mut WindowContext) -> Result<UserAttachment>>,
 }
 
 impl AttachmentRegistry {
@@ -45,24 +57,65 @@ impl AttachmentRegistry {
     }
 
     pub fn register<A: LanguageModelAttachment + 'static>(&mut self, attachment: A) {
-        let call = Box::new(move |cx: &mut WindowContext| {
-            let result = attachment.run(cx);
+        let attachment = Arc::new(attachment);
 
-            cx.spawn(move |mut cx| async move {
-                let result: Result<A::Output> = result.await;
-                let view = cx.update(|cx| A::view(result, cx))?;
+        let call = Box::new({
+            let attachment = attachment.clone();
+            move |cx: &mut WindowContext| {
+                let result = attachment.run(cx);
+                let attachment = attachment.clone();
+                cx.spawn(move |mut cx| async move {
+                    let result: Result<A::Output> = result.await;
+                    let serialized_output =
+                        result
+                            .as_ref()
+                            .map_err(ToString::to_string)
+                            .and_then(|output| {
+                                Ok(RawValue::from_string(
+                                    serde_json::to_string(output).map_err(|e| e.to_string())?,
+                                )
+                                .unwrap())
+                            });
+
+                    let view = cx.update(|cx| attachment.view(result, cx))?;
+
+                    Ok(UserAttachment {
+                        name: attachment.name(),
+                        view: view.into(),
+                        generate_fn: generate::<A>,
+                        serialized_output,
+                    })
+                })
+            }
+        });
+
+        let deserialize = Box::new({
+            let attachment = attachment.clone();
+            move |saved_attachment: &SavedUserAttachment, cx: &mut WindowContext| {
+                let serialized_output = saved_attachment.serialized_output.clone();
+                let output = match &serialized_output {
+                    Ok(serialized_output) => {
+                        Ok(serde_json::from_str::<A::Output>(serialized_output.get())?)
+                    }
+                    Err(error) => Err(anyhow!("{error}")),
+                };
+                let view = attachment.view(output, cx).into();
 
                 Ok(UserAttachment {
-                    view: view.into(),
+                    name: saved_attachment.name.clone(),
+                    view,
+                    serialized_output,
                     generate_fn: generate::<A>,
                 })
-            })
+            }
         });
 
         self.registered_attachments.insert(
             TypeId::of::<A>(),
             RegisteredAttachment {
+                name: attachment.name(),
                 call,
+                deserialize,
                 enabled: AtomicBool::new(true),
             },
         );
@@ -133,6 +186,35 @@ impl AttachmentRegistry {
                 .filter_map(|attachment| attachment.log_err())
                 .collect())
         })
+    }
+
+    pub fn serialize_user_attachment(
+        &self,
+        user_attachment: &UserAttachment,
+    ) -> SavedUserAttachment {
+        SavedUserAttachment {
+            name: user_attachment.name.clone(),
+            serialized_output: user_attachment.serialized_output.clone(),
+        }
+    }
+
+    pub fn deserialize_user_attachment(
+        &self,
+        saved_user_attachment: SavedUserAttachment,
+        cx: &mut WindowContext,
+    ) -> Result<UserAttachment> {
+        if let Some(registered_attachment) = self
+            .registered_attachments
+            .values()
+            .find(|attachment| attachment.name == saved_user_attachment.name)
+        {
+            (registered_attachment.deserialize)(&saved_user_attachment, cx)
+        } else {
+            Err(anyhow!(
+                "no attachment tool for name {}",
+                saved_user_attachment.name
+            ))
+        }
     }
 }
 

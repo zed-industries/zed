@@ -27,7 +27,13 @@ pub enum Spacing {
     ///
     /// Relative to the user's `ui_font_size` and [UiDensity] setting.
     Large,
+    /// Extra Large spacing - @16px/rem: `8px`|`12px`|`16px`
+    ///
+    /// Relative to the user's `ui_font_size` and [UiDensity] setting.
     XLarge,
+    /// 2X Large spacing - @16px/rem: `12px`|`16px`|`20px`
+    ///
+    /// Relative to the user's `ui_font_size` and [UiDensity] setting.
     XXLarge,
 }
 

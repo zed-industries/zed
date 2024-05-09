@@ -130,7 +130,7 @@ jobs:
   # todo(windows): Actually run the tests
   windows_tests:
     name: (Windows) Run Clippy and tests
-    runs-on: windows-latest
+    runs-on: hosted-windows-1
     steps:
       - name: Checkout repo
         uses: actions/checkout@v4

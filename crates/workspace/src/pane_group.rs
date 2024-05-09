@@ -983,7 +983,7 @@ mod element {
     }
 
     impl ParentElement for PaneAxisElement {
-        fn extend(&mut self, elements: impl Iterator<Item = AnyElement>) {
+        fn extend(&mut self, elements: impl IntoIterator<Item = AnyElement>) {
             self.children.extend(elements)
         }
     }
