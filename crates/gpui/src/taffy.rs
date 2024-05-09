@@ -9,14 +9,14 @@ use taffy::{
     geometry::{Point as TaffyPoint, Rect as TaffyRect, Size as TaffySize},
     style::AvailableSpace as TaffyAvailableSpace,
     tree::NodeId,
-    TaffyTree, TraversePartialTree as _,
+    Taffy,
 };
 
 type NodeMeasureFn =
     Box<dyn FnMut(Size<Option<Pixels>>, Size<AvailableSpace>, &mut WindowContext) -> Size<Pixels>>;
 
 pub struct TaffyLayoutEngine {
-    taffy: TaffyTree<()>,
+    taffy: Taffy,
     styles: FxHashMap<LayoutId, Style>,
     children_to_parents: FxHashMap<LayoutId, LayoutId>,
     absolute_layout_bounds: FxHashMap<LayoutId, Bounds<Pixels>>,
@@ -29,7 +29,7 @@ static EXPECT_MESSAGE: &str = "we should avoid taffy layout errors by constructi
 impl TaffyLayoutEngine {
     pub fn new() -> Self {
         TaffyLayoutEngine {
-            taffy: TaffyTree::new(),
+            taffy: Taffy::new(),
             styles: FxHashMap::default(),
             children_to_parents: FxHashMap::default(),
             absolute_layout_bounds: FxHashMap::default(),
@@ -114,7 +114,7 @@ impl TaffyLayoutEngine {
     fn max_depth(&self, depth: u32, parent: LayoutId) -> anyhow::Result<u32> {
         println!(
             "{parent:?} at depth {depth} has {} children",
-            self.taffy.child_count(parent.0)
+            self.taffy.child_count(parent.0)?
         );
 
         let mut max_child_depth = 0;
