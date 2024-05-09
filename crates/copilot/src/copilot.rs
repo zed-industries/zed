@@ -431,6 +431,7 @@ impl Copilot {
 
                 let server = LanguageServer::new(
                     Arc::new(Mutex::new(None)),
+                    Arc::new(Mutex::new(None)),
                     new_server_id,
                     binary,
                     Path::new("/"),

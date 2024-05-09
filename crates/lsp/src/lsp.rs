@@ -239,6 +239,7 @@ impl lsp_types::notification::Notification for ServerStatus {
 impl LanguageServer {
     /// Starts a language server process.
     pub fn new(
+        stdout_capture: Arc<Mutex<Option<String>>>,
         stderr_capture: Arc<Mutex<Option<String>>>,
         server_id: LanguageServerId,
         binary: LanguageServerBinary,
@@ -284,6 +285,7 @@ impl LanguageServer {
             server_id,
             stdin,
             stdout,
+            stdout_capture,
             Some(stderr),
             stderr_capture,
             Some(server),
@@ -318,6 +320,7 @@ impl LanguageServer {
         server_id: LanguageServerId,
         stdin: Stdin,
         stdout: Stdout,
+        stdout_capture: Arc<Mutex<Option<String>>>,
         stderr: Option<Stderr>,
         stderr_capture: Arc<Mutex<Option<String>>>,
         server: Option<Child>,
@@ -345,6 +348,7 @@ impl LanguageServer {
             let notification_handlers = notification_handlers.clone();
             let response_handlers = response_handlers.clone();
             let io_handlers = io_handlers.clone();
+            let stdout_capture = stdout_capture.clone();
             move |cx| {
                 Self::handle_input(
                     stdout,
@@ -352,6 +356,7 @@ impl LanguageServer {
                     notification_handlers,
                     response_handlers,
                     io_handlers,
+                    stdout_capture,
                     cx,
                 )
                 .log_err()
@@ -360,8 +365,8 @@ impl LanguageServer {
         let stderr_input_task = stderr
             .map(|stderr| {
                 let io_handlers = io_handlers.clone();
-                let stderr_captures = stderr_capture.clone();
-                cx.spawn(|_| Self::handle_stderr(stderr, io_handlers, stderr_captures).log_err())
+                let stderr_capture = stderr_capture.clone();
+                cx.spawn(|_| Self::handle_stderr(stderr, io_handlers, stderr_capture).log_err())
             })
             .unwrap_or_else(|| Task::Ready(Some(None)));
         let input_task = cx.spawn(|_| async move {
@@ -408,6 +413,7 @@ impl LanguageServer {
         notification_handlers: Arc<Mutex<HashMap<&'static str, NotificationHandler>>>,
         response_handlers: Arc<Mutex<Option<HashMap<RequestId, ResponseHandler>>>>,
         io_handlers: Arc<Mutex<HashMap<i32, IoHandler>>>,
+        stdout_capture: Arc<Mutex<Option<String>>>,
         cx: AsyncAppContext,
     ) -> anyhow::Result<()>
     where
@@ -442,6 +448,11 @@ impl LanguageServer {
 
             if let Ok(message) = str::from_utf8(&buffer) {
                 log::trace!("incoming message: {message}");
+
+                if let Some(stdout) = stdout_capture.lock().as_mut() {
+                    stdout.push_str(message);
+                }
+
                 for handler in io_handlers.lock().values_mut() {
                     handler(IoKind::StdOut, message);
                 }
@@ -507,12 +518,13 @@ impl LanguageServer {
 
             if let Ok(message) = str::from_utf8(&buffer) {
                 log::trace!("incoming stderr message:{message}");
-                for handler in io_handlers.lock().values_mut() {
-                    handler(IoKind::StdErr, message);
-                }
 
                 if let Some(stderr) = stderr_capture.lock().as_mut() {
                     stderr.push_str(message);
+                }
+
+                for handler in io_handlers.lock().values_mut() {
+                    handler(IoKind::StdErr, message);
                 }
             }
 
@@ -1165,6 +1177,7 @@ impl FakeLanguageServer {
             server_id,
             stdin_writer,
             stdout_reader,
+            Arc::new(Mutex::new(None)),
             None::<async_pipe::PipeReader>,
             Arc::new(Mutex::new(None)),
             None,
@@ -1181,6 +1194,7 @@ impl FakeLanguageServer {
                     server_id,
                     stdout_writer,
                     stdin_reader,
+                    Arc::new(Mutex::new(None)),
                     None::<async_pipe::PipeReader>,
                     Arc::new(Mutex::new(None)),
                     None,

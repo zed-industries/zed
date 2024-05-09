@@ -3164,9 +3164,11 @@ impl Project {
             return;
         }
 
+        let stdout_capture = Arc::new(Mutex::new(Some(String::new())));
         let stderr_capture = Arc::new(Mutex::new(Some(String::new())));
         let lsp_adapter_delegate = ProjectLspAdapterDelegate::new(self, worktree_handle, cx);
         let pending_server = match self.languages.create_pending_language_server(
+            stdout_capture.clone(),
             stderr_capture.clone(),
             language.clone(),
             adapter.clone(),
@@ -3217,7 +3219,8 @@ impl Project {
                     }
 
                     Err(err) => {
-                        log::error!("failed to start language server {server_name:?}: {err}");
+                        log::error!("failed to start language server {server_name:?}: {err:?}");
+                        log::error!("server stdout: {:?}", stdout_capture.lock().take());
                         log::error!("server stderr: {:?}", stderr_capture.lock().take());
 
                         let this = this.upgrade()?;

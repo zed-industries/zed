@@ -734,6 +734,7 @@ impl LanguageRegistry {
 
     pub fn create_pending_language_server(
         self: &Arc<Self>,
+        stdout_capture: Arc<Mutex<Option<String>>>,
         stderr_capture: Arc<Mutex<Option<String>>>,
         language: Arc<Language>,
         adapter: Arc<CachedLspAdapter>,
@@ -841,6 +842,7 @@ impl LanguageRegistry {
                 drop(this);
                 Ok((
                     lsp::LanguageServer::new(
+                        stdout_capture,
                         stderr_capture,
                         server_id,
                         binary,
