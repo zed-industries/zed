@@ -11,8 +11,7 @@ use crate::ui::UserOrAssistant;
 use ::ui::{div, prelude::*, Color, Tooltip, ViewContext};
 use anyhow::{Context, Result};
 use assistant_tooling::{
-    tool_running_placeholder, AttachmentRegistry, ProjectContext, ToolFunctionCall, ToolRegistry,
-    UserAttachment,
+    AttachmentRegistry, ProjectContext, ToolFunctionCall, ToolRegistry, UserAttachment,
 };
 use attachments::ActiveEditorAttachmentTool;
 use client::{proto, Client, UserStore};
@@ -847,7 +846,7 @@ impl AssistantChat {
                     let tools = message
                         .tool_calls
                         .iter()
-                        .map(|tool_call| self.tool_registry.render_tool_call(tool_call, cx))
+                        .filter_map(|tool_call| self.tool_registry.render_tool_call(tool_call, cx))
                         .collect::<Vec<AnyElement>>();
 
                     if !tools.is_empty() {
@@ -856,7 +855,7 @@ impl AssistantChat {
                 }
 
                 if message_elements.is_empty() {
-                    message_elements.push(tool_running_placeholder());
+                    return div().into_any();
                 }
 
                 div()

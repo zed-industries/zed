@@ -29,7 +29,7 @@ pub struct ToolFunctionCall {
 }
 
 #[derive(Default)]
-pub enum ToolFunctionCallState {
+enum ToolFunctionCallState {
     #[default]
     Initializing,
     NoSuchTool,
@@ -37,10 +37,10 @@ pub enum ToolFunctionCallState {
     ExecutedTool(Box<dyn ToolView>),
 }
 
-pub trait ToolView {
+trait ToolView {
     fn view(&self) -> AnyView;
     fn generate(&self, project: &mut ProjectContext, cx: &mut WindowContext) -> String;
-    fn set_input(&self, input: &str, cx: &mut WindowContext);
+    fn try_set_input(&self, input: &str, cx: &mut WindowContext);
     fn execute(&self, cx: &mut WindowContext) -> Task<Result<()>>;
     fn serialize_output(&self, cx: &mut WindowContext) -> Result<Box<RawValue>>;
     fn deserialize_output(&self, raw_value: &RawValue, cx: &mut WindowContext) -> Result<()>;
@@ -98,18 +98,6 @@ pub trait LanguageModelTool {
 
     /// A view of the output of running the tool, for displaying to the user.
     fn view(&self, cx: &mut WindowContext) -> View<Self::View>;
-}
-
-pub fn tool_running_placeholder() -> AnyElement {
-    ui::Label::new("Researching...").into_any_element()
-}
-
-pub fn unknown_tool_placeholder() -> AnyElement {
-    ui::Label::new("Unknown tool").into_any_element()
-}
-
-pub fn no_such_tool_placeholder() -> AnyElement {
-    ui::Label::new("No such tool").into_any_element()
 }
 
 pub trait ToolOutput: Render {
@@ -172,11 +160,6 @@ impl ToolRegistry {
             .collect()
     }
 
-    pub fn view_for_tool(&self, name: &str, cx: &mut WindowContext) -> Option<Box<dyn ToolView>> {
-        let tool = self.registered_tools.get(name)?;
-        Some((tool.build_view)(cx))
-    }
-
     pub fn update_tool_call(
         &self,
         call: &mut ToolFunctionCall,
@@ -189,7 +172,8 @@ impl ToolRegistry {
         }
         if let Some(arguments) = arguments {
             if call.arguments.is_empty() {
-                if let Some(view) = self.view_for_tool(&call.name, cx) {
+                if let Some(tool) = self.registered_tools.get(&call.name) {
+                    let view = (tool.build_view)(cx);
                     call.state = ToolFunctionCallState::KnownTool(view);
                 } else {
                     call.state = ToolFunctionCallState::NoSuchTool;
@@ -199,7 +183,7 @@ impl ToolRegistry {
 
             if let ToolFunctionCallState::KnownTool(view) = &call.state {
                 if let Ok(repaired_arguments) = repair(call.arguments.clone()) {
-                    view.set_input(&repaired_arguments, cx)
+                    view.try_set_input(&repaired_arguments, cx)
                 }
             }
         }
@@ -221,12 +205,14 @@ impl ToolRegistry {
         &self,
         tool_call: &ToolFunctionCall,
         _cx: &mut WindowContext,
-    ) -> AnyElement {
+    ) -> Option<AnyElement> {
         match &tool_call.state {
-            ToolFunctionCallState::NoSuchTool => no_such_tool_placeholder(),
-            ToolFunctionCallState::Initializing => unknown_tool_placeholder(),
+            ToolFunctionCallState::NoSuchTool => {
+                Some(ui::Label::new("No such tool").into_any_element())
+            }
+            ToolFunctionCallState::Initializing => None,
             ToolFunctionCallState::KnownTool(view) | ToolFunctionCallState::ExecutedTool(view) => {
-                view.view().into_any_element()
+                Some(view.view().into_any_element())
             }
         }
     }
@@ -287,12 +273,12 @@ impl ToolRegistry {
                 SavedToolFunctionCallState::KnownTool => {
                     log::error!("Deserialized tool that had not executed");
                     let view = (tool.build_view)(cx);
-                    view.set_input(&call.arguments, cx);
+                    view.try_set_input(&call.arguments, cx);
                     ToolFunctionCallState::KnownTool(view)
                 }
                 SavedToolFunctionCallState::ExecutedTool(output) => {
                     let view = (tool.build_view)(cx);
-                    view.set_input(&call.arguments, cx);
+                    view.try_set_input(&call.arguments, cx);
                     view.deserialize_output(output, cx)?;
                     ToolFunctionCallState::ExecutedTool(view)
                 }
@@ -332,7 +318,7 @@ impl<T: ToolOutput> ToolView for View<T> {
         self.update(cx, |view, cx| view.generate(project, cx))
     }
 
-    fn set_input(&self, input: &str, cx: &mut WindowContext) {
+    fn try_set_input(&self, input: &str, cx: &mut WindowContext) {
         if let Ok(input) = serde_json::from_str::<T::Input>(input) {
             self.update(cx, |view, cx| {
                 view.set_input(input, cx);
@@ -529,7 +515,7 @@ mod test {
         let view = cx.update(|cx| tool.view(cx));
 
         cx.update(|cx| {
-            view.set_input(&r#"{"location": "San Francisco", "unit": "Celsius"}"#, cx);
+            view.try_set_input(&r#"{"location": "San Francisco", "unit": "Celsius"}"#, cx);
         });
 
         let finished = cx.update(|cx| view.execute(cx)).await;
