@@ -123,7 +123,7 @@ impl RealNodeRuntime {
         Self::get_node_bin(node_dir).join(if consts::OS != "windows" {
             "npm"
         } else {
-            "npm.cmd"
+            "node_modules/npm/bin/npm-cli.js"
         })
     }
 
@@ -160,15 +160,10 @@ impl RealNodeRuntime {
     }
 
     fn create_npm_command(node_dir: &Path) -> Command {
-        let mut command = if consts::OS != "windows" {
-            let mut command = Self::create_command(node_dir, Self::get_node_executable(node_dir));
-            command.arg(Self::get_npm_executable(node_dir));
-            command
-        } else {
-            Self::create_command(node_dir, Self::get_npm_executable(node_dir))
-        };
+        let mut command = Self::create_command(node_dir, Self::get_node_executable(node_dir));
 
         command
+            .arg(Self::get_npm_executable(node_dir))
             .arg("--cache")
             .arg(node_dir.join("cache"))
             .arg("--userconfig")
