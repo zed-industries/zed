@@ -33,6 +33,7 @@
     function: (_) @context
     (#any-of? @context "it" "test" "describe")
     arguments: (arguments
+        .
         (argument
             (encapsed_string (string_value) @name)
         )

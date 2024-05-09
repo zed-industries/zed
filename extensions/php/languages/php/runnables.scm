@@ -80,6 +80,7 @@
     function: (_) @_name
     (#any-of? @_name "it" "test" "describe")
     arguments: (arguments
+        .
         (argument
             (encapsed_string (string_value) @run)
         )
