@@ -278,9 +278,6 @@ impl Editor {
                 self.insert_deleted_text_block(diff_base_buffer, deleted_text_lines, &hunk, cx)
             }
         };
-        if hunk_start.cmp(&hunk_end, &multi_buffer_snapshot).is_gt() {
-            eprintln!("@######################!!!!!!!!!!!!!");
-        };
         self.expanded_hunks.hunks.insert(
             block_insert_index,
             ExpandedHunk {
