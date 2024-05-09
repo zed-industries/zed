@@ -58,9 +58,8 @@ pub fn init(client: Arc<Client>, app_state: AppState, cx: &mut AppContext) -> Ta
     let mut signals = Signals::new(&[SIGTERM, SIGINT]).unwrap();
     thread::spawn({
         move || {
-            for sig in &mut signals.forever() {
+            if let Some(sig) = signals.forever().next() {
                 tx.send(sig).log_err();
-                break;
             }
         }
     });
