@@ -1,202 +1,196 @@
-use chrono::Local;
-use gpui::View;
-use serde::Deserialize;
-use ui::{prelude::*, Tooltip};
+use std::sync::Arc;
 
-use crate::{
-    saved_conversation::SavedConversationMetadata,
-    saved_conversation_picker::{SavedConversationPicker, SavedConversationPickerDelegate},
-};
+use fuzzy::{match_strings, StringMatch, StringMatchCandidate};
+use gpui::{AppContext, DismissEvent, EventEmitter, FocusHandle, FocusableView, View, WeakView};
+use picker::{Picker, PickerDelegate};
+use ui::{prelude::*, HighlightedLabel, ListItem, ListItemSpacing};
+use util::ResultExt;
 
-// temp, will be unified and moved into the time_format crate
-fn render_relative_date(date: chrono::DateTime<Local>) -> String {
-    let now = Local::now();
+use crate::saved_conversation::SavedConversationMetadata;
 
-    let duration_since = now.signed_duration_since(date);
+pub struct SavedConversations {
+    focus_handle: FocusHandle,
+    picker: Option<View<Picker<SavedConversationPickerDelegate>>>,
+}
 
-    if duration_since.num_hours() < 24 {
-        return date.format("%H:%M %P").to_string();
-    } else if duration_since.num_days() < 7 {
-        return date.format("%A").to_string();
-    } else {
-        return date.format("%Y-%m-%d").to_string();
+impl EventEmitter<DismissEvent> for SavedConversations {}
+
+impl FocusableView for SavedConversations {
+    fn focus_handle(&self, cx: &AppContext) -> FocusHandle {
+        if let Some(picker) = self.picker.as_ref() {
+            picker.focus_handle(cx)
+        } else {
+            self.focus_handle.clone()
+        }
     }
 }
 
-#[derive(Eq, PartialEq, Copy, Clone, Deserialize)]
-pub enum ConversationViewStyle {
-    List,
-    Details,
-}
-
-pub struct SavedConversations {
-    view_style: ConversationViewStyle,
-    picker: Option<View<SavedConversationPicker>>,
-}
-
 impl SavedConversations {
-    pub fn new(_cx: &mut WindowContext) -> Self {
+    pub fn new(cx: &mut ViewContext<Self>) -> Self {
         Self {
-            view_style: ConversationViewStyle::List,
+            focus_handle: cx.focus_handle(),
             picker: None,
         }
     }
 
     pub fn init(
         &mut self,
-        view: WeakView<SavedConversation>,
         saved_conversations: Vec<SavedConversationMetadata>,
-        cx: &mut WindowContext,
+        cx: &mut ViewContext<Self>,
     ) {
         let delegate =
             SavedConversationPickerDelegate::new(cx.view().downgrade(), saved_conversations);
-        self.picker = Some(SavedConversationPicker::new(delegate, cx));
+        self.picker = Some(cx.new_view(|cx| Picker::uniform_list(delegate, cx).modal(false)));
     }
 }
 
 impl Render for SavedConversations {
-    fn render(&mut self, cx: &mut ui::prelude::ViewContext<Self>) -> impl IntoElement {
-        let header_height = Spacing::Small.rems(cx) * 2.0 + ButtonSize::Default.rems();
-        let view_style = self.view_style;
-
-        div()
-            .relative()
-            .flex_1()
-            .v_flex()
-            .key_context("AssistantConversations")
-            .text_color(Color::Default.color(cx))
-            .child(
-                v_flex()
-                    .child(
-                        h_flex()
-                            .flex_none()
-                            .justify_between()
-                            .w_full()
-                            .h(header_height)
-                            .p(Spacing::Small.rems(cx))
-                            .border_b_1()
-                            .border_color(cx.theme().colors().border)
-                            .child(
-                                h_flex()
-                                    .gap(Spacing::Small.rems(cx))
-                                    .child(
-                                        IconButton::new("set-view-list", IconName::List)
-                                            .icon_color(
-                                                if view_style == ConversationViewStyle::List {
-                                                    Color::Accent
-                                                } else {
-                                                    Color::Default
-                                                },
-                                            )
-                                            .selected(view_style == ConversationViewStyle::List)
-                                            .tooltip(move |cx| {
-                                                Tooltip::text("View conversations as a list", cx)
-                                            }),
-                                    )
-                                    .child(
-                                        IconButton::new("set-view-details", IconName::Text)
-                                            .icon_color(
-                                                if view_style == ConversationViewStyle::Details {
-                                                    Color::Accent
-                                                } else {
-                                                    Color::Default
-                                                },
-                                            )
-                                            .selected(view_style == ConversationViewStyle::Details)
-                                            .tooltip(move |cx| {
-                                                Tooltip::text(
-                                                    "View conversations with summaries",
-                                                    cx,
-                                                )
-                                            }),
-                                    ),
-                            )
-                            .child(
-                                IconButton::new("new-conversation", IconName::Plus)
-                                    .tooltip(move |cx| Tooltip::text("New Conversation", cx)),
-                            ),
-                    )
-                    .map(|element| {
-                        if let Some(picker) = self.picker.as_ref() {
-                            element.child(picker.clone())
-                        } else {
-                            element.child(
-                                v_flex()
-                                    .flex_1()
-                                    .size_full()
-                                    .justify_center()
-                                    .items_center()
-                                    .p(Spacing::Large.rems(cx))
-                                    .child(
-                                        Label::new("Loading conversations...")
-                                            .color(Color::Placeholder),
-                                    ),
-                            )
-                        }
-                    }),
-            )
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+        v_flex()
+            .w_full()
+            .bg(cx.theme().colors().panel_background)
+            .children(self.picker.clone())
     }
 }
 
-#[derive(Eq, PartialEq, Clone, Deserialize)]
-pub struct ConversationPreviewData {
-    pub id: SharedString,
-    pub title: SharedString,
-    pub last_message: SharedString,
-    pub last_message_time: chrono::DateTime<chrono::Local>,
+pub struct SavedConversationPickerDelegate {
+    view: WeakView<SavedConversations>,
+    saved_conversations: Vec<SavedConversationMetadata>,
+    selected_index: usize,
+    matches: Vec<StringMatch>,
 }
 
-impl ConversationPreviewData {
+impl SavedConversationPickerDelegate {
     pub fn new(
-        path: impl Into<SharedString>,
-        title: impl Into<SharedString>,
-        last_message_time: chrono::DateTime<chrono::Local>,
+        weak_view: WeakView<SavedConversations>,
+        saved_conversations: Vec<SavedConversationMetadata>,
     ) -> Self {
+        let matches = saved_conversations
+            .iter()
+            .map(|conversation| StringMatch {
+                candidate_id: 0,
+                score: 0.0,
+                positions: Default::default(),
+                string: conversation.title.clone(),
+            })
+            .collect();
+
         Self {
-            id: path.into().into(),
-            title: title.into(),
-            last_message: "".into(),
-            last_message_time,
+            view: weak_view,
+            saved_conversations,
+            selected_index: 0,
+            matches,
         }
     }
 }
 
-#[derive(IntoElement)]
-struct ConversationPreview {
-    conversation_preview: ConversationPreviewData,
-}
+impl PickerDelegate for SavedConversationPickerDelegate {
+    type ListItem = ui::ListItem;
 
-impl RenderOnce for ConversationPreview {
-    fn render(self, cx: &mut WindowContext) -> impl IntoElement {
-        let line_height = rems(1.15);
-        let max_preview_height = line_height.clone() * 3.0;
+    fn placeholder_text(&self, _cx: &mut WindowContext) -> Arc<str> {
+        "Select saved conversation...".into()
+    }
 
-        let preview_string: SharedString = format!(
-            "{}  {}",
-            render_relative_date(self.conversation_preview.last_message_time),
-            self.conversation_preview.last_message.clone()
+    fn match_count(&self) -> usize {
+        self.matches.len()
+    }
+
+    fn selected_index(&self) -> usize {
+        self.selected_index
+    }
+
+    fn set_selected_index(&mut self, ix: usize, _cx: &mut ViewContext<Picker<Self>>) {
+        self.selected_index = ix;
+    }
+
+    fn update_matches(
+        &mut self,
+        query: String,
+        cx: &mut ViewContext<Picker<Self>>,
+    ) -> gpui::Task<()> {
+        let background_executor = cx.background_executor().clone();
+        let candidates = self
+            .saved_conversations
+            .iter()
+            .enumerate()
+            .map(|(id, conversation)| {
+                let text = conversation.title.clone();
+
+                StringMatchCandidate {
+                    id,
+                    char_bag: text.as_str().into(),
+                    string: text,
+                }
+            })
+            .collect::<Vec<_>>();
+
+        cx.spawn(move |this, mut cx| async move {
+            let matches = if query.is_empty() {
+                candidates
+                    .into_iter()
+                    .enumerate()
+                    .map(|(index, candidate)| StringMatch {
+                        candidate_id: index,
+                        string: candidate.string,
+                        positions: Vec::new(),
+                        score: 0.0,
+                    })
+                    .collect()
+            } else {
+                match_strings(
+                    &candidates,
+                    &query,
+                    false,
+                    100,
+                    &Default::default(),
+                    background_executor,
+                )
+                .await
+            };
+
+            this.update(&mut cx, |this, _cx| {
+                this.delegate.matches = matches;
+                this.delegate.selected_index = this
+                    .delegate
+                    .selected_index
+                    .min(this.delegate.matches.len().saturating_sub(1));
+            })
+            .log_err();
+        })
+    }
+
+    fn confirm(&mut self, _secondary: bool, cx: &mut ViewContext<Picker<Self>>) {
+        if self.matches.is_empty() {
+            self.dismissed(cx);
+            return;
+        }
+
+        // TODO: Implement selecting a saved conversation.
+    }
+
+    fn dismissed(&mut self, cx: &mut ui::prelude::ViewContext<Picker<Self>>) {
+        self.view
+            .update(cx, |_, cx| cx.emit(DismissEvent))
+            .log_err();
+    }
+
+    fn render_match(
+        &self,
+        ix: usize,
+        selected: bool,
+        _cx: &mut ViewContext<Picker<Self>>,
+    ) -> Option<Self::ListItem> {
+        let conversation_match = &self.matches[ix];
+        let _conversation = &self.saved_conversations[conversation_match.candidate_id];
+
+        Some(
+            ListItem::new(ix)
+                .spacing(ListItemSpacing::Sparse)
+                .selected(selected)
+                .child(HighlightedLabel::new(
+                    conversation_match.string.clone(),
+                    conversation_match.positions.clone(),
+                )),
         )
-        .into();
-
-        v_flex()
-            .id(self.conversation_preview.id.clone())
-            .flex_none()
-            .w_full()
-            .line_height(line_height)
-            .p(Spacing::Large.rems(cx))
-            // .on_click(todo!())
-            .child(
-                Headline::new(self.conversation_preview.title.clone()).size(HeadlineSize::XSmall),
-            )
-            .child(
-                div()
-                    .w_full()
-                    .min_h(cx.line_height())
-                    .max_h(max_preview_height)
-                    .text_color(cx.theme().colors().text_muted)
-                    .text_sm()
-                    .overflow_hidden()
-                    .child(preview_string),
-            )
     }
 }

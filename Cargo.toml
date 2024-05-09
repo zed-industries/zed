@@ -227,7 +227,7 @@ snippet = { path = "crates/snippet" }
 sqlez = { path = "crates/sqlez" }
 sqlez_macros = { path = "crates/sqlez_macros" }
 supermaven = { path = "crates/supermaven" }
-supermaven_api = { path = "crates/supermaven_api"}
+supermaven_api = { path = "crates/supermaven_api" }
 story = { path = "crates/story" }
 storybook = { path = "crates/storybook" }
 sum_tree = { path = "crates/sum_tree" }
@@ -386,6 +386,8 @@ version = "0.53.0"
 features = [
     "implement",
     "Foundation_Numerics",
+    "System",
+    "System_Threading",
     "Wdk_System_SystemServices",
     "Win32_Globalization",
     "Win32_Graphics_Direct2D",
@@ -409,6 +411,7 @@ features = [
     "Win32_System_SystemServices",
     "Win32_System_Threading",
     "Win32_System_Time",
+    "Win32_System_WinRT",
     "Win32_UI_Controls",
     "Win32_UI_HiDpi",
     "Win32_UI_Input_Ime",
