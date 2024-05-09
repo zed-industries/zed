@@ -1407,7 +1407,10 @@ impl EditorElement {
             editor
                 .tasks
                 .keys()
-                .map(|row| {
+                .filter_map(|row| {
+                    if snapshot.is_line_folded(*row) {
+                        return None;
+                    }
                     let button = editor.render_run_indicator(
                         &self.style,
                         Some(*row) == active_task_indicator_row,
@@ -1426,7 +1429,7 @@ impl EditorElement {
                         gutter_hitbox,
                         cx,
                     );
-                    button
+                    Some(button)
                 })
                 .collect_vec()
         })
