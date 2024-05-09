@@ -10,8 +10,6 @@ use futures::channel::{mpsc, oneshot};
 use futures::{FutureExt, SinkExt, StreamExt};
 use gpui::{AppContext, AsyncAppContext, Global, WindowHandle};
 use language::{Bias, Point};
-use release_channel::RELEASE_CHANNEL_NAME;
-use std::os::unix::net::{SocketAddr, UnixDatagram};
 use std::path::Path;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -21,6 +19,8 @@ use util::paths::PathLikeWithPosition;
 use util::ResultExt;
 use workspace::item::ItemHandle;
 use workspace::{AppState, Workspace};
+
+use crate::{init_headless, init_ui};
 
 #[derive(Default, Debug)]
 pub struct OpenRequest {
@@ -119,28 +119,21 @@ impl OpenListener {
 }
 
 #[cfg(target_os = "linux")]
-pub fn listen_for_cli_connections(opener: Arc<OpenListener>) -> Result<oneshot::Receiver<()>> {
+pub fn listen_for_cli_connections(opener: Arc<OpenListener>) -> Result<()> {
+    use release_channel::RELEASE_CHANNEL_NAME;
     use std::os::linux::net::SocketAddrExt;
 
     let uid: u32 = unsafe { libc::getuid() };
     let sock_addr =
         SocketAddr::from_abstract_name(format!("zed-{}-{}", *RELEASE_CHANNEL_NAME, uid))?;
-
-    let (tx, rx) = oneshot::channel();
-
-    let mut send = Some(tx);
     let listener = UnixDatagram::bind_addr(&sock_addr)?;
     thread::spawn(move || {
         let mut buf = [0u8; 1024];
         while let Ok(len) = listener.recv(&mut buf) {
-            opener.open_urls(vec![dbg!(String::from_utf8_lossy(&buf[..len]).to_string())]);
-        }
-
-        if let Some(tx) = send.take() {
-            tx.send(()).ok();
+            opener.open_urls(vec![String::from_utf8_lossy(&buf[..len]).to_string()]);
         }
     });
-    Ok(rx)
+    Ok(())
 }
 
 fn connect_to_cli(
@@ -240,11 +233,42 @@ pub async fn handle_cli_connection(
                 open_new_workspace,
                 dev_server_token,
             } => {
-                if dev_server_token.is_some() {
-                    // NOTE: we need to change the order of initialization a bit as we
-                    // can't determine if we're in dev-server mode until inside app.run()
-                    todo!();
+                if let Some(dev_server_token) = dev_server_token {
+                    match cx
+                        .update(|cx| {
+                            init_headless(client::DevServerToken(dev_server_token), app_state, cx)
+                        })
+                        .unwrap()
+                        .await
+                    {
+                        Ok(_) => {
+                            responses.send(CliResponse::Exit { status: 0 }).log_err();
+                        }
+                        Err(error) => {
+                            responses
+                                .send(CliResponse::Stderr {
+                                    message: format!("{}", error),
+                                })
+                                .log_err();
+                            responses.send(CliResponse::Exit { status: 1 }).log_err();
+                        }
+                    }
+                    return;
                 }
+
+                if let Err(e) = cx
+                    .update(|cx| init_ui(app_state.clone(), cx))
+                    .and_then(|r| r)
+                {
+                    responses
+                        .send(CliResponse::Stderr {
+                            message: format!("{}", e),
+                        })
+                        .log_err();
+                    responses.send(CliResponse::Exit { status: 1 }).log_err();
+                    return;
+                }
+
                 let paths = if paths.is_empty() {
                     if open_new_workspace == Some(true) {
                         vec![]

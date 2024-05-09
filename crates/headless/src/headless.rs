@@ -1,4 +1,4 @@
-use anyhow::Result;
+use anyhow::{anyhow, Result};
 use client::DevServerProjectId;
 use client::{user::UserStore, Client, ClientSettings};
 use fs::Fs;
@@ -36,7 +36,7 @@ struct GlobalDevServer(Model<DevServer>);
 
 impl Global for GlobalDevServer {}
 
-pub fn init(client: Arc<Client>, app_state: AppState, cx: &mut AppContext) {
+pub fn init(client: Arc<Client>, app_state: AppState, cx: &mut AppContext) -> Task<Result<()>> {
     let dev_server = cx.new_model(|cx| DevServer::new(client.clone(), app_state, cx));
     cx.set_global(GlobalDevServer(dev_server.clone()));
 
@@ -62,17 +62,11 @@ pub fn init(client: Arc<Client>, app_state: AppState, cx: &mut AppContext) {
 
     let server_url = ClientSettings::get_global(&cx).server_url.clone();
     cx.spawn(|cx| async move {
-        match client.authenticate_and_connect(false, &cx).await {
-            Ok(_) => {
-                log::info!("Connected to {}", server_url);
-            }
-            Err(e) => {
-                log::error!("Error connecting to '{}': {}", server_url, e);
-                cx.update(|cx| cx.quit()).log_err();
-            }
-        }
+        client
+            .authenticate_and_connect(false, &cx)
+            .await
+            .map_err(|e| anyhow!("Error connecting to '{}': {}", server_url, e))
     })
-    .detach();
 }
 
 fn set_ctrlc_handler<F>(f: F) -> Result<(), ctrlc::Error>
@@ -186,7 +180,7 @@ impl DevServer {
 
         let path_exists = fs.is_dir(path).await;
         if !path_exists {
-            return Err(anyhow::anyhow!(ErrorCode::DevServerProjectPathDoesNotExist))?;
+            return Err(anyhow!(ErrorCode::DevServerProjectPathDoesNotExist))?;
         }
 
         Ok(proto::Ack {})

@@ -3,7 +3,6 @@
 use anyhow::{Context, Result};
 use clap::Parser;
 use cli::{ipc::IpcOneShotServer, CliRequest, CliResponse, IpcHandshake};
-use once_cell::sync::Lazy;
 use std::{
     env, fs,
     path::{Path, PathBuf},
