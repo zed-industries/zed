@@ -42,6 +42,7 @@ mod macos {
     fn generate_dispatch_bindings() {
         println!("cargo:rustc-link-lib=framework=System");
         println!("cargo:rerun-if-changed=src/platform/mac/dispatch.h");
+
         let bindings = bindgen::Builder::default()
             .header("src/platform/mac/dispatch.h")
             .allowlist_var("_dispatch_main_q")
