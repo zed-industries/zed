@@ -1094,7 +1094,7 @@ pub(crate) fn next_char(
         *new_point.row_mut() += 1;
         *new_point.column_mut() = 0;
     }
-    new_point
+    map.clip_ignoring_line_ends(new_point, Bias::Right)
 }
 
 pub(crate) fn next_word_start(
