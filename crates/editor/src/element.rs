@@ -3670,19 +3670,23 @@ impl Element for EditorElement {
                     let editor_handle = cx.view().clone();
                     let max_line_number_width =
                         self.max_line_number_width(&editor.snapshot(cx), cx);
-                    cx.request_measured_layout(Style::default(), move |known_dimensions, _, cx| {
-                        editor_handle
-                            .update(cx, |editor, cx| {
-                                compute_auto_height_layout(
-                                    editor,
-                                    max_lines,
-                                    max_line_number_width,
-                                    known_dimensions,
-                                    cx,
-                                )
-                            })
-                            .unwrap_or_default()
-                    })
+                    cx.request_measured_layout(
+                        Style::default(),
+                        move |known_dimensions, available_space, cx| {
+                            editor_handle
+                                .update(cx, |editor, cx| {
+                                    compute_auto_height_layout(
+                                        editor,
+                                        max_lines,
+                                        max_line_number_width,
+                                        known_dimensions,
+                                        available_space.width,
+                                        cx,
+                                    )
+                                })
+                                .unwrap_or_default()
+                        },
+                    )
                 }
                 EditorMode::Full => {
                     let mut style = Style::default();
@@ -5261,9 +5265,16 @@ fn compute_auto_height_layout(
     max_lines: usize,
     max_line_number_width: Pixels,
     known_dimensions: Size<Option<Pixels>>,
+    available_width: AvailableSpace,
     cx: &mut ViewContext<Editor>,
 ) -> Option<Size<Pixels>> {
-    let width = known_dimensions.width?;
+    let width = known_dimensions.width.or_else(|| {
+        if let AvailableSpace::Definite(available_width) = available_width {
+            Some(available_width)
+        } else {
+            None
+        }
+    })?;
     if let Some(height) = known_dimensions.height {
         return Some(size(width, height));
     }
