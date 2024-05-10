@@ -92,8 +92,8 @@ pub(crate) fn one_dark() -> Theme {
                 editor_invisible: hsla(222.0 / 360., 11.5 / 100., 34.1 / 100., 1.0),
                 editor_wrap_guide: hsla(228. / 360., 8. / 100., 25. / 100., 1.),
                 editor_active_wrap_guide: hsla(228. / 360., 8. / 100., 25. / 100., 1.),
-                editor_indent_guide: hsla(225. / 360., 13. / 100., 12. / 100., 1.),
-                editor_indent_guide_active: hsla(228. / 360., 8. / 100., 25. / 100., 1.),
+                editor_indent_guide: hsla(228. / 360., 8. / 100., 25. / 100., 1.),
+                editor_indent_guide_active: hsla(225. / 360., 13. / 100., 12. / 100., 1.),
                 editor_document_highlight_read_background: hsla(
                     207.8 / 360.,
                     81. / 100.,
