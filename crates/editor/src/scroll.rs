@@ -210,7 +210,7 @@ impl ScrollManager {
                     anchor: top_anchor,
                     offset: point(
                         scroll_position.x.max(0.),
-                        scroll_position.y - top_anchor.to_display_point(&map).row() as f32,
+                        scroll_position.y - top_anchor.to_display_point(&map).row().0 as f32,
                     ),
                 },
                 scroll_top_buffer_point.row,

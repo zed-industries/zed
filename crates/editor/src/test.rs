@@ -166,6 +166,8 @@ pub fn expanded_hunks_background_highlights(
     editor: &mut Editor,
     cx: &mut gpui::WindowContext,
 ) -> Vec<std::ops::RangeInclusive<crate::DisplayRow>> {
+    use crate::DisplayRow;
+
     let mut highlights = Vec::new();
 
     let mut range_start = 0;
@@ -174,19 +176,19 @@ pub fn expanded_hunks_background_highlights(
     {
         match previous_highlighted_row {
             Some(previous_row) => {
-                if previous_row + 1 != highlighted_row {
-                    highlights.push(range_start..=previous_row);
-                    range_start = highlighted_row;
+                if previous_row + 1 != highlighted_row.0 {
+                    highlights.push(DisplayRow(range_start)..=DisplayRow(previous_row));
+                    range_start = highlighted_row.0;
                 }
             }
             None => {
-                range_start = highlighted_row;
+                range_start = highlighted_row.0;
             }
         }
-        previous_highlighted_row = Some(highlighted_row);
+        previous_highlighted_row = Some(highlighted_row.0);
     }
     if let Some(previous_row) = previous_highlighted_row {
-        highlights.push(range_start..=previous_row);
+        highlights.push(DisplayRow(range_start)..=DisplayRow(previous_row));
     }
 
     highlights

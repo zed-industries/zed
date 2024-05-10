@@ -86,7 +86,7 @@ use language::{
     CursorShape, Diagnostic, Documentation, IndentKind, IndentSize, Language, OffsetRangeExt,
     Point, Selection, SelectionGoal, TransactionId,
 };
-use language::{Runnable, RunnableRange};
+use language::{BufferRow, Runnable, RunnableRange};
 use task::{ResolvedTask, TaskTemplate, TaskVariables};
 
 use hover_links::{HoverLink, HoveredLinkState, InlayHighlight};
@@ -505,7 +505,7 @@ pub struct Editor {
     >,
     last_bounds: Option<Bounds<Pixels>>,
     expect_bounds_change: Option<Bounds<Pixels>>,
-    tasks: HashMap<(BufferId, MultiBufferRow), (usize, RunnableTasks)>,
+    tasks: HashMap<(BufferId, BufferRow), (usize, RunnableTasks)>,
     tasks_update_task: Option<Task<()>>,
 }
 
@@ -4532,7 +4532,7 @@ impl Editor {
         self.tasks.clear()
     }
 
-    fn insert_tasks(&mut self, key: (BufferId, MultiBufferRow), value: (usize, RunnableTasks)) {
+    fn insert_tasks(&mut self, key: (BufferId, BufferRow), value: (usize, RunnableTasks)) {
         if let Some(_) = self.tasks.insert(key, value) {
             // This case should hopefully be rare, but just in case...
             log::error!("multiple different run targets found on a single line, only the last target will be rendered")
@@ -9833,7 +9833,7 @@ impl Editor {
                                     unique_rows.insert(DisplayRow(row), *hsla);
                                 }
                                 None => {
-                                    unique_rows.remove(&row);
+                                    unique_rows.remove(&DisplayRow(row));
                                 }
                             }
                         }

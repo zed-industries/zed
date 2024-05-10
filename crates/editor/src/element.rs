@@ -34,7 +34,7 @@ use gpui::{
     ViewContext, WeakView, WindowContext,
 };
 use itertools::Itertools;
-use language::language_settings::ShowWhitespaceSetting;
+use language::{language_settings::ShowWhitespaceSetting, BufferRow};
 use lsp::DiagnosticSeverity;
 use multi_buffer::{Anchor, MultiBufferPoint, MultiBufferRow};
 use project::{
@@ -750,7 +750,8 @@ impl EditorElement {
                 for row in cmp::max(layout.active_rows.start.0, start_row.0)
                     ..=cmp::min(layout.active_rows.end.0, end_row.0)
                 {
-                    let contains_non_empty_selection = active_rows.entry(row).or_insert(!is_empty);
+                    let contains_non_empty_selection =
+                        active_rows.entry(DisplayRow(row)).or_insert(!is_empty);
                     *contains_non_empty_selection |= !is_empty;
                 }
                 layouts.push(layout);
@@ -1417,8 +1418,8 @@ impl EditorElement {
             editor
                 .tasks
                 .iter()
-                .filter_map(|((_, row), (multibuffer_offset, _))| {
-                    if snapshot.is_line_folded(*row) {
+                .filter_map(|((_, buffer_row), (multibuffer_offset, _))| {
+                    if snapshot.is_line_folded(*buffer_row) {
                         return None;
                     }
                     let display_row = snapshot
@@ -1429,7 +1430,7 @@ impl EditorElement {
 
                     let button = editor.render_run_indicator(
                         &self.style,
-                        Some(*row) == active_task_indicator_row,
+                        Some(*buffer_row) == active_task_indicator_row,
                         display_row,
                         cx,
                     );
@@ -1549,7 +1550,7 @@ impl EditorElement {
     fn layout_line_numbers(
         &self,
         rows: Range<DisplayRow>,
-        buffer_rows: impl Iterator<Item = Option<MultiBufferRow>>,
+        buffer_rows: impl Iterator<Item = Option<BufferRow>>,
         active_rows: &BTreeMap<DisplayRow, bool>,
         newest_selection_head: Option<DisplayPoint>,
         snapshot: &EditorSnapshot,
@@ -1600,7 +1601,7 @@ impl EditorElement {
             if let Some(buffer_row) = row {
                 if include_line_numbers {
                     line_number.clear();
-                    let default_number = buffer_row.0 + 1;
+                    let default_number = buffer_row + 1;
                     let number = relative_rows
                         .get(&DisplayRow(ix as u32 + rows.start.0))
                         .unwrap_or(&default_number);
@@ -2103,7 +2104,6 @@ impl EditorElement {
             crate::ContextMenuOrigin::GutterIndicator(row) => {
                 // Context menu was spawned via a click on a gutter. Ensure it's a bit closer to the indicator than just a plain first column of the
                 // text field.
-                let snapshot = self.editor.update(cx, |this, cx| this.snapshot(cx));
                 let x = -gutter_overshoot;
                 let y = (row.0 + 1) as f32 * line_height - scroll_pixel_position.y;
                 (x, y)
@@ -2272,10 +2272,14 @@ impl EditorElement {
             if let EditorMode::Full = layout.mode {
                 let mut active_rows = layout.active_rows.iter().peekable();
                 while let Some((start_row, contains_non_empty_selection)) = active_rows.next() {
-                    let mut end_row = *start_row;
-                    while active_rows.peek().map_or(false, |r| {
-                        *r.0 == end_row + 1 && r.1 == contains_non_empty_selection
-                    }) {
+                    let mut end_row = start_row.0;
+                    while active_rows
+                        .peek()
+                        .map_or(false, |(active_row, has_selection)| {
+                            active_row.0 == end_row + 1
+                                && *has_selection == contains_non_empty_selection
+                        })
+                    {
                         active_rows.next().unwrap();
                         end_row += 1;
                     }
@@ -2284,12 +2288,12 @@ impl EditorElement {
                         let origin = point(
                             layout.hitbox.origin.x,
                             layout.hitbox.origin.y
-                                + (*start_row as f32 - scroll_top)
+                                + (start_row.0 as f32 - scroll_top)
                                     * layout.position_map.line_height,
                         );
                         let size = size(
                             layout.hitbox.size.width,
-                            layout.position_map.line_height * (end_row - start_row + 1) as f32,
+                            layout.position_map.line_height * (end_row - start_row.0 + 1) as f32,
                         );
                         let active_line_bg = cx.theme().colors().editor_active_line_background;
                         cx.paint_quad(fill(Bounds { origin, size }, active_line_bg));
@@ -2297,17 +2301,17 @@ impl EditorElement {
                 }
 
                 let mut paint_highlight =
-                    |highlight_row_start: u32, highlight_row_end: u32, color| {
+                    |highlight_row_start: DisplayRow, highlight_row_end: DisplayRow, color| {
                         let origin = point(
                             layout.hitbox.origin.x,
                             layout.hitbox.origin.y
-                                + (highlight_row_start as f32 - scroll_top)
+                                + (highlight_row_start.0 as f32 - scroll_top)
                                     * layout.position_map.line_height,
                         );
                         let size = size(
                             layout.hitbox.size.width,
                             layout.position_map.line_height
-                                * (highlight_row_end + 1 - highlight_row_start) as f32,
+                                * (highlight_row_end.0 + 1 - highlight_row_start.0) as f32,
                         );
                         cx.paint_quad(fill(Bounds { origin, size }, color));
                     };
@@ -2318,7 +2322,7 @@ impl EditorElement {
                         Some((current_color, current_range)) => {
                             let current_color = *current_color;
                             let new_range_started =
-                                current_color != new_color || current_range.end + 1 != new_row;
+                                current_color != new_color || current_range.end.0 + 1 != new_row.0;
                             if new_range_started {
                                 paint_highlight(
                                     current_range.start,
@@ -2328,7 +2332,7 @@ impl EditorElement {
                                 current_paint = Some((new_color, new_row..new_row));
                                 continue;
                             } else {
-                                current_range.end += 1;
+                                current_range.end.0 += 1;
                             }
                         }
                         None => current_paint = Some((new_color, new_row..new_row)),
@@ -3037,7 +3041,7 @@ impl EditorElement {
                 line_height: layout.position_map.line_height,
                 corner_radius,
                 start_y: layout.content_origin.y
-                    + row_range.start as f32 * layout.position_map.line_height
+                    + row_range.start.0 as f32 * layout.position_map.line_height
                     - layout.position_map.scroll_pixel_position.y,
                 lines: (row_range.start.0..row_range.end.0)
                     .map(|row| {
@@ -3291,7 +3295,7 @@ impl EditorElement {
     }
 
     fn max_line_number_width(&self, snapshot: &EditorSnapshot, cx: &WindowContext) -> Pixels {
-        let digit_count = (snapshot.max_buffer_row() as f32 + 1.).log10().floor() as usize + 1;
+        let digit_count = (snapshot.max_buffer_row().0 as f32 + 1.).log10().floor() as usize + 1;
         self.column_pixels(digit_count, cx)
     }
 }
@@ -3580,8 +3584,8 @@ impl LineWithInvisibles {
         cx: &mut WindowContext,
     ) {
         let line_height = layout.position_map.line_height;
-        let line_y =
-            line_height * (row as f32 - layout.position_map.scroll_pixel_position.y / line_height);
+        let line_y = line_height
+            * (row.0 as f32 - layout.position_map.scroll_pixel_position.y / line_height);
 
         let line_origin =
             content_origin + gpui::point(-layout.position_map.scroll_pixel_position.x, line_y);
@@ -3633,7 +3637,7 @@ impl LineWithInvisibles {
                 );
 
             if let Some(allowed_regions) = allowed_invisibles_regions {
-                let invisible_point = DisplayPoint::new(DisplayRow(row), token_offset as u32);
+                let invisible_point = DisplayPoint::new(row, token_offset as u32);
                 if !allowed_regions
                     .iter()
                     .any(|region| region.start <= invisible_point && invisible_point < region.end)
@@ -4270,8 +4274,6 @@ impl IntoElement for EditorElement {
     }
 }
 
-type BufferRow = u32;
-
 pub struct EditorLayout {
     position_map: Arc<PositionMap>,
     hitbox: Hitbox,
@@ -4283,7 +4285,7 @@ pub struct EditorLayout {
     mode: EditorMode,
     wrap_guides: SmallVec<[(Pixels, bool); 2]>,
     visible_display_row_range: Range<DisplayRow>,
-    active_rows: BTreeMap<u32, bool>,
+    active_rows: BTreeMap<DisplayRow, bool>,
     highlighted_rows: BTreeMap<DisplayRow, Hsla>,
     line_numbers: Vec<Option<ShapedLine>>,
     display_hunks: Vec<(DisplayDiffHunk, Option<Hitbox>)>,
@@ -4843,7 +4845,7 @@ mod tests {
                 element
                     .layout_line_numbers(
                         DisplayRow(0)..DisplayRow(6),
-                        (0..6).map(MultiBufferRow).map(Some),
+                        (0..6).map(Some),
                         &Default::default(),
                         Some(DisplayPoint::new(DisplayRow(0), 0)),
                         &snapshot,
@@ -4968,8 +4970,8 @@ mod tests {
 
         // active lines does not include 1 (even though the range of the selection does)
         assert_eq!(
-            state.active_rows.keys().cloned().collect::<Vec<u32>>(),
-            vec![0, 3, 5, 6]
+            state.active_rows.keys().cloned().collect::<Vec<_>>(),
+            vec![DisplayRow(0), DisplayRow(3), DisplayRow(5), DisplayRow(6)]
         );
 
         // multi-buffer support

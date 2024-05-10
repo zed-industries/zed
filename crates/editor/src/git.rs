@@ -63,7 +63,8 @@ pub fn diff_hunk_to_display(
         0,
     );
 
-    let is_removal = multi_buffer_associated_hunk_status(hunk) == DiffHunkStatus::Removed;
+    let status = multi_buffer_associated_hunk_status(hunk);
+    let is_removal = status == DiffHunkStatus::Removed;
 
     let folds_start = Point::new(hunk.associated_range.start.0.saturating_sub(2), 0);
     let folds_end = Point::new(hunk.associated_range.end.0 + 2, 0);
@@ -96,7 +97,7 @@ pub fn diff_hunk_to_display(
         DisplayDiffHunk::Unfolded {
             display_row_range: start..end,
             multi_buffer_range: multi_buffer_start..multi_buffer_end,
-            status: multi_buffer_associated_hunk_status(hunk),
+            status,
             diff_base_byte_range: hunk.diff_base_byte_range.clone(),
         }
     }
