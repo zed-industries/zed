@@ -131,8 +131,8 @@ impl Editor {
                 .head()
                 .to_display_point(&display_map)
                 .row()
-                .as_f32()
-                + 1.0;
+                .next_row()
+                .as_f32();
 
             // If the selections can't all fit on screen, scroll to the newest.
             if autoscroll == Autoscroll::newest()

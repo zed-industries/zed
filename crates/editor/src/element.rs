@@ -2295,8 +2295,7 @@ impl EditorElement {
                         );
                         let size = size(
                             layout.hitbox.size.width,
-                            layout.position_map.line_height
-                                * (end_row - start_row.next_row().0) as f32,
+                            layout.position_map.line_height * (end_row - start_row.0 + 1) as f32,
                         );
                         let active_line_bg = cx.theme().colors().editor_active_line_background;
                         cx.paint_quad(fill(Bounds { origin, size }, active_line_bg));
@@ -3298,7 +3297,13 @@ impl EditorElement {
     }
 
     fn max_line_number_width(&self, snapshot: &EditorSnapshot, cx: &WindowContext) -> Pixels {
-        let digit_count = (snapshot.max_buffer_row().as_f32() + 1.).log10().floor() as usize + 1;
+        let digit_count = snapshot
+            .max_buffer_row()
+            .next_row()
+            .as_f32()
+            .log10()
+            .floor() as usize
+            + 1;
         self.column_pixels(digit_count, cx)
     }
 }
