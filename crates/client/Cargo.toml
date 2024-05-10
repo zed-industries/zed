@@ -19,6 +19,7 @@ test-support = ["clock/test-support", "collections/test-support", "gpui/test-sup
 anyhow.workspace = true
 async-recursion = "0.3"
 async-tungstenite = { version = "0.16", features = ["async-std", "async-native-tls"] }
+async-native-tls = { version = "0.5.0", features = ["vendored"] }
 chrono = { workspace = true, features = ["serde"] }
 clock.workspace = true
 collections.workspace = true
@@ -56,3 +57,6 @@ gpui = { workspace = true, features = ["test-support"] }
 rpc = { workspace = true, features = ["test-support"] }
 settings = { workspace = true, features = ["test-support"] }
 util = { workspace = true, features = ["test-support"] }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+async-native-tls = {"version" = "0.5.0", features = ["vendored"]}
