@@ -11220,7 +11220,7 @@ async fn test_indent_guides_single_line(cx: &mut gpui::TestAppContext) {
         }"
         .unindent(),
         0..3,
-        vec![IndentGuide::new(1, 1, 0, 0)],
+        vec![IndentGuide::new(1, 1, 0, 4)],
         cx,
     )
     .await;
@@ -11236,7 +11236,7 @@ async fn test_indent_guides_simple_block(cx: &mut gpui::TestAppContext) {
         }"
         .unindent(),
         0..3,
-        vec![IndentGuide::new(1, 2, 0, 0)],
+        vec![IndentGuide::new(1, 2, 0, 4)],
         cx,
     )
     .await;
@@ -11257,7 +11257,7 @@ async fn test_indent_guides_nested(cx: &mut gpui::TestAppContext) {
         .unindent(),
         0..8,
         vec![
-            IndentGuide::new(1, 6, 0, 0),
+            IndentGuide::new(1, 6, 0, 4),
             IndentGuide::new(3, 3, 1, 4),
             IndentGuide::new(5, 5, 1, 4),
         ],
@@ -11277,7 +11277,7 @@ async fn test_indent_guides_tab(cx: &mut gpui::TestAppContext) {
         }"
         .unindent(),
         0..5,
-        vec![IndentGuide::new(1, 3, 0, 0), IndentGuide::new(2, 2, 1, 4)],
+        vec![IndentGuide::new(1, 3, 0, 4), IndentGuide::new(2, 2, 1, 4)],
         cx,
     )
     .await;
@@ -11294,7 +11294,7 @@ async fn test_indent_guides_continues_on_empty_line(cx: &mut gpui::TestAppContex
         }"
         .unindent(),
         0..5,
-        vec![IndentGuide::new(1, 3, 0, 0)],
+        vec![IndentGuide::new(1, 3, 0, 4)],
         cx,
     )
     .await;
@@ -11318,7 +11318,7 @@ async fn test_indent_guides_complex(cx: &mut gpui::TestAppContext) {
         .unindent(),
         0..10,
         vec![
-            IndentGuide::new(1, 9, 0, 0),
+            IndentGuide::new(1, 9, 0, 4),
             IndentGuide::new(6, 6, 1, 4),
             IndentGuide::new(8, 8, 1, 4),
         ],
@@ -11345,7 +11345,7 @@ async fn test_indent_guides_starts_off_screen(cx: &mut gpui::TestAppContext) {
         .unindent(),
         1..11,
         vec![
-            IndentGuide::new(1, 9, 0, 0),
+            IndentGuide::new(1, 9, 0, 4),
             IndentGuide::new(6, 6, 1, 4),
             IndentGuide::new(8, 8, 1, 4),
         ],
@@ -11372,7 +11372,7 @@ async fn test_indent_guides_ends_off_screen(cx: &mut gpui::TestAppContext) {
         .unindent(),
         0..10,
         vec![
-            IndentGuide::new(1, 9, 0, 0),
+            IndentGuide::new(1, 9, 0, 4),
             IndentGuide::new(6, 6, 1, 4),
             IndentGuide::new(8, 8, 1, 4),
         ],
@@ -11395,9 +11395,9 @@ async fn test_indent_guides_without_brackets(cx: &mut gpui::TestAppContext) {
             .unindent(),
         0..7,
         vec![
-            IndentGuide::new(1, 4, 0, 0),
+            IndentGuide::new(1, 4, 0, 4),
             IndentGuide::new(2, 3, 1, 4),
-            IndentGuide::new(3, 3, 2, 8),
+            IndentGuide::new(3, 3, 2, 4),
         ],
         cx,
     )

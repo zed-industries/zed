@@ -1513,6 +1513,10 @@ impl IndentGuide {
             active: false,
         }
     }
+
+    fn indent_width(&self) -> u32 {
+        self.indent_size * self.depth
+    }
 }
 
 impl Editor {
@@ -10036,14 +10040,6 @@ impl Editor {
         let mut indent_stack = SmallVec::<[IndentGuide; 8]>::new();
         let mut visible_rows = visible_buffer_range.into_iter();
 
-        // let excerpt_boundaries = snapshot.buffer_snapshot.excerpt_boundaries_in_range(range);
-        // How to flush the stack:
-        // 1. Update all indent guides in the stack to extend to the current line
-        // 2. Push to result vec
-        // 3. Update the current excerpt boundary
-        // let current_excerpt_boundary = excerpt_boundaries.next();
-        // get excerpt boundaries, convert those boundaries into display rows
-
         while let Some(first_row) = visible_rows.next() {
             let current_depth = indent_stack.len() as u32;
 
@@ -10161,9 +10157,7 @@ impl Editor {
         let indent_candidates = indents
             .iter()
             .enumerate()
-            .filter(|(_, indent_guide)| {
-                indent_guide.indent_size * indent_guide.depth == target_indent
-            })
+            .filter(|(_, indent_guide)| indent_guide.indent_width() == target_indent)
             .collect::<Vec<_>>();
 
         // Find exact match
