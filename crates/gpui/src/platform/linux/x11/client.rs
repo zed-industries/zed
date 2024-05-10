@@ -159,6 +159,7 @@ impl X11Client {
             .filter_map(|class| class.data.as_scroll())
             .map(|class| *class)
             .collect::<Vec<_>>();
+        println!("{:#?}", scroll_class_data);
 
         let atoms = XcbAtoms::new(&xcb_connection).unwrap();
         let xkb = xcb_connection
@@ -470,6 +471,8 @@ impl X11Client {
                     }));
                 }
 
+                println!("motion event: {:?}", event);
+
                 let mut valuator_idx = 0;
                 let scroll_class_data = self.0.borrow().scroll_class_data.clone();
                 for shift in 0..32 {
@@ -481,6 +484,11 @@ impl X11Client {
                         if scroll_class.scroll_type == xinput::ScrollType::HORIZONTAL
                             && scroll_class.number == shift
                         {
+                            println!(
+                                "horizontal valulator (idx={valuator_idx}): {}",
+                                axisvalues[valuator_idx]
+                            );
+
                             let new_scroll = axisvalues[valuator_idx]
                                 / fp3232_to_f32(scroll_class.increment)
                                 * SCROLL_LINES as f32;
@@ -489,6 +497,7 @@ impl X11Client {
 
                             if let Some(old_scroll) = old_scroll {
                                 let delta_scroll = old_scroll - new_scroll;
+                                println!("horizontal delta: {delta_scroll}");
                                 window.handle_input(PlatformInput::ScrollWheel(
                                     crate::ScrollWheelEvent {
                                         position,
@@ -501,6 +510,11 @@ impl X11Client {
                         } else if scroll_class.scroll_type == xinput::ScrollType::VERTICAL
                             && scroll_class.number == shift
                         {
+                            println!(
+                                "vertical valulator (idx={valuator_idx}): {}",
+                                axisvalues[valuator_idx]
+                            );
+
                             // the `increment` is the valuator delta equivalent to one positive unit of scrolling. Here that means SCROLL_LINES lines.
                             let new_scroll = axisvalues[valuator_idx]
                                 / fp3232_to_f32(scroll_class.increment)
@@ -510,6 +524,7 @@ impl X11Client {
 
                             if let Some(old_scroll) = old_scroll {
                                 let delta_scroll = old_scroll - new_scroll;
+                                println!("vertical delta: {delta_scroll}");
                                 window.handle_input(PlatformInput::ScrollWheel(
                                     crate::ScrollWheelEvent {
                                         position,
