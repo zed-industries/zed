@@ -1066,6 +1066,8 @@ message ResolveCompletionDocumentationResponse {
     Anchor old_start = 3;
     Anchor old_end = 4;
     string new_text = 5;
+    uint64 server_id = 6;
+    bytes lsp_completion = 7;
 }
 
 message ResolveInlayHint {

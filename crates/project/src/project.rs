@@ -54,7 +54,7 @@ use language::{
 };
 use log::error;
 use lsp::{
-    DiagnosticSeverity, DiagnosticTag, DidChangeWatchedFilesRegistrationOptions,
+    CompletionItem, DiagnosticSeverity, DiagnosticTag, DidChangeWatchedFilesRegistrationOptions,
     DocumentHighlightKind, LanguageServer, LanguageServerBinary, LanguageServerId,
     LspRequestFuture, MessageActionItem, OneOf, ServerCapabilities, ServerHealthStatus,
     ServerStatus,
@@ -5495,6 +5495,7 @@ impl Project {
                 let mut tasks = Vec::with_capacity(server_ids.len());
                 this.update(&mut cx, |this, cx| {
                     for server_id in server_ids {
+                        println!("requesting lsp: server_id: {:?}", server_id);
                         let lsp_adapter = this.language_server_adapter_for_id(server_id);
                         tasks.push((
                             lsp_adapter,
@@ -5605,6 +5606,13 @@ impl Project {
                         (server_id, completion)
                     };
 
+                    let lsp_adapter = this
+                        .read_with(&mut cx, |project, _| {
+                            project.language_server_adapter_for_id(server_id)
+                        })
+                        .ok()
+                        .flatten();
+
                     Self::resolve_completion_remote(
                         project_id,
                         server_id,
@@ -5613,6 +5621,8 @@ impl Project {
                         completion_index,
                         completion,
                         client.clone(),
+                        lsp_adapter,
+                        language.clone(),
                         language_registry.clone(),
                     )
                     .await;
@@ -5748,6 +5758,8 @@ impl Project {
         completion_index: usize,
         completion: lsp::CompletionItem,
         client: Arc<Client>,
+        lsp_adapter: Option<Arc<CachedLspAdapter>>,
+        language: Option<Arc<Language>>,
         language_registry: Arc<LanguageRegistry>,
     ) {
         let request = proto::ResolveCompletionDocumentation {
@@ -5778,14 +5790,34 @@ impl Project {
             Documentation::MultiLinePlainText(response.documentation)
         };
 
-        let mut completions = completions.write();
-        let completion = &mut completions[completion_index];
-        completion.documentation = Some(documentation);
+        let label = if let Some((lsp_adapter, language)) = lsp_adapter.zip(language.as_ref()) {
+            match serde_json::from_slice(&response.lsp_completion)
+                .as_ref()
+                .ok()
+            {
+                Some(lsp_completion) => {
+                    lsp_adapter
+                        .adapter
+                        .label_for_resolved_completion(lsp_completion, language)
+                        .await
+                }
+                None => None,
+            }
+        } else {
+            None
+        };
 
         let old_range = response
             .old_start
             .and_then(deserialize_anchor)
             .zip(response.old_end.and_then(deserialize_anchor));
+
+        let mut completions = completions.write();
+        let completion = &mut completions[completion_index];
+        completion.documentation = Some(documentation);
+        if let Some(label) = label {
+            completion.label = label;
+        }
         if let Some((old_start, old_end)) = old_range {
             if !response.new_text.is_empty() {
                 completion.new_text = response.new_text;
@@ -7673,9 +7705,14 @@ impl Project {
                             TaskSourceKind::Worktree {
                                 id: remote_worktree_id,
                                 abs_path,
-                                id_base: "local_tasks_for_worktree",
+                                id_base: "local_vscode_tasks_for_worktree",
                             },
-                            StaticSource::new(TrackedFile::new(tasks_file_rx, cx)),
+                            StaticSource::new(
+                                TrackedFile::new_convertible::<task::VsCodeTaskFile>(
+                                    tasks_file_rx,
+                                    cx,
+                                ),
+                            ),
                             cx,
                         );
                     }
@@ -8990,16 +9027,17 @@ impl Project {
         _: Arc<Client>,
         mut cx: AsyncAppContext,
     ) -> Result<proto::ResolveCompletionDocumentationResponse> {
-        let lsp_completion = serde_json::from_slice(&envelope.payload.lsp_completion)?;
+        let lsp_completion: CompletionItem =
+            serde_json::from_slice(&envelope.payload.lsp_completion)?;
 
+        let server_id = LanguageServerId(envelope.payload.language_server_id as usize);
         let completion = this
             .read_with(&mut cx, |this, _| {
-                let id = LanguageServerId(envelope.payload.language_server_id as usize);
-                let Some(server) = this.language_server_for_id(id) else {
-                    return Err(anyhow!("No language server {id}"));
+                let Some(server) = this.language_server_for_id(server_id) else {
+                    return Err(anyhow!("No language server {server_id}"));
                 };
 
-                Ok(server.request::<lsp::request::ResolveCompletionItem>(lsp_completion))
+                Ok(server.request::<lsp::request::ResolveCompletionItem>(lsp_completion.clone()))
             })??
             .await?;
 
@@ -9049,6 +9087,8 @@ impl Project {
             old_start,
             old_end,
             new_text,
+            lsp_completion: serde_json::to_vec(&lsp_completion).unwrap(),
+            server_id: server_id.0 as u64,
         })
     }
 
