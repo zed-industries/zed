@@ -3,6 +3,7 @@
 #[cfg(test)]
 mod test;
 
+mod change_list;
 mod command;
 mod editor_events;
 mod insert;
@@ -17,6 +18,7 @@ mod utils;
 mod visual;
 
 use anyhow::Result;
+use change_list::push_to_change_list;
 use collections::HashMap;
 use command_palette_hooks::{CommandPaletteFilter, CommandPaletteInterceptor};
 use editor::{
@@ -159,6 +161,7 @@ fn register(workspace: &mut Workspace, cx: &mut ViewContext<Workspace>) {
     replace::register(workspace, cx);
     object::register(workspace, cx);
     visual::register(workspace, cx);
+    change_list::register(workspace, cx);
 }
 
 /// Called whenever an keystroke is typed so vim can observe all actions
@@ -264,6 +267,7 @@ impl Vim {
             EditorEvent::TransactionUndone { transaction_id } => Vim::update(cx, |vim, cx| {
                 vim.transaction_undone(transaction_id, cx);
             }),
+            EditorEvent::Edited => Vim::update(cx, |vim, cx| vim.transaction_ended(editor, cx)),
             _ => {}
         }));
 
@@ -616,6 +620,10 @@ impl Vim {
             });
         });
         self.switch_mode(Mode::Normal, true, cx)
+    }
+
+    fn transaction_ended(&mut self, editor: View<Editor>, cx: &mut WindowContext) {
+        push_to_change_list(self, editor, cx)
     }
 
     fn local_selections_changed(&mut self, editor: View<Editor>, cx: &mut WindowContext) {
