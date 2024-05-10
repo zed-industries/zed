@@ -1,15 +1,19 @@
-use gpui::{prelude::*, Rgba, WindowAppearance};
+use gpui::{prelude::*, Action, Rgba, WindowAppearance};
 
 use crate::prelude::*;
 
 #[derive(IntoElement)]
 pub struct LinuxWindowControls {
     button_height: Pixels,
+    close_window_action: Box<dyn Action>,
 }
 
 impl LinuxWindowControls {
-    pub fn new(button_height: Pixels) -> Self {
-        Self { button_height }
+    pub fn new(button_height: Pixels, close_window_action: Box<dyn Action>) -> Self {
+        Self {
+            button_height,
+            close_window_action,
+        }
     }
 }
 
@@ -49,6 +53,7 @@ impl RenderOnce for LinuxWindowControls {
                 "minimize",
                 TitlebarButtonType::Minimize,
                 button_hover_color,
+                self.close_window_action.boxed_clone(),
             ))
             .child(TitlebarButton::new(
                 "maximize-or-restore",
@@ -58,11 +63,13 @@ impl RenderOnce for LinuxWindowControls {
                     TitlebarButtonType::Maximize
                 },
                 button_hover_color,
+                self.close_window_action.boxed_clone(),
             ))
             .child(TitlebarButton::new(
                 "close",
                 TitlebarButtonType::Close,
                 close_button_hover_color,
+                self.close_window_action,
             ))
     }
 }
@@ -80,6 +87,7 @@ struct TitlebarButton {
     id: ElementId,
     icon: TitlebarButtonType,
     hover_background_color: Rgba,
+    close_window_action: Box<dyn Action>,
 }
 
 impl TitlebarButton {
@@ -87,11 +95,13 @@ impl TitlebarButton {
         id: impl Into<ElementId>,
         icon: TitlebarButtonType,
         hover_background_color: Rgba,
+        close_window_action: Box<dyn Action>,
     ) -> Self {
         Self {
             id: id.into(),
             icon,
             hover_background_color,
+            close_window_action,
         }
     }
 }
@@ -125,8 +135,9 @@ impl RenderOnce for TitlebarButton {
                     TitlebarButtonType::Minimize => cx.minimize_window(),
                     TitlebarButtonType::Restore => cx.zoom_window(),
                     TitlebarButtonType::Maximize => cx.zoom_window(),
-                    // TODO: trigger unsaved changes dialog
-                    TitlebarButtonType::Close => cx.remove_window(),
+                    TitlebarButtonType::Close => {
+                        cx.dispatch_action(self.close_window_action.boxed_clone())
+                    }
                 }
             })
     }

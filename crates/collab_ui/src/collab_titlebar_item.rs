@@ -58,7 +58,7 @@ impl Render for CollabTitlebarItem {
         let project_id = self.project.read(cx).remote_id();
         let workspace = self.workspace.upgrade();
 
-        TitleBar::new("collab-titlebar")
+        TitleBar::new("collab-titlebar", Box::new(workspace::CloseWindow))
             // note: on windows titlebar behaviour is handled by the platform implementation
             .when(cfg!(not(windows)), |this| {
                 this.on_click(|event, cx| {

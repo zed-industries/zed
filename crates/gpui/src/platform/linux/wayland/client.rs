@@ -116,7 +116,7 @@ impl Globals {
                 )
                 .ok(),
             shm: globals.bind(&qh, 1..=1, ()).unwrap(),
-            seat: seat,
+            seat,
             wm_base: globals.bind(&qh, 1..=1, ()).unwrap(),
             viewporter: globals.bind(&qh, 1..=1, ()).ok(),
             fractional_scale_manager: globals.bind(&qh, 1..=1, ()).ok(),

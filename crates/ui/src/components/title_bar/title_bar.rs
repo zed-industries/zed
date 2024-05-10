@@ -1,4 +1,4 @@
-use gpui::{AnyElement, Interactivity, Stateful};
+use gpui::{Action, AnyElement, Interactivity, Stateful};
 use smallvec::SmallVec;
 
 use crate::components::title_bar::linux_window_controls::LinuxWindowControls;
@@ -10,6 +10,7 @@ pub struct TitleBar {
     platform_style: PlatformStyle,
     content: Stateful<Div>,
     children: SmallVec<[AnyElement; 2]>,
+    close_window_action: Box<dyn Action>,
 }
 
 impl TitleBar {
@@ -46,11 +47,12 @@ impl TitleBar {
         }
     }
 
-    pub fn new(id: impl Into<ElementId>) -> Self {
+    pub fn new(id: impl Into<ElementId>, close_window_action: Box<dyn Action>) -> Self {
         Self {
             platform_style: PlatformStyle::platform(),
             content: div().id(id.into()),
             children: SmallVec::new(),
+            close_window_action,
         }
     }
 
@@ -118,7 +120,7 @@ impl RenderOnce for TitleBar {
                     && cx.should_render_window_controls(),
                 |title_bar| {
                     title_bar
-                        .child(LinuxWindowControls::new(height))
+                        .child(LinuxWindowControls::new(height, self.close_window_action))
                         .on_mouse_down(gpui::MouseButton::Right, move |ev, cx| {
                             cx.show_window_menu(ev.position)
                         })
