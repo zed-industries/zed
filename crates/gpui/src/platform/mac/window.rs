@@ -890,7 +890,7 @@ impl PlatformWindow for MacWindow {
             let alert_style = match level {
                 PromptLevel::Info => 1,
                 PromptLevel::Warning => 0,
-                PromptLevel::Critical | PromptLevel::Destructive => 2,
+                PromptLevel::Critical => 2,
             };
             let _: () = msg_send![alert, setAlertStyle: alert_style];
             let _: () = msg_send![alert, setMessageText: ns_string(msg)];
@@ -905,16 +905,10 @@ impl PlatformWindow for MacWindow {
             {
                 let button: id = msg_send![alert, addButtonWithTitle: ns_string(answer)];
                 let _: () = msg_send![button, setTag: ix as NSInteger];
-                if level == PromptLevel::Destructive && answer != &"Cancel" {
-                    let _: () = msg_send![button, setHasDestructiveAction: YES];
-                }
             }
             if let Some((ix, answer)) = latest_non_cancel_label {
                 let button: id = msg_send![alert, addButtonWithTitle: ns_string(answer)];
                 let _: () = msg_send![button, setTag: ix as NSInteger];
-                if level == PromptLevel::Destructive {
-                    let _: () = msg_send![button, setHasDestructiveAction: YES];
-                }
             }
 
             let (done_tx, done_rx) = oneshot::channel();

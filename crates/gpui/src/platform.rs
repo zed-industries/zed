@@ -719,10 +719,6 @@ pub enum PromptLevel {
 
     /// A prompt that is shown when a critical problem has occurred
     Critical,
-
-    /// A prompt that is shown when asking the user to confirm a potentially destructive action
-    /// (overwriting a file for example)
-    Destructive,
 }
 
 /// The style of the cursor (pointer)

@@ -13,7 +13,6 @@ use std::{
 
 use ::util::ResultExt;
 use anyhow::{anyhow, Context, Result};
-use async_task::Runnable;
 use copypasta::{ClipboardContext, ClipboardProvider};
 use futures::channel::oneshot::{self, Receiver};
 use itertools::Itertools;
@@ -42,11 +41,9 @@ pub(crate) struct WindowsPlatform {
     raw_window_handles: RwLock<SmallVec<[HWND; 4]>>,
     // The below members will never change throughout the entire lifecycle of the app.
     icon: HICON,
-    main_receiver: flume::Receiver<Runnable>,
     background_executor: BackgroundExecutor,
     foreground_executor: ForegroundExecutor,
     text_system: Arc<dyn PlatformTextSystem>,
-    dispatch_event: OwnedHandle,
 }
 
 pub(crate) struct WindowsPlatformState {
@@ -85,10 +82,7 @@ impl WindowsPlatform {
         unsafe {
             OleInitialize(None).expect("unable to initialize Windows OLE");
         }
-        let (main_sender, main_receiver) = flume::unbounded::<Runnable>();
-        let dispatch_event =
-            OwnedHandle::new(unsafe { CreateEventW(None, false, false, None) }.unwrap());
-        let dispatcher = Arc::new(WindowsDispatcher::new(main_sender, dispatch_event.to_raw()));
+        let dispatcher = Arc::new(WindowsDispatcher::new());
         let background_executor = BackgroundExecutor::new(dispatcher.clone());
         let foreground_executor = ForegroundExecutor::new(dispatcher);
         let text_system = if let Some(direct_write) = DirectWriteTextSystem::new().log_err() {
@@ -106,18 +100,9 @@ impl WindowsPlatform {
             state,
             raw_window_handles,
             icon,
-            main_receiver,
             background_executor,
             foreground_executor,
             text_system,
-            dispatch_event,
-        }
-    }
-
-    #[inline]
-    fn run_foreground_tasks(&self) {
-        for runnable in self.main_receiver.drain() {
-            runnable.run();
         }
     }
 
@@ -201,7 +186,6 @@ impl Platform for WindowsPlatform {
 
     fn run(&self, on_finish_launching: Box<dyn 'static + FnOnce()>) {
         on_finish_launching();
-        let dispatch_event = self.dispatch_event.to_raw();
         let vsync_event = create_event().unwrap();
         let timer_stop_event = create_event().unwrap();
         let raw_timer_stop_event = timer_stop_event.to_raw();
@@ -209,7 +193,7 @@ impl Platform for WindowsPlatform {
         'a: loop {
             let wait_result = unsafe {
                 MsgWaitForMultipleObjects(
-                    Some(&[vsync_event.to_raw(), dispatch_event]),
+                    Some(&[vsync_event.to_raw()]),
                     false,
                     INFINITE,
                     QS_ALLINPUT,
@@ -221,12 +205,8 @@ impl Platform for WindowsPlatform {
                 WAIT_EVENT(0) => {
                     self.redraw_all();
                 }
-                // foreground tasks are dispatched
-                WAIT_EVENT(1) => {
-                    self.run_foreground_tasks();
-                }
                 // Windows thread messages are posted
-                WAIT_EVENT(2) => {
+                WAIT_EVENT(1) => {
                     let mut msg = MSG::default();
                     unsafe {
                         while PeekMessageW(&mut msg, None, 0, 0, PM_REMOVE).as_bool() {
@@ -245,9 +225,6 @@ impl Platform for WindowsPlatform {
                             }
                         }
                     }
-
-                    // foreground tasks may have been queued in the message handlers
-                    self.run_foreground_tasks();
                 }
                 _ => {
                     log::error!("Something went wrong while waiting {:?}", wait_result);
@@ -344,7 +321,6 @@ impl Platform for WindowsPlatform {
             options,
             self.icon,
             self.foreground_executor.clone(),
-            self.main_receiver.clone(),
             lock.settings.mouse_wheel_settings,
             lock.current_cursor,
         );

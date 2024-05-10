@@ -30,7 +30,6 @@ chrono.workspace = true
 clap.workspace = true
 cli.workspace = true
 client.workspace = true
-clock.workspace = true
 collab_ui.workspace = true
 collections.workspace = true
 command_palette.workspace = true
@@ -60,11 +59,12 @@ language.workspace = true
 language_selector.workspace = true
 language_tools.workspace = true
 languages.workspace = true
+libc.workspace = true
 log.workspace = true
 markdown_preview.workspace = true
 menu.workspace = true
 mimalloc = { version = "0.1", optional = true }
-nix = {workspace = true, features = ["pthread"] }
+nix = {workspace = true, features = ["pthread", "signal"] }
 node_runtime.workspace = true
 notifications.workspace = true
 outline.workspace = true

@@ -79,7 +79,6 @@ use inlay_hint_cache::{InlayHintCache, InlaySplice, InvalidationStrategy};
 pub use inline_completion_provider::*;
 pub use items::MAX_TAB_TITLE_LEN;
 use itertools::Itertools;
-use language::Runnable;
 use language::{
     char_kind,
     language_settings::{self, all_language_settings, InlayHintSettings},
@@ -87,7 +86,8 @@ use language::{
     CursorShape, Diagnostic, Documentation, IndentKind, IndentSize, Language, OffsetRangeExt,
     Point, Selection, SelectionGoal, TransactionId,
 };
-use task::{ResolvedTask, TaskTemplate};
+use language::{Runnable, RunnableRange};
+use task::{ResolvedTask, TaskTemplate, TaskVariables};
 
 use hover_links::{HoverLink, HoveredLinkState, InlayHighlight};
 use lsp::{DiagnosticSeverity, LanguageServerId};
@@ -404,6 +404,7 @@ struct RunnableTasks {
     templates: Vec<(TaskSourceKind, TaskTemplate)>,
     // We need the column at which the task context evaluation should take place.
     column: u32,
+    extra_variables: HashMap<String, String>,
 }
 
 #[derive(Clone)]
@@ -448,7 +449,7 @@ pub struct Editor {
     show_wrap_guides: Option<bool>,
     placeholder_text: Option<Arc<str>>,
     highlight_order: usize,
-    highlighted_rows: HashMap<TypeId, Vec<(usize, Range<Anchor>, Hsla)>>,
+    highlighted_rows: HashMap<TypeId, Vec<(usize, RangeInclusive<Anchor>, Option<Hsla>)>>,
     background_highlights: TreeMap<TypeId, BackgroundHighlight>,
     scrollbar_marker_state: ScrollbarMarkerState,
     nav_history: Option<ItemNavHistory>,
@@ -504,7 +505,7 @@ pub struct Editor {
     >,
     last_bounds: Option<Bounds<Pixels>>,
     expect_bounds_change: Option<Bounds<Pixels>>,
-    tasks: HashMap<u32, RunnableTasks>,
+    tasks: HashMap<(BufferId, u32), (usize, RunnableTasks)>,
     tasks_update_task: Option<Task<()>>,
 }
 
@@ -3839,7 +3840,7 @@ impl Editor {
             }
         }
         drop(context_menu);
-
+        let snapshot = self.snapshot(cx);
         let deployed_from_indicator = action.deployed_from_indicator;
         let mut task = self.code_actions_task.take();
         let action = action.clone();
@@ -3851,11 +3852,24 @@ impl Editor {
 
             let spawned_test_task = this.update(&mut cx, |this, cx| {
                 if this.focus_handle.is_focused(cx) {
-                    let buffer_row = action
+                    let display_row = action
                         .deployed_from_indicator
+                        .map(|row| {
+                            DisplayPoint::new(row, 0)
+                                .to_point(&snapshot.display_snapshot)
+                                .row
+                        })
                         .unwrap_or_else(|| this.selections.newest::<Point>(cx).head().row);
-                    let tasks = this.tasks.get(&buffer_row).map(|t| Arc::new(t.to_owned()));
-                    let (location, code_actions) = this
+                    let (buffer, buffer_row) = snapshot
+                        .buffer_snapshot
+                        .buffer_line_for_row(display_row)
+                        .and_then(|(buffer_snapshot, range)| {
+                            this.buffer
+                                .read(cx)
+                                .buffer(buffer_snapshot.remote_id())
+                                .map(|buffer| (buffer, range.start.row))
+                        })?;
+                    let (_, code_actions) = this
                         .available_code_actions
                         .clone()
                         .and_then(|(location, code_actions)| {
@@ -3869,25 +3883,20 @@ impl Editor {
                             }
                         })
                         .unzip();
+                    let buffer_id = buffer.read(cx).remote_id();
+                    let tasks = this
+                        .tasks
+                        .get(&(buffer_id, buffer_row))
+                        .map(|t| Arc::new(t.to_owned()));
                     if tasks.is_none() && code_actions.is_none() {
                         return None;
                     }
 
-                    let buffer = location.map(|location| location.buffer).or_else(|| {
-                        let snapshot = this.snapshot(cx);
-                        let (buffer_snapshot, _) =
-                            snapshot.buffer_snapshot.buffer_line_for_row(buffer_row)?;
-                        let buffer_id = buffer_snapshot.remote_id();
-                        this.buffer().read(cx).buffer(buffer_id)
-                    });
-                    let Some(buffer) = buffer else {
-                        return None;
-                    };
                     this.completion_tasks.clear();
                     this.discard_inline_completion(cx);
                     let task_context = tasks.as_ref().zip(this.workspace.clone()).and_then(
                         |(tasks, (workspace, _))| {
-                            let position = Point::new(buffer_row, tasks.column);
+                            let position = Point::new(buffer_row, tasks.1.column);
                             let range_start = buffer.read(cx).anchor_at(position, Bias::Right);
                             let location = Location {
                                 buffer: buffer.clone(),
@@ -3901,22 +3910,33 @@ impl Editor {
                                 .flatten()
                         },
                     );
-                    let tasks = tasks
-                        .zip(task_context.as_ref())
-                        .map(|(tasks, task_context)| {
-                            Arc::new(ResolvedTasks {
-                                templates: tasks
-                                    .templates
-                                    .iter()
-                                    .filter_map(|(kind, template)| {
-                                        template
-                                            .resolve_task(&kind.to_id_base(), &task_context)
-                                            .map(|task| (kind.clone(), task))
-                                    })
-                                    .collect(),
-                                position: Point::new(buffer_row, tasks.column),
-                            })
-                        });
+                    let tasks = tasks.zip(task_context).map(|(tasks, mut task_context)| {
+                        // Fill in the environmental variables from the tree-sitter captures
+                        let mut additional_task_variables = TaskVariables::default();
+                        for (capture_name, value) in tasks.1.extra_variables.clone() {
+                            additional_task_variables.insert(
+                                task::VariableName::Custom(capture_name.into()),
+                                value.clone(),
+                            );
+                        }
+                        task_context
+                            .task_variables
+                            .extend(additional_task_variables);
+
+                        Arc::new(ResolvedTasks {
+                            templates: tasks
+                                .1
+                                .templates
+                                .iter()
+                                .filter_map(|(kind, template)| {
+                                    template
+                                        .resolve_task(&kind.to_id_base(), &task_context)
+                                        .map(|task| (kind.clone(), task))
+                                })
+                                .collect(),
+                            position: Point::new(buffer_row, tasks.1.column),
+                        })
+                    });
                     let spawn_straight_away = tasks
                         .as_ref()
                         .map_or(false, |tasks| tasks.templates.len() == 1)
@@ -4505,8 +4525,8 @@ impl Editor {
         self.tasks.clear()
     }
 
-    fn insert_tasks(&mut self, row: u32, tasks: RunnableTasks) {
-        if let Some(_) = self.tasks.insert(row, tasks) {
+    fn insert_tasks(&mut self, key: (BufferId, u32), value: (usize, RunnableTasks)) {
+        if let Some(_) = self.tasks.insert(key, value) {
             // This case should hopefully be rare, but just in case...
             log::error!("multiple different run targets found on a single line, only the last target will be rendered")
         }
@@ -7726,8 +7746,8 @@ impl Editor {
 
             this.update(&mut cx, |this, _| {
                 this.clear_tasks();
-                for (row, tasks) in rows {
-                    this.insert_tasks(row, tasks);
+                for (key, value) in rows {
+                    this.insert_tasks(key, value);
                 }
             })
             .ok();
@@ -7736,32 +7756,47 @@ impl Editor {
     fn fetch_runnable_ranges(
         snapshot: &DisplaySnapshot,
         range: Range<Anchor>,
-    ) -> Vec<(Range<usize>, Runnable)> {
+    ) -> Vec<language::RunnableRange> {
         snapshot.buffer_snapshot.runnable_ranges(range).collect()
     }
 
     fn runnable_rows(
         project: Model<Project>,
         snapshot: DisplaySnapshot,
-        runnable_ranges: Vec<(Range<usize>, Runnable)>,
+        runnable_ranges: Vec<RunnableRange>,
         mut cx: AsyncWindowContext,
-    ) -> Vec<(u32, RunnableTasks)> {
+    ) -> Vec<((BufferId, u32), (usize, RunnableTasks))> {
         runnable_ranges
             .into_iter()
-            .filter_map(|(multi_buffer_range, mut runnable)| {
+            .filter_map(|mut runnable| {
                 let (tasks, _) = cx
-                    .update(|cx| Self::resolve_runnable(project.clone(), &mut runnable, cx))
+                    .update(|cx| {
+                        Self::resolve_runnable(project.clone(), &mut runnable.runnable, cx)
+                    })
                     .ok()?;
                 if tasks.is_empty() {
                     return None;
                 }
-                let point = multi_buffer_range.start.to_point(&snapshot.buffer_snapshot);
+
+                let point = runnable.run_range.start.to_point(&snapshot.buffer_snapshot);
+
+                let row = snapshot
+                    .buffer_snapshot
+                    .buffer_line_for_row(point.row)?
+                    .1
+                    .start
+                    .row;
+
                 Some((
-                    point.row,
-                    RunnableTasks {
-                        templates: tasks,
-                        column: point.column,
-                    },
+                    (runnable.buffer_id, row),
+                    (
+                        runnable.run_range.start,
+                        RunnableTasks {
+                            templates: tasks,
+                            column: point.column,
+                            extra_variables: runnable.extra_captures,
+                        },
+                    ),
                 ))
             })
             .collect()
@@ -9207,6 +9242,8 @@ impl Editor {
                     self.active_diagnostics = Some(active_diagnostics);
                 }
             }
+
+            self.scrollbar_marker_state.dirty = true;
         }
     }
 
@@ -9240,6 +9277,7 @@ impl Editor {
             }
 
             cx.notify();
+            self.scrollbar_marker_state.dirty = true;
         }
     }
 
@@ -9667,7 +9705,7 @@ impl Editor {
     /// If multiple anchor ranges will produce highlights for the same row, the last range added will be used.
     pub fn highlight_rows<T: 'static>(
         &mut self,
-        rows: Range<Anchor>,
+        rows: RangeInclusive<Anchor>,
         color: Option<Hsla>,
         cx: &mut ViewContext<Self>,
     ) {
@@ -9678,9 +9716,13 @@ impl Editor {
                 let existing_highlight_index =
                     row_highlights.binary_search_by(|(_, highlight_range, _)| {
                         highlight_range
-                            .start
-                            .cmp(&rows.start, &multi_buffer_snapshot)
-                            .then(highlight_range.end.cmp(&rows.end, &multi_buffer_snapshot))
+                            .start()
+                            .cmp(&rows.start(), &multi_buffer_snapshot)
+                            .then(
+                                highlight_range
+                                    .end()
+                                    .cmp(&rows.end(), &multi_buffer_snapshot),
+                            )
                     });
                 match color {
                     Some(color) => {
@@ -9690,20 +9732,22 @@ impl Editor {
                         };
                         row_highlights.insert(
                             insert_index,
-                            (post_inc(&mut self.highlight_order), rows, color),
+                            (post_inc(&mut self.highlight_order), rows, Some(color)),
                         );
                     }
-                    None => {
-                        if let Ok(i) = existing_highlight_index {
+                    None => match existing_highlight_index {
+                        Ok(i) => {
                             row_highlights.remove(i);
                         }
-                    }
+                        Err(i) => {
+                            row_highlights
+                                .insert(i, (post_inc(&mut self.highlight_order), rows, None));
+                        }
+                    },
                 }
             }
             hash_map::Entry::Vacant(v) => {
-                if let Some(color) = color {
-                    v.insert(vec![(post_inc(&mut self.highlight_order), rows, color)]);
-                }
+                v.insert(vec![(post_inc(&mut self.highlight_order), rows, color)]);
             }
         }
     }
@@ -9716,12 +9760,12 @@ impl Editor {
     /// For a highlight given context type, gets all anchor ranges that will be used for row highlighting.
     pub fn highlighted_rows<T: 'static>(
         &self,
-    ) -> Option<impl Iterator<Item = (&Range<Anchor>, &Hsla)>> {
+    ) -> Option<impl Iterator<Item = (&RangeInclusive<Anchor>, Option<&Hsla>)>> {
         Some(
             self.highlighted_rows
                 .get(&TypeId::of::<T>())?
                 .iter()
-                .map(|(_, range, color)| (range, color)),
+                .map(|(_, range, color)| (range, color.as_ref())),
         )
     }
 
@@ -9742,14 +9786,21 @@ impl Editor {
             .fold(
                 BTreeMap::<u32, Hsla>::new(),
                 |mut unique_rows, (highlight_order, anchor_range, hsla)| {
-                    let start_row = anchor_range.start.to_display_point(&snapshot).row();
-                    let end_row = anchor_range.end.to_display_point(&snapshot).row();
+                    let start_row = anchor_range.start().to_display_point(&snapshot).row();
+                    let end_row = anchor_range.end().to_display_point(&snapshot).row();
                     for row in start_row..=end_row {
                         let used_index =
                             used_highlight_orders.entry(row).or_insert(*highlight_order);
                         if highlight_order >= used_index {
                             *used_index = *highlight_order;
-                            unique_rows.insert(row, *hsla);
+                            match hsla {
+                                Some(hsla) => {
+                                    unique_rows.insert(row, *hsla);
+                                }
+                                None => {
+                                    unique_rows.remove(&row);
+                                }
+                            }
                         }
                     }
                     unique_rows
@@ -10102,6 +10153,7 @@ impl Editor {
                 predecessor,
                 excerpts,
             } => {
+                self.tasks_update_task = Some(self.refresh_runnables(cx));
                 cx.emit(EditorEvent::ExcerptsAdded {
                     buffer: buffer.clone(),
                     predecessor: *predecessor,
@@ -11548,6 +11600,12 @@ trait RangeToAnchorExt {
 
 impl<T: ToOffset> RangeToAnchorExt for Range<T> {
     fn to_anchors(self, snapshot: &MultiBufferSnapshot) -> Range<Anchor> {
-        snapshot.anchor_after(self.start)..snapshot.anchor_before(self.end)
+        let start_offset = self.start.to_offset(snapshot);
+        let end_offset = self.end.to_offset(snapshot);
+        if start_offset == end_offset {
+            snapshot.anchor_before(start_offset)..snapshot.anchor_before(end_offset)
+        } else {
+            snapshot.anchor_after(self.start)..snapshot.anchor_before(self.end)
+        }
     }
 }

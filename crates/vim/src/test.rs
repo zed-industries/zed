@@ -1073,3 +1073,133 @@ async fn test_mouse_selection(cx: &mut TestAppContext) {
 
     cx.assert_state("one «ˇtwo» three", Mode::Visual)
 }
+
+#[gpui::test]
+async fn test_lowercase_marks(cx: &mut TestAppContext) {
+    let mut cx = NeovimBackedTestContext::new(cx).await;
+
+    cx.set_shared_state("line one\nline ˇtwo\nline three").await;
+    cx.simulate_shared_keystrokes(["m", "a", "l", "'", "a"])
+        .await;
+    cx.assert_shared_state("line one\nˇline two\nline three")
+        .await;
+    cx.simulate_shared_keystrokes(["`", "a"]).await;
+    cx.assert_shared_state("line one\nline ˇtwo\nline three")
+        .await;
+
+    cx.simulate_shared_keystrokes(["^", "d", "`", "a"]).await;
+    cx.assert_shared_state("line one\nˇtwo\nline three").await;
+}
+
+#[gpui::test]
+async fn test_lt_gt_marks(cx: &mut TestAppContext) {
+    let mut cx = NeovimBackedTestContext::new(cx).await;
+
+    cx.set_shared_state(indoc!(
+        "
+        Line one
+        Line two
+        Line ˇthree
+        Line four
+        Line five
+    "
+    ))
+    .await;
+
+    cx.simulate_shared_keystrokes(["v", "j", "escape", "k", "k"])
+        .await;
+
+    cx.simulate_shared_keystrokes(["'", "<"]).await;
+    cx.assert_shared_state(indoc!(
+        "
+        Line one
+        Line two
+        ˇLine three
+        Line four
+        Line five
+    "
+    ))
+    .await;
+
+    cx.simulate_shared_keystrokes(["`", "<"]).await;
+    cx.assert_shared_state(indoc!(
+        "
+        Line one
+        Line two
+        Line ˇthree
+        Line four
+        Line five
+    "
+    ))
+    .await;
+
+    cx.simulate_shared_keystrokes(["'", ">"]).await;
+    cx.assert_shared_state(indoc!(
+        "
+        Line one
+        Line two
+        Line three
+        ˇLine four
+        Line five
+    "
+    ))
+    .await;
+
+    cx.simulate_shared_keystrokes(["`", ">"]).await;
+    cx.assert_shared_state(indoc!(
+        "
+        Line one
+        Line two
+        Line three
+        Line ˇfour
+        Line five
+    "
+    ))
+    .await;
+}
+
+#[gpui::test]
+async fn test_caret_mark(cx: &mut TestAppContext) {
+    let mut cx = NeovimBackedTestContext::new(cx).await;
+
+    cx.set_shared_state(indoc!(
+        "
+        Line one
+        Line two
+        Line three
+        ˇLine four
+        Line five
+    "
+    ))
+    .await;
+
+    cx.simulate_shared_keystrokes([
+        "c", "w", "shift-s", "t", "r", "a", "i", "g", "h", "t", " ", "t", "h", "i", "n", "g",
+        "escape", "j", "j",
+    ])
+    .await;
+
+    cx.simulate_shared_keystrokes(["'", "^"]).await;
+    cx.assert_shared_state(indoc!(
+        "
+        Line one
+        Line two
+        Line three
+        ˇStraight thing four
+        Line five
+    "
+    ))
+    .await;
+
+    cx.simulate_shared_keystrokes(["`", "^"]).await;
+    cx.assert_shared_state(indoc!(
+        "
+        Line one
+        Line two
+        Line three
+        Straight thingˇ four
+        Line five
+    "
+    ))
+    .await;
+}

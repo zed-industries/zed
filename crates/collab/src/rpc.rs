@@ -2032,23 +2032,34 @@ async fn unshare_project_internal(
     user_id: Option<UserId>,
     session: &Session,
 ) -> Result<()> {
-    let (room, guest_connection_ids) = &*session
-        .db()
-        .await
-        .unshare_project(project_id, connection_id, user_id)
-        .await?;
+    let delete = {
+        let room_guard = session
+            .db()
+            .await
+            .unshare_project(project_id, connection_id, user_id)
+            .await?;
 
-    let message = proto::UnshareProject {
-        project_id: project_id.to_proto(),
+        let (delete, room, guest_connection_ids) = &*room_guard;
+
+        let message = proto::UnshareProject {
+            project_id: project_id.to_proto(),
+        };
+
+        broadcast(
+            Some(connection_id),
+            guest_connection_ids.iter().copied(),
+            |conn_id| session.peer.send(conn_id, message.clone()),
+        );
+        if let Some(room) = room {
+            room_updated(room, &session.peer);
+        }
+
+        *delete
     };
 
-    broadcast(
-        Some(connection_id),
-        guest_connection_ids.iter().copied(),
-        |conn_id| session.peer.send(conn_id, message.clone()),
-    );
-    if let Some(room) = room {
-        room_updated(room, &session.peer);
+    if delete {
+        let db = session.db().await;
+        db.delete_project(project_id).await?;
     }
 
     Ok(())

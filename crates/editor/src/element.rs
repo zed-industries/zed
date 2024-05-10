@@ -1406,20 +1406,24 @@ impl EditorElement {
                 };
             editor
                 .tasks
-                .keys()
-                .filter_map(|row| {
+                .iter()
+                .filter_map(|((_, row), (multibuffer_offset, _))| {
                     if snapshot.is_line_folded(*row) {
                         return None;
                     }
+                    let display_row = snapshot
+                        .buffer_snapshot
+                        .offset_to_point(*multibuffer_offset)
+                        .to_display_point(&snapshot.display_snapshot)
+                        .row();
+
                     let button = editor.render_run_indicator(
                         &self.style,
                         Some(*row) == active_task_indicator_row,
-                        *row,
+                        display_row,
                         cx,
                     );
-                    let display_row = Point::new(*row, 0)
-                        .to_display_point(&snapshot.display_snapshot)
-                        .row();
+
                     let button = prepaint_gutter_button(
                         button,
                         display_row,
@@ -2862,7 +2866,6 @@ impl EditorElement {
             let snapshot = layout.position_map.snapshot.clone();
             let theme = cx.theme().clone();
             let scrollbar_settings = EditorSettings::get_global(cx).scrollbar;
-            let max_row = layout.max_row;
 
             editor.scrollbar_marker_state.dirty = false;
             editor.scrollbar_marker_state.pending_refresh =
@@ -2871,12 +2874,12 @@ impl EditorElement {
                     let scrollbar_markers = cx
                         .background_executor()
                         .spawn(async move {
+                            let max_point = snapshot.display_snapshot.buffer_snapshot.max_point();
                             let mut marker_quads = Vec::new();
-
                             if scrollbar_settings.git_diff {
                                 let marker_row_ranges = snapshot
                                     .buffer_snapshot
-                                    .git_diff_hunks_in_range(0..max_row)
+                                    .git_diff_hunks_in_range(0..max_point.row)
                                     .map(|hunk| {
                                         let start_display_row =
                                             Point::new(hunk.associated_range.start, 0)
@@ -2945,9 +2948,6 @@ impl EditorElement {
                             }
 
                             if scrollbar_settings.diagnostics {
-                                let max_point =
-                                    snapshot.display_snapshot.buffer_snapshot.max_point();
-
                                 let diagnostics = snapshot
                                     .buffer_snapshot
                                     .diagnostics_in_range::<_, Point>(
@@ -4035,20 +4035,25 @@ impl Element for EditorElement {
                         if gutter_settings.code_actions {
                             let newest_selection_point =
                                 newest_selection_head.to_point(&snapshot.display_snapshot);
-                            let has_test_indicator = self
-                                .editor
-                                .read(cx)
-                                .tasks
-                                .contains_key(&newest_selection_point.row);
-                            if !has_test_indicator {
-                                code_actions_indicator = self.layout_code_actions_indicator(
-                                    line_height,
-                                    newest_selection_head,
-                                    scroll_pixel_position,
-                                    &gutter_dimensions,
-                                    &gutter_hitbox,
-                                    cx,
-                                );
+                            let buffer = snapshot
+                                .buffer_snapshot
+                                .buffer_line_for_row(newest_selection_point.row);
+                            if let Some((buffer, range)) = buffer {
+                                let buffer_id = buffer.remote_id();
+                                let row = range.start.row;
+                                let has_test_indicator =
+                                    self.editor.read(cx).tasks.contains_key(&(buffer_id, row));
+
+                                if !has_test_indicator {
+                                    code_actions_indicator = self.layout_code_actions_indicator(
+                                        line_height,
+                                        newest_selection_head,
+                                        scroll_pixel_position,
+                                        &gutter_dimensions,
+                                        &gutter_hitbox,
+                                        cx,
+                                    );
+                                }
                             }
                         }
                     }
@@ -4148,7 +4153,6 @@ impl Element for EditorElement {
                     gutter_dimensions,
                     content_origin,
                     scrollbar_layout,
-                    max_row,
                     active_rows,
                     highlighted_rows,
                     highlighted_ranges,
@@ -4281,7 +4285,6 @@ pub struct EditorLayout {
     cursors: Vec<(DisplayPoint, Hsla)>,
     visible_cursors: Vec<CursorLayout>,
     selections: Vec<(PlayerColor, Vec<SelectionLayout>)>,
-    max_row: u32,
     code_actions_indicator: Option<AnyElement>,
     test_indicators: Vec<AnyElement>,
     fold_indicators: Vec<Option<AnyElement>>,
