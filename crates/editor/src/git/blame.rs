@@ -8,11 +8,14 @@ use git::{
 };
 use gpui::{Model, ModelContext, Subscription, Task};
 use language::{markdown, Bias, Buffer, BufferSnapshot, Edit, LanguageRegistry, ParsedMarkdown};
+use multi_buffer::MultiBufferRow;
 use project::{Item, Project};
 use smallvec::SmallVec;
 use sum_tree::SumTree;
 use url::Url;
 use util::http::HttpClient;
+
+use crate::DisplayRow;
 
 #[derive(Clone, Debug, Default)]
 pub struct GitBlameEntry {
@@ -185,7 +188,7 @@ impl GitBlame {
 
     pub fn blame_for_rows<'a>(
         &'a mut self,
-        rows: impl 'a + IntoIterator<Item = Option<u32>>,
+        rows: impl 'a + IntoIterator<Item = Option<MultiBufferRow>>,
         cx: &mut ModelContext<Self>,
     ) -> impl 'a + Iterator<Item = Option<BlameEntry>> {
         self.sync(cx);
@@ -193,7 +196,7 @@ impl GitBlame {
         let mut cursor = self.entries.cursor::<u32>();
         rows.into_iter().map(move |row| {
             let row = row?;
-            cursor.seek_forward(&row, Bias::Right, &());
+            cursor.seek_forward(&row.0, Bias::Right, &());
             cursor.item()?.blame.clone()
         })
     }

@@ -46,8 +46,8 @@ use tab_map::TabMap;
 use wrap_map::WrapMap;
 
 pub use block_map::{
-    BlockBufferRows as DisplayBufferRows, BlockChunks as DisplayChunks, BlockContext,
-    BlockDisposition, BlockId, BlockProperties, BlockStyle, RenderBlock, TransformBlock,
+    BlockBufferRows, BlockChunks as DisplayChunks, BlockContext, BlockDisposition, BlockId,
+    BlockProperties, BlockStyle, RenderBlock, TransformBlock,
 };
 
 pub use self::fold_map::{Fold, FoldId, FoldPoint};
@@ -68,6 +68,17 @@ pub trait ToDisplayPoint {
 
 type TextHighlights = TreeMap<Option<TypeId>, Arc<(HighlightStyle, Vec<Range<Anchor>>)>>;
 type InlayHighlights = TreeMap<TypeId, TreeMap<InlayId, (HighlightStyle, InlayHighlight)>>;
+
+#[derive(Clone)]
+pub struct DisplayBufferRows<'a>(BlockBufferRows<'a>);
+
+impl<'a> Iterator for DisplayBufferRows<'a> {
+    type Item = Option<DisplayRow>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        self.0.next().map(|row| row.map(DisplayRow))
+    }
+}
 
 /// Decides how text in a [`MultiBuffer`] should be displayed in a buffer, handling inlay hints,
 /// folding, hard tabs, soft wrapping, custom blocks (like diagnostics), and highlighting.
@@ -386,8 +397,8 @@ impl DisplaySnapshot {
         self.buffer_snapshot.len() == 0
     }
 
-    pub fn buffer_rows(&self, start_row: DisplayRow) -> DisplayBufferRows {
-        self.block_snapshot.buffer_rows(start_row)
+    pub fn display_rows(&self, start_row: DisplayRow) -> DisplayBufferRows {
+        DisplayBufferRows(self.block_snapshot.buffer_rows(start_row))
     }
 
     pub fn max_buffer_row(&self) -> MultiBufferRow {

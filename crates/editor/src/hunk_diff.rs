@@ -6,7 +6,7 @@ use std::{
 use collections::{hash_map, HashMap, HashSet};
 use git::diff::{DiffHunk, DiffHunkStatus};
 use gpui::{AppContext, Hsla, Model, Task, View};
-use language::{Buffer, BufferRow};
+use language::Buffer;
 use multi_buffer::{
     Anchor, ExcerptRange, MultiBuffer, MultiBufferRow, MultiBufferSnapshot, ToPoint,
 };
@@ -17,7 +17,6 @@ use ui::{
 use util::{debug_panic, RangeExt};
 
 use crate::{
-    buffer_associated_hunk_status,
     git::{diff_hunk_to_display, DisplayDiffHunk},
     hunks_for_selections, multi_buffer_associated_hunk_status, BlockDisposition, BlockId,
     BlockProperties, BlockStyle, DiffRowHighlight, Editor, EditorSnapshot, ExpandAllHunkDiffs,
@@ -377,9 +376,10 @@ impl Editor {
                     }
 
                     let snapshot = editor.snapshot(cx);
-                    let buffer_snapshot = buffer.read(cx).snapshot();
-                    let mut recalculated_hunks = buffer_snapshot
-                        .git_diff_hunks_in_row_range(0..u32::MAX)
+                    let mut recalculated_hunks = snapshot
+                        .buffer_snapshot
+                        .git_diff_hunks_in_range(MultiBufferRow::MIN..MultiBufferRow::MAX)
+                        .filter(|hunk| hunk.buffer_id == buffer_id)
                         .fuse()
                         .peekable();
                     let mut highlights_to_remove =
@@ -405,9 +405,7 @@ impl Editor {
                                     .to_display_point(&snapshot)
                                     .row();
                             while let Some(buffer_hunk) = recalculated_hunks.peek() {
-                                let multi_buffer_hunk =
-                                    to_multi_buffer_hunk(buffer_hunk, &snapshot.buffer_snapshot);
-                                match diff_hunk_to_display(&multi_buffer_hunk, &snapshot) {
+                                match diff_hunk_to_display(&buffer_hunk, &snapshot) {
                                     DisplayDiffHunk::Folded { display_row } => {
                                         recalculated_hunks.next();
                                         if !expanded_hunk.folded
@@ -447,7 +445,9 @@ impl Editor {
                                             if !expanded_hunk.folded
                                                 && expanded_hunk_display_range == hunk_display_range
                                                 && expanded_hunk.status
-                                                    == buffer_associated_hunk_status(buffer_hunk)
+                                                    == multi_buffer_associated_hunk_status(
+                                                        buffer_hunk,
+                                                    )
                                                 && expanded_hunk.diff_base_byte_range
                                                     == buffer_hunk.diff_base_byte_range
                                             {
@@ -652,23 +652,4 @@ fn to_inclusive_row_range(
         ..display_row_range.end.to_point(&snapshot.display_snapshot);
     let new_range = point_range.to_anchors(&snapshot.buffer_snapshot);
     new_range.start..=new_range.end
-}
-
-fn to_multi_buffer_hunk(
-    buffer_hunk: &DiffHunk<BufferRow>,
-    snapshot: &MultiBufferSnapshot,
-) -> DiffHunk<MultiBufferRow> {
-    let multi_buffer_row_range = Point::new(buffer_hunk.associated_range.start, 0)
-        .to_point(snapshot)
-        .row
-        ..Point::new(buffer_hunk.associated_range.end, 0)
-            .to_point(snapshot)
-            .row;
-    DiffHunk {
-        associated_range: MultiBufferRow(multi_buffer_row_range.start)
-            ..MultiBufferRow(multi_buffer_row_range.end),
-        buffer_id: buffer_hunk.buffer_id,
-        buffer_range: buffer_hunk.buffer_range.clone(),
-        diff_base_byte_range: buffer_hunk.diff_base_byte_range.clone(),
-    }
 }

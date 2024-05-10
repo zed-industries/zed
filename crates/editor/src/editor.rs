@@ -410,7 +410,7 @@ struct RunnableTasks {
 #[derive(Clone)]
 struct ResolvedTasks {
     templates: SmallVec<[(TaskSourceKind, ResolvedTask); 1]>,
-    position: text::Point,
+    position: Anchor,
 }
 
 /// Zed's primary text input `View`, allowing users to edit a [`MultiBuffer`]
@@ -3855,21 +3855,13 @@ impl Editor {
 
             let spawned_test_task = this.update(&mut cx, |this, cx| {
                 if this.focus_handle.is_focused(cx) {
-                    let display_row = action
+                    let multibuffer_point = action
                         .deployed_from_indicator
-                        .map(|row| {
-                            MultiBufferRow(
-                                DisplayPoint::new(row, 0)
-                                    .to_point(&snapshot.display_snapshot)
-                                    .row,
-                            )
-                        })
-                        .unwrap_or_else(|| {
-                            MultiBufferRow(this.selections.newest::<Point>(cx).head().row)
-                        });
+                        .map(|row| DisplayPoint::new(row, 0).to_point(&snapshot))
+                        .unwrap_or_else(|| this.selections.newest::<Point>(cx).head());
                     let (buffer, buffer_row) = snapshot
                         .buffer_snapshot
-                        .buffer_line_for_row(display_row)
+                        .buffer_line_for_row(MultiBufferRow(multibuffer_point.row))
                         .and_then(|(buffer_snapshot, range)| {
                             this.buffer
                                 .read(cx)
@@ -3930,6 +3922,9 @@ impl Editor {
                             .task_variables
                             .extend(additional_task_variables);
 
+                        let test_convert = snapshot
+                            .buffer_snapshot
+                            .anchor_before(Point::new(multibuffer_point.row, tasks.1.column));
                         Arc::new(ResolvedTasks {
                             templates: tasks
                                 .1
@@ -3941,7 +3936,7 @@ impl Editor {
                                         .map(|task| (kind.clone(), task))
                                 })
                                 .collect(),
-                            position: Point::new(buffer_row, tasks.1.column),
+                            position: test_convert,
                         })
                     });
                     let spawn_straight_away = tasks

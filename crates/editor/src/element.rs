@@ -34,7 +34,7 @@ use gpui::{
     ViewContext, WeakView, WindowContext,
 };
 use itertools::Itertools;
-use language::{language_settings::ShowWhitespaceSetting, BufferRow};
+use language::language_settings::ShowWhitespaceSetting;
 use lsp::DiagnosticSeverity;
 use multi_buffer::{Anchor, MultiBufferPoint, MultiBufferRow};
 use project::{
@@ -132,6 +132,8 @@ pub struct EditorElement {
     editor: View<Editor>,
     style: EditorStyle,
 }
+
+type DisplayRowDelta = u32;
 
 impl EditorElement {
     pub fn new(editor: &View<Editor>, style: EditorStyle) -> Self {
@@ -1284,7 +1286,7 @@ impl EditorElement {
             .map(|(w, _)| w.clone());
 
         let display_point = DisplayPoint::new(display_row, 0);
-        let buffer_row = display_point.to_point(display_snapshot).row;
+        let buffer_row = MultiBufferRow(display_point.to_point(display_snapshot).row);
 
         let blame = self.editor.read(cx).blame.clone()?;
         let blame_entry = blame
@@ -1326,7 +1328,7 @@ impl EditorElement {
     #[allow(clippy::too_many_arguments)]
     fn layout_blame_entries(
         &self,
-        buffer_rows: impl Iterator<Item = Option<u32>>,
+        buffer_rows: impl Iterator<Item = Option<MultiBufferRow>>,
         em_width: Pixels,
         scroll_position: gpui::Point<f32>,
         line_height: Pixels,
@@ -1410,7 +1412,7 @@ impl EditorElement {
                     actions
                         .tasks
                         .as_ref()
-                        .map(|tasks| MultiBufferRow(tasks.position.row))
+                        .map(|tasks| tasks.position.to_display_point(snapshot).row())
                         .or_else(|| *deployed_from_indicator)
                 } else {
                     None
@@ -1418,19 +1420,16 @@ impl EditorElement {
             editor
                 .tasks
                 .iter()
-                .filter_map(|((_, buffer_row), (multibuffer_offset, _))| {
-                    if snapshot.is_line_folded(*buffer_row) {
+                .filter_map(|(_, (multibuffer_offset, _))| {
+                    let multibuffer_point = multibuffer_offset.to_point(&snapshot.buffer_snapshot);
+                    let multibuffer_row = MultiBufferRow(multibuffer_point.row);
+                    if snapshot.is_line_folded(multibuffer_row) {
                         return None;
                     }
-                    let display_row = snapshot
-                        .buffer_snapshot
-                        .offset_to_point(*multibuffer_offset)
-                        .to_display_point(&snapshot.display_snapshot)
-                        .row();
-
+                    let display_row = multibuffer_point.to_display_point(snapshot).row();
                     let button = editor.render_run_indicator(
                         &self.style,
-                        Some(*buffer_row) == active_task_indicator_row,
+                        Some(display_row) == active_task_indicator_row,
                         display_row,
                         cx,
                     );
@@ -1502,8 +1501,8 @@ impl EditorElement {
         snapshot: &EditorSnapshot,
         rows: &Range<DisplayRow>,
         relative_to: Option<DisplayRow>,
-    ) -> HashMap<DisplayRow, u32> {
-        let mut relative_rows: HashMap<DisplayRow, u32> = Default::default();
+    ) -> HashMap<DisplayRow, DisplayRowDelta> {
+        let mut relative_rows: HashMap<DisplayRow, DisplayRowDelta> = Default::default();
         let Some(relative_to) = relative_to else {
             return relative_rows;
         };
@@ -1512,7 +1511,7 @@ impl EditorElement {
         let end = rows.end.max(relative_to);
 
         let buffer_rows = snapshot
-            .buffer_rows(start)
+            .display_rows(start)
             .take(1 + (end.0 - start.0) as usize)
             .collect::<Vec<_>>();
 
@@ -1550,14 +1549,14 @@ impl EditorElement {
     fn layout_line_numbers(
         &self,
         rows: Range<DisplayRow>,
-        buffer_rows: impl Iterator<Item = Option<BufferRow>>,
+        buffer_rows: impl Iterator<Item = Option<DisplayRow>>,
         active_rows: &BTreeMap<DisplayRow, bool>,
         newest_selection_head: Option<DisplayPoint>,
         snapshot: &EditorSnapshot,
         cx: &WindowContext,
     ) -> (
         Vec<Option<ShapedLine>>,
-        Vec<Option<(FoldStatus, BufferRow, bool)>>,
+        Vec<Option<(FoldStatus, MultiBufferRow, bool)>>,
     ) {
         let editor = self.editor.read(cx);
         let is_singleton = editor.is_singleton(cx);
@@ -1598,10 +1597,10 @@ impl EditorElement {
             } else {
                 (false, cx.theme().colors().editor_line_number)
             };
-            if let Some(buffer_row) = row {
+            if let Some(display_row) = row {
                 if include_line_numbers {
                     line_number.clear();
-                    let default_number = buffer_row + 1;
+                    let default_number = display_row.0 + 1;
                     let number = relative_rows
                         .get(&DisplayRow(ix as u32 + rows.start.0))
                         .unwrap_or(&default_number);
@@ -1624,9 +1623,12 @@ impl EditorElement {
                     fold_statuses.push(
                         is_singleton
                             .then(|| {
+                                let multibuffer_point =
+                                    DisplayPoint::new(display_row, 0).to_point(snapshot);
+                                let multibuffer_row = MultiBufferRow(multibuffer_point.row);
                                 snapshot
-                                    .fold_for_line(buffer_row)
-                                    .map(|fold_status| (fold_status, buffer_row, active))
+                                    .fold_for_line(multibuffer_row)
+                                    .map(|fold_status| (fold_status, multibuffer_row, active))
                             })
                             .flatten(),
                     )
@@ -3826,7 +3828,7 @@ impl Element for EditorElement {
                 let end_row = DisplayRow(end_row);
 
                 let buffer_rows = snapshot
-                    .buffer_rows(start_row)
+                    .display_rows(start_row)
                     .take((start_row..end_row).len());
 
                 let start_anchor = if start_row == Default::default() {
@@ -3940,7 +3942,11 @@ impl Element for EditorElement {
                 }
 
                 let blamed_display_rows = self.layout_blame_entries(
-                    buffer_rows,
+                    buffer_rows.map(|display_row| {
+                        display_row.map(|row| {
+                            MultiBufferRow(DisplayPoint::new(row, 0).to_point(&snapshot).row)
+                        })
+                    }),
                     em_width,
                     scroll_position,
                     line_height,
