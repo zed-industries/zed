@@ -2240,8 +2240,9 @@ async fn test_git_status(cx: &mut TestAppContext) {
     tree.read_with(cx, |tree, _cx| {
         let snapshot = tree.snapshot();
         assert_eq!(snapshot.repositories().count(), 1);
-        let (dir, _) = snapshot.repositories().next().unwrap();
+        let (dir, repo_entry) = snapshot.repositories().next().unwrap();
         assert_eq!(dir.as_ref(), Path::new("project"));
+        assert!(repo_entry.relative_path_to_repo_root.is_none());
 
         assert_eq!(
             snapshot.status_for_file(project_path.join(B_TXT)),
@@ -2367,6 +2368,84 @@ async fn test_git_status(cx: &mut TestAppContext) {
             Some(GitFileStatus::Added)
         );
     });
+}
+
+#[gpui::test]
+async fn test_repository_subfolder_git_status(cx: &mut TestAppContext) {
+    init_test(cx);
+    cx.executor().allow_parking();
+
+    let root = temp_tree(json!({
+        "my-repo": {
+            // .git folder will go here
+            "a.txt": "a",
+            "sub-folder-1": {
+                "sub-folder-2": {
+                    "c.txt": "cc",
+                    "d": {
+                        "e.txt": "eee"
+                    }
+                },
+            }
+        },
+
+    }));
+
+    const C_TXT: &str = "sub-folder-1/sub-folder-2/c.txt";
+    const E_TXT: &str = "sub-folder-1/sub-folder-2/d/e.txt";
+
+    let repo_path = Path::new("my-repo");
+    let subfolder_path = Path::new("my-repo/sub-folder-1/sub-folder-2");
+
+    // Set up git repository before creating the worktree.
+    let work_dir = root.path().join(repo_path);
+    let repo = git_init(work_dir.as_path());
+    git_add(C_TXT, &repo);
+    git_commit("Initial commit", &repo);
+
+    // Open the worktree in subfolder
+    let tree = Worktree::local(
+        build_client(cx),
+        root.path().join(subfolder_path),
+        true,
+        Arc::new(RealFs::default()),
+        Default::default(),
+        &mut cx.to_async(),
+    )
+    .await
+    .unwrap();
+
+    tree.flush_fs_events(cx).await;
+    cx.read(|cx| tree.read(cx).as_local().unwrap().scan_complete())
+        .await;
+    cx.executor().run_until_parked();
+
+    tree.read_with(cx, |tree, _cx| {
+        let snapshot = tree.snapshot();
+        assert_eq!(snapshot.repositories().count(), 1);
+        let (dir, repo_entry) = snapshot.repositories().next().unwrap();
+        // Path is blank because the working directory of
+        // the git repository is located at the root of the project
+        assert_eq!(dir.as_ref(), Path::new(""));
+
+        // This is the missing path between the root of the project (sub-folder-2) and its
+        // location relative to the root of the repository.
+        assert_eq!(
+            repo_entry.relative_path_to_repo_root,
+            Some(Arc::from(Path::new("sub-folder-1/sub-folder-2")))
+        );
+
+        assert_eq!(snapshot.status_for_file("c.txt"), None);
+        assert_eq!(
+            snapshot.status_for_file("d/e.txt"),
+            Some(GitFileStatus::Added)
+        );
+    });
+
+    assert_eq!(
+        true,
+        "TODO: Ensure that git events are propagated correctly and statuses updated"
+    );
 }
 
 #[gpui::test]
