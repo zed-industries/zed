@@ -4,7 +4,9 @@ use crate::{
         BlockContext, BlockStyle, DisplaySnapshot, FoldStatus, HighlightedChunk, ToDisplayPoint,
         TransformBlock,
     },
-    editor_settings::{DoubleClickInMultibuffer, MultiCursorModifier, ShowScrollbar},
+    editor_settings::{
+        DoubleClickInMultibuffer, IndentColorMode, MultiCursorModifier, ShowScrollbar,
+    },
     git::{blame::GitBlame, diff_hunk_to_display, DisplayDiffHunk},
     hover_popover::{
         self, hover_at, HOVER_POPOVER_GAP, MIN_POPOVER_CHARACTER_WIDTH, MIN_POPOVER_LINE_HEIGHT,
@@ -1383,7 +1385,12 @@ impl EditorElement {
         text_hitbox: &Hitbox,
         snapshot: &DisplaySnapshot,
         cx: &mut WindowContext,
-    ) -> Vec<IndentGuideLayout> {
+    ) -> Option<Vec<IndentGuideLayout>> {
+        let indent_guide_settings = EditorSettings::get_global(cx).indent_guides;
+        if !indent_guide_settings.enabled {
+            return None;
+        }
+
         // TODO actually figure out why the visible range is sometimes off by one
         // Also seems fine to keep as calculating two additional lines won't really make a difference
         let visible_buffer_range = visible_buffer_range.start.saturating_sub(1)
@@ -1394,35 +1401,40 @@ impl EditorElement {
                 .read(cx)
                 .indent_guides_in_range(visible_buffer_range, snapshot, cx);
 
-        indent_guides
-            .into_iter()
-            .filter_map(|indent_guide| {
-                let start_x = text_hitbox.origin.x
-                    + self.column_pixels(indent_guide.size as usize, cx)
-                    - scroll_pixel_position.x;
-                if start_x >= text_hitbox.origin.x {
-                    let start_row = Point::new(indent_guide.start, 0)
-                        .to_display_point(snapshot)
-                        .row();
-                    let end_row = Point::new(indent_guide.end + 1, 0)
-                        .to_display_point(snapshot)
-                        .row();
+        Some(
+            indent_guides
+                .into_iter()
+                .filter_map(|indent_guide| {
+                    let indent_size = self.column_pixels(indent_guide.indent_size as usize, cx);
+                    let total_width = indent_size * px(indent_guide.depth as f32);
 
-                    let start_y = text_hitbox.origin.y + (start_row as f32 * line_height)
-                        - scroll_pixel_position.y;
+                    let start_x = text_hitbox.origin.x + total_width - scroll_pixel_position.x;
+                    if start_x >= text_hitbox.origin.x {
+                        let start_row = Point::new(indent_guide.start, 0)
+                            .to_display_point(snapshot)
+                            .row();
+                        let end_row = Point::new(indent_guide.end + 1, 0)
+                            .to_display_point(snapshot)
+                            .row();
 
-                    let length = (end_row - start_row) as f32 * line_height;
+                        let start_y = text_hitbox.origin.y + (start_row as f32 * line_height)
+                            - scroll_pixel_position.y;
 
-                    Some(IndentGuideLayout {
-                        origin: point(start_x, start_y),
-                        length,
-                        active: indent_guide.active,
-                    })
-                } else {
-                    None
-                }
-            })
-            .collect()
+                        let length = (end_row - start_row) as f32 * line_height;
+
+                        Some(IndentGuideLayout {
+                            origin: point(start_x, start_y),
+                            length,
+                            indent_size,
+                            depth: indent_guide.depth,
+                            active: indent_guide.active,
+                        })
+                    } else {
+                        None
+                    }
+                })
+                .collect(),
+        )
     }
 
     fn layout_run_indicators(
@@ -2400,19 +2412,92 @@ impl EditorElement {
     }
 
     fn paint_indent_guides(&mut self, layout: &mut EditorLayout, cx: &mut WindowContext) {
-        for indent_guide in layout.indent_guides.iter() {
-            let color = if indent_guide.active {
-                cx.theme().colors().editor_active_indent_guide
-            } else {
-                cx.theme().colors().editor_indent_guide
+        let Some(indent_guides) = &layout.indent_guides else {
+            return;
+        };
+
+        let settings = EditorSettings::get_global(cx).indent_guides;
+
+        for indent_guide in indent_guides {
+            let indent_aware_color = cx
+                .theme()
+                .indent_aware()
+                .color_for_indent(indent_guide.depth);
+
+            let line_color = match (&settings.line_color_mode, indent_guide.active) {
+                (IndentColorMode::Disabled, _) => None,
+                (IndentColorMode::Fixed, false) => {
+                    Some(cx.theme().colors().editor_indent_guide_line)
+                }
+                (IndentColorMode::Fixed, true) => {
+                    Some(cx.theme().colors().editor_indent_guide_active_line)
+                }
+                (IndentColorMode::IndentAware, false) => Some(
+                    indent_aware_color
+                        .map(|i| i.line)
+                        .unwrap_or_else(|| cx.theme().colors().editor_indent_guide_line),
+                ),
+                (IndentColorMode::IndentAware, true) => Some(
+                    indent_aware_color
+                        .map(|i| i.active_line)
+                        .unwrap_or_else(|| cx.theme().colors().editor_indent_guide_active_line),
+                ),
             };
-            cx.paint_quad(fill(
-                Bounds {
-                    origin: point(indent_guide.origin.x + px(3.), indent_guide.origin.y),
-                    size: size(px(1.), indent_guide.length),
-                },
-                color,
-            ));
+
+            let background_color = match (&settings.background_color_mode, indent_guide.active) {
+                (IndentColorMode::Disabled, _) => None,
+                (IndentColorMode::Fixed, false) => {
+                    Some(cx.theme().colors().editor_indent_guide_background)
+                }
+                (IndentColorMode::Fixed, true) => {
+                    Some(cx.theme().colors().editor_indent_guide_active_background)
+                }
+                (IndentColorMode::IndentAware, false) => Some(
+                    indent_aware_color
+                        .map(|i| i.background)
+                        .unwrap_or_else(|| cx.theme().colors().editor_indent_guide_background),
+                ),
+                (IndentColorMode::IndentAware, true) => Some(
+                    indent_aware_color
+                        .map(|i| i.active_background)
+                        .unwrap_or_else(|| {
+                            cx.theme().colors().editor_indent_guide_active_background
+                        }),
+                ),
+            };
+
+            const INDENT_GUIDE_OFFSET_X: f32 = 3.;
+
+            let mut line_indicator_width = 0.;
+            if let Some(color) = line_color {
+                cx.paint_quad(fill(
+                    Bounds {
+                        origin: point(
+                            indent_guide.origin.x + px(INDENT_GUIDE_OFFSET_X),
+                            indent_guide.origin.y,
+                        ),
+                        size: size(px(settings.line_width as f32), indent_guide.length),
+                    },
+                    color,
+                ));
+                line_indicator_width = settings.line_width as f32;
+            }
+
+            if let Some(color) = background_color {
+                let width = indent_guide.indent_size - px(line_indicator_width);
+                cx.paint_quad(fill(
+                    Bounds {
+                        origin: point(
+                            indent_guide.origin.x
+                                + px(INDENT_GUIDE_OFFSET_X)
+                                + px(line_indicator_width),
+                            indent_guide.origin.y,
+                        ),
+                        size: size(width, indent_guide.length),
+                    },
+                    color,
+                ));
+            }
         }
     }
 
@@ -4330,7 +4415,7 @@ pub struct EditorLayout {
     scrollbar_layout: Option<ScrollbarLayout>,
     mode: EditorMode,
     wrap_guides: SmallVec<[(Pixels, bool); 2]>,
-    indent_guides: Vec<IndentGuideLayout>,
+    indent_guides: Option<Vec<IndentGuideLayout>>,
     visible_display_row_range: Range<u32>,
     active_rows: BTreeMap<u32, bool>,
     highlighted_rows: BTreeMap<u32, Hsla>,
@@ -4585,9 +4670,12 @@ fn layout_line(
     )
 }
 
+#[derive(Debug)]
 pub struct IndentGuideLayout {
     origin: gpui::Point<Pixels>,
     length: Pixels,
+    indent_size: Pixels,
+    depth: u32,
     active: bool,
 }
 

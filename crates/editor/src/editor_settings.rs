@@ -14,6 +14,7 @@ pub struct EditorSettings {
     pub toolbar: Toolbar,
     pub scrollbar: Scrollbar,
     pub gutter: Gutter,
+    pub indent_guides: IndentGuides,
     pub vertical_scroll_margin: f32,
     pub scroll_sensitivity: f32,
     pub relative_line_numbers: bool,
@@ -69,6 +70,28 @@ pub struct Gutter {
     pub line_numbers: bool,
     pub code_actions: bool,
     pub folds: bool,
+}
+
+#[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
+pub struct IndentGuides {
+    pub enabled: bool,
+    pub line_width: u32,
+    pub line_color_mode: IndentColorMode,
+    pub background_color_mode: IndentColorMode,
+}
+
+/// Determines the coloring behavior for indent guides.
+///
+/// Default: off
+#[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub enum IndentColorMode {
+    /// Use no coloring at all.
+    Disabled,
+    /// Use the same color for all indentation levels.
+    Fixed,
+    /// Use a different color for each indentation level.
+    IndentAware,
 }
 
 /// When to show the scrollbar in the editor.
@@ -136,6 +159,8 @@ pub struct EditorSettingsContent {
     pub scrollbar: Option<ScrollbarContent>,
     /// Gutter related settings
     pub gutter: Option<GutterContent>,
+    /// Indent guides related settings
+    pub indent_guides: Option<IndentGuidesContent>,
     /// The number of lines to keep above/below the cursor when auto-scrolling.
     ///
     /// Default: 3.
@@ -228,6 +253,26 @@ pub struct GutterContent {
     ///
     /// Default: true
     pub folds: Option<bool>,
+}
+
+#[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
+pub struct IndentGuidesContent {
+    /// Whether to display indent guides in the editor.
+    ///
+    /// Default: true
+    pub enabled: Option<bool>,
+    /// The width of the indent guides (in pixels, between 1 and 10).
+    ///
+    /// Default: 1
+    pub line_width: Option<u32>,
+    /// Determines the coloring mode for the line of indent guides.
+    ///
+    /// Default: Fixed
+    pub line_color_mode: Option<IndentColorMode>,
+    /// Determines the coloring mode for the background of indent guides.
+    ///
+    /// Default: Disabled
+    pub background_color_mode: Option<IndentColorMode>,
 }
 
 impl Settings for EditorSettings {

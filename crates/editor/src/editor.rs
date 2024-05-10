@@ -1499,17 +1499,17 @@ struct IndentGuide {
     pub start: u32,
     pub end: u32,
     pub depth: u32,
-    pub size: u32,
+    pub indent_size: u32,
     pub active: bool,
 }
 
 impl IndentGuide {
-    fn new(start: u32, end: u32, depth: u32, size: u32) -> Self {
+    fn new(start: u32, end: u32, depth: u32, indent_size: u32) -> Self {
         Self {
             start,
             end,
             depth,
-            size,
+            indent_size,
             active: false,
         }
     }
@@ -10096,7 +10096,7 @@ impl Editor {
                         first_row,
                         last_row,
                         next_depth,
-                        (next_depth) * indent_size.get() as u32,
+                        indent_size.get() as u32,
                     ));
                 }
             }
@@ -10157,7 +10157,9 @@ impl Editor {
         let indent_candidates = indents
             .iter()
             .enumerate()
-            .filter(|(_, indent_guide)| indent_guide.size == target_indent)
+            .filter(|(_, indent_guide)| {
+                indent_guide.indent_size * indent_guide.depth == target_indent
+            })
             .collect::<Vec<_>>();
 
         // Find exact match

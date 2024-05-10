@@ -12,8 +12,9 @@ use refineable::Refineable;
 use util::ResultExt;
 
 use crate::{
-    try_parse_color, Appearance, AppearanceContent, PlayerColors, StatusColors, SyntaxTheme,
-    SystemColors, Theme, ThemeColors, ThemeContent, ThemeFamily, ThemeFamilyContent, ThemeStyles,
+    try_parse_color, Appearance, AppearanceContent, IndentAwareColors, PlayerColors, StatusColors,
+    SyntaxTheme, SystemColors, Theme, ThemeColors, ThemeContent, ThemeFamily, ThemeFamilyContent,
+    ThemeStyles,
 };
 
 #[derive(Debug, Clone)]
@@ -118,6 +119,12 @@ impl ThemeRegistry {
             };
             player_colors.merge(&user_theme.style.players);
 
+            let mut indent_aware_colors = match user_theme.appearance {
+                AppearanceContent::Light => IndentAwareColors::light(),
+                AppearanceContent::Dark => IndentAwareColors::dark(),
+            };
+            indent_aware_colors.merge(&user_theme.style.indent_aware);
+
             let mut syntax_colors = match user_theme.appearance {
                 AppearanceContent::Light => SyntaxTheme::light(),
                 AppearanceContent::Dark => SyntaxTheme::dark(),
@@ -164,6 +171,7 @@ impl ThemeRegistry {
                     colors: theme_colors,
                     status: status_colors,
                     player: player_colors,
+                    indent_aware: indent_aware_colors,
                     syntax: Arc::new(syntax_colors),
                     accents: Vec::new(),
                 },

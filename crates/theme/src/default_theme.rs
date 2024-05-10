@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use gpui::WindowBackgroundAppearance;
 
-use crate::prelude::*;
+use crate::{prelude::*, IndentAwareColors};
 
 use crate::{
     default_color_scales,
@@ -22,6 +22,7 @@ fn zed_pro_daylight() -> Theme {
             colors: ThemeColors::light(),
             status: StatusColors::light(),
             player: PlayerColors::light(),
+            indent_aware: IndentAwareColors::light(),
             syntax: Arc::new(SyntaxTheme::light()),
             accents: vec![
                 blue().light().step_9(),
@@ -53,6 +54,7 @@ pub(crate) fn zed_pro_moonlight() -> Theme {
             colors: ThemeColors::dark(),
             status: StatusColors::dark(),
             player: PlayerColors::dark(),
+            indent_aware: IndentAwareColors::dark(),
             syntax: Arc::new(SyntaxTheme::dark()),
             accents: vec![
                 blue().dark().step_9(),

@@ -60,6 +60,7 @@ impl VsCodeThemeConverter {
                 colors: theme_colors,
                 status: status_colors,
                 players: Vec::new(),
+                indent_aware: Vec::new(),
                 syntax: syntax_theme,
             },
         })

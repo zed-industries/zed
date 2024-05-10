@@ -84,6 +84,9 @@ pub struct ThemeStyleContent {
     #[serde(default)]
     pub players: Vec<PlayerColorContent>,
 
+    #[serde(default)]
+    pub indent_aware: Vec<IndentAwareColorContent>,
+
     /// The styles for syntax nodes.
     #[serde(default)]
     pub syntax: IndexMap<String, HighlightStyleContent>,
@@ -381,11 +384,20 @@ pub struct ThemeColorsContent {
     #[serde(rename = "editor.active_wrap_guide")]
     pub editor_active_wrap_guide: Option<String>,
 
-    #[serde(rename = "editor.indent_guide")]
-    pub editor_indent_guide: Option<String>,
+    #[serde(rename = "editor.indent_guide.line")]
+    pub editor_indent_guide_line: Option<String>,
 
-    #[serde(rename = "editor.active_indent_guide")]
-    pub editor_active_indent_guide: Option<String>,
+    #[serde(rename = "editor.indent_guide.active_line")]
+    pub editor_indent_guide_active_line: Option<String>,
+
+    #[serde(rename = "editor.indent_guide.background")]
+    pub editor_indent_guide_background: Option<String>,
+
+    #[serde(rename = "editor.indent_guide.active_background")]
+    pub editor_indent_guide_active_background: Option<String>,
+
+    #[serde(default, rename = "editor.indent_guide.indent_aware_coloring")]
+    pub editor_indent_guides_indent_aware_coloring: Vec<IndentAwareColorContent>,
 
     /// Read-access of a symbol, like reading a variable.
     ///
@@ -753,12 +765,20 @@ impl ThemeColorsContent {
                 .editor_active_wrap_guide
                 .as_ref()
                 .and_then(|color| try_parse_color(color).ok()),
-            editor_indent_guide: self
-                .editor_indent_guide
+            editor_indent_guide_line: self
+                .editor_indent_guide_line
                 .as_ref()
                 .and_then(|color| try_parse_color(color).ok()),
-            editor_active_indent_guide: self
-                .editor_active_indent_guide
+            editor_indent_guide_active_line: self
+                .editor_indent_guide_active_line
+                .as_ref()
+                .and_then(|color| try_parse_color(color).ok()),
+            editor_indent_guide_background: self
+                .editor_indent_guide_background
+                .as_ref()
+                .and_then(|color| try_parse_color(color).ok()),
+            editor_indent_guide_active_background: self
+                .editor_indent_guide_active_background
                 .as_ref()
                 .and_then(|color| try_parse_color(color).ok()),
             editor_document_highlight_read_background: self
@@ -1208,6 +1228,14 @@ impl StatusColorsContent {
                 .and_then(|color| try_parse_color(color).ok()),
         }
     }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct IndentAwareColorContent {
+    pub line: Option<String>,
+    pub active_line: Option<String>,
+    pub background: Option<String>,
+    pub active_background: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]

@@ -131,6 +131,12 @@ impl Theme {
         &self.styles.player
     }
 
+    /// Returns the [`IndentAwareColors`] for the theme.
+    #[inline(always)]
+    pub fn indent_aware(&self) -> &IndentAwareColors {
+        &self.styles.indent_aware
+    }
+
     /// Returns the [`ThemeColors`] for the theme.
     #[inline(always)]
     pub fn colors(&self) -> &ThemeColors {

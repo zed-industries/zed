@@ -3,8 +3,8 @@ use std::sync::Arc;
 use gpui::{hsla, FontStyle, FontWeight, HighlightStyle, WindowBackgroundAppearance};
 
 use crate::{
-    default_color_scales, Appearance, PlayerColors, StatusColors, SyntaxTheme, SystemColors, Theme,
-    ThemeColors, ThemeFamily, ThemeStyles,
+    default_color_scales, Appearance, IndentAwareColors, PlayerColors, StatusColors, SyntaxTheme,
+    SystemColors, Theme, ThemeColors, ThemeFamily, ThemeStyles,
 };
 
 // Note: This theme family is not the one you see in Zed at the moment.
@@ -91,8 +91,10 @@ pub(crate) fn one_dark() -> Theme {
                 editor_invisible: hsla(222.0 / 360., 11.5 / 100., 34.1 / 100., 1.0),
                 editor_wrap_guide: hsla(228. / 360., 8. / 100., 25. / 100., 1.),
                 editor_active_wrap_guide: hsla(228. / 360., 8. / 100., 25. / 100., 1.),
-                editor_indent_guide: hsla(228. / 360., 8. / 100., 25. / 100., 1.),
-                editor_active_indent_guide: hsla(228. / 360., 8. / 100., 25. / 100., 1.),
+                editor_indent_guide_line: hsla(228. / 360., 8. / 100., 25. / 100., 1.),
+                editor_indent_guide_active_line: hsla(228. / 360., 8. / 100., 25. / 100., 1.),
+                editor_indent_guide_background: hsla(228. / 360., 8. / 100., 25. / 100., 1.),
+                editor_indent_guide_active_background: hsla(228. / 360., 8. / 100., 25. / 100., 1.),
                 editor_document_highlight_read_background: hsla(
                     207.8 / 360.,
                     81. / 100.,
@@ -187,6 +189,7 @@ pub(crate) fn one_dark() -> Theme {
                 warning_border: yellow,
             },
             player: PlayerColors::dark(),
+            indent_aware: IndentAwareColors::dark(),
             syntax: Arc::new(SyntaxTheme {
                 highlights: vec![
                     ("attribute".into(), purple.into()),

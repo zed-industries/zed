@@ -1,4 +1,5 @@
 mod colors;
+mod indent_aware;
 mod players;
 mod status;
 mod syntax;
@@ -8,6 +9,7 @@ mod system;
 mod stories;
 
 pub use colors::*;
+pub use indent_aware::*;
 pub use players::*;
 pub use status::*;
 pub use syntax::*;
