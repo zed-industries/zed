@@ -10,6 +10,7 @@ use clock::ReplicaId;
 use collections::{HashMap, HashSet, VecDeque};
 use fs::Fs;
 use fs::{copy_recursive, RemoveOptions};
+use futures::stream::select;
 use futures::{
     channel::{
         mpsc::{self, UnboundedSender},
@@ -160,6 +161,7 @@ pub struct Snapshot {
 pub struct RepositoryEntry {
     pub(crate) work_directory: WorkDirectoryEntry,
     pub(crate) branch: Option<Arc<str>>,
+    // TODO: rename this
     pub(crate) relative_path_to_repo_root: Option<Arc<Path>>,
 }
 
@@ -2046,7 +2048,7 @@ impl Snapshot {
                 }
             }
             while let Some((repo_path, _)) = repositories.peek() {
-                if dbg!(entry.path.starts_with(repo_path)) {
+                if entry.path.starts_with(repo_path) {
                     containing_repos.push(repositories.next().unwrap());
                 } else {
                     break;
@@ -2820,7 +2822,6 @@ impl BackgroundScannerState {
         let repository = fs.open_repo(abs_path.as_path())?;
         let work_directory = RepositoryWorkDirectory(work_dir_path.clone());
 
-        println!("adding it as a git repo: {:?}", dot_git_path);
         let repo_lock = repository.lock();
         self.snapshot.repository_entries.insert(
             work_directory.clone(),
@@ -2852,8 +2853,6 @@ impl BackgroundScannerState {
         repo: &dyn GitRepository,
     ) -> TreeMap<RepoPath, GitFileStatus> {
         let repo_entry = self.snapshot.repository_entries.get(work_directory);
-        dbg!(&repo_entry);
-
         let staged_statuses = repo.staged_statuses(Path::new(""));
 
         let mut changes = vec![];
@@ -3532,7 +3531,6 @@ impl BackgroundScanner {
 
         // If we don't have a git repository at the root, we walk up directories until we found one
         // TODO: yes, this is duplicated work from above, fix this
-        let mut external_git_dir_events = None;
 
         if self.state.lock().snapshot.root_git_entry().is_none() {
             let root_abs_path = self.state.lock().snapshot.abs_path.clone();
@@ -3540,38 +3538,13 @@ impl BackgroundScanner {
             for ancestor in root_abs_path.ancestors().skip(1) {
                 let external_dot_git = ancestor.join(&*DOT_GIT);
                 if external_dot_git.is_dir() {
-                    // let metadata = self
-                    //     .fs
-                    //     .metadata(&ancestor)
-                    //     .await
-                    //     .context("failed to stat worktree path");
-
-                    // if let Ok(Some(metadata)) = metadata {
-                    // let entry_path: Arc<Path> = ancestor.into();
-                    // let mut entry = Entry::new(
-                    //     entry_path,
-                    //     &metadata,
-                    //     &self.next_entry_id,
-                    //     self.state.lock().snapshot.root_char_bag,
-                    // );
-                    // // Mark it as external
-                    // entry.is_external = true;
-
-                    // self.state
-                    //     .lock()
-                    //     .snapshot
-                    //     .insert_entry(entry, self.fs.as_ref());
+                    // TODO: Open the repository and check whether git knows about our folder. if not
+                    // don't add it.
 
                     // We associate the external git repo with our root folder.
                     if let Some(relative_path_to_repo_root) =
                         root_abs_path.strip_prefix(ancestor).log_err()
                     {
-                        println!("root_abs_path: {:?}", root_abs_path);
-                        println!("ancestor: {:?}", ancestor);
-                        println!(
-                            "relative_path_to_repo_root: {:?}",
-                            relative_path_to_repo_root
-                        );
                         self.state.lock().build_git_repository_for_path(
                             Arc::from(Path::new("")),
                             external_dot_git.clone().into(),
@@ -3579,16 +3552,16 @@ impl BackgroundScanner {
                             self.fs.as_ref(),
                         );
 
-                        external_git_dir_events =
-                            Some(self.fs.watch(&external_dot_git, FS_WATCH_LATENCY).await);
+                        let external_events =
+                            self.fs.watch(&external_dot_git, FS_WATCH_LATENCY).await;
+
+                        fs_events_rx = select(fs_events_rx, external_events).boxed()
                     }
+
                     break;
-                    // }
                 }
             }
         }
-        let mut external_git_dir_events =
-            external_git_dir_events.unwrap_or_else(|| Box::pin(futures::stream::empty()));
 
         self.send_status_update(false, None);
 
@@ -3642,16 +3615,6 @@ impl BackgroundScanner {
                         paths.extend(more_paths);
                     }
                     self.process_events(paths.clone()).await;
-                }
-
-                paths = external_git_dir_events.next().fuse() => {
-                    let Some(mut paths) = paths else { break };
-                    while let Poll::Ready(Some(more_paths)) = futures::poll!(fs_events_rx.next()) {
-                        paths.extend(more_paths);
-                    }
-                    println!("paths: {:?}", paths);
-                    self.process_events(paths.clone()).await;
-
                 }
             }
         }
@@ -4104,7 +4067,6 @@ impl BackgroundScanner {
                         &job.containing_repository
                     {
                         if let Ok(repo_path) = child_entry.path.strip_prefix(&repository_dir.0) {
-                            println!("repo_path! {:?}", repo_path);
                             if let Some(mtime) = child_entry.mtime {
                                 let repo_path = RepoPath(repo_path.into());
                                 child_entry.git_status = combine_git_statuses(
@@ -4173,7 +4135,6 @@ impl BackgroundScanner {
         abs_paths: Vec<PathBuf>,
         scan_queue_tx: Option<Sender<ScanJob>>,
     ) {
-        println!("reload_entries_for_paths!!");
         let metadata = futures::future::join_all(
             abs_paths
                 .iter()
