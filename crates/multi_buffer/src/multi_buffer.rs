@@ -3437,7 +3437,7 @@ impl MultiBufferSnapshot {
                 .git_diff_hunks_intersecting_range(buffer_start..buffer_end)
                 .map(move |hunk| {
                     let buffer_range = if excerpt_rows.start == 0 && excerpt_rows.end == 0 {
-                        MultiBufferRow::MIN..MultiBufferRow(1)
+                        MultiBufferRow(0)..MultiBufferRow(1)
                     } else {
                         let start = multibuffer_start.row
                             + hunk
@@ -4561,9 +4561,7 @@ mod tests {
         assert_eq!(snapshot.text(), buffer.read(cx).text());
 
         assert_eq!(
-            snapshot
-                .buffer_rows(MultiBufferRow::MIN)
-                .collect::<Vec<_>>(),
+            snapshot.buffer_rows(MultiBufferRow(0)).collect::<Vec<_>>(),
             (0..buffer.read(cx).row_count())
                 .map(Some)
                 .collect::<Vec<_>>()
@@ -4574,9 +4572,7 @@ mod tests {
 
         assert_eq!(snapshot.text(), buffer.read(cx).text());
         assert_eq!(
-            snapshot
-                .buffer_rows(MultiBufferRow::MIN)
-                .collect::<Vec<_>>(),
+            snapshot.buffer_rows(MultiBufferRow(0)).collect::<Vec<_>>(),
             (0..buffer.read(cx).row_count())
                 .map(Some)
                 .collect::<Vec<_>>()
@@ -4704,9 +4700,7 @@ mod tests {
             )
         );
         assert_eq!(
-            snapshot
-                .buffer_rows(MultiBufferRow::MIN)
-                .collect::<Vec<_>>(),
+            snapshot.buffer_rows(MultiBufferRow(0)).collect::<Vec<_>>(),
             [Some(1), Some(2), Some(3), Some(4), Some(3)]
         );
         assert_eq!(
@@ -4725,14 +4719,14 @@ mod tests {
         assert_eq!(
             boundaries_in_range(Point::new(0, 0)..Point::new(4, 2), &snapshot),
             &[
-                (MultiBufferRow::MIN, "bbbb\nccccc".to_string(), true),
+                (MultiBufferRow(0), "bbbb\nccccc".to_string(), true),
                 (MultiBufferRow(2), "ddd\neeee".to_string(), false),
                 (MultiBufferRow(4), "jj".to_string(), true),
             ]
         );
         assert_eq!(
             boundaries_in_range(Point::new(0, 0)..Point::new(2, 0), &snapshot),
-            &[(MultiBufferRow::MIN, "bbbb\nccccc".to_string(), true)]
+            &[(MultiBufferRow(0), "bbbb\nccccc".to_string(), true)]
         );
         assert_eq!(
             boundaries_in_range(Point::new(1, 0)..Point::new(1, 5), &snapshot),
@@ -5128,9 +5122,7 @@ mod tests {
         let snapshot = multibuffer.read(cx).snapshot(cx);
         assert_eq!(snapshot.text(), "");
         assert_eq!(
-            snapshot
-                .buffer_rows(MultiBufferRow::MIN)
-                .collect::<Vec<_>>(),
+            snapshot.buffer_rows(MultiBufferRow(0)).collect::<Vec<_>>(),
             &[Some(0)]
         );
         assert_eq!(
@@ -5553,9 +5545,7 @@ mod tests {
             log::info!("MultiBuffer text: {:?}", expected_text);
 
             assert_eq!(
-                snapshot
-                    .buffer_rows(MultiBufferRow::MIN)
-                    .collect::<Vec<_>>(),
+                snapshot.buffer_rows(MultiBufferRow(0)).collect::<Vec<_>>(),
                 expected_buffer_rows,
             );
 

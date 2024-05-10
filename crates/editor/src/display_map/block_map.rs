@@ -1428,7 +1428,7 @@ mod tests {
             let mut sorted_blocks_iter = expected_blocks.into_iter().peekable();
 
             let input_buffer_rows = buffer_snapshot
-                .buffer_rows(MultiBufferRow::MIN)
+                .buffer_rows(MultiBufferRow(0))
                 .collect::<Vec<_>>();
             let mut expected_buffer_rows = Vec::new();
             let mut expected_text = String::new();

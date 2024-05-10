@@ -991,7 +991,7 @@ impl InlaySnapshot {
         let max_buffer_row = MultiBufferRow(self.buffer.max_point().row);
         let mut buffer_point = cursor.start().1;
         let buffer_row = if row == 0 {
-            Default::default()
+            MultiBufferRow(0)
         } else {
             match cursor.item() {
                 Some(Transform::Isomorphic(_)) => {

@@ -1673,7 +1673,7 @@ fn window_top(
         .anchor
         .to_display_point(map);
 
-    if first_visible_line.row() != Default::default()
+    if first_visible_line.row() != DisplayRow(0)
         && text_layout_details.vertical_scroll_margin as usize > times
     {
         times = text_layout_details.vertical_scroll_margin.ceil() as usize;

@@ -3921,9 +3921,6 @@ impl Editor {
                             .task_variables
                             .extend(additional_task_variables);
 
-                        let test_convert = snapshot
-                            .buffer_snapshot
-                            .anchor_before(Point::new(multibuffer_point.row, tasks.1.column));
                         Arc::new(ResolvedTasks {
                             templates: tasks
                                 .1
@@ -3935,7 +3932,9 @@ impl Editor {
                                         .map(|task| (kind.clone(), task))
                                 })
                                 .collect(),
-                            position: test_convert,
+                            position: snapshot
+                                .buffer_snapshot
+                                .anchor_before(Point::new(multibuffer_point.row, tasks.1.column)),
                         })
                     });
                     let spawn_straight_away = tasks
@@ -6948,7 +6947,7 @@ impl Editor {
         let mut new_selections = Vec::new();
         if above == state.above {
             let end_row = if above {
-                DisplayRow::default()
+                DisplayRow(0)
             } else {
                 display_map.max_point().row()
             };
@@ -8113,7 +8112,7 @@ impl Editor {
             selection.head(),
             false,
             snapshot.buffer_snapshot.git_diff_hunks_in_range_rev(
-                MultiBufferRow::MIN..MultiBufferRow(selection.head().row),
+                MultiBufferRow(0)..MultiBufferRow(selection.head().row),
             ),
             cx,
         ) {
@@ -8123,7 +8122,7 @@ impl Editor {
                 wrapped_point,
                 true,
                 snapshot.buffer_snapshot.git_diff_hunks_in_range_rev(
-                    MultiBufferRow::MIN..MultiBufferRow(wrapped_point.row),
+                    MultiBufferRow(0)..MultiBufferRow(wrapped_point.row),
                 ),
                 cx,
             );

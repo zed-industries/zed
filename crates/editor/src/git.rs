@@ -287,7 +287,7 @@ mod tests {
 
         assert_eq!(
             snapshot
-                .git_diff_hunks_in_range(MultiBufferRow::MIN..MultiBufferRow(12))
+                .git_diff_hunks_in_range(MultiBufferRow(0)..MultiBufferRow(12))
                 .map(|hunk| (hunk_status(&hunk), hunk.associated_range))
                 .collect::<Vec<_>>(),
             &expected,
@@ -295,7 +295,7 @@ mod tests {
 
         assert_eq!(
             snapshot
-                .git_diff_hunks_in_range_rev(MultiBufferRow::MIN..MultiBufferRow(12))
+                .git_diff_hunks_in_range_rev(MultiBufferRow(0)..MultiBufferRow(12))
                 .map(|hunk| (hunk_status(&hunk), hunk.associated_range))
                 .collect::<Vec<_>>(),
             expected
