@@ -655,7 +655,7 @@ async fn test_navigation_history(cx: &mut TestAppContext) {
             );
             assert_eq!(
                 editor.scroll_position(cx),
-                gpui::Point::new(0., editor.max_point(cx).row().0 as f32)
+                gpui::Point::new(0., editor.max_point(cx).row().as_f32())
             );
 
             editor

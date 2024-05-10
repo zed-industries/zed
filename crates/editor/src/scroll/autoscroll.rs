@@ -6,7 +6,7 @@ use language::Point;
 
 use crate::{
     display_map::ToDisplayPoint, DiffRowHighlight, DisplayRow, Editor, EditorMode,
-    LineWithInvisibles,
+    LineWithInvisibles, RowExt,
 };
 
 #[derive(PartialEq, Eq, Clone, Copy)]
@@ -89,9 +89,9 @@ impl Editor {
             }
         }
         let max_scroll_top = if matches!(self.mode, EditorMode::AutoHeight { .. }) {
-            (display_map.max_point().row().0 as f32 - visible_lines + 1.).max(0.)
+            (display_map.max_point().row().as_f32() - visible_lines + 1.).max(0.)
         } else {
-            display_map.max_point().row().0 as f32
+            display_map.max_point().row().as_f32()
         };
         if scroll_position.y > max_scroll_top {
             scroll_position.y = max_scroll_top;
@@ -114,7 +114,7 @@ impl Editor {
             )
             .first_entry()
         {
-            target_top = first_highlighted_row.key().0 as f32;
+            target_top = first_highlighted_row.key().as_f32();
             target_bottom = target_top + 1.;
         } else {
             let selections = self.selections.all::<Point>(cx);
@@ -124,14 +124,14 @@ impl Editor {
                 .head()
                 .to_display_point(&display_map)
                 .row()
-                .0 as f32;
+                .as_f32();
             target_bottom = selections
                 .last()
                 .unwrap()
                 .head()
                 .to_display_point(&display_map)
                 .row()
-                .0 as f32
+                .as_f32()
                 + 1.0;
 
             // If the selections can't all fit on screen, scroll to the newest.
@@ -145,7 +145,7 @@ impl Editor {
                     .head()
                     .to_display_point(&display_map)
                     .row()
-                    .0 as f32;
+                    .as_f32();
                 target_top = newest_selection_top;
                 target_bottom = newest_selection_top + 1.;
             }
@@ -255,12 +255,12 @@ impl Editor {
                     let start_column = head.column().saturating_sub(3);
                     let end_column = cmp::min(display_map.line_len(head.row()), head.column() + 3);
                     target_left = target_left.min(
-                        layouts[(head.row().0 - start_row.0) as usize]
+                        layouts[head.row().minus(start_row) as usize]
                             .line
                             .x_for_index(start_column as usize),
                     );
                     target_right = target_right.max(
-                        layouts[(head.row().0 - start_row.0) as usize]
+                        layouts[head.row().minus(start_row) as usize]
                             .line
                             .x_for_index(end_column as usize)
                             + max_glyph_width,

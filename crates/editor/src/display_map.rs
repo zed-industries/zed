@@ -23,8 +23,8 @@ mod inlay_map;
 mod tab_map;
 mod wrap_map;
 
-use crate::EditorStyle;
 use crate::{hover_links::InlayHighlight, movement::TextLayoutDetails, InlayId};
+use crate::{EditorStyle, RowExt};
 pub use block_map::{BlockMap, BlockPoint};
 use collections::{HashMap, HashSet};
 use fold_map::FoldMap;
@@ -529,7 +529,7 @@ impl DisplaySnapshot {
     pub fn text_chunks(&self, display_row: DisplayRow) -> impl Iterator<Item = &str> {
         self.block_snapshot
             .chunks(
-                display_row.0..self.max_point().row().0 + 1,
+                display_row.0..self.max_point().row().next_row().0,
                 false,
                 Highlights::default(),
             )
@@ -640,7 +640,7 @@ impl DisplaySnapshot {
         let mut runs = Vec::new();
         let mut line = String::new();
 
-        let range = display_row..DisplayRow(display_row.0 + 1);
+        let range = display_row..display_row.next_row();
         for chunk in self.highlighted_chunks(range, false, &editor_style) {
             line.push_str(chunk.chunk);
 

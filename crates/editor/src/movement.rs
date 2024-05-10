@@ -3,7 +3,7 @@
 
 use super::{Bias, DisplayPoint, DisplaySnapshot, SelectionGoal, ToDisplayPoint};
 use crate::{
-    char_kind, scroll::ScrollAnchor, CharKind, DisplayRow, EditorStyle, ToOffset, ToPoint,
+    char_kind, scroll::ScrollAnchor, CharKind, DisplayRow, EditorStyle, RowExt, ToOffset, ToPoint,
 };
 use gpui::{px, Pixels, WindowTextSystem};
 use language::Point;
@@ -358,7 +358,7 @@ pub fn end_of_paragraph(
     }
 
     let mut found_non_blank_line = false;
-    for row in point.row..map.max_buffer_row().0 + 1 {
+    for row in point.row..map.max_buffer_row().next_row().0 {
         let blank = map.buffer_snapshot.is_line_blank(MultiBufferRow(row));
         if found_non_blank_line && blank {
             if count <= 1 {

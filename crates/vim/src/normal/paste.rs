@@ -1,10 +1,8 @@
 use std::cmp;
 
 use editor::{
-    display_map::{DisplayRow, ToDisplayPoint},
-    movement,
-    scroll::Autoscroll,
-    ClipboardSelection, DisplayPoint,
+    display_map::ToDisplayPoint, movement, scroll::Autoscroll, ClipboardSelection, DisplayPoint,
+    RowExt,
 };
 use gpui::{impl_actions, AppContext, ViewContext};
 use language::{Bias, SelectionGoal};
@@ -102,7 +100,7 @@ fn paste(_: &mut Workspace, action: &Paste, cx: &mut ViewContext<Workspace>) {
                         .map(|selection| cmp::min(selection.start.column(), selection.end.column()))
                         .min()
                         .unwrap();
-                    let mut row = DisplayRow(current_selections.last().unwrap().end.row().0 + 1);
+                    let mut row = current_selections.last().unwrap().end.row().next_row();
                     while i < clipboard_selections.len() {
                         let cursor =
                             display_map.clip_point(DisplayPoint::new(row, left), Bias::Left);

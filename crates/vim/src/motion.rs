@@ -4,7 +4,7 @@ use editor::{
         self, find_boundary, find_preceding_boundary_display_point, FindRange, TextLayoutDetails,
     },
     scroll::Autoscroll,
-    Anchor, Bias, DisplayPoint, ToOffset,
+    Anchor, Bias, DisplayPoint, RowExt, ToOffset,
 };
 use gpui::{actions, impl_actions, px, ViewContext, WindowContext};
 use language::{char_kind, CharKind, Point, Selection, SelectionGoal};
@@ -1021,7 +1021,7 @@ fn up_down_buffer_rows(
 
     let mut i = 0;
     while i < goal_wrap && begin_folded_line.row() < map.max_point().row() {
-        let next_folded_line = DisplayPoint::new(DisplayRow(begin_folded_line.row().0 + 1), 0);
+        let next_folded_line = DisplayPoint::new(begin_folded_line.row().next_row(), 0);
         if map
             .display_point_to_fold_point(next_folded_line, Bias::Right)
             .row()

@@ -5056,12 +5056,12 @@ impl Editor {
                 // previous selection.
                 if let Some(last_row) = last_outdent {
                     if last_row == rows.start {
-                        rows.start = MultiBufferRow(rows.start.0 + 1);
+                        rows.start = rows.start.next_row();
                     }
                 }
                 let has_multiple_rows = rows.len() > 1;
-                for row in rows.start.0..rows.end.0 {
-                    let indent_size = snapshot.indent_size_for_line(MultiBufferRow(row));
+                for row in rows.iter_rows() {
+                    let indent_size = snapshot.indent_size_for_line(row);
                     if indent_size.len > 0 {
                         let deletion_len = match indent_size.kind {
                             IndentKind::Space => {
@@ -5082,9 +5082,10 @@ impl Editor {
                         } else {
                             selection.start.column - deletion_len
                         };
-                        deletion_ranges
-                            .push(Point::new(row, start)..Point::new(row, start + deletion_len));
-                        last_outdent = Some(MultiBufferRow(row));
+                        deletion_ranges.push(
+                            Point::new(row.0, start)..Point::new(row.0, start + deletion_len),
+                        );
+                        last_outdent = Some(row);
                     }
                 }
             }
@@ -5142,7 +5143,7 @@ impl Editor {
                 // start of the row range and position the cursor there.
                 edit_start = edit_start.saturating_sub(1);
                 edit_end = buffer.len();
-                cursor_buffer_row = MultiBufferRow(rows.start.0.saturating_sub(1));
+                cursor_buffer_row = rows.start.previous_row();
             }
 
             let mut cursor = Point::new(cursor_buffer_row.0, 0).to_display_point(&display_map);
@@ -5214,20 +5215,21 @@ impl Editor {
         let mut cursor_positions = Vec::new();
         for row_range in &row_ranges {
             let anchor = snapshot.anchor_before(Point::new(
-                row_range.end.0 - 1,
-                snapshot.line_len(MultiBufferRow(row_range.end.0 - 1)),
+                row_range.end.previous_row().0,
+                snapshot.line_len(row_range.end.previous_row()),
             ));
             cursor_positions.push(anchor..anchor);
         }
 
         self.transact(cx, |this, cx| {
             for row_range in row_ranges.into_iter().rev() {
-                for row in (row_range.start.0..row_range.end.0).rev() {
-                    let end_of_line = Point::new(row, snapshot.line_len(MultiBufferRow(row)));
-                    let indent = snapshot.indent_size_for_line(MultiBufferRow(row + 1));
-                    let start_of_next_line = Point::new(row + 1, indent.len);
+                for row in row_range.iter_rows().rev() {
+                    let end_of_line = Point::new(row.0, snapshot.line_len(row));
+                    let next_line_row = row.next_row();
+                    let indent = snapshot.indent_size_for_line(next_line_row);
+                    let start_of_next_line = Point::new(next_line_row.0, indent.len);
 
-                    let replace = if snapshot.line_len(MultiBufferRow(row + 1)) > indent.len {
+                    let replace = if snapshot.line_len(next_line_row) > indent.len {
                         " "
                     } else {
                         ""
@@ -5400,8 +5402,8 @@ impl Editor {
 
             let start_point = Point::new(start_row.0, 0);
             let end_point = Point::new(
-                end_row.0 - 1,
-                buffer.line_len(MultiBufferRow(end_row.0 - 1)),
+                end_row.previous_row().0,
+                buffer.line_len(end_row.previous_row()),
             );
             let text = buffer
                 .text_for_range(start_point..end_point)
@@ -5610,8 +5612,8 @@ impl Editor {
             // or end of the region.
             let start = Point::new(rows.start.0, 0);
             let end = Point::new(
-                rows.end.0 - 1,
-                buffer.line_len(MultiBufferRow(rows.end.0 - 1)),
+                rows.end.previous_row().0,
+                buffer.line_len(rows.end.previous_row()),
             );
             let text = buffer
                 .text_for_range(start..end)
@@ -5667,15 +5669,15 @@ impl Editor {
             // Move the text spanned by the row range to be before the line preceding the row range
             if start_row.0 > 0 {
                 let range_to_move = Point::new(
-                    start_row.0 - 1,
-                    buffer.line_len(MultiBufferRow(start_row.0 - 1)),
+                    start_row.previous_row().0,
+                    buffer.line_len(start_row.previous_row()),
                 )
                     ..Point::new(
-                        end_row.0 - 1,
-                        buffer.line_len(MultiBufferRow(end_row.0 - 1)),
+                        end_row.previous_row().0,
+                        buffer.line_len(end_row.previous_row()),
                     );
                 let insertion_point = display_map
-                    .prev_line_boundary(Point::new(start_row.0 - 1, 0))
+                    .prev_line_boundary(Point::new(start_row.previous_row().0, 0))
                     .0;
 
                 // Don't move lines across excerpts
@@ -7501,7 +7503,7 @@ impl Editor {
                 // row more than once.
                 let mut start_row = MultiBufferRow(selection.start.row);
                 if last_toggled_row == Some(start_row) {
-                    start_row.0 += 1;
+                    start_row = start_row.next_row();
                 }
                 let end_row =
                     if selection.end.row > selection.start.row && selection.end.column == 0 {
@@ -10686,7 +10688,7 @@ fn hunks_for_selections(
 
     for selected_multi_buffer_rows in buffer_rows_for_selections {
         let query_rows =
-            selected_multi_buffer_rows.start..MultiBufferRow(selected_multi_buffer_rows.end.0 + 1);
+            selected_multi_buffer_rows.start..selected_multi_buffer_rows.end.next_row();
         for hunk in multi_buffer_snapshot.git_diff_hunks_in_range(query_rows.clone()) {
             // Deleted hunk is an empty row range, no caret can be placed there and Zed allows to revert it
             // when the caret is just above or just below the deleted hunk.
@@ -11329,7 +11331,7 @@ impl ViewInputHandler for Editor {
         let start = OffsetUtf16(range_utf16.start).to_display_point(&snapshot);
         let x = snapshot.x_for_display_point(start, &text_layout_details) - scroll_left
             + self.gutter_dimensions.width;
-        let y = line_height * (start.row().0 as f32 - scroll_position.y);
+        let y = line_height * (start.row().as_f32() - scroll_position.y);
 
         Some(Bounds {
             origin: element_bounds.origin + point(x, y),
@@ -11642,19 +11644,81 @@ impl<T: ToOffset> RangeToAnchorExt for Range<T> {
     }
 }
 
+pub trait RowExt {
+    fn as_f32(&self) -> f32;
+
+    fn next_row(&self) -> Self;
+
+    fn previous_row(&self) -> Self;
+
+    fn minus(&self, other: Self) -> u32;
+}
+
+impl RowExt for DisplayRow {
+    fn as_f32(&self) -> f32 {
+        self.0 as f32
+    }
+
+    fn next_row(&self) -> Self {
+        Self(self.0 + 1)
+    }
+
+    fn previous_row(&self) -> Self {
+        Self(self.0.saturating_sub(1))
+    }
+
+    fn minus(&self, other: Self) -> u32 {
+        self.0 - other.0
+    }
+}
+
+impl RowExt for MultiBufferRow {
+    fn as_f32(&self) -> f32 {
+        self.0 as f32
+    }
+
+    fn next_row(&self) -> Self {
+        Self(self.0 + 1)
+    }
+
+    fn previous_row(&self) -> Self {
+        Self(self.0.saturating_sub(1))
+    }
+
+    fn minus(&self, other: Self) -> u32 {
+        self.0 - other.0
+    }
+}
+
 trait RowRangeExt {
+    type Row;
+
     fn len(&self) -> usize;
+
+    fn iter_rows(&self) -> impl DoubleEndedIterator<Item = Self::Row>;
 }
 
 impl RowRangeExt for Range<MultiBufferRow> {
+    type Row = MultiBufferRow;
+
     fn len(&self) -> usize {
         (self.end.0 - self.start.0) as usize
+    }
+
+    fn iter_rows(&self) -> impl DoubleEndedIterator<Item = MultiBufferRow> {
+        (self.start.0..self.end.0).map(MultiBufferRow)
     }
 }
 
 impl RowRangeExt for Range<DisplayRow> {
+    type Row = DisplayRow;
+
     fn len(&self) -> usize {
         (self.end.0 - self.start.0) as usize
+    }
+
+    fn iter_rows(&self) -> impl DoubleEndedIterator<Item = DisplayRow> {
+        (self.start.0..self.end.0).map(DisplayRow)
     }
 }
 
