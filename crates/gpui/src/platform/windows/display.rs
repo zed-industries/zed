@@ -1,6 +1,7 @@
 use itertools::Itertools;
 use smallvec::SmallVec;
 use std::rc::Rc;
+use util::ResultExt;
 use uuid::Uuid;
 use windows::{
     core::*,
@@ -158,7 +159,9 @@ fn available_monitors() -> SmallVec<[HMONITOR; 4]> {
             None,
             Some(monitor_enum_proc),
             LPARAM(&mut monitors as *mut _ as _),
-        );
+        )
+        .ok()
+        .log_err();
     }
     monitors
 }

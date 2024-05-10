@@ -303,7 +303,7 @@ impl WindowsWindow {
             placement.rcNormalPosition.bottom = params.bounds.bottom().0;
             SetWindowPlacement(raw_hwnd, &placement).log_err();
         }
-        unsafe { ShowWindow(raw_hwnd, SW_SHOW) };
+        unsafe { ShowWindow(raw_hwnd, SW_SHOW).ok().log_err() };
 
         wnd
     }
@@ -384,7 +384,7 @@ impl PlatformWindow for WindowsWindow {
             GetCursorPos(&mut point)
                 .context("unable to get cursor position")
                 .log_err();
-            ScreenToClient(self.0.hwnd, &mut point);
+            ScreenToClient(self.0.hwnd, &mut point).ok().log_err();
             point
         };
         logical_point(point.x as f32, point.y as f32, scale_factor)
@@ -481,7 +481,7 @@ impl PlatformWindow for WindowsWindow {
         let hwnd = self.0.hwnd;
         unsafe { SetActiveWindow(hwnd) };
         unsafe { SetFocus(hwnd) };
-        unsafe { SetForegroundWindow(hwnd) };
+        unsafe { SetForegroundWindow(hwnd).ok().log_err() };
     }
 
     fn is_active(&self) -> bool {
@@ -511,11 +511,11 @@ impl PlatformWindow for WindowsWindow {
     fn show_character_palette(&self) {}
 
     fn minimize(&self) {
-        unsafe { ShowWindowAsync(self.0.hwnd, SW_MINIMIZE) };
+        unsafe { ShowWindowAsync(self.0.hwnd, SW_MINIMIZE).ok().log_err() };
     }
 
     fn zoom(&self) {
-        unsafe { ShowWindowAsync(self.0.hwnd, SW_MAXIMIZE) };
+        unsafe { ShowWindowAsync(self.0.hwnd, SW_MAXIMIZE).ok().log_err() };
     }
 
     fn toggle_fullscreen(&self) {
@@ -694,7 +694,9 @@ impl IDropTarget_Impl for WindowsDragDropHandler {
                 }
                 ReleaseStgMedium(&mut idata);
                 let mut cursor_position = POINT { x: pt.x, y: pt.y };
-                ScreenToClient(self.0.hwnd, &mut cursor_position);
+                ScreenToClient(self.0.hwnd, &mut cursor_position)
+                    .ok()
+                    .log_err();
                 let scale_factor = self.0.state.borrow().scale_factor;
                 let input = PlatformInput::FileDrop(FileDropEvent::Entered {
                     position: logical_point(
@@ -720,7 +722,9 @@ impl IDropTarget_Impl for WindowsDragDropHandler {
     ) -> windows::core::Result<()> {
         let mut cursor_position = POINT { x: pt.x, y: pt.y };
         unsafe {
-            ScreenToClient(self.0.hwnd, &mut cursor_position);
+            ScreenToClient(self.0.hwnd, &mut cursor_position)
+                .ok()
+                .log_err();
         }
         let scale_factor = self.0.state.borrow().scale_factor;
         let input = PlatformInput::FileDrop(FileDropEvent::Pending {
@@ -751,7 +755,9 @@ impl IDropTarget_Impl for WindowsDragDropHandler {
     ) -> windows::core::Result<()> {
         let mut cursor_position = POINT { x: pt.x, y: pt.y };
         unsafe {
-            ScreenToClient(self.0.hwnd, &mut cursor_position);
+            ScreenToClient(self.0.hwnd, &mut cursor_position)
+                .ok()
+                .log_err();
         }
         let scale_factor = self.0.state.borrow().scale_factor;
         let input = PlatformInput::FileDrop(FileDropEvent::Submit {

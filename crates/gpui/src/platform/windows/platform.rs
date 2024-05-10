@@ -114,7 +114,9 @@ impl WindowsPlatform {
                     None,
                     HRGN::default(),
                     RDW_INVALIDATE | RDW_UPDATENOW,
-                );
+                )
+                .ok()
+                .log_err();
             }
         }
     }
@@ -219,7 +221,7 @@ impl Platform for WindowsPlatform {
                                 }
                                 WM_SETTINGCHANGE => self.update_system_settings(),
                                 _ => {
-                                    TranslateMessage(&msg);
+                                    TranslateMessage(&msg).ok().log_err();
                                     DispatchMessageW(&msg);
                                 }
                             }
