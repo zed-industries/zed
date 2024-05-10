@@ -52,6 +52,8 @@ use workspace::{
 };
 use workspace::{notifications::NotificationId, NewFile};
 
+const MAX_RECENT_EDITORS: usize = 20;
+
 pub fn init(cx: &mut AppContext) {
     cx.observe_new_views(
         |workspace: &mut Workspace, _cx: &mut ViewContext<Workspace>| {
@@ -647,7 +649,7 @@ impl AssistantPanel {
             messages.extend(
                 conversation
                     .messages(cx)
-                    .map(|message| message.to_open_ai_message(buffer)),
+                    .map(|message| message.to_request_message(buffer)),
             );
         }
         let model = self.model.clone();
@@ -1368,11 +1370,20 @@ struct AutomaticContext {
     recent_buffers: RecentBuffersContext,
 }
 
-#[derive(Default)]
 struct RecentBuffersContext {
     enabled: bool,
     buffers: HashMap<WeakModel<Buffer>, Subscription>,
     message: String,
+}
+
+impl Default for RecentBuffersContext {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            buffers: HashMap::default(),
+            message: String::new(),
+        }
+    }
 }
 
 impl EventEmitter<ConversationEvent> for Conversation {}
@@ -1523,6 +1534,12 @@ impl Conversation {
         })
     }
 
+    fn toggle_recent_buffers(&mut self, cx: &mut ModelContext<Self>) {
+        self.automatic_context.recent_buffers.enabled =
+            !self.automatic_context.recent_buffers.enabled;
+        self.update_recent_buffers_context(cx);
+    }
+
     fn set_recent_buffers(&mut self, buffers: HashSet<Model<Buffer>>, cx: &mut ModelContext<Self>) {
         self.automatic_context
             .recent_buffers
@@ -1552,10 +1569,19 @@ impl Conversation {
 
     fn update_recent_buffers_context(&mut self, cx: &mut ModelContext<Self>) {
         self.automatic_context.recent_buffers.message.clear();
-        if !self.automatic_context.recent_buffers.enabled {
+        let buffers = self
+            .automatic_context
+            .recent_buffers
+            .buffers
+            .keys()
+            .filter_map(|buffer| buffer.read_with(cx, |buffer, _| buffer.snapshot()).ok())
+            .collect::<Vec<_>>();
+
+        if !self.automatic_context.recent_buffers.enabled || buffers.is_empty() {
             return;
         }
 
+        // todo!("do this in the background")
         let message = &mut self.automatic_context.recent_buffers.message;
         writeln!(
             message,
@@ -1581,86 +1607,82 @@ impl Conversation {
         writeln!(message, "3 dog").unwrap();
         writeln!(message, "```").unwrap();
 
+        message.push('\n');
         writeln!(message, "Here's the actual recent buffer list:").unwrap();
-        for buffer in self.automatic_context.recent_buffers.buffers.keys() {
-            buffer
-                .read_with(cx, |buffer, cx| {
-                    let buffer = buffer.snapshot();
+        for buffer in buffers {
+            if let Some(file) = buffer.file() {
+                writeln!(message, "{}", file.full_path(cx).display()).unwrap();
+            } else {
+                writeln!(message, "untitled").unwrap();
+            }
 
-                    if let Some(file) = buffer.file() {
-                        writeln!(message, "{}", file.full_path(cx).display()).unwrap();
+            if let Some(language) = buffer.language() {
+                writeln!(message, "```{}", language.name().to_lowercase()).unwrap();
+            } else {
+                writeln!(message, "```").unwrap();
+            }
+
+            let mut diagnostics = buffer
+                .diagnostics_in_range::<_, Point>(
+                    language::Anchor::MIN..language::Anchor::MAX,
+                    false,
+                )
+                .peekable();
+
+            let mut active_diagnostics = Vec::<DiagnosticEntry<Point>>::new();
+            const GUTTER_PADDING: usize = 4;
+            let gutter_width =
+                ((buffer.max_point().row + 1) as f32).log10() as usize + 1 + GUTTER_PADDING;
+            for buffer_row in 0..=buffer.max_point().row {
+                let display_row = buffer_row + 1;
+                active_diagnostics.retain(|diagnostic| {
+                    (diagnostic.range.start.row..=diagnostic.range.end.row).contains(&buffer_row)
+                });
+                while diagnostics.peek().map_or(false, |diagnostic| {
+                    (diagnostic.range.start.row..=diagnostic.range.end.row).contains(&buffer_row)
+                }) {
+                    active_diagnostics.push(diagnostics.next().unwrap());
+                }
+
+                let row_width = (display_row as f32).log10() as usize + 1;
+                write!(message, "{}", display_row).unwrap();
+                if row_width < gutter_width {
+                    message.extend(iter::repeat(' ').take(gutter_width - row_width));
+                }
+
+                for chunk in buffer.text_for_range(
+                    Point::new(buffer_row, 0)..Point::new(buffer_row, buffer.line_len(buffer_row)),
+                ) {
+                    message.push_str(chunk);
+                }
+                message.push('\n');
+
+                for diagnostic in &active_diagnostics {
+                    message.extend(iter::repeat(' ').take(gutter_width));
+
+                    let start_column = if diagnostic.range.start.row == buffer_row {
+                        message
+                            .extend(iter::repeat(' ').take(diagnostic.range.start.column as usize));
+                        diagnostic.range.start.column
                     } else {
-                        writeln!(message, "untitled").unwrap();
-                    }
-
-                    if let Some(language) = buffer.language() {
-                        writeln!(message, "```{}", language.name().to_lowercase()).unwrap();
+                        0
+                    };
+                    let end_column = if diagnostic.range.end.row == buffer_row {
+                        diagnostic.range.end.column
                     } else {
-                        writeln!(message, "```").unwrap();
-                    }
+                        buffer.line_len(buffer_row)
+                    };
 
-                    let mut current_row = 0;
-                    let mut diagnostics = buffer
-                        .diagnostics_in_range::<_, Point>(
-                            language::Anchor::MIN..language::Anchor::MAX,
-                            false,
-                        )
-                        .peekable();
+                    message.extend(iter::repeat('-').take((end_column - start_column) as usize));
+                    writeln!(message, " {}", diagnostic.diagnostic.message).unwrap();
+                }
+            }
 
-                    let mut active_diagnostics = Vec::<DiagnosticEntry<Point>>::new();
-                    while current_row <= buffer.max_point().row {
-                        active_diagnostics.retain(|diagnostic| {
-                            (diagnostic.range.start.row..=diagnostic.range.end.row)
-                                .contains(&current_row)
-                        });
-                        while diagnostics.peek().map_or(false, |diagnostic| {
-                            (diagnostic.range.start.row..=diagnostic.range.end.row)
-                                .contains(&current_row)
-                        }) {
-                            active_diagnostics.push(diagnostics.next().unwrap());
-                        }
-
-                        write!(message, "{} ", current_row).unwrap();
-                        for chunk in buffer.text_for_range(
-                            Point::new(current_row, 0)
-                                ..Point::new(current_row, buffer.line_len(current_row)),
-                        ) {
-                            message.push_str(chunk);
-                        }
-                        message.push('\n');
-
-                        for diagnostic in &active_diagnostics {
-                            message.push(' ');
-
-                            let start_column = if diagnostic.range.start.row == current_row {
-                                message.extend(
-                                    iter::repeat(' ').take(diagnostic.range.start.column as usize),
-                                );
-                                diagnostic.range.start.column
-                            } else {
-                                0
-                            };
-                            let end_column = if diagnostic.range.end.row == current_row {
-                                diagnostic.range.end.column
-                            } else {
-                                buffer.line_len(current_row)
-                            };
-
-                            message.extend(
-                                iter::repeat('-').take((end_column - start_column) as usize),
-                            );
-                            writeln!(message, " {}", diagnostic.diagnostic.message);
-                        }
-
-                        current_row += 1;
-                    }
-
-                    message.push('\n');
-                })
-                .ok();
+            message.push('\n');
         }
 
         self.count_remaining_tokens(cx);
+        cx.notify();
     }
 
     fn handle_buffer_event(
@@ -1838,20 +1860,27 @@ impl Conversation {
     }
 
     fn to_completion_request(&self, cx: &mut ModelContext<Conversation>) -> LanguageModelRequest {
-        let mut request = LanguageModelRequest {
+        let messages = self
+            .automatic_context
+            .recent_buffers
+            .enabled
+            .then(|| LanguageModelRequestMessage {
+                role: Role::System,
+                content: self.automatic_context.recent_buffers.message.clone(),
+            })
+            .into_iter()
+            .chain(
+                self.messages(cx)
+                    .filter(|message| matches!(message.status, MessageStatus::Done))
+                    .map(|message| message.to_request_message(self.buffer.read(cx))),
+            );
+
+        LanguageModelRequest {
             model: self.model.clone(),
-            messages: self
-                .messages(cx)
-                .filter(|message| matches!(message.status, MessageStatus::Done))
-                .map(|message| message.to_open_ai_message(self.buffer.read(cx)))
-                .collect(),
+            messages: messages.collect(),
             stop: vec![],
             temperature: 1.0,
-        };
-
-        let context_message = self.embedded_scope.message(cx);
-        request.messages.extend(context_message);
-        request
+        }
     }
 
     fn cancel_last_assist(&mut self) -> bool {
@@ -2037,7 +2066,7 @@ impl Conversation {
             let messages = self
                 .messages(cx)
                 .take(2)
-                .map(|message| message.to_open_ai_message(self.buffer.read(cx)))
+                .map(|message| message.to_request_message(self.buffer.read(cx)))
                 .chain(Some(LanguageModelRequestMessage {
                     role: Role::User,
                     content: "Summarize the conversation into a short title without punctuation"
@@ -2232,7 +2261,7 @@ struct ConversationEditor {
     editor: View<Editor>,
     blocks: HashSet<BlockId>,
     scroll_position: Option<ScrollPosition>,
-    recent_buffers: Vec<WeakModel<Buffer>>,
+    recent_editors: VecDeque<WeakView<Editor>>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -2270,17 +2299,23 @@ impl ConversationEditor {
             cx.subscribe(&workspace, Self::handle_workspace_event),
         ];
 
+        let recent_editors = workspace
+            .read(cx)
+            .items(cx)
+            .filter_map(|item| Some(item.downcast::<Editor>()?.downgrade()))
+            .take(MAX_RECENT_EDITORS)
+            .collect();
         let mut this = Self {
             conversation,
             editor,
             blocks: Default::default(),
             scroll_position: None,
-            recent_buffers: Vec::new(),
+            recent_editors,
             fs,
             workspace: workspace.downgrade(),
             _subscriptions,
         };
-        cx.defer(|this, cx| this.update_active_buffer(workspace, cx));
+        this.update_recent_buffers(cx);
         this.update_message_headers(cx);
         this
     }
@@ -2421,27 +2456,31 @@ impl ConversationEditor {
         cx: &mut ViewContext<Self>,
     ) {
         if let WorkspaceEvent::ActiveItemChanged = event {
-            if let Some(buffer) = workspace.read(cx).active_item_as::<Editor>(cx) {}
+            if let Some(editor) = workspace.read(cx).active_item_as::<Editor>(cx) {
+                self.recent_editors.retain(|prev_editor| {
+                    if let Some(prev_editor) = prev_editor.upgrade() {
+                        prev_editor != editor
+                    } else {
+                        false
+                    }
+                });
+                self.recent_editors.push_back(editor.downgrade());
+                if self.recent_editors.len() > MAX_RECENT_EDITORS {
+                    self.recent_editors.pop_front();
+                }
+                self.update_recent_buffers(cx);
+            }
         }
     }
 
-    fn update_active_buffer(
-        &mut self,
-        workspace: View<Workspace>,
-        cx: &mut ViewContext<ConversationEditor>,
-    ) {
-        let active_buffer = workspace
-            .read(cx)
-            .active_item(cx)
-            .and_then(|item| Some(item.act_as::<Editor>(cx)?.read(cx).buffer().clone()));
-
+    fn update_recent_buffers(&mut self, cx: &mut ViewContext<Self>) {
         self.conversation.update(cx, |conversation, cx| {
-            conversation
-                .embedded_scope
-                .set_active_buffer(active_buffer.clone(), cx);
-
-            conversation.count_remaining_tokens(cx);
-            cx.notify();
+            let recent_buffers = self
+                .recent_editors
+                .iter()
+                .filter_map(|editor| editor.upgrade()?.read(cx).buffer().read(cx).as_singleton())
+                .collect::<HashSet<_>>();
+            conversation.set_recent_buffers(recent_buffers, cx);
         });
     }
 
@@ -2550,6 +2589,17 @@ impl ConversationEditor {
                                                         .recent_buffers
                                                         .enabled,
                                                 )
+                                                .on_click({
+                                                    let conversation = conversation.downgrade();
+                                                    move |_, cx| {
+                                                        conversation
+                                                            .update(cx, |conversation, cx| {
+                                                                conversation
+                                                                    .toggle_recent_buffers(cx);
+                                                            })
+                                                            .ok();
+                                                    }
+                                                })
                                                 .tooltip(|cx| {
                                                     Tooltip::text("Include Open Files", cx)
                                                 }),
@@ -2894,7 +2944,7 @@ pub struct Message {
 }
 
 impl Message {
-    fn to_open_ai_message(&self, buffer: &Buffer) -> LanguageModelRequestMessage {
+    fn to_request_message(&self, buffer: &Buffer) -> LanguageModelRequestMessage {
         let content = buffer
             .text_for_range(self.offset_range.clone())
             .collect::<String>();
