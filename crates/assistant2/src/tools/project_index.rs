@@ -2,7 +2,7 @@ use anyhow::Result;
 use assistant_tooling::{LanguageModelTool, ToolOutput};
 use collections::BTreeMap;
 use file_icons::FileIcons;
-use gpui::{prelude::*, AnyElement, AppContext, Model, Task};
+use gpui::{prelude::*, AnyElement, Model, Task};
 use project::ProjectPath;
 use schemars::JsonSchema;
 use semantic_index::{ProjectIndex, Status};
@@ -172,19 +172,23 @@ impl Render for ProjectIndexView {
             ProjectIndexToolState::Finished { excerpts, .. } => {
                 let file_count = excerpts.len();
 
-                let header_text = format!(
-                    "Read {} {}",
-                    file_count,
-                    if file_count == 1 { "file" } else { "files" }
-                );
+                if excerpts.is_empty() {
+                    (format!("No results found"), div())
+                } else {
+                    let header_text = format!(
+                        "Read {} {}",
+                        file_count,
+                        if file_count == 1 { "file" } else { "files" }
+                    );
 
-                let el = v_flex().gap_2().children(excerpts.keys().map(|path| {
-                    h_flex().gap_2().child(Icon::new(IconName::File)).child(
-                        Label::new(path.path.to_string_lossy().to_string()).color(Color::Muted),
-                    )
-                }));
+                    let el = v_flex().gap_2().children(excerpts.keys().map(|path| {
+                        h_flex().gap_2().child(Icon::new(IconName::File)).child(
+                            Label::new(path.path.to_string_lossy().to_string()).color(Color::Muted),
+                        )
+                    }));
 
-                (header_text, el)
+                    (header_text, el)
+                }
             }
         };
 
@@ -398,14 +402,16 @@ impl LanguageModelTool for ProjectIndexTool {
     }
 
     fn description(&self) -> String {
-        r#"This search tool uses a semantic index to perform search queries across your codebase, identifying and returning excerpts of text and code possibly related to the query.
+        unindent::unindent(
+            r#"This search tool uses a semantic index to perform search queries across your codebase, identifying and returning excerpts of text and code possibly related to the query.
 
-        Ideal for:
-        - Discovering implementations of similar logic within the project
-        - Finding usage examples of functions, classes/structures, libraries, and other code elements
-        - Developing understanding of the codebase's architecture and design
+            Ideal for:
+            - Discovering implementations of similar logic within the project
+            - Finding usage examples of functions, classes/structures, libraries, and other code elements
+            - Developing understanding of the codebase's architecture and design
 
-        Note: The search's effectiveness is directly related to the current state of the codebase and the specificity of your query. It is recommended that you use snippets of code that are similar to the code you wish to find."#.to_string()
+            Note: The search's effectiveness is directly related to the current state of the codebase and the specificity of your query. It is recommended that you use snippets of code that are similar to the code you wish to find."#,
+        )
     }
 
     fn view(&self, cx: &mut WindowContext) -> gpui::View<Self::View> {

@@ -44,6 +44,7 @@ story = { workspace = true, optional = true }
 theme.workspace = true
 ui.workspace = true
 util.workspace = true
+unindent.workspace = true
 workspace.workspace = true
 
 [dev-dependencies]
