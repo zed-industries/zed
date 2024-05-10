@@ -88,4 +88,4 @@ else
 fi
 
 rm -rf "${archive}"
-tar -czvf $archive -C ${temp_dir} "zed$suffix.app"
+tar -czvf target/release/$archive -C ${temp_dir} "zed$suffix.app"
