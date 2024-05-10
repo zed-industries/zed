@@ -16,7 +16,6 @@ mod css;
 mod go;
 mod json;
 mod python;
-mod ruby;
 mod rust;
 mod tailwind;
 mod typescript;
@@ -50,7 +49,6 @@ pub fn init(
         ("proto", tree_sitter_proto::language()),
         ("python", tree_sitter_python::language()),
         ("regex", tree_sitter_regex::language()),
-        ("ruby", tree_sitter_ruby::language()),
         ("rust", tree_sitter_rust::language()),
         ("tsx", tree_sitter_typescript::language_tsx()),
         ("typescript", tree_sitter_typescript::language_typescript()),
@@ -156,8 +154,6 @@ pub fn init(
             node_runtime.clone(),
         ))]
     );
-    language!("ruby", vec![Arc::new(ruby::RubyLanguageServer)]);
-    language!("erb", vec![Arc::new(ruby::RubyLanguageServer),]);
     language!("regex");
     language!(
         "yaml",

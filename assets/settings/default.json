@@ -633,6 +633,9 @@
     },
     "Prisma": {
       "tab_size": 2
+    },
+    "Ruby": {
+      "language_servers": ["solargraph", "..."]
     }
   },
   // Zed's Prettier integration settings.

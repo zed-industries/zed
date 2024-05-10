@@ -1,0 +1,15 @@
+id = "ruby"
+name = "Ruby"
+description = "Ruby support."
+version = "0.0.1"
+schema_version = 1
+authors = ["Vitaly Slobodin <vitaliy.slobodin@gmail.com>"]
+repository = "https://github.com/zed-industries/zed"
+
+[language_servers.solargraph]
+name = "Solargraph"
+language = "Ruby"
+
+[grammars.ruby]
+repository = "https://github.com/tree-sitter/tree-sitter-ruby"
+commit = "9d86f3761bb30e8dcc81e754b81d3ce91848477e"
