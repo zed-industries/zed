@@ -1,12 +1,19 @@
 use anyhow::Result;
 use assistant_tooling::{LanguageModelTool, ToolOutput};
 use collections::BTreeMap;
-use gpui::{prelude::*, Model, Task};
+use file_icons::FileIcons;
+use gpui::{prelude::*, AnyElement, AppContext, Model, Task};
 use project::ProjectPath;
 use schemars::JsonSchema;
 use semantic_index::{ProjectIndex, Status};
 use serde::{Deserialize, Serialize};
-use std::{fmt::Write as _, ops::Range, path::Path, sync::Arc};
+use std::{
+    fmt::Write as _,
+    ops::Range,
+    path::{Path, PathBuf},
+    str::FromStr as _,
+    sync::Arc,
+};
 use ui::{prelude::*, CollapsibleContainer, Color, Icon, IconName, Label, WindowContext};
 
 const DEFAULT_SEARCH_LIMIT: usize = 20;
@@ -44,23 +51,29 @@ pub struct CodebaseQuery {
     excludes: Option<SearchFilter>,
 }
 
-#[derive(Deserialize, JsonSchema, Clone)]
+#[derive(Deserialize, JsonSchema, Clone, Default)]
 pub struct SearchFilter {
-    /// Filter by file path
-    path: Option<String>,
+    /// Filter by file path prefix
+    prefix_path: Option<String>,
     /// Filter by file extension
     extension: Option<String>,
     // Note: we possibly can't do content filtering very easily given the project context handling
     // the final results, so we're leaving out direct string matches for now
 }
 
+fn project_starts_with(prefix_path: Option<String>, project_path: ProjectPath) -> bool {
+    if let Some(path) = &prefix_path {
+        if let Some(path) = PathBuf::from_str(path).ok() {
+            return project_path.path.starts_with(path);
+        }
+    }
+
+    return false;
+}
+
 impl SearchFilter {
     fn matches(&self, project_path: &ProjectPath) -> bool {
-        let path_match = if let Some(path) = &self.path {
-            *path == *project_path.path.to_string_lossy().to_string()
-        } else {
-            true
-        };
+        let path_match = project_starts_with(self.prefix_path.clone(), project_path.clone());
 
         path_match
             && (if let Some(extension) = &self.extension {
@@ -92,6 +105,56 @@ impl ProjectIndexView {
     fn toggle_header(&mut self, cx: &mut ViewContext<Self>) {
         self.expanded_header = !self.expanded_header;
         cx.notify();
+    }
+
+    fn render_filter_section(
+        &mut self,
+        heading: &str,
+        filter: Option<SearchFilter>,
+        cx: &mut ViewContext<Self>,
+    ) -> Option<AnyElement> {
+        let filter = match filter {
+            Some(filter) => filter,
+            None => return None,
+        };
+
+        // Any of the filter fields can be empty. We'll show nothing if they're all empty.
+        let path = filter.prefix_path.as_ref().map(|path| {
+            let icon_path = FileIcons::get_icon(Path::new(path), cx)
+                .map(SharedString::from)
+                .unwrap_or_else(|| SharedString::from("icons/file_icons/file.svg"));
+
+            h_flex()
+                .gap_1()
+                .child("Paths: ")
+                .child(Icon::from_path(icon_path))
+                .child(ui::Label::new(path.clone()).color(Color::Muted))
+        });
+
+        let extension = filter.extension.as_ref().map(|extension| {
+            let icon_path = FileIcons::get_icon(Path::new(extension), cx)
+                .map(SharedString::from)
+                .unwrap_or_else(|| SharedString::from("icons/file_icons/file.svg"));
+
+            h_flex()
+                .gap_1()
+                .child("Extensions: ")
+                .child(Icon::from_path(icon_path))
+                .child(ui::Label::new(extension.clone()).color(Color::Muted))
+        });
+
+        if path.is_none() && extension.is_none() {
+            return None;
+        }
+
+        Some(
+            v_flex()
+                .child(ui::Label::new(heading.to_string()))
+                .gap_1()
+                .children(path)
+                .children(extension)
+                .into_any_element(),
+        )
     }
 }
 
@@ -148,6 +211,16 @@ impl Render for ProjectIndexView {
                                     .child(Icon::new(IconName::MagnifyingGlass))
                                     .child(Label::new(format!("`{}`", query)).color(Color::Muted)),
                             )
+                            .children(self.render_filter_section(
+                                "Includes",
+                                self.input.includes.clone(),
+                                cx,
+                            ))
+                            .children(self.render_filter_section(
+                                "Excludes",
+                                self.input.excludes.clone(),
+                                cx,
+                            ))
                             .child(content),
                     ),
             )
