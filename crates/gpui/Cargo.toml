@@ -124,7 +124,7 @@ x11rb = { version = "0.13.0", features = [
     "resource_manager",
 ] }
 xkbcommon = { version = "0.7", features = ["wayland", "x11"] }
-xim = { git = "https://github.com/npmania/xim-rs", rev = "9264144f40f6d0d4bfca60657afdd806e603bbe9", features = ["x11rb-xcb", "x11rb-client"] }
+xim = { git = "https://github.com/npmania/xim-rs", rev = "27132caffc5b9bc9c432ca4afad184ab6e7c16af", features = ["x11rb-xcb", "x11rb-client"] }
 
 [target.'cfg(windows)'.dependencies]
 windows.workspace = true
