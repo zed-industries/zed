@@ -18,6 +18,7 @@ use gpui::{
     MouseDownEvent, NavigationDirection, Pixels, Point, PromptLevel, Render, ScrollHandle,
     Subscription, Task, View, ViewContext, VisualContext, WeakFocusHandle, WeakView, WindowContext,
 };
+use itertools::Itertools;
 use parking_lot::Mutex;
 use project::{Project, ProjectEntryId, ProjectPath};
 use serde::Deserialize;
@@ -114,6 +115,7 @@ actions!(
         ActivatePrevItem,
         ActivateNextItem,
         ActivateLastItem,
+        AlternateFile,
         CloseCleanItems,
         CloseItemsToTheLeft,
         CloseItemsToTheRight,
@@ -183,6 +185,10 @@ impl fmt::Debug for Event {
 /// responsible for managing item tabs, focus and zoom states and drag and drop features.
 /// Can be split, see `PaneGroup` for more details.
 pub struct Pane {
+    alternate_file_items: (
+        Option<Box<dyn WeakItemHandle>>,
+        Option<Box<dyn WeakItemHandle>>,
+    ),
     focus_handle: FocusHandle,
     items: Vec<Box<dyn ItemHandle>>,
     activation_history: Vec<EntityId>,
@@ -286,6 +292,7 @@ impl Pane {
 
         let handle = cx.view().downgrade();
         Self {
+            alternate_file_items: (None, None),
             focus_handle,
             items: Vec::new(),
             activation_history: Vec::new(),
@@ -387,6 +394,39 @@ impl Pane {
             ),
             _subscriptions: subscriptions,
             double_click_dispatch_action,
+        }
+    }
+
+    fn alternate_file(&mut self, cx: &mut ViewContext<Pane>) {
+        let (_, alternative) = &self.alternate_file_items;
+        if let Some(alternative) = alternative {
+            let existing = self
+                .items()
+                .find_position(|item| item.item_id() == alternative.id());
+            if let Some((ix, _)) = existing {
+                self.activate_item(ix, true, true, cx);
+            } else {
+                if let Some(upgraded) = alternative.upgrade() {
+                    self.add_item(upgraded, true, true, None, cx);
+                }
+            }
+        }
+    }
+
+    pub fn track_alternate_file_items(&mut self) {
+        if let Some(item) = self.active_item().map(|item| item.downgrade_item()) {
+            let (current, _) = &self.alternate_file_items;
+            match current {
+                Some(current) => {
+                    if current.id() != item.id() {
+                        self.alternate_file_items =
+                            (Some(item), self.alternate_file_items.0.take());
+                    }
+                }
+                None => {
+                    self.alternate_file_items = (Some(item), None);
+                }
+            }
         }
     }
 
@@ -1981,6 +2021,9 @@ impl Render for Pane {
             .size_full()
             .flex_none()
             .overflow_hidden()
+            .on_action(cx.listener(|pane, _: &AlternateFile, cx| {
+                pane.alternate_file(cx);
+            }))
             .on_action(cx.listener(|pane, _: &SplitLeft, cx| pane.split(SplitDirection::Left, cx)))
             .on_action(cx.listener(|pane, _: &SplitUp, cx| pane.split(SplitDirection::Up, cx)))
             .on_action(

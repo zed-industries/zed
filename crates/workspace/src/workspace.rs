@@ -2499,6 +2499,9 @@ impl Workspace {
         self.zoomed_position = None;
         cx.emit(Event::ZoomChanged);
         self.update_active_view_for_followers(cx);
+        pane.model.update(cx, |pane, _| {
+            pane.track_alternate_file_items();
+        });
 
         cx.notify();
     }
@@ -2516,6 +2519,9 @@ impl Workspace {
             }
             pane::Event::Remove => self.remove_pane(pane, cx),
             pane::Event::ActivateItem { local } => {
+                pane.model.update(cx, |pane, _| {
+                    pane.track_alternate_file_items();
+                });
                 if *local {
                     self.unfollow(&pane, cx);
                 }
