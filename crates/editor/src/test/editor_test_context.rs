@@ -382,6 +382,20 @@ impl EditorTestContext {
         self.assert_selections(expected_selections, marked_text.to_string())
     }
 
+    /// Make an assertion about the editor's diff hunks
+    /// See the `util::test::marked_diff_ranges` function for more information.
+    #[track_caller]
+    pub fn assert_editor_diff_state(&mut self, marked_text: &str) {
+        let (unmarked_text, expected_hunks) = marked_diff_ranges(marked_text, true);
+        let buffer_text = self.buffer_text();
+
+        if buffer_text != unmarked_text {
+            panic!("Unmarked text doesn't match buffer text\nBuffer text: {buffer_text:?}\nUnmarked text: {unmarked_text:?}\nRaw buffer text\n{buffer_text}\nRaw unmarked text\n{unmarked_text}");
+        }
+
+        self.assert_hunks(expected_hunks, marked_text.to_string())
+    }
+
     pub fn editor_state(&mut self) -> String {
         generate_marked_text(self.buffer_text().as_str(), &self.editor_selections(), true)
     }
@@ -554,9 +568,9 @@ impl AsBuffer for &str {
 impl AsBuffer for (&str, &str) {
     fn as_buffer(&self) -> TestBufferDescription {
         TestBufferDescription {
-            marked_text: marked_text_ranges(self.0, false),
-            base_text: Some(self.1.to_string()),
-            file_name: None,
+            file_name: Some(PathBuf::from_str(self.0).unwrap()),
+            marked_text: marked_text_ranges(self.1, false),
+            base_text: None,
         }
     }
 }

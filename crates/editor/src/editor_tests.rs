@@ -10132,16 +10132,30 @@ async fn test_toggle_diff_expand_in_multi_buffer(cx: &mut gpui::TestAppContext) 
     )
     .await;
 
-    let expected_all_hunks = vec![
-        ("bbbb\n".to_string(), DiffHunkStatus::Removed, 3..3),
-        ("nnnn\n".to_string(), DiffHunkStatus::Modified, 16..17),
-        ("".to_string(), DiffHunkStatus::Added, 31..32),
-    ];
     let expected_all_hunks_shifted = vec![
         ("bbbb\n".to_string(), DiffHunkStatus::Removed, 4..4),
         ("nnnn\n".to_string(), DiffHunkStatus::Modified, 18..19),
         ("".to_string(), DiffHunkStatus::Added, 33..34),
     ];
+
+    editor_cx.assert_editor_diff_state(indoc! {"
+        aaaa
+        >>REMOVED>>bbbb>>REMOVED>>
+        cccc
+        dddd
+        qqqq
+        rrrr
+        llll
+        mmmm
+        >>MODIFIED>>1n1n1n1n1|>FROM|>nnnn>>MODIFIED>>
+        vvvv
+        wwww
+        xxxx
+        >>ADDED>>@@@@>>ADDED>>
+        {{{{
+        ~~~~
+        \u{7f}\u{7f}\u{7f}\u{7f}
+    "});
 
     editor_cx.update_editor(|editor, cx| {
         let snapshot = editor.snapshot(cx);
