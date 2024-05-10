@@ -14,6 +14,7 @@ use itertools::Itertools;
 
 use gpui::{actions, impl_actions, ViewContext, WindowContext};
 use language::{char_kind, BufferSnapshot, CharKind, Point, Selection};
+use multi_buffer::MultiBufferRow;
 use serde::Deserialize;
 use workspace::Workspace;
 
@@ -724,7 +725,7 @@ fn paragraph(
     let paragraph_end_row = paragraph_end.row();
     let paragraph_ends_with_eof = paragraph_end_row == map.max_point().row();
     let point = relative_to.to_point(map);
-    let current_line_is_empty = map.buffer_snapshot.is_line_blank(point.row);
+    let current_line_is_empty = map.buffer_snapshot.is_line_blank(MultiBufferRow(point.row));
 
     if around {
         if paragraph_ends_with_eof {
@@ -733,13 +734,13 @@ fn paragraph(
             }
 
             let paragraph_start_row = paragraph_start.row();
-            if paragraph_start_row != 0 {
+            if paragraph_start_row.0 != 0 {
                 let previous_paragraph_last_line_start =
-                    Point::new(paragraph_start_row - 1, 0).to_display_point(map);
+                    Point::new(paragraph_start_row.0 - 1, 0).to_display_point(map);
                 paragraph_start = start_of_paragraph(map, previous_paragraph_last_line_start);
             }
         } else {
-            let next_paragraph_start = Point::new(paragraph_end_row + 1, 0).to_display_point(map);
+            let next_paragraph_start = Point::new(paragraph_end_row.0 + 1, 0).to_display_point(map);
             paragraph_end = end_of_paragraph(map, next_paragraph_start);
         }
     }
@@ -756,10 +757,10 @@ pub fn start_of_paragraph(map: &DisplaySnapshot, display_point: DisplayPoint) ->
         return DisplayPoint::zero();
     }
 
-    let is_current_line_blank = map.buffer_snapshot.is_line_blank(point.row);
+    let is_current_line_blank = map.buffer_snapshot.is_line_blank(MultiBufferRow(point.row));
 
     for row in (0..point.row).rev() {
-        let blank = map.buffer_snapshot.is_line_blank(row);
+        let blank = map.buffer_snapshot.is_line_blank(MultiBufferRow(row));
         if blank != is_current_line_blank {
             return Point::new(row + 1, 0).to_display_point(map);
         }
@@ -773,18 +774,21 @@ pub fn start_of_paragraph(map: &DisplaySnapshot, display_point: DisplayPoint) ->
 /// The trailing newline is excluded from the paragraph.
 pub fn end_of_paragraph(map: &DisplaySnapshot, display_point: DisplayPoint) -> DisplayPoint {
     let point = display_point.to_point(map);
-    if point.row == map.max_buffer_row() {
+    if point.row == map.max_buffer_row().0 {
         return map.max_point();
     }
 
-    let is_current_line_blank = map.buffer_snapshot.is_line_blank(point.row);
+    let is_current_line_blank = map.buffer_snapshot.is_line_blank(MultiBufferRow(point.row));
 
-    for row in point.row + 1..map.max_buffer_row() + 1 {
-        let blank = map.buffer_snapshot.is_line_blank(row);
+    for row in point.row + 1..map.max_buffer_row().0 + 1 {
+        let blank = map.buffer_snapshot.is_line_blank(MultiBufferRow(row));
         if blank != is_current_line_blank {
             let previous_row = row - 1;
-            return Point::new(previous_row, map.buffer_snapshot.line_len(previous_row))
-                .to_display_point(map);
+            return Point::new(
+                previous_row,
+                map.buffer_snapshot.line_len(MultiBufferRow(previous_row)),
+            )
+            .to_display_point(map);
         }
     }
 

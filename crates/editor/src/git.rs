@@ -8,7 +8,7 @@ use multi_buffer::{Anchor, MultiBufferRow};
 
 use crate::{
     display_map::{DisplaySnapshot, ToDisplayPoint},
-    multi_buffer_associated_hunk_status, AnchorRangeExt, DisplayRow,
+    hunk_status, AnchorRangeExt, DisplayRow,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -63,7 +63,7 @@ pub fn diff_hunk_to_display(
         0,
     );
 
-    let status = multi_buffer_associated_hunk_status(hunk);
+    let status = hunk_status(hunk);
     let is_removal = status == DiffHunkStatus::Removed;
 
     let folds_start = Point::new(hunk.associated_range.start.0.saturating_sub(2), 0);
@@ -106,7 +106,7 @@ pub fn diff_hunk_to_display(
 #[cfg(test)]
 mod tests {
     use crate::Point;
-    use crate::{editor_tests::init_test, multi_buffer_associated_hunk_status};
+    use crate::{editor_tests::init_test, hunk_status};
     use gpui::{Context, TestAppContext};
     use language::Capability::ReadWrite;
     use multi_buffer::{ExcerptRange, MultiBuffer, MultiBufferRow};
@@ -288,10 +288,7 @@ mod tests {
         assert_eq!(
             snapshot
                 .git_diff_hunks_in_range(MultiBufferRow::MIN..MultiBufferRow(12))
-                .map(|hunk| (
-                    multi_buffer_associated_hunk_status(&hunk),
-                    hunk.associated_range
-                ))
+                .map(|hunk| (hunk_status(&hunk), hunk.associated_range))
                 .collect::<Vec<_>>(),
             &expected,
         );
@@ -299,10 +296,7 @@ mod tests {
         assert_eq!(
             snapshot
                 .git_diff_hunks_in_range_rev(MultiBufferRow::MIN..MultiBufferRow(12))
-                .map(|hunk| (
-                    multi_buffer_associated_hunk_status(&hunk),
-                    hunk.associated_range
-                ))
+                .map(|hunk| (hunk_status(&hunk), hunk.associated_range))
                 .collect::<Vec<_>>(),
             expected
                 .iter()

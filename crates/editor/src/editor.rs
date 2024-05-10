@@ -2499,7 +2499,6 @@ impl Editor {
         let reversed = start_column < tail.column();
 
         let selection_ranges = (start_row.0..=end_row.0)
-            .into_iter()
             .map(DisplayRow)
             .filter_map(|row| {
                 if start_column <= display_map.line_len(row) && !display_map.is_block_line(row) {
@@ -10692,8 +10691,7 @@ fn hunks_for_selections(
         for hunk in multi_buffer_snapshot.git_diff_hunks_in_range(query_rows.clone()) {
             // Deleted hunk is an empty row range, no caret can be placed there and Zed allows to revert it
             // when the caret is just above or just below the deleted hunk.
-            let allow_adjacent =
-                multi_buffer_associated_hunk_status(&hunk) == DiffHunkStatus::Removed;
+            let allow_adjacent = hunk_status(&hunk) == DiffHunkStatus::Removed;
             let related_to_selection = if allow_adjacent {
                 hunk.associated_range.overlaps(&query_rows)
                     || hunk.associated_range.start == query_rows.end
@@ -11661,17 +11659,7 @@ impl RowRangeExt for Range<DisplayRow> {
     }
 }
 
-fn multi_buffer_associated_hunk_status(hunk: &DiffHunk<MultiBufferRow>) -> DiffHunkStatus {
-    if hunk.diff_base_byte_range.is_empty() {
-        DiffHunkStatus::Added
-    } else if hunk.associated_range.is_empty() {
-        DiffHunkStatus::Removed
-    } else {
-        DiffHunkStatus::Modified
-    }
-}
-
-fn buffer_associated_hunk_status(hunk: &DiffHunk<u32>) -> DiffHunkStatus {
+fn hunk_status(hunk: &DiffHunk<MultiBufferRow>) -> DiffHunkStatus {
     if hunk.diff_base_byte_range.is_empty() {
         DiffHunkStatus::Added
     } else if hunk.associated_range.is_empty() {

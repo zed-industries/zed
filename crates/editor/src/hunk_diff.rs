@@ -18,9 +18,9 @@ use util::{debug_panic, RangeExt};
 
 use crate::{
     git::{diff_hunk_to_display, DisplayDiffHunk},
-    hunks_for_selections, multi_buffer_associated_hunk_status, BlockDisposition, BlockId,
-    BlockProperties, BlockStyle, DiffRowHighlight, Editor, EditorSnapshot, ExpandAllHunkDiffs,
-    RangeToAnchorExt, RevertSelectedHunks, ToDisplayPoint, ToggleHunkDiff,
+    hunk_status, hunks_for_selections, BlockDisposition, BlockId, BlockProperties, BlockStyle,
+    DiffRowHighlight, Editor, EditorSnapshot, ExpandAllHunkDiffs, RangeToAnchorExt,
+    RevertSelectedHunks, ToDisplayPoint, ToggleHunkDiff,
 };
 
 #[derive(Debug, Clone)]
@@ -181,7 +181,7 @@ impl Editor {
                             Point::new(remaining_hunk.associated_range.start.0, 0)
                                 ..Point::new(remaining_hunk.associated_range.end.0, 0);
                         hunks_to_expand.push(HunkToExpand {
-                            status: multi_buffer_associated_hunk_status(&remaining_hunk),
+                            status: hunk_status(&remaining_hunk),
                             multi_buffer_range: remaining_hunk_point_range
                                 .to_anchors(&snapshot.buffer_snapshot),
                             diff_base_byte_range: remaining_hunk.diff_base_byte_range.clone(),
@@ -444,10 +444,7 @@ impl Editor {
                                         } else {
                                             if !expanded_hunk.folded
                                                 && expanded_hunk_display_range == hunk_display_range
-                                                && expanded_hunk.status
-                                                    == multi_buffer_associated_hunk_status(
-                                                        buffer_hunk,
-                                                    )
+                                                && expanded_hunk.status == hunk_status(buffer_hunk)
                                                 && expanded_hunk.diff_base_byte_range
                                                     == buffer_hunk.diff_base_byte_range
                                             {

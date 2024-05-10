@@ -11,9 +11,9 @@ use itertools::Itertools;
 use language::{
     char_kind,
     language_settings::{language_settings, LanguageSettings},
-    AutoindentMode, Buffer, BufferChunks, BufferSnapshot, Capability, CharKind, Chunk, CursorShape,
-    DiagnosticEntry, File, IndentSize, Language, LanguageScope, OffsetRangeExt, OffsetUtf16,
-    Outline, OutlineItem, Point, PointUtf16, Selection, TextDimension, ToOffset as _,
+    AutoindentMode, Buffer, BufferChunks, BufferRow, BufferSnapshot, Capability, CharKind, Chunk,
+    CursorShape, DiagnosticEntry, File, IndentSize, Language, LanguageScope, OffsetRangeExt,
+    OffsetUtf16, Outline, OutlineItem, Point, PointUtf16, Selection, TextDimension, ToOffset as _,
     ToOffsetUtf16 as _, ToPoint as _, ToPointUtf16 as _, TransactionId, Unclipped,
 };
 use smallvec::SmallVec;
@@ -199,7 +199,7 @@ struct Excerpt {
     /// The range of the buffer to be shown in the excerpt
     range: ExcerptRange<text::Anchor>,
     /// The last row in the excerpted slice of the buffer
-    max_buffer_row: MultiBufferRow,
+    max_buffer_row: BufferRow,
     /// A summary of the text in the excerpt
     text_summary: TextSummary,
     has_trailing_newline: bool,
@@ -1661,7 +1661,7 @@ impl MultiBuffer {
                 Bias::Left,
             );
             excerpt.range.context.end = excerpt.buffer.anchor_after(end_point);
-            excerpt.max_buffer_row = MultiBufferRow(end_point.row);
+            excerpt.max_buffer_row = end_point.row;
 
             excerpt.text_summary = excerpt
                 .buffer
@@ -3895,7 +3895,7 @@ impl Excerpt {
         Excerpt {
             id,
             locator,
-            max_buffer_row: MultiBufferRow(range.context.end.to_point(&buffer).row),
+            max_buffer_row: range.context.end.to_point(&buffer).row,
             text_summary: buffer
                 .text_summary_for_range::<TextSummary, _>(range.context.to_offset(&buffer)),
             buffer_id,
@@ -4111,7 +4111,7 @@ impl sum_tree::Item for Excerpt {
         ExcerptSummary {
             excerpt_id: self.id,
             excerpt_locator: self.locator.clone(),
-            max_buffer_row: self.max_buffer_row,
+            max_buffer_row: MultiBufferRow(self.max_buffer_row),
             text,
         }
     }

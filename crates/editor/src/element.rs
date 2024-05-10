@@ -9,9 +9,9 @@ use crate::{
     hover_popover::{
         self, hover_at, HOVER_POPOVER_GAP, MIN_POPOVER_CHARACTER_WIDTH, MIN_POPOVER_LINE_HEIGHT,
     },
+    hunk_status,
     items::BufferSearchHighlights,
     mouse_context_menu::{self, MouseContextMenu},
-    multi_buffer_associated_hunk_status,
     scroll::scroll_amount::ScrollAmount,
     CodeActionsMenu, CursorShape, DisplayPoint, DisplayRow, DocumentHighlightRead,
     DocumentHighlightWrite, Editor, EditorMode, EditorSettings, EditorSnapshot, EditorStyle,
@@ -2907,8 +2907,7 @@ impl EditorElement {
                                         if end_display_row != start_display_row {
                                             end_display_row.0 -= 1;
                                         }
-                                        let color = match multi_buffer_associated_hunk_status(&hunk)
-                                        {
+                                        let color = match hunk_status(&hunk) {
                                             DiffHunkStatus::Added => theme.status().created,
                                             DiffHunkStatus::Modified => theme.status().modified,
                                             DiffHunkStatus::Removed => theme.status().deleted,
@@ -4851,7 +4850,7 @@ mod tests {
                 element
                     .layout_line_numbers(
                         DisplayRow(0)..DisplayRow(6),
-                        (0..6).map(Some),
+                        (0..6).map(DisplayRow).map(Some),
                         &Default::default(),
                         Some(DisplayPoint::new(DisplayRow(0), 0)),
                         &snapshot,

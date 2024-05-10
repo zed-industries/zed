@@ -8,6 +8,7 @@ use editor::{
 };
 use gpui::{actions, impl_actions, px, ViewContext, WindowContext};
 use language::{char_kind, CharKind, Point, Selection, SelectionGoal};
+use multi_buffer::MultiBufferRow;
 use serde::Deserialize;
 use std::ops::Range;
 use workspace::Workspace;
@@ -997,7 +998,7 @@ fn up_down_buffer_rows(
         map.fold_snapshot
             .clip_point(FoldPoint::new(start.row(), 0), Bias::Left),
     );
-    let select_nth_wrapped_row = point.row() - begin_folded_line.row();
+    let select_nth_wrapped_row = point.row().0 - begin_folded_line.row().0;
 
     let (goal_wrap, goal_x) = match goal {
         SelectionGoal::WrappedHorizontalPosition((row, x)) => (row, x),
@@ -1020,7 +1021,7 @@ fn up_down_buffer_rows(
 
     let mut i = 0;
     while i < goal_wrap && begin_folded_line.row() < map.max_point().row() {
-        let next_folded_line = DisplayPoint::new(begin_folded_line.row() + 1, 0);
+        let next_folded_line = DisplayPoint::new(DisplayRow(begin_folded_line.row().0 + 1), 0);
         if map
             .display_point_to_fold_point(next_folded_line, Bias::Right)
             .row()
@@ -1375,7 +1376,7 @@ fn previous_subword_end(
     let scope = map.buffer_snapshot.language_scope_at(point.to_point(map));
     let mut point = point.to_point(map);
 
-    if point.column < map.buffer_snapshot.line_len(point.row) {
+    if point.column < map.buffer_snapshot.line_len(MultiBufferRow(point.row)) {
         point.column += 1;
     }
     for _ in 0..times {
@@ -1497,7 +1498,7 @@ fn end_of_document(
     let new_row = if let Some(line) = line {
         (line - 1) as u32
     } else {
-        map.max_buffer_row()
+        map.max_buffer_row().0
     };
 
     let new_point = Point::new(new_row, point.column());
@@ -1709,7 +1710,7 @@ fn window_middle(
             .to_display_point(map);
 
         let max_visible_rows =
-            (visible_rows as u32).min(map.max_point().row() - first_visible_line.row());
+            (visible_rows as u32).min(map.max_point().row().0 - first_visible_line.row().0);
 
         let new_row =
             (first_visible_line.row().0 + (max_visible_rows / 2)).min(map.max_point().row().0);
@@ -1733,18 +1734,19 @@ fn window_bottom(
             .scroll_anchor
             .anchor
             .to_display_point(map);
-        let bottom_row = first_visible_line.row()
+        let bottom_row = first_visible_line.row().0
             + (visible_rows + text_layout_details.scroll_anchor.offset.y - 1.).floor() as u32;
-        if bottom_row < map.max_point().row()
+        if bottom_row < map.max_point().row().0
             && text_layout_details.vertical_scroll_margin as usize > times
         {
             times = text_layout_details.vertical_scroll_margin.ceil() as usize;
         }
-        let bottom_row_capped = bottom_row.min(map.max_point().row());
-        let new_row = if bottom_row_capped.saturating_sub(times as u32) < first_visible_line.row() {
+        let bottom_row_capped = bottom_row.min(map.max_point().row().0);
+        let new_row = if bottom_row_capped.saturating_sub(times as u32) < first_visible_line.row().0
+        {
             first_visible_line.row()
         } else {
-            bottom_row_capped.saturating_sub(times as u32)
+            DisplayRow(bottom_row_capped.saturating_sub(times as u32))
         };
         let new_col = point.column().min(map.line_len(new_row));
         let new_point = DisplayPoint::new(new_row, new_col);

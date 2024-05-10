@@ -486,6 +486,7 @@ mod tests {
             editor
                 .highlighted_display_rows(HashSet::default(), cx)
                 .into_keys()
+                .map(|r| r.0)
                 .collect()
         })
     }

@@ -15,8 +15,6 @@ use sum_tree::SumTree;
 use url::Url;
 use util::http::HttpClient;
 
-use crate::DisplayRow;
-
 #[derive(Clone, Debug, Default)]
 pub struct GitBlameEntry {
     pub rows: u32,
@@ -535,7 +533,7 @@ mod tests {
         ($blame:expr, $rows:expr, $expected:expr, $cx:expr) => {
             assert_eq!(
                 $blame
-                    .blame_for_rows($rows.map(Some), $cx)
+                    .blame_for_rows($rows.map(MultiBufferRow).map(Some), $cx)
                     .collect::<Vec<_>>(),
                 $expected
             );
@@ -600,7 +598,7 @@ mod tests {
         blame.update(cx, |blame, cx| {
             assert_eq!(
                 blame
-                    .blame_for_rows((0..1).map(Some), cx)
+                    .blame_for_rows((0..1).map(MultiBufferRow).map(Some), cx)
                     .collect::<Vec<_>>(),
                 vec![None]
             );
@@ -664,7 +662,7 @@ mod tests {
             // All lines
             assert_eq!(
                 blame
-                    .blame_for_rows((0..8).map(Some), cx)
+                    .blame_for_rows((0..8).map(MultiBufferRow).map(Some), cx)
                     .collect::<Vec<_>>(),
                 vec![
                     Some(blame_entry("1b1b1b", 0..1)),
@@ -680,7 +678,7 @@ mod tests {
             // Subset of lines
             assert_eq!(
                 blame
-                    .blame_for_rows((1..4).map(Some), cx)
+                    .blame_for_rows((1..4).map(MultiBufferRow).map(Some), cx)
                     .collect::<Vec<_>>(),
                 vec![
                     Some(blame_entry("0d0d0d", 1..2)),
@@ -691,7 +689,7 @@ mod tests {
             // Subset of lines, with some not displayed
             assert_eq!(
                 blame
-                    .blame_for_rows(vec![Some(1), None, None], cx)
+                    .blame_for_rows(vec![Some(MultiBufferRow(1)), None, None], cx)
                     .collect::<Vec<_>>(),
                 vec![Some(blame_entry("0d0d0d", 1..2)), None, None]
             );

@@ -89,7 +89,7 @@ pub fn editor_hunks(
     use multi_buffer::MultiBufferRow;
     use text::Point;
 
-    use crate::multi_buffer_associated_hunk_status;
+    use crate::hunk_status;
 
     snapshot
         .buffer_snapshot
@@ -112,11 +112,7 @@ pub fn editor_hunks(
                 .expect("should have a diff base for expanded hunk")
                 .slice(hunk.diff_base_byte_range.clone())
                 .to_string();
-            (
-                diff_base,
-                multi_buffer_associated_hunk_status(&hunk),
-                display_range,
-            )
+            (diff_base, hunk_status(&hunk), display_range)
         })
         .collect()
 }

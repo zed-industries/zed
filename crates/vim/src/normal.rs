@@ -25,6 +25,7 @@ use editor::Bias;
 use gpui::{actions, ViewContext, WindowContext};
 use language::{Point, SelectionGoal};
 use log::error;
+use multi_buffer::MultiBufferRow;
 use workspace::Workspace;
 
 use self::{
@@ -314,7 +315,7 @@ fn insert_line_above(_: &mut Workspace, _: &InsertLineAbove, cx: &mut ViewContex
                     .collect();
                 let edits = selection_start_rows.into_iter().map(|row| {
                     let indent = snapshot
-                        .indent_size_for_line(row)
+                        .indent_size_for_line(MultiBufferRow(row))
                         .chars()
                         .collect::<String>();
                     let start_of_line = Point::new(row, 0);
@@ -349,10 +350,10 @@ fn insert_line_below(_: &mut Workspace, _: &InsertLineBelow, cx: &mut ViewContex
                     .collect();
                 let edits = selection_end_rows.into_iter().map(|row| {
                     let indent = snapshot
-                        .indent_size_for_line(row)
+                        .indent_size_for_line(MultiBufferRow(row))
                         .chars()
                         .collect::<String>();
-                    let end_of_line = Point::new(row, snapshot.line_len(row));
+                    let end_of_line = Point::new(row, snapshot.line_len(MultiBufferRow(row)));
                     (end_of_line..end_of_line, "\n".to_string() + &indent)
                 });
                 editor.change_selections(Some(Autoscroll::fit()), cx, |s| {
