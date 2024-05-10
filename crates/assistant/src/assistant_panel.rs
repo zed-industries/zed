@@ -25,13 +25,16 @@ use fs::Fs;
 use futures::StreamExt;
 use gpui::{
     canvas, div, point, relative, rems, uniform_list, Action, AnyElement, AnyView, AppContext,
-    AsyncAppContext, AsyncWindowContext, AvailableSpace, ClipboardItem, Context, EventEmitter,
-    FocusHandle, FocusableView, FontStyle, FontWeight, HighlightStyle, InteractiveElement,
-    IntoElement, Model, ModelContext, ParentElement, Pixels, Render, SharedString,
-    StatefulInteractiveElement, Styled, Subscription, Task, TextStyle, UniformListScrollHandle,
-    View, ViewContext, VisualContext, WeakModel, WeakView, WhiteSpace, WindowContext,
+    AsyncAppContext, AsyncWindowContext, AvailableSpace, ClipboardItem, Context, Entity,
+    EventEmitter, FocusHandle, FocusableView, FontStyle, FontWeight, HighlightStyle,
+    InteractiveElement, IntoElement, Model, ModelContext, ParentElement, Pixels, Render,
+    SharedString, StatefulInteractiveElement, Styled, Subscription, Task, TextStyle,
+    UniformListScrollHandle, View, ViewContext, VisualContext, WeakModel, WeakView, WhiteSpace,
+    WindowContext,
 };
-use language::{language_settings::SoftWrap, Buffer, LanguageRegistry, ToOffset as _};
+use language::{
+    language_settings::SoftWrap, Buffer, DiagnosticEntry, LanguageRegistry, Point, ToOffset as _,
+};
 use parking_lot::Mutex;
 use project::Project;
 use search::{buffer_search::DivRegistrar, BufferSearchBar};
@@ -1160,7 +1163,6 @@ impl AssistantPanel {
                     .into_any_element()
                 } else if let Some(editor) = self.active_conversation_editor() {
                     let editor = editor.clone();
-                    let conversation = editor.read(cx).conversation.clone();
                     div().size_full().child(editor.clone()).into_any_element()
                 } else {
                     div().into_any_element()
@@ -1321,6 +1323,7 @@ struct Summary {
 pub struct Conversation {
     id: Option<String>,
     buffer: Model<Buffer>,
+    automatic_context: AutomaticContext,
     embedded_scope: EmbeddedScope,
     message_anchors: Vec<MessageAnchor>,
     messages_metadata: HashMap<MessageId, MessageMetadata>,
@@ -1335,6 +1338,18 @@ pub struct Conversation {
     pending_save: Task<Result<()>>,
     path: Option<PathBuf>,
     _subscriptions: Vec<Subscription>,
+}
+
+#[derive(Default)]
+struct AutomaticContext {
+    recent_buffers: RecentBuffersContext,
+}
+
+#[derive(Default)]
+struct RecentBuffersContext {
+    enabled: bool,
+    buffers: HashMap<WeakModel<Buffer>, Subscription>,
+    message: String,
 }
 
 impl EventEmitter<ConversationEvent> for Conversation {}
@@ -1366,6 +1381,7 @@ impl Conversation {
             message_anchors: Default::default(),
             messages_metadata: Default::default(),
             next_message_id: Default::default(),
+            automatic_context: AutomaticContext::default(),
             summary: None,
             pending_summary: Task::ready(None),
             completion_count: Default::default(),
@@ -1462,6 +1478,7 @@ impl Conversation {
                 message_anchors,
                 messages_metadata: saved_conversation.message_metadata,
                 next_message_id,
+                automatic_context: AutomaticContext::default(),
                 summary: Some(Summary {
                     text: saved_conversation.summary,
                     done: true,
@@ -1481,6 +1498,146 @@ impl Conversation {
             this.count_remaining_tokens(cx);
             this
         })
+    }
+
+    fn set_recent_buffers(&mut self, buffers: HashSet<Model<Buffer>>, cx: &mut ModelContext<Self>) {
+        self.automatic_context
+            .recent_buffers
+            .buffers
+            .retain(|buffer, _| {
+                if let Some(buffer) = buffer.upgrade() {
+                    buffers.contains(&buffer)
+                } else {
+                    false
+                }
+            });
+
+        for buffer in buffers {
+            self.automatic_context
+                .recent_buffers
+                .buffers
+                .entry(buffer.downgrade())
+                .or_insert_with(|| {
+                    cx.observe(&buffer, |this, _, cx| {
+                        this.update_recent_buffers_context(cx);
+                    })
+                });
+        }
+
+        self.update_recent_buffers_context(cx);
+    }
+
+    fn update_recent_buffers_context(&mut self, cx: &mut ModelContext<Self>) {
+        self.automatic_context.recent_buffers.message.clear();
+        if !self.automatic_context.recent_buffers.enabled {
+            return;
+        }
+
+        let message = &mut self.automatic_context.recent_buffers.message;
+        writeln!(
+            message,
+            "The following is a list of recent buffers that the user has opened."
+        )
+        .unwrap();
+        writeln!(
+            message,
+            "For every line in the buffer, I will include a row number that line corresponds to."
+        )
+        .unwrap();
+        writeln!(
+            message,
+            "Lines that don't have a number correspond to errors and warnings. For example:"
+        )
+        .unwrap();
+        writeln!(message, "path/to/file.md").unwrap();
+        writeln!(message, "```markdown").unwrap();
+        writeln!(message, "1 The quick brown fox").unwrap();
+        writeln!(message, "2 jumps over teh layz").unwrap();
+        writeln!(message, "             --- error: misspelled 'the'").unwrap();
+        writeln!(message, "                 ---- error: misspelled 'lazy'").unwrap();
+        writeln!(message, "3 dog").unwrap();
+        writeln!(message, "```").unwrap();
+
+        writeln!(message, "Here's the actual recent buffer list:").unwrap();
+        for buffer in self.automatic_context.recent_buffers.buffers.keys() {
+            buffer
+                .read_with(cx, |buffer, cx| {
+                    let buffer = buffer.snapshot();
+
+                    if let Some(file) = buffer.file() {
+                        writeln!(message, "{}", file.full_path(cx).display()).unwrap();
+                    } else {
+                        writeln!(message, "untitled").unwrap();
+                    }
+
+                    if let Some(language) = buffer.language() {
+                        writeln!(message, "```{}", language.name().to_lowercase()).unwrap();
+                    } else {
+                        writeln!(message, "```").unwrap();
+                    }
+
+                    let mut current_row = 0;
+                    let mut diagnostics = buffer
+                        .diagnostics_in_range::<_, Point>(
+                            language::Anchor::MIN..language::Anchor::MAX,
+                            false,
+                        )
+                        .peekable();
+
+                    let mut active_diagnostics = Vec::<DiagnosticEntry<Point>>::new();
+                    while current_row <= buffer.max_point().row {
+                        active_diagnostics.retain(|diagnostic| {
+                            (diagnostic.range.start.row..=diagnostic.range.end.row)
+                                .contains(&current_row)
+                        });
+                        while diagnostics.peek().map_or(false, |diagnostic| {
+                            (diagnostic.range.start.row..=diagnostic.range.end.row)
+                                .contains(&current_row)
+                        }) {
+                            active_diagnostics.push(diagnostics.next().unwrap());
+                        }
+
+                        write!(message, "{} ", current_row).unwrap();
+                        for chunk in buffer.text_for_range(
+                            Point::new(current_row, 0)
+                                ..Point::new(current_row, buffer.line_len(current_row)),
+                        ) {
+                            message.push_str(chunk);
+                        }
+                        message.push('\n');
+
+                        for diagnostic in &active_diagnostics {
+                            message.push(' ');
+
+                            let start_column = if diagnostic.range.start.row == current_row {
+                                message.extend(
+                                    iter::repeat(' ').take(diagnostic.range.start.column as usize),
+                                );
+                                diagnostic.range.start.column
+                            } else {
+                                0
+                            };
+                            let end_column = if diagnostic.range.end.row == current_row {
+                                diagnostic.range.end.column
+                            } else {
+                                buffer.line_len(current_row)
+                            };
+
+                            message.extend(
+                                iter::repeat('-').take((end_column - start_column) as usize),
+                            );
+                            writeln!(message, " {}", diagnostic.diagnostic.message);
+                        }
+
+                        current_row += 1;
+                    }
+
+                    message.push('\n');
+                })
+                .ok();
+        }
+
+        self.count_remaining_tokens(cx);
     }
 
     fn handle_buffer_event(
@@ -2238,15 +2395,13 @@ impl ConversationEditor {
         event: &WorkspaceEvent,
         cx: &mut ViewContext<Self>,
     ) {
-        if let WorkspaceEvent::ActiveItemChanged = event {
-            self.update_active_buffer(workspace, cx);
-        }
+        if let WorkspaceEvent::ActiveItemChanged = event {}
     }
 
     fn update_active_buffer(
         &mut self,
         workspace: View<Workspace>,
-        cx: &mut ViewContext<'_, ConversationEditor>,
+        cx: &mut ViewContext<ConversationEditor>,
     ) {
         let active_buffer = workspace
             .read(cx)
@@ -2361,6 +2516,13 @@ impl ConversationEditor {
                                         .child(
                                             IconButton::new("include_file", IconName::File)
                                                 .icon_size(IconSize::Small)
+                                                .selected(
+                                                    conversation
+                                                        .read(cx)
+                                                        .automatic_context
+                                                        .recent_buffers
+                                                        .enabled,
+                                                )
                                                 .tooltip(|cx| {
                                                     Tooltip::text("Include Open Files", cx)
                                                 }),
@@ -2368,7 +2530,6 @@ impl ConversationEditor {
                                         .child(
                                             IconButton::new("include_terminal", IconName::Terminal)
                                                 .icon_size(IconSize::Small)
-                                                .disabled(true)
                                                 .tooltip(|cx| {
                                                     Tooltip::text("Include Terminal", cx)
                                                 }),
@@ -2389,7 +2550,6 @@ impl ConversationEditor {
                                                 IconName::FileTree,
                                             )
                                             .icon_size(IconSize::Small)
-                                            .disabled(true)
                                             .tooltip(|cx| Tooltip::text("Include File Trees", cx)),
                                         )
                                         .into_any()
