@@ -59,6 +59,8 @@ pub enum Operator {
     AddSurrounds { target: Option<SurroundsType> },
     ChangeSurrounds { target: Option<Object> },
     DeleteSurrounds,
+    Mark,
+    Jump { line: bool },
 }
 
 #[derive(Default, Clone)]
@@ -73,6 +75,8 @@ pub struct EditorState {
 
     pub operator_stack: Vec<Operator>,
     pub replacements: Vec<(Range<editor::Anchor>, String)>,
+
+    pub marks: HashMap<String, Vec<Anchor>>,
 
     pub current_tx: Option<TransactionId>,
     pub current_anchor: Option<Selection<Anchor>>,
@@ -172,7 +176,10 @@ impl EditorState {
         }
         matches!(
             self.operator_stack.last(),
-            Some(Operator::FindForward { .. }) | Some(Operator::FindBackward { .. })
+            Some(Operator::FindForward { .. })
+                | Some(Operator::FindBackward { .. })
+                | Some(Operator::Mark)
+                | Some(Operator::Jump { .. })
         )
     }
 
@@ -254,6 +261,9 @@ impl Operator {
             Operator::AddSurrounds { .. } => "ys",
             Operator::ChangeSurrounds { .. } => "cs",
             Operator::DeleteSurrounds => "ds",
+            Operator::Mark => "m",
+            Operator::Jump { line: true } => "'",
+            Operator::Jump { line: false } => "`",
         }
     }
 
@@ -261,6 +271,8 @@ impl Operator {
         match self {
             Operator::Object { .. } | Operator::ChangeSurrounds { target: None } => &["VimObject"],
             Operator::FindForward { .. }
+            | Operator::Mark
+            | Operator::Jump { .. }
             | Operator::FindBackward { .. }
             | Operator::Replace
             | Operator::AddSurrounds { target: Some(_) }

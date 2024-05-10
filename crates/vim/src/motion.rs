@@ -13,7 +13,7 @@ use std::ops::Range;
 use workspace::Workspace;
 
 use crate::{
-    normal::normal_motion,
+    normal::{mark, normal_motion},
     state::{Mode, Operator},
     surrounds::SurroundsType,
     utils::coerce_punctuation,
@@ -104,6 +104,10 @@ pub enum Motion {
     ZedSearchResult {
         prior_selections: Vec<Range<Anchor>>,
         new_selections: Vec<Range<Anchor>>,
+    },
+    Jump {
+        anchor: Anchor,
+        line: bool,
     },
 }
 
@@ -469,6 +473,7 @@ impl Motion {
             | WindowTop
             | WindowMiddle
             | WindowBottom
+            | Jump { line: true, .. }
             | EndOfParagraph => true,
             EndOfLine { .. }
             | Matching
@@ -492,6 +497,7 @@ impl Motion {
             | FindBackward { .. }
             | RepeatFind { .. }
             | RepeatFindReversed { .. }
+            | Jump { line: false, .. }
             | ZedSearchResult { .. } => false,
         }
     }
@@ -531,7 +537,8 @@ impl Motion {
             | WindowMiddle
             | WindowBottom
             | NextLineStart
-            | ZedSearchResult { .. } => false,
+            | ZedSearchResult { .. }
+            | Jump { .. } => false,
         }
     }
 
@@ -570,6 +577,7 @@ impl Motion {
             | PreviousSubwordStart { .. }
             | FirstNonWhitespace { .. }
             | FindBackward { .. }
+            | Jump { .. }
             | ZedSearchResult { .. } => false,
             RepeatFind { last_find: motion } | RepeatFindReversed { last_find: motion } => {
                 motion.inclusive()
@@ -761,6 +769,7 @@ impl Motion {
             WindowTop => window_top(map, point, &text_layout_details, times - 1),
             WindowMiddle => window_middle(map, point, &text_layout_details),
             WindowBottom => window_bottom(map, point, &text_layout_details, times - 1),
+            Jump { line, anchor } => mark::jump_motion(map, *anchor, *line),
             ZedSearchResult { new_selections, .. } => {
                 // There will be only one selection, as
                 // Search::SelectNextMatch selects a single match.
