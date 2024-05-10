@@ -2046,7 +2046,7 @@ impl Snapshot {
                 }
             }
             while let Some((repo_path, _)) = repositories.peek() {
-                if entry.path.starts_with(repo_path) {
+                if dbg!(entry.path.starts_with(repo_path)) {
                     containing_repos.push(repositories.next().unwrap());
                 } else {
                     break;
@@ -2213,16 +2213,14 @@ impl LocalSnapshot {
         self.git_repositories.get(&repo.work_directory.0)
     }
 
-    pub(crate) fn local_repo_for_path(
-        &self,
-        path: &Path,
-    ) -> Option<(RepositoryWorkDirectory, &LocalRepositoryEntry)> {
-        let (path, repo) = self.repository_and_work_directory_for_path(path)?;
-        Some((path, self.git_repositories.get(&repo.work_directory_id())?))
+    pub fn repo_for_path(&self, path: &Path) -> Option<(RepositoryEntry, &LocalRepositoryEntry)> {
+        let (_, repo_entry) = self.repository_and_work_directory_for_path(path)?;
+        let work_directory_id = repo_entry.work_directory_id();
+        Some((repo_entry, self.git_repositories.get(&work_directory_id)?))
     }
 
     pub fn local_git_repo(&self, path: &Path) -> Option<Arc<Mutex<dyn GitRepository>>> {
-        self.local_repo_for_path(path)
+        self.repo_for_path(path)
             .map(|(_, entry)| entry.repo_ptr.clone())
     }
 
@@ -2538,13 +2536,15 @@ impl BackgroundScannerState {
         let mut ancestor_inodes = self.snapshot.ancestor_inodes_for_path(&path);
         let mut containing_repository = None;
         if !ignore_stack.is_abs_path_ignored(&abs_path, true) {
-            if let Some((workdir_path, repo)) = self.snapshot.local_repo_for_path(&path) {
-                if let Ok(repo_path) = path.strip_prefix(&workdir_path.0) {
-                    containing_repository = Some((
-                        workdir_path,
-                        repo.repo_ptr.clone(),
-                        repo.repo_ptr.lock().staged_statuses(repo_path),
-                    ));
+            if let Some((repo_entry, repo)) = self.snapshot.repo_for_path(&path) {
+                if let Some(workdir_path) = repo_entry.work_directory(&self.snapshot) {
+                    if let Ok(repo_path) = repo_entry.relativize(&self.snapshot, &path) {
+                        containing_repository = Some((
+                            workdir_path,
+                            repo.repo_ptr.clone(),
+                            repo.repo_ptr.lock().staged_statuses(&repo_path),
+                        ));
+                    }
                 }
             }
         }
@@ -2831,7 +2831,6 @@ impl BackgroundScannerState {
             },
         );
 
-        // TODO: Does this work?
         let staged_statuses = self.update_git_statuses(&work_directory, &*repo_lock);
         drop(repo_lock);
 
@@ -2852,6 +2851,9 @@ impl BackgroundScannerState {
         work_directory: &RepositoryWorkDirectory,
         repo: &dyn GitRepository,
     ) -> TreeMap<RepoPath, GitFileStatus> {
+        let repo_entry = self.snapshot.repository_entries.get(work_directory);
+        dbg!(&repo_entry);
+
         let staged_statuses = repo.staged_statuses(Path::new(""));
 
         let mut changes = vec![];
@@ -2859,11 +2861,12 @@ impl BackgroundScannerState {
 
         for mut entry in self
             .snapshot
-            // TODO: This also doesn't work, because we don't have the external_git_repo indexed.
             .descendent_entries(false, false, &work_directory.0)
             .cloned()
         {
-            let Ok(repo_path) = entry.path.strip_prefix(&work_directory.0) else {
+            let repo_path =
+                repo_entry.map(|repo_entry| repo_entry.relativize(&self.snapshot, &entry.path));
+            let Some(Ok(repo_path)) = repo_path else {
                 continue;
             };
             let Some(mtime) = entry.mtime else {
@@ -3646,6 +3649,7 @@ impl BackgroundScanner {
                     while let Poll::Ready(Some(more_paths)) = futures::poll!(fs_events_rx.next()) {
                         paths.extend(more_paths);
                     }
+                    println!("paths: {:?}", paths);
                     self.process_events(paths.clone()).await;
 
                 }
@@ -4100,6 +4104,7 @@ impl BackgroundScanner {
                         &job.containing_repository
                     {
                         if let Ok(repo_path) = child_entry.path.strip_prefix(&repository_dir.0) {
+                            println!("repo_path! {:?}", repo_path);
                             if let Some(mtime) = child_entry.mtime {
                                 let repo_path = RepoPath(repo_path.into());
                                 child_entry.git_status = combine_git_statuses(
@@ -4168,6 +4173,7 @@ impl BackgroundScanner {
         abs_paths: Vec<PathBuf>,
         scan_queue_tx: Option<Sender<ScanJob>>,
     ) {
+        println!("reload_entries_for_paths!!");
         let metadata = futures::future::join_all(
             abs_paths
                 .iter()
@@ -4238,10 +4244,9 @@ impl BackgroundScanner {
                     fs_entry.is_private = state.snapshot.is_path_private(path);
 
                     if !is_dir && !fs_entry.is_ignored && !fs_entry.is_external {
-                        if let Some((work_dir, repo)) = state.snapshot.local_repo_for_path(path) {
-                            if let Ok(repo_path) = path.strip_prefix(work_dir.0) {
+                        if let Some((repo_entry, repo)) = state.snapshot.repo_for_path(path) {
+                            if let Ok(repo_path) = repo_entry.relativize(&state.snapshot, path) {
                                 if let Some(mtime) = fs_entry.mtime {
-                                    let repo_path = RepoPath(repo_path.into());
                                     let repo = repo.repo_ptr.lock();
                                     fs_entry.git_status = repo.status(&repo_path, mtime);
                                 }
@@ -4392,9 +4397,7 @@ impl BackgroundScanner {
         let mut entries_by_id_edits = Vec::new();
         let mut entries_by_path_edits = Vec::new();
         let path = job.abs_path.strip_prefix(&snapshot.abs_path).unwrap();
-        let repo = snapshot
-            .local_repo_for_path(path)
-            .map_or(None, |local_repo| Some(local_repo.1));
+        let repo = snapshot.repo_for_path(path);
         for mut entry in snapshot.child_entries(path).cloned() {
             let was_ignored = entry.is_ignored;
             let abs_path: Arc<Path> = snapshot.abs_path().join(&entry.path).into();
@@ -4430,11 +4433,12 @@ impl BackgroundScanner {
                 path_entry.scan_id = snapshot.scan_id;
                 path_entry.is_ignored = entry.is_ignored;
                 if !entry.is_dir() && !entry.is_ignored && !entry.is_external {
-                    if let Some(repo) = repo {
+                    if let Some((ref repo_entry, local_repo)) = repo {
                         if let Some(mtime) = &entry.mtime {
-                            let repo_path = RepoPath(entry.path.to_path_buf());
-                            let repo = repo.repo_ptr.lock();
-                            entry.git_status = repo.status(&repo_path, *mtime);
+                            if let Ok(repo_path) = repo_entry.relativize(&snapshot, &entry.path) {
+                                let repo = local_repo.repo_ptr.lock();
+                                entry.git_status = repo.status(&repo_path, *mtime);
+                            }
                         }
                     }
                 }
