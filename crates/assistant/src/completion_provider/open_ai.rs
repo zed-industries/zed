@@ -7,6 +7,7 @@ use futures::{future::BoxFuture, stream::BoxStream, FutureExt, StreamExt};
 use gpui::{AnyView, AppContext, FontStyle, FontWeight, Task, TextStyle, View, WhiteSpace};
 use open_ai::{stream_completion, Request, RequestMessage, Role as OpenAiRole};
 use settings::Settings;
+use std::time::Duration;
 use std::{env, sync::Arc};
 use theme::ThemeSettings;
 use ui::prelude::*;
@@ -17,6 +18,7 @@ pub struct OpenAiCompletionProvider {
     api_url: String,
     default_model: OpenAiModel,
     http_client: Arc<dyn HttpClient>,
+    low_speed_timeout: Option<Duration>,
     settings_version: usize,
 }
 
@@ -25,6 +27,7 @@ impl OpenAiCompletionProvider {
         default_model: OpenAiModel,
         api_url: String,
         http_client: Arc<dyn HttpClient>,
+        low_speed_timeout: Option<Duration>,
         settings_version: usize,
     ) -> Self {
         Self {
@@ -32,13 +35,21 @@ impl OpenAiCompletionProvider {
             api_url,
             default_model,
             http_client,
+            low_speed_timeout,
             settings_version,
         }
     }
 
-    pub fn update(&mut self, default_model: OpenAiModel, api_url: String, settings_version: usize) {
+    pub fn update(
+        &mut self,
+        default_model: OpenAiModel,
+        api_url: String,
+        low_speed_timeout: Option<Duration>,
+        settings_version: usize,
+    ) {
         self.default_model = default_model;
         self.api_url = api_url;
+        self.low_speed_timeout = low_speed_timeout;
         self.settings_version = settings_version;
     }
 
@@ -112,9 +123,16 @@ impl OpenAiCompletionProvider {
         let http_client = self.http_client.clone();
         let api_key = self.api_key.clone();
         let api_url = self.api_url.clone();
+        let low_speed_timeout = self.low_speed_timeout;
         async move {
             let api_key = api_key.ok_or_else(|| anyhow!("missing api key"))?;
-            let request = stream_completion(http_client.as_ref(), &api_url, &api_key, request);
+            let request = stream_completion(
+                http_client.as_ref(),
+                &api_url,
+                &api_key,
+                request,
+                low_speed_timeout,
+            );
             let response = request.await?;
             let stream = response
                 .filter_map(|response| async move {
