@@ -398,9 +398,14 @@ impl LanguageModelTool for ProjectIndexTool {
     }
 
     fn description(&self) -> String {
-        r#"This search tool uses a semantic index built on the user's current codebase to find excerpts of text and code related to the query.
+        r#"This search tool uses a semantic index to perform search queries across your codebase, identifying and returning excerpts of text and code possibly related to the query.
 
-        Given that the embeddings are based on the user's current codebase, it's recommended to use snippets of code that are similar to the code you're looking for."#.to_string()
+        Ideal for:
+        - Discovering implementations of similar logic within the project
+        - Finding usage examples of functions, classes/structures, libraries, and other code elements
+        - Developing understanding of the codebase's architecture and design
+
+        Note: The search's effectiveness is directly related to the current state of the codebase and the specificity of your query. It is recommended that you use snippets of code that are similar to the code you wish to find."#.to_string()
     }
 
     fn view(&self, cx: &mut WindowContext) -> gpui::View<Self::View> {
