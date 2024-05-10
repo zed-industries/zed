@@ -1,5 +1,5 @@
 use anyhow::Result;
-use assistant_tooling::{LanguageModelTool, ToolOutput};
+use assistant_tooling::{LanguageModelTool, ToolView};
 use collections::BTreeMap;
 use file_icons::FileIcons;
 use gpui::{prelude::*, AnyElement, Model, Task};
@@ -232,7 +232,7 @@ impl Render for ProjectIndexView {
     }
 }
 
-impl ToolOutput for ProjectIndexView {
+impl ToolView for ProjectIndexView {
     type Input = CodebaseQuery;
     type SerializedState = SerializedState;
 

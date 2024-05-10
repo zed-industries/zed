@@ -1,5 +1,5 @@
 use anyhow::{anyhow, Result};
-use assistant_tooling::{LanguageModelTool, ProjectContext, ToolOutput};
+use assistant_tooling::{LanguageModelTool, ProjectContext, ToolView};
 use editor::Editor;
 use gpui::{prelude::*, Model, Task, View, WeakView};
 use project::Project;
@@ -65,7 +65,7 @@ impl Render for CreateBufferView {
     }
 }
 
-impl ToolOutput for CreateBufferView {
+impl ToolView for CreateBufferView {
     type Input = CreateBufferInput;
 
     type SerializedState = ();
