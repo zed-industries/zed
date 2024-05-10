@@ -394,11 +394,13 @@ impl LanguageModelTool for ProjectIndexTool {
     type View = ProjectIndexView;
 
     fn name(&self) -> String {
-        "query_codebase".to_string()
+        "semantic_search_codebase".to_string()
     }
 
     fn description(&self) -> String {
-        "Semantic search against the user's current codebase, returning excerpts related to the query by computing a dot product against embeddings of code chunks in the code base and an embedding of the query.".to_string()
+        r#"This search tool uses a semantic index built on the user's current codebase to find excerpts of text and code related to the query.
+
+        Given that the embeddings are based on the user's current codebase, it's recommended to use snippets of code that are similar to the code you're looking for."#.to_string()
     }
 
     fn view(&self, cx: &mut WindowContext) -> gpui::View<Self::View> {
