@@ -36,6 +36,7 @@ fuzzy.workspace = true
 git.workspace = true
 globset.workspace = true
 gpui.workspace = true
+http.workspace = true
 itertools.workspace = true
 language.workspace = true
 log.workspace = true

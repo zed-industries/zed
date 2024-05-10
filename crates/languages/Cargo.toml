@@ -17,6 +17,7 @@ collections.workspace = true
 feature_flags.workspace = true
 futures.workspace = true
 gpui.workspace = true
+http.workspace = true
 language.workspace = true
 lazy_static.workspace = true
 log.workspace = true

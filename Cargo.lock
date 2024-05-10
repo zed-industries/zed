@@ -224,10 +224,10 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "futures 0.3.28",
+ "http 0.1.0",
  "serde",
  "serde_json",
  "tokio",
- "util",
 ]
 
 [[package]]
@@ -344,6 +344,7 @@ dependencies = [
  "fs",
  "futures 0.3.28",
  "gpui",
+ "http 0.1.0",
  "indoc",
  "language",
  "log",
@@ -387,6 +388,7 @@ dependencies = [
  "futures 0.3.28",
  "fuzzy",
  "gpui",
+ "http 0.1.0",
  "language",
  "languages",
  "log",
@@ -887,6 +889,7 @@ dependencies = [
  "db",
  "editor",
  "gpui",
+ "http 0.1.0",
  "isahc",
  "log",
  "markdown_preview",
@@ -1754,6 +1757,7 @@ dependencies = [
  "fs",
  "futures 0.3.28",
  "gpui",
+ "http 0.1.0",
  "language",
  "live_kit_client",
  "log",
@@ -1956,6 +1960,7 @@ dependencies = [
  "collections",
  "futures 0.3.28",
  "gpui",
+ "http 0.1.0",
  "language",
  "log",
  "rand 0.8.5",
@@ -2186,6 +2191,7 @@ dependencies = [
  "feature_flags",
  "futures 0.3.28",
  "gpui",
+ "http 0.1.0",
  "lazy_static",
  "log",
  "once_cell",
@@ -2316,6 +2322,7 @@ dependencies = [
  "gpui",
  "headless",
  "hex",
+ "http 0.1.0",
  "indoc",
  "language",
  "live_kit_client",
@@ -2384,6 +2391,7 @@ dependencies = [
  "futures 0.3.28",
  "fuzzy",
  "gpui",
+ "http 0.1.0",
  "language",
  "lazy_static",
  "menu",
@@ -2553,6 +2561,7 @@ dependencies = [
  "fs",
  "futures 0.3.28",
  "gpui",
+ "http 0.1.0",
  "indoc",
  "language",
  "lsp",
@@ -3411,6 +3420,7 @@ dependencies = [
  "fuzzy",
  "git",
  "gpui",
+ "http 0.1.0",
  "indoc",
  "itertools 0.11.0",
  "language",
@@ -3714,6 +3724,7 @@ dependencies = [
  "fs",
  "futures 0.3.28",
  "gpui",
+ "http 0.1.0",
  "isahc",
  "language",
  "log",
@@ -3861,6 +3872,7 @@ dependencies = [
  "editor",
  "futures 0.3.28",
  "gpui",
+ "http 0.1.0",
  "human_bytes",
  "isahc",
  "language",
@@ -4469,6 +4481,7 @@ dependencies = [
  "derive_more",
  "git2",
  "gpui",
+ "http 0.1.0",
  "lazy_static",
  "log",
  "parking_lot",
@@ -4508,6 +4521,7 @@ dependencies = [
  "futures 0.3.28",
  "git",
  "gpui",
+ "http 0.1.0",
  "isahc",
  "pretty_assertions",
  "regex",
@@ -4515,7 +4529,6 @@ dependencies = [
  "serde_json",
  "unindent",
  "url",
- "util",
 ]
 
 [[package]]
@@ -4593,9 +4606,9 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "futures 0.3.28",
+ "http 0.1.0",
  "serde",
  "serde_json",
- "util",
 ]
 
 [[package]]
@@ -4663,6 +4676,7 @@ dependencies = [
  "foreign-types 0.5.0",
  "futures 0.3.28",
  "gpui_macros",
+ "http 0.1.0",
  "image",
  "itertools 0.11.0",
  "lazy_static",
@@ -4980,6 +4994,20 @@ name = "hound"
 version = "3.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4d13cdbd5dbb29f9c88095bbdc2590c9cba0d0a1269b983fef6b2cdd7e9f4db1"
+
+[[package]]
+name = "http"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "futures 0.3.28",
+ "futures-lite 1.13.0",
+ "isahc",
+ "log",
+ "serde",
+ "serde_json",
+ "url",
+]
 
 [[package]]
 name = "http"
@@ -5598,6 +5626,7 @@ dependencies = [
  "git",
  "globset",
  "gpui",
+ "http 0.1.0",
  "indoc",
  "itertools 0.11.0",
  "lazy_static",
@@ -5688,6 +5717,7 @@ dependencies = [
  "feature_flags",
  "futures 0.3.28",
  "gpui",
+ "http 0.1.0",
  "language",
  "lazy_static",
  "log",
@@ -6432,6 +6462,7 @@ dependencies = [
  "async-trait",
  "async_zip",
  "futures 0.3.28",
+ "http 0.1.0",
  "log",
  "semver",
  "serde",
@@ -6826,11 +6857,11 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "futures 0.3.28",
+ "http 0.1.0",
  "isahc",
  "schemars",
  "serde",
  "serde_json",
- "util",
 ]
 
 [[package]]
@@ -7567,6 +7598,7 @@ dependencies = [
  "git2",
  "globset",
  "gpui",
+ "http 0.1.0",
  "itertools 0.11.0",
  "language",
  "log",
@@ -8838,6 +8870,7 @@ dependencies = [
  "futures-batch",
  "gpui",
  "heed",
+ "http 0.1.0",
  "language",
  "languages",
  "log",
@@ -9753,6 +9786,7 @@ dependencies = [
  "env_logger",
  "futures 0.3.28",
  "gpui",
+ "http 0.1.0",
  "language",
  "log",
  "postage",
@@ -9773,6 +9807,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "futures 0.3.28",
+ "http 0.1.0",
  "serde",
  "serde_json",
  "smol",
@@ -10154,6 +10189,7 @@ dependencies = [
  "ctor",
  "env_logger",
  "gpui",
+ "http 0.1.0",
  "lazy_static",
  "log",
  "parking_lot",
@@ -11202,7 +11238,6 @@ dependencies = [
  "futures-lite 1.13.0",
  "git2",
  "globset",
- "isahc",
  "lazy_static",
  "log",
  "rand 0.8.5",
@@ -11214,7 +11249,6 @@ dependencies = [
  "tempfile",
  "tendril",
  "unicase",
- "url",
 ]
 
 [[package]]
@@ -12615,6 +12649,7 @@ dependencies = [
  "fs",
  "futures 0.3.28",
  "gpui",
+ "http 0.1.0",
  "itertools 0.11.0",
  "language",
  "lazy_static",
@@ -12650,6 +12685,7 @@ dependencies = [
  "git",
  "git2",
  "gpui",
+ "http 0.1.0",
  "ignore",
  "itertools 0.11.0",
  "language",
@@ -12899,6 +12935,7 @@ dependencies = [
  "go_to_line",
  "gpui",
  "headless",
+ "http 0.1.0",
  "image_viewer",
  "inline_completion_button",
  "install_cli",

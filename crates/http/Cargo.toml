@@ -1,22 +1,26 @@
 [package]
-name = "anthropic"
+name = "http"
 version = "0.1.0"
 edition = "2021"
 publish = false
-license = "AGPL-3.0-or-later"
+license = "Apache-2.0"
 
 [lints]
 workspace = true
 
+[features]
+test-support = []
+
 [lib]
-path = "src/anthropic.rs"
+path = "src/http.rs"
+doctest = true
 
 [dependencies]
 anyhow.workspace = true
 futures.workspace = true
-http.workspace = true
+isahc.workspace = true
+log.workspace = true
 serde.workspace = true
 serde_json.workspace = true
-
-[dev-dependencies]
-tokio.workspace = true
+futures-lite.workspace = true
+url.workspace = true

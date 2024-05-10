@@ -28,6 +28,7 @@ use gpui::{
     actions, AppContext, AsyncAppContext, Context, EventEmitter, Global, Model, ModelContext, Task,
     WeakModel,
 };
+use http::{AsyncBody, HttpClient, HttpClientWithUrl};
 use language::{
     ContextProviderWithTasks, LanguageConfig, LanguageMatcher, LanguageQueries, LanguageRegistry,
     QUERY_FILENAME_PREFIXES,
@@ -46,12 +47,7 @@ use std::{
 };
 use theme::{ThemeRegistry, ThemeSettings};
 use url::Url;
-use util::{
-    http::{AsyncBody, HttpClient, HttpClientWithUrl},
-    maybe,
-    paths::EXTENSIONS_DIR,
-    ResultExt,
-};
+use util::{maybe, paths::EXTENSIONS_DIR, ResultExt};
 use wasm_host::{
     wit::{is_supported_wasm_api_version, wasm_api_version_range},
     WasmExtension, WasmHost,

@@ -13,8 +13,9 @@ use image::{ImageBuffer, ImageError};
 #[cfg(target_os = "macos")]
 use media::core_video::CVImageBuffer;
 
+use http;
 use thiserror::Error;
-use util::{http, ResultExt};
+use util::ResultExt;
 
 /// A source of image content.
 #[derive(Clone, Debug)]

@@ -19,6 +19,7 @@ use fs::FakeFs;
 use futures::{channel::oneshot, StreamExt as _};
 use git::GitHostingProviderRegistry;
 use gpui::{BackgroundExecutor, Context, Model, Task, TestAppContext, View, VisualTestContext};
+use http::FakeHttpClient;
 use language::LanguageRegistry;
 use node_runtime::FakeNodeRuntime;
 use notifications::NotificationStore;
@@ -41,7 +42,6 @@ use std::{
         Arc,
     },
 };
-use util::http::FakeHttpClient;
 use workspace::{Workspace, WorkspaceId, WorkspaceStore};
 
 pub struct TestServer {
