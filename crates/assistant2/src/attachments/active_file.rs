@@ -1,7 +1,7 @@
 use std::{path::PathBuf, sync::Arc};
 
 use anyhow::{anyhow, Result};
-use assistant_tooling::{LanguageModelAttachment, ProjectContext, ToolOutput};
+use assistant_tooling::{AttachmentOutput, LanguageModelAttachment, ProjectContext};
 use editor::Editor;
 use gpui::{Render, Task, View, WeakModel, WeakView};
 use language::Buffer;
@@ -52,7 +52,7 @@ impl Render for FileAttachmentView {
     }
 }
 
-impl ToolOutput for FileAttachmentView {
+impl AttachmentOutput for FileAttachmentView {
     fn generate(&self, project: &mut ProjectContext, cx: &mut WindowContext) -> String {
         if let Some(path) = &self.project_path {
             project.add_file(path.clone());

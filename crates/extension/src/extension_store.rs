@@ -164,7 +164,7 @@ pub struct ExtensionIndexLanguageEntry {
 actions!(zed, [ReloadExtensions]);
 
 pub fn init(
-    fs: Arc<fs::RealFs>,
+    fs: Arc<dyn Fs>,
     client: Arc<Client>,
     node_runtime: Arc<dyn NodeRuntime>,
     language_registry: Arc<LanguageRegistry>,

@@ -13,7 +13,7 @@ use language::{
     language_settings::{language_settings, LanguageSettings},
     AutoindentMode, Buffer, BufferChunks, BufferSnapshot, Capability, CharKind, Chunk, CursorShape,
     DiagnosticEntry, File, IndentSize, Language, LanguageScope, OffsetRangeExt, OffsetUtf16,
-    Outline, OutlineItem, Point, PointUtf16, Runnable, Selection, TextDimension, ToOffset as _,
+    Outline, OutlineItem, Point, PointUtf16, Selection, TextDimension, ToOffset as _,
     ToOffsetUtf16 as _, ToPoint as _, ToPointUtf16 as _, TransactionId, Unclipped,
 };
 use smallvec::SmallVec;
@@ -1603,6 +1603,11 @@ impl MultiBuffer {
         "untitled".into()
     }
 
+    pub fn set_title(&mut self, title: String, cx: &mut ModelContext<Self>) {
+        self.title = Some(title);
+        cx.notify();
+    }
+
     #[cfg(any(test, feature = "test-support"))]
     pub fn is_parsing(&self, cx: &AppContext) -> bool {
         self.as_singleton().unwrap().read(cx).is_parsing()
@@ -3151,10 +3156,10 @@ impl MultiBufferSnapshot {
                         .redacted_ranges(excerpt.range.context.clone())
                         .map(move |mut redacted_range| {
                             // Re-base onto the excerpts coordinates in the multibuffer
-                            redacted_range.start =
-                                excerpt_offset + (redacted_range.start - excerpt_buffer_start);
-                            redacted_range.end =
-                                excerpt_offset + (redacted_range.end - excerpt_buffer_start);
+                            redacted_range.start = excerpt_offset
+                                + redacted_range.start.saturating_sub(excerpt_buffer_start);
+                            redacted_range.end = excerpt_offset
+                                + redacted_range.end.saturating_sub(excerpt_buffer_start);
 
                             redacted_range
                         })
@@ -3168,7 +3173,7 @@ impl MultiBufferSnapshot {
     pub fn runnable_ranges(
         &self,
         range: Range<Anchor>,
-    ) -> impl Iterator<Item = (Range<usize>, Runnable)> + '_ {
+    ) -> impl Iterator<Item = language::RunnableRange> + '_ {
         let range = range.start.to_offset(self)..range.end.to_offset(self);
         self.excerpts_for_range(range.clone())
             .flat_map(move |(excerpt, excerpt_offset)| {
@@ -3177,16 +3182,19 @@ impl MultiBufferSnapshot {
                 excerpt
                     .buffer
                     .runnable_ranges(excerpt.range.context.clone())
-                    .map(move |(mut match_range, runnable)| {
+                    .map(move |mut runnable| {
                         // Re-base onto the excerpts coordinates in the multibuffer
-                        match_range.start =
-                            excerpt_offset + (match_range.start - excerpt_buffer_start);
-                        match_range.end = excerpt_offset + (match_range.end - excerpt_buffer_start);
-
-                        (match_range, runnable)
+                        runnable.run_range.start = excerpt_offset
+                            + runnable
+                                .run_range
+                                .start
+                                .saturating_sub(excerpt_buffer_start);
+                        runnable.run_range.end = excerpt_offset
+                            + runnable.run_range.end.saturating_sub(excerpt_buffer_start);
+                        runnable
                     })
-                    .skip_while(move |(match_range, _)| match_range.end < range.start)
-                    .take_while(move |(match_range, _)| match_range.start < range.end)
+                    .skip_while(move |runnable| runnable.run_range.end < range.start)
+                    .take_while(move |runnable| runnable.run_range.start < range.end)
             })
     }
 

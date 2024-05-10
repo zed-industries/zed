@@ -428,8 +428,10 @@ impl TestServer {
                     node_runtime: app_state.node_runtime.clone(),
                 },
                 cx,
-            );
-        });
+            )
+        })
+        .await
+        .unwrap();
 
         TestClient {
             app_state,

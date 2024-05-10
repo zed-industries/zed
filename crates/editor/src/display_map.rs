@@ -477,6 +477,11 @@ impl DisplaySnapshot {
             .to_inlay_offset(anchor.to_offset(&self.buffer_snapshot))
     }
 
+    pub fn display_point_to_anchor(&self, point: DisplayPoint, bias: Bias) -> Anchor {
+        self.buffer_snapshot
+            .anchor_at(point.to_offset(&self, bias), bias)
+    }
+
     fn display_point_to_inlay_point(&self, point: DisplayPoint, bias: Bias) -> InlayPoint {
         let block_point = point.0;
         let wrap_point = self.block_snapshot.to_wrap_point(block_point);
@@ -719,6 +724,10 @@ impl DisplaySnapshot {
             clipped = self.clip_at_line_end(DisplayPoint(clipped)).0
         }
         DisplayPoint(clipped)
+    }
+
+    pub fn clip_ignoring_line_ends(&self, point: DisplayPoint, bias: Bias) -> DisplayPoint {
+        DisplayPoint(self.block_snapshot.clip_point(point.0, bias))
     }
 
     pub fn clip_at_line_end(&self, point: DisplayPoint) -> DisplayPoint {

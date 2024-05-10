@@ -2,16 +2,16 @@ mod assistant_settings;
 mod attachments;
 mod completion_provider;
 mod saved_conversation;
-mod saved_conversation_picker;
+mod saved_conversations;
 mod tools;
 pub mod ui;
 
+use crate::saved_conversation::SavedConversationMetadata;
 use crate::ui::UserOrAssistant;
 use ::ui::{div, prelude::*, Color, Tooltip, ViewContext};
 use anyhow::{Context, Result};
 use assistant_tooling::{
-    tool_running_placeholder, AttachmentRegistry, ProjectContext, ToolFunctionCall, ToolRegistry,
-    UserAttachment,
+    AttachmentRegistry, ProjectContext, ToolFunctionCall, ToolRegistry, UserAttachment,
 };
 use attachments::ActiveEditorAttachmentTool;
 use client::{proto, Client, UserStore};
@@ -29,7 +29,7 @@ use language::{language_settings::SoftWrap, LanguageRegistry};
 use markdown::{Markdown, MarkdownStyle};
 use open_ai::{FunctionContent, ToolCall, ToolCallContent};
 use saved_conversation::{SavedAssistantMessagePart, SavedChatMessage, SavedConversation};
-use saved_conversation_picker::SavedConversationPicker;
+use saved_conversations::SavedConversations;
 use semantic_index::{CloudEmbeddingProvider, ProjectIndex, ProjectIndexDebugView, SemanticIndex};
 use serde::{Deserialize, Serialize};
 use settings::Settings;
@@ -61,15 +61,7 @@ pub enum SubmitMode {
     Codebase,
 }
 
-gpui::actions!(
-    assistant2,
-    [
-        Cancel,
-        ToggleFocus,
-        DebugProjectIndex,
-        ToggleSavedConversations
-    ]
-);
+gpui::actions!(assistant2, [Cancel, ToggleFocus, DebugProjectIndex,]);
 gpui::impl_actions!(assistant2, [Submit]);
 
 pub fn init(client: Arc<Client>, cx: &mut AppContext) {
@@ -109,8 +101,6 @@ pub fn init(client: Arc<Client>, cx: &mut AppContext) {
         },
     )
     .detach();
-    cx.observe_new_views(SavedConversationPicker::register)
-        .detach();
 }
 
 pub fn enabled(cx: &AppContext) -> bool {
@@ -139,16 +129,13 @@ impl AssistantPanel {
 
                 let mut tool_registry = ToolRegistry::new();
                 tool_registry
-                    .register(ProjectIndexTool::new(project_index.clone()), cx)
+                    .register(ProjectIndexTool::new(project_index.clone()))
                     .unwrap();
                 tool_registry
-                    .register(
-                        CreateBufferTool::new(workspace.clone(), project.clone()),
-                        cx,
-                    )
+                    .register(CreateBufferTool::new(workspace.clone(), project.clone()))
                     .unwrap();
                 tool_registry
-                    .register(AnnotationTool::new(workspace.clone(), project.clone()), cx)
+                    .register(AnnotationTool::new(workspace.clone(), project.clone()))
                     .unwrap();
 
                 let mut attachment_registry = AttachmentRegistry::new();
@@ -262,6 +249,8 @@ pub struct AssistantChat {
     fs: Arc<dyn Fs>,
     language_registry: Arc<LanguageRegistry>,
     composer_editor: View<Editor>,
+    saved_conversations: View<SavedConversations>,
+    saved_conversations_open: bool,
     project_index_button: View<ProjectIndexButton>,
     active_file_button: Option<View<ActiveFileButton>>,
     user_store: Model<UserStore>,
@@ -317,6 +306,24 @@ impl AssistantChat {
             _ => None,
         };
 
+        let saved_conversations = cx.new_view(|cx| SavedConversations::new(cx));
+        cx.spawn({
+            let fs = fs.clone();
+            let saved_conversations = saved_conversations.downgrade();
+            |_assistant_chat, mut cx| async move {
+                let saved_conversation_metadata = SavedConversationMetadata::list(fs).await?;
+
+                cx.update(|cx| {
+                    saved_conversations.update(cx, |this, cx| {
+                        this.init(saved_conversation_metadata, cx);
+                    })
+                })??;
+
+                anyhow::Ok(())
+            }
+        })
+        .detach_and_log_err(cx);
+
         Self {
             model,
             messages: Vec::new(),
@@ -326,6 +333,8 @@ impl AssistantChat {
                 editor.set_placeholder_text("Send a message…", cx);
                 editor
             }),
+            saved_conversations,
+            saved_conversations_open: false,
             list_state,
             user_store,
             fs,
@@ -383,6 +392,10 @@ impl AssistantChat {
             ChatMessage::User(message) => message.id == id,
             ChatMessage::Assistant(message) => message.id == id,
         })
+    }
+
+    fn toggle_saved_conversations(&mut self) {
+        self.saved_conversations_open = !self.saved_conversations_open;
     }
 
     fn cancel(&mut self, _: &Cancel, cx: &mut ViewContext<Self>) {
@@ -568,25 +581,27 @@ impl AssistantChat {
                                     .update(cx, |message, cx| message.append(&content, cx));
                             }
 
-                            for tool_call in delta.tool_calls {
-                                let index = tool_call.index as usize;
+                            for tool_call_delta in delta.tool_calls {
+                                let index = tool_call_delta.index as usize;
                                 if index >= message.tool_calls.len() {
                                     message.tool_calls.resize_with(index + 1, Default::default);
                                 }
-                                let call = &mut message.tool_calls[index];
+                                let tool_call = &mut message.tool_calls[index];
 
-                                if let Some(id) = &tool_call.id {
-                                    call.id.push_str(id);
+                                if let Some(id) = &tool_call_delta.id {
+                                    tool_call.id.push_str(id);
                                 }
 
-                                match tool_call.variant {
-                                    Some(proto::tool_call_delta::Variant::Function(tool_call)) => {
-                                        if let Some(name) = &tool_call.name {
-                                            call.name.push_str(name);
-                                        }
-                                        if let Some(arguments) = &tool_call.arguments {
-                                            call.arguments.push_str(arguments);
-                                        }
+                                match tool_call_delta.variant {
+                                    Some(proto::tool_call_delta::Variant::Function(
+                                        tool_call_delta,
+                                    )) => {
+                                        this.tool_registry.update_tool_call(
+                                            tool_call,
+                                            tool_call_delta.name.as_deref(),
+                                            tool_call_delta.arguments.as_deref(),
+                                            cx,
+                                        );
                                     }
                                     None => {}
                                 }
@@ -616,35 +631,21 @@ impl AssistantChat {
                         cx.notify();
                     } else {
                         if let Some(current_message) = messages.last_mut() {
-                            for tool_call in current_message.tool_calls.iter() {
-                                tool_tasks.push(this.tool_registry.call(tool_call, cx));
+                            for tool_call in current_message.tool_calls.iter_mut() {
+                                tool_tasks
+                                    .extend(this.tool_registry.execute_tool_call(tool_call, cx));
                             }
                         }
                     }
                 }
             })?;
 
+            // This ends recursion on calling for responses after tools
             if tool_tasks.is_empty() {
                 return Ok(());
             }
 
-            let tools = join_all(tool_tasks.into_iter()).await;
-            // If the WindowContext went away for any tool's view we don't include it
-            // especially since the below call would fail for the same reason.
-            let tools = tools.into_iter().filter_map(|tool| tool.ok()).collect();
-
-            this.update(cx, |this, cx| {
-                if let Some(ChatMessage::Assistant(AssistantMessage { messages, .. })) =
-                    this.messages.last_mut()
-                {
-                    if let Some(current_message) = messages.last_mut() {
-                        current_message.tool_calls = tools;
-                        cx.notify();
-                    } else {
-                        unreachable!()
-                    }
-                }
-            })?;
+            join_all(tool_tasks.into_iter()).await;
         }
     }
 
@@ -901,7 +902,7 @@ impl AssistantChat {
                     let tools = message
                         .tool_calls
                         .iter()
-                        .map(|tool_call| self.tool_registry.render_tool_call(tool_call, cx))
+                        .filter_map(|tool_call| self.tool_registry.render_tool_call(tool_call, cx))
                         .collect::<Vec<AnyElement>>();
 
                     if !tools.is_empty() {
@@ -910,7 +911,7 @@ impl AssistantChat {
                 }
 
                 if message_elements.is_empty() {
-                    message_elements.push(tool_running_placeholder());
+                    message_elements.push(::ui::Label::new("Researching...").into_any_element())
                 }
 
                 div()
@@ -990,13 +991,11 @@ impl AssistantChat {
 
                         for tool_call in &message.tool_calls {
                             // Every tool call _must_ have a result by ID, otherwise OpenAI will error.
-                            let content = match &tool_call.result {
-                                Some(result) => {
-                                    result.generate(&tool_call.name, &mut project_context, cx)
-                                }
-                                None => "".to_string(),
-                            };
-
+                            let content = self.tool_registry.content_for_tool_call(
+                                tool_call,
+                                &mut project_context,
+                                cx,
+                            );
                             completion_messages.push(CompletionMessage::Tool {
                                 content,
                                 tool_call_id: tool_call.id.clone(),
@@ -1045,7 +1044,11 @@ impl AssistantChat {
                         tool_calls: message
                             .tool_calls
                             .iter()
-                            .map(|tool_call| self.tool_registry.serialize_tool_call(tool_call))
+                            .filter_map(|tool_call| {
+                                self.tool_registry
+                                    .serialize_tool_call(tool_call, cx)
+                                    .log_err()
+                            })
                             .collect(),
                     })
                     .collect(),
@@ -1076,18 +1079,18 @@ impl Render for AssistantChat {
                     .h(header_height)
                     .p(Spacing::Small.rems(cx))
                     .child(
-                        IconButton::new("open-saved-conversations", IconName::ChevronLeft)
-                            .on_click(|_event, cx| {
-                                cx.dispatch_action(Box::new(ToggleSavedConversations))
-                            })
-                            .tooltip(move |cx| {
-                                Tooltip::with_meta(
-                                    "Switch Conversations",
-                                    Some(&ToggleSavedConversations),
-                                    "UI will change, temporary.",
-                                    cx,
-                                )
-                            }),
+                        IconButton::new(
+                            "toggle-saved-conversations",
+                            if self.saved_conversations_open {
+                                IconName::ChevronRight
+                            } else {
+                                IconName::ChevronLeft
+                            },
+                        )
+                        .on_click(cx.listener(|this, _event, _cx| {
+                            this.toggle_saved_conversations();
+                        }))
+                        .tooltip(move |cx| Tooltip::text("Switch Conversations", cx)),
                     )
                     .child(
                         h_flex()
@@ -1111,6 +1114,15 @@ impl Render for AssistantChat {
                             ),
                     ),
             )
+            .when(self.saved_conversations_open, |element| {
+                element.child(
+                    h_flex()
+                        .absolute()
+                        .top(header_height)
+                        .w_full()
+                        .child(self.saved_conversations.clone()),
+                )
+            })
             .child(Composer::new(
                 self.composer_editor.clone(),
                 self.project_index_button.clone(),

@@ -104,22 +104,18 @@ jobs:
   # todo(linux): Actually run the tests
   linux_tests:
     name: (Linux) Run Clippy and tests
-    runs-on: ubuntu-latest
+    runs-on:
+      - self-hosted
+      - deploy
     steps:
+      - name: Add Rust to the PATH
+        run: echo "$HOME/.cargo/bin" >> $GITHUB_PATH
+
       - name: Checkout repo
         uses: actions/checkout@v4
         with:
           clean: false
           submodules: "recursive"
-
-      - name: Cache dependencies
-        uses: swatinem/rust-cache@v2
-        with:
-          save-if: ${{ github.ref == 'refs/heads/main' }}
-
-      - name: configure linux
-        shell: bash -euxo pipefail {0}
-        run: script/linux
 
       - name: cargo clippy
         run: cargo xtask clippy
@@ -262,26 +258,25 @@ jobs:
 
   bundle-linux:
     name: Create a Linux bundle
-    runs-on: ubuntu-22.04 # keep the version fixed to avoid libc and dynamic linked library issues
+    runs-on:
+      - self-hosted
+      - deploy
     if: ${{ startsWith(github.ref, 'refs/tags/v') || contains(github.event.pull_request.labels.*.name, 'run-bundling') }}
     needs: [linux_tests]
     env:
       ZED_CLIENT_CHECKSUM_SEED: ${{ secrets.ZED_CLIENT_CHECKSUM_SEED }}
     steps:
+      - name: Add Rust to the PATH
+        run: echo "$HOME/.cargo/bin" >> $GITHUB_PATH
+
       - name: Checkout repo
         uses: actions/checkout@v4
         with:
           clean: false
           submodules: "recursive"
 
-      - name: Cache dependencies
-        uses: swatinem/rust-cache@v2
-        with:
-          save-if: ${{ github.ref == 'refs/heads/main' }}
-
-      - name: Configure linux
-        shell: bash -euxo pipefail {0}
-        run: script/linux
+      - name: Limit target directory size
+        run: script/clear-target-dir-if-larger-than 100
 
       - name: Determine version and release channel
         if: ${{ startsWith(github.ref, 'refs/tags/v') }}
