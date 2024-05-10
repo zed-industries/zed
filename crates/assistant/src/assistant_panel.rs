@@ -924,6 +924,33 @@ impl AssistantPanel {
             })
     }
 
+    fn render_inject_context_menu(&self, cx: &mut ViewContext<Self>) -> impl Element {
+        let assistant = cx.view().clone();
+
+        popover_menu("inject-context-menu")
+            .trigger(IconButton::new("trigger", IconName::Quote).tooltip(|cx| {
+                Tooltip::with_meta("Insert Context", None, "Type # to insert via keyboard", cx)
+            }))
+            .menu(move |cx| {
+                let assistant = assistant.clone();
+                ContextMenu::build(cx, |menu, _cx| {
+                    menu.entry("Insert Search", None, {
+                        let assistant = assistant.clone();
+                        move |_cx| {}
+                    })
+                    .entry("Insert Docs", None, {
+                        let assistant = assistant.clone();
+                        move |cx| {}
+                    })
+                    .entry("Quote Selection", None, {
+                        let assistant = assistant.clone();
+                        move |cx| {}
+                    })
+                })
+                .into()
+            })
+    }
+
     fn render_context_injector_buttons(&self, cx: &mut ViewContext<Self>) -> Vec<IconButton> {
         vec![
             IconButton::new("search", IconName::MagnifyingGlass)
@@ -1093,11 +1120,7 @@ impl AssistantPanel {
                                 .color(ui::DividerColor::Border),
                         )
                     })
-                    .child(
-                        h_flex()
-                            .gap_1()
-                            .children(self.render_context_injector_buttons(cx)),
-                    ),
+                    .child(h_flex().gap_1().child(self.render_inject_context_menu(cx))),
             );
 
         let contents = if self.active_conversation_editor().is_some() {
