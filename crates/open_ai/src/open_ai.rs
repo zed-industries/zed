@@ -1,11 +1,11 @@
 use anyhow::{anyhow, Context, Result};
 use futures::{io::BufReader, stream::BoxStream, AsyncBufReadExt, AsyncReadExt, StreamExt};
+use http::{AsyncBody, HttpClient, Method, Request as HttpRequest};
 use isahc::config::Configurable;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 use std::time::Duration;
 use std::{convert::TryFrom, future::Future};
-use util::http::{AsyncBody, HttpClient, Method, Request as HttpRequest};
 
 pub const OPEN_AI_API_URL: &str = "https://api.openai.com/v1";
 

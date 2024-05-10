@@ -41,6 +41,7 @@ members = [
     "crates/gpui",
     "crates/gpui_macros",
     "crates/headless",
+    "crates/http",
     "crates/image_viewer",
     "crates/inline_completion_button",
     "crates/install_cli",
@@ -183,6 +184,7 @@ google_ai = { path = "crates/google_ai" }
 gpui = { path = "crates/gpui" }
 gpui_macros = { path = "crates/gpui_macros" }
 headless = { path = "crates/headless" }
+http = { path = "crates/http" }
 install_cli = { path = "crates/install_cli" }
 image_viewer = { path = "crates/image_viewer" }
 inline_completion_button = { path = "crates/inline_completion_button" }
