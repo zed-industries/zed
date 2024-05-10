@@ -218,7 +218,7 @@ pub async fn stream_completion(
         .header("Authorization", format!("Bearer {}", api_key));
 
     if let Some(low_speed_timeout) = low_speed_timeout {
-        request_builder = request_builder.low_speed_timeout(100, low_speed_timeout)
+        request_builder = request_builder.low_speed_timeout(100, low_speed_timeout);
     };
 
     let request = request_builder.body(AsyncBody::from(serde_json::to_string(&request)?))?;
