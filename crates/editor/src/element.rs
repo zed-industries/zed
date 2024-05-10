@@ -26,7 +26,7 @@ use gpui::{
     anchored, deferred, div, fill, outline, point, px, quad, relative, size, svg,
     transparent_black, Action, AnchorCorner, AnyElement, AvailableSpace, Bounds, ClipboardItem,
     ContentMask, Corners, CursorStyle, DispatchPhase, Edges, Element, ElementInputHandler, Entity,
-    GlobalElementId, Hitbox, Hsla, InteractiveElement, IntoElement, Length, ModifiersChangedEvent,
+    GlobalElementId, Hitbox, Hsla, InteractiveElement, IntoElement, ModifiersChangedEvent,
     MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, PaintQuad, ParentElement, Pixels,
     ScrollDelta, ScrollWheelEvent, ShapedLine, SharedString, Size, Stateful,
     StatefulInteractiveElement, Style, Styled, TextRun, TextStyle, TextStyleRefinement, View,
