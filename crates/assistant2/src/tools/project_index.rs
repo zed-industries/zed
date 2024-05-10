@@ -173,7 +173,7 @@ impl Render for ProjectIndexView {
                 let file_count = excerpts.len();
 
                 if excerpts.is_empty() {
-                    (format!("No results found"), div())
+                    ("No results found".to_string(), div())
                 } else {
                     let header_text = format!(
                         "Read {} {}",
