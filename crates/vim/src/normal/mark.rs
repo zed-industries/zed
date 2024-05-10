@@ -68,9 +68,11 @@ pub fn create_mark_before(vim: &mut Vim, text: Arc<str>, cx: &mut WindowContext)
 }
 
 pub fn jump(text: Arc<str>, line: bool, cx: &mut WindowContext) {
-    let anchors = match &*text {
-        "{" | "}" => Vim::update(cx, |vim, cx| {
-            vim.update_active_editor(cx, |_, editor, cx| {
+    let anchors = Vim::update(cx, |vim, cx| {
+        vim.pop_operator(cx);
+
+        match &*text {
+            "{" | "}" => vim.update_active_editor(cx, |_, editor, cx| {
                 let (map, selections) = editor.selections.all_display(cx);
                 selections
                     .into_iter()
@@ -84,13 +86,10 @@ pub fn jump(text: Arc<str>, line: bool, cx: &mut WindowContext) {
                             .anchor_before(point.to_offset(&map, Bias::Left))
                     })
                     .collect::<Vec<Anchor>>()
-            })
-        }),
-        _ => Vim::read(cx).state().marks.get(&*text).cloned(),
-    };
-
-    Vim::update(cx, |vim, cx| {
-        vim.pop_operator(cx);
+            }),
+            "." => vim.state().change_list.last().cloned(),
+            _ => vim.state().marks.get(&*text).cloned(),
+        }
     });
 
     let Some(anchors) = anchors else { return };

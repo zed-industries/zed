@@ -77,6 +77,8 @@ pub struct EditorState {
     pub replacements: Vec<(Range<editor::Anchor>, String)>,
 
     pub marks: HashMap<String, Vec<Anchor>>,
+    pub change_list: Vec<Vec<Anchor>>,
+    pub change_list_position: Option<usize>,
 
     pub current_tx: Option<TransactionId>,
     pub current_anchor: Option<Selection<Anchor>>,
