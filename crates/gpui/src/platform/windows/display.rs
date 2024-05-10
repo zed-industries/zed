@@ -107,6 +107,15 @@ impl WindowsDisplay {
         Some(WindowsDisplay::new_with_handle(monitor))
     }
 
+    pub fn check_given_origin(&self, bounds: Bounds<DevicePixels>) -> bool {
+        let center = bounds.center();
+        let center = POINT {
+            x: center.x.0,
+            y: center.y.0,
+        };
+        !unsafe { MonitorFromPoint(center, MONITOR_DEFAULTTONULL) }.is_invalid()
+    }
+
     pub fn displays() -> Vec<Rc<dyn PlatformDisplay>> {
         available_monitors()
             .into_iter()
