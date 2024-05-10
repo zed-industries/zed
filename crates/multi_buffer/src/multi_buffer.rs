@@ -3182,16 +3182,24 @@ impl MultiBufferSnapshot {
                 excerpt
                     .buffer
                     .runnable_ranges(excerpt.range.context.clone())
-                    .map(move |mut runnable| {
+                    .filter_map(move |mut runnable| {
                         // Re-base onto the excerpts coordinates in the multibuffer
-                        runnable.run_range.start = excerpt_offset
-                            + runnable
-                                .run_range
-                                .start
-                                .saturating_sub(excerpt_buffer_start);
-                        runnable.run_range.end = excerpt_offset
-                            + runnable.run_range.end.saturating_sub(excerpt_buffer_start);
-                        runnable
+                        //
+                        // The node matching our runnables query might partially overlap with
+                        // the provided range. If the run indicator is outside of excerpt bounds, do not actually show it.
+                        if runnable.run_range.start < excerpt_buffer_start {
+                            return None;
+                        }
+                        if language::ToPoint::to_point(&runnable.run_range.end, &excerpt.buffer).row
+                            > excerpt.max_buffer_row
+                        {
+                            return None;
+                        }
+                        runnable.run_range.start =
+                            excerpt_offset + runnable.run_range.start - excerpt_buffer_start;
+                        runnable.run_range.end =
+                            excerpt_offset + runnable.run_range.end - excerpt_buffer_start;
+                        Some(runnable)
                     })
                     .skip_while(move |runnable| runnable.run_range.end < range.start)
                     .take_while(move |runnable| runnable.run_range.start < range.end)
