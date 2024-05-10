@@ -13,7 +13,7 @@ use std::ops::Range;
 use workspace::Workspace;
 
 use crate::{
-    normal::normal_motion,
+    normal::{mark, normal_motion},
     state::{Mode, Operator},
     surrounds::SurroundsType,
     utils::coerce_punctuation,
@@ -104,6 +104,10 @@ pub enum Motion {
     ZedSearchResult {
         prior_selections: Vec<Range<Anchor>>,
         new_selections: Vec<Range<Anchor>>,
+    },
+    Jump {
+        anchor: Anchor,
+        line: bool,
     },
 }
 
@@ -447,6 +451,7 @@ pub(crate) fn motion(motion: Motion, cx: &mut WindowContext) {
         vim.clear_operator(cx);
         if let Some(operator) = waiting_operator {
             vim.push_operator(operator, cx);
+            vim.update_state(|state| state.pre_count = count)
         }
     });
 }
@@ -468,6 +473,7 @@ impl Motion {
             | WindowTop
             | WindowMiddle
             | WindowBottom
+            | Jump { line: true, .. }
             | EndOfParagraph => true,
             EndOfLine { .. }
             | Matching
@@ -491,6 +497,7 @@ impl Motion {
             | FindBackward { .. }
             | RepeatFind { .. }
             | RepeatFindReversed { .. }
+            | Jump { line: false, .. }
             | ZedSearchResult { .. } => false,
         }
     }
@@ -530,7 +537,8 @@ impl Motion {
             | WindowMiddle
             | WindowBottom
             | NextLineStart
-            | ZedSearchResult { .. } => false,
+            | ZedSearchResult { .. }
+            | Jump { .. } => false,
         }
     }
 
@@ -569,6 +577,7 @@ impl Motion {
             | PreviousSubwordStart { .. }
             | FirstNonWhitespace { .. }
             | FindBackward { .. }
+            | Jump { .. }
             | ZedSearchResult { .. } => false,
             RepeatFind { last_find: motion } | RepeatFindReversed { last_find: motion } => {
                 motion.inclusive()
@@ -755,11 +764,12 @@ impl Motion {
             },
             NextLineStart => (next_line_start(map, point, times), SelectionGoal::None),
             StartOfLineDownward => (next_line_start(map, point, times - 1), SelectionGoal::None),
-            EndOfLineDownward => (next_line_end(map, point, times), SelectionGoal::None),
+            EndOfLineDownward => (last_non_whitespace(map, point, times), SelectionGoal::None),
             GoToColumn => (go_to_column(map, point, times), SelectionGoal::None),
             WindowTop => window_top(map, point, &text_layout_details, times - 1),
             WindowMiddle => window_middle(map, point, &text_layout_details),
             WindowBottom => window_bottom(map, point, &text_layout_details, times - 1),
+            Jump { line, anchor } => mark::jump_motion(map, *anchor, *line),
             ZedSearchResult { new_selections, .. } => {
                 // There will be only one selection, as
                 // Search::SelectNextMatch selects a single match.
@@ -1093,7 +1103,7 @@ pub(crate) fn next_char(
         *new_point.row_mut() += 1;
         *new_point.column_mut() = 0;
     }
-    new_point
+    map.clip_ignoring_line_ends(new_point, Bias::Right)
 }
 
 pub(crate) fn next_word_start(
@@ -1420,6 +1430,26 @@ pub(crate) fn first_non_whitespace(
     }
 
     start_offset.to_display_point(map)
+}
+
+pub(crate) fn last_non_whitespace(
+    map: &DisplaySnapshot,
+    from: DisplayPoint,
+    count: usize,
+) -> DisplayPoint {
+    let mut end_of_line = end_of_line(map, false, from, count).to_offset(map, Bias::Left);
+    let scope = map.buffer_snapshot.language_scope_at(from.to_point(map));
+    for (ch, offset) in map.reverse_buffer_chars_at(end_of_line) {
+        if ch == '\n' {
+            break;
+        }
+        end_of_line = offset;
+        if char_kind(&scope, ch) != CharKind::Whitespace || ch == '\n' {
+            break;
+        }
+    }
+
+    end_of_line.to_display_point(map)
 }
 
 pub(crate) fn start_of_line(
@@ -1897,6 +1927,16 @@ mod test {
         cx.set_shared_state("ˇone\n  two\nthree").await;
         cx.simulate_shared_keystrokes(["enter"]).await;
         cx.assert_shared_state("one\n  ˇtwo\nthree").await;
+    }
+
+    #[gpui::test]
+    async fn test_end_of_line_downward(cx: &mut gpui::TestAppContext) {
+        let mut cx = NeovimBackedTestContext::new(cx).await;
+        cx.set_shared_state("ˇ one \n two \nthree").await;
+        cx.simulate_shared_keystrokes(["g", "_"]).await;
+        cx.assert_shared_state(" onˇe \n two \nthree").await;
+        cx.simulate_shared_keystrokes(["2", "g", "_"]).await;
+        cx.assert_shared_state(" one \n twˇo \nthree").await;
     }
 
     #[gpui::test]

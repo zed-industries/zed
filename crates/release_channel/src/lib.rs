@@ -7,7 +7,8 @@ use std::{env, str::FromStr};
 use gpui::{AppContext, Global, SemanticVersion};
 use once_cell::sync::Lazy;
 
-static RELEASE_CHANNEL_NAME: Lazy<String> = if cfg!(debug_assertions) {
+/// stable | dev | nightly | preview
+pub static RELEASE_CHANNEL_NAME: Lazy<String> = if cfg!(debug_assertions) {
     Lazy::new(|| {
         env::var("ZED_RELEASE_CHANNEL")
             .unwrap_or_else(|_| include_str!("../../zed/RELEASE_CHANNEL").trim().to_string())
@@ -133,6 +134,18 @@ impl ReleaseChannel {
             ReleaseChannel::Nightly => "nightly",
             ReleaseChannel::Preview => "preview",
             ReleaseChannel::Stable => "stable",
+        }
+    }
+
+    /// Returns the application ID that's used by Wayland as application ID
+    /// and WM_CLASS on X11.
+    /// This also has to match the bundle identifier for Zed on macOS.
+    pub fn app_id(&self) -> &'static str {
+        match self {
+            ReleaseChannel::Dev => "dev.zed.Zed-Dev",
+            ReleaseChannel::Nightly => "dev.zed.Zed-Nightly",
+            ReleaseChannel::Preview => "dev.zed.Zed-Preview",
+            ReleaseChannel::Stable => "dev.zed.Zed",
         }
     }
 

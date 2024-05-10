@@ -1,10 +1,11 @@
 #[cfg(test)]
 mod syntax_map_tests;
 
-use crate::{Grammar, InjectionConfig, Language, LanguageId, LanguageRegistry};
+use crate::{
+    with_parser, Grammar, InjectionConfig, Language, LanguageId, LanguageRegistry, QUERY_CURSORS,
+};
 use collections::HashMap;
 use futures::FutureExt;
-use parking_lot::Mutex;
 use std::{
     borrow::Cow,
     cmp::{self, Ordering, Reverse},
@@ -16,10 +17,6 @@ use std::{
 use sum_tree::{Bias, SeekTarget, SumTree};
 use text::{Anchor, BufferSnapshot, OffsetRangeExt, Point, Rope, ToOffset, ToPoint};
 use tree_sitter::{Node, Query, QueryCapture, QueryCaptures, QueryCursor, QueryMatches, Tree};
-
-use super::PARSER;
-
-static QUERY_CURSORS: Mutex<Vec<QueryCursor>> = Mutex::new(vec![]);
 
 #[derive(Default)]
 pub struct SyntaxMap {
@@ -59,6 +56,7 @@ pub struct SyntaxMapCapture<'a> {
 
 #[derive(Debug)]
 pub struct SyntaxMapMatch<'a> {
+    pub language: Arc<Language>,
     pub depth: usize,
     pub pattern_index: usize,
     pub captures: &'a [QueryCapture<'a>],
@@ -74,6 +72,7 @@ struct SyntaxMapCapturesLayer<'a> {
 }
 
 struct SyntaxMapMatchesLayer<'a> {
+    language: Arc<Language>,
     depth: usize,
     next_pattern_index: usize,
     next_captures: Vec<QueryCapture<'a>>,
@@ -211,7 +210,7 @@ struct TextProvider<'a>(&'a Rope);
 
 struct ByteChunks<'a>(text::Chunks<'a>);
 
-struct QueryCursorHandle(Option<QueryCursor>);
+pub(crate) struct QueryCursorHandle(Option<QueryCursor>);
 
 impl SyntaxMap {
     pub fn new() -> Self {
@@ -1019,6 +1018,7 @@ impl<'a> SyntaxMapMatches<'a> {
                     result.grammars.len() - 1
                 });
             let mut layer = SyntaxMapMatchesLayer {
+                language: layer.language.clone(),
                 depth: layer.depth,
                 grammar_index,
                 matches,
@@ -1051,10 +1051,13 @@ impl<'a> SyntaxMapMatches<'a> {
 
     pub fn peek(&self) -> Option<SyntaxMapMatch> {
         let layer = self.layers.first()?;
+
         if !layer.has_next {
             return None;
         }
+
         Some(SyntaxMapMatch {
+            language: layer.language.clone(),
             depth: layer.depth,
             grammar_index: layer.grammar_index,
             pattern_index: layer.next_pattern_index,
@@ -1177,8 +1180,7 @@ fn parse_text(
     ranges: Vec<tree_sitter::Range>,
     old_tree: Option<Tree>,
 ) -> anyhow::Result<Tree> {
-    PARSER.with(|parser| {
-        let mut parser = parser.borrow_mut();
+    with_parser(|parser| {
         let mut chunks = text.chunks_in_range(start_byte..text.len());
         parser.set_included_ranges(&ranges)?;
         parser.set_language(&grammar.ts_language)?;
@@ -1739,7 +1741,7 @@ impl<'a> Iterator for ByteChunks<'a> {
 }
 
 impl QueryCursorHandle {
-    pub(crate) fn new() -> Self {
+    pub fn new() -> Self {
         let mut cursor = QUERY_CURSORS.lock().pop().unwrap_or_else(QueryCursor::new);
         cursor.set_match_limit(64);
         QueryCursorHandle(Some(cursor))

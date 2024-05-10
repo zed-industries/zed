@@ -1,10 +1,9 @@
 pub mod arc_cow;
-pub mod codeberg;
 pub mod fs;
-mod git_author;
 pub mod github;
 pub mod http;
 pub mod paths;
+pub mod serde;
 #[cfg(any(test, feature = "test-support"))]
 pub mod test;
 

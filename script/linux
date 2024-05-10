@@ -1,9 +1,9 @@
-#!/usr/bin/bash
+#!/usr/bin/env bash
 
-set -e
+set -ex
 
 # install the wasm toolchain
-rustup target add wasm32-wasi
+which rustup > /dev/null 2>&1 || curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
 
 # if sudo is not installed, define an empty alias
 maysudo=$(command -v sudo || command -v doas || true)
@@ -13,6 +13,8 @@ maysudo=$(command -v sudo || command -v doas || true)
 apt=$(command -v apt-get || true)
 if [[ -n $apt ]]; then
   deps=(
+    gcc
+    g++
     libasound2-dev
     libfontconfig-dev
     libwayland-dev
@@ -79,6 +81,7 @@ if [[ -n $pacman ]]; then
     libxkbcommon-x11
     openssl
     zstd
+    pkgconf
   )
   $maysudo "$pacman" -S --needed --noconfirm "${deps[@]}"
   exit 0

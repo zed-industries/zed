@@ -15,12 +15,11 @@ pub mod search_history;
 use anyhow::{anyhow, bail, Context as _, Result};
 use async_trait::async_trait;
 use client::{
-    proto, Client, Collaborator, PendingEntitySubscription, ProjectId, RemoteProjectId,
+    proto, Client, Collaborator, DevServerProjectId, PendingEntitySubscription, ProjectId,
     TypedEnvelope, UserStore,
 };
 use clock::ReplicaId;
 use collections::{hash_map, BTreeMap, HashMap, HashSet, VecDeque};
-use copilot::Copilot;
 use debounced_delay::DebouncedDelay;
 use futures::{
     channel::{
@@ -98,7 +97,7 @@ use std::{
 };
 use task::static_source::{StaticSource, TrackedFile};
 use terminals::Terminals;
-use text::{Anchor, BufferId};
+use text::{Anchor, BufferId, LineEnding};
 use util::{
     debug_panic, defer,
     http::{HttpClient, Url},
@@ -200,8 +199,6 @@ pub struct Project {
     _maintain_buffer_languages: Task<()>,
     _maintain_workspace_config: Task<Result<()>>,
     terminals: Terminals,
-    copilot_lsp_subscription: Option<gpui::Subscription>,
-    copilot_log_subscription: Option<lsp::Subscription>,
     current_lsp_settings: HashMap<Arc<str>, LspSettings>,
     node: Option<Arc<dyn NodeRuntime>>,
     default_prettier: DefaultPrettier,
@@ -209,7 +206,7 @@ pub struct Project {
     prettier_instances: HashMap<PathBuf, PrettierInstance>,
     tasks: Model<Inventory>,
     hosted_project_id: Option<ProjectId>,
-    remote_project_id: Option<client::RemoteProjectId>,
+    dev_server_project_id: Option<client::DevServerProjectId>,
     search_history: SearchHistory,
 }
 
@@ -665,6 +662,7 @@ impl Project {
         client.add_model_request_handler(Self::handle_open_buffer_for_symbol);
         client.add_model_request_handler(Self::handle_open_buffer_by_id);
         client.add_model_request_handler(Self::handle_open_buffer_by_path);
+        client.add_model_request_handler(Self::handle_open_new_buffer);
         client.add_model_request_handler(Self::handle_save_buffer);
         client.add_model_message_handler(Self::handle_update_diff_base);
         client.add_model_request_handler(Self::handle_lsp_command::<lsp_ext_command::ExpandMacro>);
@@ -684,8 +682,6 @@ impl Project {
             let (tx, rx) = mpsc::unbounded();
             cx.spawn(move |this, cx| Self::send_buffer_ordered_messages(this, rx, cx))
                 .detach();
-            let copilot_lsp_subscription =
-                Copilot::global(cx).map(|copilot| subscribe_for_copilot_events(&copilot, cx));
             let tasks = Inventory::new(cx);
 
             Self {
@@ -734,8 +730,6 @@ impl Project {
                 terminals: Terminals {
                     local_handles: Vec::new(),
                 },
-                copilot_lsp_subscription,
-                copilot_log_subscription: None,
                 current_lsp_settings: ProjectSettings::get_global(cx).lsp.clone(),
                 node: Some(node),
                 default_prettier: DefaultPrettier::default(),
@@ -743,7 +737,7 @@ impl Project {
                 prettier_instances: HashMap::default(),
                 tasks,
                 hosted_project_id: None,
-                remote_project_id: None,
+                dev_server_project_id: None,
                 search_history: Self::new_search_history(),
             }
         })
@@ -822,8 +816,6 @@ impl Project {
             let (tx, rx) = mpsc::unbounded();
             cx.spawn(move |this, cx| Self::send_buffer_ordered_messages(this, rx, cx))
                 .detach();
-            let copilot_lsp_subscription =
-                Copilot::global(cx).map(|copilot| subscribe_for_copilot_events(&copilot, cx));
             let mut this = Self {
                 worktrees: Vec::new(),
                 buffer_ordered_messages_tx: tx,
@@ -857,7 +849,7 @@ impl Project {
                     capability: Capability::ReadWrite,
                     remote_id,
                     replica_id,
-                    in_room: response.payload.remote_project_id.is_none(),
+                    in_room: response.payload.dev_server_project_id.is_none(),
                 },
                 supplementary_language_servers: HashMap::default(),
                 language_servers: Default::default(),
@@ -890,8 +882,6 @@ impl Project {
                 terminals: Terminals {
                     local_handles: Vec::new(),
                 },
-                copilot_lsp_subscription,
-                copilot_log_subscription: None,
                 current_lsp_settings: ProjectSettings::get_global(cx).lsp.clone(),
                 node: None,
                 default_prettier: DefaultPrettier::default(),
@@ -899,10 +889,10 @@ impl Project {
                 prettier_instances: HashMap::default(),
                 tasks,
                 hosted_project_id: None,
-                remote_project_id: response
+                dev_server_project_id: response
                     .payload
-                    .remote_project_id
-                    .map(|remote_project_id| RemoteProjectId(remote_project_id)),
+                    .dev_server_project_id
+                    .map(|dev_server_project_id| DevServerProjectId(dev_server_project_id)),
                 search_history: Self::new_search_history(),
             };
             this.set_role(role, cx);
@@ -1183,17 +1173,6 @@ impl Project {
             self.restart_language_servers(worktree, language, cx);
         }
 
-        if self.copilot_lsp_subscription.is_none() {
-            if let Some(copilot) = Copilot::global(cx) {
-                for buffer in self.opened_buffers.values() {
-                    if let Some(buffer) = buffer.upgrade() {
-                        self.register_buffer_with_copilot(&buffer, cx);
-                    }
-                }
-                self.copilot_lsp_subscription = Some(subscribe_for_copilot_events(&copilot, cx));
-            }
-        }
-
         cx.notify();
     }
 
@@ -1261,8 +1240,8 @@ impl Project {
         self.hosted_project_id
     }
 
-    pub fn remote_project_id(&self) -> Option<RemoteProjectId> {
-        self.remote_project_id
+    pub fn dev_server_project_id(&self) -> Option<DevServerProjectId> {
+        self.dev_server_project_id
     }
 
     pub fn replica_id(&self) -> ReplicaId {
@@ -1588,7 +1567,7 @@ impl Project {
     pub fn shared(&mut self, project_id: u64, cx: &mut ModelContext<Self>) -> Result<()> {
         if !matches!(self.client_state, ProjectClientState::Local) {
             if let ProjectClientState::Remote { in_room, .. } = &mut self.client_state {
-                if *in_room || self.remote_project_id.is_none() {
+                if *in_room || self.dev_server_project_id.is_none() {
                     return Err(anyhow!("project was already shared"));
                 } else {
                     *in_room = true;
@@ -1807,7 +1786,7 @@ impl Project {
 
     fn unshare_internal(&mut self, cx: &mut AppContext) -> Result<()> {
         if self.is_remote() {
-            if self.remote_project_id().is_some() {
+            if self.dev_server_project_id().is_some() {
                 if let ProjectClientState::Remote { in_room, .. } = &mut self.client_state {
                     *in_room = false
                 }
@@ -1955,21 +1934,41 @@ impl Project {
         !self.is_local()
     }
 
-    pub fn create_buffer(
+    pub fn create_buffer(&mut self, cx: &mut ModelContext<Self>) -> Task<Result<Model<Buffer>>> {
+        if self.is_remote() {
+            let create = self.client.request(proto::OpenNewBuffer {
+                project_id: self.remote_id().unwrap(),
+            });
+            cx.spawn(|this, mut cx| async move {
+                let response = create.await?;
+                let buffer_id = BufferId::new(response.buffer_id)?;
+
+                this.update(&mut cx, |this, cx| {
+                    this.wait_for_remote_buffer(buffer_id, cx)
+                })?
+                .await
+            })
+        } else {
+            Task::ready(Ok(self.create_local_buffer("", None, cx)))
+        }
+    }
+
+    pub fn create_local_buffer(
         &mut self,
         text: &str,
         language: Option<Arc<Language>>,
         cx: &mut ModelContext<Self>,
-    ) -> Result<Model<Buffer>> {
+    ) -> Model<Buffer> {
         if self.is_remote() {
-            return Err(anyhow!("creating buffers as a guest is not supported yet"));
+            panic!("called create_local_buffer on a remote project")
         }
         let buffer = cx.new_model(|cx| {
             Buffer::local(text, cx)
                 .with_language(language.unwrap_or_else(|| language::PLAIN_TEXT.clone()), cx)
         });
-        self.register_buffer(&buffer, cx)?;
-        Ok(buffer)
+        self.register_buffer(&buffer, cx)
+            .expect("creating local buffers always succeeds");
+        buffer
     }
 
     pub fn open_path(
@@ -2330,7 +2329,7 @@ impl Project {
 
         self.detect_language_for_buffer(buffer, cx);
         self.register_buffer_with_language_servers(buffer, cx);
-        self.register_buffer_with_copilot(buffer, cx);
+        // self.register_buffer_with_copilot(buffer, cx);
         cx.observe_release(buffer, |this, buffer, cx| {
             if let Some(file) = File::from_dyn(buffer.file()) {
                 if file.is_local() {
@@ -2387,7 +2386,6 @@ impl Project {
 
             if let Some(language) = language {
                 for adapter in self.languages.lsp_adapters(&language) {
-                    let language_id = adapter.language_ids.get(language.name().as_ref()).cloned();
                     let server = self
                         .language_server_ids
                         .get(&(worktree_id, adapter.name.clone()))
@@ -2409,7 +2407,7 @@ impl Project {
                             lsp::DidOpenTextDocumentParams {
                                 text_document: lsp::TextDocumentItem::new(
                                     uri.clone(),
-                                    language_id.unwrap_or_default(),
+                                    adapter.language_id(&language),
                                     0,
                                     initial_snapshot.text(),
                                 ),
@@ -2479,15 +2477,15 @@ impl Project {
         });
     }
 
-    fn register_buffer_with_copilot(
-        &self,
-        buffer_handle: &Model<Buffer>,
-        cx: &mut ModelContext<Self>,
-    ) {
-        if let Some(copilot) = Copilot::global(cx) {
-            copilot.update(cx, |copilot, cx| copilot.register_buffer(buffer_handle, cx));
-        }
-    }
+    // fn register_buffer_with_copilot(
+    //     &self,
+    //     buffer_handle: &Model<Buffer>,
+    //     cx: &mut ModelContext<Self>,
+    // ) {
+    //     if let Some(copilot) = Copilot::global(cx) {
+    //         copilot.update(cx, |copilot, cx| copilot.register_buffer(buffer_handle, cx));
+    //     }
+    // }
 
     async fn send_buffer_ordered_messages(
         this: WeakModel<Self>,
@@ -3742,11 +3740,7 @@ impl Project {
                     lsp::DidOpenTextDocumentParams {
                         text_document: lsp::TextDocumentItem::new(
                             uri,
-                            adapter
-                                .language_ids
-                                .get(language.name().as_ref())
-                                .cloned()
-                                .unwrap_or_default(),
+                            adapter.language_id(&language),
                             version,
                             initial_snapshot.text(),
                         ),
@@ -5576,6 +5570,7 @@ impl Project {
 
     pub fn resolve_completions(
         &self,
+        buffer: Model<Buffer>,
         completion_indices: Vec<usize>,
         completions: Arc<RwLock<Box<[Completion]>>>,
         cx: &mut ModelContext<Self>,
@@ -5585,6 +5580,9 @@ impl Project {
 
         let is_remote = self.is_remote();
         let project_id = self.remote_id();
+
+        let buffer_id = buffer.read(cx).remote_id();
+        let buffer_snapshot = buffer.read(cx).snapshot();
 
         cx.spawn(move |this, mut cx| async move {
             let mut did_resolve = false;
@@ -5607,9 +5605,10 @@ impl Project {
                         (server_id, completion)
                     };
 
-                    Self::resolve_completion_documentation_remote(
+                    Self::resolve_completion_remote(
                         project_id,
                         server_id,
+                        buffer_id,
                         completions.clone(),
                         completion_index,
                         completion,
@@ -5644,8 +5643,9 @@ impl Project {
                     };
 
                     did_resolve = true;
-                    Self::resolve_completion_documentation_local(
+                    Self::resolve_completion_local(
                         server,
+                        &buffer_snapshot,
                         completions.clone(),
                         completion_index,
                         completion,
@@ -5659,8 +5659,9 @@ impl Project {
         })
     }
 
-    async fn resolve_completion_documentation_local(
+    async fn resolve_completion_local(
         server: Arc<lsp::LanguageServer>,
+        snapshot: &BufferSnapshot,
         completions: Arc<RwLock<Box<[Completion]>>>,
         completion_index: usize,
         completion: lsp::CompletionItem,
@@ -5681,9 +5682,9 @@ impl Project {
             return;
         };
 
-        if let Some(lsp_documentation) = completion_item.documentation {
+        if let Some(lsp_documentation) = completion_item.documentation.as_ref() {
             let documentation = language::prepare_completion_documentation(
-                &lsp_documentation,
+                lsp_documentation,
                 &language_registry,
                 None, // TODO: Try to reasonably work out which language the completion is for
             )
@@ -5697,11 +5698,31 @@ impl Project {
             let completion = &mut completions[completion_index];
             completion.documentation = Some(Documentation::Undocumented);
         }
+
+        if let Some(text_edit) = completion_item.text_edit.as_ref() {
+            // Technically we don't have to parse the whole `text_edit`, since the only
+            // language server we currently use that does update `text_edit` in `completionItem/resolve`
+            // is `typescript-language-server` and they only update `text_edit.new_text`.
+            // But we should not rely on that.
+            let edit = parse_completion_text_edit(text_edit, snapshot);
+
+            if let Some((old_range, mut new_text)) = edit {
+                LineEnding::normalize(&mut new_text);
+
+                let mut completions = completions.write();
+                let completion = &mut completions[completion_index];
+
+                completion.new_text = new_text;
+                completion.old_range = old_range;
+            }
+        }
     }
 
-    async fn resolve_completion_documentation_remote(
+    #[allow(clippy::too_many_arguments)]
+    async fn resolve_completion_remote(
         project_id: u64,
         server_id: LanguageServerId,
+        buffer_id: BufferId,
         completions: Arc<RwLock<Box<[Completion]>>>,
         completion_index: usize,
         completion: lsp::CompletionItem,
@@ -5712,6 +5733,7 @@ impl Project {
             project_id,
             language_server_id: server_id.0 as u64,
             lsp_completion: serde_json::to_string(&completion).unwrap().into_bytes(),
+            buffer_id: buffer_id.into(),
         };
 
         let Some(response) = client
@@ -5723,21 +5745,32 @@ impl Project {
             return;
         };
 
-        let documentation = if response.text.is_empty() {
+        let documentation = if response.documentation.is_empty() {
             Documentation::Undocumented
-        } else if response.is_markdown {
+        } else if response.documentation_is_markdown {
             Documentation::MultiLineMarkdown(
-                markdown::parse_markdown(&response.text, &language_registry, None).await,
+                markdown::parse_markdown(&response.documentation, &language_registry, None).await,
             )
-        } else if response.text.lines().count() <= 1 {
-            Documentation::SingleLine(response.text)
+        } else if response.documentation.lines().count() <= 1 {
+            Documentation::SingleLine(response.documentation)
         } else {
-            Documentation::MultiLinePlainText(response.text)
+            Documentation::MultiLinePlainText(response.documentation)
         };
 
         let mut completions = completions.write();
         let completion = &mut completions[completion_index];
         completion.documentation = Some(documentation);
+
+        let old_range = response
+            .old_start
+            .and_then(deserialize_anchor)
+            .zip(response.old_end.and_then(deserialize_anchor));
+        if let Some((old_start, old_end)) = old_range {
+            if !response.new_text.is_empty() {
+                completion.new_text = response.new_text;
+                completion.old_range = old_start..old_end;
+            }
+        }
     }
 
     pub fn apply_additional_edits_for_completion(
@@ -7613,17 +7646,15 @@ impl Project {
                     } else {
                         let fs = self.fs.clone();
                         let task_abs_path = abs_path.clone();
+                        let tasks_file_rx =
+                            watch_config_file(&cx.background_executor(), fs, task_abs_path);
                         task_inventory.add_source(
                             TaskSourceKind::Worktree {
                                 id: remote_worktree_id,
                                 abs_path,
                                 id_base: "local_tasks_for_worktree",
                             },
-                            |cx| {
-                                let tasks_file_rx =
-                                    watch_config_file(&cx.background_executor(), fs, task_abs_path);
-                                StaticSource::new(TrackedFile::new(tasks_file_rx, cx), cx)
-                            },
+                            StaticSource::new(TrackedFile::new(tasks_file_rx, cx)),
                             cx,
                         );
                     }
@@ -7635,23 +7666,20 @@ impl Project {
                     } else {
                         let fs = self.fs.clone();
                         let task_abs_path = abs_path.clone();
+                        let tasks_file_rx =
+                            watch_config_file(&cx.background_executor(), fs, task_abs_path);
                         task_inventory.add_source(
                             TaskSourceKind::Worktree {
                                 id: remote_worktree_id,
                                 abs_path,
                                 id_base: "local_vscode_tasks_for_worktree",
                             },
-                            |cx| {
-                                let tasks_file_rx =
-                                    watch_config_file(&cx.background_executor(), fs, task_abs_path);
-                                StaticSource::new(
-                                    TrackedFile::new_convertible::<task::VsCodeTaskFile>(
-                                        tasks_file_rx,
-                                        cx,
-                                    ),
+                            StaticSource::new(
+                                TrackedFile::new_convertible::<task::VsCodeTaskFile>(
+                                    tasks_file_rx,
                                     cx,
-                                )
-                            },
+                                ),
+                            ),
                             cx,
                         );
                     }
@@ -7836,6 +7864,18 @@ impl Project {
         })
     }
 
+    pub fn project_path_for_absolute_path(
+        &self,
+        abs_path: &Path,
+        cx: &AppContext,
+    ) -> Option<ProjectPath> {
+        self.find_local_worktree(abs_path, cx)
+            .map(|(worktree, relative_path)| ProjectPath {
+                worktree_id: worktree.read(cx).id(),
+                path: relative_path.into(),
+            })
+    }
+
     pub fn get_workspace_root(
         &self,
         project_path: &ProjectPath,
@@ -7859,6 +7899,16 @@ impl Project {
             .as_local()?
             .snapshot()
             .local_git_repo(&project_path.path)
+    }
+
+    pub fn get_first_worktree_root_repo(
+        &self,
+        cx: &AppContext,
+    ) -> Option<Arc<Mutex<dyn GitRepository>>> {
+        let worktree = self.visible_worktrees(cx).next()?.read(cx).as_local()?;
+        let root_entry = worktree.root_git_entry()?;
+
+        worktree.get_local_repo(&root_entry)?.repo().clone().into()
     }
 
     pub fn blame_buffer(
@@ -8525,11 +8575,13 @@ impl Project {
                     OpenBuffer::Weak(_) => {}
                 },
                 hash_map::Entry::Vacant(e) => {
-                    assert!(
-                        is_remote,
-                        "received buffer update from {:?}",
-                        envelope.original_sender_id
-                    );
+                    if !is_remote {
+                        debug_panic!(
+                            "received buffer update from {:?}",
+                            envelope.original_sender_id
+                        );
+                        return Err(anyhow!("received buffer update for non-remote project"));
+                    }
                     e.insert(OpenBuffer::Operations(ops));
                 }
             }
@@ -8632,14 +8684,15 @@ impl Project {
         this.update(&mut cx, |this, cx| {
             let buffer_id = envelope.payload.buffer_id;
             let buffer_id = BufferId::new(buffer_id)?;
-            let diff_base = envelope.payload.diff_base;
             if let Some(buffer) = this
                 .opened_buffers
                 .get_mut(&buffer_id)
                 .and_then(|b| b.upgrade())
                 .or_else(|| this.incomplete_remote_buffers.get(&buffer_id).cloned())
             {
-                buffer.update(cx, |buffer, cx| buffer.set_diff_base(diff_base, cx));
+                buffer.update(cx, |buffer, cx| {
+                    buffer.set_diff_base(envelope.payload.diff_base, cx)
+                });
             }
             Ok(())
         })?
@@ -8797,7 +8850,7 @@ impl Project {
                         .send(proto::UpdateDiffBase {
                             project_id,
                             buffer_id: buffer_id.into(),
-                            diff_base: buffer.diff_base().map(Into::into),
+                            diff_base: buffer.diff_base().map(ToString::to_string),
                         })
                         .log_err();
 
@@ -8939,19 +8992,53 @@ impl Project {
             })??
             .await?;
 
-        let mut is_markdown = false;
-        let text = match completion.documentation {
+        let mut documentation_is_markdown = false;
+        let documentation = match completion.documentation {
             Some(lsp::Documentation::String(text)) => text,
 
             Some(lsp::Documentation::MarkupContent(lsp::MarkupContent { kind, value })) => {
-                is_markdown = kind == lsp::MarkupKind::Markdown;
+                documentation_is_markdown = kind == lsp::MarkupKind::Markdown;
                 value
             }
 
             _ => String::new(),
         };
 
-        Ok(proto::ResolveCompletionDocumentationResponse { text, is_markdown })
+        // If we have a new buffer_id, that means we're talking to a new client
+        // and want to check for new text_edits in the completion too.
+        let mut old_start = None;
+        let mut old_end = None;
+        let mut new_text = String::default();
+        if let Ok(buffer_id) = BufferId::new(envelope.payload.buffer_id) {
+            let buffer_snapshot = this.update(&mut cx, |this, cx| {
+                let buffer = this
+                    .opened_buffers
+                    .get(&buffer_id)
+                    .and_then(|buffer| buffer.upgrade())
+                    .ok_or_else(|| anyhow!("unknown buffer id {}", buffer_id))?;
+                anyhow::Ok(buffer.read(cx).snapshot())
+            })??;
+
+            if let Some(text_edit) = completion.text_edit.as_ref() {
+                let edit = parse_completion_text_edit(text_edit, &buffer_snapshot);
+
+                if let Some((old_range, mut text_edit_new_text)) = edit {
+                    LineEnding::normalize(&mut text_edit_new_text);
+
+                    new_text = text_edit_new_text;
+                    old_start = Some(serialize_anchor(&old_range.start));
+                    old_end = Some(serialize_anchor(&old_range.end));
+                }
+            }
+        }
+
+        Ok(proto::ResolveCompletionDocumentationResponse {
+            documentation,
+            documentation_is_markdown,
+            old_start,
+            old_end,
+            new_text,
+        })
     }
 
     async fn handle_apply_code_action(
@@ -9410,6 +9497,18 @@ impl Project {
         })?;
 
         let buffer = open_buffer.await?;
+        Project::respond_to_open_buffer_request(this, buffer, peer_id, &mut cx)
+    }
+
+    async fn handle_open_new_buffer(
+        this: Model<Self>,
+        envelope: TypedEnvelope<proto::OpenNewBuffer>,
+        _: Arc<Client>,
+        mut cx: AsyncAppContext,
+    ) -> Result<proto::OpenBufferResponse> {
+        let buffer = this.update(&mut cx, |this, cx| this.create_local_buffer("", None, cx))?;
+        let peer_id = envelope.original_sender_id()?;
+
         Project::respond_to_open_buffer_request(this, buffer, peer_id, &mut cx)
     }
 
@@ -10361,43 +10460,6 @@ async fn search_ignored_entry(
             }
         }
     }
-}
-
-fn subscribe_for_copilot_events(
-    copilot: &Model<Copilot>,
-    cx: &mut ModelContext<'_, Project>,
-) -> gpui::Subscription {
-    cx.subscribe(
-        copilot,
-        |project, copilot, copilot_event, cx| match copilot_event {
-            copilot::Event::CopilotLanguageServerStarted => {
-                match copilot.read(cx).language_server() {
-                    Some((name, copilot_server)) => {
-                        // Another event wants to re-add the server that was already added and subscribed to, avoid doing it again.
-                        if !copilot_server.has_notification_handler::<copilot::request::LogMessage>() {
-                            let new_server_id = copilot_server.server_id();
-                            let weak_project = cx.weak_model();
-                            let copilot_log_subscription = copilot_server
-                                .on_notification::<copilot::request::LogMessage, _>(
-                                    move |params, mut cx| {
-                                        weak_project.update(&mut cx, |_, cx| {
-                                            cx.emit(Event::LanguageServerLog(
-                                                new_server_id,
-                                                params.message,
-                                            ));
-                                        }).ok();
-                                    },
-                                );
-                            project.supplementary_language_servers.insert(new_server_id, (name.clone(), Arc::clone(copilot_server)));
-                            project.copilot_log_subscription = Some(copilot_log_subscription);
-                            cx.emit(Event::LanguageServerAdded(new_server_id));
-                        }
-                    }
-                    None => debug_panic!("Received Copilot language server started event, but no language server is running"),
-                }
-            }
-        },
-    )
 }
 
 fn glob_literal_prefix(glob: &str) -> &str {

@@ -39,6 +39,7 @@ fn system_clipboard_is_newer(vim: &Vim, cx: &mut AppContext) -> bool {
 fn paste(_: &mut Workspace, action: &Paste, cx: &mut ViewContext<Workspace>) {
     Vim::update(cx, |vim, cx| {
         vim.record_current_action(cx);
+        let count = vim.take_count(cx).unwrap_or(1);
         vim.update_active_editor(cx, |vim, editor, cx| {
             let text_layout_details = editor.text_layout_details(cx);
             editor.transact(cx, |editor, cx| {
@@ -178,7 +179,7 @@ fn paste(_: &mut Workspace, action: &Paste, cx: &mut ViewContext<Workspace>) {
                     if *preserve {
                         new_selections.push((anchor, line_mode, is_multiline));
                     }
-                    edits.push((point_range, to_insert));
+                    edits.push((point_range, to_insert.repeat(count)));
                     original_indent_columns.extend(original_indent_column);
                 }
 
@@ -598,5 +599,42 @@ mod test {
                 "},
             Mode::Normal,
         );
+    }
+
+    #[gpui::test]
+    async fn test_paste_count(cx: &mut gpui::TestAppContext) {
+        let mut cx = NeovimBackedTestContext::new(cx).await;
+
+        cx.set_shared_state(indoc! {"
+            onˇe
+            two
+            three
+        "})
+            .await;
+        cx.simulate_shared_keystrokes(["y", "y", "3", "p"]).await;
+        cx.assert_shared_state(indoc! {"
+            one
+            ˇone
+            one
+            one
+            two
+            three
+        "})
+            .await;
+
+        cx.set_shared_state(indoc! {"
+            one
+            ˇtwo
+            three
+        "})
+            .await;
+        cx.simulate_shared_keystrokes(["y", "$", "$", "3", "p"])
+            .await;
+        cx.assert_shared_state(indoc! {"
+            one
+            twotwotwotwˇo
+            three
+        "})
+            .await;
     }
 }

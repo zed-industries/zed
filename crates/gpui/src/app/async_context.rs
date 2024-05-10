@@ -25,10 +25,7 @@ impl Context for AsyncAppContext {
     fn new_model<T: 'static>(
         &mut self,
         build_model: impl FnOnce(&mut ModelContext<'_, T>) -> T,
-    ) -> Self::Result<Model<T>>
-    where
-        T: 'static,
-    {
+    ) -> Self::Result<Model<T>> {
         let app = self
             .app
             .upgrade()

@@ -61,7 +61,7 @@ slotmap = "1.0.6"
 smallvec.workspace = true
 smol.workspace = true
 sum_tree.workspace = true
-taffy = { git = "https://github.com/DioxusLabs/taffy", rev = "1876f72bee5e376023eaa518aa7b8a34c769bd1b" }
+taffy = "0.4.3"
 thiserror.workspace = true
 time.workspace = true
 util.workspace = true
@@ -111,6 +111,7 @@ wayland-protocols = { version = "0.31.2", features = [
     "staging",
     "unstable",
 ] }
+wayland-protocols-plasma = { version = "0.2.0", features = ["client"] }
 oo7 = "0.3.0"
 open = "5.1.2"
 filedescriptor = "0.8.2"
@@ -119,6 +120,7 @@ x11rb = { version = "0.13.0", features = [
     "xkb",
     "randr",
     "xinput",
+    "cursor",
     "resource_manager",
 ] }
 xkbcommon = { version = "0.7", features = ["wayland", "x11"] }

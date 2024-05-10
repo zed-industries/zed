@@ -46,7 +46,6 @@ tree-sitter-markdown.workspace = true
 tree-sitter-proto.workspace = true
 tree-sitter-python.workspace = true
 tree-sitter-regex.workspace = true
-tree-sitter-ruby.workspace = true
 tree-sitter-rust.workspace = true
 tree-sitter-typescript.workspace = true
 tree-sitter-yaml.workspace = true

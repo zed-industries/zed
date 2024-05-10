@@ -1,5 +1,11 @@
 [
   {
+    "context": "ProjectPanel || Editor",
+    "bindings": {
+      "ctrl-6": "pane::AlternateFile"
+    }
+  },
+  {
     "context": "Editor && VimControl && !VimWaiting && !menu",
     "bindings": {
       "i": [
@@ -117,6 +123,9 @@
           }
         }
       ],
+      "m": ["vim::PushOperator", "Mark"],
+      "'": ["vim::PushOperator", { "Jump": { "line": true } }],
+      "`": ["vim::PushOperator", { "Jump": { "line": false } }],
       ";": "vim::RepeatFind",
       ",": "vim::RepeatFindReversed",
       "ctrl-o": "pane::GoBack",
@@ -128,6 +137,7 @@
       "shift-v": "vim::ToggleVisualLine",
       "ctrl-v": "vim::ToggleVisualBlock",
       "ctrl-q": "vim::ToggleVisualBlock",
+      "shift-k": "editor::Hover",
       "shift-r": "vim::ToggleReplace",
       "0": "vim::StartOfLine", // When no number operator present, use start of line motion
       "ctrl-f": "vim::PageDown",
@@ -236,6 +246,9 @@
       ],
       "g ]": "editor::GoToDiagnostic",
       "g [": "editor::GoToPrevDiagnostic",
+      "g i": ["workspace::SendKeystrokes", "` ^ i"],
+      "g ,": "vim::ChangeListNewer",
+      "g ;": "vim::ChangeListOlder",
       "shift-h": "vim::WindowTop",
       "shift-m": "vim::WindowMiddle",
       "shift-l": "vim::WindowBottom",

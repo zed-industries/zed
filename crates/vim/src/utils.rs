@@ -39,6 +39,24 @@ fn copy_selections_content_internal(
     let mut text = String::new();
     let mut clipboard_selections = Vec::with_capacity(selections.len());
     let mut ranges_to_highlight = Vec::new();
+
+    vim.update_state(|state| {
+        state.marks.insert(
+            "[".to_string(),
+            selections
+                .iter()
+                .map(|s| buffer.anchor_before(s.start))
+                .collect(),
+        );
+        state.marks.insert(
+            "]".to_string(),
+            selections
+                .iter()
+                .map(|s| buffer.anchor_after(s.end))
+                .collect(),
+        )
+    });
+
     {
         let mut is_first = true;
         for selection in selections.iter() {

@@ -264,7 +264,7 @@ pub async fn post_hang(
         Error::Internal(anyhow!(err))
     })?;
 
-    let mut backtrace = "Possible hang detected on main threadL".to_string();
+    let mut backtrace = "Possible hang detected on main thread:".to_string();
     let unknown = "<unknown>".to_string();
     for frame in report.backtrace.iter() {
         backtrace.push_str(&format!("\n{}", frame.symbols.first().unwrap_or(&unknown)));

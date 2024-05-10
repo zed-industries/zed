@@ -1,13 +1,13 @@
-use super::SerializedAxis;
+use super::{SerializedAxis, SerializedWindowBounds};
 use crate::{item::ItemHandle, ItemDeserializers, Member, Pane, PaneAxis, Workspace, WorkspaceId};
 use anyhow::{Context, Result};
 use async_recursion::async_recursion;
-use client::RemoteProjectId;
+use client::DevServerProjectId;
 use db::sqlez::{
     bindable::{Bind, Column, StaticColumnCount},
     statement::Statement,
 };
-use gpui::{AsyncWindowContext, Bounds, DevicePixels, Model, Task, View, WeakView};
+use gpui::{AsyncWindowContext, Model, Task, View, WeakView};
 use project::Project;
 use serde::{Deserialize, Serialize};
 use std::{
@@ -18,8 +18,8 @@ use util::ResultExt;
 use uuid::Uuid;
 
 #[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
-pub struct SerializedRemoteProject {
-    pub id: RemoteProjectId,
+pub struct SerializedDevServerProject {
+    pub id: DevServerProjectId,
     pub dev_server_name: String,
     pub path: String,
 }
@@ -68,14 +68,14 @@ impl Column for LocalPaths {
     }
 }
 
-impl From<SerializedRemoteProject> for SerializedWorkspaceLocation {
-    fn from(remote_project: SerializedRemoteProject) -> Self {
-        Self::Remote(remote_project)
+impl From<SerializedDevServerProject> for SerializedWorkspaceLocation {
+    fn from(dev_server_project: SerializedDevServerProject) -> Self {
+        Self::DevServer(dev_server_project)
     }
 }
 
-impl StaticColumnCount for SerializedRemoteProject {}
-impl Bind for &SerializedRemoteProject {
+impl StaticColumnCount for SerializedDevServerProject {}
+impl Bind for &SerializedDevServerProject {
     fn bind(&self, statement: &Statement, start_index: i32) -> Result<i32> {
         let next_index = statement.bind(&self.id.0, start_index)?;
         let next_index = statement.bind(&self.dev_server_name, next_index)?;
@@ -83,14 +83,14 @@ impl Bind for &SerializedRemoteProject {
     }
 }
 
-impl Column for SerializedRemoteProject {
+impl Column for SerializedDevServerProject {
     fn column(statement: &mut Statement, start_index: i32) -> Result<(Self, i32)> {
         let id = statement.column_int64(start_index)?;
         let dev_server_name = statement.column_text(start_index + 1)?.to_string();
         let path = statement.column_text(start_index + 2)?.to_string();
         Ok((
             Self {
-                id: RemoteProjectId(id as u64),
+                id: DevServerProjectId(id as u64),
                 dev_server_name,
                 path,
             },
@@ -102,7 +102,7 @@ impl Column for SerializedRemoteProject {
 #[derive(Debug, PartialEq, Clone)]
 pub enum SerializedWorkspaceLocation {
     Local(LocalPaths),
-    Remote(SerializedRemoteProject),
+    DevServer(SerializedDevServerProject),
 }
 
 #[derive(Debug, PartialEq, Clone)]
@@ -110,8 +110,7 @@ pub(crate) struct SerializedWorkspace {
     pub(crate) id: WorkspaceId,
     pub(crate) location: SerializedWorkspaceLocation,
     pub(crate) center_group: SerializedPaneGroup,
-    pub(crate) bounds: Option<Bounds<DevicePixels>>,
-    pub(crate) fullscreen: bool,
+    pub(crate) window_bounds: Option<SerializedWindowBounds>,
     pub(crate) centered_layout: bool,
     pub(crate) display: Option<Uuid>,
     pub(crate) docks: DockStructure,

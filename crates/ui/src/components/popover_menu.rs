@@ -195,7 +195,7 @@ impl<M: ManagedView> Element for PopoverMenu<M> {
                     .map(|child_element| child_element.request_layout(cx));
 
                 let layout_id = cx.request_layout(
-                    &gpui::Style::default(),
+                    gpui::Style::default(),
                     menu_layout_id.into_iter().chain(child_layout_id),
                 );
 

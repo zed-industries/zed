@@ -94,7 +94,7 @@ impl Selectable for Tab {
 }
 
 impl ParentElement for Tab {
-    fn extend(&mut self, elements: impl Iterator<Item = AnyElement>) {
+    fn extend(&mut self, elements: impl IntoIterator<Item = AnyElement>) {
         self.children.extend(elements)
     }
 }
@@ -124,21 +124,21 @@ impl RenderOnce for Tab {
             .map(|this| match self.position {
                 TabPosition::First => {
                     if self.selected {
-                        this.pl_px().border_r().pb_px()
+                        this.pl_px().border_r_1().pb_px()
                     } else {
-                        this.pl_px().pr_px().border_b()
+                        this.pl_px().pr_px().border_b_1()
                     }
                 }
                 TabPosition::Last => {
                     if self.selected {
-                        this.border_l().border_r().pb_px()
+                        this.border_l_1().border_r_1().pb_px()
                     } else {
-                        this.pr_px().pl_px().border_b().border_r()
+                        this.pr_px().pl_px().border_b_1().border_r_1()
                     }
                 }
-                TabPosition::Middle(Ordering::Equal) => this.border_l().border_r().pb_px(),
-                TabPosition::Middle(Ordering::Less) => this.border_l().pr_px().border_b(),
-                TabPosition::Middle(Ordering::Greater) => this.border_r().pl_px().border_b(),
+                TabPosition::Middle(Ordering::Equal) => this.border_l_1().border_r_1().pb_px(),
+                TabPosition::Middle(Ordering::Less) => this.border_l_1().pr_px().border_b_1(),
+                TabPosition::Middle(Ordering::Greater) => this.border_r_1().pl_px().border_b_1(),
             })
             .cursor_pointer()
             .child(
@@ -146,32 +146,30 @@ impl RenderOnce for Tab {
                     .group("")
                     .relative()
                     .h(rems(Self::CONTENT_HEIGHT_IN_REMS))
-                    .px_5()
-                    .gap_1()
+                    .px(crate::custom_spacing(cx, 20.))
+                    .gap(Spacing::Small.rems(cx))
                     .text_color(text_color)
                     // .hover(|style| style.bg(tab_hover_bg))
                     // .active(|style| style.bg(tab_active_bg))
                     .child(
                         h_flex()
-                            .w_3()
-                            .h_3()
+                            .size_3()
                             .justify_center()
                             .absolute()
                             .map(|this| match self.close_side {
-                                TabCloseSide::Start => this.right_1(),
-                                TabCloseSide::End => this.left_1(),
+                                TabCloseSide::Start => this.right(Spacing::Small.rems(cx)),
+                                TabCloseSide::End => this.left(Spacing::Small.rems(cx)),
                             })
                             .children(self.start_slot),
                     )
                     .child(
                         h_flex()
-                            .w_3()
-                            .h_3()
+                            .size_3()
                             .justify_center()
                             .absolute()
                             .map(|this| match self.close_side {
-                                TabCloseSide::Start => this.left_1(),
-                                TabCloseSide::End => this.right_1(),
+                                TabCloseSide::Start => this.left(Spacing::Small.rems(cx)),
+                                TabCloseSide::End => this.right(Spacing::Small.rems(cx)),
                             })
                             .visible_on_hover("")
                             .children(self.end_slot),

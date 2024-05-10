@@ -1,5 +1,7 @@
 mod app_menus;
-mod only_instance;
+pub mod inline_completion_registry;
+#[cfg(not(target_os = "linux"))]
+pub(crate) mod only_instance;
 mod open_listener;
 
 pub use app_menus::*;
@@ -11,7 +13,6 @@ use gpui::{
     actions, point, px, AppContext, AsyncAppContext, Context, FocusableView, PromptLevel,
     TitlebarOptions, View, ViewContext, VisualContext, WindowKind, WindowOptions,
 };
-pub use only_instance::*;
 pub use open_listener::*;
 
 use anyhow::Context as _;
@@ -87,6 +88,7 @@ pub fn build_window_options(display_uuid: Option<Uuid>, cx: &mut AppContext) -> 
             .into_iter()
             .find(|display| display.uuid().ok() == Some(uuid))
     });
+    let app_id = ReleaseChannel::global(cx).app_id();
 
     WindowOptions {
         titlebar: Some(TitlebarOptions {
@@ -94,15 +96,14 @@ pub fn build_window_options(display_uuid: Option<Uuid>, cx: &mut AppContext) -> 
             appears_transparent: true,
             traffic_light_position: Some(point(px(9.0), px(9.0))),
         }),
-        bounds: None,
+        window_bounds: None,
         focus: false,
         show: false,
         kind: WindowKind::Normal,
         is_movable: true,
         display_id: display.map(|display| display.id()),
-        fullscreen: false,
         window_background: cx.theme().window_background_appearance(),
-        app_id: Some("dev.zed.Zed".to_owned()),
+        app_id: Some(app_id.to_owned()),
     }
 }
 
@@ -126,7 +127,10 @@ pub fn initialize_workspace(app_state: Arc<AppState>, cx: &mut AppContext) {
         })
         .detach();
 
-        let copilot = cx.new_view(|cx| copilot_ui::CopilotButton::new(app_state.fs.clone(), cx));
+        let inline_completion_button = cx.new_view(|cx| {
+            inline_completion_button::InlineCompletionButton::new(app_state.fs.clone(), cx)
+        });
+
         let diagnostic_summary =
             cx.new_view(|cx| diagnostics::items::DiagnosticIndicator::new(workspace, cx));
         let activity_indicator =
@@ -139,7 +143,7 @@ pub fn initialize_workspace(app_state: Arc<AppState>, cx: &mut AppContext) {
         workspace.status_bar().update(cx, |status_bar, cx| {
             status_bar.add_left_item(diagnostic_summary, cx);
             status_bar.add_left_item(activity_indicator, cx);
-            status_bar.add_right_item(copilot, cx);
+            status_bar.add_right_item(inline_completion_button, cx);
             status_bar.add_right_item(active_buffer_language, cx);
             status_bar.add_right_item(vim_mode_indicator, cx);
             status_bar.add_right_item(cursor_position, cx);
@@ -163,19 +167,14 @@ pub fn initialize_workspace(app_state: Arc<AppState>, cx: &mut AppContext) {
             project.update(cx, |project, cx| {
                 let fs = app_state.fs.clone();
                 project.task_inventory().update(cx, |inventory, cx| {
+                    let tasks_file_rx =
+                        watch_config_file(&cx.background_executor(), fs, paths::TASKS.clone());
                     inventory.add_source(
                         TaskSourceKind::AbsPath {
                             id_base: "global_tasks",
                             abs_path: paths::TASKS.clone(),
                         },
-                        |cx| {
-                            let tasks_file_rx = watch_config_file(
-                                &cx.background_executor(),
-                                fs,
-                                paths::TASKS.clone(),
-                            );
-                            StaticSource::new(TrackedFile::new(tasks_file_rx, cx), cx)
-                        },
+                        StaticSource::new(TrackedFile::new(tasks_file_rx, cx)),
                         cx,
                     );
                 })
@@ -215,7 +214,9 @@ pub fn initialize_workspace(app_state: Arc<AppState>, cx: &mut AppContext) {
             workspace_handle.update(&mut cx, |workspace, cx| {
                 workspace.add_panel(assistant_panel, cx);
                 workspace.add_panel(project_panel, cx);
-                workspace.add_panel(terminal_panel, cx);
+                if !workspace.project().read(cx).is_remote() {
+                    workspace.add_panel(terminal_panel, cx);
+                }
                 workspace.add_panel(channels_panel, cx);
                 workspace.add_panel(chat_panel, cx);
                 workspace.add_panel(notification_panel, cx);
@@ -599,9 +600,9 @@ fn open_log_file(workspace: &mut Workspace, cx: &mut ViewContext<Workspace>) {
                             return;
                         };
                         let project = workspace.project().clone();
-                        let buffer = project
-                            .update(cx, |project, cx| project.create_buffer(&log, None, cx))
-                            .expect("creating buffers on a local workspace always succeeds");
+                        let buffer = project.update(cx, |project, cx| {
+                            project.create_local_buffer(&log, None, cx)
+                        });
 
                         let buffer = cx.new_model(|cx| {
                             MultiBuffer::singleton(buffer, cx).with_title("Log".into())
@@ -812,8 +813,7 @@ fn open_telemetry_log_file(workspace: &mut Workspace, cx: &mut ViewContext<Works
             workspace.update(&mut cx, |workspace, cx| {
                 let project = workspace.project().clone();
                 let buffer = project
-                    .update(cx, |project, cx| project.create_buffer("", None, cx))
-                    .expect("creating buffers on a local workspace always succeeds");
+                    .update(cx, |project, cx| project.create_local_buffer("", None, cx));
                 buffer.update(cx, |buffer, cx| {
                     buffer.set_language(json, cx);
                     buffer.edit(
@@ -862,9 +862,7 @@ fn open_bundled_file(
                 workspace.with_local_workspace(cx, |workspace, cx| {
                     let project = workspace.project();
                     let buffer = project.update(cx, move |project, cx| {
-                        project
-                            .create_buffer(text.as_ref(), language, cx)
-                            .expect("creating buffers on a local workspace always succeeds")
+                        project.create_local_buffer(text.as_ref(), language, cx)
                     });
                     let buffer = cx.new_model(|cx| {
                         MultiBuffer::singleton(buffer, cx).with_title(title.into())
@@ -1335,6 +1333,7 @@ mod tests {
             })
         })
         .await;
+        cx.run_until_parked();
 
         let workspace = cx
             .update(|cx| cx.windows().first().unwrap().downcast::<Workspace>())
@@ -3106,6 +3105,7 @@ mod tests {
             notifications::init(app_state.client.clone(), app_state.user_store.clone(), cx);
             workspace::init(app_state.clone(), cx);
             Project::init_settings(cx);
+            release_channel::init("0.0.0", cx);
             command_palette::init(cx);
             language::init(cx);
             editor::init(cx);

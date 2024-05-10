@@ -4,7 +4,8 @@ use crate::{
     DisplayLink, ExternalPaths, FileDropEvent, ForegroundExecutor, KeyDownEvent, Keystroke,
     Modifiers, ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent,
     Pixels, PlatformAtlas, PlatformDisplay, PlatformInput, PlatformWindow, Point, PromptLevel,
-    Size, Timer, WindowAppearance, WindowBackgroundAppearance, WindowKind, WindowParams,
+    Size, Timer, WindowAppearance, WindowBackgroundAppearance, WindowBounds, WindowKind,
+    WindowParams,
 };
 use block::ConcreteBlock;
 use cocoa::{
@@ -34,7 +35,6 @@ use parking_lot::Mutex;
 use raw_window_handle as rwh;
 use smallvec::SmallVec;
 use std::{
-    any::Any,
     cell::Cell,
     ffi::{c_void, CStr},
     mem,
@@ -265,10 +265,6 @@ unsafe fn build_window_class(name: &'static str, superclass: &Class) -> *const C
         window_will_enter_fullscreen as extern "C" fn(&Object, Sel, id),
     );
     decl.add_method(
-        sel!(windowWillExitFullScreen:),
-        window_will_exit_fullscreen as extern "C" fn(&Object, Sel, id),
-    );
-    decl.add_method(
         sel!(windowDidMove:),
         window_did_move as extern "C" fn(&Object, Sel, id),
     );
@@ -311,14 +307,6 @@ unsafe fn build_window_class(name: &'static str, superclass: &Class) -> *const C
         sel!(concludeDragOperation:),
         conclude_drag_operation as extern "C" fn(&Object, Sel, id),
     );
-    decl.add_method(
-        sel!(windowDidMiniaturize:),
-        window_did_miniaturize as extern "C" fn(&Object, Sel, id),
-    );
-    decl.add_method(
-        sel!(windowDidDeminiaturize:),
-        window_did_deminiaturize as extern "C" fn(&Object, Sel, id),
-    );
 
     decl.register()
 }
@@ -341,7 +329,6 @@ struct MacWindowState {
     event_callback: Option<Box<dyn FnMut(PlatformInput) -> crate::DispatchEventResult>>,
     activate_callback: Option<Box<dyn FnMut(bool)>>,
     resize_callback: Option<Box<dyn FnMut(Size<Pixels>, f32)>>,
-    fullscreen_callback: Option<Box<dyn FnMut(bool)>>,
     moved_callback: Option<Box<dyn FnMut()>>,
     should_close_callback: Option<Box<dyn FnMut() -> bool>>,
     close_callback: Option<Box<dyn FnOnce()>>,
@@ -358,7 +345,7 @@ struct MacWindowState {
     external_files_dragged: bool,
     // Whether the next left-mouse click is also the focusing click.
     first_mouse: bool,
-    minimized: bool,
+    fullscreen_restore_bounds: Bounds<DevicePixels>,
 }
 
 impl MacWindowState {
@@ -415,6 +402,15 @@ impl MacWindowState {
 
     fn start_display_link(&mut self) {
         self.stop_display_link();
+        unsafe {
+            if !self
+                .native_window
+                .occlusionState()
+                .contains(NSWindowOcclusionState::NSWindowOcclusionStateVisible)
+            {
+                return;
+            }
+        }
         let display_id = unsafe { display_id_for_screen(self.native_window.screen()) };
         if let Some(mut display_link) =
             DisplayLink::new(display_id, self.native_view.as_ptr() as *mut c_void, step).log_err()
@@ -434,10 +430,6 @@ impl MacWindowState {
             let screen_size = self.native_window.screen().visibleFrame().into();
             bounds.size == screen_size
         }
-    }
-
-    fn is_minimized(&self) -> bool {
-        self.minimized
     }
 
     fn is_fullscreen(&self) -> bool {
@@ -496,13 +488,11 @@ impl MacWindowState {
         }
     }
 
-    fn to_screen_ns_point(&self, point: Point<Pixels>) -> NSPoint {
-        unsafe {
-            let point = NSPoint::new(
-                point.x.into(),
-                (self.content_size().height - point.y).into(),
-            );
-            msg_send![self.native_window, convertPointToScreen: point]
+    fn window_bounds(&self) -> WindowBounds {
+        if self.is_fullscreen() {
+            WindowBounds::Fullscreen(self.fullscreen_restore_bounds)
+        } else {
+            WindowBounds::Windowed(self.bounds())
         }
     }
 }
@@ -628,12 +618,12 @@ impl MacWindow {
                     native_window as *mut _,
                     native_view as *mut _,
                     window_size,
+                    window_background != WindowBackgroundAppearance::Opaque,
                 ),
                 request_frame_callback: None,
                 event_callback: None,
                 activate_callback: None,
                 resize_callback: None,
-                fullscreen_callback: None,
                 moved_callback: None,
                 should_close_callback: None,
                 close_callback: None,
@@ -650,7 +640,7 @@ impl MacWindow {
                 previous_keydown_inserted_text: None,
                 external_files_dragged: false,
                 first_mouse: false,
-                minimized: false,
+                fullscreen_restore_bounds: Bounds::default(),
             })));
 
             (*native_window).set_ivar(
@@ -786,12 +776,12 @@ impl PlatformWindow for MacWindow {
         self.0.as_ref().lock().bounds()
     }
 
-    fn is_maximized(&self) -> bool {
-        self.0.as_ref().lock().is_maximized()
+    fn window_bounds(&self) -> WindowBounds {
+        self.0.as_ref().lock().window_bounds()
     }
 
-    fn is_minimized(&self) -> bool {
-        self.0.as_ref().lock().is_minimized()
+    fn is_maximized(&self) -> bool {
+        self.0.as_ref().lock().is_maximized()
     }
 
     fn content_size(&self) -> Size<Pixels> {
@@ -854,10 +844,6 @@ impl PlatformWindow for MacWindow {
         }
     }
 
-    fn as_any_mut(&mut self) -> &mut dyn Any {
-        self
-    }
-
     fn set_input_handler(&mut self, input_handler: PlatformInputHandler) {
         self.0.as_ref().lock().input_handler = Some(input_handler);
     }
@@ -904,7 +890,7 @@ impl PlatformWindow for MacWindow {
             let alert_style = match level {
                 PromptLevel::Info => 1,
                 PromptLevel::Warning => 0,
-                PromptLevel::Critical | PromptLevel::Destructive => 2,
+                PromptLevel::Critical => 2,
             };
             let _: () = msg_send![alert, setAlertStyle: alert_style];
             let _: () = msg_send![alert, setMessageText: ns_string(msg)];
@@ -919,16 +905,10 @@ impl PlatformWindow for MacWindow {
             {
                 let button: id = msg_send![alert, addButtonWithTitle: ns_string(answer)];
                 let _: () = msg_send![button, setTag: ix as NSInteger];
-                if level == PromptLevel::Destructive && answer != &"Cancel" {
-                    let _: () = msg_send![button, setHasDestructiveAction: YES];
-                }
             }
             if let Some((ix, answer)) = latest_non_cancel_label {
                 let button: id = msg_send![alert, addButtonWithTitle: ns_string(answer)];
                 let _: () = msg_send![button, setTag: ix as NSInteger];
-                if level == PromptLevel::Destructive {
-                    let _: () = msg_send![button, setHasDestructiveAction: YES];
-                }
             }
 
             let (done_tx, done_rx) = oneshot::channel();
@@ -985,7 +965,10 @@ impl PlatformWindow for MacWindow {
     fn set_app_id(&mut self, _app_id: &str) {}
 
     fn set_background_appearance(&mut self, background_appearance: WindowBackgroundAppearance) {
-        let this = self.0.as_ref().lock();
+        let mut this = self.0.as_ref().lock();
+        this.renderer
+            .update_transparency(background_appearance != WindowBackgroundAppearance::Opaque);
+
         let blur_radius = if background_appearance == WindowBackgroundAppearance::Blurred {
             80
         } else {
@@ -1093,10 +1076,6 @@ impl PlatformWindow for MacWindow {
         self.0.as_ref().lock().resize_callback = Some(callback);
     }
 
-    fn on_fullscreen(&self, callback: Box<dyn FnMut(bool)>) {
-        self.0.as_ref().lock().fullscreen_callback = Some(callback);
-    }
-
     fn on_moved(&self, callback: Box<dyn FnMut()>) {
         self.0.as_ref().lock().moved_callback = Some(callback);
     }
@@ -1111,31 +1090,6 @@ impl PlatformWindow for MacWindow {
 
     fn on_appearance_changed(&self, callback: Box<dyn FnMut()>) {
         self.0.lock().appearance_changed_callback = Some(callback);
-    }
-
-    fn is_topmost_for_position(&self, position: Point<Pixels>) -> bool {
-        let self_borrow = self.0.lock();
-        let self_handle = self_borrow.handle;
-
-        unsafe {
-            let app = NSApplication::sharedApplication(nil);
-
-            // Convert back to screen coordinates
-            let screen_point = self_borrow.to_screen_ns_point(position);
-
-            let window_number: NSInteger = msg_send![class!(NSWindow), windowNumberAtPoint:screen_point belowWindowWithWindowNumber:0];
-            let top_most_window: id = msg_send![app, windowWithWindowNumber: window_number];
-
-            let is_panel: BOOL = msg_send![top_most_window, isKindOfClass: PANEL_CLASS];
-            let is_window: BOOL = msg_send![top_most_window, isKindOfClass: WINDOW_CLASS];
-            if is_panel == YES || is_window == YES {
-                let topmost_window = get_window_state(&*top_most_window).lock().handle;
-                topmost_window == self_handle
-            } else {
-                // Someone else's window is on top
-                false
-            }
-        }
     }
 
     fn draw(&self, scene: &crate::Scene) {
@@ -1508,21 +1462,9 @@ extern "C" fn window_did_resize(this: &Object, _: Sel, _: id) {
 }
 
 extern "C" fn window_will_enter_fullscreen(this: &Object, _: Sel, _: id) {
-    window_fullscreen_changed(this, true);
-}
-
-extern "C" fn window_will_exit_fullscreen(this: &Object, _: Sel, _: id) {
-    window_fullscreen_changed(this, false);
-}
-
-fn window_fullscreen_changed(this: &Object, is_fullscreen: bool) {
     let window_state = unsafe { get_window_state(this) };
     let mut lock = window_state.as_ref().lock();
-    if let Some(mut callback) = lock.fullscreen_callback.take() {
-        drop(lock);
-        callback(is_fullscreen);
-        window_state.lock().fullscreen_callback = Some(callback);
-    }
+    lock.fullscreen_restore_bounds = lock.bounds();
 }
 
 extern "C" fn window_did_move(this: &Object, _: Sel, _: id) {
@@ -1920,18 +1862,6 @@ extern "C" fn conclude_drag_operation(this: &Object, _: Sel, _: id) {
         &window_state,
         PlatformInput::FileDrop(FileDropEvent::Exited),
     );
-}
-
-extern "C" fn window_did_miniaturize(this: &Object, _: Sel, _: id) {
-    let window_state = unsafe { get_window_state(this) };
-
-    window_state.lock().minimized = true;
-}
-
-extern "C" fn window_did_deminiaturize(this: &Object, _: Sel, _: id) {
-    let window_state = unsafe { get_window_state(this) };
-
-    window_state.lock().minimized = false;
 }
 
 async fn synthetic_drag(

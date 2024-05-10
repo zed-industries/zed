@@ -9,14 +9,14 @@ use taffy::{
     geometry::{Point as TaffyPoint, Rect as TaffyRect, Size as TaffySize},
     style::AvailableSpace as TaffyAvailableSpace,
     tree::NodeId,
-    Taffy,
+    TaffyTree, TraversePartialTree as _,
 };
 
 type NodeMeasureFn =
     Box<dyn FnMut(Size<Option<Pixels>>, Size<AvailableSpace>, &mut WindowContext) -> Size<Pixels>>;
 
 pub struct TaffyLayoutEngine {
-    taffy: Taffy,
+    taffy: TaffyTree<()>,
     styles: FxHashMap<LayoutId, Style>,
     children_to_parents: FxHashMap<LayoutId, LayoutId>,
     absolute_layout_bounds: FxHashMap<LayoutId, Bounds<Pixels>>,
@@ -29,7 +29,7 @@ static EXPECT_MESSAGE: &str = "we should avoid taffy layout errors by constructi
 impl TaffyLayoutEngine {
     pub fn new() -> Self {
         TaffyLayoutEngine {
-            taffy: Taffy::new(),
+            taffy: TaffyTree::new(),
             styles: FxHashMap::default(),
             children_to_parents: FxHashMap::default(),
             absolute_layout_bounds: FxHashMap::default(),
@@ -49,7 +49,7 @@ impl TaffyLayoutEngine {
 
     pub fn request_layout(
         &mut self,
-        style: &Style,
+        style: Style,
         rem_size: Pixels,
         children: &[LayoutId],
     ) -> LayoutId {
@@ -66,12 +66,11 @@ impl TaffyLayoutEngine {
                 .new_with_children(taffy_style, unsafe { std::mem::transmute(children) })
                 .expect(EXPECT_MESSAGE)
                 .into();
-            for child_id in children {
-                self.children_to_parents.insert(*child_id, parent_id);
-            }
+            self.children_to_parents
+                .extend(children.into_iter().map(|child_id| (*child_id, parent_id)));
             parent_id
         };
-        self.styles.insert(layout_id, style.clone());
+        self.styles.insert(layout_id, style);
         layout_id
     }
 
@@ -82,7 +81,6 @@ impl TaffyLayoutEngine {
         measure: impl FnMut(Size<Option<Pixels>>, Size<AvailableSpace>, &mut WindowContext) -> Size<Pixels>
             + 'static,
     ) -> LayoutId {
-        let style = style.clone();
         let taffy_style = style.to_taffy(rem_size);
 
         let layout_id = self
@@ -91,7 +89,7 @@ impl TaffyLayoutEngine {
             .expect(EXPECT_MESSAGE)
             .into();
         self.nodes_to_measure.insert(layout_id, Box::new(measure));
-        self.styles.insert(layout_id, style.clone());
+        self.styles.insert(layout_id, style);
         layout_id
     }
 
@@ -116,7 +114,7 @@ impl TaffyLayoutEngine {
     fn max_depth(&self, depth: u32, parent: LayoutId) -> anyhow::Result<u32> {
         println!(
             "{parent:?} at depth {depth} has {} children",
-            self.taffy.child_count(parent.0)?
+            self.taffy.child_count(parent.0)
         );
 
         let mut max_child_depth = 0;

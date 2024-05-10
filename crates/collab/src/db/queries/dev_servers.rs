@@ -3,7 +3,7 @@ use sea_orm::{
     ActiveValue, ColumnTrait, DatabaseTransaction, EntityTrait, IntoActiveModel, QueryFilter,
 };
 
-use super::{dev_server, remote_project, Database, DevServerId, UserId};
+use super::{dev_server, dev_server_project, Database, DevServerId, UserId};
 
 impl Database {
     pub async fn get_dev_server(
@@ -29,43 +29,43 @@ impl Database {
         .await
     }
 
-    pub async fn remote_projects_update(
+    pub async fn dev_server_projects_update(
         &self,
         user_id: UserId,
-    ) -> crate::Result<proto::RemoteProjectsUpdate> {
-        self.transaction(
-            |tx| async move { self.remote_projects_update_internal(user_id, &tx).await },
-        )
+    ) -> crate::Result<proto::DevServerProjectsUpdate> {
+        self.transaction(|tx| async move {
+            self.dev_server_projects_update_internal(user_id, &tx).await
+        })
         .await
     }
 
-    pub async fn remote_projects_update_internal(
+    pub async fn dev_server_projects_update_internal(
         &self,
         user_id: UserId,
         tx: &DatabaseTransaction,
-    ) -> crate::Result<proto::RemoteProjectsUpdate> {
+    ) -> crate::Result<proto::DevServerProjectsUpdate> {
         let dev_servers = dev_server::Entity::find()
             .filter(dev_server::Column::UserId.eq(user_id))
             .all(tx)
             .await?;
 
-        let remote_projects = remote_project::Entity::find()
+        let dev_server_projects = dev_server_project::Entity::find()
             .filter(
-                remote_project::Column::DevServerId
+                dev_server_project::Column::DevServerId
                     .is_in(dev_servers.iter().map(|d| d.id).collect::<Vec<_>>()),
             )
             .find_also_related(super::project::Entity)
             .all(tx)
             .await?;
 
-        Ok(proto::RemoteProjectsUpdate {
+        Ok(proto::DevServerProjectsUpdate {
             dev_servers: dev_servers
                 .into_iter()
                 .map(|d| d.to_proto(proto::DevServerStatus::Offline))
                 .collect(),
-            remote_projects: remote_projects
+            dev_server_projects: dev_server_projects
                 .into_iter()
-                .map(|(remote_project, project)| remote_project.to_proto(project))
+                .map(|(dev_server_project, project)| dev_server_project.to_proto(project))
                 .collect(),
         })
     }
@@ -75,29 +75,36 @@ impl Database {
         name: &str,
         hashed_access_token: &str,
         user_id: UserId,
-    ) -> crate::Result<(dev_server::Model, proto::RemoteProjectsUpdate)> {
+    ) -> crate::Result<(dev_server::Model, proto::DevServerProjectsUpdate)> {
         self.transaction(|tx| async move {
+            if name.trim().is_empty() {
+                return Err(anyhow::anyhow!(proto::ErrorCode::Forbidden))?;
+            }
+
             let dev_server = dev_server::Entity::insert(dev_server::ActiveModel {
                 id: ActiveValue::NotSet,
                 hashed_token: ActiveValue::Set(hashed_access_token.to_string()),
-                name: ActiveValue::Set(name.to_string()),
+                name: ActiveValue::Set(name.trim().to_string()),
                 user_id: ActiveValue::Set(user_id),
             })
             .exec_with_returning(&*tx)
             .await?;
 
-            let remote_projects = self.remote_projects_update_internal(user_id, &tx).await?;
+            let dev_server_projects = self
+                .dev_server_projects_update_internal(user_id, &tx)
+                .await?;
 
-            Ok((dev_server, remote_projects))
+            Ok((dev_server, dev_server_projects))
         })
         .await
     }
 
-    pub async fn delete_dev_server(
+    pub async fn update_dev_server_token(
         &self,
         id: DevServerId,
+        hashed_token: &str,
         user_id: UserId,
-    ) -> crate::Result<proto::RemoteProjectsUpdate> {
+    ) -> crate::Result<proto::DevServerProjectsUpdate> {
         self.transaction(|tx| async move {
             let Some(dev_server) = dev_server::Entity::find_by_id(id).one(&*tx).await? else {
                 return Err(anyhow::anyhow!("no dev server with id {}", id))?;
@@ -106,8 +113,67 @@ impl Database {
                 return Err(anyhow::anyhow!(proto::ErrorCode::Forbidden))?;
             }
 
-            remote_project::Entity::delete_many()
-                .filter(remote_project::Column::DevServerId.eq(id))
+            dev_server::Entity::update(dev_server::ActiveModel {
+                hashed_token: ActiveValue::Set(hashed_token.to_string()),
+                ..dev_server.clone().into_active_model()
+            })
+            .exec(&*tx)
+            .await?;
+
+            let dev_server_projects = self
+                .dev_server_projects_update_internal(user_id, &tx)
+                .await?;
+
+            Ok(dev_server_projects)
+        })
+        .await
+    }
+
+    pub async fn rename_dev_server(
+        &self,
+        id: DevServerId,
+        name: &str,
+        user_id: UserId,
+    ) -> crate::Result<proto::DevServerProjectsUpdate> {
+        self.transaction(|tx| async move {
+            let Some(dev_server) = dev_server::Entity::find_by_id(id).one(&*tx).await? else {
+                return Err(anyhow::anyhow!("no dev server with id {}", id))?;
+            };
+            if dev_server.user_id != user_id || name.trim().is_empty() {
+                return Err(anyhow::anyhow!(proto::ErrorCode::Forbidden))?;
+            }
+
+            dev_server::Entity::update(dev_server::ActiveModel {
+                name: ActiveValue::Set(name.trim().to_string()),
+                ..dev_server.clone().into_active_model()
+            })
+            .exec(&*tx)
+            .await?;
+
+            let dev_server_projects = self
+                .dev_server_projects_update_internal(user_id, &tx)
+                .await?;
+
+            Ok(dev_server_projects)
+        })
+        .await
+    }
+
+    pub async fn delete_dev_server(
+        &self,
+        id: DevServerId,
+        user_id: UserId,
+    ) -> crate::Result<proto::DevServerProjectsUpdate> {
+        self.transaction(|tx| async move {
+            let Some(dev_server) = dev_server::Entity::find_by_id(id).one(&*tx).await? else {
+                return Err(anyhow::anyhow!("no dev server with id {}", id))?;
+            };
+            if dev_server.user_id != user_id {
+                return Err(anyhow::anyhow!(proto::ErrorCode::Forbidden))?;
+            }
+
+            dev_server_project::Entity::delete_many()
+                .filter(dev_server_project::Column::DevServerId.eq(id))
                 .exec(&*tx)
                 .await?;
 
@@ -115,9 +181,11 @@ impl Database {
                 .exec(&*tx)
                 .await?;
 
-            let remote_projects = self.remote_projects_update_internal(user_id, &tx).await?;
+            let dev_server_projects = self
+                .dev_server_projects_update_internal(user_id, &tx)
+                .await?;
 
-            Ok(remote_projects)
+            Ok(dev_server_projects)
         })
         .await
     }

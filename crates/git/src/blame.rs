@@ -1,11 +1,11 @@
 use crate::commit::get_messages;
-use crate::permalink::{build_commit_permalink, parse_git_remote_url, BuildCommitPermalinkParams};
-use crate::Oid;
+use crate::{parse_git_remote_url, BuildCommitPermalinkParams, GitHostingProviderRegistry, Oid};
 use anyhow::{anyhow, Context, Result};
 use collections::{HashMap, HashSet};
 use serde::{Deserialize, Serialize};
 use std::io::Write;
 use std::process::{Command, Stdio};
+use std::sync::Arc;
 use std::{ops::Range, path::Path};
 use text::Rope;
 use time;
@@ -34,6 +34,7 @@ impl Blame {
         path: &Path,
         content: &Rope,
         remote_url: Option<String>,
+        provider_registry: Arc<GitHostingProviderRegistry>,
     ) -> Result<Self> {
         let output = run_git_blame(git_binary, working_directory, path, &content)?;
         let mut entries = parse_git_blame(&output)?;
@@ -41,18 +42,22 @@ impl Blame {
 
         let mut permalinks = HashMap::default();
         let mut unique_shas = HashSet::default();
-        let parsed_remote_url = remote_url.as_deref().and_then(parse_git_remote_url);
+        let parsed_remote_url = remote_url
+            .as_deref()
+            .and_then(|remote_url| parse_git_remote_url(provider_registry, remote_url));
 
         for entry in entries.iter_mut() {
             unique_shas.insert(entry.sha);
             // DEPRECATED (18 Apr 24): Sending permalinks over the wire is deprecated. Clients
             // now do the parsing.
-            if let Some(remote) = parsed_remote_url.as_ref() {
+            if let Some((provider, remote)) = parsed_remote_url.as_ref() {
                 permalinks.entry(entry.sha).or_insert_with(|| {
-                    build_commit_permalink(BuildCommitPermalinkParams {
+                    provider.build_commit_permalink(
                         remote,
-                        sha: entry.sha.to_string().as_str(),
-                    })
+                        BuildCommitPermalinkParams {
+                            sha: entry.sha.to_string().as_str(),
+                        },
+                    )
                 });
             }
         }
@@ -255,15 +260,21 @@ fn parse_git_blame(output: &str) -> Result<Vec<BlameEntry>> {
                     .get(&new_entry.sha)
                     .and_then(|slot| entries.get(*slot))
                 {
-                    new_entry.author = existing_entry.author.clone();
-                    new_entry.author_mail = existing_entry.author_mail.clone();
+                    new_entry.author.clone_from(&existing_entry.author);
+                    new_entry
+                        .author_mail
+                        .clone_from(&existing_entry.author_mail);
                     new_entry.author_time = existing_entry.author_time;
-                    new_entry.author_tz = existing_entry.author_tz.clone();
-                    new_entry.committer = existing_entry.committer.clone();
-                    new_entry.committer_mail = existing_entry.committer_mail.clone();
+                    new_entry.author_tz.clone_from(&existing_entry.author_tz);
+                    new_entry.committer.clone_from(&existing_entry.committer);
+                    new_entry
+                        .committer_mail
+                        .clone_from(&existing_entry.committer_mail);
                     new_entry.committer_time = existing_entry.committer_time;
-                    new_entry.committer_tz = existing_entry.committer_tz.clone();
-                    new_entry.summary = existing_entry.summary.clone();
+                    new_entry
+                        .committer_tz
+                        .clone_from(&existing_entry.committer_tz);
+                    new_entry.summary.clone_from(&existing_entry.summary);
                 }
 
                 current_entry.replace(new_entry);

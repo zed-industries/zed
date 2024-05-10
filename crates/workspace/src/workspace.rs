@@ -8,6 +8,7 @@ mod persistence;
 pub mod searchable;
 pub mod shared_screen;
 mod status_bar;
+pub mod tasks;
 mod toolbar;
 mod workspace_settings;
 
@@ -31,7 +32,7 @@ use gpui::{
     ElementId, Entity as _, EntityId, EventEmitter, FocusHandle, FocusableView, Global,
     GlobalElementId, KeyContext, Keystroke, LayoutId, ManagedView, Model, ModelContext,
     PathPromptOptions, Point, PromptLevel, Render, Size, Subscription, Task, View, WeakView,
-    WindowHandle, WindowOptions,
+    WindowBounds, WindowHandle, WindowOptions,
 };
 use item::{
     FollowableItem, FollowableItemHandle, Item, ItemHandle, ItemSettings, PreviewTabsSettings,
@@ -45,9 +46,9 @@ use node_runtime::NodeRuntime;
 use notifications::{simple_message_notification::MessageNotification, NotificationHandle};
 pub use pane::*;
 pub use pane_group::*;
-use persistence::{model::SerializedWorkspace, SerializedWindowsBounds, DB};
+use persistence::{model::SerializedWorkspace, SerializedWindowBounds, DB};
 pub use persistence::{
-    model::{ItemId, LocalPaths, SerializedRemoteProject, SerializedWorkspaceLocation},
+    model::{ItemId, LocalPaths, SerializedDevServerProject, SerializedWorkspaceLocation},
     WorkspaceDb, DB as WORKSPACE_DB,
 };
 use postage::stream::Stream;
@@ -129,7 +130,6 @@ actions!(
         NewCenterTerminal,
         NewSearch,
         Feedback,
-        Restart,
         Welcome,
         ToggleZoom,
         ToggleLeftDock,
@@ -184,6 +184,11 @@ pub struct CloseInactiveTabsAndPanes {
 #[derive(Clone, Deserialize, PartialEq)]
 pub struct SendKeystrokes(pub String);
 
+#[derive(Clone, Deserialize, PartialEq, Default)]
+pub struct Restart {
+    pub binary_path: Option<PathBuf>,
+}
+
 impl_actions!(
     workspace,
     [
@@ -193,6 +198,7 @@ impl_actions!(
         CloseInactiveTabsAndPanes,
         NewFileInDirection,
         OpenTerminal,
+        Restart,
         Save,
         SaveAll,
         SwapPaneInDirection,
@@ -784,29 +790,15 @@ impl Workspace {
                         .await;
                     this.update(&mut cx, |this, cx| {
                         if let Some(display) = cx.display() {
-                            let window_bounds = cx.window_bounds();
-                            let fullscreen = cx.is_fullscreen();
-
                             if let Some(display_uuid) = display.uuid().log_err() {
-                                // Only update the window bounds when not full screen,
-                                // so we can remember the last non-fullscreen bounds
-                                // across restarts
-                                if fullscreen {
-                                    cx.background_executor()
-                                        .spawn(DB.set_fullscreen(workspace_id, true))
-                                        .detach_and_log_err(cx);
-                                } else if !cx.is_minimized() {
-                                    cx.background_executor()
-                                        .spawn(DB.set_fullscreen(workspace_id, false))
-                                        .detach_and_log_err(cx);
-                                    cx.background_executor()
-                                        .spawn(DB.set_window_bounds(
-                                            workspace_id,
-                                            SerializedWindowsBounds(window_bounds),
-                                            display_uuid,
-                                        ))
-                                        .detach_and_log_err(cx);
-                                }
+                                let window_bounds = cx.window_bounds();
+                                cx.background_executor()
+                                    .spawn(DB.set_window_open_status(
+                                        workspace_id,
+                                        SerializedWindowBounds(window_bounds),
+                                        display_uuid,
+                                    ))
+                                    .detach_and_log_err(cx);
                             }
                         }
                         this.bounds_save_task_queued.take();
@@ -946,30 +938,27 @@ impl Workspace {
             } else {
                 let window_bounds_override = window_bounds_env_override();
 
-                let (bounds, display, fullscreen) = if let Some(bounds) = window_bounds_override {
-                    (Some(bounds), None, false)
+                let (window_bounds, display) = if let Some(bounds) = window_bounds_override {
+                    (Some(WindowBounds::Windowed(bounds)), None)
                 } else {
                     let restorable_bounds = serialized_workspace
                         .as_ref()
-                        .and_then(|workspace| {
-                            Some((workspace.display?, workspace.bounds?, workspace.fullscreen))
-                        })
+                        .and_then(|workspace| Some((workspace.display?, workspace.window_bounds?)))
                         .or_else(|| {
-                            let (display, bounds, fullscreen) = DB.last_window().log_err()?;
-                            Some((display?, bounds?.0, fullscreen.unwrap_or(false)))
+                            let (display, window_bounds) = DB.last_window().log_err()?;
+                            Some((display?, window_bounds?))
                         });
 
-                    if let Some((serialized_display, bounds, fullscreen)) = restorable_bounds {
-                        (Some(bounds), Some(serialized_display), fullscreen)
+                    if let Some((serialized_display, serialized_status)) = restorable_bounds {
+                        (Some(serialized_status.0), Some(serialized_display))
                     } else {
-                        (None, None, false)
+                        (None, None)
                     }
                 };
 
                 // Use the serialized workspace to construct the new window
                 let mut options = cx.update(|cx| (app_state.build_window_options)(display, cx))?;
-                options.bounds = bounds;
-                options.fullscreen = fullscreen;
+                options.window_bounds = window_bounds;
                 let centered_layout = serialized_workspace
                     .as_ref()
                     .map(|w| w.centered_layout)
@@ -1693,6 +1682,13 @@ impl Workspace {
     }
 
     fn add_folder_to_project(&mut self, _: &AddFolderToProject, cx: &mut ViewContext<Self>) {
+        if self.project.read(cx).is_remote() {
+            self.show_error(
+                &anyhow!("Folders cannot yet be added to remote projects"),
+                cx,
+            );
+            return;
+        }
         let paths = cx.prompt_for_paths(PathPromptOptions {
             files: false,
             directories: true,
@@ -2503,6 +2499,9 @@ impl Workspace {
         self.zoomed_position = None;
         cx.emit(Event::ZoomChanged);
         self.update_active_view_for_followers(cx);
+        pane.model.update(cx, |pane, _| {
+            pane.track_alternate_file_items();
+        });
 
         cx.notify();
     }
@@ -2520,6 +2519,9 @@ impl Workspace {
             }
             pane::Event::Remove => self.remove_pane(pane, cx),
             pane::Event::ActivateItem { local } => {
+                pane.model.update(cx, |pane, _| {
+                    pane.track_alternate_file_items();
+                });
                 if *local {
                     self.unfollow(&pane, cx);
                 }
@@ -3315,7 +3317,7 @@ impl Workspace {
         }
 
         if &update.id != &self.last_active_view_id {
-            self.last_active_view_id = update.id.clone();
+            self.last_active_view_id.clone_from(&update.id);
             self.update_followers(
                 is_project_item,
                 proto::update_followers::Variant::UpdateActiveView(update),
@@ -3637,18 +3639,19 @@ impl Workspace {
             } else {
                 None
             }
-        } else if let Some(remote_project_id) = self.project().read(cx).remote_project_id() {
-            let store = remote_projects::Store::global(cx).read(cx);
+        } else if let Some(dev_server_project_id) = self.project().read(cx).dev_server_project_id()
+        {
+            let store = dev_server_projects::Store::global(cx).read(cx);
             maybe!({
-                let project = store.remote_project(remote_project_id)?;
+                let project = store.dev_server_project(dev_server_project_id)?;
                 let dev_server = store.dev_server(project.dev_server_id)?;
 
-                let remote_project = SerializedRemoteProject {
-                    id: remote_project_id,
+                let dev_server_project = SerializedDevServerProject {
+                    id: dev_server_project_id,
                     dev_server_name: dev_server.name.to_string(),
                     path: project.path.to_string(),
                 };
-                Some(SerializedWorkspaceLocation::Remote(remote_project))
+                Some(SerializedWorkspaceLocation::DevServer(dev_server_project))
             })
         } else {
             None
@@ -3658,14 +3661,14 @@ impl Workspace {
         if let Some(location) = location {
             let center_group = build_serialized_pane_group(&self.center.root, cx);
             let docks = build_serialized_docks(self, cx);
+            let window_bounds = Some(SerializedWindowBounds(cx.window_bounds()));
             let serialized_workspace = SerializedWorkspace {
                 id: self.database_id,
                 location,
                 center_group,
-                bounds: Default::default(),
+                window_bounds,
                 display: Default::default(),
                 docks,
-                fullscreen: cx.is_fullscreen(),
                 centered_layout: self.centered_layout,
             };
             return cx.spawn(|_| persistence::DB.save_workspace(serialized_workspace));
@@ -4114,8 +4117,8 @@ impl Render for Workspace {
                     .flex()
                     .flex_col()
                     .overflow_hidden()
-                    .border_t()
-                    .border_b()
+                    .border_t_1()
+                    .border_b_1()
                     .border_color(colors.border)
                     .child({
                         let this = cx.view().clone();
@@ -4221,10 +4224,10 @@ impl Render for Workspace {
                             .shadow_lg();
 
                         Some(match self.zoomed_position {
-                            Some(DockPosition::Left) => div.right_2().border_r(),
-                            Some(DockPosition::Right) => div.left_2().border_l(),
-                            Some(DockPosition::Bottom) => div.top_2().border_t(),
-                            None => div.top_2().bottom_2().left_2().right_2().border(),
+                            Some(DockPosition::Left) => div.right_2().border_r_1(),
+                            Some(DockPosition::Right) => div.left_2().border_l_1(),
+                            Some(DockPosition::Bottom) => div.top_2().border_t_1(),
+                            None => div.top_2().bottom_2().left_2().right_2().border_1(),
                         })
                     }))
                     .child(self.modal_layer.clone())
@@ -4530,7 +4533,7 @@ async fn join_channel_internal(
                         return None;
                     }
                     let project = workspace.project.read(cx);
-                    if (project.is_local() || project.remote_project_id().is_some())
+                    if (project.is_local() || project.dev_server_project_id().is_some())
                         && project.visible_worktrees(cx).any(|tree| {
                             tree.read(cx)
                                 .root_entry()
@@ -4858,7 +4861,8 @@ pub fn join_hosted_project(
             let window_bounds_override = window_bounds_env_override();
             cx.update(|cx| {
                 let mut options = (app_state.build_window_options)(None, cx);
-                options.bounds = window_bounds_override;
+                options.window_bounds =
+                    window_bounds_override.map(|bounds| WindowBounds::Windowed(bounds));
                 cx.open_window(options, |cx| {
                     cx.new_view(|cx| {
                         Workspace::new(Default::default(), project, app_state.clone(), cx)
@@ -4876,7 +4880,7 @@ pub fn join_hosted_project(
     })
 }
 
-pub fn join_remote_project(
+pub fn join_dev_server_project(
     project_id: ProjectId,
     app_state: Arc<AppState>,
     window_to_replace: Option<WindowHandle<Workspace>>,
@@ -4922,7 +4926,8 @@ pub fn join_remote_project(
                 let window_bounds_override = window_bounds_env_override();
                 cx.update(|cx| {
                     let mut options = (app_state.build_window_options)(None, cx);
-                    options.bounds = window_bounds_override;
+                    options.window_bounds =
+                        window_bounds_override.map(|bounds| WindowBounds::Windowed(bounds));
                     cx.open_window(options, |cx| {
                         cx.new_view(|cx| {
                             Workspace::new(Default::default(), project, app_state.clone(), cx)
@@ -4984,7 +4989,8 @@ pub fn join_in_room_project(
             let window_bounds_override = window_bounds_env_override();
             cx.update(|cx| {
                 let mut options = (app_state.build_window_options)(None, cx);
-                options.bounds = window_bounds_override;
+                options.window_bounds =
+                    window_bounds_override.map(|bounds| WindowBounds::Windowed(bounds));
                 cx.open_window(options, |cx| {
                     cx.new_view(|cx| {
                         Workspace::new(Default::default(), project, app_state.clone(), cx)
@@ -5025,7 +5031,7 @@ pub fn join_in_room_project(
     })
 }
 
-pub fn restart(_: &Restart, cx: &mut AppContext) {
+pub fn restart(restart: &Restart, cx: &mut AppContext) {
     let should_confirm = WorkspaceSettings::get_global(cx).confirm_quit;
     let mut workspace_windows = cx
         .windows()
@@ -5051,6 +5057,7 @@ pub fn restart(_: &Restart, cx: &mut AppContext) {
             .ok();
     }
 
+    let binary_path = restart.binary_path.clone();
     cx.spawn(|mut cx| async move {
         if let Some(prompt) = prompt {
             let answer = prompt.await?;
@@ -5070,7 +5077,7 @@ pub fn restart(_: &Restart, cx: &mut AppContext) {
             }
         }
 
-        cx.update(|cx| cx.restart())
+        cx.update(|cx| cx.restart(binary_path))
     })
     .detach_and_log_err(cx);
 }

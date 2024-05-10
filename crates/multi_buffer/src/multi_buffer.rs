@@ -87,6 +87,9 @@ pub enum Event {
     },
     Reloaded,
     DiffBaseChanged,
+    DiffUpdated {
+        buffer: Model<Buffer>,
+    },
     LanguageChanged,
     CapabilityChanged,
     Reparsed,
@@ -156,6 +159,7 @@ pub struct MultiBufferSnapshot {
     edit_count: usize,
     is_dirty: bool,
     has_conflict: bool,
+    show_headers: bool,
 }
 
 /// A boundary between [`Excerpt`]s in a [`MultiBuffer`]
@@ -269,6 +273,28 @@ struct ExcerptBytes<'a> {
 
 impl MultiBuffer {
     pub fn new(replica_id: ReplicaId, capability: Capability) -> Self {
+        Self {
+            snapshot: RefCell::new(MultiBufferSnapshot {
+                show_headers: true,
+                ..MultiBufferSnapshot::default()
+            }),
+            buffers: RefCell::default(),
+            subscriptions: Topic::default(),
+            singleton: false,
+            capability,
+            replica_id,
+            title: None,
+            history: History {
+                next_transaction_id: clock::Lamport::default(),
+                undo_stack: Vec::new(),
+                redo_stack: Vec::new(),
+                transaction_depth: 0,
+                group_interval: Duration::from_millis(300),
+            },
+        }
+    }
+
+    pub fn without_headers(replica_id: ReplicaId, capability: Capability) -> Self {
         Self {
             snapshot: Default::default(),
             buffers: Default::default(),
@@ -1466,6 +1492,7 @@ impl MultiBuffer {
             language::Event::FileHandleChanged => Event::FileHandleChanged,
             language::Event::Reloaded => Event::Reloaded,
             language::Event::DiffBaseChanged => Event::DiffBaseChanged,
+            language::Event::DiffUpdated => Event::DiffUpdated { buffer },
             language::Event::LanguageChanged => Event::LanguageChanged,
             language::Event::Reparsed => Event::Reparsed,
             language::Event::DiagnosticsUpdated => Event::DiagnosticsUpdated,
@@ -1495,7 +1522,13 @@ impl MultiBuffer {
             .map(|state| state.buffer.clone())
     }
 
-    pub fn is_completion_trigger(&self, position: Anchor, text: &str, cx: &AppContext) -> bool {
+    pub fn is_completion_trigger(
+        &self,
+        position: Anchor,
+        text: &str,
+        trigger_in_words: bool,
+        cx: &AppContext,
+    ) -> bool {
         let mut chars = text.chars();
         let char = if let Some(char) = chars.next() {
             char
@@ -1509,7 +1542,7 @@ impl MultiBuffer {
         let snapshot = self.snapshot(cx);
         let position = position.to_offset(&snapshot);
         let scope = snapshot.language_scope_at(position);
-        if char_kind(&scope, char) == CharKind::Word {
+        if trigger_in_words && char_kind(&scope, char) == CharKind::Word {
             return true;
         }
 
@@ -1568,6 +1601,11 @@ impl MultiBuffer {
         }
 
         "untitled".into()
+    }
+
+    pub fn set_title(&mut self, title: String, cx: &mut ModelContext<Self>) {
+        self.title = Some(title);
+        cx.notify();
     }
 
     #[cfg(any(test, feature = "test-support"))]
@@ -3118,10 +3156,10 @@ impl MultiBufferSnapshot {
                         .redacted_ranges(excerpt.range.context.clone())
                         .map(move |mut redacted_range| {
                             // Re-base onto the excerpts coordinates in the multibuffer
-                            redacted_range.start =
-                                excerpt_offset + (redacted_range.start - excerpt_buffer_start);
-                            redacted_range.end =
-                                excerpt_offset + (redacted_range.end - excerpt_buffer_start);
+                            redacted_range.start = excerpt_offset
+                                + redacted_range.start.saturating_sub(excerpt_buffer_start);
+                            redacted_range.end = excerpt_offset
+                                + redacted_range.end.saturating_sub(excerpt_buffer_start);
 
                             redacted_range
                         })
@@ -3130,6 +3168,42 @@ impl MultiBufferSnapshot {
                 })
             })
             .flatten()
+    }
+
+    pub fn runnable_ranges(
+        &self,
+        range: Range<Anchor>,
+    ) -> impl Iterator<Item = language::RunnableRange> + '_ {
+        let range = range.start.to_offset(self)..range.end.to_offset(self);
+        self.excerpts_for_range(range.clone())
+            .flat_map(move |(excerpt, excerpt_offset)| {
+                let excerpt_buffer_start = excerpt.range.context.start.to_offset(&excerpt.buffer);
+
+                excerpt
+                    .buffer
+                    .runnable_ranges(excerpt.range.context.clone())
+                    .filter_map(move |mut runnable| {
+                        // Re-base onto the excerpts coordinates in the multibuffer
+                        //
+                        // The node matching our runnables query might partially overlap with
+                        // the provided range. If the run indicator is outside of excerpt bounds, do not actually show it.
+                        if runnable.run_range.start < excerpt_buffer_start {
+                            return None;
+                        }
+                        if language::ToPoint::to_point(&runnable.run_range.end, &excerpt.buffer).row
+                            > excerpt.max_buffer_row
+                        {
+                            return None;
+                        }
+                        runnable.run_range.start =
+                            excerpt_offset + runnable.run_range.start - excerpt_buffer_start;
+                        runnable.run_range.end =
+                            excerpt_offset + runnable.run_range.end - excerpt_buffer_start;
+                        Some(runnable)
+                    })
+                    .skip_while(move |runnable| runnable.run_range.end < range.start)
+                    .take_while(move |runnable| runnable.run_range.start < range.end)
+            })
     }
 
     pub fn diagnostics_update_count(&self) -> usize {
@@ -3587,6 +3661,10 @@ impl MultiBufferSnapshot {
                         })
                     })
             })
+    }
+
+    pub fn show_headers(&self) -> bool {
+        self.show_headers
     }
 }
 

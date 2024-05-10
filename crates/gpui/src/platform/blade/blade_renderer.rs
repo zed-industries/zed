@@ -28,6 +28,7 @@ pub unsafe fn new_renderer(
     _native_window: *mut c_void,
     native_view: *mut c_void,
     bounds: crate::Size<f32>,
+    transparent: bool,
 ) -> Renderer {
     use raw_window_handle as rwh;
     struct RawWindow {
@@ -64,10 +65,13 @@ pub unsafe fn new_renderer(
 
     BladeRenderer::new(
         gpu,
-        gpu::Extent {
-            width: bounds.width as u32,
-            height: bounds.height as u32,
-            depth: 1,
+        BladeSurfaceConfig {
+            size: gpu::Extent {
+                width: bounds.width as u32,
+                height: bounds.height as u32,
+                depth: 1,
+            },
+            transparent,
         },
     )
 }
@@ -76,7 +80,8 @@ pub unsafe fn new_renderer(
 #[derive(Clone, Copy, Pod, Zeroable)]
 struct GlobalParams {
     viewport_size: [f32; 2],
-    pad: [u32; 2],
+    premultiplied_alpha: u32,
+    pad: u32,
 }
 
 //Note: we can't use `Bounds` directly here because
@@ -184,6 +189,10 @@ impl BladePipelines {
     fn new(gpu: &gpu::Context, surface_info: gpu::SurfaceInfo) -> Self {
         use gpu::ShaderData as _;
 
+        log::info!(
+            "Initializing Blade pipelines for surface {:?}",
+            surface_info
+        );
         let shader = gpu.create_shader(gpu::ShaderDesc {
             source: include_str!("shaders.wgsl"),
         });
@@ -200,6 +209,18 @@ impl BladePipelines {
         shader.check_struct_size::<MonochromeSprite>();
         shader.check_struct_size::<PolychromeSprite>();
 
+        // See https://apoorvaj.io/alpha-compositing-opengl-blending-and-premultiplied-alpha/
+        let blend_mode = match surface_info.alpha {
+            gpu::AlphaMode::Ignored => gpu::BlendState::ALPHA_BLENDING,
+            gpu::AlphaMode::PreMultiplied => gpu::BlendState::PREMULTIPLIED_ALPHA_BLENDING,
+            gpu::AlphaMode::PostMultiplied => gpu::BlendState::ALPHA_BLENDING,
+        };
+        let color_targets = &[gpu::ColorTargetState {
+            format: surface_info.format,
+            blend: Some(blend_mode),
+            write_mask: gpu::ColorWrites::default(),
+        }];
+
         Self {
             quads: gpu.create_render_pipeline(gpu::RenderPipelineDesc {
                 name: "quads",
@@ -212,11 +233,7 @@ impl BladePipelines {
                 },
                 depth_stencil: None,
                 fragment: shader.at("fs_quad"),
-                color_targets: &[gpu::ColorTargetState {
-                    format: surface_info.format,
-                    blend: Some(gpu::BlendState::ALPHA_BLENDING),
-                    write_mask: gpu::ColorWrites::default(),
-                }],
+                color_targets,
             }),
             shadows: gpu.create_render_pipeline(gpu::RenderPipelineDesc {
                 name: "shadows",
@@ -229,11 +246,7 @@ impl BladePipelines {
                 },
                 depth_stencil: None,
                 fragment: shader.at("fs_shadow"),
-                color_targets: &[gpu::ColorTargetState {
-                    format: surface_info.format,
-                    blend: Some(gpu::BlendState::ALPHA_BLENDING),
-                    write_mask: gpu::ColorWrites::default(),
-                }],
+                color_targets,
             }),
             path_rasterization: gpu.create_render_pipeline(gpu::RenderPipelineDesc {
                 name: "path_rasterization",
@@ -263,11 +276,7 @@ impl BladePipelines {
                 },
                 depth_stencil: None,
                 fragment: shader.at("fs_path"),
-                color_targets: &[gpu::ColorTargetState {
-                    format: surface_info.format,
-                    blend: Some(gpu::BlendState::ALPHA_BLENDING),
-                    write_mask: gpu::ColorWrites::default(),
-                }],
+                color_targets,
             }),
             underlines: gpu.create_render_pipeline(gpu::RenderPipelineDesc {
                 name: "underlines",
@@ -280,11 +289,7 @@ impl BladePipelines {
                 },
                 depth_stencil: None,
                 fragment: shader.at("fs_underline"),
-                color_targets: &[gpu::ColorTargetState {
-                    format: surface_info.format,
-                    blend: Some(gpu::BlendState::ALPHA_BLENDING),
-                    write_mask: gpu::ColorWrites::default(),
-                }],
+                color_targets,
             }),
             mono_sprites: gpu.create_render_pipeline(gpu::RenderPipelineDesc {
                 name: "mono-sprites",
@@ -297,11 +302,7 @@ impl BladePipelines {
                 },
                 depth_stencil: None,
                 fragment: shader.at("fs_mono_sprite"),
-                color_targets: &[gpu::ColorTargetState {
-                    format: surface_info.format,
-                    blend: Some(gpu::BlendState::ALPHA_BLENDING),
-                    write_mask: gpu::ColorWrites::default(),
-                }],
+                color_targets,
             }),
             poly_sprites: gpu.create_render_pipeline(gpu::RenderPipelineDesc {
                 name: "poly-sprites",
@@ -314,11 +315,7 @@ impl BladePipelines {
                 },
                 depth_stencil: None,
                 fragment: shader.at("fs_poly_sprite"),
-                color_targets: &[gpu::ColorTargetState {
-                    format: surface_info.format,
-                    blend: Some(gpu::BlendState::ALPHA_BLENDING),
-                    write_mask: gpu::ColorWrites::default(),
-                }],
+                color_targets,
             }),
             surfaces: gpu.create_render_pipeline(gpu::RenderPipelineDesc {
                 name: "surfaces",
@@ -331,23 +328,25 @@ impl BladePipelines {
                 },
                 depth_stencil: None,
                 fragment: shader.at("fs_surface"),
-                color_targets: &[gpu::ColorTargetState {
-                    format: surface_info.format,
-                    blend: Some(gpu::BlendState::ALPHA_BLENDING),
-                    write_mask: gpu::ColorWrites::default(),
-                }],
+                color_targets,
             }),
         }
     }
 }
 
+pub struct BladeSurfaceConfig {
+    pub size: gpu::Extent,
+    pub transparent: bool,
+}
+
 pub struct BladeRenderer {
     gpu: Arc<gpu::Context>,
+    surface_config: gpu::SurfaceConfig,
+    alpha_mode: gpu::AlphaMode,
     command_encoder: gpu::CommandEncoder,
     last_sync_point: Option<gpu::SyncPoint>,
     pipelines: BladePipelines,
     instance_belt: BladeBelt,
-    viewport_size: gpu::Extent,
     path_tiles: HashMap<PathId, AtlasTile>,
     atlas: Arc<BladeAtlas>,
     atlas_sampler: gpu::Sampler,
@@ -356,21 +355,17 @@ pub struct BladeRenderer {
 }
 
 impl BladeRenderer {
-    fn make_surface_config(size: gpu::Extent) -> gpu::SurfaceConfig {
-        gpu::SurfaceConfig {
-            size,
+    pub fn new(gpu: Arc<gpu::Context>, config: BladeSurfaceConfig) -> Self {
+        let surface_config = gpu::SurfaceConfig {
+            size: config.size,
             usage: gpu::TextureUsage::TARGET,
             display_sync: gpu::DisplaySync::Recent,
-            //Note: this matches the original logic of the Metal backend,
-            // but ultimaterly we need to switch to `Linear`.
-            color_space: gpu::ColorSpace::Srgb,
+            color_space: gpu::ColorSpace::Linear,
             allow_exclusive_full_screen: false,
-            transparent: false,
-        }
-    }
+            transparent: config.transparent,
+        };
+        let surface_info = gpu.resize(surface_config);
 
-    pub fn new(gpu: Arc<gpu::Context>, size: gpu::Extent) -> Self {
-        let surface_info = gpu.resize(Self::make_surface_config(size));
         let command_encoder = gpu.create_command_encoder(gpu::CommandEncoderDesc {
             name: "main",
             buffer_count: 2,
@@ -397,11 +392,12 @@ impl BladeRenderer {
 
         Self {
             gpu,
+            surface_config,
+            alpha_mode: surface_info.alpha,
             command_encoder,
             last_sync_point: None,
             pipelines,
             instance_belt,
-            viewport_size: size,
             path_tiles: HashMap::default(),
             atlas,
             atlas_sampler,
@@ -425,15 +421,26 @@ impl BladeRenderer {
             depth: 1,
         };
 
-        if gpu_size != self.viewport_size() {
+        if gpu_size != self.surface_config.size {
             self.wait_for_gpu();
-            self.gpu.resize(Self::make_surface_config(gpu_size));
-            self.viewport_size = gpu_size;
+            self.surface_config.size = gpu_size;
+            self.gpu.resize(self.surface_config);
         }
     }
 
+    pub fn update_transparency(&mut self, transparent: bool) {
+        if transparent != self.surface_config.transparent {
+            self.wait_for_gpu();
+            self.surface_config.transparent = transparent;
+            let surface_info = self.gpu.resize(self.surface_config);
+            self.pipelines = BladePipelines::new(&self.gpu, surface_info);
+            self.alpha_mode = surface_info.alpha;
+        }
+    }
+
+    #[cfg_attr(target_os = "macos", allow(dead_code))]
     pub fn viewport_size(&self) -> gpu::Extent {
-        self.viewport_size
+        self.surface_config.size
     }
 
     pub fn sprite_atlas(&self) -> &Arc<BladeAtlas> {
@@ -481,7 +488,8 @@ impl BladeRenderer {
             let tex_info = self.atlas.get_texture_info(texture_id);
             let globals = GlobalParams {
                 viewport_size: [tex_info.size.width as f32, tex_info.size.height as f32],
-                pad: [0; 2],
+                premultiplied_alpha: 0,
+                pad: 0,
             };
 
             let vertex_buf = unsafe { self.instance_belt.alloc_data(&vertices, &self.gpu) };
@@ -526,10 +534,14 @@ impl BladeRenderer {
 
         let globals = GlobalParams {
             viewport_size: [
-                self.viewport_size.width as f32,
-                self.viewport_size.height as f32,
+                self.surface_config.size.width as f32,
+                self.surface_config.size.height as f32,
             ],
-            pad: [0; 2],
+            premultiplied_alpha: match self.alpha_mode {
+                gpu::AlphaMode::Ignored | gpu::AlphaMode::PostMultiplied => 0,
+                gpu::AlphaMode::PreMultiplied => 1,
+            },
+            pad: 0,
         };
 
         if let mut pass = self.command_encoder.render(gpu::RenderTargetSet {
