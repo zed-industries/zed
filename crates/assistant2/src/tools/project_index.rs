@@ -276,6 +276,9 @@ impl ToolOutput for ProjectIndexView {
 
         let project_index = self.project_index.read(cx);
         let index_status = project_index.status();
+
+        // TODO: wire the filters into the search here instead of processing after.
+        // Otherwise we'll get zero results sometimes.
         let search = project_index.search(self.input.query.clone(), DEFAULT_SEARCH_LIMIT, cx);
 
         let includes = self.input.includes.clone();
