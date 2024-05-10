@@ -125,16 +125,16 @@ impl Theme {
         &self.styles.system
     }
 
+    /// Returns the [`AccentColors`] for the theme.
+    #[inline(always)]
+    pub fn accents(&self) -> &AccentColors {
+        &self.styles.accents
+    }
+
     /// Returns the [`PlayerColors`] for the theme.
     #[inline(always)]
     pub fn players(&self) -> &PlayerColors {
         &self.styles.player
-    }
-
-    /// Returns the [`IndentAwareColors`] for the theme.
-    #[inline(always)]
-    pub fn indent_aware(&self) -> &IndentAwareColors {
-        &self.styles.indent_aware
     }
 
     /// Returns the [`ThemeColors`] for the theme.

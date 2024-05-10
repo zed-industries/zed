@@ -12,7 +12,7 @@ use refineable::Refineable;
 use util::ResultExt;
 
 use crate::{
-    try_parse_color, Appearance, AppearanceContent, IndentAwareColors, PlayerColors, StatusColors,
+    try_parse_color, AccentColors, Appearance, AppearanceContent, PlayerColors, StatusColors,
     SyntaxTheme, SystemColors, Theme, ThemeColors, ThemeContent, ThemeFamily, ThemeFamilyContent,
     ThemeStyles,
 };
@@ -119,11 +119,11 @@ impl ThemeRegistry {
             };
             player_colors.merge(&user_theme.style.players);
 
-            let mut indent_aware_colors = match user_theme.appearance {
-                AppearanceContent::Light => IndentAwareColors::light(),
-                AppearanceContent::Dark => IndentAwareColors::dark(),
+            let mut accent_colors = match user_theme.appearance {
+                AppearanceContent::Light => AccentColors::light(),
+                AppearanceContent::Dark => AccentColors::dark(),
             };
-            indent_aware_colors.merge(&user_theme.style.indent_aware);
+            accent_colors.merge(&user_theme.style.accents);
 
             let mut syntax_colors = match user_theme.appearance {
                 AppearanceContent::Light => SyntaxTheme::light(),
@@ -168,12 +168,11 @@ impl ThemeRegistry {
                 styles: ThemeStyles {
                     system: SystemColors::default(),
                     window_background_appearance,
+                    accents: accent_colors,
                     colors: theme_colors,
                     status: status_colors,
                     player: player_colors,
-                    indent_aware: indent_aware_colors,
                     syntax: Arc::new(syntax_colors),
-                    accents: Vec::new(),
                 },
             }
         }));

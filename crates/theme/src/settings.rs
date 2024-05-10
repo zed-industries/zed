@@ -325,10 +325,7 @@ impl ThemeSettings {
                 .status
                 .refine(&theme_overrides.status_colors_refinement());
             base_theme.styles.player.merge(&theme_overrides.players);
-            base_theme
-                .styles
-                .indent_aware
-                .merge(&theme_overrides.indent_aware);
+            base_theme.styles.accents.merge(&theme_overrides.accents);
             base_theme.styles.syntax = Arc::new(SyntaxTheme {
                 highlights: {
                     let mut highlights = base_theme.styles.syntax.highlights.clone();

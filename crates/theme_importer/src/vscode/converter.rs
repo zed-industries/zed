@@ -57,10 +57,10 @@ impl VsCodeThemeConverter {
             appearance,
             style: ThemeStyleContent {
                 window_background_appearance: Some(theme::WindowBackgroundContent::Opaque),
+                accents: Vec::new(), //TODO can we read this from the theme?
                 colors: theme_colors,
                 status: status_colors,
                 players: Vec::new(),
-                indent_aware: Vec::new(),
                 syntax: syntax_theme,
             },
         })

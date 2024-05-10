@@ -2418,52 +2418,51 @@ impl EditorElement {
 
         let settings = EditorSettings::get_global(cx).indent_guides;
 
+        let faded_color = |color: Hsla, alpha: f32| {
+            let mut faded = color.clone();
+            faded.a = alpha;
+            faded
+        };
+
+        // get it working
+        // test one dark and gruvbox
+        // test a theme that doesn't have accent to make sure it behaves as expected
+
         for indent_guide in indent_guides {
-            let indent_aware_color = cx
-                .theme()
-                .indent_aware()
-                .color_for_indent(indent_guide.depth);
+            let indent_accent_colors = cx.theme().accents().color_for_index(indent_guide.depth);
+
+            // TODO fixed for now, expose them later
+            const INDENT_AWARE_ALPHA: f32 = 0.2;
+            const INDENT_AWARE_ACTIVE_ALPHA: f32 = 0.4;
+            const INDENT_AWARE_BACKGROUND_ALPHA: f32 = 0.1;
+            const INDENT_AWARE_BACKGROUND_ACTIVE_ALPHA: f32 = 0.2;
 
             let line_color = match (&settings.line_color_mode, indent_guide.active) {
                 (IndentColorMode::Disabled, _) => None,
-                (IndentColorMode::Fixed, false) => {
-                    Some(cx.theme().colors().editor_indent_guide_line)
-                }
+                (IndentColorMode::Fixed, false) => Some(cx.theme().colors().editor_indent_guide),
                 (IndentColorMode::Fixed, true) => {
-                    Some(cx.theme().colors().editor_indent_guide_active_line)
+                    Some(cx.theme().colors().editor_indent_guide_active)
                 }
                 (IndentColorMode::IndentAware, false) => Some(
-                    indent_aware_color
-                        .map(|i| i.line)
-                        .unwrap_or_else(|| cx.theme().colors().editor_indent_guide_line),
+                    indent_accent_colors
+                        .map(|i| faded_color(i, INDENT_AWARE_ALPHA))
+                        .unwrap_or_else(|| cx.theme().colors().editor_indent_guide),
                 ),
                 (IndentColorMode::IndentAware, true) => Some(
-                    indent_aware_color
-                        .map(|i| i.active_line)
-                        .unwrap_or_else(|| cx.theme().colors().editor_indent_guide_active_line),
+                    indent_accent_colors
+                        .map(|i| faded_color(i, INDENT_AWARE_ACTIVE_ALPHA))
+                        .unwrap_or_else(|| cx.theme().colors().editor_indent_guide_active),
                 ),
             };
 
             let background_color = match (&settings.background_color_mode, indent_guide.active) {
                 (IndentColorMode::Disabled, _) => None,
-                (IndentColorMode::Fixed, false) => {
-                    Some(cx.theme().colors().editor_indent_guide_background)
+                (IndentColorMode::Fixed, _) => None, //TODO
+                (IndentColorMode::IndentAware, false) => {
+                    indent_accent_colors.map(|i| faded_color(i, INDENT_AWARE_BACKGROUND_ALPHA))
                 }
-                (IndentColorMode::Fixed, true) => {
-                    Some(cx.theme().colors().editor_indent_guide_active_background)
-                }
-                (IndentColorMode::IndentAware, false) => Some(
-                    indent_aware_color
-                        .map(|i| i.background)
-                        .unwrap_or_else(|| cx.theme().colors().editor_indent_guide_background),
-                ),
-                (IndentColorMode::IndentAware, true) => Some(
-                    indent_aware_color
-                        .map(|i| i.active_background)
-                        .unwrap_or_else(|| {
-                            cx.theme().colors().editor_indent_guide_active_background
-                        }),
-                ),
+                (IndentColorMode::IndentAware, true) => indent_accent_colors
+                    .map(|i| faded_color(i, INDENT_AWARE_BACKGROUND_ACTIVE_ALPHA)),
             };
 
             const INDENT_GUIDE_OFFSET_X: f32 = 3.;
