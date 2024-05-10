@@ -4344,6 +4344,7 @@ async fn complete_with_open_ai(
         OPEN_AI_API_URL,
         &api_key,
         crate::ai::language_model_request_to_open_ai(request)?,
+        None,
     )
     .await
     .context("open_ai::stream_completion request failed within collab")?;

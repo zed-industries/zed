@@ -18,6 +18,7 @@ use futures::{future::BoxFuture, stream::BoxStream};
 use gpui::{AnyView, AppContext, BorrowAppContext, Task, WindowContext};
 use settings::{Settings, SettingsStore};
 use std::sync::Arc;
+use std::time::Duration;
 
 pub fn init(client: Arc<Client>, cx: &mut AppContext) {
     let mut settings_version = 0;
@@ -33,10 +34,12 @@ pub fn init(client: Arc<Client>, cx: &mut AppContext) {
         AssistantProvider::OpenAi {
             default_model,
             api_url,
+            low_speed_timeout_in_seconds,
         } => CompletionProvider::OpenAi(OpenAiCompletionProvider::new(
             default_model.clone(),
             api_url.clone(),
             client.http_client(),
+            low_speed_timeout_in_seconds.map(Duration::from_secs),
             settings_version,
         )),
     };
@@ -51,9 +54,15 @@ pub fn init(client: Arc<Client>, cx: &mut AppContext) {
                     AssistantProvider::OpenAi {
                         default_model,
                         api_url,
+                        low_speed_timeout_in_seconds,
                     },
                 ) => {
-                    provider.update(default_model.clone(), api_url.clone(), settings_version);
+                    provider.update(
+                        default_model.clone(),
+                        api_url.clone(),
+                        low_speed_timeout_in_seconds.map(Duration::from_secs),
+                        settings_version,
+                    );
                 }
                 (
                     CompletionProvider::ZedDotDev(provider),
@@ -74,12 +83,14 @@ pub fn init(client: Arc<Client>, cx: &mut AppContext) {
                     AssistantProvider::OpenAi {
                         default_model,
                         api_url,
+                        low_speed_timeout_in_seconds,
                     },
                 ) => {
                     *provider = CompletionProvider::OpenAi(OpenAiCompletionProvider::new(
                         default_model.clone(),
                         api_url.clone(),
                         client.http_client(),
+                        low_speed_timeout_in_seconds.map(Duration::from_secs),
                         settings_version,
                     ));
                 }
