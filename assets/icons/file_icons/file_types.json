@@ -141,7 +141,7 @@
     "sdf": "storage",
     "sh": "terminal",
     "sqlite": "storage",
-    "svelte": "template",
+    "svelte": "svelte",
     "svg": "image",
     "sc": "scala",
     "scala": "scala",
