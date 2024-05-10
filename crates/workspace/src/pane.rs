@@ -18,6 +18,7 @@ use gpui::{
     MouseDownEvent, NavigationDirection, Pixels, Point, PromptLevel, Render, ScrollHandle,
     Subscription, Task, View, ViewContext, VisualContext, WeakFocusHandle, WeakView, WindowContext,
 };
+use itertools::Itertools;
 use parking_lot::Mutex;
 use project::{Project, ProjectEntryId, ProjectPath};
 use serde::Deserialize;
@@ -396,7 +397,14 @@ impl Pane {
     fn alternate_file(&mut self, cx: &mut ViewContext<Pane>) {
         let (_, alternative) = &self.alternate_file_items;
         if let Some(alternative) = alternative {
-            self.add_item(alternative.clone(), true, true, None, cx);
+            let existing = self
+                .items()
+                .find_position(|item| item.item_id() == alternative.item_id());
+            if let Some((ix, _)) = existing {
+                self.activate_item(ix, true, true, cx);
+            } else {
+                self.add_item(alternative.clone(), true, true, None, cx);
+            }
         }
     }
 
