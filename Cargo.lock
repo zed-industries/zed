@@ -5710,7 +5710,6 @@ dependencies = [
  "tree-sitter-c",
  "tree-sitter-cpp",
  "tree-sitter-css",
- "tree-sitter-embedded-template",
  "tree-sitter-go",
  "tree-sitter-gomod",
  "tree-sitter-gowork",
