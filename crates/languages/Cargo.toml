@@ -36,7 +36,6 @@ tree-sitter-bash.workspace = true
 tree-sitter-c.workspace = true
 tree-sitter-cpp.workspace = true
 tree-sitter-css.workspace = true
-tree-sitter-embedded-template.workspace = true
 tree-sitter-go.workspace = true
 tree-sitter-gomod.workspace = true
 tree-sitter-gowork.workspace = true
