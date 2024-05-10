@@ -570,14 +570,13 @@ mod tests {
     use crate::{
         display_map::Inlay,
         test::{editor_test_context::EditorTestContext, marked_display_snapshot},
-        Buffer, DisplayMap, ExcerptRange, InlayId, MultiBuffer,
+        DisplayMap, InlayId, MultiBuffer,
     };
     use gpui::{font, Context as _};
     use indoc::indoc;
-    use language::Capability;
     use project::Project;
     use settings::SettingsStore;
-    use util::{post_inc, test::marked_text_offsets};
+    use util::post_inc;
 
     #[gpui::test]
     fn test_previous_word_start(cx: &mut gpui::AppContext) {
@@ -867,7 +866,7 @@ mod tests {
             init_test(cx);
         });
 
-        let mut cx = EditorTestContext::new_multibuffer(cx, ["«abc\ndefg»\n«hijkl\nmn»"]);
+        let mut cx = EditorTestContext::new_multibuffer(cx, [&"«abc\ndefg»\n«hijkl\nmn»"]).await;
         cx.update_editor(|editor, cx| {
             editor.move_right(&Default::default(), cx);
             editor.move_right(&Default::default(), cx)

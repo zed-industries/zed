@@ -1,5 +1,6 @@
 use crate::{
-    display_map::ToDisplayPoint, AnchorRangeExt, Autoscroll, DisplayPoint, Editor, MultiBuffer,
+    display_map::ToDisplayPoint, AnchorRangeExt, Autoscroll, DisplayPoint, Editor, EditorMode,
+    MultiBuffer,
 };
 use collections::BTreeMap;
 use futures::Future;
@@ -16,12 +17,16 @@ use project::{FakeFs, Project};
 use std::{
     any::TypeId,
     ops::{Deref, DerefMut, Range},
+    path::PathBuf,
+    str::FromStr,
     sync::{
         atomic::{AtomicUsize, Ordering},
         Arc,
     },
 };
-use ui::Context;
+use workspace::Workspace;
+
+use ui::{Context, VisualContext};
 use util::{
     assert_set_eq,
     test::{generate_marked_text, marked_text_ranges},
@@ -69,15 +74,25 @@ impl EditorTestContext {
         }
     }
 
-    pub fn new_multibuffer<const COUNT: usize>(
+    pub async fn new_multibuffer<const COUNT: usize>(
         cx: &mut gpui::TestAppContext,
-        excerpts: [&str; COUNT],
+        buffers: [&dyn AsBuffer; COUNT],
     ) -> EditorTestContext {
+        let buffer_descriptions = buffers
+            .iter()
+            .map(|as_buffer| as_buffer.as_buffer())
+            .collect_vec();
+
         let mut multibuffer = MultiBuffer::new(0, language::Capability::ReadWrite);
         let buffer = cx.new_model(|cx| {
-            for excerpt in excerpts.into_iter() {
-                let (text, ranges) = marked_text_ranges(excerpt, false);
+            for buffer_description in buffer_descriptions.iter() {
+                let (text, ranges) = buffer_description.marked_text.clone();
                 let buffer = cx.new_model(|cx| Buffer::local(text, cx));
+
+                buffer.update(cx, |buffer, cx| {
+                    buffer.set_diff_base(buffer_description.base_text.clone(), cx)
+                });
+
                 multibuffer.push_excerpts(
                     buffer,
                     ranges.into_iter().map(|range| ExcerptRange {
@@ -90,17 +105,51 @@ impl EditorTestContext {
             multibuffer
         });
 
-        let editor = cx.add_window(|cx| {
-            let editor = build_editor(buffer, cx);
-            editor.focus(cx);
-            editor
-        });
+        let mut has_file = false;
+        let fs = FakeFs::new(cx.executor());
+        let mut folder = serde_json::Map::new();
+        for buffer_description in buffer_descriptions {
+            if let Some(path) = buffer_description.file_name {
+                has_file = true;
+                folder.insert(
+                    path.to_str().unwrap().to_string(),
+                    serde_json::Value::String(buffer_description.marked_text.0),
+                );
+            }
+        }
 
-        let editor_view = editor.root_view(cx).unwrap();
+        let (editor, window): (View<Editor>, AnyWindowHandle) = if has_file {
+            fs.insert_tree("/a", serde_json::Value::Object(folder))
+                .await;
+            let project = Project::test(fs, ["/a".as_ref()], cx).await;
+            let workspace = cx.add_window(|cx| Workspace::test_new(project.clone(), cx));
+            let editor = workspace
+                .update(cx, |_, cx| {
+                    cx.new_view(|cx| {
+                        Editor::new(EditorMode::Full, buffer, Some(project.clone()), cx)
+                    })
+                })
+                .unwrap();
+
+            (editor, workspace.into())
+        } else {
+            let editor_window_handle = cx.add_window(|cx| {
+                let editor = build_editor(buffer, cx);
+                editor.focus(cx);
+                editor
+            });
+
+            let editor = editor_window_handle.clone().root_view(cx).unwrap();
+
+            (editor, editor_window_handle.into())
+        };
+
+        let cx = VisualTestContext::from_window(window, cx);
+
         Self {
-            cx: VisualTestContext::from_window(*editor.deref(), cx),
-            window: editor.into(),
-            editor: editor_view,
+            cx,
+            window,
+            editor,
             assertion_cx: AssertionContextManager::new(),
         }
     }
@@ -479,5 +528,45 @@ impl Drop for ContextHandle {
     fn drop(&mut self) {
         let mut contexts = self.manager.contexts.write();
         contexts.remove(&self.id);
+    }
+}
+
+pub struct TestBufferDescription {
+    marked_text: (String, Vec<Range<usize>>),
+    base_text: Option<String>,
+    file_name: Option<PathBuf>,
+}
+
+pub trait AsBuffer {
+    fn as_buffer(&self) -> TestBufferDescription;
+}
+
+impl AsBuffer for &str {
+    fn as_buffer(&self) -> TestBufferDescription {
+        TestBufferDescription {
+            marked_text: marked_text_ranges(self, false),
+            base_text: None,
+            file_name: None,
+        }
+    }
+}
+
+impl AsBuffer for (&str, &str) {
+    fn as_buffer(&self) -> TestBufferDescription {
+        TestBufferDescription {
+            marked_text: marked_text_ranges(self.0, false),
+            base_text: Some(self.1.to_string()),
+            file_name: None,
+        }
+    }
+}
+
+impl AsBuffer for (&str, &str, &str) {
+    fn as_buffer(&self) -> TestBufferDescription {
+        TestBufferDescription {
+            file_name: Some(PathBuf::from_str(self.0).unwrap()),
+            marked_text: marked_text_ranges(self.1, false),
+            base_text: Some(self.2.to_string()),
+        }
     }
 }

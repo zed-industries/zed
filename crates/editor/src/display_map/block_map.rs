@@ -146,11 +146,24 @@ impl Debug for TransformBlock {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Custom(block) => f.debug_struct("Custom").field("block", block).finish(),
-            Self::ExcerptHeader { buffer, .. } => f
+            Self::ExcerptHeader {
+                buffer,
+                starts_new_buffer,
+                id,
+                ..
+            } => f
                 .debug_struct("ExcerptHeader")
+                .field("id", &id)
                 .field("path", &buffer.file().map(|f| f.path()))
+                .field("starts_new_buffer", &starts_new_buffer)
                 .finish(),
-            TransformBlock::ExcerptFooter { .. } => f.debug_struct("ExcerptFooter").finish(),
+            TransformBlock::ExcerptFooter {
+                id, disposition, ..
+            } => f
+                .debug_struct("ExcerptFooter")
+                .field("id", &id)
+                .field("disposition", &disposition)
+                .finish(),
         }
     }
 }
@@ -393,10 +406,10 @@ impl BlockMap {
                                         TransformBlock::ExcerptFooter {
                                             id: prev.id,
                                             height: self.excerpt_footer_height,
-                                            disposition: if excerpt_boundary.next.is_none() {
-                                                BlockDisposition::Below
-                                            } else {
+                                            disposition: if excerpt_boundary.next.is_some() {
                                                 BlockDisposition::Above
+                                            } else {
+                                                BlockDisposition::Below
                                             },
                                         },
                                     )
@@ -430,18 +443,47 @@ impl BlockMap {
             // Place excerpt headers and footers above custom blocks on the same row
             blocks_in_edit.sort_unstable_by(|(row_a, block_a), (row_b, block_b)| {
                 row_a.cmp(row_b).then_with(|| match (block_a, block_b) {
+                    // Sort footers with an above disposition
                     (
-                        TransformBlock::ExcerptFooter { .. },
-                        TransformBlock::ExcerptFooter { .. },
+                        TransformBlock::ExcerptFooter {
+                            disposition: BlockDisposition::Above,
+                            ..
+                        },
+                        TransformBlock::ExcerptFooter {
+                            disposition: BlockDisposition::Above,
+                            ..
+                        },
                     ) => Ordering::Equal,
-                    (TransformBlock::ExcerptFooter { .. }, _) => Ordering::Less,
-                    (_, TransformBlock::ExcerptFooter { .. }) => Ordering::Greater,
+                    (
+                        TransformBlock::ExcerptFooter {
+                            disposition: BlockDisposition::Above,
+                            ..
+                        },
+                        _,
+                    ) => Ordering::Less,
+                    (
+                        _,
+                        TransformBlock::ExcerptFooter {
+                            disposition: BlockDisposition::Above,
+                            ..
+                        },
+                    ) => Ordering::Greater,
+
+                    // Then excerpt headers
                     (
                         TransformBlock::ExcerptHeader { .. },
                         TransformBlock::ExcerptHeader { .. },
                     ) => Ordering::Equal,
                     (TransformBlock::ExcerptHeader { .. }, _) => Ordering::Less,
                     (_, TransformBlock::ExcerptHeader { .. }) => Ordering::Greater,
+                    // Then footers
+                    (
+                        TransformBlock::ExcerptFooter { .. },
+                        TransformBlock::ExcerptFooter { .. },
+                    ) => Ordering::Equal,
+                    (TransformBlock::ExcerptFooter { .. }, _) => Ordering::Less,
+                    (_, TransformBlock::ExcerptFooter { .. }) => Ordering::Greater,
+                    // And finally, custom blocks
                     (TransformBlock::Custom(block_a), TransformBlock::Custom(block_b)) => block_a
                         .disposition
                         .cmp(&block_b.disposition)
