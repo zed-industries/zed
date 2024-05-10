@@ -7901,6 +7901,16 @@ impl Project {
             .local_git_repo(&project_path.path)
     }
 
+    pub fn get_first_worktree_root_repo(
+        &self,
+        cx: &AppContext,
+    ) -> Option<Arc<Mutex<dyn GitRepository>>> {
+        let worktree = self.visible_worktrees(cx).next()?.read(cx).as_local()?;
+        let root_entry = worktree.root_git_entry()?;
+
+        worktree.get_local_repo(&root_entry)?.repo().clone().into()
+    }
+
     pub fn blame_buffer(
         &self,
         buffer: &Model<Buffer>,
