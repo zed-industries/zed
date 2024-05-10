@@ -136,7 +136,6 @@ pub fn client() -> Arc<dyn HttpClient> {
     Arc::new(
         isahc::HttpClient::builder()
             .connect_timeout(Duration::from_secs(5))
-            .low_speed_timeout(100, Duration::from_secs(5))
             .proxy(http_proxy_from_env())
             .build()
             .unwrap(),
