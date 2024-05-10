@@ -32,7 +32,6 @@ jobs:
         uses: actions/checkout@v4
         with:
           clean: false
-          submodules: "recursive"
           fetch-depth: 0
 
       - name: Remove untracked files
@@ -87,7 +86,6 @@ jobs:
         uses: actions/checkout@v4
         with:
           clean: false
-          submodules: "recursive"
 
       - name: cargo clippy
         run: cargo xtask clippy
@@ -115,7 +113,6 @@ jobs:
         uses: actions/checkout@v4
         with:
           clean: false
-          submodules: "recursive"
 
       - name: cargo clippy
         run: cargo xtask clippy
@@ -132,7 +129,6 @@ jobs:
         uses: actions/checkout@v4
         with:
           clean: false
-          submodules: "recursive"
 
       - name: Cache dependencies
         uses: swatinem/rust-cache@v2
@@ -175,7 +171,6 @@ jobs:
           # 25 was chosen arbitrarily.
           fetch-depth: 25
           clean: false
-          submodules: "recursive"
 
       - name: Limit target directory size
         run: script/clear-target-dir-if-larger-than 100
@@ -273,7 +268,6 @@ jobs:
         uses: actions/checkout@v4
         with:
           clean: false
-          submodules: "recursive"
 
       - name: Limit target directory size
         run: script/clear-target-dir-if-larger-than 100
