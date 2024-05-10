@@ -1237,7 +1237,7 @@ impl Pane {
             false
         } else {
             true
-        }
+        };
         if Self::can_autosave_item(item, cx) {
             item.save(format, project, cx)
         } else {
