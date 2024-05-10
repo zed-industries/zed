@@ -35,11 +35,11 @@ impl LanguageModelTool for CreateBufferTool {
     type View = CreateBufferView;
 
     fn name(&self) -> String {
-        "create_buffer".to_string()
+        "create_file".to_string()
     }
 
     fn description(&self) -> String {
-        "Create a new buffer in the current codebase".to_string()
+        "Create a new untitled file in the current codebase. Side effect: opens it in a new pane/tab for the user to edit.".to_string()
     }
 
     fn view(&self, cx: &mut WindowContext) -> View<Self::View> {
@@ -61,7 +61,7 @@ pub struct CreateBufferView {
 
 impl Render for CreateBufferView {
     fn render(&mut self, _cx: &mut ViewContext<Self>) -> impl IntoElement {
-        div().child("Opening a buffer")
+        ui::Label::new("Opening a buffer")
     }
 }
 
@@ -81,8 +81,9 @@ impl ToolOutput for CreateBufferView {
         }
     }
 
-    fn set_input(&mut self, input: Self::Input, _cx: &mut ViewContext<Self>) {
+    fn set_input(&mut self, input: Self::Input, cx: &mut ViewContext<Self>) {
         self.input = Some(input);
+        cx.notify();
     }
 
     fn execute(&mut self, cx: &mut ViewContext<Self>) -> Task<Result<()>> {

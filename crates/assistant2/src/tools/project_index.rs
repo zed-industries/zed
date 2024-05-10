@@ -1,12 +1,19 @@
 use anyhow::Result;
 use assistant_tooling::{LanguageModelTool, ToolOutput};
 use collections::BTreeMap;
-use gpui::{prelude::*, Model, Task};
+use file_icons::FileIcons;
+use gpui::{prelude::*, AnyElement, Model, Task};
 use project::ProjectPath;
 use schemars::JsonSchema;
 use semantic_index::{ProjectIndex, Status};
 use serde::{Deserialize, Serialize};
-use std::{fmt::Write as _, ops::Range, path::Path, sync::Arc};
+use std::{
+    fmt::Write as _,
+    ops::Range,
+    path::{Path, PathBuf},
+    str::FromStr as _,
+    sync::Arc,
+};
 use ui::{prelude::*, CollapsibleContainer, Color, Icon, IconName, Label, WindowContext};
 
 const DEFAULT_SEARCH_LIMIT: usize = 20;
@@ -38,8 +45,48 @@ pub struct ProjectIndexView {
 pub struct CodebaseQuery {
     /// Semantic search query
     query: String,
-    /// Maximum number of results to return, defaults to 20
-    limit: Option<usize>,
+    /// Criteria to include results
+    includes: Option<SearchFilter>,
+    /// Criteria to exclude results
+    excludes: Option<SearchFilter>,
+}
+
+#[derive(Deserialize, JsonSchema, Clone, Default)]
+pub struct SearchFilter {
+    /// Filter by file path prefix
+    prefix_path: Option<String>,
+    /// Filter by file extension
+    extension: Option<String>,
+    // Note: we possibly can't do content filtering very easily given the project context handling
+    // the final results, so we're leaving out direct string matches for now
+}
+
+fn project_starts_with(prefix_path: Option<String>, project_path: ProjectPath) -> bool {
+    if let Some(path) = &prefix_path {
+        if let Some(path) = PathBuf::from_str(path).ok() {
+            return project_path.path.starts_with(path);
+        }
+    }
+
+    return false;
+}
+
+impl SearchFilter {
+    fn matches(&self, project_path: &ProjectPath) -> bool {
+        let path_match = project_starts_with(self.prefix_path.clone(), project_path.clone());
+
+        path_match
+            && (if let Some(extension) = &self.extension {
+                project_path
+                    .path
+                    .extension()
+                    .and_then(|ext| ext.to_str())
+                    .map(|ext| ext == extension)
+                    .unwrap_or(false)
+            } else {
+                true
+            })
+    }
 }
 
 #[derive(Serialize, Deserialize)]
@@ -59,6 +106,56 @@ impl ProjectIndexView {
         self.expanded_header = !self.expanded_header;
         cx.notify();
     }
+
+    fn render_filter_section(
+        &mut self,
+        heading: &str,
+        filter: Option<SearchFilter>,
+        cx: &mut ViewContext<Self>,
+    ) -> Option<AnyElement> {
+        let filter = match filter {
+            Some(filter) => filter,
+            None => return None,
+        };
+
+        // Any of the filter fields can be empty. We'll show nothing if they're all empty.
+        let path = filter.prefix_path.as_ref().map(|path| {
+            let icon_path = FileIcons::get_icon(Path::new(path), cx)
+                .map(SharedString::from)
+                .unwrap_or_else(|| SharedString::from("icons/file_icons/file.svg"));
+
+            h_flex()
+                .gap_1()
+                .child("Paths: ")
+                .child(Icon::from_path(icon_path))
+                .child(ui::Label::new(path.clone()).color(Color::Muted))
+        });
+
+        let extension = filter.extension.as_ref().map(|extension| {
+            let icon_path = FileIcons::get_icon(Path::new(extension), cx)
+                .map(SharedString::from)
+                .unwrap_or_else(|| SharedString::from("icons/file_icons/file.svg"));
+
+            h_flex()
+                .gap_1()
+                .child("Extensions: ")
+                .child(Icon::from_path(icon_path))
+                .child(ui::Label::new(extension.clone()).color(Color::Muted))
+        });
+
+        if path.is_none() && extension.is_none() {
+            return None;
+        }
+
+        Some(
+            v_flex()
+                .child(ui::Label::new(heading.to_string()))
+                .gap_1()
+                .children(path)
+                .children(extension)
+                .into_any_element(),
+        )
+    }
 }
 
 impl Render for ProjectIndexView {
@@ -75,19 +172,23 @@ impl Render for ProjectIndexView {
             ProjectIndexToolState::Finished { excerpts, .. } => {
                 let file_count = excerpts.len();
 
-                let header_text = format!(
-                    "Read {} {}",
-                    file_count,
-                    if file_count == 1 { "file" } else { "files" }
-                );
+                if excerpts.is_empty() {
+                    ("No results found".to_string(), div())
+                } else {
+                    let header_text = format!(
+                        "Read {} {}",
+                        file_count,
+                        if file_count == 1 { "file" } else { "files" }
+                    );
 
-                let el = v_flex().gap_2().children(excerpts.keys().map(|path| {
-                    h_flex().gap_2().child(Icon::new(IconName::File)).child(
-                        Label::new(path.path.to_string_lossy().to_string()).color(Color::Muted),
-                    )
-                }));
+                    let el = v_flex().gap_2().children(excerpts.keys().map(|path| {
+                        h_flex().gap_2().child(Icon::new(IconName::File)).child(
+                            Label::new(path.path.to_string_lossy().to_string()).color(Color::Muted),
+                        )
+                    }));
 
-                (header_text, el)
+                    (header_text, el)
+                }
             }
         };
 
@@ -114,6 +215,16 @@ impl Render for ProjectIndexView {
                                     .child(Icon::new(IconName::MagnifyingGlass))
                                     .child(Label::new(format!("`{}`", query)).color(Color::Muted)),
                             )
+                            .children(self.render_filter_section(
+                                "Includes",
+                                self.input.includes.clone(),
+                                cx,
+                            ))
+                            .children(self.render_filter_section(
+                                "Excludes",
+                                self.input.excludes.clone(),
+                                cx,
+                            ))
                             .child(content),
                     ),
             )
@@ -165,11 +276,13 @@ impl ToolOutput for ProjectIndexView {
 
         let project_index = self.project_index.read(cx);
         let index_status = project_index.status();
-        let search = project_index.search(
-            self.input.query.clone(),
-            self.input.limit.unwrap_or(DEFAULT_SEARCH_LIMIT),
-            cx,
-        );
+
+        // TODO: wire the filters into the search here instead of processing after.
+        // Otherwise we'll get zero results sometimes.
+        let search = project_index.search(self.input.query.clone(), DEFAULT_SEARCH_LIMIT, cx);
+
+        let includes = self.input.includes.clone();
+        let excludes = self.input.excludes.clone();
 
         cx.spawn(|this, mut cx| async move {
             let search_result = search.await;
@@ -182,6 +295,17 @@ impl ToolOutput for ProjectIndexView {
                                 worktree_id: search_result.worktree.read(cx).id(),
                                 path: search_result.path,
                             };
+
+                            if let Some(includes) = &includes {
+                                if !includes.matches(&project_path) {
+                                    continue;
+                                }
+                            } else if let Some(excludes) = &excludes {
+                                if excludes.matches(&project_path) {
+                                    continue;
+                                }
+                            }
+
                             excerpts
                                 .entry(project_path)
                                 .or_default()
@@ -277,11 +401,20 @@ impl LanguageModelTool for ProjectIndexTool {
     type View = ProjectIndexView;
 
     fn name(&self) -> String {
-        "query_codebase".to_string()
+        "semantic_search_codebase".to_string()
     }
 
     fn description(&self) -> String {
-        "Semantic search against the user's current codebase, returning excerpts related to the query by computing a dot product against embeddings of code chunks in the code base and an embedding of the query.".to_string()
+        unindent::unindent(
+            r#"This search tool uses a semantic index to perform search queries across your codebase, identifying and returning excerpts of text and code possibly related to the query.
+
+            Ideal for:
+            - Discovering implementations of similar logic within the project
+            - Finding usage examples of functions, classes/structures, libraries, and other code elements
+            - Developing understanding of the codebase's architecture and design
+
+            Note: The search's effectiveness is directly related to the current state of the codebase and the specificity of your query. It is recommended that you use snippets of code that are similar to the code you wish to find."#,
+        )
     }
 
     fn view(&self, cx: &mut WindowContext) -> gpui::View<Self::View> {

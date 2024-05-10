@@ -383,6 +383,7 @@ dependencies = [
  "editor",
  "env_logger",
  "feature_flags",
+ "file_icons",
  "fs",
  "futures 0.3.28",
  "fuzzy",
@@ -406,6 +407,7 @@ dependencies = [
  "story",
  "theme",
  "ui",
+ "unindent",
  "util",
  "workspace",
 ]
