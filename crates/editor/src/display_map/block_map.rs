@@ -2,7 +2,7 @@ use super::{
     wrap_map::{self, WrapEdit, WrapPoint, WrapSnapshot},
     Highlights,
 };
-use crate::{DisplayRow, EditorStyle, GutterDimensions};
+use crate::{EditorStyle, GutterDimensions};
 use collections::{Bound, HashMap, HashSet};
 use gpui::{AnyElement, Pixels, WindowContext};
 use language::{BufferSnapshot, Chunk, Patch, Point};
@@ -50,7 +50,7 @@ pub struct BlockId(usize);
 pub struct BlockPoint(pub Point);
 
 #[derive(Copy, Clone, Debug, Default, Eq, Ord, PartialOrd, PartialEq)]
-struct BlockRow(u32);
+pub struct BlockRow(pub(super) u32);
 
 #[derive(Copy, Clone, Debug, Default, Eq, Ord, PartialOrd, PartialEq)]
 struct WrapRow(u32);
@@ -163,7 +163,7 @@ pub struct BlockChunks<'a> {
 pub struct BlockBufferRows<'a> {
     transforms: sum_tree::Cursor<'a, Transform, (BlockRow, WrapRow)>,
     input_buffer_rows: wrap_map::WrapBufferRows<'a>,
-    output_row: DisplayRow,
+    output_row: BlockRow,
     started: bool,
 }
 
@@ -633,9 +633,9 @@ impl BlockSnapshot {
         }
     }
 
-    pub fn buffer_rows(&self, start_row: DisplayRow) -> BlockBufferRows {
+    pub(super) fn buffer_rows(&self, start_row: BlockRow) -> BlockBufferRows {
         let mut cursor = self.transforms.cursor::<(BlockRow, WrapRow)>();
-        cursor.seek(&BlockRow(start_row.0), Bias::Right, &());
+        cursor.seek(&start_row, Bias::Right, &());
         let (output_start, input_start) = cursor.start();
         let overshoot = if cursor.item().map_or(false, |t| t.is_isomorphic()) {
             start_row.0 - output_start.0
@@ -676,7 +676,7 @@ impl BlockSnapshot {
 
     pub fn max_point(&self) -> BlockPoint {
         let row = self.transforms.summary().output_rows - 1;
-        BlockPoint::new(row, self.line_len(DisplayRow(row)))
+        BlockPoint::new(row, self.line_len(BlockRow(row)))
     }
 
     pub fn longest_row(&self) -> u32 {
@@ -684,7 +684,7 @@ impl BlockSnapshot {
         self.to_block_point(WrapPoint::new(input_row, 0)).row
     }
 
-    pub fn line_len(&self, row: DisplayRow) -> u32 {
+    pub(super) fn line_len(&self, row: BlockRow) -> u32 {
         let mut cursor = self.transforms.cursor::<(BlockRow, WrapRow)>();
         cursor.seek(&BlockRow(row.0), Bias::Right, &());
         if let Some(transform) = cursor.item() {
@@ -700,9 +700,9 @@ impl BlockSnapshot {
         }
     }
 
-    pub fn is_block_line(&self, row: DisplayRow) -> bool {
+    pub(super) fn is_block_line(&self, row: BlockRow) -> bool {
         let mut cursor = self.transforms.cursor::<(BlockRow, WrapRow)>();
-        cursor.seek(&BlockRow(row.0), Bias::Right, &());
+        cursor.seek(&row, Bias::Right, &());
         cursor.item().map_or(false, |t| t.block.is_some())
     }
 
@@ -881,7 +881,7 @@ impl<'a> Iterator for BlockChunks<'a> {
 }
 
 impl<'a> Iterator for BlockBufferRows<'a> {
-    type Item = Option<u32>;
+    type Item = Option<BlockRow>;
 
     fn next(&mut self) -> Option<Self::Item> {
         if self.started {
@@ -898,7 +898,7 @@ impl<'a> Iterator for BlockBufferRows<'a> {
         if transform.block.is_some() {
             Some(None)
         } else {
-            Some(self.input_buffer_rows.next().unwrap())
+            Some(self.input_buffer_rows.next().unwrap().map(BlockRow))
         }
     }
 }
@@ -1154,7 +1154,10 @@ mod tests {
         );
 
         assert_eq!(
-            snapshot.buffer_rows(DisplayRow(0)).collect::<Vec<_>>(),
+            snapshot
+                .buffer_rows(BlockRow(0))
+                .map(|row| row.map(|r| r.0))
+                .collect::<Vec<_>>(),
             &[
                 Some(0),
                 None,
@@ -1500,7 +1503,8 @@ mod tests {
                 );
                 assert_eq!(
                     blocks_snapshot
-                        .buffer_rows(DisplayRow(start_row as u32))
+                        .buffer_rows(BlockRow(start_row as u32))
+                        .map(|row| row.map(|r| r.0))
                         .collect::<Vec<_>>(),
                     &expected_buffer_rows[start_row..]
                 );
@@ -1520,7 +1524,7 @@ mod tests {
                 let row = row as u32;
 
                 assert_eq!(
-                    blocks_snapshot.line_len(DisplayRow(row)),
+                    blocks_snapshot.line_len(BlockRow(row)),
                     line.len() as u32,
                     "invalid line len for row {}",
                     row

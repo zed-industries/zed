@@ -50,6 +50,7 @@ pub use block_map::{
     BlockProperties, BlockStyle, RenderBlock, TransformBlock,
 };
 
+use self::block_map::BlockRow;
 pub use self::fold_map::{Fold, FoldId, FoldPoint};
 pub use self::inlay_map::{InlayOffset, InlayPoint};
 pub(crate) use inlay_map::Inlay;
@@ -76,7 +77,7 @@ impl<'a> Iterator for DisplayBufferRows<'a> {
     type Item = Option<DisplayRow>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        self.0.next().map(|row| row.map(DisplayRow))
+        self.0.next().map(|row| row.map(|r| DisplayRow(r.0)))
     }
 }
 
@@ -398,7 +399,7 @@ impl DisplaySnapshot {
     }
 
     pub fn display_rows(&self, start_row: DisplayRow) -> DisplayBufferRows {
-        DisplayBufferRows(self.block_snapshot.buffer_rows(start_row))
+        DisplayBufferRows(self.block_snapshot.buffer_rows(BlockRow(start_row.0)))
     }
 
     pub fn max_buffer_row(&self) -> MultiBufferRow {
@@ -780,7 +781,7 @@ impl DisplaySnapshot {
     }
 
     pub fn is_block_line(&self, display_row: DisplayRow) -> bool {
-        self.block_snapshot.is_block_line(display_row)
+        self.block_snapshot.is_block_line(BlockRow(display_row.0))
     }
 
     pub fn soft_wrap_indent(&self, display_row: DisplayRow) -> Option<u32> {
@@ -831,7 +832,7 @@ impl DisplaySnapshot {
     }
 
     pub fn line_len(&self, row: DisplayRow) -> u32 {
-        self.block_snapshot.line_len(row)
+        self.block_snapshot.line_len(BlockRow(row.0))
     }
 
     pub fn longest_row(&self) -> DisplayRow {
