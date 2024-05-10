@@ -45,7 +45,7 @@ struct Excerpt {
     path: String,
     /// A short, distinctive string that appears in the file, used to define a location in the file.
     text_passage: String,
-    /// Text to display above the code excerpt
+    /// Text to display above the code excerpt. All explanation of code should be included here.
     annotation: String,
 }
 
@@ -53,11 +53,17 @@ impl LanguageModelTool for AnnotationTool {
     type View = AnnotationResultView;
 
     fn name(&self) -> String {
-        "annotate_code".to_string()
+        "show_code_file_excerpts".to_string()
     }
 
     fn description(&self) -> String {
-        "Dynamically annotate symbols in the current codebase. Opens a buffer in a panel in their editor, to the side of the conversation. The annotations are shown in the editor as a block decoration.".to_string()
+        "
+            Show and explain code from the current project
+            Opens a buffer in a separate pane/tab, to the side of the conversation.
+            The annotations are shown in the editor as block decorations.
+            Many related excerpts can be shown at once.
+        "
+        .to_string()
     }
 
     fn view(&self, cx: &mut WindowContext) -> View<Self::View> {

@@ -48,18 +48,7 @@ pub use assistant_settings::AssistantSettings;
 const MAX_COMPLETION_CALLS_PER_SUBMISSION: usize = 5;
 
 #[derive(Eq, PartialEq, Copy, Clone, Deserialize)]
-pub struct Submit(SubmitMode);
-
-/// There are multiple different ways to submit a model request, represented by this enum.
-#[derive(Eq, PartialEq, Copy, Clone, Deserialize)]
-pub enum SubmitMode {
-    /// Only include the conversation.
-    Simple,
-    /// Send the current file as context.
-    CurrentFile,
-    /// Search the codebase and send relevant excerpts.
-    Codebase,
-}
+pub struct Submit;
 
 gpui::actions!(assistant2, [Cancel, ToggleFocus, DebugProjectIndex,]);
 gpui::impl_actions!(assistant2, [Submit]);
@@ -391,7 +380,7 @@ impl AssistantChat {
         cx.propagate();
     }
 
-    fn submit(&mut self, Submit(mode): &Submit, cx: &mut ViewContext<Self>) {
+    fn submit(&mut self, _: &Submit, cx: &mut ViewContext<Self>) {
         if let Some(focused_message_id) = self.focused_message_id(cx) {
             self.truncate_messages(focused_message_id, cx);
             self.pending_completion.take();
@@ -429,7 +418,6 @@ impl AssistantChat {
             return;
         }
 
-        let mode = *mode;
         self.pending_completion = Some(cx.spawn(move |this, mut cx| async move {
             let attachments_task = this.update(&mut cx, |this, cx| {
                 let attachment_registry = this.attachment_registry.clone();
@@ -454,14 +442,9 @@ impl AssistantChat {
             })
             .log_err();
 
-            Self::request_completion(
-                this.clone(),
-                mode,
-                MAX_COMPLETION_CALLS_PER_SUBMISSION,
-                &mut cx,
-            )
-            .await
-            .log_err();
+            Self::request_completion(this.clone(), MAX_COMPLETION_CALLS_PER_SUBMISSION, &mut cx)
+                .await
+                .log_err();
 
             this.update(&mut cx, |this, _cx| {
                 this.pending_completion = None;
@@ -473,7 +456,6 @@ impl AssistantChat {
 
     async fn request_completion(
         this: WeakView<Self>,
-        mode: SubmitMode,
         limit: usize,
         cx: &mut AsyncWindowContext,
     ) -> Result<()> {
@@ -483,9 +465,7 @@ impl AssistantChat {
                 let (tool_definitions, model_name, messages) = this.update(cx, |this, cx| {
                     this.push_new_assistant_message(cx);
 
-                    let definitions = if call_count < limit
-                        && matches!(mode, SubmitMode::Codebase | SubmitMode::Simple)
-                    {
+                    let definitions = if call_count < limit {
                         this.tool_registry.definitions()
                     } else {
                         Vec::new()
@@ -886,6 +866,21 @@ impl AssistantChat {
 
         let mut project_context = ProjectContext::new(project, fs);
         let mut completion_messages = Vec::new();
+
+        completion_messages.push(CompletionMessage::System {
+            content: r#"
+                You are the assistant for the Zed code editor.
+                Your job is to help the user understand and modify their own code.
+                Use tools to retrieve the information needed to give answers that are
+                specific to the user's codebase. Do NOT give generic answers that are
+                not specific to the user's codebase.
+                Whenever possible, use tools to display code in the editor.
+            "#
+            .lines()
+            .map(|line| line.trim_start())
+            .filter(|line| !line.is_empty())
+            .collect(),
+        });
 
         for message in &self.messages {
             match message {

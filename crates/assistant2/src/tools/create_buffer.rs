@@ -35,11 +35,11 @@ impl LanguageModelTool for CreateBufferTool {
     type View = CreateBufferView;
 
     fn name(&self) -> String {
-        "create_buffer".to_string()
+        "create_new_source_file".to_string()
     }
 
     fn description(&self) -> String {
-        "Create a new buffer in the current codebase".to_string()
+        "Create a new file in the current codebase. Only use this when generating new code, NOT when showing existing code from the project.".to_string()
     }
 
     fn view(&self, cx: &mut WindowContext) -> View<Self::View> {
