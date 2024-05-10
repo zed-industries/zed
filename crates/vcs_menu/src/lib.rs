@@ -1,4 +1,4 @@
-use anyhow::{anyhow, bail, Result};
+use anyhow::{Context, Result};
 use fuzzy::{StringMatch, StringMatchCandidate};
 use git::repository::Branch;
 use gpui::{
@@ -105,15 +105,10 @@ impl BranchListDelegate {
         cx: &AppContext,
     ) -> Result<Self> {
         let project = workspace.project().read(&cx);
-        let Some(worktree) = project.visible_worktrees(cx).next() else {
-            bail!("Cannot update branch list as there are no visible worktrees")
-        };
+        let repo = project
+            .get_first_worktree_root_repo(cx)
+            .context("failed to get root repository for first worktree")?;
 
-        let mut cwd = worktree.read(cx).abs_path().to_path_buf();
-        cwd.push(".git");
-        let Some(repo) = project.fs().open_repo(&cwd) else {
-            bail!("Project does not have associated git repository.")
-        };
         let all_branches = repo.lock().branches()?;
         Ok(Self {
             matches: vec![],
@@ -159,14 +154,20 @@ impl PickerDelegate for BranchListDelegate {
             let candidates = picker.update(&mut cx, |view, _| {
                 const RECENT_BRANCHES_COUNT: usize = 10;
                 let mut branches = view.delegate.all_branches.clone();
-                if query.is_empty() && branches.len() > RECENT_BRANCHES_COUNT {
-                    // Truncate list of recent branches
-                    // Do a partial sort to show recent-ish branches first.
-                    branches.select_nth_unstable_by(RECENT_BRANCHES_COUNT - 1, |lhs, rhs| {
-                        rhs.unix_timestamp.cmp(&lhs.unix_timestamp)
+                if query.is_empty() {
+                    if branches.len() > RECENT_BRANCHES_COUNT {
+                        // Truncate list of recent branches
+                        // Do a partial sort to show recent-ish branches first.
+                        branches.select_nth_unstable_by(RECENT_BRANCHES_COUNT - 1, |lhs, rhs| {
+                            rhs.is_head
+                                .cmp(&lhs.is_head)
+                                .then(rhs.unix_timestamp.cmp(&lhs.unix_timestamp))
+                        });
+                        branches.truncate(RECENT_BRANCHES_COUNT);
+                    }
+                    branches.sort_unstable_by(|lhs, rhs| {
+                        rhs.is_head.cmp(&lhs.is_head).then(lhs.name.cmp(&rhs.name))
                     });
-                    branches.truncate(RECENT_BRANCHES_COUNT);
-                    branches.sort_unstable_by(|lhs, rhs| lhs.name.cmp(&rhs.name));
                 }
                 branches
                     .into_iter()
@@ -232,23 +233,10 @@ impl PickerDelegate for BranchListDelegate {
             picker
                 .update(&mut cx, |this, cx| {
                     let project = this.delegate.workspace.read(cx).project().read(cx);
-                    let mut cwd = project
-                        .visible_worktrees(cx)
-                        .next()
-                        .ok_or_else(|| anyhow!("There are no visisible worktrees."))?
-                        .read(cx)
-                        .abs_path()
-                        .to_path_buf();
-                    cwd.push(".git");
-                    let status = project
-                        .fs()
-                        .open_repo(&cwd)
-                        .ok_or_else(|| {
-                            anyhow!(
-                                "Could not open repository at path `{}`",
-                                cwd.as_os_str().to_string_lossy()
-                            )
-                        })?
+                    let repo = project
+                        .get_first_worktree_root_repo(cx)
+                        .context("failed to get root repository for first worktree")?;
+                    let status = repo
                         .lock()
                         .change_branch(&current_pick);
                     if status.is_err() {
@@ -325,18 +313,9 @@ impl PickerDelegate for BranchListDelegate {
                                         picker.update(&mut cx, |this, cx| {
                                             let project = this.delegate.workspace.read(cx).project().read(cx);
                                             let current_pick = &this.delegate.last_query;
-                                            let mut cwd = project
-                                            .visible_worktrees(cx)
-                                            .next()
-                                            .ok_or_else(|| anyhow!("There are no visisible worktrees."))?
-                                            .read(cx)
-                                            .abs_path()
-                                            .to_path_buf();
-                                            cwd.push(".git");
                                             let repo = project
-                                                .fs()
-                                                .open_repo(&cwd)
-                                                .ok_or_else(|| anyhow!("Could not open repository at path `{}`", cwd.as_os_str().to_string_lossy()))?;
+                                                .get_first_worktree_root_repo(cx)
+                                                .context("failed to get root repository for first worktree")?;
                                             let repo = repo
                                                 .lock();
                                             let status = repo

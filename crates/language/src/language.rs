@@ -56,7 +56,10 @@ use std::{
     },
 };
 use syntax_map::{QueryCursorHandle, SyntaxSnapshot};
-pub use task_context::{BasicContextProvider, ContextProvider, ContextProviderWithTasks};
+use task::RunnableTag;
+pub use task_context::{
+    BasicContextProvider, ContextProvider, ContextProviderWithTasks, RunnableRange,
+};
 use theme::SyntaxTheme;
 use tree_sitter::{self, wasmtime, Query, QueryCursor, WasmStore};
 use util::http::HttpClient;
@@ -151,7 +154,7 @@ pub struct CachedLspAdapter {
     pub name: LanguageServerName,
     pub disk_based_diagnostic_sources: Vec<String>,
     pub disk_based_diagnostics_progress_token: Option<String>,
-    pub language_ids: HashMap<String, String>,
+    language_ids: HashMap<String, String>,
     pub adapter: Arc<dyn LspAdapter>,
     pub reinstall_attempt_count: AtomicU64,
     /// Indicates whether this language server is the primary language server
@@ -245,6 +248,13 @@ impl CachedLspAdapter {
             .clone()
             .labels_for_symbols(symbols, language)
             .await
+    }
+
+    pub fn language_id(&self, language: &Language) -> String {
+        self.language_ids
+            .get(language.name().as_ref())
+            .cloned()
+            .unwrap_or_else(|| language.lsp_id())
     }
 
     #[cfg(any(test, feature = "test-support"))]
@@ -836,6 +846,7 @@ pub struct Grammar {
     pub(crate) highlights_query: Option<Query>,
     pub(crate) brackets_config: Option<BracketConfig>,
     pub(crate) redactions_config: Option<RedactionConfig>,
+    pub(crate) runnable_config: Option<RunnableConfig>,
     pub(crate) indents_config: Option<IndentConfig>,
     pub outline_config: Option<OutlineConfig>,
     pub embedding_config: Option<EmbeddingConfig>,
@@ -882,6 +893,14 @@ struct RedactionConfig {
     pub redaction_capture_ix: u32,
 }
 
+struct RunnableConfig {
+    pub query: Query,
+    /// A mapping from captures indices to known test tags
+    pub runnable_tags: HashMap<u32, RunnableTag>,
+    /// index of the capture that corresponds to @run
+    pub run_capture_ix: u32,
+}
+
 struct OverrideConfig {
     query: Query,
     values: HashMap<u32, (String, LanguageConfigOverride)>,
@@ -923,6 +942,7 @@ impl Language {
                     injection_config: None,
                     override_config: None,
                     redactions_config: None,
+                    runnable_config: None,
                     error_query: Query::new(&ts_language, "(ERROR) @error").unwrap(),
                     ts_language,
                     highlight_map: Default::default(),
@@ -978,6 +998,11 @@ impl Language {
                 .with_redaction_query(query.as_ref())
                 .context("Error loading redaction query")?;
         }
+        if let Some(query) = queries.runnables {
+            self = self
+                .with_runnable_query(query.as_ref())
+                .context("Error loading tests query")?;
+        }
         Ok(self)
     }
 
@@ -986,6 +1011,33 @@ impl Language {
             .grammar_mut()
             .ok_or_else(|| anyhow!("cannot mutate grammar"))?;
         grammar.highlights_query = Some(Query::new(&grammar.ts_language, source)?);
+        Ok(self)
+    }
+
+    pub fn with_runnable_query(mut self, source: &str) -> Result<Self> {
+        let grammar = self
+            .grammar_mut()
+            .ok_or_else(|| anyhow!("cannot mutate grammar"))?;
+
+        let query = Query::new(&grammar.ts_language, source)?;
+        let mut run_capture_index = None;
+        let mut runnable_tags = HashMap::default();
+        for (ix, name) in query.capture_names().iter().enumerate() {
+            if *name == "run" {
+                run_capture_index = Some(ix as u32);
+            } else if !name.starts_with('_') {
+                runnable_tags.insert(ix as u32, RunnableTag(name.to_string().into()));
+            }
+        }
+
+        if let Some(run_capture_ix) = run_capture_index {
+            grammar.runnable_config = Some(RunnableConfig {
+                query,
+                run_capture_ix,
+                runnable_tags,
+            });
+        }
+
         Ok(self)
     }
 
@@ -1126,7 +1178,7 @@ impl Language {
                 for setting in query.property_settings(ix) {
                     match setting.key.as_ref() {
                         "language" => {
-                            config.language = setting.value.clone();
+                            config.language.clone_from(&setting.value);
                         }
                         "combined" => {
                             config.combined = true;
@@ -1329,6 +1381,13 @@ impl Language {
 
     pub fn prettier_plugins(&self) -> &Vec<Arc<str>> {
         &self.config.prettier_plugins
+    }
+
+    pub fn lsp_id(&self) -> String {
+        match self.config.name.as_ref() {
+            "Plain Text" => "plaintext".to_string(),
+            language_name => language_name.to_lowercase(),
+        }
     }
 }
 

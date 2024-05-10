@@ -1,6 +1,7 @@
 mod app_menus;
 pub mod inline_completion_registry;
-mod only_instance;
+#[cfg(not(target_os = "linux"))]
+pub(crate) mod only_instance;
 mod open_listener;
 
 pub use app_menus::*;
@@ -12,7 +13,6 @@ use gpui::{
     actions, point, px, AppContext, AsyncAppContext, Context, FocusableView, PromptLevel,
     TitlebarOptions, View, ViewContext, VisualContext, WindowKind, WindowOptions,
 };
-pub use only_instance::*;
 pub use open_listener::*;
 
 use anyhow::Context as _;
@@ -96,13 +96,12 @@ pub fn build_window_options(display_uuid: Option<Uuid>, cx: &mut AppContext) -> 
             appears_transparent: true,
             traffic_light_position: Some(point(px(9.0), px(9.0))),
         }),
-        bounds: None,
+        window_bounds: None,
         focus: false,
         show: false,
         kind: WindowKind::Normal,
         is_movable: true,
         display_id: display.map(|display| display.id()),
-        fullscreen: false,
         window_background: cx.theme().window_background_appearance(),
         app_id: Some(app_id.to_owned()),
     }
@@ -168,19 +167,14 @@ pub fn initialize_workspace(app_state: Arc<AppState>, cx: &mut AppContext) {
             project.update(cx, |project, cx| {
                 let fs = app_state.fs.clone();
                 project.task_inventory().update(cx, |inventory, cx| {
+                    let tasks_file_rx =
+                        watch_config_file(&cx.background_executor(), fs, paths::TASKS.clone());
                     inventory.add_source(
                         TaskSourceKind::AbsPath {
                             id_base: "global_tasks",
                             abs_path: paths::TASKS.clone(),
                         },
-                        |cx| {
-                            let tasks_file_rx = watch_config_file(
-                                &cx.background_executor(),
-                                fs,
-                                paths::TASKS.clone(),
-                            );
-                            StaticSource::new(TrackedFile::new(tasks_file_rx, cx), cx)
-                        },
+                        StaticSource::new(TrackedFile::new(tasks_file_rx, cx)),
                         cx,
                     );
                 })

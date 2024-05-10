@@ -429,11 +429,17 @@ impl Copilot {
                     env: None,
                 };
 
+                let root_path = if cfg!(target_os = "windows") {
+                    Path::new("C:/")
+                } else {
+                    Path::new("/")
+                };
+
                 let server = LanguageServer::new(
                     Arc::new(Mutex::new(None)),
                     new_server_id,
                     binary,
-                    Path::new("/"),
+                    root_path,
                     None,
                     cx.clone(),
                 )?;
@@ -948,12 +954,9 @@ impl Copilot {
 }
 
 fn id_for_language(language: Option<&Arc<Language>>) -> String {
-    let language_name = language.map(|language| language.name());
-    match language_name.as_deref() {
-        Some("Plain Text") => "plaintext".to_string(),
-        Some(language_name) => language_name.to_lowercase(),
-        None => "plaintext".to_string(),
-    }
+    language
+        .map(|language| language.lsp_id())
+        .unwrap_or_else(|| "plaintext".to_string())
 }
 
 fn uri_for_buffer(buffer: &Model<Buffer>, cx: &AppContext) -> lsp::Url {

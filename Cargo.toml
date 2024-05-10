@@ -4,8 +4,8 @@ members = [
     "crates/anthropic",
     "crates/assets",
     "crates/assistant",
-    "crates/assistant_tooling",
     "crates/assistant2",
+    "crates/assistant_tooling",
     "crates/audio",
     "crates/auto_update",
     "crates/breadcrumbs",
@@ -35,6 +35,7 @@ members = [
     "crates/fsevent",
     "crates/fuzzy",
     "crates/git",
+    "crates/git_hosting_providers",
     "crates/go_to_line",
     "crates/google_ai",
     "crates/gpui",
@@ -51,6 +52,7 @@ members = [
     "crates/live_kit_client",
     "crates/live_kit_server",
     "crates/lsp",
+    "crates/markdown",
     "crates/markdown_preview",
     "crates/media",
     "crates/menu",
@@ -175,6 +177,7 @@ fs = { path = "crates/fs" }
 fsevent = { path = "crates/fsevent" }
 fuzzy = { path = "crates/fuzzy" }
 git = { path = "crates/git" }
+git_hosting_providers = { path = "crates/git_hosting_providers" }
 go_to_line = { path = "crates/go_to_line" }
 google_ai = { path = "crates/google_ai" }
 gpui = { path = "crates/gpui" }
@@ -191,6 +194,7 @@ languages = { path = "crates/languages" }
 live_kit_client = { path = "crates/live_kit_client" }
 live_kit_server = { path = "crates/live_kit_server" }
 lsp = { path = "crates/lsp" }
+markdown = { path = "crates/markdown" }
 markdown_preview = { path = "crates/markdown_preview" }
 media = { path = "crates/media" }
 menu = { path = "crates/menu" }
@@ -224,7 +228,7 @@ snippet = { path = "crates/snippet" }
 sqlez = { path = "crates/sqlez" }
 sqlez_macros = { path = "crates/sqlez_macros" }
 supermaven = { path = "crates/supermaven" }
-supermaven_api = { path = "crates/supermaven_api"}
+supermaven_api = { path = "crates/supermaven_api" }
 story = { path = "crates/story" }
 storybook = { path = "crates/storybook" }
 sum_tree = { path = "crates/sum_tree" }
@@ -254,20 +258,23 @@ async-fs = "1.6"
 async-recursion = "1.0.0"
 async-tar = "0.4.2"
 async-trait = "0.1"
+async_zip = { version = "0.0.17", features = ["deflate", "deflate64"] }
 bitflags = "2.4.2"
-blade-graphics = { git = "https://github.com/kvark/blade", rev = "e82eec97691c3acdb43494484be60d661edfebf3" }
-blade-macros = { git = "https://github.com/kvark/blade", rev = "e82eec97691c3acdb43494484be60d661edfebf3" }
+blade-graphics = { git = "https://github.com/kvark/blade", rev = "e35b2d41f221a48b75f7cf2e78a81e7ecb7a383c" }
+blade-macros = { git = "https://github.com/kvark/blade", rev = "e35b2d41f221a48b75f7cf2e78a81e7ecb7a383c" }
 cap-std = "3.0"
 chrono = { version = "0.4", features = ["serde"] }
 clap = { version = "4.4", features = ["derive"] }
 clickhouse = { version = "0.11.6" }
 ctor = "0.2.6"
-ctrlc = "3.4.4"
+signal-hook = "0.3.17"
 core-foundation = { version = "0.9.3" }
 core-foundation-sys = "0.8.6"
 derive_more = "0.99.17"
 emojis = "0.6.1"
 env_logger = "0.9"
+exec = "0.3.1"
+fork = "0.1.23"
 futures = "0.3"
 futures-batch = "0.6.1"
 futures-lite = "1.13"
@@ -286,10 +293,12 @@ isahc = { version = "1.7.2", default-features = false, features = [
 ] }
 itertools = "0.11.0"
 lazy_static = "1.4.0"
+libc = "0.2"
 linkify = "0.10.0"
 log = { version = "0.4.16", features = ["kv_unstable_serde"] }
 nanoid = "0.4"
 nix = "0.28"
+once_cell = "1.19.0"
 ordered-float = "2.1.1"
 palette = { version = "0.7.5", default-features = false, features = ["std"] }
 parking_lot = "0.12.1"
@@ -303,6 +312,7 @@ pulldown-cmark = { version = "0.10.0", default-features = false }
 rand = "0.8.5"
 refineable = { path = "./crates/refineable" }
 regex = "1.5"
+repair_json = "0.1.0"
 rusqlite = { version = "0.29.0", features = ["blob", "array", "modern_sqlite"] }
 rust-embed = { version = "8.0", features = ["include-exclude"] }
 schemars = "0.8"
@@ -382,6 +392,8 @@ version = "0.53.0"
 features = [
     "implement",
     "Foundation_Numerics",
+    "System",
+    "System_Threading",
     "Wdk_System_SystemServices",
     "Win32_Globalization",
     "Win32_Graphics_Direct2D",
@@ -405,6 +417,7 @@ features = [
     "Win32_System_SystemServices",
     "Win32_System_Threading",
     "Win32_System_Time",
+    "Win32_System_WinRT",
     "Win32_UI_Controls",
     "Win32_UI_HiDpi",
     "Win32_UI_Input_Ime",

@@ -17,6 +17,7 @@ use collab_ui::channel_view::ChannelView;
 use collections::{HashMap, HashSet};
 use fs::FakeFs;
 use futures::{channel::oneshot, StreamExt as _};
+use git::GitHostingProviderRegistry;
 use gpui::{BackgroundExecutor, Context, Model, Task, TestAppContext, View, VisualTestContext};
 use language::LanguageRegistry;
 use node_runtime::FakeNodeRuntime;
@@ -257,6 +258,11 @@ impl TestServer {
                 })
             });
 
+        let git_hosting_provider_registry =
+            cx.update(|cx| GitHostingProviderRegistry::default_global(cx));
+        git_hosting_provider_registry
+            .register_hosting_provider(Arc::new(git_hosting_providers::Github));
+
         let fs = FakeFs::new(cx.executor());
         let user_store = cx.new_model(|cx| UserStore::new(client.clone(), cx));
         let workspace_store = cx.new_model(|cx| WorkspaceStore::new(client.clone(), cx));
@@ -422,8 +428,10 @@ impl TestServer {
                     node_runtime: app_state.node_runtime.clone(),
                 },
                 cx,
-            );
-        });
+            )
+        })
+        .await
+        .unwrap();
 
         TestClient {
             app_state,

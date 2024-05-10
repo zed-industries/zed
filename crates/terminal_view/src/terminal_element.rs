@@ -559,7 +559,7 @@ impl Element for TerminalElement {
             .request_layout(global_id, cx, |mut style, cx| {
                 style.size.width = relative(1.).into();
                 style.size.height = relative(1.).into();
-                let layout_id = cx.request_layout(&style, None);
+                let layout_id = cx.request_layout(style, None);
 
                 layout_id
             });

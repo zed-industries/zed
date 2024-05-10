@@ -88,7 +88,7 @@ impl RenderOnce for CollapsibleContainer {
             .relative()
             .rounded_md()
             .bg(styles.background_color)
-            .border()
+            .border_1()
             .border_color(styles.border_color)
             .text_color(styles.text_color)
             .overflow_hidden()
@@ -97,7 +97,7 @@ impl RenderOnce for CollapsibleContainer {
                     .overflow_hidden()
                     .w_full()
                     .group("toggleable_container_header")
-                    .border_b()
+                    .border_b_1()
                     .border_color(if self.toggle {
                         styles.border_color
                     } else {

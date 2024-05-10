@@ -6,7 +6,7 @@ use crate::ElevationIndex;
 fn elevated<E: Styled>(this: E, cx: &mut WindowContext, index: ElevationIndex) -> E {
     this.bg(cx.theme().colors().elevated_surface_background)
         .rounded(px(8.))
-        .border()
+        .border_1()
         .border_color(cx.theme().colors().border_variant)
         .shadow(index.shadow())
 }

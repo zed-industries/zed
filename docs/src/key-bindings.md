@@ -77,13 +77,18 @@ A common request is to be able to map from one sequence of keys to another. As o
 [
   {
     "bindings": {
-      "j k": ["workspace::SendKeystrokes", "escape"],
       "alt-down": ["workspace::SendKeystrokes", "down down down down"],
       "cmd-alt-c": [
         "workspace::SendKeystrokes",
         "cmd-shift-p copy relative path enter"
       ],
       "cmd-alt-r": ["workspace::SendKeystrokes", "cmd-p README enter"]
+    }
+  },
+  {
+    "context": "Editor && vim_mode == insert",
+    "bindings": {
+      "j k": ["workspace::SendKeystrokes", "escape"],
     }
   }
 ]

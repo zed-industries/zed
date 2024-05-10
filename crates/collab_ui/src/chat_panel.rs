@@ -572,7 +572,7 @@ impl ChatPanel {
             )
             .child(
                 self.render_popover_buttons(&cx, message_id, can_delete_message, can_edit_message)
-                    .neg_mt_2p5(),
+                    .mt_neg_2p5(),
             )
     }
 

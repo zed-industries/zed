@@ -11,6 +11,7 @@ use collections::{HashMap, HashSet};
 use futures::channel::oneshot::Receiver;
 use raw_window_handle as rwh;
 use wayland_backend::client::ObjectId;
+use wayland_client::protocol::wl_region::WlRegion;
 use wayland_client::WEnum;
 use wayland_client::{protocol::wl_surface, Proxy};
 use wayland_protocols::wp::fractional_scale::v1::client::wp_fractional_scale_v1;
@@ -18,15 +19,16 @@ use wayland_protocols::wp::viewporter::client::wp_viewport;
 use wayland_protocols::xdg::decoration::zv1::client::zxdg_toplevel_decoration_v1;
 use wayland_protocols::xdg::shell::client::xdg_surface;
 use wayland_protocols::xdg::shell::client::xdg_toplevel::{self, WmCapabilities};
+use wayland_protocols_plasma::blur::client::{org_kde_kwin_blur, org_kde_kwin_blur_manager};
 
-use crate::platform::blade::BladeRenderer;
+use crate::platform::blade::{BladeRenderer, BladeSurfaceConfig};
 use crate::platform::linux::wayland::display::WaylandDisplay;
 use crate::platform::{PlatformAtlas, PlatformInputHandler, PlatformWindow};
 use crate::scene::Scene;
 use crate::{
     px, size, Bounds, DevicePixels, Globals, Modifiers, Pixels, PlatformDisplay, PlatformInput,
     Point, PromptLevel, Size, WaylandClientState, WaylandClientStatePtr, WindowAppearance,
-    WindowBackgroundAppearance, WindowParams,
+    WindowBackgroundAppearance, WindowBounds, WindowParams,
 };
 
 #[derive(Default)]
@@ -35,7 +37,6 @@ pub(crate) struct Callbacks {
     input: Option<Box<dyn FnMut(crate::PlatformInput) -> crate::DispatchEventResult>>,
     active_status_change: Option<Box<dyn FnMut(bool)>>,
     resize: Option<Box<dyn FnMut(Size<Pixels>, f32)>>,
-    fullscreen: Option<Box<dyn FnMut(bool)>>,
     moved: Option<Box<dyn FnMut()>>,
     should_close: Option<Box<dyn FnMut() -> bool>>,
     close: Option<Box<dyn FnOnce()>>,
@@ -67,6 +68,7 @@ pub struct WaylandWindowState {
     acknowledged_first_configure: bool,
     pub surface: wl_surface::WlSurface,
     decoration: Option<zxdg_toplevel_decoration_v1::ZxdgToplevelDecorationV1>,
+    blur: Option<org_kde_kwin_blur::OrgKdeKwinBlur>,
     toplevel: xdg_toplevel::XdgToplevel,
     viewport: Option<wp_viewport::WpViewport>,
     outputs: HashSet<ObjectId>,
@@ -77,6 +79,7 @@ pub struct WaylandWindowState {
     input_handler: Option<PlatformInputHandler>,
     decoration_state: WaylandDecorationState,
     fullscreen: bool,
+    restore_bounds: Bounds<DevicePixels>,
     maximized: bool,
     client: WaylandClientStatePtr,
     callbacks: Callbacks,
@@ -124,10 +127,13 @@ impl WaylandWindowState {
             }
             .unwrap(),
         );
-        let extent = gpu::Extent {
-            width: bounds.size.width,
-            height: bounds.size.height,
-            depth: 1,
+        let config = BladeSurfaceConfig {
+            size: gpu::Extent {
+                width: bounds.size.width,
+                height: bounds.size.height,
+                depth: 1,
+            },
+            transparent: options.window_background != WindowBackgroundAppearance::Opaque,
         };
 
         Self {
@@ -135,18 +141,18 @@ impl WaylandWindowState {
             acknowledged_first_configure: false,
             surface,
             decoration,
+            blur: None,
             toplevel,
             viewport,
             globals,
-
             outputs: HashSet::default(),
-
-            renderer: BladeRenderer::new(gpu, extent),
+            renderer: BladeRenderer::new(gpu, config),
             bounds,
             scale: 1.0,
             input_handler: None,
             decoration_state: WaylandDecorationState::Client,
             fullscreen: false,
+            restore_bounds: Bounds::default(),
             maximized: false,
             callbacks: Callbacks::default(),
             client,
@@ -165,6 +171,9 @@ impl Drop for WaylandWindow {
         state.renderer.destroy();
         if let Some(decoration) = &state.decoration {
             decoration.destroy();
+        }
+        if let Some(blur) = &state.blur {
+            blur.release();
         }
         state.toplevel.destroy();
         if let Some(viewport) = &state.viewport {
@@ -292,7 +301,7 @@ impl WaylandWindowStatePtr {
                     self.set_decoration_state(WaylandDecorationState::Server)
                 }
                 WEnum::Value(zxdg_toplevel_decoration_v1::Mode::ClientSide) => {
-                    self.set_decoration_state(WaylandDecorationState::Server)
+                    self.set_decoration_state(WaylandDecorationState::Client)
                 }
                 WEnum::Value(_) => {
                     log::warn!("Unknown decoration mode");
@@ -325,10 +334,15 @@ impl WaylandWindowStatePtr {
                 let height = NonZeroU32::new(height as u32);
                 let fullscreen = states.contains(&(xdg_toplevel::State::Fullscreen as u8));
                 let maximized = states.contains(&(xdg_toplevel::State::Maximized as u8));
-                self.resize(width, height);
-                self.set_fullscreen(fullscreen);
                 let mut state = self.state.borrow_mut();
                 state.maximized = maximized;
+                state.fullscreen = fullscreen;
+                if fullscreen || maximized {
+                    state.restore_bounds = state.bounds.map(|p| DevicePixels(p as i32));
+                }
+                drop(state);
+                self.resize(width, height);
+                self.set_fullscreen(fullscreen);
 
                 false
             }
@@ -472,11 +486,6 @@ impl WaylandWindowStatePtr {
     pub fn set_fullscreen(&self, fullscreen: bool) {
         let mut state = self.state.borrow_mut();
         state.fullscreen = fullscreen;
-
-        let mut callbacks = self.callbacks.borrow_mut();
-        if let Some(ref mut fun) = callbacks.fullscreen {
-            fun(fullscreen)
-        }
     }
 
     /// Notifies the window of the state of the decorations.
@@ -543,9 +552,17 @@ impl PlatformWindow for WaylandWindow {
         self.borrow().maximized
     }
 
-    fn is_minimized(&self) -> bool {
-        // This cannot be determined by the client
-        false
+    // todo(linux)
+    // check if it is right
+    fn window_bounds(&self) -> WindowBounds {
+        let state = self.borrow();
+        if state.fullscreen {
+            WindowBounds::Fullscreen(state.restore_bounds)
+        } else if state.maximized {
+            WindowBounds::Maximized(state.restore_bounds)
+        } else {
+            WindowBounds::Windowed(state.bounds.map(|p| DevicePixels(p as i32)))
+        }
     }
 
     fn content_size(&self) -> Size<Pixels> {
@@ -580,10 +597,6 @@ impl PlatformWindow for WaylandWindow {
         crate::Modifiers::default()
     }
 
-    fn as_any_mut(&mut self) -> &mut dyn Any {
-        self
-    }
-
     fn set_input_handler(&mut self, input_handler: PlatformInputHandler) {
         self.borrow_mut().input_handler = Some(input_handler);
     }
@@ -612,15 +625,51 @@ impl PlatformWindow for WaylandWindow {
     }
 
     fn set_title(&mut self, title: &str) {
-        self.borrow_mut().toplevel.set_title(title.to_string());
+        self.borrow().toplevel.set_title(title.to_string());
     }
 
     fn set_app_id(&mut self, app_id: &str) {
-        self.borrow_mut().toplevel.set_app_id(app_id.to_owned());
+        self.borrow().toplevel.set_app_id(app_id.to_owned());
     }
 
-    fn set_background_appearance(&mut self, _background_appearance: WindowBackgroundAppearance) {
-        // todo(linux)
+    fn set_background_appearance(&mut self, background_appearance: WindowBackgroundAppearance) {
+        let opaque = background_appearance == WindowBackgroundAppearance::Opaque;
+        let mut state = self.borrow_mut();
+        state.renderer.update_transparency(!opaque);
+
+        let region = state
+            .globals
+            .compositor
+            .create_region(&state.globals.qh, ());
+        region.add(0, 0, i32::MAX, i32::MAX);
+
+        if opaque {
+            // Promise the compositor that this region of the window surface
+            // contains no transparent pixels. This allows the compositor to
+            // do skip whatever is behind the surface for better performance.
+            state.surface.set_opaque_region(Some(&region));
+        } else {
+            state.surface.set_opaque_region(None);
+        }
+
+        if let Some(ref blur_manager) = state.globals.blur_manager {
+            if (background_appearance == WindowBackgroundAppearance::Blurred) {
+                if (state.blur.is_none()) {
+                    let blur = blur_manager.create(&state.surface, &state.globals.qh, ());
+                    blur.set_region(Some(&region));
+                    state.blur = Some(blur);
+                }
+                state.blur.as_ref().unwrap().commit();
+            } else {
+                // It probably doesn't hurt to clear the blur for opaque windows
+                blur_manager.unset(&state.surface);
+                if let Some(b) = state.blur.take() {
+                    b.release()
+                }
+            }
+        }
+
+        region.destroy();
     }
 
     fn set_edited(&mut self, edited: bool) {
@@ -632,15 +681,21 @@ impl PlatformWindow for WaylandWindow {
     }
 
     fn minimize(&self) {
-        self.borrow_mut().toplevel.set_minimized();
+        self.borrow().toplevel.set_minimized();
     }
 
     fn zoom(&self) {
-        // todo(linux)
+        let state = self.borrow();
+        if !state.maximized {
+            state.toplevel.set_maximized();
+        } else {
+            state.toplevel.unset_maximized();
+        }
     }
 
     fn toggle_fullscreen(&self) {
-        let state = self.borrow_mut();
+        let mut state = self.borrow_mut();
+        state.restore_bounds = state.bounds.map(|p| DevicePixels(p as i32));
         if !state.fullscreen {
             state.toplevel.set_fullscreen(None);
         } else {
@@ -668,10 +723,6 @@ impl PlatformWindow for WaylandWindow {
         self.0.callbacks.borrow_mut().resize = Some(callback);
     }
 
-    fn on_fullscreen(&self, callback: Box<dyn FnMut(bool)>) {
-        self.0.callbacks.borrow_mut().fullscreen = Some(callback);
-    }
-
     fn on_moved(&self, callback: Box<dyn FnMut()>) {
         self.0.callbacks.borrow_mut().moved = Some(callback);
     }
@@ -686,11 +737,6 @@ impl PlatformWindow for WaylandWindow {
 
     fn on_appearance_changed(&self, callback: Box<dyn FnMut()>) {
         // todo(linux)
-    }
-
-    // todo(linux)
-    fn is_topmost_for_position(&self, position: Point<Pixels>) -> bool {
-        false
     }
 
     fn draw(&self, scene: &Scene) {

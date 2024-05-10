@@ -74,6 +74,7 @@ pub(crate) unsafe fn set_window_long(
     }
 }
 
+#[derive(Debug, Clone)]
 pub(crate) struct OwnedHandle(HANDLE);
 
 impl OwnedHandle {
@@ -117,12 +118,14 @@ pub(crate) fn load_cursor(style: CursorStyle) -> HCURSOR {
         CursorStyle::IBeam | CursorStyle::IBeamCursorForVerticalLayout => (&IBEAM, IDC_IBEAM),
         CursorStyle::Crosshair => (&CROSS, IDC_CROSS),
         CursorStyle::PointingHand | CursorStyle::DragLink => (&HAND, IDC_HAND),
-        CursorStyle::ResizeLeft | CursorStyle::ResizeRight | CursorStyle::ResizeLeftRight => {
-            (&SIZEWE, IDC_SIZEWE)
-        }
-        CursorStyle::ResizeUp | CursorStyle::ResizeDown | CursorStyle::ResizeUpDown => {
-            (&SIZENS, IDC_SIZENS)
-        }
+        CursorStyle::ResizeLeft
+        | CursorStyle::ResizeRight
+        | CursorStyle::ResizeLeftRight
+        | CursorStyle::ResizeColumn => (&SIZEWE, IDC_SIZEWE),
+        CursorStyle::ResizeUp
+        | CursorStyle::ResizeDown
+        | CursorStyle::ResizeUpDown
+        | CursorStyle::ResizeRow => (&SIZENS, IDC_SIZENS),
         CursorStyle::OperationNotAllowed => (&NO, IDC_NO),
         _ => (&ARROW, IDC_ARROW),
     };
@@ -134,4 +137,20 @@ pub(crate) fn load_cursor(style: CursorStyle) -> HCURSOR {
                 .0,
         )
     })
+}
+
+#[inline]
+pub(crate) fn logical_size(physical_size: Size<DevicePixels>, scale_factor: f32) -> Size<Pixels> {
+    Size {
+        width: px(physical_size.width.0 as f32 / scale_factor),
+        height: px(physical_size.height.0 as f32 / scale_factor),
+    }
+}
+
+#[inline]
+pub(crate) fn logical_point(x: f32, y: f32, scale_factor: f32) -> Point<Pixels> {
+    Point {
+        x: px(x / scale_factor),
+        y: px(y / scale_factor),
+    }
 }

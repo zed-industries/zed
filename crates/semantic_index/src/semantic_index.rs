@@ -163,6 +163,10 @@ impl ProjectIndex {
         self.project.clone()
     }
 
+    pub fn fs(&self) -> Arc<dyn Fs> {
+        self.fs.clone()
+    }
+
     fn handle_project_event(
         &mut self,
         _: Model<Project>,
@@ -446,7 +450,7 @@ pub struct WorktreeSearchResult {
     pub score: f32,
 }
 
-#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+#[derive(Copy, Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub enum Status {
     Idle,
     Loading,

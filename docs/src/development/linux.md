@@ -56,6 +56,14 @@ For a release build:
 cargo run --release
 ```
 
+For a release package:
+
+```
+cargo build --release
+```
+
+the binary can be found in `target/release` folder.
+
 And to run the tests:
 
 ```
