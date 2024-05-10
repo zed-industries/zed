@@ -188,19 +188,18 @@
     "enabled": true,
     /// The width of the indent guides in pixels, between 1 and 10.
     "line_width": 1,
-    /// Determines the coloring mode for the line of indent guides.
+    /// Determines the coloring mode for indent guides.
     /// This setting can take the following three values:
     ///
     /// 1. "disabled"
     /// 2. "fixed"
     /// 3. "indent_aware"
-    "line_color_mode": "fixed",
-    /// Determines the coloring mode for the background of indent guides.
-    /// This setting can take the following three values:
+    "color_mode": "fixed",
+    /// Determines the background coloring mode for indent guides.
+    /// This setting can take the following two values:
     ///
     /// 1. "disabled"
-    /// 2. "fixed"
-    /// 3. "indent_aware"
+    /// 2. "indent_aware"
     "background_color_mode": "disabled"
   },
   // The number of lines to keep above/below the cursor when scrolling.

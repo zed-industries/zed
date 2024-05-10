@@ -5,7 +5,8 @@ use crate::{
         TransformBlock,
     },
     editor_settings::{
-        DoubleClickInMultibuffer, IndentColorMode, MultiCursorModifier, ShowScrollbar,
+        DoubleClickInMultibuffer, IndentGuideBackgroundColorMode, IndentGuideColorMode,
+        MultiCursorModifier, ShowScrollbar,
     },
     git::{blame::GitBlame, diff_hunk_to_display, DisplayDiffHunk},
     hover_popover::{
@@ -2424,7 +2425,7 @@ impl EditorElement {
             faded
         };
 
-        // get it working
+        // TODO themes:
         // test one dark and gruvbox
         // test a theme that doesn't have accent to make sure it behaves as expected
 
@@ -2437,18 +2438,20 @@ impl EditorElement {
             const INDENT_AWARE_BACKGROUND_ALPHA: f32 = 0.1;
             const INDENT_AWARE_BACKGROUND_ACTIVE_ALPHA: f32 = 0.2;
 
-            let line_color = match (&settings.line_color_mode, indent_guide.active) {
-                (IndentColorMode::Disabled, _) => None,
-                (IndentColorMode::Fixed, false) => Some(cx.theme().colors().editor_indent_guide),
-                (IndentColorMode::Fixed, true) => {
+            let line_color = match (&settings.color_mode, indent_guide.active) {
+                (IndentGuideColorMode::Disabled, _) => None,
+                (IndentGuideColorMode::Fixed, false) => {
+                    Some(cx.theme().colors().editor_indent_guide)
+                }
+                (IndentGuideColorMode::Fixed, true) => {
                     Some(cx.theme().colors().editor_indent_guide_active)
                 }
-                (IndentColorMode::IndentAware, false) => Some(
+                (IndentGuideColorMode::IndentAware, false) => Some(
                     indent_accent_colors
                         .map(|i| faded_color(i, INDENT_AWARE_ALPHA))
                         .unwrap_or_else(|| cx.theme().colors().editor_indent_guide),
                 ),
-                (IndentColorMode::IndentAware, true) => Some(
+                (IndentGuideColorMode::IndentAware, true) => Some(
                     indent_accent_colors
                         .map(|i| faded_color(i, INDENT_AWARE_ACTIVE_ALPHA))
                         .unwrap_or_else(|| cx.theme().colors().editor_indent_guide_active),
@@ -2456,12 +2459,11 @@ impl EditorElement {
             };
 
             let background_color = match (&settings.background_color_mode, indent_guide.active) {
-                (IndentColorMode::Disabled, _) => None,
-                (IndentColorMode::Fixed, _) => None, //TODO
-                (IndentColorMode::IndentAware, false) => {
+                (IndentGuideBackgroundColorMode::Disabled, _) => None,
+                (IndentGuideBackgroundColorMode::IndentAware, false) => {
                     indent_accent_colors.map(|i| faded_color(i, INDENT_AWARE_BACKGROUND_ALPHA))
                 }
-                (IndentColorMode::IndentAware, true) => indent_accent_colors
+                (IndentGuideBackgroundColorMode::IndentAware, true) => indent_accent_colors
                     .map(|i| faded_color(i, INDENT_AWARE_BACKGROUND_ACTIVE_ALPHA)),
             };
 

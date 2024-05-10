@@ -76,20 +76,32 @@ pub struct Gutter {
 pub struct IndentGuides {
     pub enabled: bool,
     pub line_width: u32,
-    pub line_color_mode: IndentColorMode,
-    pub background_color_mode: IndentColorMode,
+    pub color_mode: IndentGuideColorMode,
+    pub background_color_mode: IndentGuideBackgroundColorMode,
 }
 
-/// Determines the coloring behavior for indent guides.
+/// Determines the coloring mode for indent guides.
 ///
 /// Default: off
 #[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
 #[serde(rename_all = "snake_case")]
-pub enum IndentColorMode {
+pub enum IndentGuideColorMode {
     /// Use no coloring at all.
     Disabled,
     /// Use the same color for all indentation levels.
     Fixed,
+    /// Use a different color for each indentation level.
+    IndentAware,
+}
+
+/// Determines the background mode behavior for indent guides.
+///
+/// Default: off
+#[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub enum IndentGuideBackgroundColorMode {
+    /// Use no coloring at all.
+    Disabled,
     /// Use a different color for each indentation level.
     IndentAware,
 }
@@ -265,14 +277,14 @@ pub struct IndentGuidesContent {
     ///
     /// Default: 1
     pub line_width: Option<u32>,
-    /// Determines the coloring mode for the line of indent guides.
+    /// Determines the coloring mode for indent guides.
     ///
     /// Default: Fixed
-    pub line_color_mode: Option<IndentColorMode>,
-    /// Determines the coloring mode for the background of indent guides.
+    pub color_mode: Option<IndentGuideColorMode>,
+    /// Determines the background coloring mode for indent guides.
     ///
     /// Default: Disabled
-    pub background_color_mode: Option<IndentColorMode>,
+    pub background_color_mode: Option<IndentGuideBackgroundColorMode>,
 }
 
 impl Settings for EditorSettings {
