@@ -38,11 +38,12 @@ host_line=$(echo "$version_info" | grep host)
 target_triple=${host_line#*: }
 
 # Build binary in release mode
-cargo build --release --target "${target_triple}" --package zed
+cargo build --release --target "${target_triple}" --package zed --package cli
 
 # Strip the binary of all debug symbols
 # Later, we probably want to do something like this: https://github.com/GabrielMajeri/separate-symbols
 strip "target/${target_triple}/release/Zed"
+strip "target/${target_triple}/release/cli"
 
 suffix=""
 if [ "$channel" != "stable" ]; then
@@ -57,6 +58,7 @@ zed_dir="${temp_dir}/zed$suffix.app"
 # Binary
 mkdir -p "${zed_dir}/bin"
 cp "target/${target_triple}/release/Zed" "${zed_dir}/bin/zed"
+cp "target/${target_triple}/release/cli" "${zed_dir}/bin/cli"
 
 # Icons
 mkdir -p "${zed_dir}/share/icons/hicolor/512x512/apps"

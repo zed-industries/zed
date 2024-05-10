@@ -2119,7 +2119,11 @@ dependencies = [
  "clap 4.4.4",
  "core-foundation",
  "core-services",
+ "exec",
+ "fork",
  "ipc-channel",
+ "libc",
+ "once_cell",
  "plist",
  "release_channel",
  "serde",
@@ -3577,12 +3581,33 @@ dependencies = [
 
 [[package]]
 name = "errno"
+version = "0.2.8"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f639046355ee4f37944e44f60642c6f3a7efa3cf6b78c78a0d989a8ce6c396a1"
+dependencies = [
+ "errno-dragonfly",
+ "libc",
+ "winapi",
+]
+
+[[package]]
+name = "errno"
 version = "0.3.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a258e46cdc063eb8519c00b9fc845fc47bcfca4130e2f08e88665ceda8474245"
 dependencies = [
  "libc",
  "windows-sys 0.52.0",
+]
+
+[[package]]
+name = "errno-dragonfly"
+version = "0.1.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "aa68f1b12764fab894d2755d2518754e71b4fd80ecfb822714a1206c2aab39bf"
+dependencies = [
+ "cc",
+ "libc",
 ]
 
 [[package]]
@@ -3661,6 +3686,16 @@ checksum = "feedafcaa9b749175d5ac357452a9d41ea2911da598fde46ce1fe02c37751291"
 dependencies = [
  "event-listener 5.1.0",
  "pin-project-lite",
+]
+
+[[package]]
+name = "exec"
+version = "0.3.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "886b70328cba8871bfc025858e1de4be16b1d5088f2ba50b57816f4210672615"
+dependencies = [
+ "errno 0.2.8",
+ "libc",
 ]
 
 [[package]]
@@ -4062,6 +4097,15 @@ name = "foreign-types-shared"
 version = "0.3.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "aa9a19cbb55df58761df49b23516a86d432839add4af60fc256da840f66ed35b"
+
+[[package]]
+name = "fork"
+version = "0.1.23"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "60e74d3423998a57e9d906e49252fb79eb4a04d5cdfe188fb1b7ff9fc076a8ed"
+dependencies = [
+ "libc",
+]
 
 [[package]]
 name = "form_urlencoded"
@@ -4788,7 +4832,6 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "client",
- "ctrlc",
  "fs",
  "futures 0.3.28",
  "gpui",
@@ -4800,6 +4843,7 @@ dependencies = [
  "rpc",
  "settings",
  "shellexpand",
+ "signal-hook",
  "util",
 ]
 
@@ -8400,7 +8444,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4d69718bf81c6127a49dc64e44a742e8bb9213c0ff8869a22c308f84c1d4ab06"
 dependencies = [
  "bitflags 1.3.2",
- "errno",
+ "errno 0.3.8",
  "io-lifetimes 1.0.11",
  "libc",
  "linux-raw-sys 0.3.8",
@@ -8414,7 +8458,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "65e04861e65f21776e67888bfbea442b3642beaa0138fdb1dd7a84a52dffdb89"
 dependencies = [
  "bitflags 2.4.2",
- "errno",
+ "errno 0.3.8",
  "itoa",
  "libc",
  "linux-raw-sys 0.4.12",
@@ -8428,7 +8472,7 @@ version = "0.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a25c3aad9fc1424eb82c88087789a7d938e1829724f3e4043163baf0d13cfc12"
 dependencies = [
- "errno",
+ "errno 0.3.8",
  "libc",
  "rustix 0.38.32",
 ]
@@ -12832,7 +12876,6 @@ dependencies = [
  "clap 4.4.4",
  "cli",
  "client",
- "clock",
  "collab_ui",
  "collections",
  "command_palette",
@@ -12863,6 +12906,7 @@ dependencies = [
  "language_selector",
  "language_tools",
  "languages",
+ "libc",
  "log",
  "markdown_preview",
  "menu",
