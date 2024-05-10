@@ -27,14 +27,14 @@ impl Solargraph {
                     CompletionKind::Constant => "constant",
                     CompletionKind::Method => "function.method",
                     CompletionKind::Keyword => {
-                        if completion.label.starts_with(":") {
+                        if completion.label.starts_with(':') {
                             "string.special.symbol"
                         } else {
                             "keyword"
                         }
                     }
                     CompletionKind::Variable => {
-                        if completion.label.starts_with("@") {
+                        if completion.label.starts_with('@') {
                             "property"
                         } else {
                             return None;
@@ -105,7 +105,7 @@ impl Solargraph {
                 })
             }
             SymbolKind::Constant => {
-                let code = format!("{}", name.to_uppercase());
+                let code = name.to_uppercase().to_string();
                 let filter_range = 0..name.len();
                 let display_range = 0..name.len();
 
