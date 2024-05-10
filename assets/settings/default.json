@@ -27,11 +27,11 @@
   // Set the buffer's line height.
   // May take 3 values:
   //  1. Use a line height that's comfortable for reading (1.618)
-  //         "line_height": "comfortable"
+  //         "buffer_line_height": "comfortable"
   //  2. Use a standard line height, (1.3)
-  //         "line_height": "standard",
+  //         "buffer_line_height": "standard",
   //  3. Use a custom line height
-  //         "line_height": {
+  //         "buffer_line_height": {
   //           "custom": 2
   //         },
   "buffer_line_height": "comfortable",
