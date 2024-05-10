@@ -2232,6 +2232,7 @@ struct ConversationEditor {
     editor: View<Editor>,
     blocks: HashSet<BlockId>,
     scroll_position: Option<ScrollPosition>,
+    recent_buffers: Vec<WeakModel<Buffer>>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -2274,6 +2275,7 @@ impl ConversationEditor {
             editor,
             blocks: Default::default(),
             scroll_position: None,
+            recent_buffers: Vec::new(),
             fs,
             workspace: workspace.downgrade(),
             _subscriptions,
@@ -2418,7 +2420,9 @@ impl ConversationEditor {
         event: &WorkspaceEvent,
         cx: &mut ViewContext<Self>,
     ) {
-        if let WorkspaceEvent::ActiveItemChanged = event {}
+        if let WorkspaceEvent::ActiveItemChanged = event {
+            if let Some(buffer) = workspace.read(cx).active_item_as::<Editor>(cx) {}
+        }
     }
 
     fn update_active_buffer(
@@ -2481,7 +2485,7 @@ impl ConversationEditor {
                     style: BlockStyle::Sticky,
                     render: Box::new({
                         let conversation = self.conversation.clone();
-                        move |_cx| {
+                        move |cx| {
                             let message_id = message.id;
                             let sender = ButtonLike::new("role")
                                 .style(ButtonStyle::Filled)
