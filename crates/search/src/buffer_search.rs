@@ -1090,7 +1090,7 @@ mod tests {
     use std::ops::Range;
 
     use super::*;
-    use editor::{DisplayPoint, Editor};
+    use editor::{display_map::DisplayRow, DisplayPoint, Editor};
     use gpui::{Context, Hsla, TestAppContext, VisualTestContext};
     use language::Buffer;
     use project::Project;
@@ -1157,8 +1157,8 @@ mod tests {
             assert_eq!(
                 display_points_of(editor.all_text_background_highlights(cx)),
                 &[
-                    DisplayPoint::new(2, 17)..DisplayPoint::new(2, 19),
-                    DisplayPoint::new(2, 43)..DisplayPoint::new(2, 45),
+                    DisplayPoint::new(DisplayRow(2), 17)..DisplayPoint::new(DisplayRow(2), 19),
+                    DisplayPoint::new(DisplayRow(2), 43)..DisplayPoint::new(DisplayRow(2), 45),
                 ]
             );
         });
@@ -1172,7 +1172,7 @@ mod tests {
         editor.update(cx, |editor, cx| {
             assert_eq!(
                 display_points_of(editor.all_text_background_highlights(cx)),
-                &[DisplayPoint::new(2, 43)..DisplayPoint::new(2, 45),]
+                &[DisplayPoint::new(DisplayRow(2), 43)..DisplayPoint::new(DisplayRow(2), 45),]
             );
         });
 
@@ -1186,13 +1186,13 @@ mod tests {
             assert_eq!(
                 display_points_of(editor.all_text_background_highlights(cx)),
                 &[
-                    DisplayPoint::new(0, 24)..DisplayPoint::new(0, 26),
-                    DisplayPoint::new(0, 41)..DisplayPoint::new(0, 43),
-                    DisplayPoint::new(2, 71)..DisplayPoint::new(2, 73),
-                    DisplayPoint::new(3, 1)..DisplayPoint::new(3, 3),
-                    DisplayPoint::new(3, 11)..DisplayPoint::new(3, 13),
-                    DisplayPoint::new(3, 56)..DisplayPoint::new(3, 58),
-                    DisplayPoint::new(3, 60)..DisplayPoint::new(3, 62),
+                    DisplayPoint::new(DisplayRow(0), 24)..DisplayPoint::new(DisplayRow(0), 26),
+                    DisplayPoint::new(DisplayRow(0), 41)..DisplayPoint::new(DisplayRow(0), 43),
+                    DisplayPoint::new(DisplayRow(2), 71)..DisplayPoint::new(DisplayRow(2), 73),
+                    DisplayPoint::new(DisplayRow(3), 1)..DisplayPoint::new(DisplayRow(3), 3),
+                    DisplayPoint::new(DisplayRow(3), 11)..DisplayPoint::new(DisplayRow(3), 13),
+                    DisplayPoint::new(DisplayRow(3), 56)..DisplayPoint::new(DisplayRow(3), 58),
+                    DisplayPoint::new(DisplayRow(3), 60)..DisplayPoint::new(DisplayRow(3), 62),
                 ]
             );
         });
@@ -1207,16 +1207,18 @@ mod tests {
             assert_eq!(
                 display_points_of(editor.all_text_background_highlights(cx)),
                 &[
-                    DisplayPoint::new(0, 41)..DisplayPoint::new(0, 43),
-                    DisplayPoint::new(3, 11)..DisplayPoint::new(3, 13),
-                    DisplayPoint::new(3, 56)..DisplayPoint::new(3, 58),
+                    DisplayPoint::new(DisplayRow(0), 41)..DisplayPoint::new(DisplayRow(0), 43),
+                    DisplayPoint::new(DisplayRow(3), 11)..DisplayPoint::new(DisplayRow(3), 13),
+                    DisplayPoint::new(DisplayRow(3), 56)..DisplayPoint::new(DisplayRow(3), 58),
                 ]
             );
         });
 
         editor.update(cx, |editor, cx| {
             editor.change_selections(None, cx, |s| {
-                s.select_display_ranges([DisplayPoint::new(0, 0)..DisplayPoint::new(0, 0)])
+                s.select_display_ranges([
+                    DisplayPoint::new(DisplayRow(0), 0)..DisplayPoint::new(DisplayRow(0), 0)
+                ])
             });
         });
         search_bar.update(cx, |search_bar, cx| {
@@ -1224,7 +1226,7 @@ mod tests {
             search_bar.select_next_match(&SelectNextMatch, cx);
             assert_eq!(
                 editor.update(cx, |editor, cx| editor.selections.display_ranges(cx)),
-                [DisplayPoint::new(0, 41)..DisplayPoint::new(0, 43)]
+                [DisplayPoint::new(DisplayRow(0), 41)..DisplayPoint::new(DisplayRow(0), 43)]
             );
         });
         search_bar.update(cx, |search_bar, _| {
@@ -1235,7 +1237,7 @@ mod tests {
             search_bar.select_next_match(&SelectNextMatch, cx);
             assert_eq!(
                 editor.update(cx, |editor, cx| editor.selections.display_ranges(cx)),
-                [DisplayPoint::new(3, 11)..DisplayPoint::new(3, 13)]
+                [DisplayPoint::new(DisplayRow(3), 11)..DisplayPoint::new(DisplayRow(3), 13)]
             );
         });
         search_bar.update(cx, |search_bar, _| {
@@ -1246,7 +1248,7 @@ mod tests {
             search_bar.select_next_match(&SelectNextMatch, cx);
             assert_eq!(
                 editor.update(cx, |editor, cx| editor.selections.display_ranges(cx)),
-                [DisplayPoint::new(3, 56)..DisplayPoint::new(3, 58)]
+                [DisplayPoint::new(DisplayRow(3), 56)..DisplayPoint::new(DisplayRow(3), 58)]
             );
         });
         search_bar.update(cx, |search_bar, _| {
@@ -1257,7 +1259,7 @@ mod tests {
             search_bar.select_next_match(&SelectNextMatch, cx);
             assert_eq!(
                 editor.update(cx, |editor, cx| editor.selections.display_ranges(cx)),
-                [DisplayPoint::new(0, 41)..DisplayPoint::new(0, 43)]
+                [DisplayPoint::new(DisplayRow(0), 41)..DisplayPoint::new(DisplayRow(0), 43)]
             );
         });
         search_bar.update(cx, |search_bar, _| {
@@ -1268,7 +1270,7 @@ mod tests {
             search_bar.select_prev_match(&SelectPrevMatch, cx);
             assert_eq!(
                 editor.update(cx, |editor, cx| editor.selections.display_ranges(cx)),
-                [DisplayPoint::new(3, 56)..DisplayPoint::new(3, 58)]
+                [DisplayPoint::new(DisplayRow(3), 56)..DisplayPoint::new(DisplayRow(3), 58)]
             );
         });
         search_bar.update(cx, |search_bar, _| {
@@ -1279,7 +1281,7 @@ mod tests {
             search_bar.select_prev_match(&SelectPrevMatch, cx);
             assert_eq!(
                 editor.update(cx, |editor, cx| editor.selections.display_ranges(cx)),
-                [DisplayPoint::new(3, 11)..DisplayPoint::new(3, 13)]
+                [DisplayPoint::new(DisplayRow(3), 11)..DisplayPoint::new(DisplayRow(3), 13)]
             );
         });
         search_bar.update(cx, |search_bar, _| {
@@ -1290,7 +1292,7 @@ mod tests {
             search_bar.select_prev_match(&SelectPrevMatch, cx);
             assert_eq!(
                 editor.update(cx, |editor, cx| editor.selections.display_ranges(cx)),
-                [DisplayPoint::new(0, 41)..DisplayPoint::new(0, 43)]
+                [DisplayPoint::new(DisplayRow(0), 41)..DisplayPoint::new(DisplayRow(0), 43)]
             );
         });
         search_bar.update(cx, |search_bar, _| {
@@ -1301,7 +1303,9 @@ mod tests {
         // the closest match to the left.
         editor.update(cx, |editor, cx| {
             editor.change_selections(None, cx, |s| {
-                s.select_display_ranges([DisplayPoint::new(1, 0)..DisplayPoint::new(1, 0)])
+                s.select_display_ranges([
+                    DisplayPoint::new(DisplayRow(1), 0)..DisplayPoint::new(DisplayRow(1), 0)
+                ])
             });
         });
         search_bar.update(cx, |search_bar, cx| {
@@ -1309,7 +1313,7 @@ mod tests {
             search_bar.select_prev_match(&SelectPrevMatch, cx);
             assert_eq!(
                 editor.update(cx, |editor, cx| editor.selections.display_ranges(cx)),
-                [DisplayPoint::new(0, 41)..DisplayPoint::new(0, 43)]
+                [DisplayPoint::new(DisplayRow(0), 41)..DisplayPoint::new(DisplayRow(0), 43)]
             );
         });
         search_bar.update(cx, |search_bar, _| {
@@ -1320,7 +1324,9 @@ mod tests {
         // closest match to the right.
         editor.update(cx, |editor, cx| {
             editor.change_selections(None, cx, |s| {
-                s.select_display_ranges([DisplayPoint::new(1, 0)..DisplayPoint::new(1, 0)])
+                s.select_display_ranges([
+                    DisplayPoint::new(DisplayRow(1), 0)..DisplayPoint::new(DisplayRow(1), 0)
+                ])
             });
         });
         search_bar.update(cx, |search_bar, cx| {
@@ -1328,7 +1334,7 @@ mod tests {
             search_bar.select_next_match(&SelectNextMatch, cx);
             assert_eq!(
                 editor.update(cx, |editor, cx| editor.selections.display_ranges(cx)),
-                [DisplayPoint::new(3, 11)..DisplayPoint::new(3, 13)]
+                [DisplayPoint::new(DisplayRow(3), 11)..DisplayPoint::new(DisplayRow(3), 13)]
             );
         });
         search_bar.update(cx, |search_bar, _| {
@@ -1339,7 +1345,9 @@ mod tests {
         // the last match.
         editor.update(cx, |editor, cx| {
             editor.change_selections(None, cx, |s| {
-                s.select_display_ranges([DisplayPoint::new(3, 60)..DisplayPoint::new(3, 60)])
+                s.select_display_ranges([
+                    DisplayPoint::new(DisplayRow(3), 60)..DisplayPoint::new(DisplayRow(3), 60)
+                ])
             });
         });
         search_bar.update(cx, |search_bar, cx| {
@@ -1347,7 +1355,7 @@ mod tests {
             search_bar.select_prev_match(&SelectPrevMatch, cx);
             assert_eq!(
                 editor.update(cx, |editor, cx| editor.selections.display_ranges(cx)),
-                [DisplayPoint::new(3, 56)..DisplayPoint::new(3, 58)]
+                [DisplayPoint::new(DisplayRow(3), 56)..DisplayPoint::new(DisplayRow(3), 58)]
             );
         });
         search_bar.update(cx, |search_bar, _| {
@@ -1358,7 +1366,9 @@ mod tests {
         // first match.
         editor.update(cx, |editor, cx| {
             editor.change_selections(None, cx, |s| {
-                s.select_display_ranges([DisplayPoint::new(3, 60)..DisplayPoint::new(3, 60)])
+                s.select_display_ranges([
+                    DisplayPoint::new(DisplayRow(3), 60)..DisplayPoint::new(DisplayRow(3), 60)
+                ])
             });
         });
         search_bar.update(cx, |search_bar, cx| {
@@ -1366,7 +1376,7 @@ mod tests {
             search_bar.select_next_match(&SelectNextMatch, cx);
             assert_eq!(
                 editor.update(cx, |editor, cx| editor.selections.display_ranges(cx)),
-                [DisplayPoint::new(0, 41)..DisplayPoint::new(0, 43)]
+                [DisplayPoint::new(DisplayRow(0), 41)..DisplayPoint::new(DisplayRow(0), 43)]
             );
         });
         search_bar.update(cx, |search_bar, _| {
@@ -1377,7 +1387,9 @@ mod tests {
         // selects the last match.
         editor.update(cx, |editor, cx| {
             editor.change_selections(None, cx, |s| {
-                s.select_display_ranges([DisplayPoint::new(0, 0)..DisplayPoint::new(0, 0)])
+                s.select_display_ranges([
+                    DisplayPoint::new(DisplayRow(0), 0)..DisplayPoint::new(DisplayRow(0), 0)
+                ])
             });
         });
         search_bar.update(cx, |search_bar, cx| {
@@ -1385,7 +1397,7 @@ mod tests {
             search_bar.select_prev_match(&SelectPrevMatch, cx);
             assert_eq!(
                 editor.update(cx, |editor, cx| editor.selections.display_ranges(cx)),
-                [DisplayPoint::new(3, 56)..DisplayPoint::new(3, 58)]
+                [DisplayPoint::new(DisplayRow(3), 56)..DisplayPoint::new(DisplayRow(3), 58)]
             );
         });
         search_bar.update(cx, |search_bar, _| {
@@ -1414,7 +1426,7 @@ mod tests {
         editor.update(cx, |editor, cx| {
             assert_eq!(
                 display_points_of(editor.all_text_background_highlights(cx)),
-                &[DisplayPoint::new(2, 43)..DisplayPoint::new(2, 45),]
+                &[DisplayPoint::new(DisplayRow(2), 43)..DisplayPoint::new(DisplayRow(2), 45),]
             );
         });
 
@@ -1439,7 +1451,7 @@ mod tests {
         editor.update(cx, |editor, cx| {
             assert_eq!(
                 display_points_of(editor.all_text_background_highlights(cx)),
-                &[DisplayPoint::new(0, 35)..DisplayPoint::new(0, 40),]
+                &[DisplayPoint::new(DisplayRow(0), 35)..DisplayPoint::new(DisplayRow(0), 40),]
             );
         });
 
@@ -2041,8 +2053,8 @@ mod tests {
             assert_eq!(
                 display_points_of(editor.all_text_background_highlights(cx)),
                 &[
-                    DisplayPoint::new(0, 10)..DisplayPoint::new(0, 20),
-                    DisplayPoint::new(1, 9)..DisplayPoint::new(1, 19),
+                    DisplayPoint::new(DisplayRow(0), 10)..DisplayPoint::new(DisplayRow(0), 20),
+                    DisplayPoint::new(DisplayRow(1), 9)..DisplayPoint::new(DisplayRow(1), 19),
                 ],
             );
         });

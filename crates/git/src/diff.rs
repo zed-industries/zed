@@ -30,18 +30,6 @@ pub struct DiffHunk<T> {
     pub diff_base_byte_range: Range<usize>,
 }
 
-impl DiffHunk<u32> {
-    pub fn status(&self) -> DiffHunkStatus {
-        if self.diff_base_byte_range.is_empty() {
-            DiffHunkStatus::Added
-        } else if self.associated_range.is_empty() {
-            DiffHunkStatus::Removed
-        } else {
-            DiffHunkStatus::Modified
-        }
-    }
-}
-
 impl sum_tree::Item for DiffHunk<Anchor> {
     type Summary = DiffHunkSummary;
 

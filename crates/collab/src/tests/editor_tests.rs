@@ -9,6 +9,7 @@ use editor::{
         ConfirmCodeAction, ConfirmCompletion, ConfirmRename, ContextMenuFirst, Redo, Rename,
         RevertSelectedHunks, ToggleCodeActions, Undo,
     },
+    display_map::DisplayRow,
     test::{
         editor_hunks,
         editor_test_context::{AssertionContextManager, EditorTestContext},
@@ -24,6 +25,7 @@ use language::{
     language_settings::{AllLanguageSettings, InlayHintSettings},
     FakeLspAdapter,
 };
+use multi_buffer::MultiBufferRow;
 use project::{
     project_settings::{InlineBlameSettings, ProjectSettings},
     SERVER_PROGRESS_DEBOUNCE_TIMEOUT,
@@ -2114,14 +2116,30 @@ struct Row10;"#};
         assert_eq!(
             all_hunks,
             vec![
-                ("".to_string(), DiffHunkStatus::Added, 1..3),
-                ("struct Row2;\n".to_string(), DiffHunkStatus::Removed, 4..4),
-                ("struct Row5;\n".to_string(), DiffHunkStatus::Modified, 6..7),
-                ("struct Row8;\n".to_string(), DiffHunkStatus::Removed, 9..9),
+                (
+                    "".to_string(),
+                    DiffHunkStatus::Added,
+                    DisplayRow(1)..DisplayRow(3)
+                ),
+                (
+                    "struct Row2;\n".to_string(),
+                    DiffHunkStatus::Removed,
+                    DisplayRow(4)..DisplayRow(4)
+                ),
+                (
+                    "struct Row5;\n".to_string(),
+                    DiffHunkStatus::Modified,
+                    DisplayRow(6)..DisplayRow(7)
+                ),
+                (
+                    "struct Row8;\n".to_string(),
+                    DiffHunkStatus::Removed,
+                    DisplayRow(9)..DisplayRow(9)
+                ),
                 (
                     "struct Row10;".to_string(),
                     DiffHunkStatus::Modified,
-                    10..10,
+                    DisplayRow(10)..DisplayRow(10),
                 ),
             ]
         );
@@ -2133,23 +2151,35 @@ struct Row10;"#};
         let all_expanded_hunks = expanded_hunks(&editor, &snapshot, cx);
         assert_eq!(
             expanded_hunks_background_highlights(editor, cx),
-            vec![1..=2, 8..=8],
+            vec![DisplayRow(1)..=DisplayRow(2), DisplayRow(8)..=DisplayRow(8)],
         );
         assert_eq!(
             all_hunks,
             vec![
-                ("".to_string(), DiffHunkStatus::Added, 1..3),
-                ("struct Row2;\n".to_string(), DiffHunkStatus::Removed, 5..5),
-                ("struct Row5;\n".to_string(), DiffHunkStatus::Modified, 8..9),
+                (
+                    "".to_string(),
+                    DiffHunkStatus::Added,
+                    DisplayRow(1)..DisplayRow(3)
+                ),
+                (
+                    "struct Row2;\n".to_string(),
+                    DiffHunkStatus::Removed,
+                    DisplayRow(5)..DisplayRow(5)
+                ),
+                (
+                    "struct Row5;\n".to_string(),
+                    DiffHunkStatus::Modified,
+                    DisplayRow(8)..DisplayRow(9)
+                ),
                 (
                     "struct Row8;\n".to_string(),
                     DiffHunkStatus::Removed,
-                    12..12
+                    DisplayRow(12)..DisplayRow(12)
                 ),
                 (
                     "struct Row10;".to_string(),
                     DiffHunkStatus::Modified,
-                    13..13,
+                    DisplayRow(13)..DisplayRow(13),
                 ),
             ]
         );
@@ -2173,7 +2203,7 @@ struct Row10;"#};
             vec![(
                 "struct Row10;".to_string(),
                 DiffHunkStatus::Modified,
-                10..10,
+                DisplayRow(10)..DisplayRow(10),
             )]
         );
         assert_eq!(all_expanded_hunks, Vec::new());
@@ -2184,14 +2214,14 @@ struct Row10;"#};
         let all_expanded_hunks = expanded_hunks(&editor, &snapshot, cx);
         assert_eq!(
             expanded_hunks_background_highlights(editor, cx),
-            vec![5..=5]
+            vec![DisplayRow(5)..=DisplayRow(5)]
         );
         assert_eq!(
             all_hunks,
             vec![(
                 "struct Row10;".to_string(),
                 DiffHunkStatus::Modified,
-                10..10,
+                DisplayRow(10)..DisplayRow(10),
             )]
         );
         assert_eq!(all_expanded_hunks, Vec::new());
@@ -2330,7 +2360,7 @@ async fn test_git_blame_is_forwarded(cx_a: &mut TestAppContext, cx_b: &mut TestA
         let blame = editor_b.blame().expect("editor_b should have blame now");
         let entries = blame.update(cx, |blame, cx| {
             blame
-                .blame_for_rows((0..4).map(Some), cx)
+                .blame_for_rows((0..4).map(MultiBufferRow).map(Some), cx)
                 .collect::<Vec<_>>()
         });
 
@@ -2369,7 +2399,7 @@ async fn test_git_blame_is_forwarded(cx_a: &mut TestAppContext, cx_b: &mut TestA
         let blame = editor_b.blame().expect("editor_b should have blame now");
         let entries = blame.update(cx, |blame, cx| {
             blame
-                .blame_for_rows((0..4).map(Some), cx)
+                .blame_for_rows((0..4).map(MultiBufferRow).map(Some), cx)
                 .collect::<Vec<_>>()
         });
 
@@ -2396,7 +2426,7 @@ async fn test_git_blame_is_forwarded(cx_a: &mut TestAppContext, cx_b: &mut TestA
         let blame = editor_b.blame().expect("editor_b should have blame now");
         let entries = blame.update(cx, |blame, cx| {
             blame
-                .blame_for_rows((0..4).map(Some), cx)
+                .blame_for_rows((0..4).map(MultiBufferRow).map(Some), cx)
                 .collect::<Vec<_>>()
         });
 

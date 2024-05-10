@@ -7,6 +7,7 @@ use editor::{
 };
 use gpui::WindowContext;
 use language::{Point, Selection};
+use multi_buffer::MultiBufferRow;
 
 pub fn delete_motion(vim: &mut Vim, motion: Motion, times: Option<usize>, cx: &mut WindowContext) {
     vim.stop_recording();
@@ -29,7 +30,7 @@ pub fn delete_motion(vim: &mut Vim, motion: Motion, times: Option<usize>, cx: &m
                         if selection.is_empty()
                             && map
                                 .buffer_snapshot
-                                .line_len(selection.start.to_point(&map).row)
+                                .line_len(MultiBufferRow(selection.start.to_point(&map).row))
                                 == 0
                         {
                             selection.end = map
@@ -79,7 +80,7 @@ pub fn delete_object(vim: &mut Vim, object: Object, around: bool, cx: &mut Windo
                     let mut move_selection_start_to_previous_line =
                         |map: &DisplaySnapshot, selection: &mut Selection<DisplayPoint>| {
                             let start = selection.start.to_offset(map, Bias::Left);
-                            if selection.start.row() > 0 {
+                            if selection.start.row().0 > 0 {
                                 should_move_to_start.insert(selection.id);
                                 selection.start = (start - '\n'.len_utf8()).to_display_point(map);
                             }

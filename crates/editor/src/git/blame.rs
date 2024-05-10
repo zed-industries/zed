@@ -8,6 +8,7 @@ use git::{
 };
 use gpui::{Model, ModelContext, Subscription, Task};
 use language::{markdown, Bias, Buffer, BufferSnapshot, Edit, LanguageRegistry, ParsedMarkdown};
+use multi_buffer::MultiBufferRow;
 use project::{Item, Project};
 use smallvec::SmallVec;
 use sum_tree::SumTree;
@@ -185,7 +186,7 @@ impl GitBlame {
 
     pub fn blame_for_rows<'a>(
         &'a mut self,
-        rows: impl 'a + IntoIterator<Item = Option<u32>>,
+        rows: impl 'a + IntoIterator<Item = Option<MultiBufferRow>>,
         cx: &mut ModelContext<Self>,
     ) -> impl 'a + Iterator<Item = Option<BlameEntry>> {
         self.sync(cx);
@@ -193,7 +194,7 @@ impl GitBlame {
         let mut cursor = self.entries.cursor::<u32>();
         rows.into_iter().map(move |row| {
             let row = row?;
-            cursor.seek_forward(&row, Bias::Right, &());
+            cursor.seek_forward(&row.0, Bias::Right, &());
             cursor.item()?.blame.clone()
         })
     }
@@ -532,7 +533,7 @@ mod tests {
         ($blame:expr, $rows:expr, $expected:expr, $cx:expr) => {
             assert_eq!(
                 $blame
-                    .blame_for_rows($rows.map(Some), $cx)
+                    .blame_for_rows($rows.map(MultiBufferRow).map(Some), $cx)
                     .collect::<Vec<_>>(),
                 $expected
             );
@@ -597,7 +598,7 @@ mod tests {
         blame.update(cx, |blame, cx| {
             assert_eq!(
                 blame
-                    .blame_for_rows((0..1).map(Some), cx)
+                    .blame_for_rows((0..1).map(MultiBufferRow).map(Some), cx)
                     .collect::<Vec<_>>(),
                 vec![None]
             );
@@ -661,7 +662,7 @@ mod tests {
             // All lines
             assert_eq!(
                 blame
-                    .blame_for_rows((0..8).map(Some), cx)
+                    .blame_for_rows((0..8).map(MultiBufferRow).map(Some), cx)
                     .collect::<Vec<_>>(),
                 vec![
                     Some(blame_entry("1b1b1b", 0..1)),
@@ -677,7 +678,7 @@ mod tests {
             // Subset of lines
             assert_eq!(
                 blame
-                    .blame_for_rows((1..4).map(Some), cx)
+                    .blame_for_rows((1..4).map(MultiBufferRow).map(Some), cx)
                     .collect::<Vec<_>>(),
                 vec![
                     Some(blame_entry("0d0d0d", 1..2)),
@@ -688,7 +689,7 @@ mod tests {
             // Subset of lines, with some not displayed
             assert_eq!(
                 blame
-                    .blame_for_rows(vec![Some(1), None, None], cx)
+                    .blame_for_rows(vec![Some(MultiBufferRow(1)), None, None], cx)
                     .collect::<Vec<_>>(),
                 vec![Some(blame_entry("0d0d0d", 1..2)), None, None]
             );
