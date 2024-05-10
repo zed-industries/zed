@@ -211,7 +211,7 @@ impl ProjectPanel {
                 }
                 project::Event::WorktreeUpdatedEntries(_, _)
                 | project::Event::WorktreeAdded
-                | project::Event::WorktreesSorted => {
+                | project::Event::WorktreeOrderChanged => {
                     this.update_visible_entries(None, cx);
                     cx.notify();
                 }
@@ -1229,6 +1229,43 @@ impl ProjectPanel {
     }
 
     fn move_entry(
+        &mut self,
+        entry_to_move: ProjectEntryId,
+        destination: ProjectEntryId,
+        destination_is_file: bool,
+        cx: &mut ViewContext<Self>,
+    ) {
+        let entry_is_worktree_root = self
+            .project
+            .read(cx)
+            .entry_is_worktree_root(entry_to_move, cx);
+
+        match entry_is_worktree_root {
+            true => self.move_worktree_root(entry_to_move, destination, cx),
+            false => self.move_worktree_entry(entry_to_move, destination, destination_is_file, cx),
+        }
+    }
+
+    fn move_worktree_root(
+        &mut self,
+        entry_to_move: ProjectEntryId,
+        destination: ProjectEntryId,
+        cx: &mut ViewContext<Self>,
+    ) {
+        self.project.update(cx, |project, cx| {
+            let Some(worktree_to_move) = project.worktree_for_entry(entry_to_move, cx) else {
+                return;
+            };
+            let Some(destination_worktree) = project.worktree_for_entry(destination, cx) else {
+                return;
+            };
+            let task = project.move_worktree(worktree_to_move, destination_worktree, cx);
+            cx.foreground_executor().spawn(task).detach_and_log_err(cx);
+        });
+        return;
+    }
+
+    fn move_worktree_entry(
         &mut self,
         entry_to_move: ProjectEntryId,
         destination: ProjectEntryId,

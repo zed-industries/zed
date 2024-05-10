@@ -308,7 +308,7 @@ pub enum Event {
     ActiveEntryChanged(Option<ProjectEntryId>),
     ActivateProjectPanel,
     WorktreeAdded,
-    WorktreesSorted,
+    WorktreeOrderChanged,
     WorktreeRemoved(WorktreeId),
     WorktreeUpdatedEntries(WorktreeId, UpdatedEntriesSet),
     WorktreeUpdatedGitRepositories,
@@ -1330,6 +1330,17 @@ impl Project {
     ) -> Option<WorktreeId> {
         self.worktree_for_entry(entry_id, cx)
             .map(|worktree| worktree.read(cx).id())
+    }
+
+    pub fn entry_is_worktree_root(&self, entry_id: ProjectEntryId, cx: &AppContext) -> bool {
+        self.worktree_for_entry(entry_id, cx)
+            .map(|worktree| {
+                worktree
+                    .read(cx)
+                    .root_entry()
+                    .is_some_and(|e| e.id == entry_id)
+            })
+            .unwrap_or(false)
     }
 
     pub fn visibility_for_paths(&self, paths: &[PathBuf], cx: &AppContext) -> Option<bool> {
@@ -7052,6 +7063,48 @@ impl Project {
         })
     }
 
+    pub fn move_worktree(
+        &mut self,
+        worktree: Model<Worktree>,
+        destination: Model<Worktree>,
+        cx: &mut ModelContext<'_, Self>,
+    ) -> Task<Result<()>> {
+        // get the index of the worktree
+        // remove the worktree from the worktrees list
+        // get the index of the destination worktree
+        // insert the worktree above or below the destination worktree
+
+        let Some(worktree_idx) = self
+            .worktrees
+            .iter()
+            .position(|wt| wt.handle_id() == worktree.entity_id().as_u64() as usize)
+        else {
+            return Task::ready(Err(anyhow!("Worktree not found")));
+        };
+
+        let worktree = self.worktrees.remove(worktree_idx);
+
+        let Some(destination_idx) = self
+            .worktrees
+            .iter()
+            .position(|wt| wt.handle_id() == destination.entity_id().as_u64() as usize)
+        else {
+            return Task::ready(Err(anyhow!("Destination worktree not found")));
+        };
+
+        let insert_idx = match worktree_idx > destination_idx {
+            true => destination_idx,
+            false => destination_idx + 1,
+        };
+
+        self.worktrees.insert(insert_idx, worktree);
+
+        cx.emit(Event::WorktreeOrderChanged);
+        self.metadata_changed(cx);
+
+        Task::ready(Ok(()))
+    }
+
     pub fn sort_local_worktrees(&mut self, cx: &mut ModelContext<Self>) {
         self.worktrees
             .sort_unstable_by(|a, b| match (a.upgrade(), b.upgrade()) {
@@ -7065,7 +7118,7 @@ impl Project {
                 (None, None) => Ordering::Equal,
             });
 
-        cx.emit(Event::WorktreesSorted);
+        cx.emit(Event::WorktreeOrderChanged);
         self.metadata_changed(cx);
     }
 
