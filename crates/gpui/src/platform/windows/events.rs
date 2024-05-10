@@ -39,6 +39,7 @@ pub(crate) fn handle_msg(
         WM_TIMER => handle_timer_msg(handle, wparam, state_ptr),
         WM_NCCALCSIZE => handle_calc_client_size(handle, wparam, lparam, state_ptr),
         WM_DPICHANGED => handle_dpi_changed_msg(handle, wparam, lparam, state_ptr),
+        WM_DISPLAYCHANGE => handle_display_change_msg(wparam, lparam, state_ptr),
         WM_NCHITTEST => handle_hit_test_msg(handle, msg, wparam, lparam, state_ptr),
         WM_PAINT => handle_paint_msg(handle, state_ptr),
         WM_CLOSE => handle_close_msg(state_ptr),
@@ -768,6 +769,30 @@ fn handle_dpi_changed_msg(
     }
     invalidate_client_area(handle);
 
+    Some(0)
+}
+
+/// The following conditions will trigger this event:
+/// 1. The monitor on which the window is located goes offline or changes resolution.
+/// 2. Another monitor goes offline, is plugged in, or changes resolution.
+///
+/// In either case, the window will only receive information from the monitor on which
+/// it is located.
+///
+/// For example, in the case of condition 2, where the monitor on which the window is
+/// located has actually changed nothing, it will still receive this event.
+fn handle_display_change_msg(
+    wparam: WPARAM,
+    lparam: LPARAM,
+    state_ptr: Rc<WindowsWindowStatePtr>,
+) -> Option<isize> {
+    println!(
+        "display changed: {:?}, {:?}, width: {}, height: {}",
+        wparam,
+        lparam,
+        lparam.loword(),
+        lparam.hiword()
+    );
     Some(0)
 }
 
