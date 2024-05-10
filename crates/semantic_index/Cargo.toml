@@ -37,9 +37,12 @@ serde.workspace = true
 serde_json.workspace = true
 sha2.workspace = true
 smol.workspace = true
+theme.workspace = true
 tree-sitter.workspace = true
+ui. workspace = true
 util. workspace = true
 unindent.workspace = true
+workspace.workspace = true
 worktree.workspace = true
 
 [dev-dependencies]
@@ -54,3 +57,4 @@ project = { workspace = true, features = ["test-support"] }
 tempfile.workspace = true
 util = { workspace = true, features = ["test-support"] }
 worktree = { workspace = true, features = ["test-support"] }
+workspace = { workspace = true, features = ["test-support"] }

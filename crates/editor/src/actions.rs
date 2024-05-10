@@ -52,8 +52,9 @@ pub struct SelectToEndOfLine {
 
 #[derive(PartialEq, Clone, Deserialize, Default)]
 pub struct ToggleCodeActions {
+    // Display row from which the action was deployed.
     #[serde(default)]
-    pub deployed_from_indicator: bool,
+    pub deployed_from_indicator: Option<u32>,
 }
 
 #[derive(PartialEq, Clone, Deserialize, Default)]

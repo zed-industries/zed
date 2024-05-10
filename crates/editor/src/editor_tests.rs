@@ -9,7 +9,7 @@ use crate::{
     JoinLines,
 };
 use futures::StreamExt;
-use gpui::{div, TestAppContext, VisualTestContext, WindowOptions};
+use gpui::{div, TestAppContext, VisualTestContext, WindowBounds, WindowOptions};
 use indoc::indoc;
 use language::{
     language_settings::{AllLanguageSettings, AllLanguageSettingsContent, LanguageSettingsContent},
@@ -2824,6 +2824,31 @@ async fn test_join_lines_with_git_diff_base(
         "#
         .unindent(),
     );
+}
+
+#[gpui::test]
+async fn test_custom_newlines_cause_no_false_positive_diffs(
+    executor: BackgroundExecutor,
+    cx: &mut gpui::TestAppContext,
+) {
+    init_test(cx, |_| {});
+    let mut cx = EditorTestContext::new(cx).await;
+    cx.set_state("Line 0\r\nLine 1\rˇ\nLine 2\r\nLine 3");
+    cx.set_diff_base(Some("Line 0\r\nLine 1\r\nLine 2\r\nLine 3"));
+    executor.run_until_parked();
+
+    cx.update_editor(|editor, cx| {
+        assert_eq!(
+            editor
+                .buffer()
+                .read(cx)
+                .snapshot(cx)
+                .git_diff_hunks_in_range(0..u32::MAX)
+                .collect::<Vec<_>>(),
+            Vec::new(),
+            "Should not have any diffs for files with custom newlines"
+        );
+    });
 }
 
 #[gpui::test]
@@ -7468,10 +7493,10 @@ async fn test_following(cx: &mut gpui::TestAppContext) {
     let follower = cx.update(|cx| {
         cx.open_window(
             WindowOptions {
-                bounds: Some(Bounds::from_corners(
+                window_bounds: Some(WindowBounds::Windowed(Bounds::from_corners(
                     gpui::Point::new(0.into(), 0.into()),
                     gpui::Point::new(10.into(), 80.into()),
-                )),
+                ))),
                 ..Default::default()
             },
             |cx| cx.new_view(|cx| build_editor(buffer.clone(), cx)),
@@ -9038,7 +9063,7 @@ async fn test_multibuffer_reverts(cx: &mut gpui::TestAppContext) {
                     .collect::<String>(),
                 cx,
             );
-            buffer.set_diff_base(Some(sample_text.into()), cx);
+            buffer.set_diff_base(Some(sample_text), cx);
         });
         cx.executor().run_until_parked();
     }
@@ -9530,8 +9555,8 @@ async fn test_toggle_hunk_diff(executor: BackgroundExecutor, cx: &mut gpui::Test
         let all_hunks = editor_hunks(editor, &snapshot, cx);
         let all_expanded_hunks = expanded_hunks(&editor, &snapshot, cx);
         assert_eq!(
-            expanded_hunks_background_highlights(editor, &snapshot),
-            vec![1..2, 7..8, 9..10],
+            expanded_hunks_background_highlights(editor, cx),
+            vec![1..=1, 7..=7, 9..=9],
             "After expanding, all git additions should be highlighted for Modified (split into added and removed) and Added hunks"
         );
         assert_eq!(
@@ -9558,7 +9583,7 @@ async fn test_toggle_hunk_diff(executor: BackgroundExecutor, cx: &mut gpui::Test
         let all_hunks = editor_hunks(editor, &snapshot, cx);
         let all_expanded_hunks = expanded_hunks(editor, &snapshot, cx);
         assert_eq!(
-            expanded_hunks_background_highlights(editor, &snapshot),
+            expanded_hunks_background_highlights(editor, cx),
             Vec::new(),
             "After cancelling in editor, no git highlights should be left"
         );
@@ -9671,8 +9696,8 @@ async fn test_toggled_diff_base_change(
         let all_hunks = editor_hunks(editor, &snapshot, cx);
         let all_expanded_hunks = expanded_hunks(&editor, &snapshot, cx);
         assert_eq!(
-            expanded_hunks_background_highlights(editor, &snapshot),
-            vec![9..11, 13..15],
+            expanded_hunks_background_highlights(editor, cx),
+            vec![9..=10, 13..=14],
             "After expanding, all git additions should be highlighted for Modified (split into added and removed) and Added hunks"
         );
         assert_eq!(
@@ -9700,7 +9725,7 @@ async fn test_toggled_diff_base_change(
         let all_hunks = editor_hunks(editor, &snapshot, cx);
         let all_expanded_hunks = expanded_hunks(editor, &snapshot, cx);
         assert_eq!(
-            expanded_hunks_background_highlights(editor, &snapshot),
+            expanded_hunks_background_highlights(editor, cx),
             Vec::new(),
             "After diff base is changed, old git highlights should be removed"
         );
@@ -9845,8 +9870,8 @@ async fn test_fold_unfold_diff(executor: BackgroundExecutor, cx: &mut gpui::Test
         let all_hunks = editor_hunks(editor, &snapshot, cx);
         let all_expanded_hunks = expanded_hunks(&editor, &snapshot, cx);
         assert_eq!(
-            expanded_hunks_background_highlights(editor, &snapshot),
-            vec![9..11, 13..15, 19..20]
+            expanded_hunks_background_highlights(editor, cx),
+            vec![9..=10, 13..=14, 19..=19]
         );
         assert_eq!(
             all_hunks,
@@ -9910,8 +9935,8 @@ async fn test_fold_unfold_diff(executor: BackgroundExecutor, cx: &mut gpui::Test
         let all_hunks = editor_hunks(editor, &snapshot, cx);
         let all_expanded_hunks = expanded_hunks(&editor, &snapshot, cx);
         assert_eq!(
-            expanded_hunks_background_highlights(editor, &snapshot),
-            vec![5..6],
+            expanded_hunks_background_highlights(editor, cx),
+            vec![0..=0, 5..=5],
             "Only one hunk is left not folded, its highlight should be visible"
         );
         assert_eq!(
@@ -9991,8 +10016,8 @@ async fn test_fold_unfold_diff(executor: BackgroundExecutor, cx: &mut gpui::Test
         let all_hunks = editor_hunks(editor, &snapshot, cx);
         let all_expanded_hunks = expanded_hunks(&editor, &snapshot, cx);
         assert_eq!(
-            expanded_hunks_background_highlights(editor, &snapshot),
-            vec![9..11, 13..15, 19..20],
+            expanded_hunks_background_highlights(editor, cx),
+            vec![9..=10, 13..=14, 19..=19],
             "After unfolding, all hunk diffs should be visible again"
         );
         assert_eq!(
@@ -10053,17 +10078,17 @@ async fn test_toggle_diff_expand_in_multi_buffer(cx: &mut gpui::TestAppContext) 
         "vvvv\nwwww\nxxxx\nyyyy\nzzzz\n@@@@\n{{{{\n||||\n}}}}\n~~~~\n\u{7f}\u{7f}\u{7f}\u{7f}";
     let buffer_1 = cx.new_model(|cx| {
         let mut buffer = Buffer::local(modified_sample_text_1.to_string(), cx);
-        buffer.set_diff_base(Some(sample_text_1.clone().into()), cx);
+        buffer.set_diff_base(Some(sample_text_1.clone()), cx);
         buffer
     });
     let buffer_2 = cx.new_model(|cx| {
         let mut buffer = Buffer::local(modified_sample_text_2.to_string(), cx);
-        buffer.set_diff_base(Some(sample_text_2.clone().into()), cx);
+        buffer.set_diff_base(Some(sample_text_2.clone()), cx);
         buffer
     });
     let buffer_3 = cx.new_model(|cx| {
         let mut buffer = Buffer::local(modified_sample_text_3.to_string(), cx);
-        buffer.set_diff_base(Some(sample_text_3.clone().into()), cx);
+        buffer.set_diff_base(Some(sample_text_3.clone()), cx);
         buffer
     });
 
@@ -10159,10 +10184,7 @@ async fn test_toggle_diff_expand_in_multi_buffer(cx: &mut gpui::TestAppContext) 
         let snapshot = editor.snapshot(cx);
         let all_hunks = editor_hunks(editor, &snapshot, cx);
         let all_expanded_hunks = expanded_hunks(&editor, &snapshot, cx);
-        assert_eq!(
-            expanded_hunks_background_highlights(editor, &snapshot),
-            Vec::new(),
-        );
+        assert_eq!(expanded_hunks_background_highlights(editor, cx), Vec::new());
         assert_eq!(all_hunks, expected_all_hunks);
         assert_eq!(all_expanded_hunks, Vec::new());
     });
@@ -10177,8 +10199,8 @@ async fn test_toggle_diff_expand_in_multi_buffer(cx: &mut gpui::TestAppContext) 
         let all_hunks = editor_hunks(editor, &snapshot, cx);
         let all_expanded_hunks = expanded_hunks(&editor, &snapshot, cx);
         assert_eq!(
-            expanded_hunks_background_highlights(editor, &snapshot),
-            vec![18..19, 33..34],
+            expanded_hunks_background_highlights(editor, cx),
+            vec![18..=18, 33..=33],
         );
         assert_eq!(all_hunks, expected_all_hunks_shifted);
         assert_eq!(all_hunks, all_expanded_hunks);
@@ -10192,10 +10214,7 @@ async fn test_toggle_diff_expand_in_multi_buffer(cx: &mut gpui::TestAppContext) 
         let snapshot = editor.snapshot(cx);
         let all_hunks = editor_hunks(editor, &snapshot, cx);
         let all_expanded_hunks = expanded_hunks(&editor, &snapshot, cx);
-        assert_eq!(
-            expanded_hunks_background_highlights(editor, &snapshot),
-            Vec::new(),
-        );
+        assert_eq!(expanded_hunks_background_highlights(editor, cx), Vec::new());
         assert_eq!(all_hunks, expected_all_hunks);
         assert_eq!(all_expanded_hunks, Vec::new());
     });
@@ -10209,8 +10228,8 @@ async fn test_toggle_diff_expand_in_multi_buffer(cx: &mut gpui::TestAppContext) 
         let all_hunks = editor_hunks(editor, &snapshot, cx);
         let all_expanded_hunks = expanded_hunks(&editor, &snapshot, cx);
         assert_eq!(
-            expanded_hunks_background_highlights(editor, &snapshot),
-            vec![18..19, 33..34],
+            expanded_hunks_background_highlights(editor, cx),
+            vec![18..=18, 33..=33],
         );
         assert_eq!(all_hunks, expected_all_hunks_shifted);
         assert_eq!(all_hunks, all_expanded_hunks);
@@ -10224,10 +10243,7 @@ async fn test_toggle_diff_expand_in_multi_buffer(cx: &mut gpui::TestAppContext) 
         let snapshot = editor.snapshot(cx);
         let all_hunks = editor_hunks(editor, &snapshot, cx);
         let all_expanded_hunks = expanded_hunks(&editor, &snapshot, cx);
-        assert_eq!(
-            expanded_hunks_background_highlights(editor, &snapshot),
-            Vec::new(),
-        );
+        assert_eq!(expanded_hunks_background_highlights(editor, cx), Vec::new());
         assert_eq!(all_hunks, expected_all_hunks);
         assert_eq!(all_expanded_hunks, Vec::new());
     });
@@ -10316,8 +10332,8 @@ async fn test_edits_around_toggled_additions(
             vec![("".to_string(), DiffHunkStatus::Added, 4..7)]
         );
         assert_eq!(
-            expanded_hunks_background_highlights(editor, &snapshot),
-            vec![4..7]
+            expanded_hunks_background_highlights(editor, cx),
+            vec![4..=6]
         );
         assert_eq!(all_hunks, all_expanded_hunks);
     });
@@ -10352,8 +10368,8 @@ async fn test_edits_around_toggled_additions(
             vec![("".to_string(), DiffHunkStatus::Added, 4..8)]
         );
         assert_eq!(
-            expanded_hunks_background_highlights(editor, &snapshot),
-            vec![4..8],
+            expanded_hunks_background_highlights(editor, cx),
+            vec![4..=6],
             "Edited hunk should have one more line added"
         );
         assert_eq!(
@@ -10393,8 +10409,8 @@ async fn test_edits_around_toggled_additions(
             vec![("".to_string(), DiffHunkStatus::Added, 4..9)]
         );
         assert_eq!(
-            expanded_hunks_background_highlights(editor, &snapshot),
-            vec![4..9],
+            expanded_hunks_background_highlights(editor, cx),
+            vec![4..=6],
             "Edited hunk should have one more line added"
         );
         assert_eq!(all_hunks, all_expanded_hunks);
@@ -10433,8 +10449,8 @@ async fn test_edits_around_toggled_additions(
             vec![("".to_string(), DiffHunkStatus::Added, 4..8)]
         );
         assert_eq!(
-            expanded_hunks_background_highlights(editor, &snapshot),
-            vec![4..8],
+            expanded_hunks_background_highlights(editor, cx),
+            vec![4..=6],
             "Deleting a line should shrint the hunk"
         );
         assert_eq!(
@@ -10477,8 +10493,8 @@ async fn test_edits_around_toggled_additions(
             vec![("".to_string(), DiffHunkStatus::Added, 5..6)]
         );
         assert_eq!(
-            expanded_hunks_background_highlights(editor, &snapshot),
-            vec![5..6]
+            expanded_hunks_background_highlights(editor, cx),
+            vec![5..=5]
         );
         assert_eq!(all_hunks, all_expanded_hunks);
     });
@@ -10520,7 +10536,7 @@ async fn test_edits_around_toggled_additions(
             ]
         );
         assert_eq!(
-            expanded_hunks_background_highlights(editor, &snapshot),
+            expanded_hunks_background_highlights(editor, cx),
             Vec::new(),
             "Should close all stale expanded addition hunks"
         );
@@ -10619,10 +10635,7 @@ async fn test_edits_around_toggled_deletions(
         let snapshot = editor.snapshot(cx);
         let all_hunks = editor_hunks(editor, &snapshot, cx);
         let all_expanded_hunks = expanded_hunks(&editor, &snapshot, cx);
-        assert_eq!(
-            expanded_hunks_background_highlights(editor, &snapshot),
-            Vec::new()
-        );
+        assert_eq!(expanded_hunks_background_highlights(editor, cx), Vec::new());
         assert_eq!(
             all_hunks,
             vec![(
@@ -10659,7 +10672,7 @@ async fn test_edits_around_toggled_deletions(
         let all_hunks = editor_hunks(editor, &snapshot, cx);
         let all_expanded_hunks = expanded_hunks(&editor, &snapshot, cx);
         assert_eq!(
-            expanded_hunks_background_highlights(editor, &snapshot),
+            expanded_hunks_background_highlights(editor, cx),
             Vec::new(),
             "Deleted hunks do not highlight current editor's background"
         );
@@ -10697,10 +10710,7 @@ async fn test_edits_around_toggled_deletions(
         let snapshot = editor.snapshot(cx);
         let all_hunks = editor_hunks(editor, &snapshot, cx);
         let all_expanded_hunks = expanded_hunks(&editor, &snapshot, cx);
-        assert_eq!(
-            expanded_hunks_background_highlights(editor, &snapshot),
-            Vec::new()
-        );
+        assert_eq!(expanded_hunks_background_highlights(editor, cx), Vec::new());
         assert_eq!(
             all_hunks,
             vec![(
@@ -10744,8 +10754,8 @@ async fn test_edits_around_toggled_deletions(
             )]
         );
         assert_eq!(
-            expanded_hunks_background_highlights(editor, &snapshot),
-            vec![7..8],
+            expanded_hunks_background_highlights(editor, cx),
+            vec![7..=7],
             "Modified expanded hunks should display additions and highlight their background"
         );
         assert_eq!(all_hunks, all_expanded_hunks);
@@ -10838,8 +10848,8 @@ async fn test_edits_around_toggled_modifications(
         let all_hunks = editor_hunks(editor, &snapshot, cx);
         let all_expanded_hunks = expanded_hunks(&editor, &snapshot, cx);
         assert_eq!(
-            expanded_hunks_background_highlights(editor, &snapshot),
-            vec![6..7],
+            expanded_hunks_background_highlights(editor, cx),
+            vec![6..=6],
         );
         assert_eq!(
             all_hunks,
@@ -10881,8 +10891,8 @@ async fn test_edits_around_toggled_modifications(
         let all_hunks = editor_hunks(editor, &snapshot, cx);
         let all_expanded_hunks = expanded_hunks(&editor, &snapshot, cx);
         assert_eq!(
-            expanded_hunks_background_highlights(editor, &snapshot),
-            vec![6..9],
+            expanded_hunks_background_highlights(editor, cx),
+            vec![6..=6],
             "Modified hunk should grow highlighted lines on more text additions"
         );
         assert_eq!(
@@ -10927,9 +10937,8 @@ async fn test_edits_around_toggled_modifications(
         let all_hunks = editor_hunks(editor, &snapshot, cx);
         let all_expanded_hunks = expanded_hunks(&editor, &snapshot, cx);
         assert_eq!(
-            expanded_hunks_background_highlights(editor, &snapshot),
-            vec![6..9],
-            "Modified hunk should grow deleted lines on text deletions above"
+            expanded_hunks_background_highlights(editor, cx),
+            vec![6..=8],
         );
         assert_eq!(
             all_hunks,
@@ -10937,7 +10946,8 @@ async fn test_edits_around_toggled_modifications(
                 "const B: u32 = 42;\nconst C: u32 = 42;\n".to_string(),
                 DiffHunkStatus::Modified,
                 6..9
-            )]
+            )],
+            "Modified hunk should grow deleted lines on text deletions above"
         );
         assert_eq!(all_hunks, all_expanded_hunks);
     });
@@ -10971,8 +10981,8 @@ async fn test_edits_around_toggled_modifications(
         let all_hunks = editor_hunks(editor, &snapshot, cx);
         let all_expanded_hunks = expanded_hunks(&editor, &snapshot, cx);
         assert_eq!(
-            expanded_hunks_background_highlights(editor, &snapshot),
-            vec![6..10],
+            expanded_hunks_background_highlights(editor, cx),
+            vec![6..=9],
             "Modified hunk should grow deleted lines on text modifications above"
         );
         assert_eq!(
@@ -11015,8 +11025,8 @@ async fn test_edits_around_toggled_modifications(
         let all_hunks = editor_hunks(editor, &snapshot, cx);
         let all_expanded_hunks = expanded_hunks(&editor, &snapshot, cx);
         assert_eq!(
-            expanded_hunks_background_highlights(editor, &snapshot),
-            vec![6..9],
+            expanded_hunks_background_highlights(editor, cx),
+            vec![6..=8],
             "Modified hunk should grow shrink lines on modification lines removal"
         );
         assert_eq!(
@@ -11056,7 +11066,7 @@ async fn test_edits_around_toggled_modifications(
         let all_hunks = editor_hunks(editor, &snapshot, cx);
         let all_expanded_hunks = expanded_hunks(&editor, &snapshot, cx);
         assert_eq!(
-            expanded_hunks_background_highlights(editor, &snapshot),
+            expanded_hunks_background_highlights(editor, cx),
             Vec::new(),
             "Modified hunk should turn into a removed one on all modified lines removal"
         );
@@ -11159,8 +11169,8 @@ async fn test_multiple_expanded_hunks_merge(
         let all_hunks = editor_hunks(editor, &snapshot, cx);
         let all_expanded_hunks = expanded_hunks(&editor, &snapshot, cx);
         assert_eq!(
-            expanded_hunks_background_highlights(editor, &snapshot),
-            vec![6..7],
+            expanded_hunks_background_highlights(editor, cx),
+            vec![6..=6],
         );
         assert_eq!(
             all_hunks,

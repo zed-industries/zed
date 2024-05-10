@@ -37,6 +37,7 @@ pub unsafe fn new_renderer(
     _native_window: *mut c_void,
     _native_view: *mut c_void,
     _bounds: crate::Size<f32>,
+    _transparent: bool,
 ) -> Renderer {
     MetalRenderer::new(context)
 }
@@ -231,6 +232,10 @@ impl MetalRenderer {
         }
     }
 
+    pub fn update_transparency(&mut self, _transparent: bool) {
+        // todo(mac)?
+    }
+
     pub fn destroy(&mut self) {
         // nothing to do
     }
@@ -412,7 +417,7 @@ impl MetalRenderer {
 
             let tile = self
                 .sprite_atlas
-                .allocate(clipped_bounds.size.map(Into::into), AtlasTextureKind::Path);
+                .allocate(clipped_bounds.size.map(Into::into), AtlasTextureKind::Path)?;
             vertices_by_texture_id
                 .entry(tile.texture_id)
                 .or_insert(Vec::new())

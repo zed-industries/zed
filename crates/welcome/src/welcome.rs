@@ -2,7 +2,6 @@ mod base_keymap_picker;
 mod base_keymap_setting;
 
 use client::{telemetry::Telemetry, TelemetrySettings};
-use copilot_ui;
 use db::kvp::KEY_VALUE_STORE;
 use gpui::{
     svg, AnyElement, AppContext, EventEmitter, FocusHandle, FocusableView, InteractiveElement,
@@ -143,7 +142,7 @@ impl Render for WelcomePage {
                                         this.telemetry.report_app_event(
                                             "welcome page: sign in to copilot".to_string(),
                                         );
-                                        copilot_ui::initiate_sign_in(cx);
+                                        inline_completion_button::initiate_sign_in(cx);
                                     })),
                             )
                             .child(

@@ -4,8 +4,8 @@ use crate::{
     Element, Empty, Entity, EventEmitter, ForegroundExecutor, Global, InputEvent, Keystroke, Model,
     ModelContext, Modifiers, ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseMoveEvent,
     MouseUpEvent, Pixels, Platform, Point, Render, Result, Size, Task, TestDispatcher,
-    TestPlatform, TestWindow, TextSystem, View, ViewContext, VisualContext, WindowContext,
-    WindowHandle, WindowOptions,
+    TestPlatform, TestWindow, TextSystem, View, ViewContext, VisualContext, WindowBounds,
+    WindowContext, WindowHandle, WindowOptions,
 };
 use anyhow::{anyhow, bail};
 use futures::{channel::oneshot, Stream, StreamExt};
@@ -35,10 +35,7 @@ impl Context for TestAppContext {
     fn new_model<T: 'static>(
         &mut self,
         build_model: impl FnOnce(&mut ModelContext<'_, T>) -> T,
-    ) -> Self::Result<Model<T>>
-    where
-        T: 'static,
-    {
+    ) -> Self::Result<Model<T>> {
         let mut app = self.app.borrow_mut();
         app.new_model(build_model)
     }
@@ -191,7 +188,7 @@ impl TestAppContext {
         let bounds = Bounds::maximized(None, &mut cx);
         cx.open_window(
             WindowOptions {
-                bounds: Some(bounds),
+                window_bounds: Some(WindowBounds::Windowed(bounds)),
                 ..Default::default()
             },
             |cx| cx.new_view(build_window),
@@ -204,7 +201,7 @@ impl TestAppContext {
         let bounds = Bounds::maximized(None, &mut cx);
         let window = cx.open_window(
             WindowOptions {
-                bounds: Some(bounds),
+                window_bounds: Some(WindowBounds::Windowed(bounds)),
                 ..Default::default()
             },
             |cx| cx.new_view(|_| Empty),
@@ -227,7 +224,7 @@ impl TestAppContext {
         let bounds = Bounds::maximized(None, &mut cx);
         let window = cx.open_window(
             WindowOptions {
-                bounds: Some(bounds),
+                window_bounds: Some(WindowBounds::Windowed(bounds)),
                 ..Default::default()
             },
             |cx| cx.new_view(build_root_view),
@@ -685,11 +682,47 @@ impl VisualTestContext {
     }
 
     /// Simulate a mouse move event to the given point
-    pub fn simulate_mouse_move(&mut self, position: Point<Pixels>, modifiers: Modifiers) {
+    pub fn simulate_mouse_move(
+        &mut self,
+        position: Point<Pixels>,
+        button: impl Into<Option<MouseButton>>,
+        modifiers: Modifiers,
+    ) {
         self.simulate_event(MouseMoveEvent {
             position,
             modifiers,
-            pressed_button: None,
+            pressed_button: button.into(),
+        })
+    }
+
+    /// Simulate a mouse down event to the given point
+    pub fn simulate_mouse_down(
+        &mut self,
+        position: Point<Pixels>,
+        button: MouseButton,
+        modifiers: Modifiers,
+    ) {
+        self.simulate_event(MouseDownEvent {
+            position,
+            modifiers,
+            button,
+            click_count: 1,
+            first_mouse: false,
+        })
+    }
+
+    /// Simulate a mouse up event to the given point
+    pub fn simulate_mouse_up(
+        &mut self,
+        position: Point<Pixels>,
+        button: MouseButton,
+        modifiers: Modifiers,
+    ) {
+        self.simulate_event(MouseUpEvent {
+            position,
+            modifiers,
+            button,
+            click_count: 1,
         })
     }
 

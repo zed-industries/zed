@@ -47,13 +47,4 @@ impl PlatformTextSystem for TestTextSystem {
     fn layout_line(&self, text: &str, font_size: Pixels, runs: &[FontRun]) -> LineLayout {
         unimplemented!()
     }
-    fn wrap_line(
-        &self,
-        text: &str,
-        font_id: FontId,
-        font_size: Pixels,
-        width: Pixels,
-    ) -> Vec<usize> {
-        unimplemented!()
-    }
 }

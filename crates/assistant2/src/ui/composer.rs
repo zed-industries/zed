@@ -1,33 +1,43 @@
-use crate::{ui::ProjectIndexButton, AssistantChat, CompletionProvider};
+use crate::{
+    ui::{ActiveFileButton, ProjectIndexButton},
+    AssistantChat, CompletionProvider,
+};
 use editor::{Editor, EditorElement, EditorStyle};
 use gpui::{AnyElement, FontStyle, FontWeight, TextStyle, View, WeakView, WhiteSpace};
 use settings::Settings;
 use theme::ThemeSettings;
-use ui::{popover_menu, prelude::*, ButtonLike, ContextMenu, Tooltip};
+use ui::{popover_menu, prelude::*, ButtonLike, ContextMenu, Divider, TextSize, Tooltip};
 
 #[derive(IntoElement)]
 pub struct Composer {
     editor: View<Editor>,
-    project_index_button: Option<View<ProjectIndexButton>>,
+    project_index_button: View<ProjectIndexButton>,
+    active_file_button: Option<View<ActiveFileButton>>,
     model_selector: AnyElement,
 }
 
 impl Composer {
     pub fn new(
         editor: View<Editor>,
-        project_index_button: Option<View<ProjectIndexButton>>,
+        project_index_button: View<ProjectIndexButton>,
+        active_file_button: Option<View<ActiveFileButton>>,
         model_selector: AnyElement,
     ) -> Self {
         Self {
             editor,
             project_index_button,
+            active_file_button,
             model_selector,
         }
     }
 
     fn render_tools(&mut self, _cx: &mut WindowContext) -> impl IntoElement {
+        h_flex().child(self.project_index_button.clone())
+    }
+
+    fn render_attachment_tools(&mut self, _cx: &mut WindowContext) -> impl IntoElement {
         h_flex().children(
-            self.project_index_button
+            self.active_file_button
                 .clone()
                 .map(|view| view.into_any_element()),
         )
@@ -36,16 +46,26 @@ impl Composer {
 
 impl RenderOnce for Composer {
     fn render(mut self, cx: &mut WindowContext) -> impl IntoElement {
-        let font_size = rems(0.875);
+        let font_size = TextSize::Default.rems(cx);
         let line_height = font_size.to_pixels(cx.rem_size()) * 1.3;
+        let mut editor_border = cx.theme().colors().text;
+        editor_border.fade_out(0.90);
 
-        h_flex().w_full().items_start().mt_2().child(
-            v_flex().size_full().gap_1().child(
+        // Remove the extra 1px added by the border
+        let padding = Spacing::XLarge.rems(cx) - rems_from_px(1.);
+
+        h_flex()
+            .p(Spacing::Small.rems(cx))
+            .w_full()
+            .items_start()
+            .child(
                 v_flex()
                     .w_full()
-                    .p_3()
-                    .bg(cx.theme().colors().editor_background)
                     .rounded_lg()
+                    .p(padding)
+                    .border_1()
+                    .border_color(editor_border)
+                    .bg(cx.theme().colors().editor_background)
                     .child(
                         v_flex()
                             .justify_between()
@@ -83,12 +103,19 @@ impl RenderOnce for Composer {
                                     .gap_2()
                                     .justify_between()
                                     .w_full()
-                                    .child(h_flex().gap_1().child(self.render_tools(cx)))
+                                    .child(
+                                        h_flex().gap_1().child(
+                                            h_flex()
+                                                .gap_2()
+                                                .child(self.render_tools(cx))
+                                                .child(Divider::vertical())
+                                                .child(self.render_attachment_tools(cx)),
+                                        ),
+                                    )
                                     .child(h_flex().gap_1().child(self.model_selector)),
                             ),
                     ),
-            ),
-        )
+            )
     }
 }
 
@@ -122,7 +149,7 @@ impl RenderOnce for ModelSelector {
                                 let assistant_chat = self.assistant_chat.clone();
                                 move |cx| {
                                     _ = assistant_chat.update(cx, |assistant_chat, cx| {
-                                        assistant_chat.model = model.clone();
+                                        assistant_chat.model.clone_from(&model);
                                         cx.notify();
                                     });
                                 }

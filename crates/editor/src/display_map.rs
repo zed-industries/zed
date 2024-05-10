@@ -721,6 +721,10 @@ impl DisplaySnapshot {
         DisplayPoint(clipped)
     }
 
+    pub fn clip_ignoring_line_ends(&self, point: DisplayPoint, bias: Bias) -> DisplayPoint {
+        DisplayPoint(self.block_snapshot.clip_point(point.0, bias))
+    }
+
     pub fn clip_at_line_end(&self, point: DisplayPoint) -> DisplayPoint {
         let mut point = point.0;
         if point.column == self.line_len(point.row) {

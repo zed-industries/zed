@@ -183,6 +183,14 @@ pub fn monitor_main_thread_hangs(
     installation_id: Option<String>,
     cx: &AppContext,
 ) {
+    // This is too noisy to ship to stable for now.
+    if !matches!(
+        ReleaseChannel::global(cx),
+        ReleaseChannel::Dev | ReleaseChannel::Nightly | ReleaseChannel::Preview
+    ) {
+        return;
+    }
+
     use nix::sys::signal::{
         sigaction, SaFlags, SigAction, SigHandler, SigSet,
         Signal::{self, SIGUSR2},
@@ -524,7 +532,7 @@ async fn upload_previous_crashes(
             }
 
             if uploaded < filename {
-                uploaded = filename.clone();
+                uploaded.clone_from(&filename);
                 KEY_VALUE_STORE
                     .write_kvp(LAST_CRASH_UPLOADED.to_string(), filename)
                     .await?;
