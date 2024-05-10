@@ -10088,6 +10088,10 @@ impl Editor {
                         // should display the range up to the row before this
                         indent.end = last_row - 1;
                     }
+                    if snapshot.is_line_folded(indent.end) {
+                        break;
+                    }
+
                     result_vec.push(indent)
                 }
             } else if depth > current_depth {
