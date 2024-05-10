@@ -10084,7 +10084,13 @@ impl Editor {
                         // should display the range up to the row before this
                         indent.end = last_row - 1;
                     }
-                    if snapshot.is_line_folded(indent.end) {
+
+                    let buffer_row = if indent.start == indent.end {
+                        indent.end
+                    } else {
+                        indent.end.saturating_sub(1)
+                    };
+                    if snapshot.is_line_folded(buffer_row) {
                         break;
                     }
 
