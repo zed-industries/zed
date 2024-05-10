@@ -3,10 +3,10 @@ mod parser;
 use crate::parser::CodeBlockKind;
 use futures::FutureExt;
 use gpui::{
-    point, quad, AnyElement, Bounds, CursorStyle, DispatchPhase, Edges, FontStyle, FontWeight,
-    GlobalElementId, Hitbox, Hsla, MouseDownEvent, MouseEvent, MouseMoveEvent, MouseUpEvent, Point,
-    Render, StrikethroughStyle, Style, StyledText, Task, TextLayout, TextRun, TextStyle,
-    TextStyleRefinement, View,
+    point, quad, AnyElement, AppContext, Bounds, CursorStyle, DispatchPhase, Edges, FocusHandle,
+    FocusableView, FontStyle, FontWeight, GlobalElementId, Hitbox, Hsla, KeyContext,
+    MouseDownEvent, MouseEvent, MouseMoveEvent, MouseUpEvent, Point, Render, StrikethroughStyle,
+    Style, StyledText, Task, TextLayout, TextRun, TextStyle, TextStyleRefinement, View,
 };
 use language::{Language, LanguageRegistry, Rope};
 use parser::{parse_markdown, MarkdownEvent, MarkdownTag, MarkdownTagEnd};
@@ -36,6 +36,7 @@ pub struct Markdown {
     parsed_markdown: ParsedMarkdown,
     should_reparse: bool,
     pending_parse: Option<Task<Option<()>>>,
+    focus_handle: FocusHandle,
     language_registry: Arc<LanguageRegistry>,
 }
 
@@ -46,6 +47,7 @@ impl Markdown {
         language_registry: Arc<LanguageRegistry>,
         cx: &mut ViewContext<Self>,
     ) -> Self {
+        let focus_handle = cx.focus_handle();
         let mut this = Self {
             source,
             selection: Selection::default(),
@@ -55,6 +57,7 @@ impl Markdown {
             should_reparse: false,
             parsed_markdown: ParsedMarkdown::default(),
             pending_parse: None,
+            focus_handle,
             language_registry,
         };
         this.parse(cx);
@@ -63,6 +66,16 @@ impl Markdown {
 
     pub fn append(&mut self, text: &str, cx: &mut ViewContext<Self>) {
         self.source.push_str(text);
+        self.parse(cx);
+    }
+
+    pub fn reset(&mut self, source: String, cx: &mut ViewContext<Self>) {
+        self.source = source;
+        self.selection = Selection::default();
+        self.autoscroll_request = None;
+        self.pending_parse = None;
+        self.should_reparse = false;
+        self.parsed_markdown = ParsedMarkdown::default();
         self.parse(cx);
     }
 
@@ -117,6 +130,12 @@ impl Render for Markdown {
             self.style.clone(),
             self.language_registry.clone(),
         )
+    }
+}
+
+impl FocusableView for Markdown {
+    fn focus_handle(&self, _cx: &AppContext) -> FocusHandle {
+        self.focus_handle.clone()
     }
 }
 
@@ -309,6 +328,7 @@ impl MarkdownElement {
                                 reversed: false,
                                 pending: true,
                             };
+                            cx.focus(&markdown.focus_handle);
                         }
 
                         cx.notify();
@@ -593,6 +613,13 @@ impl Element for MarkdownElement {
         hitbox: &mut Self::PrepaintState,
         cx: &mut WindowContext,
     ) {
+        let focus_handle = self.markdown.read(cx).focus_handle.clone();
+        cx.set_focus_handle(&focus_handle);
+
+        let mut context = KeyContext::default();
+        context.add("Markdown");
+        cx.set_key_context(context);
+
         self.paint_mouse_listeners(hitbox, &rendered_markdown.text, cx);
         rendered_markdown.element.paint(cx);
         self.paint_selection(bounds, &rendered_markdown.text, cx);

@@ -148,18 +148,31 @@ pub fn expanded_hunks(
 
 #[cfg(any(test, feature = "test-support"))]
 pub fn expanded_hunks_background_highlights(
-    editor: &Editor,
-    snapshot: &DisplaySnapshot,
-) -> Vec<core::ops::Range<u32>> {
-    use itertools::Itertools;
+    editor: &mut Editor,
+    cx: &mut gpui::WindowContext,
+) -> Vec<std::ops::RangeInclusive<u32>> {
+    let mut highlights = Vec::new();
 
-    editor
-        .highlighted_rows::<crate::DiffRowHighlight>()
-        .into_iter()
-        .flatten()
-        .map(|(range, _)| {
-            range.start.to_display_point(snapshot).row()..range.end.to_display_point(snapshot).row()
-        })
-        .unique()
-        .collect()
+    let mut range_start = 0;
+    let mut previous_highlighted_row = None;
+    for (highlighted_row, _) in editor.highlighted_display_rows(collections::HashSet::default(), cx)
+    {
+        match previous_highlighted_row {
+            Some(previous_row) => {
+                if previous_row + 1 != highlighted_row {
+                    highlights.push(range_start..=previous_row);
+                    range_start = highlighted_row;
+                }
+            }
+            None => {
+                range_start = highlighted_row;
+            }
+        }
+        previous_highlighted_row = Some(highlighted_row);
+    }
+    if let Some(previous_row) = previous_highlighted_row {
+        highlights.push(range_start..=previous_row);
+    }
+
+    highlights
 }
