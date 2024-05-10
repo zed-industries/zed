@@ -38,8 +38,42 @@ pub struct ProjectIndexView {
 pub struct CodebaseQuery {
     /// Semantic search query
     query: String,
-    /// Maximum number of results to return, defaults to 20
-    limit: Option<usize>,
+    /// Criteria to include results
+    includes: Option<SearchFilter>,
+    /// Criteria to exclude results
+    excludes: Option<SearchFilter>,
+}
+
+#[derive(Deserialize, JsonSchema, Clone)]
+pub struct SearchFilter {
+    /// Filter by file path
+    path: Option<String>,
+    /// Filter by file extension
+    extension: Option<String>,
+    // Note: we possibly can't do content filtering very easily given the project context handling
+    // the final results, so we're leaving out direct string matches for now
+}
+
+impl SearchFilter {
+    fn matches(&self, project_path: &ProjectPath) -> bool {
+        let path_match = if let Some(path) = &self.path {
+            *path == *project_path.path.to_string_lossy().to_string()
+        } else {
+            true
+        };
+
+        path_match
+            && (if let Some(extension) = &self.extension {
+                project_path
+                    .path
+                    .extension()
+                    .and_then(|ext| ext.to_str())
+                    .map(|ext| ext == extension)
+                    .unwrap_or(false)
+            } else {
+                true
+            })
+    }
 }
 
 #[derive(Serialize, Deserialize)]
@@ -165,11 +199,10 @@ impl ToolOutput for ProjectIndexView {
 
         let project_index = self.project_index.read(cx);
         let index_status = project_index.status();
-        let search = project_index.search(
-            self.input.query.clone(),
-            self.input.limit.unwrap_or(DEFAULT_SEARCH_LIMIT),
-            cx,
-        );
+        let search = project_index.search(self.input.query.clone(), DEFAULT_SEARCH_LIMIT, cx);
+
+        let includes = self.input.includes.clone();
+        let excludes = self.input.excludes.clone();
 
         cx.spawn(|this, mut cx| async move {
             let search_result = search.await;
@@ -182,6 +215,17 @@ impl ToolOutput for ProjectIndexView {
                                 worktree_id: search_result.worktree.read(cx).id(),
                                 path: search_result.path,
                             };
+
+                            if let Some(includes) = &includes {
+                                if !includes.matches(&project_path) {
+                                    continue;
+                                }
+                            } else if let Some(excludes) = &excludes {
+                                if excludes.matches(&project_path) {
+                                    continue;
+                                }
+                            }
+
                             excerpts
                                 .entry(project_path)
                                 .or_default()
