@@ -7931,24 +7931,21 @@ impl Project {
                     .context("worktree was not local")?
                     .snapshot();
 
-                let (work_directory, repo) = match worktree
-                    .repository_and_work_directory_for_path(&buffer_project_path.path)
-                {
-                    Some(work_dir_repo) => work_dir_repo,
-                    None => anyhow::bail!(NoRepositoryError {}),
-                };
-
-                let repo_entry = match worktree.get_local_repo(&repo) {
+                let repo_entry = match worktree.repository_for_path(&buffer_project_path.path) {
                     Some(repo_entry) => repo_entry,
                     None => anyhow::bail!(NoRepositoryError {}),
                 };
 
-                let repo = repo_entry.repo().clone();
+                let relative_path = repo_entry
+                    .relativize(&worktree, &buffer_project_path.path)
+                    .context("failed to relativize buffer path")?;
 
-                let relative_path = buffer_project_path
-                    .path
-                    .strip_prefix(&work_directory)?
-                    .to_path_buf();
+                let local_repo_entry = match worktree.get_local_repo(&repo_entry) {
+                    Some(repo_entry) => repo_entry,
+                    None => anyhow::bail!(NoRepositoryError {}),
+                };
+
+                let repo = local_repo_entry.repo().clone();
 
                 let content = match version {
                     Some(version) => buffer.rope_for_version(&version).clone(),

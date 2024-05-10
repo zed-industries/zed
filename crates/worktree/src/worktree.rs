@@ -160,6 +160,7 @@ pub struct Snapshot {
 pub struct RepositoryEntry {
     pub(crate) work_directory: WorkDirectoryEntry,
     pub(crate) branch: Option<Arc<str>>,
+    pub(crate) relative_path_to_repo_root: Option<Arc<Path>>,
 }
 
 impl RepositoryEntry {
@@ -183,6 +184,15 @@ impl RepositoryEntry {
             branch: self.branch.as_ref().map(|str| str.to_string()),
         }
     }
+
+    pub fn relativize(&self, worktree: &Snapshot, path: &Path) -> Result<RepoPath> {
+        if let Some(repo_root) = &self.relative_path_to_repo_root {
+            self.work_directory
+                .relativize(worktree, &repo_root.join(path))
+        } else {
+            self.work_directory.relativize(worktree, path)
+        }
+    }
 }
 
 impl From<&RepositoryEntry> for proto::RepositoryEntry {
@@ -194,6 +204,7 @@ impl From<&RepositoryEntry> for proto::RepositoryEntry {
     }
 }
 
+/// TODO: This comment is now wrong
 /// This path corresponds to the 'content path' (the folder that contains the .git)
 #[derive(Clone, Debug, Ord, PartialOrd, Eq, PartialEq)]
 pub struct RepositoryWorkDirectory(pub(crate) Arc<Path>);
@@ -214,6 +225,7 @@ impl AsRef<Path> for RepositoryWorkDirectory {
 pub struct WorkDirectoryEntry(ProjectEntryId);
 
 impl WorkDirectoryEntry {
+    // TODO: Remove this
     pub(crate) fn relativize(&self, worktree: &Snapshot, path: &Path) -> Result<RepoPath> {
         let entry = worktree
             .entry_for_id(self.0)
@@ -1081,8 +1093,7 @@ impl LocalWorktree {
             let mut index_task = None;
             let snapshot = this.update(&mut cx, |this, _| this.as_local().unwrap().snapshot())?;
             if let Some(repo) = snapshot.repository_for_path(&path) {
-                if let Some(repo_path) = repo.work_directory.relativize(&snapshot, &path).log_err()
-                {
+                if let Some(repo_path) = repo.relativize(&snapshot, &path).log_err() {
                     if let Some(git_repo) = snapshot.git_repositories.get(&*repo.work_directory) {
                         let git_repo = git_repo.repo_ptr.clone();
                         index_task = Some(cx.background_executor().spawn({
@@ -1907,6 +1918,8 @@ impl Snapshot {
                         RepositoryEntry {
                             work_directory: work_directory_entry,
                             branch: repository.branch.map(Into::into),
+                            // TODO: this needs to be fixed
+                            relative_path_to_repo_root: None,
                         },
                     )
                 }
@@ -2768,21 +2781,7 @@ impl BackgroundScannerState {
                     "building git repository, `.git` path in the worktree: {dot_git_path:?}"
                 );
 
-                // TODO: Maybe we don't want this check, but instead pass in a boolean
-                // whenever we have an outside-project-root git dir. Then we can store that boolean
-                // on `LocalRepositoryEntry` too.
-                let is_ancestor = dot_git_path.is_absolute()
-                    && self
-                        .snapshot
-                        .abs_path()
-                        .ancestors()
-                        .enumerate()
-                        .any(|(level, ancestor)| level != 0 && *ancestor == *parent_dir);
-                if is_ancestor {
-                    PathBuf::from("").into()
-                } else {
-                    parent_dir.into()
-                }
+                parent_dir.into()
             }
             None => {
                 // `dot_git_path.parent().is_none()` means `.git` directory is the opened worktree itself,
@@ -2794,6 +2793,20 @@ impl BackgroundScannerState {
             }
         };
 
+        self.build_git_repository_for_path(work_dir_path, dot_git_path, None, fs)
+    }
+
+    fn build_git_repository_for_path(
+        &mut self,
+        work_dir_path: Arc<Path>,
+        dot_git_path: Arc<Path>,
+        relative_path_to_repo_root: Option<Arc<Path>>,
+        fs: &dyn Fs,
+    ) -> Option<(
+        RepositoryWorkDirectory,
+        Arc<Mutex<dyn GitRepository>>,
+        TreeMap<RepoPath, GitFileStatus>,
+    )> {
         let work_dir_id = self
             .snapshot
             .entry_for_path(work_dir_path.clone())
@@ -2807,12 +2820,14 @@ impl BackgroundScannerState {
         let repository = fs.open_repo(abs_path.as_path())?;
         let work_directory = RepositoryWorkDirectory(work_dir_path.clone());
 
+        println!("adding it as a git repo: {:?}", dot_git_path);
         let repo_lock = repository.lock();
         self.snapshot.repository_entries.insert(
             work_directory.clone(),
             RepositoryEntry {
                 work_directory: work_dir_id.into(),
                 branch: repo_lock.branch_name().map(Into::into),
+                relative_path_to_repo_root,
             },
         );
 
@@ -2844,6 +2859,7 @@ impl BackgroundScannerState {
 
         for mut entry in self
             .snapshot
+            // TODO: This also doesn't work, because we don't have the external_git_repo indexed.
             .descendent_entries(false, false, &work_directory.0)
             .cloned()
         {
@@ -3468,7 +3484,6 @@ impl BackgroundScanner {
         use futures::FutureExt as _;
 
         // Populate ignores above the root.
-        let mut above_root_git_dir_events = None;
         let root_abs_path = self.state.lock().snapshot.abs_path.clone();
         for (index, ancestor) in root_abs_path.ancestors().enumerate() {
             if index != 0 {
@@ -3482,21 +3497,11 @@ impl BackgroundScanner {
                         .insert(ancestor.into(), (ignore.into(), false));
                 }
             }
-            let root_git_dir = ancestor.join(&*DOT_GIT);
-            if root_git_dir.is_dir() {
+            if ancestor.join(&*DOT_GIT).is_dir() {
                 // Reached root of git repository.
-
-                self.state
-                    .lock()
-                    .build_git_repository(root_git_dir.clone().into(), self.fs.as_ref());
-
-                above_root_git_dir_events =
-                    Some(self.fs.watch(&root_git_dir, FS_WATCH_LATENCY).await);
                 break;
             }
         }
-        let mut above_root_git_dir_events =
-            above_root_git_dir_events.unwrap_or_else(|| Box::pin(futures::stream::empty()));
 
         let (scan_job_tx, scan_job_rx) = channel::unbounded();
         {
@@ -3521,6 +3526,66 @@ impl BackgroundScanner {
             let mut state = self.state.lock();
             state.snapshot.completed_scan_id = state.snapshot.scan_id;
         }
+
+        // If we don't have a git repository at the root, we walk up directories until we found one
+        // TODO: yes, this is duplicated work from above, fix this
+        let mut external_git_dir_events = None;
+
+        if self.state.lock().snapshot.root_git_entry().is_none() {
+            let root_abs_path = self.state.lock().snapshot.abs_path.clone();
+
+            for ancestor in root_abs_path.ancestors().skip(1) {
+                let external_dot_git = ancestor.join(&*DOT_GIT);
+                if external_dot_git.is_dir() {
+                    // let metadata = self
+                    //     .fs
+                    //     .metadata(&ancestor)
+                    //     .await
+                    //     .context("failed to stat worktree path");
+
+                    // if let Ok(Some(metadata)) = metadata {
+                    // let entry_path: Arc<Path> = ancestor.into();
+                    // let mut entry = Entry::new(
+                    //     entry_path,
+                    //     &metadata,
+                    //     &self.next_entry_id,
+                    //     self.state.lock().snapshot.root_char_bag,
+                    // );
+                    // // Mark it as external
+                    // entry.is_external = true;
+
+                    // self.state
+                    //     .lock()
+                    //     .snapshot
+                    //     .insert_entry(entry, self.fs.as_ref());
+
+                    // We associate the external git repo with our root folder.
+                    if let Some(relative_path_to_repo_root) =
+                        root_abs_path.strip_prefix(ancestor).log_err()
+                    {
+                        println!("root_abs_path: {:?}", root_abs_path);
+                        println!("ancestor: {:?}", ancestor);
+                        println!(
+                            "relative_path_to_repo_root: {:?}",
+                            relative_path_to_repo_root
+                        );
+                        self.state.lock().build_git_repository_for_path(
+                            Arc::from(Path::new("")),
+                            external_dot_git.clone().into(),
+                            Some(relative_path_to_repo_root.into()),
+                            self.fs.as_ref(),
+                        );
+
+                        external_git_dir_events =
+                            Some(self.fs.watch(&external_dot_git, FS_WATCH_LATENCY).await);
+                    }
+                    break;
+                    // }
+                }
+            }
+        }
+        let mut external_git_dir_events =
+            external_git_dir_events.unwrap_or_else(|| Box::pin(futures::stream::empty()));
 
         self.send_status_update(false, None);
 
@@ -3576,7 +3641,7 @@ impl BackgroundScanner {
                     self.process_events(paths.clone()).await;
                 }
 
-                paths = above_root_git_dir_events.next().fuse() => {
+                paths = external_git_dir_events.next().fuse() => {
                     let Some(mut paths) = paths else { break };
                     while let Poll::Ready(Some(more_paths)) = futures::poll!(fs_events_rx.next()) {
                         paths.extend(more_paths);
