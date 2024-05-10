@@ -301,11 +301,10 @@ impl WindowsWindow {
                 ..Default::default()
             };
             GetWindowPlacement(raw_hwnd, &mut placement).log_err();
-            // the bounds may not inside the display
+            // the bounds may be not inside the display, or the display may have been removed
             let bounds = if display.check_given_origin(params.bounds) {
                 params.bounds
             } else {
-                // the display may have been removed
                 display.default_bounds()
             };
             placement.rcNormalPosition.left = bounds.left().0;
