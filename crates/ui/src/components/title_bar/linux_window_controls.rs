@@ -129,6 +129,7 @@ impl RenderOnce for TitlebarButton {
                 TitlebarButtonType::Maximize => IconName::Maximize,
                 TitlebarButtonType::Close => IconName::Close,
             }))
+            .on_mouse_move(|_, cx| cx.stop_propagation())
             .on_click(move |_, cx| {
                 cx.stop_propagation();
                 match self.icon {
