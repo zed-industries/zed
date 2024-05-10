@@ -5,8 +5,8 @@ use crate::{
     prompts::generate_content_prompt,
     Assist, CompletionProvider, CycleMessageRole, InjectSearch, InlineAssist, LanguageModel,
     LanguageModelRequest, LanguageModelRequestMessage, MessageId, MessageMetadata, MessageStatus,
-    NewConversation, QuoteSelection, ResetKey, Role, SavedConversation, SavedConversationMetadata,
-    SavedMessage, Split, ToggleFocus, ToggleIncludeConversation,
+    QuoteSelection, ResetKey, Role, SavedConversation, SavedConversationMetadata, SavedMessage,
+    Split, ToggleFocus, ToggleHistory, ToggleIncludeConversation,
 };
 use anyhow::{anyhow, Result};
 use chrono::{DateTime, Local};
@@ -39,19 +39,15 @@ use settings::Settings;
 use std::{cmp, fmt::Write, iter, ops::Range, path::PathBuf, sync::Arc, time::Duration};
 use telemetry_events::AssistantKind;
 use theme::ThemeSettings;
-use ui::{
-    prelude::*,
-    utils::{DateTimeType, FormatDistance},
-    ButtonLike, Tab, TabBar, Tooltip,
-};
+use ui::{popover_menu, prelude::*, ButtonLike, ContextMenu, Tab, TabBar, Tooltip};
 use util::{paths::CONVERSATIONS_DIR, post_inc, ResultExt, TryFutureExt};
 use uuid::Uuid;
-use workspace::notifications::NotificationId;
 use workspace::{
     dock::{DockPosition, Panel, PanelEvent},
     searchable::Direction,
     Event as WorkspaceEvent, Save, Toast, ToggleZoom, Toolbar, Workspace,
 };
+use workspace::{notifications::NotificationId, NewFile};
 
 pub fn init(cx: &mut AppContext) {
     cx.observe_new_views(
@@ -824,6 +820,18 @@ impl AssistantPanel {
         }
     }
 
+    fn toggle_history(&mut self, _: &ToggleHistory, cx: &mut ViewContext<Self>) {
+        self.show_saved_conversations = !self.show_saved_conversations;
+        cx.notify();
+    }
+
+    fn show_history(&mut self, cx: &mut ViewContext<Self>) {
+        if !self.show_saved_conversations {
+            self.show_saved_conversations = true;
+            cx.notify();
+        }
+    }
+
     fn deploy(&mut self, action: &search::buffer_search::Deploy, cx: &mut ViewContext<Self>) {
         let mut propagate = true;
         if let Some(search_bar) = self.toolbar.read(cx).item_of_type::<BufferSearchBar>() {
@@ -878,13 +886,39 @@ impl AssistantPanel {
         Some(&self.active_conversation_editor.as_ref()?.editor)
     }
 
-    fn render_hamburger_button(cx: &mut ViewContext<Self>) -> impl IntoElement {
-        IconButton::new("hamburger_button", IconName::Menu)
-            .on_click(cx.listener(|this, _event, cx| {
-                this.show_saved_conversations = !this.show_saved_conversations;
-                cx.notify();
-            }))
-            .tooltip(|cx| Tooltip::text("Conversation History", cx))
+    fn render_popover_button(&self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+        let assistant = cx.view().clone();
+        let zoomed = self.zoomed;
+        let show_saved = self.show_saved_conversations;
+
+        popover_menu("assistant-popover")
+            .trigger(IconButton::new("trigger", IconName::Menu))
+            .menu(move |cx| {
+                let assistant = assistant.clone();
+                ContextMenu::build(cx, |menu, _cx| {
+                    menu.entry(
+                        if zoomed { "Zoom Out" } else { "Zoom In" },
+                        Some(Box::new(ToggleZoom)),
+                        {
+                            let assistant = assistant.clone();
+                            move |cx| {
+                                assistant.focus_handle(cx).dispatch_action(&ToggleZoom, cx);
+                            }
+                        },
+                    )
+                    .entry("New Context", Some(Box::new(NewFile)), {
+                        let assistant = assistant.clone();
+                        move |cx| {
+                            assistant.focus_handle(cx).dispatch_action(&NewFile, cx);
+                        }
+                    })
+                    .entry("History", Some(Box::new(ToggleHistory)), {
+                        let assistant = assistant.clone();
+                        move |cx| assistant.update(cx, |assistant, cx| assistant.show_history(cx))
+                    })
+                })
+                .into()
+            })
     }
 
     fn render_context_injector_buttons(&self, cx: &mut ViewContext<Self>) -> Vec<IconButton> {
@@ -944,7 +978,7 @@ impl AssistantPanel {
                 this.new_conversation(cx);
             }))
             .icon_size(IconSize::Small)
-            .tooltip(|cx| Tooltip::for_action("Add Context", &NewConversation, cx))
+            .tooltip(|cx| Tooltip::for_action("Add Context", &NewFile, cx))
     }
 
     fn render_zoom_button(&self, cx: &mut ViewContext<Self>) -> impl IntoElement {
@@ -1031,24 +1065,7 @@ impl AssistantPanel {
 
     fn render_signed_in(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         let header = TabBar::new("assistant_header")
-            .start_child(
-                h_flex()
-                    .gap_1()
-                    .child(
-                        IconButton::new("zoom", IconName::Maximize)
-                            .icon_size(IconSize::XSmall)
-                            .tooltip(|cx| Tooltip::text("Zoom Panel", cx)),
-                    )
-                    .child(
-                        IconButton::new("new_conversation", IconName::Plus)
-                            .tooltip(|cx| Tooltip::text("New Context", cx)),
-                    )
-                    .child(
-                        IconButton::new("conversation_history", IconName::CountdownTimer)
-                            .icon_size(IconSize::XSmall)
-                            .tooltip(|cx| Tooltip::text("Context History", cx)),
-                    ),
-            )
+            .start_child(h_flex().gap_1().child(self.render_popover_button(cx)))
             .children(self.active_conversation_editor().map(|editor| {
                 h_flex()
                     .h(rems(Tab::CONTAINER_HEIGHT_IN_REMS))
@@ -1090,6 +1107,7 @@ impl AssistantPanel {
         } else {
             div()
         };
+
         v_flex()
             .key_context("AssistantPanel")
             .size_full()
@@ -1097,6 +1115,7 @@ impl AssistantPanel {
                 this.new_conversation(cx);
             }))
             .on_action(cx.listener(AssistantPanel::toggle_zoom))
+            .on_action(cx.listener(AssistantPanel::toggle_history))
             .on_action(cx.listener(AssistantPanel::deploy))
             .on_action(cx.listener(AssistantPanel::select_next_match))
             .on_action(cx.listener(AssistantPanel::select_prev_match))

@@ -26,7 +26,6 @@ use std::{
 actions!(
     assistant,
     [
-        NewConversation,
         Assist,
         Split,
         CycleMessageRole,
@@ -35,7 +34,8 @@ actions!(
         ResetKey,
         InlineAssist,
         ToggleIncludeConversation,
-        InjectSearch
+        InjectSearch,
+        ToggleHistory,
     ]
 );
 
