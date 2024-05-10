@@ -818,7 +818,6 @@ struct CompletionsMenu {
     selected_item: usize,
     scroll_handle: UniformListScrollHandle,
     selected_completion_documentation_resolve_debounce: Arc<Mutex<DebouncedDelay>>,
-    language: Option<Arc<Language>>,
 }
 
 impl CompletionsMenu {
@@ -926,7 +925,6 @@ impl CompletionsMenu {
 
     fn pre_resolve_completion_documentation(
         buffer: Model<Buffer>,
-        language: Option<Arc<Language>>,
         completions: Arc<RwLock<Box<[Completion]>>>,
         matches: Arc<RwLock<Box<[StringMatch]>>>,
         editor: &Editor,
@@ -944,7 +942,7 @@ impl CompletionsMenu {
 
         let candidates = matches.read().iter().map(|m| m.candidate_id).collect();
         let resolve_task =
-            provider.resolve_completions(buffer, language, candidates, completions.clone(), cx);
+            provider.resolve_completions(buffer, candidates, completions.clone(), cx);
 
         return cx.spawn(move |this, mut cx| async move {
             if let Some(res) = resolve_task.await.log_err() {
@@ -984,7 +982,6 @@ impl CompletionsMenu {
         let resolve_task = project.update(cx, |project, cx| {
             project.resolve_completions(
                 self.buffer.clone(),
-                self.language.clone(),
                 vec![completion_index],
                 self.completions.clone(),
                 cx,
@@ -3679,7 +3676,6 @@ impl Editor {
 
         let query = Self::completion_query(&self.buffer.read(cx).read(cx), position);
         let completions = provider.completions(&buffer, buffer_position, cx);
-        let language = buffer.read(cx).language_at(buffer_position);
 
         let id = post_inc(&mut self.next_completion_id);
         let task = cx.spawn(|this, mut cx| {
@@ -3708,7 +3704,6 @@ impl Editor {
                         selected_completion_documentation_resolve_debounce: Arc::new(Mutex::new(
                             DebouncedDelay::new(),
                         )),
-                        language,
                     };
                     menu.filter(query.as_deref(), cx.background_executor().clone())
                         .await;
@@ -3719,7 +3714,6 @@ impl Editor {
                         this.update(&mut cx, |editor, cx| {
                             let completions = menu.completions.clone();
                             let matches = menu.matches.clone();
-                            let language = menu.language.clone();
 
                             let delay_ms = EditorSettings::get_global(cx)
                                 .completion_documentation_secondary_query_debounce;
@@ -3730,7 +3724,6 @@ impl Editor {
                                 .fire_new(delay, cx, |editor, cx| {
                                     CompletionsMenu::pre_resolve_completion_documentation(
                                         buffer,
-                                        language,
                                         completions,
                                         matches,
                                         editor,
@@ -10824,7 +10817,6 @@ pub trait CompletionProvider {
     fn resolve_completions(
         &self,
         buffer: Model<Buffer>,
-        language: Option<Arc<Language>>,
         completion_indices: Vec<usize>,
         completions: Arc<RwLock<Box<[Completion]>>>,
         cx: &mut ViewContext<Editor>,
@@ -10854,13 +10846,12 @@ impl CompletionProvider for Model<Project> {
     fn resolve_completions(
         &self,
         buffer: Model<Buffer>,
-        language: Option<Arc<Language>>,
         completion_indices: Vec<usize>,
         completions: Arc<RwLock<Box<[Completion]>>>,
         cx: &mut ViewContext<Editor>,
     ) -> Task<Result<Vec<usize>>> {
         self.update(cx, |project, cx| {
-            project.resolve_completions(buffer, language, completion_indices, completions, cx)
+            project.resolve_completions(buffer, completion_indices, completions, cx)
         })
     }
 

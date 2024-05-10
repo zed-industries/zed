@@ -5571,13 +5571,13 @@ impl Project {
     pub fn resolve_completions(
         &self,
         buffer: Model<Buffer>,
-        language: Option<Arc<Language>>,
         completion_indices: Vec<usize>,
         completions: Arc<RwLock<Box<[Completion]>>>,
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<Vec<usize>>> {
         let client = self.client();
         let language_registry = self.languages().clone();
+        let language = buffer.read(cx).language().cloned();
 
         let is_remote = self.is_remote();
         let project_id = self.remote_id();
