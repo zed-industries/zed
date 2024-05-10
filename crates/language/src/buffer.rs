@@ -3159,7 +3159,21 @@ impl BufferSnapshot {
                 .iter_mut()
                 .enumerate()
                 .flat_map(|(ix, iter)| Some((ix, iter.peek()?)))
-                .min_by(|(_, a), (_, b)| a.range.start.cmp(&b.range.start))?;
+                .min_by(|(_, a), (_, b)| {
+                    let cmp = a
+                        .range
+                        .start
+                        .cmp(&b.range.start)
+                        // when range is equal, sort by diagnostic severity
+                        .then(a.diagnostic.severity.cmp(&b.diagnostic.severity))
+                        // and stabilize order with group_id
+                        .then(a.diagnostic.group_id.cmp(&b.diagnostic.group_id));
+                    if reversed {
+                        cmp.reverse()
+                    } else {
+                        cmp
+                    }
+                })?;
             iterators[next_ix].next()
         })
     }

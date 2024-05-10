@@ -1447,6 +1447,7 @@ impl CodeActionsMenu {
 struct ActiveDiagnosticGroup {
     primary_range: Range<Anchor>,
     primary_message: String,
+    group_id: usize,
     blocks: HashMap<BlockId, Diagnostic>,
     is_valid: bool,
 }
@@ -8015,7 +8016,7 @@ impl Editor {
         });
         let mut search_start = if let Some(active_primary_range) = active_primary_range.as_ref() {
             if active_primary_range.contains(&selection.head()) {
-                *active_primary_range.end()
+                *active_primary_range.start()
             } else {
                 selection.head()
             }
@@ -8024,24 +8025,38 @@ impl Editor {
         };
         let snapshot = self.snapshot(cx);
         loop {
-            let mut diagnostics = if direction == Direction::Prev {
+            let diagnostics = if direction == Direction::Prev {
                 buffer.diagnostics_in_range::<_, usize>(0..search_start, true)
             } else {
                 buffer.diagnostics_in_range::<_, usize>(search_start..buffer.len(), false)
             }
             .filter(|diagnostic| !snapshot.intersects_fold(diagnostic.range.start));
-            let group = diagnostics.find_map(|entry| {
-                if entry.diagnostic.is_primary
-                    && entry.diagnostic.severity <= DiagnosticSeverity::WARNING
-                    && !entry.range.is_empty()
-                    && Some(entry.range.end) != active_primary_range.as_ref().map(|r| *r.end())
-                    && !entry.range.contains(&search_start)
-                {
-                    Some((entry.range, entry.diagnostic.group_id))
-                } else {
-                    None
-                }
-            });
+            let group = diagnostics
+                // relies on diagnostics_in_range to return diagnostics with the same starting range to
+                // be sorted in a stable way
+                // skip until we are at current active diagnostic, if it exists
+                .skip_while(|entry| {
+                    (match direction {
+                        Direction::Prev => entry.range.start >= search_start,
+                        Direction::Next => entry.range.start <= search_start,
+                    }) && self
+                        .active_diagnostics
+                        .as_ref()
+                        .is_some_and(|a| a.group_id != entry.diagnostic.group_id)
+                })
+                .find_map(|entry| {
+                    if entry.diagnostic.is_primary
+                        && entry.diagnostic.severity <= DiagnosticSeverity::WARNING
+                        && !entry.range.is_empty()
+                        // if we match with the active diagnostic, skip it
+                        && Some(entry.diagnostic.group_id)
+                            != self.active_diagnostics.as_ref().map(|d| d.group_id)
+                    {
+                        Some((entry.range, entry.diagnostic.group_id))
+                    } else {
+                        None
+                    }
+                });
 
             if let Some((primary_range, group_id)) = group {
                 if self.activate_diagnostics(group_id, cx) {
@@ -9042,6 +9057,7 @@ impl Editor {
             Some(ActiveDiagnosticGroup {
                 primary_range,
                 primary_message,
+                group_id,
                 blocks,
                 is_valid: true,
             })
