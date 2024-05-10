@@ -240,8 +240,7 @@ pub trait PlatformDispatcher: Send + Sync {
     fn dispatch(&self, runnable: Runnable, label: Option<TaskLabel>);
     fn dispatch_on_main_thread(&self, runnable: Runnable);
     fn dispatch_after(&self, duration: Duration, runnable: Runnable);
-    fn tick(&self, background_only: bool) -> bool;
-    fn park(&self);
+    fn park(&self, timeout: Option<Duration>) -> bool;
     fn unparker(&self) -> Unparker;
 
     #[cfg(any(test, feature = "test-support"))]

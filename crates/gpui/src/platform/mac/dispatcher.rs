@@ -87,12 +87,13 @@ impl PlatformDispatcher for MacDispatcher {
         }
     }
 
-    fn tick(&self, _background_only: bool) -> bool {
-        false
-    }
-
-    fn park(&self) {
-        self.parker.lock().park()
+    fn park(&self, timeout: Option<Duration>) -> bool {
+        if let Some(timeout) = timeout {
+            self.parker.lock().park_timeout(timeout)
+        } else {
+            self.parker.lock().park();
+            true
+        }
     }
 
     fn unparker(&self) -> Unparker {
