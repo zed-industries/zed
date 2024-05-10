@@ -185,7 +185,10 @@ impl fmt::Debug for Event {
 /// responsible for managing item tabs, focus and zoom states and drag and drop features.
 /// Can be split, see `PaneGroup` for more details.
 pub struct Pane {
-    alternate_file_items: (Option<Box<dyn ItemHandle>>, Option<Box<dyn ItemHandle>>),
+    alternate_file_items: (
+        Option<Box<dyn WeakItemHandle>>,
+        Option<Box<dyn WeakItemHandle>>,
+    ),
     focus_handle: FocusHandle,
     items: Vec<Box<dyn ItemHandle>>,
     activation_history: Vec<EntityId>,
@@ -399,22 +402,25 @@ impl Pane {
         if let Some(alternative) = alternative {
             let existing = self
                 .items()
-                .find_position(|item| item.item_id() == alternative.item_id());
+                .find_position(|item| item.item_id() == alternative.id());
             if let Some((ix, _)) = existing {
                 self.activate_item(ix, true, true, cx);
             } else {
-                self.add_item(alternative.clone(), true, true, None, cx);
+                if let Some(upgraded) = alternative.upgrade() {
+                    self.add_item(upgraded, true, true, None, cx);
+                }
             }
         }
     }
 
     pub fn track_alternate_file_items(&mut self) {
-        if let Some(item) = self.active_item() {
+        if let Some(item) = self.active_item().map(|item| item.downgrade_item()) {
             let (current, _) = &self.alternate_file_items;
             match current {
                 Some(current) => {
-                    if current.item_id() != item.item_id() {
-                        self.alternate_file_items = (Some(item), Some(current.clone()));
+                    if current.id() != item.id() {
+                        self.alternate_file_items =
+                            (Some(item), self.alternate_file_items.0.take());
                     }
                 }
                 None => {
