@@ -114,7 +114,12 @@ impl WindowsDisplay {
             y: center.y.0,
         };
         let monitor = unsafe { MonitorFromPoint(center, MONITOR_DEFAULTTONULL) };
-        !monitor.is_invalid() && monitor == self.handle
+        if monitor.is_invalid() {
+            false
+        } else {
+            let display = WindowsDisplay::new_with_handle(monitor);
+            display.uuid == self.uuid
+        }
     }
 
     pub fn displays() -> Vec<Rc<dyn PlatformDisplay>> {
