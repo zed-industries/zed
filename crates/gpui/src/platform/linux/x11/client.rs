@@ -541,24 +541,28 @@ impl X11Client {
                 }
             }
             Event::XinputLeave(event) => {
-                self.0.borrow_mut().scroll_x = None; // Set last scroll to `None` so that a large delta isn't created if scrolling is done outside the window (the valuator is global)
-                self.0.borrow_mut().scroll_y = None;
+                println!("\nleave event: {:?}", event);
 
-                let window = self.get_window(event.event)?;
-                let state = self.0.borrow();
-                let pressed_button = button_from_mask(event.buttons[0]);
-                let position = point(
-                    px(event.event_x as f32 / u16::MAX as f32 / state.scale_factor),
-                    px(event.event_y as f32 / u16::MAX as f32 / state.scale_factor),
-                );
-                let modifiers = modifiers_from_xinput_info(event.mods);
-                drop(state);
+                if event.mode == xinput::NotifyMode::NORMAL {
+                    self.0.borrow_mut().scroll_x = None; // Set last scroll to `None` so that a large delta isn't created if scrolling is done outside the window (the valuator is global)
+                    self.0.borrow_mut().scroll_y = None;
 
-                window.handle_input(PlatformInput::MouseExited(crate::MouseExitEvent {
-                    pressed_button,
-                    position,
-                    modifiers,
-                }));
+                    let window = self.get_window(event.event)?;
+                    let state = self.0.borrow();
+                    let pressed_button = button_from_mask(event.buttons[0]);
+                    let position = point(
+                        px(event.event_x as f32 / u16::MAX as f32 / state.scale_factor),
+                        px(event.event_y as f32 / u16::MAX as f32 / state.scale_factor),
+                    );
+                    let modifiers = modifiers_from_xinput_info(event.mods);
+                    drop(state);
+
+                    window.handle_input(PlatformInput::MouseExited(crate::MouseExitEvent {
+                        pressed_button,
+                        position,
+                        modifiers,
+                    }));
+                }
             }
             _ => {}
         };
