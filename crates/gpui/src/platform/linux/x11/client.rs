@@ -471,7 +471,7 @@ impl X11Client {
                     }));
                 }
 
-                println!("motion event: {:?}", event);
+                println!("\nmotion event: {:?}", event);
 
                 let mut valuator_idx = 0;
                 let scroll_class_data = self.0.borrow().scroll_class_data.clone();
@@ -485,7 +485,7 @@ impl X11Client {
                             && scroll_class.number == shift
                         {
                             println!(
-                                "horizontal valulator (idx={valuator_idx}): {}",
+                                "horizontal valuator (idx={valuator_idx}): {}",
                                 axisvalues[valuator_idx]
                             );
 

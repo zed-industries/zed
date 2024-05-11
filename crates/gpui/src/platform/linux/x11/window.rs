@@ -459,6 +459,8 @@ impl X11WindowStatePtr {
     }
 
     pub fn handle_input(&self, input: PlatformInput) {
+        println!("got event: {:?}", input);
+
         if let Some(ref mut fun) = self.callbacks.borrow_mut().input {
             if !fun(input.clone()).propagate {
                 return;
