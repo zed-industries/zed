@@ -10,7 +10,6 @@ use collections::HashMap;
 use copypasta::x11_clipboard::{Clipboard, Primary, X11ClipboardContext};
 use copypasta::ClipboardProvider;
 
-use thiserror::Error;
 use util::ResultExt;
 use x11rb::connection::{Connection, RequestConnection};
 use x11rb::cursor;
@@ -56,12 +55,14 @@ impl Deref for WindowRef {
     }
 }
 
-#[derive(Debug, Error)]
+#[derive(Debug)]
 #[non_exhaustive]
 pub enum EventHandlerError {
     XCBConnectionError(ConnectionError),
     XIMClientError(xim::ClientError),
 }
+
+impl std::error::Error for EventHandlerError {}
 
 impl std::fmt::Display for EventHandlerError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
