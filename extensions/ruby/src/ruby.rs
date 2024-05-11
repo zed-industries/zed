@@ -1,18 +1,23 @@
 mod language_servers;
 
 use zed::lsp::{Completion, Symbol};
-use zed::{CodeLabel, LanguageServerId};
+use zed::serde_json::json;
+use zed::{serde_json, CodeLabel, LanguageServerId};
 use zed_extension_api::{self as zed, Result};
 
-use crate::language_servers::Solargraph;
+use crate::language_servers::{RubyLsp, Solargraph};
 
 struct RubyExtension {
     solargraph: Option<Solargraph>,
+    ruby_lsp: Option<RubyLsp>,
 }
 
 impl zed::Extension for RubyExtension {
     fn new() -> Self {
-        Self { solargraph: None }
+        Self {
+            solargraph: None,
+            ruby_lsp: None,
+        }
     }
 
     fn language_server_command(
@@ -30,6 +35,15 @@ impl zed::Extension for RubyExtension {
                     env: worktree.shell_env(),
                 })
             }
+            RubyLsp::LANGUAGE_SERVER_ID => {
+                let ruby_lsp = self.ruby_lsp.get_or_insert_with(|| RubyLsp::new());
+
+                Ok(zed::Command {
+                    command: ruby_lsp.server_script_path(worktree)?,
+                    args: vec![],
+                    env: worktree.shell_env(),
+                })
+            }
             language_server_id => Err(format!("unknown language server: {language_server_id}")),
         }
     }
@@ -41,6 +55,7 @@ impl zed::Extension for RubyExtension {
     ) -> Option<CodeLabel> {
         match language_server_id.as_ref() {
             Solargraph::LANGUAGE_SERVER_ID => self.solargraph.as_ref()?.label_for_symbol(symbol),
+            RubyLsp::LANGUAGE_SERVER_ID => self.ruby_lsp.as_ref()?.label_for_symbol(symbol),
             _ => None,
         }
     }
@@ -54,7 +69,27 @@ impl zed::Extension for RubyExtension {
             Solargraph::LANGUAGE_SERVER_ID => {
                 self.solargraph.as_ref()?.label_for_completion(completion)
             }
+            RubyLsp::LANGUAGE_SERVER_ID => self.ruby_lsp.as_ref()?.label_for_completion(completion),
             _ => None,
+        }
+    }
+
+    fn language_server_initialization_options(
+        &mut self,
+        language_server_id: &LanguageServerId,
+        _worktree: &zed::Worktree,
+    ) -> Result<Option<serde_json::Value>> {
+        match language_server_id.as_ref() {
+            // We disable diagnostics because ruby-lsp uses pull-based diagnostics,
+            // which Zed doesn't support yet.
+            RubyLsp::LANGUAGE_SERVER_ID => Ok(Some(json!({
+                "enabledFeatures": {
+                  "diagnostics": false
+                },
+                "experimentalFeaturesEnabled": true
+            }))),
+
+            _ => Ok(None),
         }
     }
 }
