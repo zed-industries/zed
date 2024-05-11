@@ -472,7 +472,7 @@ mod test {
                     😃😃"
         })
         .await;
-        cx.simulate_shared_keystrokes(["j"]).await;
+        cx.simulate_shared_keystrokes("j").await;
         cx.assert_shared_state(indoc! {"
                     aaaa
                     😃ˇ😃"
@@ -483,7 +483,7 @@ mod test {
                     ˇThe qˇuick broˇwn
                     ˇfox jumps"
         }) {
-            cx.assert_neovim_compatible(&marked_position, ["j"]).await;
+            cx.assert_neovim_compatible(&marked_position, "j").await;
         }
     }
 
@@ -520,14 +520,14 @@ mod test {
     async fn test_jump_to_line_boundaries(cx: &mut gpui::TestAppContext) {
         let mut cx = NeovimBackedTestContext::new(cx).await;
         cx.assert_binding_matches_all(
-            ["$"],
+            "$",
             indoc! {"
             ˇThe qˇuicˇk
             ˇbrowˇn"},
         )
         .await;
         cx.assert_binding_matches_all(
-            ["0"],
+            "0",
             indoc! {"
                 ˇThe qˇuicˇk
                 ˇbrowˇn"},
@@ -621,7 +621,7 @@ mod test {
     async fn test_gg(cx: &mut gpui::TestAppContext) {
         let mut cx = NeovimBackedTestContext::new(cx).await;
         cx.assert_binding_matches_all(
-            ["g", "g"],
+            "g g",
             indoc! {"
                 The qˇuick
 
@@ -630,7 +630,7 @@ mod test {
         )
         .await;
         cx.assert_binding_matches(
-            ["g", "g"],
+            "g g",
             indoc! {"
 
 
@@ -639,7 +639,7 @@ mod test {
         )
         .await;
         cx.assert_binding_matches(
-            ["2", "g", "g"],
+            "2 g g",
             indoc! {"
                 ˇ
 
@@ -653,7 +653,7 @@ mod test {
     async fn test_end_of_document(cx: &mut gpui::TestAppContext) {
         let mut cx = NeovimBackedTestContext::new(cx).await;
         cx.assert_binding_matches_all(
-            ["shift-g"],
+            "shift-g",
             indoc! {"
                 The qˇuick
 
@@ -662,7 +662,7 @@ mod test {
         )
         .await;
         cx.assert_binding_matches(
-            ["shift-g"],
+            "shift-g",
             indoc! {"
 
 
@@ -671,7 +671,7 @@ mod test {
         )
         .await;
         cx.assert_binding_matches(
-            ["2", "shift-g"],
+            "2 shift-g",
             indoc! {"
                 ˇ
 
@@ -781,7 +781,8 @@ mod test {
                 brown fox"})
             .await;
 
-        cx.assert_manual(
+        cx.assert_binding(
+            "o",
             indoc! {"
                 fn test() {
                     println!(ˇ);
@@ -795,7 +796,8 @@ mod test {
             Mode::Insert,
         );
 
-        cx.assert_manual(
+        cx.assert_binding(
+            "o",
             indoc! {"
                 fn test(ˇ) {
                     println!();
@@ -828,7 +830,8 @@ mod test {
             .await;
 
         // Our indentation is smarter than vims. So we don't match here
-        cx.assert_manual(
+        cx.assert_binding(
+            "shift-o",
             indoc! {"
                 fn test() {
                     println!(ˇ);
@@ -841,7 +844,8 @@ mod test {
                 }"},
             Mode::Insert,
         );
-        cx.assert_manual(
+        cx.assert_binding(
+            "shift-o",
             indoc! {"
                 fn test(ˇ) {
                     println!();
@@ -859,21 +863,21 @@ mod test {
     #[gpui::test]
     async fn test_dd(cx: &mut gpui::TestAppContext) {
         let mut cx = NeovimBackedTestContext::new(cx).await;
-        cx.assert_neovim_compatible("ˇ", ["d", "d"]).await;
-        cx.assert_neovim_compatible("The ˇquick", ["d", "d"]).await;
+        cx.assert_neovim_compatible("ˇ", "d d").await;
+        cx.assert_neovim_compatible("The ˇquick", "d d").await;
         for marked_text in cx.each_marked_position(indoc! {"
             The qˇuick
             brown ˇfox
             jumps ˇover"})
         {
-            cx.assert_neovim_compatible(&marked_text, ["d", "d"]).await;
+            cx.assert_neovim_compatible(&marked_text, "d d").await;
         }
         cx.assert_neovim_compatible(
             indoc! {"
                 The quick
                 ˇ
                 brown fox"},
-            ["d", "d"],
+            "d d",
         )
         .await;
     }
@@ -901,7 +905,7 @@ mod test {
 
         for count in 1..=5 {
             cx.assert_binding_matches_all(
-                [&count.to_string(), "w"],
+                &format!("{count} w"),
                 indoc! {"
                     ˇThe quˇickˇ browˇn
                     ˇ
@@ -931,10 +935,10 @@ mod test {
                 ˇb
             "};
 
-            cx.assert_binding_matches_all([&count.to_string(), "f", "b"], test_case)
+            cx.assert_binding_matches_all(&format!("{count} f b"), test_case)
                 .await;
 
-            cx.assert_binding_matches_all([&count.to_string(), "t", "b"], test_case)
+            cx.assert_binding_matches_all(&format!("{count} t b"), test_case)
                 .await;
         }
     }
@@ -951,10 +955,10 @@ mod test {
         };
 
         for count in 1..=3 {
-            cx.assert_binding_matches_all([&count.to_string(), "shift-f", "b"], test_case)
+            cx.assert_binding_matches_all(&format!("{count} shift-f b"), test_case)
                 .await;
 
-            cx.assert_binding_matches_all([&count.to_string(), "shift-t", "b"], test_case)
+            cx.assert_binding_matches_all(&format!("{count} shift-t b"), test_case)
                 .await;
         }
     }
@@ -969,7 +973,7 @@ mod test {
         });
 
         cx.assert_binding(
-            ["f", "l"],
+            "f l",
             indoc! {"
             ˇfunction print() {
                 console.log('ok')
@@ -985,7 +989,7 @@ mod test {
         );
 
         cx.assert_binding(
-            ["t", "l"],
+            "t l",
             indoc! {"
             ˇfunction print() {
                 console.log('ok')
@@ -1011,7 +1015,7 @@ mod test {
         });
 
         cx.assert_binding(
-            ["shift-f", "p"],
+            "shift-f p",
             indoc! {"
             function print() {
                 console.ˇlog('ok')
@@ -1027,7 +1031,7 @@ mod test {
         );
 
         cx.assert_binding(
-            ["shift-t", "p"],
+            "shift-t p",
             indoc! {"
             function print() {
                 console.ˇlog('ok')
@@ -1053,7 +1057,7 @@ mod test {
         });
 
         cx.assert_binding(
-            ["f", "p"],
+            "f p",
             indoc! {"ˇfmt.Println(\"Hello, World!\")"},
             Mode::Normal,
             indoc! {"fmt.ˇPrintln(\"Hello, World!\")"},
@@ -1061,7 +1065,7 @@ mod test {
         );
 
         cx.assert_binding(
-            ["shift-f", "p"],
+            "shift-f p",
             indoc! {"fmt.Printlnˇ(\"Hello, World!\")"},
             Mode::Normal,
             indoc! {"fmt.ˇPrintln(\"Hello, World!\")"},
@@ -1069,7 +1073,7 @@ mod test {
         );
 
         cx.assert_binding(
-            ["t", "p"],
+            "t p",
             indoc! {"ˇfmt.Println(\"Hello, World!\")"},
             Mode::Normal,
             indoc! {"fmtˇ.Println(\"Hello, World!\")"},
@@ -1077,7 +1081,7 @@ mod test {
         );
 
         cx.assert_binding(
-            ["shift-t", "p"],
+            "shift-t p",
             indoc! {"fmt.Printlnˇ(\"Hello, World!\")"},
             Mode::Normal,
             indoc! {"fmt.Pˇrintln(\"Hello, World!\")"},
@@ -1100,15 +1104,15 @@ mod test {
 
         // goes to current line end
         cx.set_shared_state(indoc! {"ˇaa\nbb\ncc"}).await;
-        cx.simulate_shared_keystrokes(["$"]).await;
+        cx.simulate_shared_keystrokes("$").await;
         cx.assert_shared_state(indoc! {"aˇa\nbb\ncc"}).await;
 
         // goes to next line end
-        cx.simulate_shared_keystrokes(["2", "$"]).await;
+        cx.simulate_shared_keystrokes("2 $").await;
         cx.assert_shared_state("aa\nbˇb\ncc").await;
 
         // try to exceed the final line.
-        cx.simulate_shared_keystrokes(["4", "$"]).await;
+        cx.simulate_shared_keystrokes("4 $").await;
         cx.assert_shared_state("aa\nbb\ncˇc").await;
     }
 
@@ -1148,34 +1152,22 @@ mod test {
             ]);
         });
 
-        cx.assert_binding_normal(
-            ["w"],
-            indoc! {"ˇassert_binding"},
-            indoc! {"assert_ˇbinding"},
-        );
+        cx.assert_binding_normal("w", indoc! {"ˇassert_binding"}, indoc! {"assert_ˇbinding"});
         // Special case: In 'cw', 'w' acts like 'e'
         cx.assert_binding(
-            ["c", "w"],
+            "c w",
             indoc! {"ˇassert_binding"},
             Mode::Normal,
             indoc! {"ˇ_binding"},
             Mode::Insert,
         );
 
-        cx.assert_binding_normal(
-            ["e"],
-            indoc! {"ˇassert_binding"},
-            indoc! {"asserˇt_binding"},
-        );
+        cx.assert_binding_normal("e", indoc! {"ˇassert_binding"}, indoc! {"asserˇt_binding"});
+
+        cx.assert_binding_normal("b", indoc! {"assert_ˇbinding"}, indoc! {"ˇassert_binding"});
 
         cx.assert_binding_normal(
-            ["b"],
-            indoc! {"assert_ˇbinding"},
-            indoc! {"ˇassert_binding"},
-        );
-
-        cx.assert_binding_normal(
-            ["g", "e"],
+            "g e",
             indoc! {"assert_bindinˇg"},
             indoc! {"asserˇt_binding"},
         );

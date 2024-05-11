@@ -290,7 +290,7 @@ mod test {
             indoc! {"
             The qˇuick
             brown fox"},
-            ["c", "0"],
+            "c 0",
         )
         .await;
         cx.assert_neovim_compatible(
@@ -298,7 +298,7 @@ mod test {
             The quick
             ˇ
             brown fox"},
-            ["c", "0"],
+            "c 0",
         )
         .await;
     }
@@ -312,7 +312,7 @@ mod test {
             The quick
             brown ˇfox
             jumps over"},
-            ["c", "k"],
+            "c k",
         )
         .await;
         cx.assert_neovim_compatible(
@@ -320,7 +320,7 @@ mod test {
             The quick
             brown fox
             jumps ˇover"},
-            ["c", "k"],
+            "c k",
         )
         .await;
         cx.assert_neovim_compatible(
@@ -328,7 +328,7 @@ mod test {
             The qˇuick
             brown fox
             jumps over"},
-            ["c", "k"],
+            "c k",
         )
         .await;
         cx.assert_neovim_compatible(
@@ -336,7 +336,7 @@ mod test {
             ˇ
             brown fox
             jumps over"},
-            ["c", "k"],
+            "c k",
         )
         .await;
     }
@@ -349,7 +349,7 @@ mod test {
             The quick
             brown ˇfox
             jumps over"},
-            ["c", "j"],
+            "c j",
         )
         .await;
         cx.assert_neovim_compatible(
@@ -357,7 +357,7 @@ mod test {
             The quick
             brown fox
             jumps ˇover"},
-            ["c", "j"],
+            "c j",
         )
         .await;
         cx.assert_neovim_compatible(
@@ -365,7 +365,7 @@ mod test {
             The qˇuick
             brown fox
             jumps over"},
-            ["c", "j"],
+            "c j",
         )
         .await;
         cx.assert_neovim_compatible(
@@ -373,7 +373,7 @@ mod test {
             The quick
             brown fox
             ˇ"},
-            ["c", "j"],
+            "c j",
         )
         .await;
     }
@@ -387,7 +387,7 @@ mod test {
             brownˇ fox
             jumps over
             the lazy"},
-            ["c", "shift-g"],
+            "c shift-g",
         )
         .await;
         cx.assert_neovim_compatible(
@@ -396,7 +396,7 @@ mod test {
             brownˇ fox
             jumps over
             the lazy"},
-            ["c", "shift-g"],
+            "c shift-g",
         )
         .await;
         cx.assert_neovim_compatible(
@@ -405,7 +405,7 @@ mod test {
             brown fox
             jumps over
             the lˇazy"},
-            ["c", "shift-g"],
+            "c shift-g",
         )
         .await;
         cx.assert_neovim_compatible(
@@ -414,7 +414,7 @@ mod test {
             brown fox
             jumps over
             ˇ"},
-            ["c", "shift-g"],
+            "c shift-g",
         )
         .await;
     }
@@ -428,7 +428,7 @@ mod test {
              brownˇ fox
            jumps over
            the lazy"},
-            ["c", "c"],
+            "c c",
         )
         .await;
 
@@ -438,7 +438,7 @@ mod test {
            brown fox
            jumps over
            the lazy"},
-            ["c", "c"],
+            "c c",
         )
         .await;
 
@@ -448,7 +448,7 @@ mod test {
              broˇwn fox
            jumˇps over
            the lazy"},
-            ["c", "c"],
+            "c c",
         )
         .await;
     }
@@ -462,7 +462,7 @@ mod test {
             brownˇ fox
             jumps over
             the lazy"},
-            ["c", "g", "g"],
+            "c g g",
         )
         .await;
         cx.assert_neovim_compatible(
@@ -471,7 +471,7 @@ mod test {
             brown fox
             jumps over
             the lˇazy"},
-            ["c", "g", "g"],
+            "c g g",
         )
         .await;
         cx.assert_neovim_compatible(
@@ -480,7 +480,7 @@ mod test {
             brown fox
             jumps over
             the lazy"},
-            ["c", "g", "g"],
+            "c g g",
         )
         .await;
         cx.assert_neovim_compatible(
@@ -489,7 +489,7 @@ mod test {
             brown fox
             jumps over
             the lazy"},
-            ["c", "g", "g"],
+            "c g g",
         )
         .await;
     }
@@ -500,7 +500,7 @@ mod test {
 
         for count in 1..=5 {
             cx.assert_binding_matches_all(
-                ["c", &count.to_string(), "j"],
+                &format!("c {count} j"),
                 indoc! {"
                     ˇThe quˇickˇ browˇn
                     ˇ
@@ -518,7 +518,7 @@ mod test {
 
         for count in 1..=5 {
             cx.assert_binding_matches_all(
-                ["c", &count.to_string(), "l"],
+                &format!("c {count} l"),
                 indoc! {"
                     ˇThe quˇickˇ browˇn
                     ˇ
@@ -542,7 +542,7 @@ mod test {
                 ˇthe lazy dog
                 "})
             {
-                cx.assert_neovim_compatible(&marked_text, ["c", &count.to_string(), "b"])
+                cx.assert_neovim_compatible(&marked_text, &format!("c {count} b"))
                     .await;
             }
         }
@@ -554,7 +554,7 @@ mod test {
 
         for count in 1..=5 {
             cx.assert_binding_matches_all(
-                ["c", &count.to_string(), "e"],
+                &format!("c {count} e"),
                 indoc! {"
                     ˇThe quˇickˇ browˇn
                     ˇ

@@ -985,13 +985,11 @@ mod test {
     async fn test_change_word_object(cx: &mut gpui::TestAppContext) {
         let mut cx = NeovimBackedTestContext::new(cx).await;
 
-        cx.assert_binding_matches_all(["c", "i", "w"], WORD_LOCATIONS)
+        cx.assert_binding_matches_all("c i w", WORD_LOCATIONS).await;
+        cx.assert_binding_matches_all("c i shift-w", WORD_LOCATIONS)
             .await;
-        cx.assert_binding_matches_all(["c", "i", "shift-w"], WORD_LOCATIONS)
-            .await;
-        cx.assert_binding_matches_all(["c", "a", "w"], WORD_LOCATIONS)
-            .await;
-        cx.assert_binding_matches_all(["c", "a", "shift-w"], WORD_LOCATIONS)
+        cx.assert_binding_matches_all("c a w", WORD_LOCATIONS).await;
+        cx.assert_binding_matches_all("c a shift-w", WORD_LOCATIONS)
             .await;
     }
 
@@ -999,13 +997,11 @@ mod test {
     async fn test_delete_word_object(cx: &mut gpui::TestAppContext) {
         let mut cx = NeovimBackedTestContext::new(cx).await;
 
-        cx.assert_binding_matches_all(["d", "i", "w"], WORD_LOCATIONS)
+        cx.assert_binding_matches_all("d i w", WORD_LOCATIONS).await;
+        cx.assert_binding_matches_all("d i shift-w", WORD_LOCATIONS)
             .await;
-        cx.assert_binding_matches_all(["d", "i", "shift-w"], WORD_LOCATIONS)
-            .await;
-        cx.assert_binding_matches_all(["d", "a", "w"], WORD_LOCATIONS)
-            .await;
-        cx.assert_binding_matches_all(["d", "a", "shift-w"], WORD_LOCATIONS)
+        cx.assert_binding_matches_all("d a w", WORD_LOCATIONS).await;
+        cx.assert_binding_matches_all("d a shift-w", WORD_LOCATIONS)
             .await;
     }
 
@@ -1021,53 +1017,14 @@ mod test {
                 cx.assert_shared_state("The quick «brownˇ»\nfox").await;
         */
         cx.set_shared_state("The quick brown\nˇ\nfox").await;
-        cx.simulate_shared_keystrokes(["v"]).await;
+        cx.simulate_shared_keystrokes("v").await;
         cx.assert_shared_state("The quick brown\n«\nˇ»fox").await;
-        cx.simulate_shared_keystrokes(["i", "w"]).await;
+        cx.simulate_shared_keystrokes("i w").await;
         cx.assert_shared_state("The quick brown\n«\nˇ»fox").await;
 
-        cx.assert_binding_matches_all(["v", "i", "w"], WORD_LOCATIONS)
+        cx.assert_binding_matches_all("v i w", WORD_LOCATIONS).await;
+        cx.assert_binding_matches_all("v i shift-w", WORD_LOCATIONS)
             .await;
-        cx.assert_binding_matches_all_exempted(
-            ["v", "h", "i", "w"],
-            WORD_LOCATIONS,
-            ExemptionFeatures::NonEmptyVisualTextObjects,
-        )
-        .await;
-        cx.assert_binding_matches_all_exempted(
-            ["v", "l", "i", "w"],
-            WORD_LOCATIONS,
-            ExemptionFeatures::NonEmptyVisualTextObjects,
-        )
-        .await;
-        cx.assert_binding_matches_all(["v", "i", "shift-w"], WORD_LOCATIONS)
-            .await;
-
-        cx.assert_binding_matches_all_exempted(
-            ["v", "i", "h", "shift-w"],
-            WORD_LOCATIONS,
-            ExemptionFeatures::NonEmptyVisualTextObjects,
-        )
-        .await;
-        cx.assert_binding_matches_all_exempted(
-            ["v", "i", "l", "shift-w"],
-            WORD_LOCATIONS,
-            ExemptionFeatures::NonEmptyVisualTextObjects,
-        )
-        .await;
-
-        cx.assert_binding_matches_all_exempted(
-            ["v", "a", "w"],
-            WORD_LOCATIONS,
-            ExemptionFeatures::AroundObjectLeavesWhitespaceAtEndOfLine,
-        )
-        .await;
-        cx.assert_binding_matches_all_exempted(
-            ["v", "a", "shift-w"],
-            WORD_LOCATIONS,
-            ExemptionFeatures::AroundObjectLeavesWhitespaceAtEndOfLine,
-        )
-        .await;
     }
 
     const SENTENCE_EXAMPLES: &[&'static str] = &[
@@ -1237,9 +1194,9 @@ mod test {
         let mut cx = NeovimBackedTestContext::new(cx).await;
 
         for paragraph_example in PARAGRAPH_EXAMPLES {
-            cx.assert_binding_matches_all(["c", "i", "p"], paragraph_example)
+            cx.assert_binding_matches_all("c i p", paragraph_example)
                 .await;
-            cx.assert_binding_matches_all(["c", "a", "p"], paragraph_example)
+            cx.assert_binding_matches_all("c a p", paragraph_example)
                 .await;
         }
     }
@@ -1249,58 +1206,11 @@ mod test {
         let mut cx = NeovimBackedTestContext::new(cx).await;
 
         for paragraph_example in PARAGRAPH_EXAMPLES {
-            cx.assert_binding_matches_all(["d", "i", "p"], paragraph_example)
+            cx.assert_binding_matches_all("d i p", paragraph_example)
                 .await;
-            cx.assert_binding_matches_all(["d", "a", "p"], paragraph_example)
+            cx.assert_binding_matches_all("d a p", paragraph_example)
                 .await;
         }
-    }
-
-    #[gpui::test]
-    async fn test_paragraph_object_with_landing_positions_not_at_beginning_of_line(
-        cx: &mut gpui::TestAppContext,
-    ) {
-        // Landing position not at the beginning of the line
-        const PARAGRAPH_LANDING_POSITION_EXAMPLE: &'static str = indoc! {"
-            The quick brown fox jumpsˇ
-            over the lazy dog.ˇ
-            ˇ ˇ\tˇ
-            ˇ ˇ
-            ˇ\tˇ ˇ\tˇ
-            ˇThe quick brown fox jumpsˇ
-            ˇover the lazy dog.ˇ
-            ˇ ˇ\tˇ
-            ˇ
-            ˇ ˇ\tˇ
-            ˇ\tˇ ˇ\tˇ
-        "};
-
-        let mut cx = NeovimBackedTestContext::new(cx).await;
-
-        cx.assert_binding_matches_all_exempted(
-            ["c", "i", "p"],
-            PARAGRAPH_LANDING_POSITION_EXAMPLE,
-            ExemptionFeatures::IncorrectLandingPosition,
-        )
-        .await;
-        cx.assert_binding_matches_all_exempted(
-            ["c", "a", "p"],
-            PARAGRAPH_LANDING_POSITION_EXAMPLE,
-            ExemptionFeatures::IncorrectLandingPosition,
-        )
-        .await;
-        cx.assert_binding_matches_all_exempted(
-            ["d", "i", "p"],
-            PARAGRAPH_LANDING_POSITION_EXAMPLE,
-            ExemptionFeatures::IncorrectLandingPosition,
-        )
-        .await;
-        cx.assert_binding_matches_all_exempted(
-            ["d", "a", "p"],
-            PARAGRAPH_LANDING_POSITION_EXAMPLE,
-            ExemptionFeatures::IncorrectLandingPosition,
-        )
-        .await;
     }
 
     #[gpui::test]
@@ -1332,9 +1242,9 @@ mod test {
         ];
 
         for paragraph_example in EXAMPLES {
-            cx.assert_binding_matches_all(["v", "i", "p"], paragraph_example)
+            cx.assert_binding_matches_all("v i p", paragraph_example)
                 .await;
-            cx.assert_binding_matches_all(["v", "a", "p"], paragraph_example)
+            cx.assert_binding_matches_all("v a p", paragraph_example)
                 .await;
         }
     }
@@ -1364,13 +1274,13 @@ mod test {
                 .replace('`', &start.to_string())
                 .replace('\'', &end.to_string());
 
-            cx.assert_binding_matches_all(["c", "i", &start.to_string()], &marked_string)
+            cx.assert_binding_matches_all(&format!("c i {start}"), &marked_string)
                 .await;
-            cx.assert_binding_matches_all(["c", "i", &end.to_string()], &marked_string)
+            cx.assert_binding_matches_all(&format!("c i {end}"), &marked_string)
                 .await;
-            cx.assert_binding_matches_all(["c", "a", &start.to_string()], &marked_string)
+            cx.assert_binding_matches_all(&format!("c a {start}"), &marked_string)
                 .await;
-            cx.assert_binding_matches_all(["c", "a", &end.to_string()], &marked_string)
+            cx.assert_binding_matches_all(&format!("c a {end}"), &marked_string)
                 .await;
         }
     }
@@ -1383,7 +1293,7 @@ mod test {
             "helˇlo \"world\"!"
         })
         .await;
-        cx.simulate_shared_keystrokes(["v", "i", "\""]).await;
+        cx.simulate_shared_keystrokes("v i \"").await;
         cx.assert_shared_state(indoc! {
             "hello \"«worldˇ»\"!"
         })
@@ -1393,7 +1303,7 @@ mod test {
             "hello \"wˇorld\"!"
         })
         .await;
-        cx.simulate_shared_keystrokes(["v", "i", "\""]).await;
+        cx.simulate_shared_keystrokes("v i \"").await;
         cx.assert_shared_state(indoc! {
             "hello \"«worldˇ»\"!"
         })
@@ -1403,7 +1313,7 @@ mod test {
             "hello \"wˇorld\"!"
         })
         .await;
-        cx.simulate_shared_keystrokes(["v", "a", "\""]).await;
+        cx.simulate_shared_keystrokes("v a \"").await;
         cx.assert_shared_state(indoc! {
             "hello« \"world\"ˇ»!"
         })
@@ -1413,7 +1323,7 @@ mod test {
             "hello \"wˇorld\" !"
         })
         .await;
-        cx.simulate_shared_keystrokes(["v", "a", "\""]).await;
+        cx.simulate_shared_keystrokes("v a \"").await;
         cx.assert_shared_state(indoc! {
             "hello «\"world\" ˇ»!"
         })
@@ -1424,7 +1334,7 @@ mod test {
             goodbye"
         })
         .await;
-        cx.simulate_shared_keystrokes(["v", "a", "\""]).await;
+        cx.simulate_shared_keystrokes("v a \"").await;
         cx.assert_shared_state(indoc! {
             "hello «\"world\" ˇ»
             goodbye"
@@ -1445,7 +1355,7 @@ mod test {
             }"
         })
         .await;
-        cx.simulate_shared_keystrokes(["v", "i", "{"]).await;
+        cx.simulate_shared_keystrokes("v i {").await;
         cx.assert_shared_state(indoc! {"
             func empty(a string) bool {
             «   if a == \"\" {
@@ -1463,7 +1373,7 @@ mod test {
             }"
         })
         .await;
-        cx.simulate_shared_keystrokes(["v", "i", "{"]).await;
+        cx.simulate_shared_keystrokes("v i {").await;
         cx.assert_shared_state(indoc! {"
             func empty(a string) bool {
                  if a == \"\" {
@@ -1482,7 +1392,7 @@ mod test {
             }"
         })
         .await;
-        cx.simulate_shared_keystrokes(["v", "i", "{"]).await;
+        cx.simulate_shared_keystrokes("v i {").await;
         cx.assert_shared_state(indoc! {"
             func empty(a string) bool {
                  if a == \"\" {
@@ -1502,7 +1412,7 @@ mod test {
             "h\"e\\\"lˇlo \\\"world\"!"
         })
         .await;
-        cx.simulate_shared_keystrokes(["v", "i", "\""]).await;
+        cx.simulate_shared_keystrokes("v i \"").await;
         cx.assert_shared_state(indoc! {
             "h\"«e\\\"llo \\\"worldˇ»\"!"
         })
@@ -1512,7 +1422,7 @@ mod test {
             "hello \"teˇst \\\"inside\\\" world\""
         })
         .await;
-        cx.simulate_shared_keystrokes(["v", "i", "\""]).await;
+        cx.simulate_shared_keystrokes("v i \"").await;
         cx.assert_shared_state(indoc! {
             "hello \"«test \\\"inside\\\" worldˇ»\""
         })
@@ -1530,7 +1440,7 @@ mod test {
             },
             Mode::Normal,
         );
-        cx.simulate_keystrokes(["c", "i", "|"]);
+        cx.simulate_keystrokes("c i |");
         cx.assert_state(
             indoc! {"
             fn boop() {
@@ -1539,7 +1449,7 @@ mod test {
             },
             Mode::Insert,
         );
-        cx.simulate_keystrokes(["escape", "1", "8", "|"]);
+        cx.simulate_keystrokes("escape 1 8 |");
         cx.assert_state(
             indoc! {"
             fn boop() {
@@ -1549,7 +1459,7 @@ mod test {
             Mode::Normal,
         );
 
-        cx.simulate_keystrokes(["v", "a", "|"]);
+        cx.simulate_keystrokes("v a |");
         cx.assert_state(
             indoc! {"
             fn boop() {
@@ -1566,7 +1476,7 @@ mod test {
 
         // Generic arguments
         cx.set_state("fn boop<A: ˇDebug, B>() {}", Mode::Normal);
-        cx.simulate_keystrokes(["v", "i", "a"]);
+        cx.simulate_keystrokes("v i a");
         cx.assert_state("fn boop<«A: Debugˇ», B>() {}", Mode::Visual);
 
         // Function arguments
@@ -1574,11 +1484,11 @@ mod test {
             "fn boop(ˇarg_a: (Tuple, Of, Types), arg_b: String) {}",
             Mode::Normal,
         );
-        cx.simulate_keystrokes(["d", "a", "a"]);
+        cx.simulate_keystrokes("d a a");
         cx.assert_state("fn boop(ˇarg_b: String) {}", Mode::Normal);
 
         cx.set_state("std::namespace::test(\"strinˇg\", a.b.c())", Mode::Normal);
-        cx.simulate_keystrokes(["v", "a", "a"]);
+        cx.simulate_keystrokes("v a a");
         cx.assert_state("std::namespace::test(«\"string\", ˇ»a.b.c())", Mode::Visual);
 
         // Tuple, vec, and array arguments
@@ -1586,34 +1496,34 @@ mod test {
             "fn boop(arg_a: (Tuple, Ofˇ, Types), arg_b: String) {}",
             Mode::Normal,
         );
-        cx.simulate_keystrokes(["c", "i", "a"]);
+        cx.simulate_keystrokes("c i a");
         cx.assert_state(
             "fn boop(arg_a: (Tuple, ˇ, Types), arg_b: String) {}",
             Mode::Insert,
         );
 
         cx.set_state("let a = (test::call(), 'p', my_macro!{ˇ});", Mode::Normal);
-        cx.simulate_keystrokes(["c", "a", "a"]);
+        cx.simulate_keystrokes("c a a");
         cx.assert_state("let a = (test::call(), 'p'ˇ);", Mode::Insert);
 
         cx.set_state("let a = [test::call(ˇ), 300];", Mode::Normal);
-        cx.simulate_keystrokes(["c", "i", "a"]);
+        cx.simulate_keystrokes("c i a");
         cx.assert_state("let a = [ˇ, 300];", Mode::Insert);
 
         cx.set_state(
             "let a = vec![Vec::new(), vecˇ![test::call(), 300]];",
             Mode::Normal,
         );
-        cx.simulate_keystrokes(["c", "a", "a"]);
+        cx.simulate_keystrokes("c a a");
         cx.assert_state("let a = vec![Vec::new()ˇ];", Mode::Insert);
 
         // Cursor immediately before / after brackets
         cx.set_state("let a = [test::call(first_arg)ˇ]", Mode::Normal);
-        cx.simulate_keystrokes(["v", "i", "a"]);
+        cx.simulate_keystrokes("v i a");
         cx.assert_state("let a = [«test::call(first_arg)ˇ»]", Mode::Visual);
 
         cx.set_state("let a = [test::callˇ(first_arg)]", Mode::Normal);
-        cx.simulate_keystrokes(["v", "i", "a"]);
+        cx.simulate_keystrokes("v i a");
         cx.assert_state("let a = [«test::call(first_arg)ˇ»]", Mode::Visual);
     }
 
@@ -1626,13 +1536,13 @@ mod test {
                 .replace('`', &start.to_string())
                 .replace('\'', &end.to_string());
 
-            cx.assert_binding_matches_all(["d", "i", &start.to_string()], &marked_string)
+            cx.assert_binding_matches_all(&format!("d i {start}"), &marked_string)
                 .await;
-            cx.assert_binding_matches_all(["d", "i", &end.to_string()], &marked_string)
+            cx.assert_binding_matches_all(&format!("d i {end}"), &marked_string)
                 .await;
-            cx.assert_binding_matches_all(["d", "a", &start.to_string()], &marked_string)
+            cx.assert_binding_matches_all(&format!("d a {start}"), &marked_string)
                 .await;
-            cx.assert_binding_matches_all(["d", "a", &end.to_string()], &marked_string)
+            cx.assert_binding_matches_all(&format!("d a {end}"), &marked_string)
                 .await;
         }
     }
@@ -1642,17 +1552,17 @@ mod test {
         let mut cx = VimTestContext::new_html(cx).await;
 
         cx.set_state("<html><head></head><body><b>hˇi!</b></body>", Mode::Normal);
-        cx.simulate_keystrokes(["v", "i", "t"]);
+        cx.simulate_keystrokes("v i t");
         cx.assert_state(
             "<html><head></head><body><b>«hi!ˇ»</b></body>",
             Mode::Visual,
         );
-        cx.simulate_keystrokes(["a", "t"]);
+        cx.simulate_keystrokes("a t");
         cx.assert_state(
             "<html><head></head><body>«<b>hi!</b>ˇ»</body>",
             Mode::Visual,
         );
-        cx.simulate_keystrokes(["a", "t"]);
+        cx.simulate_keystrokes("a t");
         cx.assert_state(
             "<html><head></head>«<body><b>hi!</b></body>ˇ»",
             Mode::Visual,
@@ -1663,12 +1573,12 @@ mod test {
             "<html><head></head><body> ˇ  <b>hi!</b></body>",
             Mode::Normal,
         );
-        cx.simulate_keystrokes(["v", "i", "t"]);
+        cx.simulate_keystrokes("v i t");
         cx.assert_state(
             "<html><head></head><body>   <b>«hi!ˇ»</b></body>",
             Mode::Visual,
         );
-        cx.simulate_keystrokes(["a", "t"]);
+        cx.simulate_keystrokes("a t");
         cx.assert_state(
             "<html><head></head><body>   «<b>hi!</b>ˇ»</body>",
             Mode::Visual,
@@ -1679,12 +1589,12 @@ mod test {
             "<html><head></head><body><bˇ>hi!</b><b>hello!</b></body>",
             Mode::Normal,
         );
-        cx.simulate_keystrokes(["v", "a", "t"]);
+        cx.simulate_keystrokes("v a t");
         cx.assert_state(
             "<html><head></head><body>«<b>hi!</b>ˇ»<b>hello!</b></body>",
             Mode::Visual,
         );
-        cx.simulate_keystrokes(["i", "t"]);
+        cx.simulate_keystrokes("i t");
         cx.assert_state(
             "<html><head></head><body>«<b>hi!</b><b>hello!</b>ˇ»</body>",
             Mode::Visual,
@@ -1695,12 +1605,12 @@ mod test {
             "<html><head></head><body><«b>hi!ˇ»</b></body>",
             Mode::Visual,
         );
-        cx.simulate_keystrokes(["i", "t"]);
+        cx.simulate_keystrokes("i t");
         cx.assert_state(
             "<html><head></head><body><b>«hi!ˇ»</b></body>",
             Mode::Visual,
         );
-        cx.simulate_keystrokes(["a", "t"]);
+        cx.simulate_keystrokes("a t");
         cx.assert_state(
             "<html><head></head><body>«<b>hi!</b>ˇ»</body>",
             Mode::Visual,
@@ -1710,7 +1620,7 @@ mod test {
             "<html><head></head><body><«b>hi!</ˇ»b></body>",
             Mode::Visual,
         );
-        cx.simulate_keystrokes(["a", "t"]);
+        cx.simulate_keystrokes("a t");
         cx.assert_state(
             "<html><head></head>«<body><b>hi!</b></body>ˇ»",
             Mode::Visual,

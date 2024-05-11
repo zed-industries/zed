@@ -1779,7 +1779,7 @@ mod test {
 
         // goes down once
         cx.set_shared_state(initial_state).await;
-        cx.simulate_shared_keystrokes(["}"]).await;
+        cx.simulate_shared_keystrokes("}").await;
         cx.assert_shared_state(indoc! {r"abc
             def
             ˇ
@@ -1793,11 +1793,11 @@ mod test {
             .await;
 
         // goes up once
-        cx.simulate_shared_keystrokes(["{"]).await;
+        cx.simulate_shared_keystrokes("{").await;
         cx.assert_shared_state(initial_state).await;
 
         // goes down twice
-        cx.simulate_shared_keystrokes(["2", "}"]).await;
+        cx.simulate_shared_keystrokes("2 }").await;
         cx.assert_shared_state(indoc! {r"abc
             def
 
@@ -1811,7 +1811,7 @@ mod test {
             .await;
 
         // goes down over multiple blanks
-        cx.simulate_shared_keystrokes(["}"]).await;
+        cx.simulate_shared_keystrokes("}").await;
         cx.assert_shared_state(indoc! {r"abc
                 def
 
@@ -1825,7 +1825,7 @@ mod test {
             .await;
 
         // goes up twice
-        cx.simulate_shared_keystrokes(["2", "{"]).await;
+        cx.simulate_shared_keystrokes("2 {").await;
         cx.assert_shared_state(indoc! {r"abc
                 def
                 ˇ
@@ -1847,7 +1847,7 @@ mod test {
                 do(something(with<Types>.and_arrays[0, 2]))
             }"})
             .await;
-        cx.simulate_shared_keystrokes(["%"]).await;
+        cx.simulate_shared_keystrokes("%").await;
         cx.assert_shared_state(indoc! {r"func (a stringˇ) {
                 do(something(with<Types>.and_arrays[0, 2]))
             }"})
@@ -1858,7 +1858,7 @@ mod test {
             do(something(with<Types>.and_arrays[0, 2]))
             }"})
             .await;
-        cx.simulate_shared_keystrokes(["%"]).await;
+        cx.simulate_shared_keystrokes("%").await;
         cx.assert_shared_state(indoc! {r"func (a string) {
             do(something(with<Types>.and_arrays[0, 2]))
             ˇ}"})
@@ -1866,19 +1866,19 @@ mod test {
 
         // test it works on immediate nesting
         cx.set_shared_state("ˇ{()}").await;
-        cx.simulate_shared_keystrokes(["%"]).await;
+        cx.simulate_shared_keystrokes("%").await;
         cx.assert_shared_state("{()ˇ}").await;
-        cx.simulate_shared_keystrokes(["%"]).await;
+        cx.simulate_shared_keystrokes("%").await;
         cx.assert_shared_state("ˇ{()}").await;
 
         // test it works on immediate nesting inside braces
         cx.set_shared_state("{\n    ˇ{()}\n}").await;
-        cx.simulate_shared_keystrokes(["%"]).await;
+        cx.simulate_shared_keystrokes("%").await;
         cx.assert_shared_state("{\n    {()ˇ}\n}").await;
 
         // test it jumps to the next paren on a line
         cx.set_shared_state("func ˇboop() {\n}").await;
-        cx.simulate_shared_keystrokes(["%"]).await;
+        cx.simulate_shared_keystrokes("%").await;
         cx.assert_shared_state("func boop(ˇ) {\n}").await;
     }
 
@@ -1888,32 +1888,32 @@ mod test {
 
         // f and F
         cx.set_shared_state("ˇone two three four").await;
-        cx.simulate_shared_keystrokes(["f", "o"]).await;
+        cx.simulate_shared_keystrokes("f o").await;
         cx.assert_shared_state("one twˇo three four").await;
-        cx.simulate_shared_keystrokes([","]).await;
+        cx.simulate_shared_keystrokes(",").await;
         cx.assert_shared_state("ˇone two three four").await;
-        cx.simulate_shared_keystrokes(["2", ";"]).await;
+        cx.simulate_shared_keystrokes("2 ;").await;
         cx.assert_shared_state("one two three fˇour").await;
-        cx.simulate_shared_keystrokes(["shift-f", "e"]).await;
+        cx.simulate_shared_keystrokes("shift-f e").await;
         cx.assert_shared_state("one two threˇe four").await;
-        cx.simulate_shared_keystrokes(["2", ";"]).await;
+        cx.simulate_shared_keystrokes("2 ;").await;
         cx.assert_shared_state("onˇe two three four").await;
-        cx.simulate_shared_keystrokes([","]).await;
+        cx.simulate_shared_keystrokes(",").await;
         cx.assert_shared_state("one two thrˇee four").await;
 
         // t and T
         cx.set_shared_state("ˇone two three four").await;
-        cx.simulate_shared_keystrokes(["t", "o"]).await;
+        cx.simulate_shared_keystrokes("t o").await;
         cx.assert_shared_state("one tˇwo three four").await;
-        cx.simulate_shared_keystrokes([","]).await;
+        cx.simulate_shared_keystrokes(",").await;
         cx.assert_shared_state("oˇne two three four").await;
-        cx.simulate_shared_keystrokes(["2", ";"]).await;
+        cx.simulate_shared_keystrokes("2 ;").await;
         cx.assert_shared_state("one two three ˇfour").await;
-        cx.simulate_shared_keystrokes(["shift-t", "e"]).await;
+        cx.simulate_shared_keystrokes("shift-t e").await;
         cx.assert_shared_state("one two threeˇ four").await;
-        cx.simulate_shared_keystrokes(["3", ";"]).await;
+        cx.simulate_shared_keystrokes("3 ;").await;
         cx.assert_shared_state("oneˇ two three four").await;
-        cx.simulate_shared_keystrokes([","]).await;
+        cx.simulate_shared_keystrokes(",").await;
         cx.assert_shared_state("one two thˇree four").await;
     }
 
@@ -1922,7 +1922,7 @@ mod test {
         let mut cx = NeovimBackedTestContext::new(cx).await;
         let initial_state = indoc! {r"something(ˇfoo)"};
         cx.set_shared_state(initial_state).await;
-        cx.simulate_shared_keystrokes(["}"]).await;
+        cx.simulate_shared_keystrokes("}").await;
         cx.assert_shared_state(indoc! {r"something(fooˇ)"}).await;
     }
 
@@ -1930,7 +1930,7 @@ mod test {
     async fn test_next_line_start(cx: &mut gpui::TestAppContext) {
         let mut cx = NeovimBackedTestContext::new(cx).await;
         cx.set_shared_state("ˇone\n  two\nthree").await;
-        cx.simulate_shared_keystrokes(["enter"]).await;
+        cx.simulate_shared_keystrokes("enter").await;
         cx.assert_shared_state("one\n  ˇtwo\nthree").await;
     }
 
@@ -1938,9 +1938,9 @@ mod test {
     async fn test_end_of_line_downward(cx: &mut gpui::TestAppContext) {
         let mut cx = NeovimBackedTestContext::new(cx).await;
         cx.set_shared_state("ˇ one \n two \nthree").await;
-        cx.simulate_shared_keystrokes(["g", "_"]).await;
+        cx.simulate_shared_keystrokes("g _").await;
         cx.assert_shared_state(" onˇe \n two \nthree").await;
-        cx.simulate_shared_keystrokes(["2", "g", "_"]).await;
+        cx.simulate_shared_keystrokes("2 g _").await;
         cx.assert_shared_state(" one \n twˇo \nthree").await;
     }
 
@@ -1955,7 +1955,7 @@ mod test {
           final"};
 
         cx.set_shared_state(initial_state).await;
-        cx.simulate_shared_keystrokes(["shift-h"]).await;
+        cx.simulate_shared_keystrokes("shift-h").await;
         cx.assert_shared_state(indoc! {r"abˇc
           def
           paragraph
@@ -1971,7 +1971,7 @@ mod test {
           7 8 ˇ9
           "})
             .await;
-        cx.simulate_shared_keystrokes(["shift-h"]).await;
+        cx.simulate_shared_keystrokes("shift-h").await;
         cx.assert_shared_state(indoc! {r"
           1 2 ˇ3
           4 5 6
@@ -1985,7 +1985,7 @@ mod test {
           ˇ7 8 9
           "})
             .await;
-        cx.simulate_shared_keystrokes(["shift-h"]).await;
+        cx.simulate_shared_keystrokes("shift-h").await;
         cx.assert_shared_state(indoc! {r"
           ˇ1 2 3
           4 5 6
@@ -1998,7 +1998,7 @@ mod test {
           4 5 ˇ6
           7 8 9"})
             .await;
-        cx.simulate_shared_keystrokes(["9", "shift-h"]).await;
+        cx.simulate_shared_keystrokes("9 shift-h").await;
         cx.assert_shared_state(indoc! {r"
           1 2 3
           4 5 6
@@ -2017,7 +2017,7 @@ mod test {
           final"};
 
         cx.set_shared_state(initial_state).await;
-        cx.simulate_shared_keystrokes(["shift-m"]).await;
+        cx.simulate_shared_keystrokes("shift-m").await;
         cx.assert_shared_state(indoc! {r"abc
           def
           paˇragraph
@@ -2032,7 +2032,7 @@ mod test {
           7 8 ˇ9
           "})
             .await;
-        cx.simulate_shared_keystrokes(["shift-m"]).await;
+        cx.simulate_shared_keystrokes("shift-m").await;
         cx.assert_shared_state(indoc! {r"
           1 2 3
           4 5 ˇ6
@@ -2045,7 +2045,7 @@ mod test {
           ˇ7 8 9
           "})
             .await;
-        cx.simulate_shared_keystrokes(["shift-m"]).await;
+        cx.simulate_shared_keystrokes("shift-m").await;
         cx.assert_shared_state(indoc! {r"
           1 2 3
           ˇ4 5 6
@@ -2058,7 +2058,7 @@ mod test {
           7 8 9
           "})
             .await;
-        cx.simulate_shared_keystrokes(["shift-m"]).await;
+        cx.simulate_shared_keystrokes("shift-m").await;
         cx.assert_shared_state(indoc! {r"
           1 2 3
           ˇ4 5 6
@@ -2071,7 +2071,7 @@ mod test {
           7 8 9
           "})
             .await;
-        cx.simulate_shared_keystrokes(["shift-m"]).await;
+        cx.simulate_shared_keystrokes("shift-m").await;
         cx.assert_shared_state(indoc! {r"
           1 2 3
           ˇ4 5 6
@@ -2084,7 +2084,7 @@ mod test {
           7 8 9
           "})
             .await;
-        cx.simulate_shared_keystrokes(["shift-m"]).await;
+        cx.simulate_shared_keystrokes("shift-m").await;
         cx.assert_shared_state(indoc! {r"
           1 2 3
           4 5 ˇ6
@@ -2104,7 +2104,7 @@ mod test {
           final"};
 
         cx.set_shared_state(initial_state).await;
-        cx.simulate_shared_keystrokes(["shift-l"]).await;
+        cx.simulate_shared_keystrokes("shift-l").await;
         cx.assert_shared_state(indoc! {r"abc
           def
           paragraph
@@ -2119,7 +2119,7 @@ mod test {
           7 8 9
           "})
             .await;
-        cx.simulate_shared_keystrokes(["shift-l"]).await;
+        cx.simulate_shared_keystrokes("shift-l").await;
         cx.assert_shared_state(indoc! {r"
           1 2 3
           4 5 6
@@ -2133,7 +2133,7 @@ mod test {
           7 8 9
           "})
             .await;
-        cx.simulate_shared_keystrokes(["shift-l"]).await;
+        cx.simulate_shared_keystrokes("shift-l").await;
         cx.assert_shared_state(indoc! {r"
           1 2 3
           4 5 6
@@ -2147,7 +2147,7 @@ mod test {
           7 8 9
           "})
             .await;
-        cx.simulate_shared_keystrokes(["shift-l"]).await;
+        cx.simulate_shared_keystrokes("shift-l").await;
         cx.assert_shared_state(indoc! {r"
           1 2 3
           4 5 6
@@ -2161,7 +2161,7 @@ mod test {
           7 8 9
           "})
             .await;
-        cx.simulate_shared_keystrokes(["shift-l"]).await;
+        cx.simulate_shared_keystrokes("shift-l").await;
         cx.assert_shared_state(indoc! {r"
           1 2 3
           4 5 6
@@ -2175,7 +2175,7 @@ mod test {
           7 8 9
           "})
             .await;
-        cx.simulate_shared_keystrokes(["9", "shift-l"]).await;
+        cx.simulate_shared_keystrokes("9 shift-l").await;
         cx.assert_shared_state(indoc! {r"
           1 2 ˇ3
           4 5 6
@@ -2191,7 +2191,7 @@ mod test {
         456 5ˇ67 678
         "})
             .await;
-        cx.simulate_shared_keystrokes(["g", "e"]).await;
+        cx.simulate_shared_keystrokes("g e").await;
         cx.assert_shared_state(indoc! {r"
         45ˇ6 567 678
         "})
@@ -2203,7 +2203,7 @@ mod test {
         456 5ˇ67 678
         "})
             .await;
-        cx.simulate_shared_keystrokes(["4", "g", "e"]).await;
+        cx.simulate_shared_keystrokes("4 g e").await;
         cx.assert_shared_state(indoc! {r"
         12ˇ3 234 345
         456 567 678
@@ -2217,7 +2217,7 @@ mod test {
         789 890 901
         "})
             .await;
-        cx.simulate_shared_keystrokes(["g", "e"]).await;
+        cx.simulate_shared_keystrokes("g e").await;
         cx.assert_shared_state(indoc! {r"
           123 234 345
           4;5.ˇ6 567 678
@@ -2232,7 +2232,7 @@ mod test {
         789 890 901
         "})
             .await;
-        cx.simulate_shared_keystrokes(["5", "g", "e"]).await;
+        cx.simulate_shared_keystrokes("5 g e").await;
         cx.assert_shared_state(indoc! {r"
           123 234 345
           ˇ4;5.6 567 678
@@ -2247,14 +2247,14 @@ mod test {
         78ˇ9 890 901
         "})
             .await;
-        cx.simulate_shared_keystrokes(["g", "e"]).await;
+        cx.simulate_shared_keystrokes("g e").await;
         cx.assert_shared_state(indoc! {r"
           123 234 345
           ˇ
           789 890 901
         "})
             .await;
-        cx.simulate_shared_keystrokes(["g", "e"]).await;
+        cx.simulate_shared_keystrokes("g e").await;
         cx.assert_shared_state(indoc! {r"
           123 234 34ˇ5
 
@@ -2269,7 +2269,7 @@ mod test {
         789 890 901
         "})
             .await;
-        cx.simulate_shared_keystrokes(["g", "shift-e"]).await;
+        cx.simulate_shared_keystrokes("g shift-e").await;
         cx.assert_shared_state(indoc! {r"
           123 234 34ˇ5
           4;5.6 567 678
@@ -2288,7 +2288,7 @@ mod test {
             }
         "})
             .await;
-        cx.simulate_shared_keystrokes(["v", "$", "%"]).await;
+        cx.simulate_shared_keystrokes("v $ %").await;
         cx.assert_shared_state(indoc! {"
             fn a«() {
               return

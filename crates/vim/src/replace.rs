@@ -148,9 +148,9 @@ mod test {
     #[gpui::test]
     async fn test_enter_and_exit_replace_mode(cx: &mut gpui::TestAppContext) {
         let mut cx = VimTestContext::new(cx, true).await;
-        cx.simulate_keystroke("shift-r");
+        cx.simulate_keystrokes("shift-r");
         assert_eq!(cx.mode(), Mode::Replace);
-        cx.simulate_keystroke("escape");
+        cx.simulate_keystrokes("escape");
         assert_eq!(cx.mode(), Mode::Normal);
     }
 
@@ -164,8 +164,7 @@ mod test {
             fox jumps over
             the lazy dog."})
             .await;
-        cx.simulate_shared_keystrokes(["shift-r", "O", "n", "e"])
-            .await;
+        cx.simulate_shared_keystrokes("shift-r O n e").await;
         cx.assert_shared_state(indoc! {"
             Oneˇ quick brown
             fox jumps over
@@ -179,8 +178,7 @@ mod test {
             fox jumps over
             the lazy dog."})
             .await;
-        cx.simulate_shared_keystrokes(["shift-r", "O", "n", "e"])
-            .await;
+        cx.simulate_shared_keystrokes("shift-r O n e").await;
         cx.assert_shared_state(indoc! {"
             The quick browOneˇ
             fox jumps over
@@ -194,8 +192,7 @@ mod test {
         fox jumps over
         the lazy dog."})
             .await;
-        cx.simulate_shared_keystrokes(["shift-r", "O", "n", "e"])
-            .await;
+        cx.simulate_shared_keystrokes("shift-r O n e").await;
         cx.assert_shared_state(indoc! {"
             The quick brown
             Oneˇ
@@ -209,8 +206,7 @@ mod test {
             fox jumps over
             the lazy ˇdog."})
             .await;
-        cx.simulate_shared_keystrokes(["shift-r", "O", "n", "e"])
-            .await;
+        cx.simulate_shared_keystrokes("shift-r O n e").await;
         cx.assert_shared_state(indoc! {"
             Oneˇ quick brown
             fox jumps over
@@ -223,8 +219,7 @@ mod test {
             fox jumps over
             the lazy dog."})
             .await;
-        cx.simulate_shared_keystrokes(["shift-r", "enter", "O", "n", "e"])
-            .await;
+        cx.simulate_shared_keystrokes("shift-r enter O n e").await;
         cx.assert_shared_state(indoc! {"
             The qu
             Oneˇ brown
@@ -238,15 +233,13 @@ mod test {
             fox jumps over
             the lazy ˇdog."})
             .await;
-        cx.simulate_shared_keystrokes(["shift-r", "O", "n", "e"])
-            .await;
+        cx.simulate_shared_keystrokes("shift-r O n e").await;
         cx.assert_shared_state(indoc! {"
             Oneˇ quick brown
             fox jumps over
             the lazy Oneˇ."})
             .await;
-        cx.simulate_shared_keystrokes(["enter", "T", "w", "o"])
-            .await;
+        cx.simulate_shared_keystrokes("enter T w o").await;
         cx.assert_shared_state(indoc! {"
             One
             Twoˇck brown
@@ -286,47 +279,13 @@ mod test {
 
         for example in UNDO_REPLACE_EXAMPLES {
             // normal undo
-            cx.assert_binding_matches(
-                [
-                    "shift-r",
-                    "O",
-                    "n",
-                    "e",
-                    "backspace",
-                    "backspace",
-                    "backspace",
-                ],
-                example,
-            )
-            .await;
+            cx.assert_binding_matches("shift-r O n e backspace backspace backspace", example)
+                .await;
             // undo with new line
+            cx.assert_binding_matches("shift-r O enter e backspace backspace backspace", example)
+                .await;
             cx.assert_binding_matches(
-                [
-                    "shift-r",
-                    "O",
-                    "enter",
-                    "e",
-                    "backspace",
-                    "backspace",
-                    "backspace",
-                ],
-                example,
-            )
-            .await;
-            cx.assert_binding_matches(
-                [
-                    "shift-r",
-                    "O",
-                    "enter",
-                    "n",
-                    "enter",
-                    "e",
-                    "backspace",
-                    "backspace",
-                    "backspace",
-                    "backspace",
-                    "backspace",
-                ],
+                "shift-r O enter n enter e backspace backspace backspace backspace backspace",
                 example,
             )
             .await;
@@ -337,16 +296,10 @@ mod test {
     async fn test_replace_multicursor(cx: &mut gpui::TestAppContext) {
         let mut cx = VimTestContext::new(cx, true).await;
         cx.set_state("ˇabcˇabcabc", Mode::Normal);
-        cx.simulate_keystrokes(["shift-r", "1", "2", "3", "4"]);
+        cx.simulate_keystrokes("shift-r 1 2 3 4");
         cx.assert_state("1234ˇ234ˇbc", Mode::Replace);
         assert_eq!(cx.mode(), Mode::Replace);
-        cx.simulate_keystrokes([
-            "backspace",
-            "backspace",
-            "backspace",
-            "backspace",
-            "backspace",
-        ]);
+        cx.simulate_keystrokes("backspace backspace backspace backspace backspace");
         cx.assert_state("ˇabˇcabcabc", Mode::Replace);
     }
 
@@ -355,7 +308,7 @@ mod test {
         let mut cx = VimTestContext::new(cx, true).await;
 
         cx.set_state("ˇaaaa", Mode::Normal);
-        cx.simulate_keystrokes(["0", "shift-r", "b", "b", "b", "escape", "u"]);
+        cx.simulate_keystrokes("0 shift-r b b b escape u");
         cx.assert_state("ˇaaaa", Mode::Normal);
     }
 }

@@ -192,24 +192,24 @@ mod test {
             indoc! {"
             Test tesˇt
                 test"},
-            ["d", "w"],
+            "d w",
         )
         .await;
 
-        cx.assert_neovim_compatible("Teˇst", ["d", "w"]).await;
-        cx.assert_neovim_compatible("Tˇest test", ["d", "w"]).await;
+        cx.assert_neovim_compatible("Teˇst", "d w").await;
+        cx.assert_neovim_compatible("Tˇest test", "d w").await;
         cx.assert_neovim_compatible(
             indoc! {"
             Test teˇst
             test"},
-            ["d", "w"],
+            "d w",
         )
         .await;
         cx.assert_neovim_compatible(
             indoc! {"
             Test tesˇt
             test"},
-            ["d", "w"],
+            "d w",
         )
         .await;
 
@@ -218,12 +218,11 @@ mod test {
             Test test
             ˇ
             test"},
-            ["d", "w"],
+            "d w",
         )
         .await;
 
-        let mut cx = cx.binding(["d", "shift-w"]);
-        cx.assert_neovim_compatible("Test teˇst-test test", ["d", "shift-w"])
+        cx.assert_neovim_compatible("Test teˇst-test test", "d shift-w")
             .await;
     }
 
@@ -359,7 +358,7 @@ mod test {
             brownˇ fox
             jumps over
             the lazy"},
-            ["d", "shift-g"],
+            "d shift-g",
         )
         .await;
         cx.assert_neovim_compatible(
@@ -368,7 +367,7 @@ mod test {
             brownˇ fox
             jumps over
             the lazy"},
-            ["d", "shift-g"],
+            "d shift-g",
         )
         .await;
         cx.assert_neovim_compatible(
@@ -377,7 +376,7 @@ mod test {
             brown fox
             jumps over
             the lˇazy"},
-            ["d", "shift-g"],
+            "d shift-g",
         )
         .await;
         cx.assert_neovim_compatible(
@@ -386,23 +385,21 @@ mod test {
             brown fox
             jumps over
             ˇ"},
-            ["d", "shift-g"],
+            "d shift-g",
         )
         .await;
     }
 
     #[gpui::test]
     async fn test_delete_gg(cx: &mut gpui::TestAppContext) {
-        let mut cx = NeovimBackedTestContext::new(cx)
-            .await
-            .binding(["d", "g", "g"]);
+        let mut cx = NeovimBackedTestContext::new(cx).await;
         cx.assert_neovim_compatible(
             indoc! {"
             The quick
             brownˇ fox
             jumps over
             the lazy"},
-            ["d", "g", "g"],
+            "d g g",
         )
         .await;
         cx.assert_neovim_compatible(
@@ -411,7 +408,7 @@ mod test {
             brown fox
             jumps over
             the lˇazy"},
-            ["d", "g", "g"],
+            "d g g",
         )
         .await;
         cx.assert_neovim_compatible(
@@ -420,7 +417,7 @@ mod test {
             brown fox
             jumps over
             the lazy"},
-            ["d", "g", "g"],
+            "d g g",
         )
         .await;
         cx.assert_neovim_compatible(
@@ -429,7 +426,7 @@ mod test {
             brown fox
             jumps over
             the lazy"},
-            ["d", "g", "g"],
+            "d g g",
         )
         .await;
     }
@@ -446,7 +443,7 @@ mod test {
         );
 
         // Canceling operator twice reverts to normal mode with no active operator
-        cx.simulate_keystrokes(["d", "escape", "k"]);
+        cx.simulate_keystrokes("d escape k");
         assert_eq!(cx.active_operator(), None);
         assert_eq!(cx.mode(), Mode::Normal);
         cx.assert_editor_state(indoc! {"
@@ -467,7 +464,7 @@ mod test {
         );
 
         // Canceling operator twice reverts to normal mode with no active operator
-        cx.simulate_keystrokes(["d", "y"]);
+        cx.simulate_keystrokes("d y");
         assert_eq!(cx.active_operator(), None);
         assert_eq!(cx.mode(), Mode::Normal);
     }
@@ -480,7 +477,7 @@ mod test {
                 fox jumps over
                 the lazy dog"})
             .await;
-        cx.simulate_shared_keystrokes(["d", "2", "d"]).await;
+        cx.simulate_shared_keystrokes("d 2 d").await;
         cx.assert_shared_state(indoc! {"
         the ˇlazy dog"})
             .await;
@@ -490,7 +487,7 @@ mod test {
                 fox jumps over
                 the lazy dog"})
             .await;
-        cx.simulate_shared_keystrokes(["2", "d", "d"]).await;
+        cx.simulate_shared_keystrokes("2 d d").await;
         cx.assert_shared_state(indoc! {"
         the ˇlazy dog"})
             .await;
@@ -502,7 +499,7 @@ mod test {
                 a star, and
                 the lazy dog"})
             .await;
-        cx.simulate_shared_keystrokes(["2", "d", "2", "d"]).await;
+        cx.simulate_shared_keystrokes("2 d 2 d").await;
         cx.assert_shared_state(indoc! {"
         the ˇlazy dog"})
             .await;
@@ -511,7 +508,7 @@ mod test {
     #[gpui::test]
     async fn test_delete_to_adjacent_character(cx: &mut gpui::TestAppContext) {
         let mut cx = NeovimBackedTestContext::new(cx).await;
-        cx.assert_neovim_compatible("ˇax", ["d", "t", "x"]).await;
-        cx.assert_neovim_compatible("aˇx", ["d", "t", "x"]).await;
+        cx.assert_neovim_compatible("ˇax", "d t x").await;
+        cx.assert_neovim_compatible("aˇx", "d t x").await;
     }
 }

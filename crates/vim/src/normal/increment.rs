@@ -191,29 +191,28 @@ mod test {
             "})
             .await;
 
-        cx.simulate_shared_keystrokes(["ctrl-a"]).await;
+        cx.simulate_shared_keystrokes("ctrl-a").await;
         cx.assert_shared_state(indoc! {"
             1ˇ3
             "})
             .await;
-        cx.simulate_shared_keystrokes(["ctrl-x"]).await;
+        cx.simulate_shared_keystrokes("ctrl-x").await;
         cx.assert_shared_state(indoc! {"
             1ˇ2
             "})
             .await;
 
-        cx.simulate_shared_keystrokes(["9", "9", "ctrl-a"]).await;
+        cx.simulate_shared_keystrokes("9 9 ctrl-a").await;
         cx.assert_shared_state(indoc! {"
             11ˇ1
             "})
             .await;
-        cx.simulate_shared_keystrokes(["1", "1", "1", "ctrl-x"])
-            .await;
+        cx.simulate_shared_keystrokes("1 1 1 ctrl-x").await;
         cx.assert_shared_state(indoc! {"
             ˇ0
             "})
             .await;
-        cx.simulate_shared_keystrokes(["."]).await;
+        cx.simulate_shared_keystrokes(".").await;
         cx.assert_shared_state(indoc! {"
             -11ˇ1
             "})
@@ -229,12 +228,12 @@ mod test {
             "})
             .await;
 
-        cx.simulate_shared_keystrokes(["ctrl-a"]).await;
+        cx.simulate_shared_keystrokes("ctrl-a").await;
         cx.assert_shared_state(indoc! {"
             1.ˇ3
             "})
             .await;
-        cx.simulate_shared_keystrokes(["ctrl-x"]).await;
+        cx.simulate_shared_keystrokes("ctrl-x").await;
         cx.assert_shared_state(indoc! {"
             1.ˇ2
             "})
@@ -250,12 +249,12 @@ mod test {
             "})
             .await;
 
-        cx.simulate_shared_keystrokes(["ctrl-a"]).await;
+        cx.simulate_shared_keystrokes("ctrl-a").await;
         cx.assert_shared_state(indoc! {"
             111..ˇ3
             "})
             .await;
-        cx.simulate_shared_keystrokes(["ctrl-x"]).await;
+        cx.simulate_shared_keystrokes("ctrl-x").await;
         cx.assert_shared_state(indoc! {"
             111..ˇ2
             "})
@@ -266,16 +265,16 @@ mod test {
     async fn test_increment_radix(cx: &mut gpui::TestAppContext) {
         let mut cx = NeovimBackedTestContext::new(cx).await;
 
-        cx.assert_matches_neovim("ˇ total: 0xff", ["ctrl-a"], " total: 0x10ˇ0")
+        cx.assert_matches_neovim("ˇ total: 0xff", "ctrl-a", " total: 0x10ˇ0")
             .await;
-        cx.assert_matches_neovim("ˇ total: 0xff", ["ctrl-x"], " total: 0xfˇe")
+        cx.assert_matches_neovim("ˇ total: 0xff", "ctrl-x", " total: 0xfˇe")
             .await;
-        cx.assert_matches_neovim("ˇ total: 0xFF", ["ctrl-x"], " total: 0xFˇE")
+        cx.assert_matches_neovim("ˇ total: 0xFF", "ctrl-x", " total: 0xFˇE")
             .await;
-        cx.assert_matches_neovim("(ˇ0b10f)", ["ctrl-a"], "(0b1ˇ1f)")
+        cx.assert_matches_neovim("(ˇ0b10f)", "ctrl-a", "(0b1ˇ1f)")
             .await;
-        cx.assert_matches_neovim("ˇ-1", ["ctrl-a"], "ˇ0").await;
-        cx.assert_matches_neovim("banˇana", ["ctrl-a"], "banˇana")
+        cx.assert_matches_neovim("ˇ-1", "ctrl-a", "ˇ0").await;
+        cx.assert_matches_neovim("banˇana", "ctrl-a", "banˇana")
             .await;
     }
 
@@ -291,8 +290,7 @@ mod test {
             1"})
             .await;
 
-        cx.simulate_shared_keystrokes(["j", "v", "shift-g", "g", "ctrl-a"])
-            .await;
+        cx.simulate_shared_keystrokes("j v shift-g g ctrl-a").await;
         cx.assert_shared_state(indoc! {"
             1
             ˇ2
@@ -301,8 +299,7 @@ mod test {
             5"})
             .await;
 
-        cx.simulate_shared_keystrokes(["shift-g", "ctrl-v", "g", "g"])
-            .await;
+        cx.simulate_shared_keystrokes("shift-g ctrl-v g g").await;
         cx.assert_shared_state(indoc! {"
             «1ˇ»
             «2ˇ»
@@ -311,7 +308,7 @@ mod test {
             «5ˇ»"})
             .await;
 
-        cx.simulate_shared_keystrokes(["g", "ctrl-x"]).await;
+        cx.simulate_shared_keystrokes("g ctrl-x").await;
         cx.assert_shared_state(indoc! {"
             ˇ0
             0

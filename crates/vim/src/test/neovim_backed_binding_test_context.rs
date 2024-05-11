@@ -1,7 +1,5 @@
 use std::ops::{Deref, DerefMut};
 
-use crate::state::Mode;
-
 use super::{ExemptionFeatures, NeovimBackedTestContext, SUPPORTED_FEATURES};
 
 pub struct NeovimBackedBindingTestContext<const COUNT: usize> {
@@ -30,37 +28,21 @@ impl<const COUNT: usize> NeovimBackedBindingTestContext<COUNT> {
 
     pub async fn assert(&mut self, marked_positions: &str) {
         self.cx
-            .assert_binding_matches(self.keystrokes_under_test, marked_positions)
+            .assert_binding_matches(&self.keystrokes_under_test.join(" "), marked_positions)
             .await;
     }
 
     pub async fn assert_exempted(&mut self, marked_positions: &str, feature: ExemptionFeatures) {
         if SUPPORTED_FEATURES.contains(&feature) {
             self.cx
-                .assert_binding_matches(self.keystrokes_under_test, marked_positions)
+                .assert_binding_matches(&self.keystrokes_under_test.join(" "), marked_positions)
                 .await
         }
     }
 
-    pub fn assert_manual(
-        &mut self,
-        initial_state: &str,
-        mode_before: Mode,
-        state_after: &str,
-        mode_after: Mode,
-    ) {
-        self.cx.assert_binding(
-            self.keystrokes_under_test,
-            initial_state,
-            mode_before,
-            state_after,
-            mode_after,
-        );
-    }
-
     pub async fn assert_all(&mut self, marked_positions: &str) {
         self.cx
-            .assert_binding_matches_all(self.keystrokes_under_test, marked_positions)
+            .assert_binding_matches_all(&self.keystrokes_under_test.join(" "), marked_positions)
             .await
     }
 
@@ -71,7 +53,7 @@ impl<const COUNT: usize> NeovimBackedBindingTestContext<COUNT> {
     ) {
         if SUPPORTED_FEATURES.contains(&feature) {
             self.cx
-                .assert_binding_matches_all(self.keystrokes_under_test, marked_positions)
+                .assert_binding_matches_all(&self.keystrokes_under_test.join(" "), marked_positions)
                 .await
         }
     }

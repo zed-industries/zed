@@ -1,4 +1,3 @@
-use editor::test::editor_test_context::ContextHandle;
 use gpui::{px, size, BorrowAppContext, Context};
 use indoc::indoc;
 use settings::SettingsStore;
@@ -35,8 +34,6 @@ pub enum ExemptionFeatures {
     SentenceAtStartOfLineWithWhitespace,
     // Whitespace around sentences is slightly incorrect when starting between sentences
     AroundSentenceStartingBetweenIncludesWrongWhitespace,
-    // Non empty selection with text objects in visual mode
-    NonEmptyVisualTextObjects,
     // Sentence Doesn't backtrack when its at the end of the file
     SentenceAfterPunctuationAtEndOfFile,
 }
@@ -105,16 +102,8 @@ impl NeovimBackedTestContext {
         }
     }
 
-    pub async fn simulate_shared_keystroke(&mut self, keystroke_text: &str) -> ContextHandle {
-        self.neovim.send_keystroke(keystroke_text).await;
-        self.simulate_keystroke(keystroke_text)
-    }
-
-    pub async fn simulate_shared_keystrokes<const COUNT: usize>(
-        &mut self,
-        keystroke_texts: [&str; COUNT],
-    ) {
-        for keystroke_text in keystroke_texts.into_iter() {
+    pub async fn simulate_shared_keystrokes(&mut self, keystroke_texts: &str) {
+        for keystroke_text in keystroke_texts.split(' ') {
             self.recent_keystrokes.push(keystroke_text.to_string());
             self.neovim.send_keystroke(keystroke_text).await;
         }
@@ -330,11 +319,7 @@ impl NeovimBackedTestContext {
         }
     }
 
-    pub async fn assert_binding_matches<const COUNT: usize>(
-        &mut self,
-        keystrokes: [&str; COUNT],
-        initial_state: &str,
-    ) {
+    pub async fn assert_binding_matches(&mut self, keystrokes: &str, initial_state: &str) {
         if let Some(possible_exempted_keystrokes) = self.exemptions.get(initial_state) {
             match possible_exempted_keystrokes {
                 Some(exempted_keystrokes) => {
@@ -355,11 +340,7 @@ impl NeovimBackedTestContext {
         self.assert_state_matches().await;
     }
 
-    pub async fn assert_binding_matches_all<const COUNT: usize>(
-        &mut self,
-        keystrokes: [&str; COUNT],
-        marked_positions: &str,
-    ) {
+    pub async fn assert_binding_matches_all(&mut self, keystrokes: &str, marked_positions: &str) {
         let (unmarked_text, cursor_offsets) = marked_text_offsets(marked_positions);
 
         for cursor_offset in cursor_offsets.iter() {
@@ -383,37 +364,21 @@ impl NeovimBackedTestContext {
         ret
     }
 
-    pub async fn assert_neovim_compatible<const COUNT: usize>(
-        &mut self,
-        marked_positions: &str,
-        keystrokes: [&str; COUNT],
-    ) {
+    pub async fn assert_neovim_compatible(&mut self, marked_positions: &str, keystrokes: &str) {
         self.set_shared_state(&marked_positions).await;
         self.simulate_shared_keystrokes(keystrokes).await;
         self.assert_state_matches().await;
     }
 
-    pub async fn assert_matches_neovim<const COUNT: usize>(
+    pub async fn assert_matches_neovim(
         &mut self,
         marked_positions: &str,
-        keystrokes: [&str; COUNT],
+        keystrokes: &str,
         result: &str,
     ) {
         self.set_shared_state(marked_positions).await;
         self.simulate_shared_keystrokes(keystrokes).await;
         self.assert_shared_state(result).await;
-    }
-
-    pub async fn assert_binding_matches_all_exempted<const COUNT: usize>(
-        &mut self,
-        keystrokes: [&str; COUNT],
-        marked_positions: &str,
-        feature: ExemptionFeatures,
-    ) {
-        if SUPPORTED_FEATURES.contains(&feature) {
-            self.assert_binding_matches_all(keystrokes, marked_positions)
-                .await
-        }
     }
 
     pub fn binding<const COUNT: usize>(
