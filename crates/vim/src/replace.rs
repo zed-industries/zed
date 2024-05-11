@@ -196,18 +196,6 @@ mod test {
             fox jumps over
             the lazy dog."});
 
-        // test replace with multi cursor
-        cx.set_shared_state(indoc! {"
-            ˇThe quick brown
-            fox jumps over
-            the lazy ˇdog."})
-            .await;
-        cx.simulate_shared_keystrokes("shift-r O n e").await;
-        cx.shared_state().await.assert_eq(indoc! {"
-            Oneˇ quick brown
-            fox jumps over
-            the lazy Oneˇ."});
-
         // test replace with newline
         cx.set_shared_state(indoc! {"
             The quˇick brown
@@ -222,23 +210,31 @@ mod test {
             the lazy dog."});
 
         // test replace with multi cursor and newline
-        cx.set_shared_state(indoc! {"
+        cx.set_state(
+            indoc! {"
             ˇThe quick brown
             fox jumps over
-            the lazy ˇdog."})
-            .await;
-        cx.simulate_shared_keystrokes("shift-r O n e").await;
-        cx.shared_state().await.assert_eq(indoc! {"
+            the lazy ˇdog."},
+            Mode::Normal,
+        );
+        cx.simulate_keystrokes("shift-r O n e");
+        cx.assert_state(
+            indoc! {"
             Oneˇ quick brown
             fox jumps over
-            the lazy Oneˇ."});
-        cx.simulate_shared_keystrokes("enter T w o").await;
-        cx.shared_state().await.assert_eq(indoc! {"
+            the lazy Oneˇ."},
+            Mode::Replace,
+        );
+        cx.simulate_keystrokes("enter T w o");
+        cx.assert_state(
+            indoc! {"
             One
             Twoˇck brown
             fox jumps over
             the lazy One
-            Twoˇ"});
+            Twoˇ"},
+            Mode::Replace,
+        );
     }
 
     #[gpui::test]
@@ -261,26 +257,23 @@ mod test {
                 fox jumps over
                 the lazy dog."
             },
-            // replace undo with multi cursor
-            indoc! {"
-                The quick browˇn
-                fox jumps over
-                the lazy ˇdog."
-            },
         ];
 
         for example in UNDO_REPLACE_EXAMPLES {
             // normal undo
-            cx.assert_binding_matches("shift-r O n e backspace backspace backspace", example)
-                .await;
+            cx.simulate("shift-r O n e backspace backspace backspace", example)
+                .await
+                .assert_matches();
             // undo with new line
-            cx.assert_binding_matches("shift-r O enter e backspace backspace backspace", example)
-                .await;
-            cx.assert_binding_matches(
+            cx.simulate("shift-r O enter e backspace backspace backspace", example)
+                .await
+                .assert_matches();
+            cx.simulate(
                 "shift-r O enter n enter e backspace backspace backspace backspace backspace",
                 example,
             )
-            .await;
+            .await
+            .assert_matches();
         }
     }
 

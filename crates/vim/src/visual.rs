@@ -721,37 +721,44 @@ mod test {
     async fn test_visual_delete(cx: &mut gpui::TestAppContext) {
         let mut cx = NeovimBackedTestContext::new(cx).await;
 
-        cx.assert_binding_matches("v w", "The quick ˇbrown").await;
+        cx.simulate("v w", "The quick ˇbrown")
+            .await
+            .assert_matches();
 
-        cx.assert_binding_matches("v w x", "The quick ˇbrown").await;
-        cx.assert_binding_matches(
+        cx.simulate("v w x", "The quick ˇbrown")
+            .await
+            .assert_matches();
+        cx.simulate(
             "v w j x",
             indoc! {"
                 The ˇquick brown
                 fox jumps over
                 the lazy dog"},
         )
-        .await;
+        .await
+        .assert_matches();
         // Test pasting code copied on delete
         cx.simulate_shared_keystrokes("j p").await;
         cx.shared_state().await.assert_matches();
 
-        cx.assert_binding_matches_all(
+        cx.simulate_at_each_offset(
             "v w j x",
             indoc! {"
                 The ˇquick brown
                 fox jumps over
                 the ˇlazy dog"},
         )
-        .await;
-        cx.assert_binding_matches_all(
+        .await
+        .assert_matches();
+        cx.simulate_at_each_offset(
             "v b k x",
             indoc! {"
                 The ˇquick brown
                 fox jumps ˇover
                 the ˇlazy dog"},
         )
-        .await;
+        .await
+        .assert_matches();
     }
 
     #[gpui::test]

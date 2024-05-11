@@ -985,24 +985,36 @@ mod test {
     async fn test_change_word_object(cx: &mut gpui::TestAppContext) {
         let mut cx = NeovimBackedTestContext::new(cx).await;
 
-        cx.assert_binding_matches_all("c i w", WORD_LOCATIONS).await;
-        cx.assert_binding_matches_all("c i shift-w", WORD_LOCATIONS)
-            .await;
-        cx.assert_binding_matches_all("c a w", WORD_LOCATIONS).await;
-        cx.assert_binding_matches_all("c a shift-w", WORD_LOCATIONS)
-            .await;
+        cx.simulate_at_each_offset("c i w", WORD_LOCATIONS)
+            .await
+            .assert_matches();
+        cx.simulate_at_each_offset("c i shift-w", WORD_LOCATIONS)
+            .await
+            .assert_matches();
+        cx.simulate_at_each_offset("c a w", WORD_LOCATIONS)
+            .await
+            .assert_matches();
+        cx.simulate_at_each_offset("c a shift-w", WORD_LOCATIONS)
+            .await
+            .assert_matches();
     }
 
     #[gpui::test]
     async fn test_delete_word_object(cx: &mut gpui::TestAppContext) {
         let mut cx = NeovimBackedTestContext::new(cx).await;
 
-        cx.assert_binding_matches_all("d i w", WORD_LOCATIONS).await;
-        cx.assert_binding_matches_all("d i shift-w", WORD_LOCATIONS)
-            .await;
-        cx.assert_binding_matches_all("d a w", WORD_LOCATIONS).await;
-        cx.assert_binding_matches_all("d a shift-w", WORD_LOCATIONS)
-            .await;
+        cx.simulate_at_each_offset("d i w", WORD_LOCATIONS)
+            .await
+            .assert_matches();
+        cx.simulate_at_each_offset("d i shift-w", WORD_LOCATIONS)
+            .await
+            .assert_matches();
+        cx.simulate_at_each_offset("d a w", WORD_LOCATIONS)
+            .await
+            .assert_matches();
+        cx.simulate_at_each_offset("d a shift-w", WORD_LOCATIONS)
+            .await
+            .assert_matches();
     }
 
     #[gpui::test]
@@ -1026,9 +1038,12 @@ mod test {
             .await
             .assert_eq("The quick brown\n«\nˇ»fox");
 
-        cx.assert_binding_matches_all("v i w", WORD_LOCATIONS).await;
-        cx.assert_binding_matches_all("v i shift-w", WORD_LOCATIONS)
-            .await;
+        cx.simulate_at_each_offset("v i w", WORD_LOCATIONS)
+            .await
+            .assert_matches();
+        cx.simulate_at_each_offset("v i shift-w", WORD_LOCATIONS)
+            .await
+            .assert_matches();
     }
 
     const PARAGRAPH_EXAMPLES: &[&'static str] = &[
@@ -1091,10 +1106,12 @@ mod test {
         let mut cx = NeovimBackedTestContext::new(cx).await;
 
         for paragraph_example in PARAGRAPH_EXAMPLES {
-            cx.assert_binding_matches_all("c i p", paragraph_example)
-                .await;
-            cx.assert_binding_matches_all("c a p", paragraph_example)
-                .await;
+            cx.simulate_at_each_offset("c i p", paragraph_example)
+                .await
+                .assert_matches();
+            cx.simulate_at_each_offset("c a p", paragraph_example)
+                .await
+                .assert_matches();
         }
     }
 
@@ -1103,10 +1120,12 @@ mod test {
         let mut cx = NeovimBackedTestContext::new(cx).await;
 
         for paragraph_example in PARAGRAPH_EXAMPLES {
-            cx.assert_binding_matches_all("d i p", paragraph_example)
-                .await;
-            cx.assert_binding_matches_all("d a p", paragraph_example)
-                .await;
+            cx.simulate_at_each_offset("d i p", paragraph_example)
+                .await
+                .assert_matches();
+            cx.simulate_at_each_offset("d a p", paragraph_example)
+                .await
+                .assert_matches();
         }
     }
 
@@ -1139,10 +1158,12 @@ mod test {
         ];
 
         for paragraph_example in EXAMPLES {
-            cx.assert_binding_matches_all("v i p", paragraph_example)
-                .await;
-            cx.assert_binding_matches_all("v a p", paragraph_example)
-                .await;
+            cx.simulate_at_each_offset("v i p", paragraph_example)
+                .await
+                .assert_matches();
+            cx.simulate_at_each_offset("v a p", paragraph_example)
+                .await
+                .assert_matches();
         }
     }
 
@@ -1166,14 +1187,18 @@ mod test {
                 .replace('`', &start.to_string())
                 .replace('\'', &end.to_string());
 
-            cx.assert_binding_matches_all(&format!("c i {start}"), &marked_string)
-                .await;
-            cx.assert_binding_matches_all(&format!("c i {end}"), &marked_string)
-                .await;
-            cx.assert_binding_matches_all(&format!("c a {start}"), &marked_string)
-                .await;
-            cx.assert_binding_matches_all(&format!("c a {end}"), &marked_string)
-                .await;
+            cx.simulate_at_each_offset(&format!("c i {start}"), &marked_string)
+                .await
+                .assert_matches();
+            cx.simulate_at_each_offset(&format!("c i {end}"), &marked_string)
+                .await
+                .assert_matches();
+            cx.simulate_at_each_offset(&format!("c a {start}"), &marked_string)
+                .await
+                .assert_matches();
+            cx.simulate_at_each_offset(&format!("c a {end}"), &marked_string)
+                .await
+                .assert_matches();
         }
     }
     #[gpui::test]
@@ -1418,14 +1443,18 @@ mod test {
                 .replace('`', &start.to_string())
                 .replace('\'', &end.to_string());
 
-            cx.assert_binding_matches_all(&format!("d i {start}"), &marked_string)
-                .await;
-            cx.assert_binding_matches_all(&format!("d i {end}"), &marked_string)
-                .await;
-            cx.assert_binding_matches_all(&format!("d a {start}"), &marked_string)
-                .await;
-            cx.assert_binding_matches_all(&format!("d a {end}"), &marked_string)
-                .await;
+            cx.simulate_at_each_offset(&format!("d i {start}"), &marked_string)
+                .await
+                .assert_matches();
+            cx.simulate_at_each_offset(&format!("d i {end}"), &marked_string)
+                .await
+                .assert_matches();
+            cx.simulate_at_each_offset(&format!("d a {start}"), &marked_string)
+                .await
+                .assert_matches();
+            cx.simulate_at_each_offset(&format!("d a {end}"), &marked_string)
+                .await
+                .assert_matches();
         }
     }
 

@@ -20,6 +20,7 @@ pub struct NeovimBackedTestContext {
     recent_keystrokes: Vec<String>,
 }
 
+#[derive(Default)]
 pub struct SharedState {
     neovim: String,
     editor: String,
@@ -158,14 +159,6 @@ impl NeovimBackedTestContext {
         }
     }
 
-    pub async fn simulate_shared_keystrokes(&mut self, keystroke_texts: &str) {
-        for keystroke_text in keystroke_texts.split(' ') {
-            self.recent_keystrokes.push(keystroke_text.to_string());
-            self.neovim.send_keystroke(keystroke_text).await;
-        }
-        self.simulate_keystrokes(keystroke_texts);
-    }
-
     pub async fn set_shared_state(&mut self, marked_text: &str) {
         let mode = if marked_text.contains('»') {
             Mode::Visual
@@ -176,6 +169,22 @@ impl NeovimBackedTestContext {
         self.last_set_state = Some(marked_text.to_string());
         self.recent_keystrokes = Vec::new();
         self.neovim.set_state(marked_text).await;
+    }
+
+    pub async fn simulate_shared_keystrokes(&mut self, keystroke_texts: &str) {
+        for keystroke_text in keystroke_texts.split(' ') {
+            self.recent_keystrokes.push(keystroke_text.to_string());
+            self.neovim.send_keystroke(keystroke_text).await;
+        }
+        self.simulate_keystrokes(keystroke_texts);
+    }
+
+    #[must_use]
+    pub async fn simulate(&mut self, keystrokes: &str, initial_state: &str) -> SharedState {
+        dbg!(&initial_state);
+        self.set_shared_state(initial_state).await;
+        self.simulate_shared_keystrokes(keystrokes).await;
+        self.shared_state().await
     }
 
     pub async fn set_shared_wrap(&mut self, columns: u32) {
@@ -256,21 +265,25 @@ impl NeovimBackedTestContext {
         }
     }
 
-    pub async fn assert_binding_matches(&mut self, keystrokes: &str, initial_state: &str) {
-        self.set_shared_state(initial_state).await;
-        self.simulate_shared_keystrokes(keystrokes).await;
-        self.shared_state().await.assert_matches();
-    }
-
-    pub async fn assert_binding_matches_all(&mut self, keystrokes: &str, marked_positions: &str) {
+    #[must_use]
+    pub async fn simulate_at_each_offset(
+        &mut self,
+        keystrokes: &str,
+        marked_positions: &str,
+    ) -> SharedState {
         let (unmarked_text, cursor_offsets) = marked_text_offsets(marked_positions);
 
         for cursor_offset in cursor_offsets.iter() {
             let mut marked_text = unmarked_text.clone();
             marked_text.insert(*cursor_offset, 'ˇ');
 
-            self.assert_binding_matches(keystrokes, &marked_text).await;
+            let state = self.simulate(keystrokes, &marked_text).await;
+            if state.neovim != state.editor || state.neovim_mode != state.editor_mode {
+                return state;
+            }
         }
+
+        SharedState::default()
     }
 }
 

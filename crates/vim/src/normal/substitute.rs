@@ -161,67 +161,73 @@ mod test {
             The ˇver
             the lazy dog"});
 
-        cx.assert_binding_matches_all(
+        cx.simulate_at_each_offset(
             "v w j c",
             indoc! {"
                     The ˇquick brown
                     fox jumps ˇover
                     the ˇlazy dog"},
         )
-        .await;
-        cx.assert_binding_matches_all(
+        .await
+        .assert_matches();
+        cx.simulate_at_each_offset(
             "v w k c",
             indoc! {"
                     The ˇquick brown
                     fox jumps ˇover
                     the ˇlazy dog"},
         )
-        .await;
+        .await
+        .assert_matches();
     }
 
     #[gpui::test]
     async fn test_visual_line_change(cx: &mut gpui::TestAppContext) {
         let mut cx = NeovimBackedTestContext::new(cx).await;
-        cx.assert_binding_matches(
+        cx.simulate(
             "shift-v c",
             indoc! {"
             The quˇick brown
             fox jumps over
             the lazy dog"},
         )
-        .await;
+        .await
+        .assert_matches();
         // Test pasting code copied on change
         cx.simulate_shared_keystrokes("escape j p").await;
         cx.shared_state().await.assert_matches();
 
-        cx.assert_binding_matches_all(
+        cx.simulate_at_each_offset(
             "shift-v c",
             indoc! {"
             The quick brown
             fox juˇmps over
             the laˇzy dog"},
         )
-        .await;
-        cx.assert_binding_matches(
+        .await
+        .assert_matches();
+        cx.simulate(
             "shift-v j c",
             indoc! {"
             The quˇick brown
             fox jumps over
             the lazy dog"},
         )
-        .await;
+        .await
+        .assert_matches();
         // Test pasting code copied on delete
         cx.simulate_shared_keystrokes("escape j p").await;
         cx.shared_state().await.assert_matches();
 
-        cx.assert_binding_matches_all(
+        cx.simulate_at_each_offset(
             "shift-v j c",
             indoc! {"
             The quick brown
             fox juˇmps over
             the laˇzy dog"},
         )
-        .await;
+        .await
+        .assert_matches();
     }
 
     #[gpui::test]

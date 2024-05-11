@@ -368,11 +368,12 @@ impl NeovimConnection {
             })
             .expect("Could not find mode value");
 
-        let mode = match nvim_mode_text.as_ref() {
+        let mode = match dbg!(nvim_mode_text).as_ref() {
             "i" => Some(Mode::Insert),
             "n" => Some(Mode::Normal),
             "v" => Some(Mode::Visual),
             "V" => Some(Mode::VisualLine),
+            "R" => Some(Mode::Replace),
             "\x16" => Some(Mode::VisualBlock),
             _ => None,
         };
