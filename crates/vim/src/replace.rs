@@ -169,7 +169,6 @@ mod test {
             Oneˇ quick brown
             fox jumps over
             the lazy dog."});
-        assert_eq!(Mode::Replace, cx.neovim_mode().await);
 
         // test replace with line ending
         cx.set_shared_state(indoc! {"

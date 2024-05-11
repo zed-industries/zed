@@ -465,14 +465,6 @@ impl NeovimConnection {
         }
     }
 
-    pub async fn mode(&mut self) -> Option<Mode> {
-        self.state().await.0
-    }
-
-    pub async fn marked_text(&mut self) -> String {
-        self.state().await.1
-    }
-
     fn test_data_path(test_case_id: &str) -> PathBuf {
         let mut data_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
         data_path.push("test_data");

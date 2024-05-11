@@ -612,7 +612,6 @@ mod test {
             the lazy dog"});
 
         cx.simulate_shared_keystrokes("escape").await;
-        assert_eq!(Mode::Normal, cx.neovim_mode().await);
         cx.shared_state().await.assert_eq(indoc! { "The quick brown
             fox jumps ˇover
             the lazy dog"});
@@ -661,7 +660,6 @@ mod test {
             a
             b
             ˇ"});
-        assert_eq!(cx.mode(), cx.neovim_mode().await);
     }
 
     #[gpui::test]
@@ -680,7 +678,6 @@ mod test {
             .assert_eq(indoc! { "The «qˇ»uick brown
             fox jumps over
             the lazy dog"});
-        assert_eq!(cx.mode(), cx.neovim_mode().await);
         cx.simulate_shared_keystrokes("x").await;
         cx.shared_state().await.assert_eq(indoc! { "fox ˇjumps over
         the lazy dog"});
@@ -713,7 +710,6 @@ mod test {
             a
             b
             ˇ"});
-        assert_eq!(cx.mode(), cx.neovim_mode().await);
         cx.update_editor(|editor, cx| assert_eq!(cursor, editor.pixel_position_of_cursor(cx)));
         cx.simulate_shared_keystrokes("x").await;
         cx.shared_state().await.assert_eq(indoc! {"

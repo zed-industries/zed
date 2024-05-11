@@ -655,7 +655,6 @@ mod test {
         cx.set_shared_state("ˇa.c. abcd a.c. abcd").await;
         cx.simulate_shared_keystrokes("v 3 l *").await;
         cx.shared_state().await.assert_eq("a.c. abcd ˇa.c. abcd");
-        cx.assert_shared_mode(Mode::Normal).await;
     }
 
     #[gpui::test]

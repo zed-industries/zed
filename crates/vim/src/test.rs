@@ -841,7 +841,6 @@ async fn test_comma_w(cx: &mut gpui::TestAppContext) {
     cx.shared_state()
         .await
         .assert_eq("hellˇo hello\nhello hello");
-    cx.assert_shared_mode(Mode::Insert).await;
 }
 
 #[gpui::test]
