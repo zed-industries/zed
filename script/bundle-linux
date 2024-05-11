@@ -82,7 +82,7 @@ cp "assets/licenses.md" "${zed_dir}/licenses.md"
 target="linux-$(uname -m)"
 
 if [[ "$channel" == "nightly" ]]; then
-  archive="zed-${target}.tar.gz"
+  archive="zed-${commit}-${target}.tar.gz"
 elif  [[ "$channel" == "dev" ]]; then
   archive="zed-${commit}-${target}.tar.gz"
 else
