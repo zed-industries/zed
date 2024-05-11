@@ -305,12 +305,12 @@ impl<P: LinuxClient + 'static> Platform for P {
 
     fn reveal_path(&self, path: &Path) {
         if path.is_dir() {
-            open::that(path);
+            open::that_detached(path);
             return;
         }
         // If `path` is a file, the system may try to open it in a text editor
         let dir = path.parent().unwrap_or(Path::new(""));
-        open::that(dir);
+        open::that_detached(dir);
     }
 
     fn on_quit(&self, callback: Box<dyn FnMut()>) {
