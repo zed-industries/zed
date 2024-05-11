@@ -301,7 +301,7 @@ impl WindowsWindow {
                 ..Default::default()
             };
             GetWindowPlacement(raw_hwnd, &mut placement).log_err();
-            // the bounds may be not inside the display, or the display may have been removed
+            // the bounds may be not inside the display
             let bounds = if display.check_given_origin(params.bounds) {
                 params.bounds
             } else {

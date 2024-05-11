@@ -113,7 +113,8 @@ impl WindowsDisplay {
             x: center.x.0,
             y: center.y.0,
         };
-        !unsafe { MonitorFromPoint(center, MONITOR_DEFAULTTONULL) }.is_invalid()
+        let monitor = unsafe { MonitorFromPoint(center, MONITOR_DEFAULTTONULL) };
+        !monitor.is_invalid() && monitor == self.handle
     }
 
     pub fn displays() -> Vec<Rc<dyn PlatformDisplay>> {
