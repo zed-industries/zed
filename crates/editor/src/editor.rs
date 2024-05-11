@@ -8326,7 +8326,7 @@ impl Editor {
                         let range = editor.range_for_match(&range);
                         if Some(&target.buffer) == editor.buffer.read(cx).as_singleton().as_ref() {
                             editor.change_selections(Some(Autoscroll::focused()), cx, |s| {
-                                s.select_ranges([range]);
+                                s.select_ranges([range.start..range.start]);
                             });
                         } else {
                             cx.window_context().defer(move |cx| {
@@ -8348,7 +8348,7 @@ impl Editor {
                                         Some(Autoscroll::focused()),
                                         cx,
                                         |s| {
-                                            s.select_ranges([range]);
+                                            s.select_ranges([range.start..range.start]);
                                         },
                                     );
                                     pane.update(cx, |pane, _| pane.enable_history());
