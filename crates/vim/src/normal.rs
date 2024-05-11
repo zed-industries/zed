@@ -472,23 +472,25 @@ mod test {
         let mut cx = NeovimBackedTestContext::new(cx).await;
 
         cx.set_shared_state(indoc! {"
-                    aaˇaa
-                    😃😃"
+            aaˇaa
+            😃😃"
         })
         .await;
         cx.simulate_shared_keystrokes("j").await;
         cx.assert_shared_state(indoc! {"
-                    aaaa
-                    😃ˇ😃"
+            aaaa
+            😃ˇ😃"
         })
         .await;
 
-        for marked_position in cx.each_marked_position(indoc! {"
-                    ˇThe qˇuick broˇwn
-                    ˇfox jumps"
-        }) {
-            cx.assert_neovim_compatible(&marked_position, "j").await;
-        }
+        cx.assert_binding_matches_all(
+            "j",
+            indoc! {"
+                ˇThe qˇuick broˇwn
+                ˇfox jumps"
+            },
+        )
+        .await;
     }
 
     #[gpui::test]
@@ -938,21 +940,22 @@ mod test {
     #[gpui::test]
     async fn test_dd(cx: &mut gpui::TestAppContext) {
         let mut cx = NeovimBackedTestContext::new(cx).await;
-        cx.assert_neovim_compatible("ˇ", "d d").await;
-        cx.assert_neovim_compatible("The ˇquick", "d d").await;
-        for marked_text in cx.each_marked_position(indoc! {"
+        cx.assert_binding_matches("d d", "ˇ").await;
+        cx.assert_binding_matches("d d", "The ˇquick").await;
+        cx.assert_binding_matches_all(
+            "d d",
+            indoc! {"
             The qˇuick
             brown ˇfox
-            jumps ˇover"})
-        {
-            cx.assert_neovim_compatible(&marked_text, "d d").await;
-        }
-        cx.assert_neovim_compatible(
+            jumps ˇover"},
+        )
+        .await;
+        cx.assert_binding_matches(
+            "d d",
             indoc! {"
                 The quick
                 ˇ
                 brown fox"},
-            "d d",
         )
         .await;
     }

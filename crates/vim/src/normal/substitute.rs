@@ -162,14 +162,22 @@ mod test {
             the lazy dog"})
             .await;
 
-        let cases = cx.each_marked_position(indoc! {"
-            The ˇquick brown
-            fox jumps ˇover
-            the ˇlazy dog"});
-        for initial_state in cases {
-            cx.assert_neovim_compatible(&initial_state, "v w j c").await;
-            cx.assert_neovim_compatible(&initial_state, "v w k c").await;
-        }
+            cx.assert_binding_matches_all(
+                "v w j c",
+                indoc! {"
+                    The ˇquick brown
+                    fox jumps ˇover
+                    the ˇlazy dog"},
+            )
+            .await;
+            cx.assert_binding_matches_all(
+                "v w k c",
+                indoc! {"
+                    The ˇquick brown
+                    fox jumps ˇover
+                    the ˇlazy dog"},
+            )
+            .await;
     }
 
     #[gpui::test]
@@ -195,20 +203,26 @@ mod test {
             the laˇzy dog"},
         )
         .await;
-        cx.assert_binding_matches("shift-v j c", indoc! {"
+        cx.assert_binding_matches(
+            "shift-v j c",
+            indoc! {"
             The quˇick brown
             fox jumps over
-            the lazy dog"})
-            .await;
+            the lazy dog"},
+        )
+        .await;
         // Test pasting code copied on delete
         cx.simulate_shared_keystrokes("escape j p").await;
         cx.assert_state_matches().await;
 
-        cx.assert_binding_matches_all("shift-v j c", indoc! {"
+        cx.assert_binding_matches_all(
+            "shift-v j c",
+            indoc! {"
             The quick brown
             fox juˇmps over
-            the laˇzy dog"})
-            .await;
+            the laˇzy dog"},
+        )
+        .await;
     }
 
     #[gpui::test]

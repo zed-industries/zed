@@ -282,19 +282,6 @@ impl NeovimBackedTestContext {
         }
     }
 
-    pub fn each_marked_position(&self, marked_positions: &str) -> Vec<String> {
-        let (unmarked_text, cursor_offsets) = marked_text_offsets(marked_positions);
-        let mut ret = Vec::with_capacity(cursor_offsets.len());
-
-        for cursor_offset in cursor_offsets.iter() {
-            let mut marked_text = unmarked_text.clone();
-            marked_text.insert(*cursor_offset, 'ˇ');
-            ret.push(marked_text)
-        }
-
-        ret
-    }
-
     pub async fn assert_neovim_compatible(&mut self, marked_positions: &str, keystrokes: &str) {
         self.set_shared_state(&marked_positions).await;
         self.simulate_shared_keystrokes(keystrokes).await;

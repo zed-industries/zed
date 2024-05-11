@@ -790,18 +790,15 @@ mod test {
         cx.assert_state_matches().await;
         cx.assert_shared_clipboard("the lazy dog\n").await;
 
-        for marked_text in cx.each_marked_position(indoc! {"
-                        The quˇick brown
-                        fox jumps over
-                        the lazy dog"})
-        {
-            cx.set_shared_state(&marked_text).await;
-            cx.simulate_shared_keystrokes("shift-v j x").await;
-            cx.assert_state_matches().await;
-            // Test pasting code copied on delete
-            cx.simulate_shared_keystrokes("p").await;
-            cx.assert_state_matches().await;
-        }
+        cx.set_shared_state(indoc! {"
+                                The quˇick brown
+                                fox jumps over
+                                the lazy dog"}).await;
+        cx.simulate_shared_keystrokes("shift-v j x").await;
+        cx.assert_state_matches().await;
+        // Test pasting code copied on delete
+        cx.simulate_shared_keystrokes("p").await;
+        cx.assert_state_matches().await;
 
         cx.set_shared_state(indoc! {"
             The ˇlong line

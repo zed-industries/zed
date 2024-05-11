@@ -569,16 +569,16 @@ mod test {
         let mut cx = NeovimBackedTestContext::new(cx).await;
 
         for count in 1..=5 {
-            for marked_text in cx.each_marked_position(indoc! {"
+            cx.assert_binding_matches_all(
+                &format!("c {count} b"),
+                indoc! {"
                 ˇThe quˇickˇ browˇn
                 ˇ
                 ˇfox ˇjumpsˇ-ˇoˇver
                 ˇthe lazy dog
-                "})
-            {
-                cx.assert_neovim_compatible(&marked_text, &format!("c {count} b"))
-                    .await;
-            }
+                "},
+            )
+            .await
         }
     }
 
