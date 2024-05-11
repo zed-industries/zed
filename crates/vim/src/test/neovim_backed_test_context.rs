@@ -181,7 +181,6 @@ impl NeovimBackedTestContext {
 
     #[must_use]
     pub async fn simulate(&mut self, keystrokes: &str, initial_state: &str) -> SharedState {
-        dbg!(&initial_state);
         self.set_shared_state(initial_state).await;
         self.simulate_shared_keystrokes(keystrokes).await;
         self.shared_state().await
@@ -253,7 +252,7 @@ impl NeovimBackedTestContext {
         let (mode, marked_text) = self.neovim.state().await;
         SharedState {
             neovim: marked_text,
-            neovim_mode: mode.unwrap(),
+            neovim_mode: mode,
             editor: self.editor_state(),
             editor_mode: self.mode(),
             initial: self
