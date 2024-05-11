@@ -143,7 +143,7 @@ impl<C: Client<XEvent = xproto::KeyPressEvent>> ClientHandler<C> for XimHandler 
         // XIMHighlight: 4: normal text
         // XIMVisibleToForward: 64, XIMVisibleToBackward: 128, XIMVisibleCenter: 256: text align position
         // XIMPrimary, XIMHighlight, XIMSecondary, XIMTertiary are not specified,
-        // but interchangable as above
+        // but interchangeable as above
         // Currently there's no way to support these.
         let mark_range = self.xim_tx.send(XimCallbackEvent::XimPreeditEvent(
             self.window,
