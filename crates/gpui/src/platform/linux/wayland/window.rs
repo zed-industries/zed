@@ -417,6 +417,70 @@ impl WaylandWindowStatePtr {
         }
     }
 
+    pub fn handle_ime_commit(&self, text: String) {
+        if let Some(ref mut fun) = self.callbacks.borrow_mut().input {
+            if !fun(PlatformInput::KeyUp(crate::KeyUpEvent {
+                keystroke: crate::Keystroke::default(),
+            }))
+            .propagate
+            {
+                return;
+            }
+        }
+        let mut state = self.state.borrow_mut();
+        if let Some(mut input_handler) = state.input_handler.take() {
+            drop(state);
+            input_handler.replace_text_in_range(None, &text);
+            self.state.borrow_mut().input_handler = Some(input_handler);
+        }
+    }
+
+    pub fn handle_ime_preedit(&self, text: String) {
+        if let Some(ref mut fun) = self.callbacks.borrow_mut().input {
+            if !fun(PlatformInput::KeyUp(crate::KeyUpEvent {
+                keystroke: crate::Keystroke::default(),
+            }))
+            .propagate
+            {
+                return;
+            }
+        }
+        let mut state = self.state.borrow_mut();
+        if let Some(mut input_handler) = state.input_handler.take() {
+            drop(state);
+            input_handler.replace_and_mark_text_in_range(
+                None,
+                &text,
+                Some(0..text.chars().count()),
+            );
+            self.state.borrow_mut().input_handler = Some(input_handler);
+        }
+    }
+
+    pub fn handle_ime_delete(&self) {
+        let mut state = self.state.borrow_mut();
+        if let Some(mut input_handler) = state.input_handler.take() {
+            drop(state);
+            if let Some(marked) = input_handler.marked_text_range() {
+                input_handler.replace_text_in_range(Some(marked), "");
+            };
+            self.state.borrow_mut().input_handler = Some(input_handler);
+        }
+    }
+
+    pub fn get_ime_area(&self) -> Option<Bounds<Pixels>> {
+        let mut state = self.state.borrow_mut();
+        let mut bounds: Option<Bounds<Pixels>> = None;
+        if let Some(mut input_handler) = state.input_handler.take() {
+            drop(state);
+            if let Some(range) = input_handler.marked_text_range() {
+                bounds = input_handler.bounds_for_range(range);
+            }
+            self.state.borrow_mut().input_handler = Some(input_handler);
+        }
+        bounds
+    }
+
     pub fn set_size_and_scale(
         &self,
         width: Option<NonZeroU32>,

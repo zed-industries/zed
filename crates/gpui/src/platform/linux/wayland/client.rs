@@ -41,6 +41,12 @@ use wayland_protocols::wp::cursor_shape::v1::client::{
 use wayland_protocols::wp::fractional_scale::v1::client::{
     wp_fractional_scale_manager_v1, wp_fractional_scale_v1,
 };
+use wayland_protocols::wp::text_input::zv3::client::zwp_text_input_v3::{
+    ContentHint, ContentPurpose,
+};
+use wayland_protocols::wp::text_input::zv3::client::{
+    zwp_text_input_manager_v3, zwp_text_input_v3,
+};
 use wayland_protocols::wp::viewporter::client::{wp_viewport, wp_viewporter};
 use wayland_protocols::xdg::activation::v1::client::{xdg_activation_token_v1, xdg_activation_v1};
 use wayland_protocols::xdg::decoration::zv1::client::{
@@ -85,6 +91,7 @@ pub struct Globals {
         Option<wp_fractional_scale_manager_v1::WpFractionalScaleManagerV1>,
     pub decoration_manager: Option<zxdg_decoration_manager_v1::ZxdgDecorationManagerV1>,
     pub blur_manager: Option<org_kde_kwin_blur_manager::OrgKdeKwinBlurManager>,
+    pub text_input_manager: Option<zwp_text_input_manager_v3::ZwpTextInputManagerV3>,
     pub executor: ForegroundExecutor,
 }
 
@@ -118,6 +125,7 @@ impl Globals {
             fractional_scale_manager: globals.bind(&qh, 1..=1, ()).ok(),
             decoration_manager: globals.bind(&qh, 1..=1, ()).ok(),
             blur_manager: globals.bind(&qh, 1..=1, ()).ok(),
+            text_input_manager: globals.bind(&qh, 1..=1, ()).ok(),
             executor,
             qh,
         }
@@ -131,6 +139,8 @@ pub(crate) struct WaylandClientState {
     wl_pointer: Option<wl_pointer::WlPointer>,
     cursor_shape_device: Option<wp_cursor_shape_device_v1::WpCursorShapeDeviceV1>,
     data_device: Option<wl_data_device::WlDataDevice>,
+    text_input: Option<zwp_text_input_v3::ZwpTextInputV3>,
+    pre_edit_text: Option<String>,
     // Surface to Window mapping
     windows: HashMap<ObjectId, WaylandWindowStatePtr>,
     // Output to scale mapping
@@ -233,6 +243,9 @@ impl Drop for WaylandClient {
         if let Some(data_device) = &state.data_device {
             data_device.release();
         }
+        if let Some(text_input) = &state.text_input {
+            text_input.destroy();
+        }
     }
 }
 
@@ -321,6 +334,8 @@ impl WaylandClient {
             wl_pointer: None,
             cursor_shape_device: None,
             data_device,
+            text_input: None,
+            pre_edit_text: None,
             output_scales: outputs,
             windows: HashMap::default(),
             common,
@@ -564,6 +579,7 @@ delegate_noop!(WaylandClientStatePtr: ignore wl_region::WlRegion);
 delegate_noop!(WaylandClientStatePtr: ignore wp_fractional_scale_manager_v1::WpFractionalScaleManagerV1);
 delegate_noop!(WaylandClientStatePtr: ignore zxdg_decoration_manager_v1::ZxdgDecorationManagerV1);
 delegate_noop!(WaylandClientStatePtr: ignore org_kde_kwin_blur_manager::OrgKdeKwinBlurManager);
+delegate_noop!(WaylandClientStatePtr: ignore zwp_text_input_manager_v3::ZwpTextInputManagerV3);
 delegate_noop!(WaylandClientStatePtr: ignore org_kde_kwin_blur::OrgKdeKwinBlur);
 delegate_noop!(WaylandClientStatePtr: ignore wp_viewporter::WpViewporter);
 delegate_noop!(WaylandClientStatePtr: ignore wp_viewport::WpViewport);
@@ -740,12 +756,17 @@ impl Dispatch<wl_seat::WlSeat, ()> for WaylandClientStatePtr {
             capabilities: WEnum::Value(capabilities),
         } = event
         {
+            let client = state.get_client();
+            let mut state = client.borrow_mut();
             if capabilities.contains(wl_seat::Capability::Keyboard) {
                 seat.get_keyboard(qh, ());
+                state.text_input = state
+                    .globals
+                    .text_input_manager
+                    .as_ref()
+                    .map(|text_input_manager| text_input_manager.get_text_input(&seat, qh, ()));
             }
             if capabilities.contains(wl_seat::Capability::Pointer) {
-                let client = state.get_client();
-                let mut state = client.borrow_mut();
                 let pointer = seat.get_pointer(qh, ());
                 state.cursor_shape_device = state
                     .globals
@@ -913,6 +934,86 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for WaylandClientStatePtr {
                         focused_window.handle_input(input);
                     }
                     _ => {}
+                }
+            }
+            _ => {}
+        }
+    }
+}
+impl Dispatch<zwp_text_input_v3::ZwpTextInputV3, ()> for WaylandClientStatePtr {
+    fn event(
+        this: &mut Self,
+        text_input: &zwp_text_input_v3::ZwpTextInputV3,
+        event: <zwp_text_input_v3::ZwpTextInputV3 as Proxy>::Event,
+        data: &(),
+        conn: &Connection,
+        qhandle: &QueueHandle<Self>,
+    ) {
+        let client = this.get_client();
+        let mut state = client.borrow_mut();
+        match event {
+            zwp_text_input_v3::Event::Enter { surface } => {
+                text_input.enable();
+                text_input.set_content_type(ContentHint::None, ContentPurpose::Normal);
+
+                if let Some(window) = state.keyboard_focused_window.clone() {
+                    drop(state);
+                    if let Some(area) = window.get_ime_area() {
+                        text_input.set_cursor_rectangle(
+                            area.origin.x.0 as i32,
+                            area.origin.y.0 as i32,
+                            area.size.width.0 as i32,
+                            area.size.height.0 as i32,
+                        );
+                    }
+                }
+                text_input.commit();
+            }
+            zwp_text_input_v3::Event::Leave { surface } => {
+                text_input.disable();
+                text_input.commit();
+            }
+            zwp_text_input_v3::Event::CommitString { text } => {
+                let Some(window) = state.keyboard_focused_window.clone() else {
+                    return;
+                };
+
+                if let Some(commit_text) = text {
+                    drop(state);
+                    window.handle_ime_commit(commit_text);
+                }
+            }
+            zwp_text_input_v3::Event::PreeditString {
+                text,
+                cursor_begin,
+                cursor_end,
+            } => {
+                state.pre_edit_text = text;
+            }
+            zwp_text_input_v3::Event::Done { serial } => {
+                let last_serial = state.serial_tracker.get(SerialKind::InputMethod);
+                state.serial_tracker.update(SerialKind::InputMethod, serial);
+                let Some(window) = state.keyboard_focused_window.clone() else {
+                    return;
+                };
+
+                if let Some(text) = state.pre_edit_text.take() {
+                    drop(state);
+                    window.handle_ime_preedit(text);
+                    if let Some(area) = window.get_ime_area() {
+                        text_input.set_cursor_rectangle(
+                            area.origin.x.0 as i32,
+                            area.origin.y.0 as i32,
+                            area.size.width.0 as i32,
+                            area.size.height.0 as i32,
+                        );
+                        if last_serial == serial {
+                            text_input.commit();
+                        }
+                    }
+                } else {
+                    drop(state);
+                    window.handle_ime_delete();
                 }
             }
             _ => {}
