@@ -6,7 +6,7 @@
 {"Key":"c"}
 {"Key":"c"}
 {"Get":{"state":"ˇ\nbrown fox\njumps over\nthe lazy","mode":"Insert"}}
-{"Put":{"state":"The quick\n  broˇwn fox\njumˇps over\nthe lazy"}}
+{"Put":{"state":"The quick\n  broˇwn fox\njumps over\nthe lazy"}}
 {"Key":"c"}
 {"Key":"c"}
-{"Get":{"state":"The quick\n  ˇ\nˇ\nthe lazy","mode":"Insert"}}
+{"Get":{"state":"The quick\n  ˇ\njumps over\nthe lazy","mode":"Insert"}}

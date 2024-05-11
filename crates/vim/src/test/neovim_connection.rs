@@ -40,7 +40,7 @@ static NEOVIM_LOCK: ReentrantMutex<()> = ReentrantMutex::new(());
 pub enum NeovimData {
     Put { state: String },
     Key(String),
-    Get { state: String, mode: Option<Mode> },
+    Get { state: String, mode: Mode },
     ReadRegister { name: char, value: String },
     Exec { command: String },
     SetOption { value: String },
@@ -218,7 +218,7 @@ impl NeovimConnection {
         }
 
         if let Some(NeovimData::Get { mode, state }) = self.data.back() {
-            if *mode == Some(Mode::Normal) && *state == marked_text {
+            if *mode == Mode::Normal && *state == marked_text {
                 return;
             }
         }
@@ -230,7 +230,7 @@ impl NeovimConnection {
     #[cfg(not(feature = "neovim"))]
     pub async fn set_state(&mut self, marked_text: &str) {
         if let Some(NeovimData::Get { mode, state: text }) = self.data.front() {
-            if *mode == Some(Mode::Normal) && *text == marked_text {
+            if *mode == Mode::Normal && *text == marked_text {
                 return;
             }
             self.data.pop_front();
@@ -334,7 +334,7 @@ impl NeovimConnection {
     }
 
     #[cfg(feature = "neovim")]
-    pub async fn state(&mut self) -> (Option<Mode>, String) {
+    pub async fn state(&mut self) -> (Mode, String) {
         let nvim_buffer = self
             .nvim
             .get_current_buf()
@@ -369,12 +369,13 @@ impl NeovimConnection {
             .expect("Could not find mode value");
 
         let mode = match nvim_mode_text.as_ref() {
-            "i" => Some(Mode::Insert),
-            "n" => Some(Mode::Normal),
-            "v" => Some(Mode::Visual),
-            "V" => Some(Mode::VisualLine),
-            "\x16" => Some(Mode::VisualBlock),
-            _ => None,
+            "i" => Mode::Insert,
+            "n" => Mode::Normal,
+            "v" => Mode::Visual,
+            "V" => Mode::VisualLine,
+            "R" => Mode::Replace,
+            "\x16" => Mode::VisualBlock,
+            _ => panic!("unexpected vim mode: {nvim_mode_text}"),
         };
 
         let mut selections = Vec::new();
@@ -382,7 +383,7 @@ impl NeovimConnection {
         // Zed uses the index of the positions between the characters, so we need
         // to add one to the end in visual mode.
         match mode {
-            Some(Mode::VisualBlock) if selection_row != cursor_row => {
+            Mode::VisualBlock if selection_row != cursor_row => {
                 // in zed we fake a block selection by using multiple cursors (one per line)
                 // this code emulates that.
                 // to deal with casees where the selection is not perfectly rectangular we extract
@@ -415,7 +416,7 @@ impl NeovimConnection {
                     }
                 }
             }
-            Some(Mode::Visual) | Some(Mode::VisualLine) | Some(Mode::VisualBlock) => {
+            Mode::Visual | Mode::VisualLine | Mode::VisualBlock => {
                 if (selection_row, selection_col) > (cursor_row, cursor_col) {
                     let selection_line_length =
                         self.read_position("echo strlen(getline(line('v')))").await;
@@ -439,7 +440,7 @@ impl NeovimConnection {
                     Point::new(selection_row, selection_col)..Point::new(cursor_row, cursor_col),
                 )
             }
-            Some(Mode::Insert) | Some(Mode::Normal) | Some(Mode::Replace) | None => selections
+            Mode::Insert | Mode::Normal | Mode::Replace => selections
                 .push(Point::new(selection_row, selection_col)..Point::new(cursor_row, cursor_col)),
         }
 
@@ -457,20 +458,12 @@ impl NeovimConnection {
     }
 
     #[cfg(not(feature = "neovim"))]
-    pub async fn state(&mut self) -> (Option<Mode>, String) {
+    pub async fn state(&mut self) -> (Mode, String) {
         if let Some(NeovimData::Get { state: raw, mode }) = self.data.front() {
             (*mode, raw.to_string())
         } else {
             panic!("operation does not match recorded script. re-record with --features=neovim");
         }
-    }
-
-    pub async fn mode(&mut self) -> Option<Mode> {
-        self.state().await.0
-    }
-
-    pub async fn marked_text(&mut self) -> String {
-        self.state().await.1
     }
 
     fn test_data_path(test_case_id: &str) -> PathBuf {
