@@ -169,7 +169,7 @@ pub trait PlatformDisplay: Send + Sync + Debug {
     /// Get the bounds for this display
     fn bounds(&self) -> Bounds<DevicePixels>;
 
-    /// Get the default bounds for this display
+    /// Get the default bounds for this display to place a window
     fn default_bounds(&self) -> Bounds<DevicePixels> {
         let center = self.bounds().center();
         let offset = DEFAULT_WINDOW_SIZE / 2;

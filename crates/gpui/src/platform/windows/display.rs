@@ -107,7 +107,8 @@ impl WindowsDisplay {
         Some(WindowsDisplay::new_with_handle(monitor))
     }
 
-    pub fn check_given_origin(&self, bounds: Bounds<DevicePixels>) -> bool {
+    /// Check if the center point of given bounds is inside this monitor
+    pub fn check_given_bounds(&self, bounds: Bounds<DevicePixels>) -> bool {
         let center = bounds.center();
         let center = POINT {
             x: center.x.0,
@@ -150,6 +151,7 @@ impl WindowsDisplay {
         })
     }
 
+    /// Check if this monitor is still online
     pub fn is_connected(hmonitor: HMONITOR) -> bool {
         available_monitors().iter().contains(&hmonitor)
     }
