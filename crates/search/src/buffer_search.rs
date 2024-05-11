@@ -549,8 +549,11 @@ impl BufferSearchBar {
                 searchable_item.clear_matches(cx);
             }
         }
-        if let Some(active_editor) = self.active_searchable_item.as_ref() {
+        if let Some(active_editor) = self.active_searchable_item.as_mut() {
+            self.selection_search_enabled = false;
+            self.replace_enabled = false;
             active_editor.search_bar_visibility_changed(false, cx);
+            active_editor.toggle_filtered_search_ranges(false, cx);
             let handle = active_editor.focus_handle(cx);
             cx.focus(&handle);
         }
@@ -858,7 +861,7 @@ impl BufferSearchBar {
     }
 
     fn toggle_selection(&mut self, _: &ToggleSelection, cx: &mut ViewContext<Self>) {
-        if let Some(active_item) = &mut self.active_searchable_item {
+        if let Some(active_item) = self.active_searchable_item.as_mut() {
             self.selection_search_enabled = !self.selection_search_enabled;
             active_item.toggle_filtered_search_ranges(self.selection_search_enabled, cx);
             let _ = self.update_matches(cx);
