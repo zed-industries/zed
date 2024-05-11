@@ -136,6 +136,8 @@ pub struct EditorElement {
 type DisplayRowDelta = u32;
 
 impl EditorElement {
+    pub(crate) const SCROLLBAR_WIDTH: Pixels = px(13.);
+
     pub fn new(editor: &View<Editor>, style: EditorStyle) -> Self {
         Self {
             editor: editor.clone(),
@@ -3763,7 +3765,13 @@ impl Element for EditorElement {
                     cx,
                 );
                 let text_width = bounds.size.width - gutter_dimensions.width;
-                let overscroll = size(em_width, px(0.));
+
+                let right_margin = if snapshot.mode == EditorMode::Full {
+                    EditorElement::SCROLLBAR_WIDTH
+                } else {
+                    px(0.)
+                };
+                let overscroll = size(em_width + right_margin, px(0.));
 
                 snapshot = self.editor.update(cx, |editor, cx| {
                     editor.last_bounds = Some(bounds);
