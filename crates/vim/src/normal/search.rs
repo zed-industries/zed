@@ -654,7 +654,7 @@ mod test {
 
         cx.set_shared_state("ˇa.c. abcd a.c. abcd").await;
         cx.simulate_shared_keystrokes("v 3 l *").await;
-        cx.assert_shared_state("a.c. abcd ˇa.c. abcd").await;
+        cx.shared_state().await.assert_eq("a.c. abcd ˇa.c. abcd");
         cx.assert_shared_mode(Mode::Normal).await;
     }
 
@@ -665,7 +665,7 @@ mod test {
         cx.set_shared_state("ˇa.c. abcd a.c. abcd").await;
         cx.simulate_shared_keystrokes("d / c d").await;
         cx.simulate_shared_keystrokes("enter").await;
-        cx.assert_shared_state("ˇcd a.c. abcd").await;
+        cx.shared_state().await.assert_eq("ˇcd a.c. abcd");
     }
 
     #[gpui::test]
@@ -675,22 +675,22 @@ mod test {
         cx.set_shared_state("ˇa.c. abcd a.c. abcd").await;
         cx.simulate_shared_keystrokes("v / c d").await;
         cx.simulate_shared_keystrokes("enter").await;
-        cx.assert_shared_state("«a.c. abcˇ»d a.c. abcd").await;
+        cx.shared_state().await.assert_eq("«a.c. abcˇ»d a.c. abcd");
 
         cx.set_shared_state("a a aˇ a a a").await;
         cx.simulate_shared_keystrokes("v / a").await;
         cx.simulate_shared_keystrokes("enter").await;
-        cx.assert_shared_state("a a a« aˇ» a a").await;
+        cx.shared_state().await.assert_eq("a a a« aˇ» a a");
         cx.simulate_shared_keystrokes("/ enter").await;
-        cx.assert_shared_state("a a a« a aˇ» a").await;
+        cx.shared_state().await.assert_eq("a a a« a aˇ» a");
         cx.simulate_shared_keystrokes("? enter").await;
-        cx.assert_shared_state("a a a« aˇ» a a").await;
+        cx.shared_state().await.assert_eq("a a a« aˇ» a a");
         cx.simulate_shared_keystrokes("? enter").await;
-        cx.assert_shared_state("a a «ˇa »a a a").await;
+        cx.shared_state().await.assert_eq("a a «ˇa »a a a");
         cx.simulate_shared_keystrokes("/ enter").await;
-        cx.assert_shared_state("a a a« aˇ» a a").await;
+        cx.shared_state().await.assert_eq("a a a« aˇ» a a");
         cx.simulate_shared_keystrokes("/ enter").await;
-        cx.assert_shared_state("a a a« a aˇ» a").await;
+        cx.shared_state().await.assert_eq("a a a« a aˇ» a");
     }
 
     #[gpui::test]
@@ -706,13 +706,12 @@ mod test {
         .await;
         cx.simulate_shared_keystrokes("ctrl-v j / f").await;
         cx.simulate_shared_keystrokes("enter").await;
-        cx.assert_shared_state(indoc! {
+        cx.shared_state().await.assert_eq(indoc! {
             "«one twoˇ»
              «three fˇ»our
              five six
              "
-        })
-        .await;
+        });
     }
 
     // cargo test -p vim --features neovim test_replace_with_range
@@ -731,10 +730,9 @@ mod test {
              "
         })
         .await;
-        cx.simulate_shared_keystrokes(": 2 , 5 s / a / b")
-            .await;
+        cx.simulate_shared_keystrokes(": 2 , 5 s / a / b").await;
         cx.simulate_shared_keystrokes("enter").await;
-        cx.assert_shared_state(indoc! {
+        cx.shared_state().await.assert_eq(indoc! {
             "a
             b
             b
@@ -743,7 +741,6 @@ mod test {
             a
             a
              "
-        })
-        .await;
+        });
     }
 }

@@ -62,30 +62,30 @@ mod test {
         cx.set_shared_state("ˇhello\n").await;
         cx.simulate_shared_keystrokes("5 i - escape").await;
         cx.run_until_parked();
-        cx.assert_shared_state("----ˇ-hello\n").await;
+        cx.shared_state().await.assert_eq("----ˇ-hello\n");
 
         cx.set_shared_state("ˇhello\n").await;
         cx.simulate_shared_keystrokes("5 a - escape").await;
         cx.run_until_parked();
-        cx.assert_shared_state("h----ˇ-ello\n").await;
+        cx.shared_state().await.assert_eq("h----ˇ-ello\n");
 
         cx.simulate_shared_keystrokes("4 shift-i - escape").await;
         cx.run_until_parked();
-        cx.assert_shared_state("---ˇ-h-----ello\n").await;
+        cx.shared_state().await.assert_eq("---ˇ-h-----ello\n");
 
         cx.simulate_shared_keystrokes("3 shift-a - escape").await;
         cx.run_until_parked();
-        cx.assert_shared_state("----h-----ello--ˇ-\n").await;
+        cx.shared_state().await.assert_eq("----h-----ello--ˇ-\n");
 
         cx.set_shared_state("ˇhello\n").await;
         cx.simulate_shared_keystrokes("3 o o i escape").await;
         cx.run_until_parked();
-        cx.assert_shared_state("hello\noi\noi\noˇi\n").await;
+        cx.shared_state().await.assert_eq("hello\noi\noi\noˇi\n");
 
         cx.set_shared_state("ˇhello\n").await;
         cx.simulate_shared_keystrokes("3 shift-o o i escape").await;
         cx.run_until_parked();
-        cx.assert_shared_state("oi\noi\noˇi\nhello\n").await;
+        cx.shared_state().await.assert_eq("oi\noi\noˇi\nhello\n");
     }
 
     #[gpui::test]
@@ -95,23 +95,27 @@ mod test {
         cx.set_shared_state("ˇhello\n").await;
         cx.simulate_shared_keystrokes("3 i - escape").await;
         cx.run_until_parked();
-        cx.assert_shared_state("--ˇ-hello\n").await;
+        cx.shared_state().await.assert_eq("--ˇ-hello\n");
         cx.simulate_shared_keystrokes(".").await;
         cx.run_until_parked();
-        cx.assert_shared_state("----ˇ--hello\n").await;
+        cx.shared_state().await.assert_eq("----ˇ--hello\n");
         cx.simulate_shared_keystrokes("2 .").await;
         cx.run_until_parked();
-        cx.assert_shared_state("-----ˇ---hello\n").await;
+        cx.shared_state().await.assert_eq("-----ˇ---hello\n");
 
         cx.set_shared_state("ˇhello\n").await;
         cx.simulate_shared_keystrokes("2 o k k escape").await;
         cx.run_until_parked();
-        cx.assert_shared_state("hello\nkk\nkˇk\n").await;
+        cx.shared_state().await.assert_eq("hello\nkk\nkˇk\n");
         cx.simulate_shared_keystrokes(".").await;
         cx.run_until_parked();
-        cx.assert_shared_state("hello\nkk\nkk\nkk\nkˇk\n").await;
+        cx.shared_state()
+            .await
+            .assert_eq("hello\nkk\nkk\nkk\nkˇk\n");
         cx.simulate_shared_keystrokes("1 .").await;
         cx.run_until_parked();
-        cx.assert_shared_state("hello\nkk\nkk\nkk\nkk\nkˇk\n").await;
+        cx.shared_state()
+            .await
+            .assert_eq("hello\nkk\nkk\nkk\nkk\nkˇk\n");
     }
 }

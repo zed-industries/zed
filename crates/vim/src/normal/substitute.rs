@@ -149,7 +149,7 @@ mod test {
 
         cx.set_shared_state("The quick ˇbrown").await;
         cx.simulate_shared_keystrokes("v w c").await;
-        cx.assert_shared_state("The quick ˇ").await;
+        cx.shared_state().await.assert_eq("The quick ˇ");
 
         cx.set_shared_state(indoc! {"
             The ˇquick brown
@@ -157,27 +157,26 @@ mod test {
             the lazy dog"})
             .await;
         cx.simulate_shared_keystrokes("v w j c").await;
-        cx.assert_shared_state(indoc! {"
+        cx.shared_state().await.assert_eq(indoc! {"
             The ˇver
-            the lazy dog"})
-            .await;
+            the lazy dog"});
 
-            cx.assert_binding_matches_all(
-                "v w j c",
-                indoc! {"
+        cx.assert_binding_matches_all(
+            "v w j c",
+            indoc! {"
                     The ˇquick brown
                     fox jumps ˇover
                     the ˇlazy dog"},
-            )
-            .await;
-            cx.assert_binding_matches_all(
-                "v w k c",
-                indoc! {"
+        )
+        .await;
+        cx.assert_binding_matches_all(
+            "v w k c",
+            indoc! {"
                     The ˇquick brown
                     fox jumps ˇover
                     the ˇlazy dog"},
-            )
-            .await;
+        )
+        .await;
     }
 
     #[gpui::test]
@@ -193,7 +192,7 @@ mod test {
         .await;
         // Test pasting code copied on change
         cx.simulate_shared_keystrokes("escape j p").await;
-        cx.assert_state_matches().await;
+        cx.shared_state().await.assert_matches();
 
         cx.assert_binding_matches_all(
             "shift-v c",
@@ -213,7 +212,7 @@ mod test {
         .await;
         // Test pasting code copied on delete
         cx.simulate_shared_keystrokes("escape j p").await;
-        cx.assert_state_matches().await;
+        cx.shared_state().await.assert_matches();
 
         cx.assert_binding_matches_all(
             "shift-v j c",
@@ -238,50 +237,45 @@ mod test {
         // normal mode
         cx.set_shared_state(initial_state).await;
         cx.simulate_shared_keystrokes("shift-s o").await;
-        cx.assert_shared_state(indoc! {"
+        cx.shared_state().await.assert_eq(indoc! {"
             The quick brown
             oˇ
             the lazy dog
-            "})
-            .await;
+            "});
 
         // visual mode
         cx.set_shared_state(initial_state).await;
         cx.simulate_shared_keystrokes("v k shift-s o").await;
-        cx.assert_shared_state(indoc! {"
+        cx.shared_state().await.assert_eq(indoc! {"
             oˇ
             the lazy dog
-            "})
-            .await;
+            "});
 
         // visual block mode
         cx.set_shared_state(initial_state).await;
         cx.simulate_shared_keystrokes("ctrl-v j shift-s o").await;
-        cx.assert_shared_state(indoc! {"
+        cx.shared_state().await.assert_eq(indoc! {"
             The quick brown
             oˇ
-            "})
-            .await;
+            "});
 
         // visual mode including newline
         cx.set_shared_state(initial_state).await;
         cx.simulate_shared_keystrokes("v $ shift-s o").await;
-        cx.assert_shared_state(indoc! {"
+        cx.shared_state().await.assert_eq(indoc! {"
             The quick brown
             oˇ
             the lazy dog
-            "})
-            .await;
+            "});
 
         // indentation
         cx.set_neovim_option("shiftwidth=4").await;
         cx.set_shared_state(initial_state).await;
         cx.simulate_shared_keystrokes("> > shift-s o").await;
-        cx.assert_shared_state(indoc! {"
+        cx.shared_state().await.assert_eq(indoc! {"
             The quick brown
                 oˇ
             the lazy dog
-            "})
-            .await;
+            "});
     }
 }

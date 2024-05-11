@@ -408,11 +408,10 @@ mod test {
 
         // hack: our cursor positionining after a join command is wrong
         cx.simulate_shared_keystrokes("^").await;
-        cx.assert_shared_state(indoc! {
+        cx.shared_state().await.assert_eq(indoc! {
             "ˇa b
             c"
-        })
-        .await;
+        });
     }
 
     #[gpui::test]
@@ -425,11 +424,10 @@ mod test {
             c"})
             .await;
         cx.simulate_shared_keystrokes(": 3 enter").await;
-        cx.assert_shared_state(indoc! {"
+        cx.shared_state().await.assert_eq(indoc! {"
             a
             b
-            ˇc"})
-            .await;
+            ˇc"});
     }
 
     #[gpui::test]
@@ -441,20 +439,17 @@ mod test {
             b
             c"})
             .await;
-        cx.simulate_shared_keystrokes(": % s / b / d enter")
-            .await;
-        cx.assert_shared_state(indoc! {"
+        cx.simulate_shared_keystrokes(": % s / b / d enter").await;
+        cx.shared_state().await.assert_eq(indoc! {"
             a
             ˇd
-            c"})
-            .await;
+            c"});
         cx.simulate_shared_keystrokes(": % s : . : \\ 0 \\ 0 enter")
             .await;
-        cx.assert_shared_state(indoc! {"
+        cx.shared_state().await.assert_eq(indoc! {"
             aa
             dd
-            ˇcc"})
-            .await;
+            ˇcc"});
     }
 
     #[gpui::test]
@@ -468,19 +463,17 @@ mod test {
                 c"})
             .await;
         cx.simulate_shared_keystrokes(": / b enter").await;
-        cx.assert_shared_state(indoc! {"
+        cx.shared_state().await.assert_eq(indoc! {"
                 a
                 ˇb
                 a
-                c"})
-            .await;
+                c"});
         cx.simulate_shared_keystrokes(": ? a enter").await;
-        cx.assert_shared_state(indoc! {"
+        cx.shared_state().await.assert_eq(indoc! {"
                 ˇa
                 b
                 a
-                c"})
-            .await;
+                c"});
     }
 
     #[gpui::test]

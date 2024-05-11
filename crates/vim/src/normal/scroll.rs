@@ -235,17 +235,17 @@ mod test {
         // skip over the scrolloff at the top
         // test ctrl-d
         cx.simulate_shared_keystrokes("4 j ctrl-d").await;
-        cx.assert_state_matches().await;
+        cx.shared_state().await.assert_matches();
         cx.simulate_shared_keystrokes("ctrl-d").await;
-        cx.assert_state_matches().await;
+        cx.shared_state().await.assert_matches();
         cx.simulate_shared_keystrokes("g g ctrl-d").await;
-        cx.assert_state_matches().await;
+        cx.shared_state().await.assert_matches();
 
         // test ctrl-u
         cx.simulate_shared_keystrokes("ctrl-u").await;
-        cx.assert_state_matches().await;
+        cx.shared_state().await.assert_matches();
         cx.simulate_shared_keystrokes("ctrl-d ctrl-d 4 j ctrl-u ctrl-u")
             .await;
-        cx.assert_state_matches().await;
+        cx.shared_state().await.assert_matches();
     }
 }

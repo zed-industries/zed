@@ -1018,9 +1018,13 @@ mod test {
         */
         cx.set_shared_state("The quick brown\nˇ\nfox").await;
         cx.simulate_shared_keystrokes("v").await;
-        cx.assert_shared_state("The quick brown\n«\nˇ»fox").await;
+        cx.shared_state()
+            .await
+            .assert_eq("The quick brown\n«\nˇ»fox");
         cx.simulate_shared_keystrokes("i w").await;
-        cx.assert_shared_state("The quick brown\n«\nˇ»fox").await;
+        cx.shared_state()
+            .await
+            .assert_eq("The quick brown\n«\nˇ»fox");
 
         cx.assert_binding_matches_all("v i w", WORD_LOCATIONS).await;
         cx.assert_binding_matches_all("v i shift-w", WORD_LOCATIONS)
@@ -1182,40 +1186,36 @@ mod test {
         })
         .await;
         cx.simulate_shared_keystrokes("v i \"").await;
-        cx.assert_shared_state(indoc! {
+        cx.shared_state().await.assert_eq(indoc! {
             "hello \"«worldˇ»\"!"
-        })
-        .await;
+        });
 
         cx.set_shared_state(indoc! {
             "hello \"wˇorld\"!"
         })
         .await;
         cx.simulate_shared_keystrokes("v i \"").await;
-        cx.assert_shared_state(indoc! {
+        cx.shared_state().await.assert_eq(indoc! {
             "hello \"«worldˇ»\"!"
-        })
-        .await;
+        });
 
         cx.set_shared_state(indoc! {
             "hello \"wˇorld\"!"
         })
         .await;
         cx.simulate_shared_keystrokes("v a \"").await;
-        cx.assert_shared_state(indoc! {
+        cx.shared_state().await.assert_eq(indoc! {
             "hello« \"world\"ˇ»!"
-        })
-        .await;
+        });
 
         cx.set_shared_state(indoc! {
             "hello \"wˇorld\" !"
         })
         .await;
         cx.simulate_shared_keystrokes("v a \"").await;
-        cx.assert_shared_state(indoc! {
+        cx.shared_state().await.assert_eq(indoc! {
             "hello «\"world\" ˇ»!"
-        })
-        .await;
+        });
 
         cx.set_shared_state(indoc! {
             "hello \"wˇorld\"•
@@ -1223,11 +1223,10 @@ mod test {
         })
         .await;
         cx.simulate_shared_keystrokes("v a \"").await;
-        cx.assert_shared_state(indoc! {
+        cx.shared_state().await.assert_eq(indoc! {
             "hello «\"world\" ˇ»
             goodbye"
-        })
-        .await;
+        });
     }
 
     #[gpui::test]
@@ -1244,14 +1243,13 @@ mod test {
         })
         .await;
         cx.simulate_shared_keystrokes("v i {").await;
-        cx.assert_shared_state(indoc! {"
+        cx.shared_state().await.assert_eq(indoc! {"
             func empty(a string) bool {
             «   if a == \"\" {
                   return true
                }
                return false
-            ˇ»}"})
-            .await;
+            ˇ»}"});
         cx.set_shared_state(indoc! {
             "func empty(a string) bool {
                  if a == \"\" {
@@ -1262,14 +1260,13 @@ mod test {
         })
         .await;
         cx.simulate_shared_keystrokes("v i {").await;
-        cx.assert_shared_state(indoc! {"
+        cx.shared_state().await.assert_eq(indoc! {"
             func empty(a string) bool {
                  if a == \"\" {
             «         return true
             ˇ»     }
                  return false
-            }"})
-            .await;
+            }"});
 
         cx.set_shared_state(indoc! {
             "func empty(a string) bool {
@@ -1281,14 +1278,13 @@ mod test {
         })
         .await;
         cx.simulate_shared_keystrokes("v i {").await;
-        cx.assert_shared_state(indoc! {"
+        cx.shared_state().await.assert_eq(indoc! {"
             func empty(a string) bool {
                  if a == \"\" {
             «         return true
             ˇ»     }
                  return false
-            }"})
-            .await;
+            }"});
     }
 
     #[gpui::test]
@@ -1301,20 +1297,18 @@ mod test {
         })
         .await;
         cx.simulate_shared_keystrokes("v i \"").await;
-        cx.assert_shared_state(indoc! {
+        cx.shared_state().await.assert_eq(indoc! {
             "h\"«e\\\"llo \\\"worldˇ»\"!"
-        })
-        .await;
+        });
 
         cx.set_shared_state(indoc! {
             "hello \"teˇst \\\"inside\\\" world\""
         })
         .await;
         cx.simulate_shared_keystrokes("v i \"").await;
-        cx.assert_shared_state(indoc! {
+        cx.shared_state().await.assert_eq(indoc! {
             "hello \"«test \\\"inside\\\" worldˇ»\""
-        })
-        .await;
+        });
     }
 
     #[gpui::test]

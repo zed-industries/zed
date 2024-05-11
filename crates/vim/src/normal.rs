@@ -477,11 +477,10 @@ mod test {
         })
         .await;
         cx.simulate_shared_keystrokes("j").await;
-        cx.assert_shared_state(indoc! {"
+        cx.shared_state().await.assert_eq(indoc! {"
             aaaa
             😃ˇ😃"
-        })
-        .await;
+        });
 
         cx.assert_binding_matches_all(
             "j",
@@ -1191,15 +1190,15 @@ mod test {
         // goes to current line end
         cx.set_shared_state(indoc! {"ˇaa\nbb\ncc"}).await;
         cx.simulate_shared_keystrokes("$").await;
-        cx.assert_shared_state(indoc! {"aˇa\nbb\ncc"}).await;
+        cx.shared_state().await.assert_eq("aˇa\nbb\ncc");
 
         // goes to next line end
         cx.simulate_shared_keystrokes("2 $").await;
-        cx.assert_shared_state("aa\nbˇb\ncc").await;
+        cx.shared_state().await.assert_eq("aa\nbˇb\ncc");
 
         // try to exceed the final line.
         cx.simulate_shared_keystrokes("4 $").await;
-        cx.assert_shared_state("aa\nbb\ncˇc").await;
+        cx.shared_state().await.assert_eq("aa\nbb\ncˇc");
     }
 
     #[gpui::test]

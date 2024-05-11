@@ -165,11 +165,10 @@ mod test {
             the lazy dog."})
             .await;
         cx.simulate_shared_keystrokes("shift-r O n e").await;
-        cx.assert_shared_state(indoc! {"
+        cx.shared_state().await.assert_eq(indoc! {"
             Oneˇ quick brown
             fox jumps over
-            the lazy dog."})
-            .await;
+            the lazy dog."});
         assert_eq!(Mode::Replace, cx.neovim_mode().await);
 
         // test replace with line ending
@@ -179,11 +178,10 @@ mod test {
             the lazy dog."})
             .await;
         cx.simulate_shared_keystrokes("shift-r O n e").await;
-        cx.assert_shared_state(indoc! {"
+        cx.shared_state().await.assert_eq(indoc! {"
             The quick browOneˇ
             fox jumps over
-            the lazy dog."})
-            .await;
+            the lazy dog."});
 
         // test replace with blank line
         cx.set_shared_state(indoc! {"
@@ -193,12 +191,11 @@ mod test {
         the lazy dog."})
             .await;
         cx.simulate_shared_keystrokes("shift-r O n e").await;
-        cx.assert_shared_state(indoc! {"
+        cx.shared_state().await.assert_eq(indoc! {"
             The quick brown
             Oneˇ
             fox jumps over
-            the lazy dog."})
-            .await;
+            the lazy dog."});
 
         // test replace with multi cursor
         cx.set_shared_state(indoc! {"
@@ -207,11 +204,10 @@ mod test {
             the lazy ˇdog."})
             .await;
         cx.simulate_shared_keystrokes("shift-r O n e").await;
-        cx.assert_shared_state(indoc! {"
+        cx.shared_state().await.assert_eq(indoc! {"
             Oneˇ quick brown
             fox jumps over
-            the lazy Oneˇ."})
-            .await;
+            the lazy Oneˇ."});
 
         // test replace with newline
         cx.set_shared_state(indoc! {"
@@ -220,12 +216,11 @@ mod test {
             the lazy dog."})
             .await;
         cx.simulate_shared_keystrokes("shift-r enter O n e").await;
-        cx.assert_shared_state(indoc! {"
+        cx.shared_state().await.assert_eq(indoc! {"
             The qu
             Oneˇ brown
             fox jumps over
-            the lazy dog."})
-            .await;
+            the lazy dog."});
 
         // test replace with multi cursor and newline
         cx.set_shared_state(indoc! {"
@@ -234,19 +229,17 @@ mod test {
             the lazy ˇdog."})
             .await;
         cx.simulate_shared_keystrokes("shift-r O n e").await;
-        cx.assert_shared_state(indoc! {"
+        cx.shared_state().await.assert_eq(indoc! {"
             Oneˇ quick brown
             fox jumps over
-            the lazy Oneˇ."})
-            .await;
+            the lazy Oneˇ."});
         cx.simulate_shared_keystrokes("enter T w o").await;
-        cx.assert_shared_state(indoc! {"
+        cx.shared_state().await.assert_eq(indoc! {"
             One
             Twoˇck brown
             fox jumps over
             the lazy One
-            Twoˇ"})
-            .await;
+            Twoˇ"});
     }
 
     #[gpui::test]

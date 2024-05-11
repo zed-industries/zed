@@ -112,30 +112,30 @@ mod test {
         let mut cx = NeovimBackedTestContext::new(cx).await;
         cx.set_shared_state("ˇabC\n").await;
         cx.simulate_shared_keystrokes("~").await;
-        cx.assert_shared_state("AˇbC\n").await;
+        cx.shared_state().await.assert_eq("AˇbC\n");
         cx.simulate_shared_keystrokes("2 ~").await;
-        cx.assert_shared_state("ABˇc\n").await;
+        cx.shared_state().await.assert_eq("ABˇc\n");
 
         // works in visual mode
         cx.set_shared_state("a😀C«dÉ1*fˇ»\n").await;
         cx.simulate_shared_keystrokes("~").await;
-        cx.assert_shared_state("a😀CˇDé1*F\n").await;
+        cx.shared_state().await.assert_eq("a😀CˇDé1*F\n");
 
         // works with multibyte characters
         cx.simulate_shared_keystrokes("~").await;
         cx.set_shared_state("aˇC😀é1*F\n").await;
         cx.simulate_shared_keystrokes("4 ~").await;
-        cx.assert_shared_state("ac😀É1ˇ*F\n").await;
+        cx.shared_state().await.assert_eq("ac😀É1ˇ*F\n");
 
         // works with line selections
         cx.set_shared_state("abˇC\n").await;
         cx.simulate_shared_keystrokes("shift-v ~").await;
-        cx.assert_shared_state("ˇABc\n").await;
+        cx.shared_state().await.assert_eq("ˇABc\n");
 
         // works in visual block mode
         cx.set_shared_state("ˇaa\nbb\ncc").await;
         cx.simulate_shared_keystrokes("ctrl-v j ~").await;
-        cx.assert_shared_state("ˇAa\nBb\ncc").await;
+        cx.shared_state().await.assert_eq("ˇAa\nBb\ncc");
 
         // works with multiple cursors (zed only)
         cx.set_state("aˇßcdˇe\n", Mode::Normal);
@@ -149,17 +149,17 @@ mod test {
         // works in visual mode
         cx.set_shared_state("a😀C«dÉ1*fˇ»\n").await;
         cx.simulate_shared_keystrokes("U").await;
-        cx.assert_shared_state("a😀CˇDÉ1*F\n").await;
+        cx.shared_state().await.assert_eq("a😀CˇDÉ1*F\n");
 
         // works with line selections
         cx.set_shared_state("abˇC\n").await;
         cx.simulate_shared_keystrokes("shift-v U").await;
-        cx.assert_shared_state("ˇABC\n").await;
+        cx.shared_state().await.assert_eq("ˇABC\n");
 
         // works in visual block mode
         cx.set_shared_state("ˇaa\nbb\ncc").await;
         cx.simulate_shared_keystrokes("ctrl-v j U").await;
-        cx.assert_shared_state("ˇAa\nBb\ncc").await;
+        cx.shared_state().await.assert_eq("ˇAa\nBb\ncc");
     }
 
     #[gpui::test]
@@ -168,16 +168,16 @@ mod test {
         // works in visual mode
         cx.set_shared_state("A😀c«DÉ1*fˇ»\n").await;
         cx.simulate_shared_keystrokes("u").await;
-        cx.assert_shared_state("A😀cˇdé1*f\n").await;
+        cx.shared_state().await.assert_eq("A😀cˇdé1*f\n");
 
         // works with line selections
         cx.set_shared_state("ABˇc\n").await;
         cx.simulate_shared_keystrokes("shift-v u").await;
-        cx.assert_shared_state("ˇabc\n").await;
+        cx.shared_state().await.assert_eq("ˇabc\n");
 
         // works in visual block mode
         cx.set_shared_state("ˇAa\nBb\nCc").await;
         cx.simulate_shared_keystrokes("ctrl-v j u").await;
-        cx.assert_shared_state("ˇaa\nbb\nCc").await;
+        cx.shared_state().await.assert_eq("ˇaa\nbb\nCc");
     }
 }

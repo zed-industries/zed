@@ -524,9 +524,8 @@ mod test {
                 the lazy dog"})
             .await;
         cx.simulate_shared_keystrokes("d 2 d").await;
-        cx.assert_shared_state(indoc! {"
-        the ˇlazy dog"})
-            .await;
+        cx.shared_state().await.assert_eq(indoc! {"
+        the ˇlazy dog"});
 
         cx.set_shared_state(indoc! {"
                 The ˇquick brown
@@ -534,9 +533,8 @@ mod test {
                 the lazy dog"})
             .await;
         cx.simulate_shared_keystrokes("2 d d").await;
-        cx.assert_shared_state(indoc! {"
-        the ˇlazy dog"})
-            .await;
+        cx.shared_state().await.assert_eq(indoc! {"
+        the ˇlazy dog"});
 
         cx.set_shared_state(indoc! {"
                 The ˇquick brown
@@ -546,9 +544,8 @@ mod test {
                 the lazy dog"})
             .await;
         cx.simulate_shared_keystrokes("2 d 2 d").await;
-        cx.assert_shared_state(indoc! {"
-        the ˇlazy dog"})
-            .await;
+        cx.shared_state().await.assert_eq(indoc! {"
+        the ˇlazy dog"});
     }
 
     #[gpui::test]

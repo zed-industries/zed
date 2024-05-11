@@ -18,8 +18,119 @@ pub struct NeovimBackedTestContext {
 
     last_set_state: Option<String>,
     recent_keystrokes: Vec<String>,
+}
 
-    is_dirty: bool,
+pub struct SharedState {
+    neovim: String,
+    editor: String,
+    initial: String,
+    neovim_mode: Mode,
+    editor_mode: Mode,
+    recent_keystrokes: String,
+}
+
+impl SharedState {
+    #[track_caller]
+    pub fn assert_matches(&self) {
+        if self.neovim != self.editor || self.neovim_mode != self.editor_mode {
+            panic!(
+                indoc! {"Test failed (zed does not match nvim behaviour)
+                    # initial state:
+                    {}
+                    # keystrokes:
+                    {}
+                    # neovim ({}):
+                    {}
+                    # zed ({}):
+                    {}"},
+                self.initial,
+                self.recent_keystrokes,
+                self.neovim_mode,
+                self.neovim,
+                self.editor_mode,
+                self.editor,
+            )
+        }
+    }
+
+    #[track_caller]
+    pub fn assert_eq(&mut self, marked_text: &str) {
+        let marked_text = marked_text.replace('•', " ");
+        if self.neovim == marked_text
+            && self.neovim == self.editor
+            && self.neovim_mode == self.editor_mode
+        {
+            return;
+        }
+
+        let message = if self.neovim != marked_text {
+            "Test is incorrect (currently expected != neovim_state)"
+        } else {
+            "Editor does not match nvim behaviour"
+        };
+        panic!(
+            indoc! {"{}
+                # initial state:
+                {}
+                # keystrokes:
+                {}
+                # currently expected:
+                {}
+                # neovim ({}):
+                {}
+                # zed ({}):
+                {}"},
+            message,
+            self.initial,
+            self.recent_keystrokes,
+            marked_text.replace(" \n", "•\n"),
+            self.neovim_mode,
+            self.neovim.replace(" \n", "•\n"),
+            self.editor_mode,
+            self.editor.replace(" \n", "•\n"),
+        )
+    }
+}
+
+pub struct SharedClipboard {
+    neovim: String,
+    editor: String,
+    state: SharedState,
+}
+
+impl SharedClipboard {
+    #[track_caller]
+    pub fn assert_eq(&self, expected: &str) {
+        if expected == self.neovim && self.neovim == self.editor {
+            return;
+        }
+
+        let message = if expected == self.neovim {
+            "Test is incorrect (currently expected != neovim_state)"
+        } else {
+            "Editor does not match nvim behaviour"
+        };
+
+        panic!(
+            indoc! {"{}
+                # initial state:
+                {}
+                # keystrokes:
+                {}
+                # currently expected:
+                {}
+                # neovim clipboard:
+                {}
+                # zed clipboard:
+                {}"},
+            message,
+            self.state.initial,
+            self.state.recent_keystrokes,
+            expected,
+            self.neovim,
+            self.editor
+        )
+    }
 }
 
 impl NeovimBackedTestContext {
@@ -44,7 +155,6 @@ impl NeovimBackedTestContext {
 
             last_set_state: None,
             recent_keystrokes: Default::default(),
-            is_dirty: false,
         }
     }
 
@@ -66,7 +176,6 @@ impl NeovimBackedTestContext {
         self.last_set_state = Some(marked_text.to_string());
         self.recent_keystrokes = Vec::new();
         self.neovim.set_state(marked_text).await;
-        self.is_dirty = true;
     }
 
     pub async fn set_shared_wrap(&mut self, columns: u32) {
@@ -121,89 +230,13 @@ impl NeovimBackedTestContext {
         self.neovim.set_option(option).await;
     }
 
-    pub async fn assert_shared_state(&mut self, marked_text: &str) {
-        self.is_dirty = false;
-        let marked_text = marked_text.replace('•', " ");
-        let neovim = self.neovim_state().await;
-        let neovim_mode = self.neovim_mode().await;
-        let editor = self.editor_state();
-        let editor_mode = self.mode();
-        if neovim == marked_text && neovim == editor && neovim_mode == editor_mode {
-            return;
+    #[must_use]
+    pub async fn shared_clipboard(&mut self) -> SharedClipboard {
+        SharedClipboard {
+            state: self.shared_state().await,
+            neovim: self.neovim.read_register('"').await,
+            editor: self.read_from_clipboard().unwrap().text().clone(),
         }
-        let initial_state = self
-            .last_set_state
-            .as_ref()
-            .unwrap_or(&"N/A".to_string())
-            .clone();
-
-        let message = if neovim != marked_text {
-            "Test is incorrect (currently expected != neovim_state)"
-        } else {
-            "Editor does not match nvim behaviour"
-        };
-        panic!(
-            indoc! {"{}
-                # initial state:
-                {}
-                # keystrokes:
-                {}
-                # currently expected:
-                {}
-                # neovim ({}):
-                {}
-                # zed ({}):
-                {}"},
-            message,
-            initial_state,
-            self.recent_keystrokes.join(" "),
-            marked_text.replace(" \n", "•\n"),
-            neovim_mode,
-            neovim.replace(" \n", "•\n"),
-            editor_mode,
-            editor.replace(" \n", "•\n"),
-        )
-    }
-
-    pub async fn assert_shared_clipboard(&mut self, text: &str) {
-        let neovim = self.neovim.read_register('"').await;
-        let editor = self.read_from_clipboard().unwrap().text().clone();
-
-        if text == neovim && text == editor {
-            return;
-        }
-
-        let message = if neovim != text {
-            "Test is incorrect (currently expected != neovim)"
-        } else {
-            "Editor does not match nvim behaviour"
-        };
-
-        let initial_state = self
-            .last_set_state
-            .as_ref()
-            .unwrap_or(&"N/A".to_string())
-            .clone();
-
-        panic!(
-            indoc! {"{}
-                # initial state:
-                {}
-                # keystrokes:
-                {}
-                # currently expected:
-                {}
-                # neovim clipboard:
-                {}
-                # zed clipboard:
-                {}"},
-            message,
-            initial_state,
-            self.recent_keystrokes.join(" "),
-            text,
-            neovim,
-            editor
-        )
     }
 
     pub async fn neovim_state(&mut self) -> String {
@@ -232,43 +265,26 @@ impl NeovimBackedTestContext {
         }
     }
 
-    pub async fn assert_state_matches(&mut self) {
-        self.is_dirty = false;
-        let neovim = self.neovim_state().await;
-        let neovim_mode = self.neovim_mode().await;
-        let editor = self.editor_state();
-        let editor_mode = self.mode();
-        let initial_state = self
-            .last_set_state
-            .as_ref()
-            .unwrap_or(&"N/A".to_string())
-            .clone();
-
-        if neovim != editor || neovim_mode != editor_mode {
-            panic!(
-                indoc! {"Test failed (zed does not match nvim behaviour)
-                    # initial state:
-                    {}
-                    # keystrokes:
-                    {}
-                    # neovim ({}):
-                    {}
-                    # zed ({}):
-                    {}"},
-                initial_state,
-                self.recent_keystrokes.join(" "),
-                neovim_mode,
-                neovim,
-                editor_mode,
-                editor,
-            )
+    #[must_use]
+    pub async fn shared_state(&mut self) -> SharedState {
+        SharedState {
+            neovim: self.neovim_state().await,
+            neovim_mode: self.neovim_mode().await,
+            editor: self.editor_state(),
+            editor_mode: self.mode(),
+            initial: self
+                .last_set_state
+                .as_ref()
+                .cloned()
+                .unwrap_or("N/A".to_string()),
+            recent_keystrokes: self.recent_keystrokes.join(" "),
         }
     }
 
     pub async fn assert_binding_matches(&mut self, keystrokes: &str, initial_state: &str) {
         self.set_shared_state(initial_state).await;
         self.simulate_shared_keystrokes(keystrokes).await;
-        self.assert_state_matches().await;
+        self.shared_state().await.assert_matches();
     }
 
     pub async fn assert_binding_matches_all(&mut self, keystrokes: &str, marked_positions: &str) {
@@ -297,17 +313,6 @@ impl DerefMut for NeovimBackedTestContext {
     }
 }
 
-// a common mistake in tests is to call set_shared_state when
-// you mean asswert_shared_state. This notices that and lets
-// you know.
-impl Drop for NeovimBackedTestContext {
-    fn drop(&mut self) {
-        if self.is_dirty {
-            panic!("Test context was dropped after set_shared_state before assert_shared_state")
-        }
-    }
-}
-
 #[cfg(test)]
 mod test {
     use crate::test::NeovimBackedTestContext;
@@ -316,8 +321,8 @@ mod test {
     #[gpui::test]
     async fn neovim_backed_test_context_works(cx: &mut TestAppContext) {
         let mut cx = NeovimBackedTestContext::new(cx).await;
-        cx.assert_state_matches().await;
+        cx.shared_state().await.assert_matches();
         cx.set_shared_state("This is a tesˇt").await;
-        cx.assert_state_matches().await;
+        cx.shared_state().await.assert_matches();
     }
 }

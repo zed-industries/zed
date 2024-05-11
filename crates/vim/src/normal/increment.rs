@@ -192,31 +192,26 @@ mod test {
             .await;
 
         cx.simulate_shared_keystrokes("ctrl-a").await;
-        cx.assert_shared_state(indoc! {"
+        cx.shared_state().await.assert_eq(indoc! {"
             1ˇ3
-            "})
-            .await;
+            "});
         cx.simulate_shared_keystrokes("ctrl-x").await;
-        cx.assert_shared_state(indoc! {"
+        cx.shared_state().await.assert_eq(indoc! {"
             1ˇ2
-            "})
-            .await;
+            "});
 
         cx.simulate_shared_keystrokes("9 9 ctrl-a").await;
-        cx.assert_shared_state(indoc! {"
+        cx.shared_state().await.assert_eq(indoc! {"
             11ˇ1
-            "})
-            .await;
+            "});
         cx.simulate_shared_keystrokes("1 1 1 ctrl-x").await;
-        cx.assert_shared_state(indoc! {"
+        cx.shared_state().await.assert_eq(indoc! {"
             ˇ0
-            "})
-            .await;
+            "});
         cx.simulate_shared_keystrokes(".").await;
-        cx.assert_shared_state(indoc! {"
+        cx.shared_state().await.assert_eq(indoc! {"
             -11ˇ1
-            "})
-            .await;
+            "});
     }
 
     #[gpui::test]
@@ -229,15 +224,13 @@ mod test {
             .await;
 
         cx.simulate_shared_keystrokes("ctrl-a").await;
-        cx.assert_shared_state(indoc! {"
+        cx.shared_state().await.assert_eq(indoc! {"
             1.ˇ3
-            "})
-            .await;
+            "});
         cx.simulate_shared_keystrokes("ctrl-x").await;
-        cx.assert_shared_state(indoc! {"
+        cx.shared_state().await.assert_eq(indoc! {"
             1.ˇ2
-            "})
-            .await;
+            "});
     }
 
     #[gpui::test]
@@ -250,15 +243,13 @@ mod test {
             .await;
 
         cx.simulate_shared_keystrokes("ctrl-a").await;
-        cx.assert_shared_state(indoc! {"
+        cx.shared_state().await.assert_eq(indoc! {"
             111..ˇ3
-            "})
-            .await;
+            "});
         cx.simulate_shared_keystrokes("ctrl-x").await;
-        cx.assert_shared_state(indoc! {"
+        cx.shared_state().await.assert_eq(indoc! {"
             111..ˇ2
-            "})
-            .await;
+            "});
     }
 
     #[gpui::test]
@@ -286,30 +277,27 @@ mod test {
             .await;
 
         cx.simulate_shared_keystrokes("j v shift-g g ctrl-a").await;
-        cx.assert_shared_state(indoc! {"
+        cx.shared_state().await.assert_eq(indoc! {"
             1
             ˇ2
             3  2
             4
-            5"})
-            .await;
+            5"});
 
         cx.simulate_shared_keystrokes("shift-g ctrl-v g g").await;
-        cx.assert_shared_state(indoc! {"
+        cx.shared_state().await.assert_eq(indoc! {"
             «1ˇ»
             «2ˇ»
             «3ˇ»  2
             «4ˇ»
-            «5ˇ»"})
-            .await;
+            «5ˇ»"});
 
         cx.simulate_shared_keystrokes("g ctrl-x").await;
-        cx.assert_shared_state(indoc! {"
+        cx.shared_state().await.assert_eq(indoc! {"
             ˇ0
             0
             0  2
             0
-            0"})
-            .await;
+            0"});
     }
 }
