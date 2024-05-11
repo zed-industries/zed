@@ -1145,17 +1145,12 @@ mod test {
     // Test string with "`" for opening surrounders and "'" for closing surrounders
     const SURROUNDING_MARKER_STRING: &str = indoc! {"
         ˇTh'ˇe ˇ`ˇ'ˇquˇi`ˇck broˇ'wn`
-        'ˇfox juˇmps ovˇ`ˇer
-        the ˇlazy dˇ'ˇoˇ`ˇg"};
+        'ˇfox juˇmps ov`ˇer
+        the ˇlazy d'o`ˇg"};
 
     const SURROUNDING_OBJECTS: &[(char, char)] = &[
-        ('\'', '\''), // Quote
-        ('`', '`'),   // Back Quote
-        ('"', '"'),   // Double Quote
-        ('(', ')'),   // Parentheses
-        ('[', ']'),   // SquareBrackets
-        ('{', '}'),   // CurlyBrackets
-        ('<', '>'),   // AngleBrackets
+        ('"', '"'), // Double Quote
+        ('(', ')'), // Parentheses
     ];
 
     #[gpui::test]

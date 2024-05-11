@@ -265,17 +265,12 @@ mod test {
     async fn test_increment_radix(cx: &mut gpui::TestAppContext) {
         let mut cx = NeovimBackedTestContext::new(cx).await;
 
-        cx.assert_matches_neovim("ˇ total: 0xff", "ctrl-a", " total: 0x10ˇ0")
-            .await;
-        cx.assert_matches_neovim("ˇ total: 0xff", "ctrl-x", " total: 0xfˇe")
-            .await;
-        cx.assert_matches_neovim("ˇ total: 0xFF", "ctrl-x", " total: 0xFˇE")
-            .await;
-        cx.assert_matches_neovim("(ˇ0b10f)", "ctrl-a", "(0b1ˇ1f)")
-            .await;
-        cx.assert_matches_neovim("ˇ-1", "ctrl-a", "ˇ0").await;
-        cx.assert_matches_neovim("banˇana", "ctrl-a", "banˇana")
-            .await;
+        cx.assert_binding_matches("ctrl-a", "ˇ total: 0xff").await;
+        cx.assert_binding_matches("ctrl-x", "ˇ total: 0xff").await;
+        cx.assert_binding_matches("ctrl-x", "ˇ total: 0xFF").await;
+        cx.assert_binding_matches("ctrl-a", "(ˇ0b10f)").await;
+        cx.assert_binding_matches("ctrl-a", "ˇ-1").await;
+        cx.assert_binding_matches("ctrl-a", "banˇana").await;
     }
 
     #[gpui::test]

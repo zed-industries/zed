@@ -281,23 +281,6 @@ impl NeovimBackedTestContext {
             self.assert_binding_matches(keystrokes, &marked_text).await;
         }
     }
-
-    pub async fn assert_neovim_compatible(&mut self, marked_positions: &str, keystrokes: &str) {
-        self.set_shared_state(&marked_positions).await;
-        self.simulate_shared_keystrokes(keystrokes).await;
-        self.assert_state_matches().await;
-    }
-
-    pub async fn assert_matches_neovim(
-        &mut self,
-        marked_positions: &str,
-        keystrokes: &str,
-        result: &str,
-    ) {
-        self.set_shared_state(marked_positions).await;
-        self.simulate_shared_keystrokes(keystrokes).await;
-        self.assert_shared_state(result).await;
-    }
 }
 
 impl Deref for NeovimBackedTestContext {

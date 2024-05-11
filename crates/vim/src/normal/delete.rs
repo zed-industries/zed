@@ -194,41 +194,41 @@ mod test {
     #[gpui::test]
     async fn test_delete_w(cx: &mut gpui::TestAppContext) {
         let mut cx = NeovimBackedTestContext::new(cx).await;
-        cx.assert_neovim_compatible(
+        cx.assert_binding_matches(
+            "d w",
             indoc! {"
             Test tesˇt
                 test"},
-            "d w",
         )
         .await;
 
-        cx.assert_neovim_compatible("Teˇst", "d w").await;
-        cx.assert_neovim_compatible("Tˇest test", "d w").await;
-        cx.assert_neovim_compatible(
+        cx.assert_binding_matches("d w", "Teˇst").await;
+        cx.assert_binding_matches("d w", "Tˇest test").await;
+        cx.assert_binding_matches(
+            "d w",
             indoc! {"
             Test teˇst
             test"},
-            "d w",
         )
         .await;
-        cx.assert_neovim_compatible(
+        cx.assert_binding_matches(
+            "d w",
             indoc! {"
             Test tesˇt
             test"},
-            "d w",
         )
         .await;
 
-        cx.assert_neovim_compatible(
+        cx.assert_binding_matches(
+            "d w",
             indoc! {"
             Test test
             ˇ
             test"},
-            "d w",
         )
         .await;
 
-        cx.assert_neovim_compatible("Test teˇst-test test", "d shift-w")
+        cx.assert_binding_matches("d shift-w", "Test teˇst-test test")
             .await;
     }
 
@@ -398,40 +398,40 @@ mod test {
     #[gpui::test]
     async fn test_delete_end_of_document(cx: &mut gpui::TestAppContext) {
         let mut cx = NeovimBackedTestContext::new(cx).await;
-        cx.assert_neovim_compatible(
+        cx.assert_binding_matches(
+            "d shift-g",
             indoc! {"
             The quick
             brownˇ fox
             jumps over
             the lazy"},
-            "d shift-g",
         )
         .await;
-        cx.assert_neovim_compatible(
+        cx.assert_binding_matches(
+            "d shift-g",
             indoc! {"
             The quick
             brownˇ fox
             jumps over
             the lazy"},
-            "d shift-g",
         )
         .await;
-        cx.assert_neovim_compatible(
+        cx.assert_binding_matches(
+            "d shift-g",
             indoc! {"
             The quick
             brown fox
             jumps over
             the lˇazy"},
-            "d shift-g",
         )
         .await;
-        cx.assert_neovim_compatible(
+        cx.assert_binding_matches(
+            "d shift-g",
             indoc! {"
             The quick
             brown fox
             jumps over
             ˇ"},
-            "d shift-g",
         )
         .await;
     }
@@ -439,40 +439,40 @@ mod test {
     #[gpui::test]
     async fn test_delete_gg(cx: &mut gpui::TestAppContext) {
         let mut cx = NeovimBackedTestContext::new(cx).await;
-        cx.assert_neovim_compatible(
+        cx.assert_binding_matches(
+            "d g g",
             indoc! {"
             The quick
             brownˇ fox
             jumps over
             the lazy"},
-            "d g g",
         )
         .await;
-        cx.assert_neovim_compatible(
+        cx.assert_binding_matches(
+            "d g g",
             indoc! {"
             The quick
             brown fox
             jumps over
             the lˇazy"},
-            "d g g",
         )
         .await;
-        cx.assert_neovim_compatible(
+        cx.assert_binding_matches(
+            "d g g",
             indoc! {"
             The qˇuick
             brown fox
             jumps over
             the lazy"},
-            "d g g",
         )
         .await;
-        cx.assert_neovim_compatible(
+        cx.assert_binding_matches(
+            "d g g",
             indoc! {"
             ˇ
             brown fox
             jumps over
             the lazy"},
-            "d g g",
         )
         .await;
     }
@@ -554,7 +554,7 @@ mod test {
     #[gpui::test]
     async fn test_delete_to_adjacent_character(cx: &mut gpui::TestAppContext) {
         let mut cx = NeovimBackedTestContext::new(cx).await;
-        cx.assert_neovim_compatible("ˇax", "d t x").await;
-        cx.assert_neovim_compatible("aˇx", "d t x").await;
+        cx.assert_binding_matches("d t x", "ˇax").await;
+        cx.assert_binding_matches("d t x", "aˇx").await;
     }
 }
