@@ -143,6 +143,10 @@ impl WindowsDisplay {
             .then(|| devmode.dmDisplayFrequency)
         })
     }
+
+    pub fn is_connected(hmonitor: HMONITOR) -> bool {
+        available_monitors().iter().contains(&hmonitor)
+    }
 }
 
 impl PlatformDisplay for WindowsDisplay {

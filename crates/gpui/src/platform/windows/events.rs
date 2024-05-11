@@ -39,7 +39,7 @@ pub(crate) fn handle_msg(
         WM_TIMER => handle_timer_msg(handle, wparam, state_ptr),
         WM_NCCALCSIZE => handle_calc_client_size(handle, wparam, lparam, state_ptr),
         WM_DPICHANGED => handle_dpi_changed_msg(handle, wparam, lparam, state_ptr),
-        WM_DISPLAYCHANGE => handle_display_change_msg(wparam, lparam, state_ptr),
+        WM_DISPLAYCHANGE => handle_display_change_msg(handle, state_ptr),
         WM_NCHITTEST => handle_hit_test_msg(handle, msg, wparam, lparam, state_ptr),
         WM_PAINT => handle_paint_msg(handle, state_ptr),
         WM_CLOSE => handle_close_msg(state_ptr),
@@ -781,18 +781,26 @@ fn handle_dpi_changed_msg(
 ///
 /// For example, in the case of condition 2, where the monitor on which the window is
 /// located has actually changed nothing, it will still receive this event.
-fn handle_display_change_msg(
-    wparam: WPARAM,
-    lparam: LPARAM,
-    state_ptr: Rc<WindowsWindowStatePtr>,
-) -> Option<isize> {
-    println!(
-        "display changed: {:?}, {:?}, width: {}, height: {}",
-        wparam,
-        lparam,
-        lparam.loword(),
-        lparam.hiword()
-    );
+fn handle_display_change_msg(handle: HWND, state_ptr: Rc<WindowsWindowStatePtr>) -> Option<isize> {
+    let old_display = state_ptr.as_ref().state.borrow().display;
+    let located_display = unsafe { MonitorFromWindow(handle, MONITOR_DEFAULTTONULL) };
+    if located_display.is_invalid() {
+        // window is minimized or display disconnected
+        if WindowsDisplay::is_connected(old_display.handle) {
+            // we are fine, other display changed
+            return None;
+        }
+
+        // display disconnected
+        unsafe { ShowWindow(handle, SW_SHOWNORMAL) };
+        let new_monitor = unsafe { MonitorFromWindow(handle, MONITOR_DEFAULTTONULL) };
+        if new_monitor.is_invalid() {
+            log::error!("No monitor detected!");
+            return None;
+        }
+        let new_display = WindowsDisplay::new_with_handle(new_monitor);
+        state_ptr.as_ref().state.borrow_mut().display = new_display;
+    }
     Some(0)
 }
 
