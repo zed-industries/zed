@@ -685,8 +685,6 @@ impl X11Client {
         let window = self.get_window(window).unwrap();
         window.handle_ime_preedit(text);
 
-        let area = window.get_ime_area().clone();
-
         let mut state = self.0.borrow_mut();
         let mut ximc = state.ximc.take().unwrap();
         let mut xim_handler = state.xim_handler.take().unwrap();
