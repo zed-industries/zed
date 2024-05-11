@@ -1380,15 +1380,16 @@ impl EditorElement {
 
     fn layout_indent_guides(
         &self,
+        content_origin: gpui::Point<Pixels>,
+        text_origin: gpui::Point<Pixels>,
         visible_buffer_range: Range<u32>,
         scroll_pixel_position: gpui::Point<Pixels>,
         line_height: Pixels,
-        text_hitbox: &Hitbox,
         snapshot: &DisplaySnapshot,
         cx: &mut WindowContext,
     ) -> Option<Vec<IndentGuideLayout>> {
-        let indent_guide_settings = EditorSettings::get_global(cx).indent_guides;
-        if !indent_guide_settings.enabled {
+        let settings = EditorSettings::get_global(cx).indent_guides;
+        if !settings.enabled {
             return None;
         }
 
@@ -1409,8 +1410,8 @@ impl EditorElement {
                     let indent_size = self.column_pixels(indent_guide.indent_size as usize, cx);
                     let total_width = indent_size * px(indent_guide.depth as f32);
 
-                    let start_x = text_hitbox.origin.x + total_width - scroll_pixel_position.x;
-                    if start_x >= text_hitbox.origin.x {
+                    let start_x = content_origin.x + total_width - scroll_pixel_position.x;
+                    if start_x >= text_origin.x {
                         let start_row = Point::new(indent_guide.start, 0)
                             .to_display_point(snapshot)
                             .row();
@@ -1418,7 +1419,7 @@ impl EditorElement {
                             .to_display_point(snapshot)
                             .row();
 
-                        let start_y = text_hitbox.origin.y + (start_row as f32 * line_height)
+                        let start_y = content_origin.y + (start_row as f32 * line_height)
                             - scroll_pixel_position.y;
 
                         let length = (end_row - start_row) as f32 * line_height;
@@ -2467,16 +2468,11 @@ impl EditorElement {
                     .map(|i| faded_color(i, INDENT_AWARE_BACKGROUND_ACTIVE_ALPHA)),
             };
 
-            const INDENT_GUIDE_OFFSET_X: f32 = 3.;
-
             let mut line_indicator_width = 0.;
             if let Some(color) = line_color {
                 cx.paint_quad(fill(
                     Bounds {
-                        origin: point(
-                            indent_guide.origin.x + px(INDENT_GUIDE_OFFSET_X),
-                            indent_guide.origin.y,
-                        ),
+                        origin: indent_guide.origin,
                         size: size(px(settings.line_width as f32), indent_guide.length),
                     },
                     color,
@@ -2489,9 +2485,7 @@ impl EditorElement {
                 cx.paint_quad(fill(
                     Bounds {
                         origin: point(
-                            indent_guide.origin.x
-                                + px(INDENT_GUIDE_OFFSET_X)
-                                + px(line_indicator_width),
+                            indent_guide.origin.x + px(line_indicator_width),
                             indent_guide.origin.y,
                         ),
                         size: size(width, indent_guide.length),
@@ -4048,10 +4042,11 @@ impl Element for EditorElement {
                 let start_buffer_row = start_anchor.to_point(&snapshot.buffer_snapshot).row;
                 let end_buffer_row = end_anchor.to_point(&snapshot.buffer_snapshot).row;
                 let indent_guides = self.layout_indent_guides(
+                    content_origin,
+                    text_hitbox.origin,
                     start_buffer_row..end_buffer_row,
                     scroll_pixel_position,
                     line_height,
-                    &text_hitbox,
                     &snapshot,
                     cx,
                 );
