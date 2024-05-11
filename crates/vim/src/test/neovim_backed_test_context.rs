@@ -6,49 +6,14 @@ use std::{
     panic, thread,
 };
 
-use collections::{HashMap, HashSet};
 use language::language_settings::{AllLanguageSettings, SoftWrap};
 use util::test::marked_text_offsets;
 
-use super::{neovim_connection::NeovimConnection, NeovimBackedBindingTestContext, VimTestContext};
+use super::{neovim_connection::NeovimConnection, VimTestContext};
 use crate::state::Mode;
-
-pub const SUPPORTED_FEATURES: &[ExemptionFeatures] = &[];
-
-/// Enum representing features we have tests for but which don't work, yet. Used
-/// to add exemptions and automatically
-#[derive(PartialEq, Eq)]
-pub enum ExemptionFeatures {
-    // MOTIONS
-    // When an operator completes at the end of the file, an extra newline is left
-    OperatorLastNewlineRemains,
-
-    // OBJECTS
-    // Resulting position after the operation is slightly incorrect for unintuitive reasons.
-    IncorrectLandingPosition,
-    // Operator around the text object at the end of the line doesn't remove whitespace.
-    AroundObjectLeavesWhitespaceAtEndOfLine,
-    // Sentence object on empty lines
-    SentenceOnEmptyLines,
-    // Whitespace isn't included with text objects at the start of the line
-    SentenceAtStartOfLineWithWhitespace,
-    // Whitespace around sentences is slightly incorrect when starting between sentences
-    AroundSentenceStartingBetweenIncludesWrongWhitespace,
-    // Sentence Doesn't backtrack when its at the end of the file
-    SentenceAfterPunctuationAtEndOfFile,
-}
-
-impl ExemptionFeatures {
-    pub fn supported(&self) -> bool {
-        SUPPORTED_FEATURES.contains(self)
-    }
-}
 
 pub struct NeovimBackedTestContext {
     cx: VimTestContext,
-    // Lookup for exempted assertions. Keyed by the insertion text, and with a value indicating which
-    // bindings are exempted. If None, all bindings are ignored for that insertion text.
-    exemptions: HashMap<String, Option<HashSet<String>>>,
     pub(crate) neovim: NeovimConnection,
 
     last_set_state: Option<String>,
@@ -75,30 +40,11 @@ impl NeovimBackedTestContext {
             .to_string();
         Self {
             cx: VimTestContext::new(cx, true).await,
-            exemptions: Default::default(),
             neovim: NeovimConnection::new(test_name).await,
 
             last_set_state: None,
             recent_keystrokes: Default::default(),
             is_dirty: false,
-        }
-    }
-
-    pub fn add_initial_state_exemptions(
-        &mut self,
-        marked_positions: &str,
-        missing_feature: ExemptionFeatures, // Feature required to support this exempted test case
-    ) {
-        if !missing_feature.supported() {
-            let (unmarked_text, cursor_offsets) = marked_text_offsets(marked_positions);
-
-            for cursor_offset in cursor_offsets.iter() {
-                let mut marked_text = unmarked_text.clone();
-                marked_text.insert(*cursor_offset, 'ˇ');
-
-                // None represents all key bindings being exempted for that initial state
-                self.exemptions.insert(marked_text, None);
-            }
         }
     }
 
@@ -320,23 +266,8 @@ impl NeovimBackedTestContext {
     }
 
     pub async fn assert_binding_matches(&mut self, keystrokes: &str, initial_state: &str) {
-        if let Some(possible_exempted_keystrokes) = self.exemptions.get(initial_state) {
-            match possible_exempted_keystrokes {
-                Some(exempted_keystrokes) => {
-                    if exempted_keystrokes.contains(&format!("{keystrokes:?}")) {
-                        // This keystroke was exempted for this insertion text
-                        return;
-                    }
-                }
-                None => {
-                    // All keystrokes for this insertion text are exempted
-                    return;
-                }
-            }
-        }
-
-        let _state_context = self.set_shared_state(initial_state).await;
-        let _keystroke_context = self.simulate_shared_keystrokes(keystrokes).await;
+        self.set_shared_state(initial_state).await;
+        self.simulate_shared_keystrokes(keystrokes).await;
         self.assert_state_matches().await;
     }
 
@@ -379,13 +310,6 @@ impl NeovimBackedTestContext {
         self.set_shared_state(marked_positions).await;
         self.simulate_shared_keystrokes(keystrokes).await;
         self.assert_shared_state(result).await;
-    }
-
-    pub fn binding<const COUNT: usize>(
-        self,
-        keystrokes: [&'static str; COUNT],
-    ) -> NeovimBackedBindingTestContext<COUNT> {
-        NeovimBackedBindingTestContext::new(keystrokes, self)
     }
 }
 

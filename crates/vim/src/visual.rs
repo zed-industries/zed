@@ -747,18 +747,22 @@ mod test {
         cx.simulate_shared_keystrokes("j p").await;
         cx.assert_state_matches().await;
 
-        let mut cx = cx.binding(["v", "w", "j", "x"]);
-        cx.assert_all(indoc! {"
+        cx.assert_binding_matches_all(
+            "v w j x",
+            indoc! {"
                 The ˇquick brown
                 fox jumps over
-                the ˇlazy dog"})
-            .await;
-        let mut cx = cx.binding(["v", "b", "k", "x"]);
-        cx.assert_all(indoc! {"
+                the ˇlazy dog"},
+        )
+        .await;
+        cx.assert_binding_matches_all(
+            "v b k x",
+            indoc! {"
                 The ˇquick brown
                 fox jumps ˇover
-                the ˇlazy dog"})
-            .await;
+                the ˇlazy dog"},
+        )
+        .await;
     }
 
     #[gpui::test]
@@ -849,7 +853,6 @@ mod test {
         cx.simulate_shared_keystrokes("shift-v y").await;
         cx.assert_shared_clipboard("the lazy dog\n").await;
 
-        let mut cx = cx.binding(["v", "b", "k", "y"]);
         cx.set_shared_state(indoc! {"
                     The ˇquick brown
                     fox jumps over

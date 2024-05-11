@@ -174,25 +174,28 @@ mod test {
 
     #[gpui::test]
     async fn test_visual_line_change(cx: &mut gpui::TestAppContext) {
-        let mut cx = NeovimBackedTestContext::new(cx)
-            .await
-            .binding(["shift-v", "c"]);
-        cx.assert(indoc! {"
+        let mut cx = NeovimBackedTestContext::new(cx).await;
+        cx.assert_binding_matches(
+            "shift-v c",
+            indoc! {"
             The quˇick brown
             fox jumps over
-            the lazy dog"})
-            .await;
+            the lazy dog"},
+        )
+        .await;
         // Test pasting code copied on change
         cx.simulate_shared_keystrokes("escape j p").await;
         cx.assert_state_matches().await;
 
-        cx.assert_all(indoc! {"
+        cx.assert_binding_matches_all(
+            "shift-v c",
+            indoc! {"
             The quick brown
             fox juˇmps over
-            the laˇzy dog"})
-            .await;
-        let mut cx = cx.binding(["shift-v", "j", "c"]);
-        cx.assert(indoc! {"
+            the laˇzy dog"},
+        )
+        .await;
+        cx.assert_binding_matches("shift-v j c", indoc! {"
             The quˇick brown
             fox jumps over
             the lazy dog"})
@@ -201,7 +204,7 @@ mod test {
         cx.simulate_shared_keystrokes("escape j p").await;
         cx.assert_state_matches().await;
 
-        cx.assert_all(indoc! {"
+        cx.assert_binding_matches_all("shift-v j c", indoc! {"
             The quick brown
             fox juˇmps over
             the laˇzy dog"})

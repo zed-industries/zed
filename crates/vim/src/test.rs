@@ -1,4 +1,3 @@
-mod neovim_backed_binding_test_context;
 mod neovim_backed_test_context;
 mod neovim_connection;
 mod vim_test_context;
@@ -9,7 +8,6 @@ use command_palette::CommandPalette;
 use editor::{display_map::DisplayRow, DisplayPoint};
 use futures::StreamExt;
 use gpui::{KeyBinding, Modifiers, MouseButton, TestAppContext};
-pub use neovim_backed_binding_test_context::*;
 pub use neovim_backed_test_context::*;
 pub use vim_test_context::*;
 
