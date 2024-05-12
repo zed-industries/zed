@@ -349,6 +349,8 @@
   // when saving it.
   "ensure_final_newline_on_save": true,
   // Whether or not to perform a buffer format before saving
+  //
+  // Keep in mind, if the autosave with delay is enabled, format_on_save will be ignored
   "format_on_save": "on",
   // How to perform a buffer format. This setting can take 4 values:
   //
