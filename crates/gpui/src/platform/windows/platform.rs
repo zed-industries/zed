@@ -221,7 +221,9 @@ impl Platform for WindowsPlatform {
                                 }
                                 WM_SETTINGCHANGE => self.update_system_settings(),
                                 _ => {
-                                    TranslateMessage(&msg).ok().log_err();
+                                    // todo(windows)
+                                    // crate `windows 0.56` reports true as Err
+                                    TranslateMessage(&msg).as_bool();
                                     DispatchMessageW(&msg);
                                 }
                             }
