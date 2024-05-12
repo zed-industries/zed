@@ -24,13 +24,19 @@ impl SvelteExtension {
             &zed::LanguageServerInstallationStatus::CheckingForUpdate,
         );
 
-        let installed_version = zed::npm_package_installed_version(PACKAGE_NAME).ok().flatten();
+        let installed_version = zed::npm_package_installed_version(PACKAGE_NAME)
+            .ok()
+            .flatten();
+
         let latest_version = zed::npm_package_latest_version(PACKAGE_NAME);
-        let should_reinstall = !server_exists || match (installed_version.as_deref(), latest_version.as_deref().ok()) {
-            (Some(installed_version), Some(latest_version)) => installed_version != latest_version,
-            (Some(_), None) => false,
-            _ => true
-        };
+        let should_reinstall = !server_exists
+            || match (installed_version.as_deref(), latest_version.as_deref().ok()) {
+                (Some(installed_version), Some(latest_version)) => {
+                    installed_version != latest_version
+                }
+                (Some(_), None) => false,
+                _ => true,
+            };
 
         if should_reinstall {
             zed::set_language_server_installation_status(
