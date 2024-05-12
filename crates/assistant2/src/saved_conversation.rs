@@ -1,6 +1,16 @@
+use std::cmp::Reverse;
+use std::ffi::OsStr;
+use std::path::PathBuf;
+use std::sync::Arc;
+
+use anyhow::Result;
 use assistant_tooling::{SavedToolFunctionCall, SavedUserAttachment};
+use fs::Fs;
+use futures::StreamExt;
 use gpui::SharedString;
+use regex::Regex;
 use serde::{Deserialize, Serialize};
+use util::paths::CONVERSATIONS_DIR;
 
 use crate::MessageId;
 
@@ -33,25 +43,48 @@ pub struct SavedAssistantMessagePart {
     pub tool_calls: Vec<SavedToolFunctionCall>,
 }
 
-/// Returns a list of placeholder conversations for mocking the UI.
-///
-/// Once we have real saved conversations to pull from we can use those instead.
-pub fn placeholder_conversations() -> Vec<SavedConversation> {
-    vec![
-        SavedConversation {
-            version: "0.3.0".to_string(),
-            title: "How to get a list of exported functions in an Erlang module".to_string(),
-            messages: vec![],
-        },
-        SavedConversation {
-            version: "0.3.0".to_string(),
-            title: "7 wonders of the ancient world".to_string(),
-            messages: vec![],
-        },
-        SavedConversation {
-            version: "0.3.0".to_string(),
-            title: "Size difference between u8 and a reference to u8 in Rust".to_string(),
-            messages: vec![],
-        },
-    ]
+pub struct SavedConversationMetadata {
+    pub title: String,
+    pub path: PathBuf,
+    pub mtime: chrono::DateTime<chrono::Local>,
+}
+
+impl SavedConversationMetadata {
+    pub async fn list(fs: Arc<dyn Fs>) -> Result<Vec<Self>> {
+        fs.create_dir(&CONVERSATIONS_DIR).await?;
+
+        let mut paths = fs.read_dir(&CONVERSATIONS_DIR).await?;
+        let mut conversations = Vec::new();
+        while let Some(path) = paths.next().await {
+            let path = path?;
+            if path.extension() != Some(OsStr::new("json")) {
+                continue;
+            }
+
+            let pattern = r" - \d+.zed.\d.\d.\d.json$";
+            let re = Regex::new(pattern).unwrap();
+
+            let metadata = fs.metadata(&path).await?;
+            if let Some((file_name, metadata)) = path
+                .file_name()
+                .and_then(|name| name.to_str())
+                .zip(metadata)
+            {
+                // This is used to filter out conversations saved by the old assistant.
+                if !re.is_match(file_name) {
+                    continue;
+                }
+
+                let title = re.replace(file_name, "");
+                conversations.push(Self {
+                    title: title.into_owned(),
+                    path,
+                    mtime: metadata.mtime.into(),
+                });
+            }
+        }
+        conversations.sort_unstable_by_key(|conversation| Reverse(conversation.mtime));
+
+        Ok(conversations)
+    }
 }

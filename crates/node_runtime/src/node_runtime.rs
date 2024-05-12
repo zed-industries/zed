@@ -4,6 +4,7 @@ use async_tar::Archive;
 use async_zip::base::read::stream::ZipFileReader;
 use async_zip::ZipString;
 use futures::{AsyncBufRead, AsyncReadExt};
+use http::HttpClient;
 use semver::Version;
 use serde::Deserialize;
 use smol::io;
@@ -16,7 +17,6 @@ use std::{
     path::{Path, PathBuf},
     sync::Arc,
 };
-use util::http::HttpClient;
 use util::ResultExt;
 
 const VERSION: &str = "v18.15.0";

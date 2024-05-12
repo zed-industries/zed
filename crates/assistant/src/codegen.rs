@@ -7,6 +7,7 @@ use editor::{Anchor, MultiBuffer, MultiBufferSnapshot, ToOffset, ToPoint};
 use futures::{channel::mpsc, SinkExt, Stream, StreamExt};
 use gpui::{EventEmitter, Model, ModelContext, Task};
 use language::{Rope, TransactionId};
+use multi_buffer::MultiBufferRow;
 use std::{cmp, future, ops::Range};
 
 pub enum Event {
@@ -100,7 +101,7 @@ impl Codegen {
             .suggested_indents(selection_start.row..selection_start.row + 1, cx)
             .into_values()
             .next()
-            .unwrap_or_else(|| snapshot.indent_size_for_line(selection_start.row));
+            .unwrap_or_else(|| snapshot.indent_size_for_line(MultiBufferRow(selection_start.row)));
 
         let response = CompletionProvider::global(cx).complete(prompt);
         self.generation = cx.spawn(|this, mut cx| {

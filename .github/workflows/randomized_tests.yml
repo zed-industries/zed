@@ -31,7 +31,6 @@ jobs:
         uses: actions/checkout@v4
         with:
           clean: false
-          submodules: "recursive"
 
       - name: Run randomized tests
         run: script/randomized-test-ci

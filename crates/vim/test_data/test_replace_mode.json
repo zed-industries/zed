@@ -16,12 +16,6 @@
 {"Key":"n"}
 {"Key":"e"}
 {"Get":{"state":"The quick brown\nOneˇ\nfox jumps over\nthe lazy dog.","mode":"Replace"}}
-{"Put":{"state":"ˇThe quick brown\nfox jumps over\nthe lazy ˇdog."}}
-{"Key":"shift-r"}
-{"Key":"O"}
-{"Key":"n"}
-{"Key":"e"}
-{"Get":{"state":"Oneˇ quick brown\nfox jumps over\nthe lazy Oneˇ.","mode":"Replace"}}
 {"Put":{"state":"The quˇick brown\nfox jumps over\nthe lazy dog."}}
 {"Key":"shift-r"}
 {"Key":"enter"}
@@ -29,20 +23,3 @@
 {"Key":"n"}
 {"Key":"e"}
 {"Get":{"state":"The qu\nOneˇ brown\nfox jumps over\nthe lazy dog.","mode":"Replace"}}
-{"Put":{"state":"ˇThe quick brown\nfox jumps over\nthe lazy ˇdog."}}
-{"Key":"shift-r"}
-{"Key":"O"}
-{"Key":"n"}
-{"Key":"e"}
-{"Get":{"state":"Oneˇ quick brown\nfox jumps over\nthe lazy Oneˇ.","mode":"Replace"}}
-{"Key":"enter"}
-{"Key":"T"}
-{"Key":"w"}
-{"Key":"o"}
-{"Get":{"state":"One\nTwoˇck brown\nfox jumps over\nthe lazy One\nTwoˇ","mode":"Replace"}}
-{"Put":{"state":"ˇThe quick brown\nfox jumps over\nthe lazy ˇdog."}}
-{"Key":"shift-r"}
-{"Key":"O"}
-{"Key":"n"}
-{"Key":"e"}
-{"Get":{"state":"Oneˇ quick brown\nfox jumps over\nthe lazy Oneˇ.","mode":"Replace"}}

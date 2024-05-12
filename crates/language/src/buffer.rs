@@ -13,6 +13,7 @@ use crate::{
         SyntaxLayer, SyntaxMap, SyntaxMapCapture, SyntaxMapCaptures, SyntaxMapMatches,
         SyntaxSnapshot, ToTreeSitterPoint,
     },
+    task_context::RunnableRange,
     LanguageScope, Outline, RunnableTag,
 };
 use anyhow::{anyhow, Context, Result};
@@ -73,6 +74,8 @@ pub enum Capability {
     /// The buffer is a read-only replica.
     ReadOnly,
 }
+
+pub type BufferRow = u32;
 
 /// An in-memory representation of a source code file, including its text,
 /// syntax trees, git status, and diagnostics.
@@ -2993,7 +2996,7 @@ impl BufferSnapshot {
     pub fn runnable_ranges(
         &self,
         range: Range<Anchor>,
-    ) -> impl Iterator<Item = (Range<usize>, Runnable)> + '_ {
+    ) -> impl Iterator<Item = RunnableRange> + '_ {
         let offset_range = range.start.to_offset(self)..range.end.to_offset(self);
 
         let mut syntax_matches = self.syntax.matches(offset_range, self, |grammar| {
@@ -3007,31 +3010,49 @@ impl BufferSnapshot {
             .collect::<Vec<_>>();
 
         iter::from_fn(move || {
-            let test_range = syntax_matches
-                .peek()
-                .and_then(|mat| {
-                    test_configs[mat.grammar_index].and_then(|test_configs| {
-                        let tags = SmallVec::from_iter(mat.captures.iter().filter_map(|capture| {
-                            test_configs.runnable_tags.get(&capture.index).cloned()
+            let test_range = syntax_matches.peek().and_then(|mat| {
+                test_configs[mat.grammar_index].and_then(|test_configs| {
+                    let mut tags: SmallVec<[(Range<usize>, RunnableTag); 1]> =
+                        SmallVec::from_iter(mat.captures.iter().filter_map(|capture| {
+                            test_configs
+                                .runnable_tags
+                                .get(&capture.index)
+                                .cloned()
+                                .map(|tag_name| (capture.node.byte_range(), tag_name))
                         }));
-
-                        if tags.is_empty() {
-                            return None;
-                        }
-
-                        Some((
-                            mat.captures
-                                .iter()
-                                .find(|capture| capture.index == test_configs.run_capture_ix)?,
-                            Runnable {
-                                tags,
-                                language: mat.language,
-                                buffer: self.remote_id(),
-                            },
-                        ))
+                    let maximum_range = tags
+                        .iter()
+                        .max_by_key(|(byte_range, _)| byte_range.len())
+                        .map(|(range, _)| range)?
+                        .clone();
+                    tags.sort_by_key(|(range, _)| range == &maximum_range);
+                    let split_point = tags.partition_point(|(range, _)| range != &maximum_range);
+                    let (extra_captures, tags) = tags.split_at(split_point);
+                    let extra_captures = extra_captures
+                        .into_iter()
+                        .map(|(range, name)| {
+                            (
+                                name.0.to_string(),
+                                self.text_for_range(range.clone()).collect::<String>(),
+                            )
+                        })
+                        .collect();
+                    Some(RunnableRange {
+                        run_range: mat
+                            .captures
+                            .iter()
+                            .find(|capture| capture.index == test_configs.run_capture_ix)
+                            .map(|mat| mat.node.byte_range())?,
+                        runnable: Runnable {
+                            tags: tags.into_iter().cloned().map(|(_, tag)| tag).collect(),
+                            language: mat.language,
+                            buffer: self.remote_id(),
+                        },
+                        extra_captures,
+                        buffer_id: self.remote_id(),
                     })
                 })
-                .map(|(mat, test_tags)| (mat.node.byte_range(), test_tags));
+            });
             syntax_matches.advance();
             test_range
         })
@@ -3085,7 +3106,7 @@ impl BufferSnapshot {
     /// row range.
     pub fn git_diff_hunks_in_row_range(
         &self,
-        range: Range<u32>,
+        range: Range<BufferRow>,
     ) -> impl '_ + Iterator<Item = git::diff::DiffHunk<u32>> {
         self.git_diff.hunks_in_row_range(range, self)
     }
@@ -3138,7 +3159,21 @@ impl BufferSnapshot {
                 .iter_mut()
                 .enumerate()
                 .flat_map(|(ix, iter)| Some((ix, iter.peek()?)))
-                .min_by(|(_, a), (_, b)| a.range.start.cmp(&b.range.start))?;
+                .min_by(|(_, a), (_, b)| {
+                    let cmp = a
+                        .range
+                        .start
+                        .cmp(&b.range.start)
+                        // when range is equal, sort by diagnostic severity
+                        .then(a.diagnostic.severity.cmp(&b.diagnostic.severity))
+                        // and stabilize order with group_id
+                        .then(a.diagnostic.group_id.cmp(&b.diagnostic.group_id));
+                    if reversed {
+                        cmp.reverse()
+                    } else {
+                        cmp
+                    }
+                })?;
             iterators[next_ix].next()
         })
     }

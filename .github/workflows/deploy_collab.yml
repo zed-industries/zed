@@ -21,7 +21,6 @@ jobs:
         uses: actions/checkout@v4
         with:
           clean: false
-          submodules: "recursive"
           fetch-depth: 0
 
       - name: Run style checks
@@ -41,7 +40,6 @@ jobs:
         uses: actions/checkout@v4
         with:
           clean: false
-          submodules: "recursive"
           fetch-depth: 0
 
       - name: Install cargo nextest
@@ -76,7 +74,6 @@ jobs:
         uses: actions/checkout@v4
         with:
           clean: false
-          submodules: "recursive"
 
       - name: Build docker image
         run: docker build . --build-arg GITHUB_SHA=$GITHUB_SHA --tag registry.digitalocean.com/zed/collab:$GITHUB_SHA

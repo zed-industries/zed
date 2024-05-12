@@ -12,6 +12,8 @@ use gpui::{
     actions, AppContext, AsyncAppContext, Context, Entity, EntityId, EventEmitter, Global, Model,
     ModelContext, Task, WeakModel,
 };
+use http::github::latest_github_release;
+use http::HttpClient;
 use language::{
     language_settings::{all_language_settings, language_settings, InlineCompletionProvider},
     point_from_lsp, point_to_lsp, Anchor, Bias, Buffer, BufferSnapshot, Language, PointUtf16,
@@ -31,9 +33,7 @@ use std::{
     path::{Path, PathBuf},
     sync::Arc,
 };
-use util::{
-    fs::remove_matching, github::latest_github_release, http::HttpClient, maybe, paths, ResultExt,
-};
+use util::{fs::remove_matching, maybe, paths, ResultExt};
 
 pub use copilot_completion_provider::CopilotCompletionProvider;
 pub use sign_in::CopilotCodeVerification;
@@ -393,7 +393,7 @@ impl Copilot {
             Default::default(),
             cx.to_async(),
         );
-        let http = util::http::FakeHttpClient::create(|_| async { unreachable!() });
+        let http = http::FakeHttpClient::create(|_| async { unreachable!() });
         let node_runtime = FakeNodeRuntime::new();
         let this = cx.new_model(|cx| Self {
             server_id: LanguageServerId(0),

@@ -18,7 +18,7 @@ use editor::{
     },
     scroll::{Autoscroll, AutoscrollStrategy},
     Anchor, Editor, EditorElement, EditorEvent, EditorStyle, MultiBuffer, MultiBufferSnapshot,
-    ToOffset as _, ToPoint,
+    RowExt, ToOffset as _, ToPoint,
 };
 use file_icons::FileIcons;
 use fs::Fs;
@@ -32,6 +32,7 @@ use gpui::{
     View, ViewContext, VisualContext, WeakModel, WeakView, WhiteSpace, WindowContext,
 };
 use language::{language_settings::SoftWrap, Buffer, LanguageRegistry, ToOffset as _};
+use multi_buffer::MultiBufferRow;
 use parking_lot::Mutex;
 use project::Project;
 use search::{buffer_search::DivRegistrar, BufferSearchBar};
@@ -306,7 +307,7 @@ impl AssistantPanel {
             if point_selection.end.column == 0 {
                 point_selection.end.row -= 1;
             }
-            point_selection.end.column = snapshot.line_len(point_selection.end.row);
+            point_selection.end.column = snapshot.line_len(MultiBufferRow(point_selection.end.row));
         }
 
         let codegen_kind = if point_selection.start == point_selection.end {
@@ -2168,7 +2169,7 @@ impl ConversationEditor {
                         let snapshot = editor.snapshot(cx);
                         let cursor_point = scroll_position.cursor.to_display_point(&snapshot);
                         let scroll_top =
-                            cursor_point.row() as f32 - scroll_position.offset_before_cursor.y;
+                            cursor_point.row().as_f32() - scroll_position.offset_before_cursor.y;
                         editor.set_scroll_position(
                             point(scroll_position.offset_before_cursor.x, scroll_top),
                             cx,
@@ -2236,7 +2237,10 @@ impl ConversationEditor {
         self.editor.update(cx, |editor, cx| {
             let snapshot = editor.snapshot(cx);
             let cursor = editor.selections.newest_anchor().head();
-            let cursor_row = cursor.to_display_point(&snapshot.display_snapshot).row() as f32;
+            let cursor_row = cursor
+                .to_display_point(&snapshot.display_snapshot)
+                .row()
+                .as_f32();
             let scroll_position = editor
                 .scroll_manager
                 .anchor()
