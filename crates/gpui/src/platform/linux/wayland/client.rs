@@ -853,7 +853,9 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for WaylandClientStatePtr {
                 state.enter_token.take();
 
                 if let Some(window) = keyboard_focused_window {
+                    state.pre_edit_text.take();
                     drop(state);
+                    window.handle_ime_delete();
                     window.set_focused(false);
                 }
             }
