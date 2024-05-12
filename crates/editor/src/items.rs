@@ -5,7 +5,7 @@ use crate::{
 };
 use anyhow::{anyhow, Context as _, Result};
 use collections::HashSet;
-use futures::future::{join_all, try_join_all};
+use futures::future::try_join_all;
 use git::repository::GitFileStatus;
 use gpui::{
     point, AnyElement, AppContext, AsyncWindowContext, Context, Entity, EntityId, EventEmitter,
@@ -16,7 +16,7 @@ use language::{
     proto::serialize_anchor as serialize_text_anchor, Bias, Buffer, CharKind, OffsetRangeExt,
     Point, SelectionGoal,
 };
-use multi_buffer::AnchorRangeExt;
+use multi_buffer::{AnchorRangeExt, MultiBufferRow};
 use project::{search::SearchQuery, FormatTrigger, Item as _, Project, ProjectPath};
 use rpc::proto::{self, update_view, PeerId};
 use settings::Settings;
@@ -1036,7 +1036,8 @@ impl SearchableItem for Editor {
                     column: 0,
                 });
 
-                let end_anchor = if point_range.end.row == snapshot.max_buffer_row() {
+                let end_anchor = if MultiBufferRow(point_range.end.row) == snapshot.max_buffer_row()
+                {
                     snapshot.anchor_after(snapshot.max_point())
                 } else {
                     snapshot.anchor_before(Point {
@@ -1202,28 +1203,22 @@ impl SearchableItem for Editor {
 
             let mut ranges = Vec::new();
             if let Some((_, _, excerpt_buffer)) = buffer.as_singleton() {
-                // search_ranges is likely length 1 (very rarely longer)
-                ranges.extend(
-                    join_all(search_ranges.into_iter().map(|range| async {
-                        let offset = if let Some(range) = &range {
-                            range.start
-                        } else {
-                            0
-                        };
+                for range in search_ranges {
+                    let offset = if let Some(range) = &range {
+                        range.start
+                    } else {
+                        0
+                    };
 
-                        let buffer = &buffer;
+                    let buffer = &buffer;
 
-                        query.search(excerpt_buffer, range).await.into_iter().map(
-                            move |matched_range| {
-                                buffer.anchor_after(offset + matched_range.start)
-                                    ..buffer.anchor_before(offset + matched_range.end)
-                            },
-                        )
-                    }))
-                    .await
-                    .into_iter()
-                    .flatten(),
-                );
+                    ranges.extend(query.search(excerpt_buffer, range).await.into_iter().map(
+                        move |matched_range| {
+                            buffer.anchor_after(offset + matched_range.start)
+                                ..buffer.anchor_before(offset + matched_range.end)
+                        },
+                    ));
+                }
             } else {
                 // Selections ranges
                 // Excerpt ranges
