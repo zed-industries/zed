@@ -1,5 +1,6 @@
 use core::hash;
 use std::cell::{RefCell, RefMut};
+use std::ffi::OsString;
 use std::os::fd::{AsRawFd, BorrowedFd};
 use std::path::PathBuf;
 use std::rc::{Rc, Weak};
@@ -146,6 +147,7 @@ pub(crate) struct WaylandClientState {
     // Output to scale mapping
     output_scales: HashMap<ObjectId, i32>,
     keymap_state: Option<xkb::State>,
+    compose_state: Option<xkb::compose::State>,
     drag: DragState,
     click: ClickState,
     repeat: KeyRepeat,
@@ -340,6 +342,7 @@ impl WaylandClient {
             windows: HashMap::default(),
             common,
             keymap_state: None,
+            compose_state: None,
             drag: DragState {
                 data_offer: None,
                 window: None,
@@ -806,9 +809,10 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for WaylandClientStatePtr {
                     wl_keyboard::KeymapFormat::XkbV1,
                     "Unsupported keymap format"
                 );
+                let xkb_context = xkb::Context::new(xkb::CONTEXT_NO_FLAGS);
                 let keymap = unsafe {
                     xkb::Keymap::new_from_fd(
-                        &xkb::Context::new(xkb::CONTEXT_NO_FLAGS),
+                        &xkb_context,
                         fd,
                         size as usize,
                         XKB_KEYMAP_FORMAT_TEXT_V1,
@@ -818,7 +822,21 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for WaylandClientStatePtr {
                     .flatten()
                     .expect("Failed to create keymap")
                 };
+                let table = {
+                    let locale = std::env::var_os("LC_CTYPE").unwrap_or(OsString::from("C"));
+                    xkb::compose::Table::new_from_locale(
+                        &xkb_context,
+                        &locale,
+                        xkb::compose::COMPILE_NO_FLAGS,
+                    )
+                    .log_err()
+                    .unwrap()
+                };
                 state.keymap_state = Some(xkb::State::new(&keymap));
+                state.compose_state = Some(xkb::compose::State::new(
+                    &table,
+                    xkb::compose::STATE_NO_FLAGS,
+                ));
             }
             wl_keyboard::Event::Enter { surface, .. } => {
                 state.keyboard_focused_window = get_window(&mut state, &surface.id());
@@ -882,8 +900,46 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for WaylandClientStatePtr {
 
                 match key_state {
                     wl_keyboard::KeyState::Pressed if !keysym.is_modifier_key() => {
+                        let mut keystroke =
+                            Keystroke::from_xkb(&keymap_state, state.modifiers, keycode);
+                        if let Some(mut compose) = state.compose_state.take() {
+                            compose.feed(keysym);
+                            match compose.status() {
+                                xkb::Status::Composing => {
+                                    state.pre_edit_text =
+                                        compose.utf8().or(Keystroke::underlying_dead_key(keysym));
+                                    let pre_edit =
+                                        state.pre_edit_text.clone().unwrap_or(String::default());
+                                    drop(state);
+                                    focused_window.handle_ime_preedit(pre_edit);
+                                    state = client.borrow_mut();
+                                }
+
+                                xkb::Status::Composed => {
+                                    state.pre_edit_text.take();
+                                    keystroke.ime_key = compose.utf8();
+                                    keystroke.key = xkb::keysym_get_name(compose.keysym().unwrap());
+                                }
+                                xkb::Status::Cancelled => {
+                                    let pre_edit = state.pre_edit_text.take();
+                                    drop(state);
+                                    if let Some(pre_edit) = pre_edit {
+                                        focused_window.handle_ime_commit(pre_edit);
+                                    }
+                                    if let Some(current_key) =
+                                        Keystroke::underlying_dead_key(keysym)
+                                    {
+                                        focused_window.handle_ime_preedit(current_key);
+                                    }
+                                    compose.feed(keysym);
+                                    state = client.borrow_mut();
+                                }
+                                _ => {}
+                            }
+                            state.compose_state = Some(compose);
+                        }
                         let input = PlatformInput::KeyDown(KeyDownEvent {
-                            keystroke: Keystroke::from_xkb(keymap_state, state.modifiers, keycode),
+                            keystroke: keystroke,
                             is_held: false, // todo(linux)
                         });
 
