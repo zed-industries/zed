@@ -2,7 +2,7 @@
 
 The assistant panel provides you with a way to interact with OpenAI's large language models. The assistant is good for various tasks, such as generating code, asking questions about existing code, and even writing plaintext, such as emails and documentation. To open the assistant panel, toggle the right dock by using the `workspace: toggle right dock` action in the command palette (`cmd-shift-p`).
 
-_Note: A default binding can be set to toggle the right dock via the settings._
+> **Note**: A default binding can be set to toggle the right dock via the settings.
 
 ## Setup
 
