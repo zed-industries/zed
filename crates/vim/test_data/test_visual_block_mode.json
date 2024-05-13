@@ -11,7 +11,7 @@
 {"Key":"$"}
 {"Get":{"state":"The «quick brownˇ»\nfox «jumps overˇ»\nthe «lazy dogˇ»","mode":"VisualBlock"}}
 {"Key":"shift-f"}
-{"Key":" "}
+{"Key":"space"}
 {"Get":{"state":"The «quickˇ» brown\nfox «jumpsˇ» over\nthe «lazy ˇ»dog","mode":"VisualBlock"}}
 {"Key":"v"}
 {"Get":{"state":"The «quick brown\nfox jumps over\nthe lazy ˇ»dog","mode":"Visual"}}

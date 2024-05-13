@@ -1404,8 +1404,15 @@ impl Pane {
         project: Model<Project>,
         cx: &mut WindowContext,
     ) -> Task<Result<()>> {
+        let format = if let AutosaveSetting::AfterDelay { .. } =
+            WorkspaceSettings::get_global(cx).autosave
+        {
+            false
+        } else {
+            true
+        };
         if Self::can_autosave_item(item, cx) {
-            item.save(true, project, cx)
+            item.save(format, project, cx)
         } else {
             Task::ready(Ok(()))
         }

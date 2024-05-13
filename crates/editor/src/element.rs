@@ -7,7 +7,10 @@ use crate::{
     editor_settings::{
         CurrentLineHighlight, DoubleClickInMultibuffer, MultiCursorModifier, ShowScrollbar,
     },
-    git::{blame::GitBlame, diff_hunk_to_display, DisplayDiffHunk},
+    git::{
+        blame::{CommitDetails, GitBlame},
+        diff_hunk_to_display, DisplayDiffHunk,
+    },
     hover_popover::{
         self, hover_at, HOVER_POPOVER_GAP, MIN_POPOVER_CHARACTER_WIDTH, MIN_POPOVER_LINE_HEIGHT,
     },
@@ -138,6 +141,8 @@ pub struct EditorElement {
 type DisplayRowDelta = u32;
 
 impl EditorElement {
+    pub(crate) const SCROLLBAR_WIDTH: Pixels = px(13.);
+
     pub fn new(editor: &View<Editor>, style: EditorStyle) -> Self {
         Self {
             editor: editor.clone(),
@@ -1513,7 +1518,7 @@ impl EditorElement {
         let end = rows.end.max(relative_to);
 
         let buffer_rows = snapshot
-            .display_rows(start)
+            .buffer_rows(start)
             .take(1 + end.minus(start) as usize)
             .collect::<Vec<_>>();
 
@@ -1551,7 +1556,7 @@ impl EditorElement {
     fn layout_line_numbers(
         &self,
         rows: Range<DisplayRow>,
-        buffer_rows: impl Iterator<Item = Option<DisplayRow>>,
+        buffer_rows: impl Iterator<Item = Option<MultiBufferRow>>,
         active_rows: &BTreeMap<DisplayRow, bool>,
         newest_selection_head: Option<DisplayPoint>,
         snapshot: &EditorSnapshot,
@@ -1599,10 +1604,10 @@ impl EditorElement {
             } else {
                 (false, cx.theme().colors().editor_line_number)
             };
-            if let Some(display_row) = row {
+            if let Some(multibuffer_row) = row {
                 if include_line_numbers {
                     line_number.clear();
-                    let default_number = display_row.0 + 1;
+                    let default_number = multibuffer_row.0 + 1;
                     let number = relative_rows
                         .get(&DisplayRow(ix as u32 + rows.start.0))
                         .unwrap_or(&default_number);
@@ -1625,9 +1630,6 @@ impl EditorElement {
                     fold_statuses.push(
                         is_singleton
                             .then(|| {
-                                let multibuffer_point =
-                                    DisplayPoint::new(display_row, 0).to_point(snapshot);
-                                let multibuffer_row = MultiBufferRow(multibuffer_point.row);
                                 snapshot
                                     .fold_for_line(multibuffer_row)
                                     .map(|fold_status| (fold_status, multibuffer_row, active))
@@ -3452,8 +3454,15 @@ fn render_blame_entry(
         ])
         .on_mouse_down(MouseButton::Right, {
             let blame_entry = blame_entry.clone();
+            let details = details.clone();
             move |event, cx| {
-                deploy_blame_entry_context_menu(&blame_entry, editor.clone(), event.position, cx);
+                deploy_blame_entry_context_menu(
+                    &blame_entry,
+                    details.as_ref(),
+                    editor.clone(),
+                    event.position,
+                    cx,
+                );
             }
         })
         .hover(|style| style.bg(cx.theme().colors().element_hover))
@@ -3473,6 +3482,7 @@ fn render_blame_entry(
 
 fn deploy_blame_entry_context_menu(
     blame_entry: &BlameEntry,
+    details: Option<&CommitDetails>,
     editor: View<Editor>,
     position: gpui::Point<Pixels>,
     cx: &mut WindowContext<'_>,
@@ -3482,6 +3492,10 @@ fn deploy_blame_entry_context_menu(
         this.entry("Copy commit SHA", None, move |cx| {
             cx.write_to_clipboard(ClipboardItem::new(sha.clone()));
         })
+        .when_some(
+            details.and_then(|details| details.permalink.clone()),
+            |this, url| this.entry("Open permalink", None, move |cx| cx.open_url(url.as_str())),
+        )
     });
 
     editor.update(cx, move |editor, cx| {
@@ -3786,7 +3800,13 @@ impl Element for EditorElement {
                     cx,
                 );
                 let text_width = bounds.size.width - gutter_dimensions.width;
-                let overscroll = size(em_width, px(0.));
+
+                let right_margin = if snapshot.mode == EditorMode::Full {
+                    EditorElement::SCROLLBAR_WIDTH
+                } else {
+                    px(0.)
+                };
+                let overscroll = size(em_width + right_margin, px(0.));
 
                 snapshot = self.editor.update(cx, |editor, cx| {
                     editor.last_bounds = Some(bounds);
@@ -3861,8 +3881,9 @@ impl Element for EditorElement {
                 let end_row = DisplayRow(end_row);
 
                 let buffer_rows = snapshot
-                    .display_rows(start_row)
-                    .take((start_row..end_row).len());
+                    .buffer_rows(start_row)
+                    .take((start_row..end_row).len())
+                    .collect::<Vec<_>>();
 
                 let start_anchor = if start_row == Default::default() {
                     Anchor::min()
@@ -3905,7 +3926,7 @@ impl Element for EditorElement {
 
                 let (line_numbers, fold_statuses) = self.layout_line_numbers(
                     start_row..end_row,
-                    buffer_rows.clone(),
+                    buffer_rows.clone().into_iter(),
                     &active_rows,
                     newest_selection_head,
                     &snapshot,
@@ -3975,11 +3996,7 @@ impl Element for EditorElement {
                 }
 
                 let blamed_display_rows = self.layout_blame_entries(
-                    buffer_rows.map(|display_row| {
-                        display_row.map(|row| {
-                            MultiBufferRow(DisplayPoint::new(row, 0).to_point(&snapshot).row)
-                        })
-                    }),
+                    buffer_rows.into_iter(),
                     em_width,
                     scroll_position,
                     line_height,
@@ -4884,7 +4901,7 @@ mod tests {
                 element
                     .layout_line_numbers(
                         DisplayRow(0)..DisplayRow(6),
-                        (0..6).map(DisplayRow).map(Some),
+                        (0..6).map(MultiBufferRow).map(Some),
                         &Default::default(),
                         Some(DisplayPoint::new(DisplayRow(0), 0)),
                         &snapshot,
