@@ -1090,9 +1090,6 @@ mod tests {
 
         db.save_workspace(workspace.clone()).await;
 
-        // todo: revisit this test with setting in place to auto-sort roots, unless we want to treat them
-        // as different workspaces in the db?
-
         let round_trip_workspace = db.workspace_for_roots(&["/tmp2", "/tmp"]);
         assert_eq!(None, round_trip_workspace, "wrong order");
 
