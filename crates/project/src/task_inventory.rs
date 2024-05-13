@@ -8,7 +8,7 @@ use std::{
 
 use collections::{btree_map, BTreeMap, VecDeque};
 use gpui::{AppContext, Context, Model, ModelContext};
-use itertools::{Either, Itertools};
+use itertools::Itertools;
 use language::Language;
 use task::{
     static_source::StaticSource, ResolvedTask, TaskContext, TaskId, TaskTemplate, VariableName,
@@ -188,7 +188,6 @@ impl Inventory {
             .last_scheduled_tasks
             .iter()
             .rev()
-            .filter(|(_, task)| !task.original_task().ignore_previously_resolved)
             .filter(|(task_kind, _)| {
                 if matches!(task_kind, TaskSourceKind::Language { .. }) {
                     Some(task_kind) == task_source_kind.as_ref()
@@ -256,38 +255,46 @@ impl Inventory {
                 tasks_by_label
             },
         );
-        tasks_by_label = currently_resolved_tasks.into_iter().fold(
+        tasks_by_label = currently_resolved_tasks.iter().fold(
             tasks_by_label,
             |mut tasks_by_label, (source, task, lru_score)| {
-                match tasks_by_label.entry((source, task.resolved_label.clone())) {
+                match tasks_by_label.entry((source.clone(), task.resolved_label.clone())) {
                     btree_map::Entry::Occupied(mut o) => {
                         let (previous_task, _) = o.get();
                         let new_template = task.original_task();
-                        if new_template.ignore_previously_resolved
-                            || new_template != previous_task.original_task()
-                        {
-                            o.insert((task, lru_score));
+                        if new_template != previous_task.original_task() {
+                            o.insert((task.clone(), *lru_score));
                         }
                     }
                     btree_map::Entry::Vacant(v) => {
-                        v.insert((task, lru_score));
+                        v.insert((task.clone(), *lru_score));
                     }
                 }
                 tasks_by_label
             },
         );
 
-        tasks_by_label
+        let resolved = tasks_by_label
             .into_iter()
             .map(|((kind, _), (task, lru_score))| (kind, task, lru_score))
             .sorted_unstable_by(task_lru_comparator)
-            .partition_map(|(kind, task, lru_score)| {
+            .filter_map(|(kind, task, lru_score)| {
                 if lru_score < not_used_score {
-                    Either::Left((kind, task))
+                    Some((kind, task))
                 } else {
-                    Either::Right((kind, task))
+                    None
                 }
             })
+            .collect();
+
+        (
+            resolved,
+            currently_resolved_tasks
+                .into_iter()
+                .sorted_unstable_by(task_lru_comparator)
+                .map(|(kind, task, _)| (kind, task))
+                .collect(),
+        )
     }
 
     /// Returns the last scheduled task, if any of the sources contains one with the matching id.
