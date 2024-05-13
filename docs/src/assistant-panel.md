@@ -38,13 +38,13 @@ Inserting text from an editor is as simple as highlighting the text and running 
 
 ![Quoting a selection](https://zed.dev/img/assistant/quoting-a-selection.png)
 
-To submit a message, use `cmd-enter` (`assistant: assist`). Unlike typical chat applications where pressing `enter` would submit the message, in the assistant editor, our goal was to make it feel as close to a regular editor as possible. So, pressing `enter` simply inserts a newline.
+To submit a message, use `cmd-enter` (`assistant: assist`). Unlike typical chat applications where pressing `enter` would submit the message, in the assistant editor, our goal was to make it feel as close to a regular editor as possible. So, pressing `enter` simply inserts a new line.
 
 After submitting a message, the assistant's response will be streamed below, in an `Assistant` message block.
 
 ![Receiving an answer](https://zed.dev/img/assistant/receiving-an-answer.png)
 
-The stream can be cancelled at any point with `escape`. This is useful if you realize early on that the response is not what you were looking for.
+The stream can be canceled at any point with `escape`. This is useful if you realize early on that the response is not what you were looking for.
 
 If you want to start a new conversation at any time, you can use the `New Conversation` button located at the top-right corner of the assistant panel.
 
@@ -67,7 +67,7 @@ Being able to edit previous messages gives you control over how tokens are used.
 Some additional points to keep in mind:
 
 - You are free to change the model type at any point in the conversation.
-- You can cycle the role of a message block, by clicking on the role, which is useful when you receive a response in an `Assistant` block that you want to edit and send back up as a `You` block.
+- You can cycle the role of a message block by clicking on the role, which is useful when you receive a response in an `Assistant` block that you want to edit and send back up as a `You` block.
 
 ## Saving and loading conversations
 
