@@ -684,6 +684,7 @@ fn init_stdout_logger() {
         .init();
 }
 
+#[cfg(not(target_os = "windows"))]
 async fn load_shell_from_passwd() -> Result<()> {
     let bufsize = match unsafe { libc::sysconf(libc::_SC_GETPW_R_SIZE_MAX) } {
         n if n < 0 => 1024,
