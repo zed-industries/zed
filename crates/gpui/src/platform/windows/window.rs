@@ -49,9 +49,6 @@ pub struct WindowsWindowState {
     pub display: WindowsDisplay,
     fullscreen: Option<StyleAndBounds>,
     hwnd: HWND,
-
-    pub last_update: Instant,
-    pub frame_count: usize,
 }
 
 pub(crate) struct WindowsWindowStatePtr {
@@ -101,8 +98,6 @@ impl WindowsWindowState {
             display,
             fullscreen,
             hwnd,
-            last_update: Instant::now(),
-            frame_count: 0,
         }
     }
 
