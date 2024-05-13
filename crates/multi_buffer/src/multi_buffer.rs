@@ -13,9 +13,8 @@ use language::{
     language_settings::{language_settings, LanguageSettings},
     AutoindentMode, Buffer, BufferChunks, BufferRow, BufferSnapshot, Capability, CharKind, Chunk,
     CursorShape, DiagnosticEntry, File, IndentGuide, IndentSize, Language, LanguageScope,
-    OffsetRangeExt, OffsetUtf16, Outline, OutlineItem, Point, PointUtf16, Runnable, Selection,
-    TextDimension, ToOffset as _, ToOffsetUtf16 as _, ToPoint as _, ToPointUtf16 as _,
-    TransactionId, Unclipped,
+    OffsetRangeExt, OffsetUtf16, Outline, OutlineItem, Point, PointUtf16, Selection, TextDimension,
+    ToOffset as _, ToOffsetUtf16 as _, ToPoint as _, ToPointUtf16 as _, TransactionId, Unclipped,
 };
 use smallvec::SmallVec;
 use std::{

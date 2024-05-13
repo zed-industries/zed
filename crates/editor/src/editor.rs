@@ -10140,7 +10140,7 @@ impl Editor {
                 } else {
                     indent_guide.end_row.saturating_sub(1)
                 };
-                !snapshot.is_line_folded(buffer_row)
+                !snapshot.is_line_folded(MultiBufferRow(buffer_row))
             })
             .collect();
 
@@ -10162,12 +10162,13 @@ impl Editor {
                 let mut containing_range = None;
                 let mut target_indent = None;
                 for row in (0..=selection_range.end.row).rev() {
-                    let fold_range = snapshot.foldable_range(row);
+                    let fold_range = snapshot.foldable_range(MultiBufferRow(row));
 
                     if let Some(fold_range) = fold_range {
                         if fold_range.end.row >= buffer_start_row {
                             containing_range = Some(fold_range);
-                            target_indent = Some(snapshot.line_indent_for_buffer_row(row).0);
+                            target_indent =
+                                Some(snapshot.line_indent_for_buffer_row(MultiBufferRow(row)).0);
                             if row <= selection_range.start.row {
                                 break;
                             }
@@ -10200,7 +10201,35 @@ impl Editor {
                     .offset_to_point(excerpt_selection_range.start)
                     .row;
 
-                let indent_at_cursor = excerpt.buffer().line_indent_for_row(selection_start_row).0;
+                let (mut indent_at_cursor, line_at_cursor_is_empty) =
+                    excerpt.buffer().line_indent_for_row(selection_start_row);
+
+                if line_at_cursor_is_empty {
+                    // Find the next non-empty line in both directions and use the largest indent that we find
+                    let mut prev_indent = None;
+                    for row in (0..selection_start_row.saturating_sub(1)).rev() {
+                        let (indent, is_empty) = excerpt.buffer().line_indent_for_row(row);
+                        if !is_empty {
+                            prev_indent = Some(indent);
+                            break;
+                        }
+                    }
+                    let mut next_indent = None;
+                    for row in selection_start_row + 1..excerpt.buffer().max_point().row {
+                        let (indent, is_empty) = excerpt.buffer().line_indent_for_row(row);
+                        if !is_empty {
+                            next_indent = Some(indent);
+                            break;
+                        }
+                    }
+
+                    indent_at_cursor = match (prev_indent, next_indent) {
+                        (Some(prev_indent), Some(next_indent)) => prev_indent.max(next_indent),
+                        (Some(prev_indent), None) => prev_indent,
+                        (None, Some(next_indent)) => next_indent,
+                        (None, None) => indent_at_cursor,
+                    };
+                }
 
                 // Search upwards until we find a line that has another indent
                 let mut start_row = 0;
@@ -10224,6 +10253,7 @@ impl Editor {
                         break;
                     }
                 }
+
                 (start_row..end_row, target_indent?, buffer_id)
             };
 
@@ -10234,9 +10264,6 @@ impl Editor {
                 indent_guide.buffer_id == buffer_id && indent_guide.indent_width() == target_indent
             })
             .collect::<Vec<_>>();
-
-        dbg!(&candidates);
-        dbg!(&buffer_row_range);
 
         let first_indent_start = candidates
             .iter()
@@ -10258,24 +10285,7 @@ impl Editor {
         let mut matches = Vec::new();
 
         for (i, (_, indent)) in candidates.iter() {
-            // Find exact match
-            if buffer_row_range.start + 1 == indent.start_row
-                && indent.end_row == buffer_row_range.end
-            {
-                matches.push(*i);
-            }
-
-            // Find match that is partially on screen (start/end of fold is the same as the indent start)
-            if buffer_row_range.start < indent.start_row && indent.end_row == buffer_row_range.end {
-                matches.push(*i);
-            }
-            if buffer_row_range.start + 1 == indent.start_row
-                && indent.end_row <= buffer_row_range.end
-            {
-                matches.push(*i);
-            }
-
-            // Find match that is inside the fold
+            // Find matches that are either an exact match, or partially on screen, or inside the fold
             if buffer_row_range.start <= indent.start_row && indent.end_row <= buffer_row_range.end
             {
                 matches.push(*i);
@@ -10283,219 +10293,7 @@ impl Editor {
         }
 
         Some(matches)
-
-        // // Find exact match
-        // for (i, (_, indent)) in candidates.iter() {
-        //     if buffer_row_range.start + 1 == indent.start_row
-        //         && indent.end_row == buffer_row_range.end
-        //     {
-        //         dbg!("exact match");
-        //         return Some(*i);
-        //     }
-        // }
-
-        // // Find match that is partially on screen (start/end of fold is the same as the indent start)
-        // for (i, (_, indent)) in candidates.iter() {
-        //     if buffer_row_range.start < indent.start_row && indent.end_row == buffer_row_range.end {
-        //         dbg!("partial match");
-        //         return Some(*i);
-        //     }
-        //     if buffer_row_range.start + 1 == indent.start_row
-        //         && indent.end_row <= buffer_row_range.end
-        //     {
-        //         dbg!("partial match");
-        //         return Some(*i);
-        //     }
-        // }
-
-        // // Find match that is inside the fold
-        // for (i, (_, indent)) in candidates.iter() {
-        //     if buffer_row_range.start <= indent.start_row && indent.end_row <= buffer_row_range.end
-        //     {
-        //         dbg!("containing match");
-        //         return Some(*i);
-        //     }
-        // }
-
-        // None
     }
-
-    // fn calculate_indent_guides(
-    //     &self,
-    //     rows: Range<u32>,
-    //     buffer: &text::BufferSnapshot,
-    //     display_snapshot: &DisplaySnapshot,
-    //     cx: &WindowContext,
-    // ) -> Vec<IndentGuide> {
-    //     fn indent_size_for_row(
-    //         this: &Editor,
-    //         row: u32,
-    //         snapshot: &DisplaySnapshot,
-    //         cx: &WindowContext,
-    //     ) -> NonZeroU32 {
-    //         let language = this.language_at(DisplayPoint::new(row, 0).to_point(snapshot), cx);
-    //         language::language_settings::language_settings(language.as_ref(), None, cx).tab_size
-    //     }
-
-    //     let mut result_vec = Vec::new();
-    //     let mut indent_stack = SmallVec::<[IndentGuide; 8]>::new();
-    //     let mut visible_rows = rows.into_iter();
-
-    //     while let Some(first_row) = visible_rows.next() {
-    //         let current_depth = indent_stack.len() as u32;
-
-    //         let (mut line_indent, empty) = buffer.line_indent_for_row(first_row);
-
-    //         let mut indent_size = indent_size_for_row(self, first_row, display_snapshot, cx);
-
-    //         // When encountering empty, continue until found useful line indent
-    //         // then add to the indent stack with the depth found
-    //         let mut found_indent = false;
-    //         let mut last_row = first_row;
-    //         if empty {
-    //             while let Some(display_row) = visible_rows.next() {
-    //                 let (new_line_indent, empty) = buffer.line_indent_for_row(display_row);
-    //                 if empty {
-    //                     continue;
-    //                 }
-    //                 last_row = display_row;
-    //                 line_indent = new_line_indent;
-    //                 found_indent = true;
-    //                 indent_size = indent_size_for_row(self, first_row, display_snapshot, cx);
-    //                 break;
-    //             }
-    //         } else {
-    //             found_indent = true
-    //         }
-
-    //         let depth = if found_indent {
-    //             line_indent / indent_size + ((line_indent % indent_size) > 0) as u32
-    //         } else {
-    //             current_depth
-    //         };
-
-    //         if depth < current_depth {
-    //             for _ in 0..(current_depth - depth) {
-    //                 let mut indent = indent_stack.pop().unwrap();
-    //                 if last_row != first_row {
-    //                     // In this case, we landed on an empty row, had to seek forward,
-    //                     // and discovered that the indent we where on is ending.
-    //                     // This means that the last display row must
-    //                     // be on line that ends this indent range, so we
-    //                     // should display the range up to the row before this
-    //                     indent.end = last_row - 1;
-    //                 }
-
-    //                 let buffer_row = if indent.start == indent.end {
-    //                     indent.end
-    //                 } else {
-    //                     indent.end.saturating_sub(1)
-    //                 };
-    //                 if display_snapshot.is_line_folded(buffer_row) {
-    //                     break;
-    //                 }
-
-    //                 result_vec.push(indent)
-    //             }
-    //         } else if depth > current_depth {
-    //             for next_depth in current_depth..depth {
-    //                 indent_stack.push(IndentGuide::new(
-    //                     first_row,
-    //                     last_row,
-    //                     next_depth,
-    //                     indent_size.get() as u32,
-    //                 ));
-    //             }
-    //         }
-
-    //         for indent in indent_stack.iter_mut() {
-    //             indent.end = last_row;
-    //         }
-    //     }
-
-    //     result_vec.extend(indent_stack);
-
-    //     result_vec
-    // }
-
-    // fn find_active_indent_index(
-    //     &self,
-    //     indents: &[IndentGuide],
-    //     snapshot: &DisplaySnapshot,
-    //     cx: &WindowContext,
-    // ) -> Option<usize> {
-    //     let selection = self.selections.newest::<Point>(cx);
-    //     let range = selection.range().sorted();
-    //     let buffer_start_row = range.start.row;
-
-    //     println!("{:?}", range);
-
-    //     let mut containing_range = None;
-    //     let mut target_indent = None;
-    //     for row in (0..=range.end.row).rev() {
-    //         println!("row: {}", row);
-    //         let fold_range = snapshot.foldable_range(row);
-
-    //         if let Some(fold_range) = fold_range {
-    //             if fold_range.end.row >= buffer_start_row {
-    //                 containing_range = Some(fold_range);
-    //                 target_indent = Some(snapshot.line_indent_for_buffer_row(row).0);
-    //                 if row <= range.start.row {
-    //                     break;
-    //                 }
-    //             }
-    //         }
-    //     }
-    //     let cursor_fold_range = containing_range?;
-    //     let target_indent = target_indent?;
-
-    //     let start_row = indents.iter().map(|i| i.start).min()?;
-    //     let end_row = indents.iter().map(|i| i.end).max()?;
-
-    //     // Check if the fold intersects with our visible range
-    //     if cursor_fold_range.end.row < start_row || cursor_fold_range.start.row > end_row {
-    //         return None;
-    //     }
-
-    //     let indent_candidates = indents
-    //         .iter()
-    //         .enumerate()
-    //         .filter(|(_, indent_guide)| indent_guide.indent_width() == target_indent)
-    //         .collect::<Vec<_>>();
-
-    //     // Find exact match
-    //     for (i, indent) in indent_candidates.iter() {
-    //         if cursor_fold_range.start.row + 1 == indent.start
-    //             && indent.end == cursor_fold_range.end.row
-    //         {
-    //             return Some(*i);
-    //         }
-    //     }
-
-    //     // Find match that is partially on screen (start/end of fold is the same as the indent start)
-    //     for (i, indent) in indent_candidates.iter() {
-    //         if cursor_fold_range.start.row < indent.start && indent.end == cursor_fold_range.end.row
-    //         {
-    //             return Some(*i);
-    //         }
-    //         if cursor_fold_range.start.row + 1 == indent.start
-    //             && indent.end <= cursor_fold_range.end.row
-    //         {
-    //             return Some(*i);
-    //         }
-    //     }
-
-    //     // Find a match that overlaps with the fold
-    //     for (i, indent) in indent_candidates.iter() {
-    //         if cursor_fold_range.start.row <= indent.start
-    //             && indent.end <= cursor_fold_range.end.row
-    //         {
-    //             return Some(*i);
-    //         }
-    //     }
-
-    //     None
-    // }
 
     pub fn highlight_text<T: 'static>(
         &mut self,

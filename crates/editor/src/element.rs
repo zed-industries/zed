@@ -1448,17 +1448,17 @@ impl EditorElement {
                         // length of the indent guide.
                         let mut end_range =
                             multi_buffer_range.end.to_point(&snapshot.buffer_snapshot);
-                        if end_range.row < snapshot.buffer_snapshot.max_buffer_row() {
+                        if end_range.row < snapshot.buffer_snapshot.max_buffer_row().0 {
                             end_range.row += 1;
                         }
 
                         let start_row = multi_buffer_range.start.to_display_point(snapshot).row();
                         let end_row = end_range.to_display_point(snapshot).row();
 
-                        let start_y = content_origin.y + (start_row as f32 * line_height)
+                        let start_y = content_origin.y + (start_row.0 as f32 * line_height)
                             - scroll_pixel_position.y;
 
-                        let length = (end_row - start_row) as f32 * line_height;
+                        let length = (end_row.0 - start_row.0) as f32 * line_height;
 
                         Some(IndentGuideLayout {
                             origin: point(start_x, start_y),
