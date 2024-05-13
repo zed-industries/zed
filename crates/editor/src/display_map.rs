@@ -70,17 +70,6 @@ pub trait ToDisplayPoint {
 type TextHighlights = TreeMap<Option<TypeId>, Arc<(HighlightStyle, Vec<Range<Anchor>>)>>;
 type InlayHighlights = TreeMap<TypeId, TreeMap<InlayId, (HighlightStyle, InlayHighlight)>>;
 
-#[derive(Clone)]
-pub struct DisplayBufferRows<'a>(BlockBufferRows<'a>);
-
-impl<'a> Iterator for DisplayBufferRows<'a> {
-    type Item = Option<DisplayRow>;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        self.0.next().map(|row| row.map(|r| DisplayRow(r.0)))
-    }
-}
-
 /// Decides how text in a [`MultiBuffer`] should be displayed in a buffer, handling inlay hints,
 /// folding, hard tabs, soft wrapping, custom blocks (like diagnostics), and highlighting.
 ///
@@ -398,8 +387,13 @@ impl DisplaySnapshot {
         self.buffer_snapshot.len() == 0
     }
 
-    pub fn display_rows(&self, start_row: DisplayRow) -> DisplayBufferRows {
-        DisplayBufferRows(self.block_snapshot.buffer_rows(BlockRow(start_row.0)))
+    pub fn buffer_rows(
+        &self,
+        start_row: DisplayRow,
+    ) -> impl Iterator<Item = Option<MultiBufferRow>> + '_ {
+        self.block_snapshot
+            .buffer_rows(BlockRow(start_row.0))
+            .map(|row| row.map(|row| MultiBufferRow(row.0)))
     }
 
     pub fn max_buffer_row(&self) -> MultiBufferRow {

@@ -17,6 +17,7 @@
 {"Key":"down"}
 {"Key":"y"}
 {"Key":"y"}
+{"Get":{"state":"fn boop() {\nˇ  barp()\n  bazp()\n}\n","mode":"Normal"}}
 {"ReadRegister":{"name":"\"","value":"  barp()\n  bazp()\n"}}
 {"Key":"z"}
 {"Key":"o"}

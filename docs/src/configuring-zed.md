@@ -186,6 +186,38 @@ left and right padding of the central pane from the workspace when the centered 
 
 List of `string` values
 
+## Current Line Highlight
+
+- Description: How to highlight the current line in the editor.
+- Setting: `current_line_highlight`
+- Default: `all`
+
+**Options**
+
+1. Don't highlight the current line:
+
+```json
+"current_line_highlight": "none"
+```
+
+2. Highlight the gutter area.
+
+```json
+"current_line_highlight": "gutter"
+```
+
+3. Highlight the editor area.
+
+```json
+"current_line_highlight": "line"
+```
+
+4. Highlight the full line.
+
+```json
+"current_line_highlight": "all"
+```
+
 ## Cursor Blink
 
 - Description: Whether or not the cursor blinks.

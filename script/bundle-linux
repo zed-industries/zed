@@ -27,7 +27,7 @@ export ZED_BUNDLE=true
 
 channel=$(<crates/zed/RELEASE_CHANNEL)
 
-version="$(cargo metadata --no-deps --manifest-path crates/zed/Cargo.toml --offline --format-version=1 | jq -r '.packages | map(select(.name == "zed"))[0].version')"
+version="$(script/get-crate-version zed)"
 # Set RELEASE_VERSION so it's compiled into GPUI and it knows about the version.
 export RELEASE_VERSION="${version}"
 
@@ -38,6 +38,7 @@ host_line=$(echo "$version_info" | grep host)
 target_triple=${host_line#*: }
 
 # Build binary in release mode
+export RUSTFLAGS="-C link-args=-Wl,-rpath,\$ORIGIN/../lib"
 cargo build --release --target "${target_triple}" --package zed --package cli
 
 # Strip the binary of all debug symbols
@@ -59,6 +60,17 @@ zed_dir="${temp_dir}/zed$suffix.app"
 mkdir -p "${zed_dir}/bin"
 cp "target/${target_triple}/release/Zed" "${zed_dir}/bin/zed"
 cp "target/${target_triple}/release/cli" "${zed_dir}/bin/cli"
+
+# Libs
+find_libs() {
+    ldd target/debug/Zed |\
+    cut -d' ' -f3 |\
+    grep -v '\<\(libstdc++.so\|libc.so\|libgcc_s.so\|libm.so\)'
+}
+
+mkdir -p "${zed_dir}/lib"
+rm -rf "${zed_dir}/lib/*"
+cp $(find_libs) "${zed_dir}/lib"
 
 # Icons
 mkdir -p "${zed_dir}/share/icons/hicolor/512x512/apps"
