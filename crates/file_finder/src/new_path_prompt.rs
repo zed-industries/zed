@@ -334,7 +334,7 @@ impl PickerDelegate for NewPathDelegate {
         if exists {
             self.should_dismiss = false;
             let answer = cx.prompt(
-                gpui::PromptLevel::Destructive,
+                gpui::PromptLevel::Critical,
                 &format!("{} already exists. Do you want to replace it?", m.relative_path()),
                 Some(
                     "A file or folder with the same name already eixsts. Replacing it will overwrite its current contents.",

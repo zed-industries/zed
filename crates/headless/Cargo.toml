@@ -15,7 +15,7 @@ doctest = false
 [dependencies]
 anyhow.workspace = true
 client.workspace = true
-ctrlc.workspace = true
+signal-hook.workspace = true
 gpui.workspace = true
 log.workspace = true
 rpc.workspace = true

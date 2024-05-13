@@ -527,7 +527,7 @@ mod test {
             the lazy dog."},
             Mode::Normal,
         );
-        cx.simulate_keystrokes(["y", "s", "i", "w", "{"]);
+        cx.simulate_keystrokes("y s i w {");
         cx.assert_state(
             indoc! {"
             The ˇ{ quick } brown
@@ -544,7 +544,7 @@ mod test {
             the lazy dog."},
             Mode::Normal,
         );
-        cx.simulate_keystrokes(["y", "s", "i", "w", "}"]);
+        cx.simulate_keystrokes("y s i w }");
         cx.assert_state(
             indoc! {"
             The ˇ{quick} brown
@@ -561,7 +561,7 @@ mod test {
             the lazy dog."},
             Mode::Normal,
         );
-        cx.simulate_keystrokes(["y", "s", "$", "}"]);
+        cx.simulate_keystrokes("y s $ }");
         cx.assert_state(
             indoc! {"
             The quˇ{ick brown}
@@ -578,7 +578,7 @@ mod test {
             the laˇzy dog."},
             Mode::Normal,
         );
-        cx.simulate_keystrokes(["y", "s", "i", "w", "'"]);
+        cx.simulate_keystrokes("y s i w '");
         cx.assert_state(
             indoc! {"
             The ˇ'quick' brown
@@ -595,7 +595,7 @@ mod test {
             the laˇzy dog."},
             Mode::Normal,
         );
-        cx.simulate_keystrokes(["y", "s", "$", "'"]);
+        cx.simulate_keystrokes("y s $ '");
         cx.assert_state(
             indoc! {"
             The quˇ'ick brown'
@@ -612,7 +612,7 @@ mod test {
             the laˇzy dog."},
             Mode::Normal,
         );
-        cx.simulate_keystrokes(["y", "s", "$", "1"]);
+        cx.simulate_keystrokes("y s $ 1");
         cx.assert_state(
             indoc! {"
             The quˇ1ick brown1
@@ -629,7 +629,7 @@ mod test {
             the lazy dog."},
             Mode::Normal,
         );
-        cx.simulate_keystrokes(["y", "s", "s", "{"]);
+        cx.simulate_keystrokes("y s s {");
         cx.assert_state(
             indoc! {"
             ˇ{ The quick brown }
@@ -645,7 +645,7 @@ mod test {
             the lazy dog."},
             Mode::Normal,
         );
-        cx.simulate_keystrokes(["y", "s", "s", "{"]);
+        cx.simulate_keystrokes("y s s {");
         cx.assert_state(
             indoc! {"
                 ˇ{ The quick brown }•
@@ -653,7 +653,7 @@ mod test {
             the lazy dog."},
             Mode::Normal,
         );
-        cx.simulate_keystrokes(["2", "y", "s", "s", ")"]);
+        cx.simulate_keystrokes("2 y s s )");
         cx.assert_state(
             indoc! {"
                 ˇ({ The quick brown }•
@@ -675,7 +675,7 @@ mod test {
             the lazy dog."},
             Mode::Normal,
         );
-        cx.simulate_keystrokes(["d", "s", "{"]);
+        cx.simulate_keystrokes("d s {");
         cx.assert_state(
             indoc! {"
             The ˇquick brown
@@ -692,7 +692,7 @@ mod test {
             the lazy dog."},
             Mode::Normal,
         );
-        cx.simulate_keystrokes(["d", "s", "["]);
+        cx.simulate_keystrokes("d s [");
         cx.assert_state(
             indoc! {"
             The {quˇick} brown
@@ -710,7 +710,7 @@ mod test {
             the lazy dog."},
             Mode::Normal,
         );
-        cx.simulate_keystrokes(["d", "s", "{"]);
+        cx.simulate_keystrokes("d s {");
         cx.assert_state(
             indoc! {"
             The {quick} brˇown
@@ -727,7 +727,7 @@ mod test {
             the lazy dog."},
             Mode::Normal,
         );
-        cx.simulate_keystrokes(["d", "s", "{"]);
+        cx.simulate_keystrokes("d s {");
         cx.assert_state(
             indoc! {"
             The ˇquick brown
@@ -744,7 +744,7 @@ mod test {
             the [laˇzy] dog."},
             Mode::Normal,
         );
-        cx.simulate_keystrokes(["d", "s", "]"]);
+        cx.simulate_keystrokes("d s ]");
         cx.assert_state(
             indoc! {"
             The ˇquick brown
@@ -761,7 +761,7 @@ mod test {
             the [laˇzy] dog."},
             Mode::Normal,
         );
-        cx.simulate_keystrokes(["d", "s", "["]);
+        cx.simulate_keystrokes("d s [");
         cx.assert_state(
             indoc! {"
             The ˇquick brown
@@ -777,7 +777,7 @@ mod test {
             the [laˇzy ] dog."},
             Mode::Normal,
         );
-        cx.simulate_keystrokes(["d", "s", "["]);
+        cx.simulate_keystrokes("d s [");
         cx.assert_state(
             indoc! {"
             The ˇquick brown
@@ -796,7 +796,7 @@ mod test {
             the {laˇzy} dog."},
             Mode::Normal,
         );
-        cx.simulate_keystrokes(["d", "s", "{"]);
+        cx.simulate_keystrokes("d s {");
         cx.assert_state(
             indoc! {"
             The [quick] brown
@@ -815,7 +815,7 @@ mod test {
             }"},
             Mode::Normal,
         );
-        cx.simulate_keystrokes(["d", "s", "}"]);
+        cx.simulate_keystrokes("d s }");
         cx.assert_state(
             indoc! {"
             fn test_surround() ˇ
@@ -838,7 +838,7 @@ mod test {
             the lazy dog."},
             Mode::Normal,
         );
-        cx.simulate_keystrokes(["c", "s", "{", "["]);
+        cx.simulate_keystrokes("c s { [");
         cx.assert_state(
             indoc! {"
             The ˇ[ quick ] brown
@@ -855,7 +855,7 @@ mod test {
             the {laˇzy} dog."},
             Mode::Normal,
         );
-        cx.simulate_keystrokes(["c", "s", "{", "["]);
+        cx.simulate_keystrokes("c s { [");
         cx.assert_state(
             indoc! {"
             The ˇ[ quick ] brown
@@ -872,7 +872,7 @@ mod test {
             the {laˇzy} dog."},
             Mode::Normal,
         );
-        cx.simulate_keystrokes(["c", "s", "{", "["]);
+        cx.simulate_keystrokes("c s { [");
         cx.assert_state(
             indoc! {"
             The ˇ[ quick ] brown
@@ -889,7 +889,7 @@ mod test {
             the {laˇzy} dog."},
             Mode::Normal,
         );
-        cx.simulate_keystrokes(["c", "s", "{", "]"]);
+        cx.simulate_keystrokes("c s { ]");
         cx.assert_state(
             indoc! {"
             The ˇ[quick] brown
@@ -906,7 +906,7 @@ mod test {
             the [laˇzy] dog."},
             Mode::Normal,
         );
-        cx.simulate_keystrokes(["c", "s", "[", "'"]);
+        cx.simulate_keystrokes("c s [ '");
         cx.assert_state(
             indoc! {"
             The {quick} brown
@@ -925,7 +925,7 @@ mod test {
             };"},
             Mode::Normal,
         );
-        cx.simulate_keystrokes(["c", "s", "{", "["]);
+        cx.simulate_keystrokes("c s { [");
         cx.assert_state(
             indoc! {"
             fn test_surround() ˇ[
@@ -948,7 +948,7 @@ mod test {
             the lazy dog."},
             Mode::Normal,
         );
-        cx.simulate_keystrokes(["y", "s", "i", "w", "["]);
+        cx.simulate_keystrokes("y s i w [");
         cx.assert_state(
             indoc! {"
             The ˇ[ quick ] brown
@@ -957,7 +957,7 @@ mod test {
             Mode::Normal,
         );
 
-        cx.simulate_keystrokes(["c", "s", "[", "}"]);
+        cx.simulate_keystrokes("c s [ }");
         cx.assert_state(
             indoc! {"
             The ˇ{quick} brown
@@ -966,7 +966,7 @@ mod test {
             Mode::Normal,
         );
 
-        cx.simulate_keystrokes(["d", "s", "{"]);
+        cx.simulate_keystrokes("d s {");
         cx.assert_state(
             indoc! {"
             The ˇquick brown
@@ -975,7 +975,7 @@ mod test {
             Mode::Normal,
         );
 
-        cx.simulate_keystrokes(["u"]);
+        cx.simulate_keystrokes("u");
         cx.assert_state(
             indoc! {"
             The ˇ{quick} brown

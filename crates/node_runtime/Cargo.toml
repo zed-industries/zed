@@ -22,6 +22,7 @@ async-tar.workspace = true
 async-trait.workspace = true
 async_zip.workspace = true
 futures.workspace = true
+http.workspace = true
 log.workspace = true
 semver.workspace = true
 serde.workspace = true

@@ -3,6 +3,7 @@ use std::time::Duration;
 use editor::{ClipboardSelection, Editor};
 use gpui::{ClipboardItem, ViewContext};
 use language::{CharKind, Point};
+use multi_buffer::MultiBufferRow;
 use settings::Settings;
 
 use crate::{state::Mode, UseSystemClipboard, Vim, VimSettings};
@@ -39,6 +40,24 @@ fn copy_selections_content_internal(
     let mut text = String::new();
     let mut clipboard_selections = Vec::with_capacity(selections.len());
     let mut ranges_to_highlight = Vec::new();
+
+    vim.update_state(|state| {
+        state.marks.insert(
+            "[".to_string(),
+            selections
+                .iter()
+                .map(|s| buffer.anchor_before(s.start))
+                .collect(),
+        );
+        state.marks.insert(
+            "]".to_string(),
+            selections
+                .iter()
+                .map(|s| buffer.anchor_after(s.end))
+                .collect(),
+        )
+    });
+
     {
         let mut is_first = true;
         for selection in selections.iter() {
@@ -56,10 +75,10 @@ fn copy_selections_content_internal(
             // contains a newline (so that delete works as expected). We undo that change
             // here.
             let is_last_line = linewise
-                && end.row == buffer.max_buffer_row()
+                && end.row == buffer.max_buffer_row().0
                 && buffer.max_point().column > 0
-                && start.row < buffer.max_buffer_row()
-                && start == Point::new(start.row, buffer.line_len(start.row));
+                && start.row < buffer.max_buffer_row().0
+                && start == Point::new(start.row, buffer.line_len(MultiBufferRow(start.row)));
 
             if is_last_line {
                 start = Point::new(start.row + 1, 0);
@@ -78,7 +97,7 @@ fn copy_selections_content_internal(
             clipboard_selections.push(ClipboardSelection {
                 len: text.len() - initial_len,
                 is_entire_line: linewise,
-                first_line_indent: buffer.indent_size_for_line(start.row).len,
+                first_line_indent: buffer.indent_size_for_line(MultiBufferRow(start.row)).len,
             });
         }
     }

@@ -75,6 +75,8 @@ pub enum Capability {
     ReadOnly,
 }
 
+pub type BufferRow = u32;
+
 /// An in-memory representation of a source code file, including its text,
 /// syntax trees, git status, and diagnostics.
 pub struct Buffer {
@@ -3104,7 +3106,7 @@ impl BufferSnapshot {
     /// row range.
     pub fn git_diff_hunks_in_row_range(
         &self,
-        range: Range<u32>,
+        range: Range<BufferRow>,
     ) -> impl '_ + Iterator<Item = git::diff::DiffHunk<u32>> {
         self.git_diff.hunks_in_row_range(range, self)
     }
@@ -3157,7 +3159,21 @@ impl BufferSnapshot {
                 .iter_mut()
                 .enumerate()
                 .flat_map(|(ix, iter)| Some((ix, iter.peek()?)))
-                .min_by(|(_, a), (_, b)| a.range.start.cmp(&b.range.start))?;
+                .min_by(|(_, a), (_, b)| {
+                    let cmp = a
+                        .range
+                        .start
+                        .cmp(&b.range.start)
+                        // when range is equal, sort by diagnostic severity
+                        .then(a.diagnostic.severity.cmp(&b.diagnostic.severity))
+                        // and stabilize order with group_id
+                        .then(a.diagnostic.group_id.cmp(&b.diagnostic.group_id));
+                    if reversed {
+                        cmp.reverse()
+                    } else {
+                        cmp
+                    }
+                })?;
             iterators[next_ix].next()
         })
     }
