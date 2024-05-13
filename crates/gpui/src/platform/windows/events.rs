@@ -81,8 +81,8 @@ pub(crate) fn handle_msg(
         WM_IME_STARTCOMPOSITION => handle_ime_position(handle, state_ptr),
         WM_IME_COMPOSITION => handle_ime_composition(handle, lparam, state_ptr),
         WM_SETCURSOR => handle_set_cursor(lparam, state_ptr),
+        WM_SETTINGCHANGE => handle_system_settings_changed(state_ptr),
         CURSOR_STYLE_CHANGED => handle_cursor_changed(lparam, state_ptr),
-        MOUSE_WHEEL_SETTINGS_CHANGED => handle_mouse_wheel_settings_msg(wparam, lparam, state_ptr),
         _ => None,
     };
     if let Some(n) = handled {
@@ -501,7 +501,7 @@ fn handle_mouse_wheel_msg(
     let mut lock = state_ptr.state.borrow_mut();
     if let Some(mut callback) = lock.callbacks.input.take() {
         let scale_factor = lock.scale_factor;
-        let wheel_scroll_lines = lock.mouse_wheel_settings.wheel_scroll_lines;
+        let wheel_scroll_lines = lock.system_settings.mouse_wheel_settings.wheel_scroll_lines;
         drop(lock);
         let wheel_distance =
             (wparam.signed_hiword() as f32 / WHEEL_DELTA as f32) * wheel_scroll_lines as f32;
@@ -541,7 +541,7 @@ fn handle_mouse_horizontal_wheel_msg(
     let mut lock = state_ptr.state.borrow_mut();
     if let Some(mut callback) = lock.callbacks.input.take() {
         let scale_factor = lock.scale_factor;
-        let wheel_scroll_chars = lock.mouse_wheel_settings.wheel_scroll_chars;
+        let wheel_scroll_chars = lock.system_settings.mouse_wheel_settings.wheel_scroll_chars;
         drop(lock);
         let wheel_distance =
             (-wparam.signed_hiword() as f32 / WHEEL_DELTA as f32) * wheel_scroll_chars as f32;
@@ -995,29 +995,26 @@ fn handle_set_cursor(lparam: LPARAM, state_ptr: Rc<WindowsWindowStatePtr>) -> Op
     Some(1)
 }
 
-fn handle_mouse_wheel_settings_msg(
-    wparam: WPARAM,
-    lparam: LPARAM,
-    state_ptr: Rc<WindowsWindowStatePtr>,
-) -> Option<isize> {
-    match lparam.0 {
-        1 => {
-            state_ptr
-                .state
-                .borrow_mut()
-                .mouse_wheel_settings
-                .wheel_scroll_chars = wparam.0 as u32
+fn handle_system_settings_changed(state_ptr: Rc<WindowsWindowStatePtr>) -> Option<isize> {
+    let mut lock = state_ptr.state.borrow_mut();
+    // mouse wheel
+    {
+        let (scroll_chars, scroll_lines) = lock.system_settings.mouse_wheel_settings.update();
+        if let Some(scroll_chars) = scroll_chars {
+            self.post_message(
+                MOUSE_WHEEL_SETTINGS_CHANGED,
+                WPARAM(scroll_chars as usize),
+                LPARAM(MOUSE_WHEEL_SETTINGS_SCROLL_CHARS_CHANGED),
+            );
         }
-        2 => {
-            state_ptr
-                .state
-                .borrow_mut()
-                .mouse_wheel_settings
-                .wheel_scroll_lines = wparam.0 as u32
+        if let Some(scroll_lines) = scroll_lines {
+            self.post_message(
+                MOUSE_WHEEL_SETTINGS_CHANGED,
+                WPARAM(scroll_lines as usize),
+                LPARAM(MOUSE_WHEEL_SETTINGS_SCROLL_LINES_CHANGED),
+            );
         }
-        _ => unreachable!(),
     }
-    Some(0)
 }
 
 fn parse_syskeydown_msg_keystroke(wparam: WPARAM) -> Option<Keystroke> {

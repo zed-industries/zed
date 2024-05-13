@@ -48,7 +48,6 @@ pub(crate) struct WindowsPlatform {
 
 pub(crate) struct WindowsPlatformState {
     callbacks: PlatformCallbacks,
-    pub(crate) settings: WindowsPlatformSystemSettings,
     // NOTE: standard cursor handles don't need to close.
     pub(crate) current_cursor: HCURSOR,
 }
@@ -66,12 +65,10 @@ struct PlatformCallbacks {
 impl WindowsPlatformState {
     fn new() -> Self {
         let callbacks = PlatformCallbacks::default();
-        let settings = WindowsPlatformSystemSettings::new();
         let current_cursor = load_cursor(CursorStyle::Arrow);
 
         Self {
             callbacks,
-            settings,
             current_cursor,
         }
     }
@@ -321,7 +318,6 @@ impl Platform for WindowsPlatform {
             options,
             self.icon,
             self.foreground_executor.clone(),
-            lock.settings.mouse_wheel_settings,
             lock.current_cursor,
         );
         drop(lock);
