@@ -144,28 +144,6 @@ impl WindowsPlatform {
 
         lock.is_empty()
     }
-
-    fn update_system_settings(&self) {
-        let mut lock = self.state.borrow_mut();
-        // mouse wheel
-        {
-            let (scroll_chars, scroll_lines) = lock.settings.mouse_wheel_settings.update();
-            if let Some(scroll_chars) = scroll_chars {
-                self.post_message(
-                    MOUSE_WHEEL_SETTINGS_CHANGED,
-                    WPARAM(scroll_chars as usize),
-                    LPARAM(MOUSE_WHEEL_SETTINGS_SCROLL_CHARS_CHANGED),
-                );
-            }
-            if let Some(scroll_lines) = scroll_lines {
-                self.post_message(
-                    MOUSE_WHEEL_SETTINGS_CHANGED,
-                    WPARAM(scroll_lines as usize),
-                    LPARAM(MOUSE_WHEEL_SETTINGS_SCROLL_LINES_CHANGED),
-                );
-            }
-        }
-    }
 }
 
 impl Platform for WindowsPlatform {
@@ -214,7 +192,6 @@ impl Platform for WindowsPlatform {
                                         break 'a;
                                     }
                                 }
-                                WM_SETTINGCHANGE => self.update_system_settings(),
                                 _ => {
                                     TranslateMessage(&msg);
                                     DispatchMessageW(&msg);
