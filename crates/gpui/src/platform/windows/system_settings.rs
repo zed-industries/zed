@@ -8,7 +8,7 @@ use windows::Win32::UI::WindowsAndMessaging::{
 
 /// Windows settings pulled from SystemParametersInfo
 /// https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-systemparametersinfow
-#[derive(Default, Debug)]
+#[derive(Default, Debug, Clone, Copy)]
 pub(crate) struct WindowsPlatformSystemSettings {
     pub(crate) mouse_wheel_settings: MouseWheelSettings,
 }

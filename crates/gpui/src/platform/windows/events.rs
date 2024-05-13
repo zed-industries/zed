@@ -998,23 +998,8 @@ fn handle_set_cursor(lparam: LPARAM, state_ptr: Rc<WindowsWindowStatePtr>) -> Op
 fn handle_system_settings_changed(state_ptr: Rc<WindowsWindowStatePtr>) -> Option<isize> {
     let mut lock = state_ptr.state.borrow_mut();
     // mouse wheel
-    {
-        let (scroll_chars, scroll_lines) = lock.system_settings.mouse_wheel_settings.update();
-        if let Some(scroll_chars) = scroll_chars {
-            self.post_message(
-                MOUSE_WHEEL_SETTINGS_CHANGED,
-                WPARAM(scroll_chars as usize),
-                LPARAM(MOUSE_WHEEL_SETTINGS_SCROLL_CHARS_CHANGED),
-            );
-        }
-        if let Some(scroll_lines) = scroll_lines {
-            self.post_message(
-                MOUSE_WHEEL_SETTINGS_CHANGED,
-                WPARAM(scroll_lines as usize),
-                LPARAM(MOUSE_WHEEL_SETTINGS_SCROLL_LINES_CHANGED),
-            );
-        }
-    }
+    lock.system_settings.mouse_wheel_settings.update();
+    Some(0)
 }
 
 fn parse_syskeydown_msg_keystroke(wparam: WPARAM) -> Option<Keystroke> {
