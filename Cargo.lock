@@ -12822,7 +12822,6 @@ dependencies = [
  "anyhow",
  "cargo_toml",
  "clap 4.4.4",
- "serde",
  "toml 0.8.10",
 ]
 

@@ -12,5 +12,4 @@ workspace = true
 anyhow.workspace = true
 cargo_toml.workspace = true
 clap = { workspace = true, features = ["derive"] }
-serde.workspace = true
 toml.workspace = true
