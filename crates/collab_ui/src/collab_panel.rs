@@ -2,7 +2,10 @@ mod channel_modal;
 mod contact_finder;
 
 use self::channel_modal::ChannelModal;
-use crate::{channel_view::ChannelView, chat_panel::ChatPanel, CollaborationPanelSettings};
+use crate::{
+    channel_view::ChannelView, chat_panel::ChatPanel, face_pile::FacePile,
+    CollaborationPanelSettings,
+};
 use call::ActiveCall;
 use channel::{Channel, ChannelEvent, ChannelStore};
 use client::{ChannelId, Client, Contact, ProjectId, User, UserStore};
@@ -31,8 +34,7 @@ use std::{mem, sync::Arc};
 use theme::{ActiveTheme, ThemeSettings};
 use ui::{
     prelude::*, tooltip_container, Avatar, AvatarAvailabilityIndicator, Button, Color, ContextMenu,
-    FacePile, Icon, IconButton, IconName, IconSize, Indicator, Label, ListHeader, ListItem,
-    Tooltip,
+    Icon, IconButton, IconName, IconSize, Indicator, Label, ListHeader, ListItem, Tooltip,
 };
 use util::{maybe, ResultExt, TryFutureExt};
 use workspace::{
