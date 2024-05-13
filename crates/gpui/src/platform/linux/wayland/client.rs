@@ -10,8 +10,6 @@ use calloop::timer::{TimeoutAction, Timer};
 use calloop::{EventLoop, LoopHandle};
 use calloop_wayland_source::WaylandSource;
 use collections::HashMap;
-use copypasta::wayland_clipboard::{create_clipboards_from_external, Clipboard, Primary};
-use copypasta::ClipboardProvider;
 use filedescriptor::Pipe;
 
 use smallvec::SmallVec;
@@ -60,6 +58,7 @@ use super::super::{open_uri_internal, read_fd, DOUBLE_CLICK_INTERVAL};
 use super::display::WaylandDisplay;
 use super::window::{ImeInput, WaylandWindowStatePtr};
 use crate::platform::linux::is_within_click_distance;
+use crate::platform::linux::wayland::clipboard::{Clipboard, FILE_LIST_MIME_TYPE, TEXT_MIME_TYPE};
 use crate::platform::linux::wayland::cursor::Cursor;
 use crate::platform::linux::wayland::serial::{SerialKind, SerialTracker};
 use crate::platform::linux::wayland::window::WaylandWindow;
@@ -206,9 +205,8 @@ pub(crate) struct WaylandClientState {
     keyboard_focused_window: Option<WaylandWindowStatePtr>,
     loop_handle: LoopHandle<'static, WaylandClientStatePtr>,
     cursor_style: Option<CursorStyle>,
+    clipboard: Clipboard,
     cursor: Cursor,
-    clipboard: Option<Clipboard>,
-    primary: Option<Primary>,
     event_loop: Option<EventLoop<'static, WaylandClientStatePtr>>,
     common: LinuxCommon,
 
@@ -313,9 +311,6 @@ impl Drop for WaylandClient {
         let mut state = self.0.borrow_mut();
         state.windows.clear();
 
-        // Drop the clipboard to prevent a seg fault after we've closed all Wayland connections.
-        state.primary = None;
-        state.clipboard = None;
         if let Some(wl_pointer) = &state.wl_pointer {
             wl_pointer.release();
         }
@@ -430,8 +425,6 @@ impl WaylandClient {
             .as_ref()
             .map(|data_device_manager| data_device_manager.get_data_device(&seat, &qh, ()));
 
-        let (primary, clipboard) = unsafe { create_clipboards_from_external(display) };
-
         let mut cursor = Cursor::new(&conn, &globals, 24);
 
         handle
@@ -519,9 +512,8 @@ impl WaylandClient {
             loop_handle: handle.clone(),
             enter_token: None,
             cursor_style: None,
+            clipboard: Clipboard::new(),
             cursor,
-            clipboard: Some(clipboard),
-            primary: Some(primary),
             event_loop: Some(event_loop),
 
             pending_open_uri: None,
@@ -667,47 +659,51 @@ impl LinuxClient for WaylandClient {
     }
 
     fn write_to_primary(&self, item: crate::ClipboardItem) {
-        self.0
-            .borrow_mut()
-            .primary
-            .as_mut()
-            .unwrap()
-            .set_contents(item.text)
-            .ok();
+        println!("write_to_primary: {item:?}");
+        // TODO
     }
 
     fn write_to_clipboard(&self, item: crate::ClipboardItem) {
-        self.0
-            .borrow_mut()
-            .clipboard
-            .as_mut()
-            .unwrap()
-            .set_contents(item.text)
-            .ok();
+        println!("write_to_clipboard: {item:?}");
+        let mut state = self.0.borrow_mut();
+        let (Some(data_device_manager), Some(data_device)) = (
+            state.globals.data_device_manager.clone(),
+            state.data_device.clone(),
+        ) else {
+            return;
+        };
+        if state.mouse_focused_window.is_some() || state.keyboard_focused_window.is_some() {
+            let serial = state.serial_tracker.get(SerialKind::KeyEnter);
+            let data_source = data_device_manager.create_data_source(&state.globals.qh, ());
+            data_source.offer(TEXT_MIME_TYPE.to_string());
+            data_device.set_selection(Some(&data_source), serial);
+            state.clipboard.set_pending_write(item.text);
+        }
     }
 
     fn read_from_primary(&self) -> Option<crate::ClipboardItem> {
-        self.0
-            .borrow_mut()
-            .primary
-            .as_mut()
-            .unwrap()
-            .get_contents()
-            .ok()
-            .map(|s| crate::ClipboardItem {
-                text: s,
-                metadata: None,
-            })
+        // TODO
+        None
     }
 
     fn read_from_clipboard(&self) -> Option<crate::ClipboardItem> {
+        // TODO
+        // self.0
+        //     .borrow_mut()
+        //     .clipboard
+        //     .as_mut()
+        //     .unwrap()
+        //     .get_contents()
+        //     .ok()
+        //     .map(|s| crate::ClipboardItem {
+        //         text: s,
+        //         metadata: None,
+        //     })
+        // None
         self.0
             .borrow_mut()
             .clipboard
-            .as_mut()
-            .unwrap()
-            .get_contents()
-            .ok()
+            .handle_read()
             .map(|s| crate::ClipboardItem {
                 text: s,
                 metadata: None,
@@ -1077,7 +1073,10 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for WaylandClientStatePtr {
                     xkb::compose::STATE_NO_FLAGS,
                 ));
             }
-            wl_keyboard::Event::Enter { surface, .. } => {
+            wl_keyboard::Event::Enter {
+                serial, surface, ..
+            } => {
+                state.serial_tracker.update(SerialKind::KeyEnter, serial);
                 state.keyboard_focused_window = get_window(&mut state, &surface.id());
                 state.enter_token = Some(());
 
@@ -1665,8 +1664,6 @@ impl Dispatch<zxdg_toplevel_decoration_v1::ZxdgToplevelDecorationV1, ObjectId>
     }
 }
 
-const FILE_LIST_MIME_TYPE: &str = "text/uri-list";
-
 impl Dispatch<wl_data_device::WlDataDevice, ()> for WaylandClientStatePtr {
     fn event(
         this: &mut Self,
@@ -1680,6 +1677,16 @@ impl Dispatch<wl_data_device::WlDataDevice, ()> for WaylandClientStatePtr {
         let mut state = client.borrow_mut();
 
         match event {
+            // Clipboard
+            // wl_data_device::Event::DataOffer { id: data_offer } => {
+            //     println!("data_offer event: {data_offer:?}");
+            // }
+            wl_data_device::Event::Selection { id: data_offer } => {
+                println!("selection event: {data_offer:?}");
+                state.clipboard.set_pending_read(data_offer);
+            }
+
+            // Drag and drop
             wl_data_device::Event::Enter {
                 serial,
                 surface,
@@ -1816,10 +1823,34 @@ impl Dispatch<wl_data_offer::WlDataOffer, ()> for WaylandClientStatePtr {
 
         match event {
             wl_data_offer::Event::Offer { mime_type } => {
-                if mime_type == FILE_LIST_MIME_TYPE {
+                if mime_type == TEXT_MIME_TYPE || mime_type == FILE_LIST_MIME_TYPE {
                     let serial = state.serial_tracker.get(SerialKind::DataDevice);
                     data_offer.accept(serial, Some(mime_type));
                 }
+            }
+            _ => {}
+        }
+    }
+}
+
+impl Dispatch<wl_data_source::WlDataSource, ()> for WaylandClientStatePtr {
+    fn event(
+        this: &mut Self,
+        data_source: &wl_data_source::WlDataSource,
+        event: wl_data_source::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+        let client = this.get_client();
+        let mut state = client.borrow_mut();
+
+        match event {
+            wl_data_source::Event::Send { mime_type, fd } => {
+                state.clipboard.handle_send(mime_type, fd);
+            }
+            wl_data_source::Event::Cancelled => {
+                data_source.destroy();
             }
             _ => {}
         }
