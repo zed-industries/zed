@@ -119,7 +119,6 @@ actions!(
         NewWindow,
         CloseWindow,
         AddFolderToProject,
-        SortProjectFolders,
         Unfollow,
         SaveAs,
         SaveWithoutFormat,
@@ -1707,23 +1706,6 @@ impl Workspace {
                 }
             }
             anyhow::Ok(())
-        })
-        .detach_and_log_err(cx);
-    }
-
-    fn sort_project_folders(&mut self, _: &SortProjectFolders, cx: &mut ViewContext<Self>) {
-        // todo: review whether this is possible in remote projects
-        if self.project.read(cx).is_remote() {
-            self.show_error(
-                &anyhow!("Folders cannot yet be sorted in remote projects"),
-                cx,
-            );
-            return;
-        }
-
-        let project = self.project.clone();
-        cx.spawn(move |_, mut cx| async move {
-            project.update(&mut cx, |project, cx| project.sort_local_worktrees(cx))
         })
         .detach_and_log_err(cx);
     }
@@ -3786,7 +3768,6 @@ impl Workspace {
             .on_action(cx.listener(Self::save_all))
             .on_action(cx.listener(Self::send_keystrokes))
             .on_action(cx.listener(Self::add_folder_to_project))
-            .on_action(cx.listener(Self::sort_project_folders))
             .on_action(cx.listener(Self::follow_next_collaborator))
             .on_action(cx.listener(|workspace, _: &Unfollow, cx| {
                 let pane = workspace.active_pane().clone();
@@ -3893,7 +3874,6 @@ impl Workspace {
             .on_action(cx.listener(Self::close_inactive_items_and_panes))
             .on_action(cx.listener(Self::close_all_items_and_panes))
             .on_action(cx.listener(Self::add_folder_to_project))
-            .on_action(cx.listener(Self::sort_project_folders))
             .on_action(cx.listener(Self::save_all))
             .on_action(cx.listener(Self::open));
         for action in self.workspace_actions.iter() {
