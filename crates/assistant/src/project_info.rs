@@ -5,7 +5,7 @@ use anyhow::{anyhow, Result};
 use collections::HashMap;
 use fs::Fs;
 use gpui::{AsyncWindowContext, Model};
-use project::Project;
+use project::{Project, ProjectPath};
 use serde::Deserialize;
 
 // Let's get all the useful info we can about the currently open Rust project
@@ -64,24 +64,30 @@ pub fn identify_project(
     project: Model<Project>,
     cx: &mut AsyncWindowContext,
 ) -> Result<()> {
-    let worktree = cx.update(|cx| {
-        project
+    let path_to_cargo_toml = cx.update(|cx| {
+        let worktree = project
             .read(cx)
-            .visible_worktrees(cx)
+            .worktrees()
             .next()
-            .ok_or_else(|| anyhow!("no worktree"))
+            .ok_or_else(|| anyhow!("no worktree"))?;
+
+        let path_to_cargo_toml = worktree.update(cx, |worktree, cx| {
+            let cargo_toml = worktree.entry_for_path("Cargo.toml")?;
+            Some(ProjectPath {
+                worktree_id: worktree.id(),
+                path: cargo_toml.path.clone(),
+            })
+        });
+        let path_to_cargo_toml =
+            path_to_cargo_toml.and_then(|path| project.read(cx).absolute_path(&path, cx));
+
+        anyhow::Ok(path_to_cargo_toml)
     })??;
 
-    let cargo_toml = worktree.update(cx, |worktree, _cx| {
-        worktree.entry_for_path("Cargo.toml").cloned()
-    })?;
+    let path_to_cargo_toml = path_to_cargo_toml.ok_or_else(|| anyhow!("no Cargo.toml"))?;
 
-    dbg!(&cargo_toml);
-
-    cx.spawn(|cx| async move {
-        let cargo_toml = cargo_toml.ok_or_else(|| anyhow!("no Cargo.toml"))?;
-
-        let project_info = populate_project_metadata(fs, &cargo_toml.path).await?;
+    cx.spawn(|_cx| async move {
+        let project_info = populate_project_metadata(fs, &path_to_cargo_toml).await?;
 
         dbg!(&project_info);
 
