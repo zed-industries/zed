@@ -12,7 +12,7 @@ Currently the two instances connect via Zed's servers, but we intend to build pe
 
 ## Setup
 
-> NOTE: You must be in the alpha program to see this UI. The instructions will likely change as the feature gets closer to launch.
+> **Note**: You must be in the alpha program to see this UI. The instructions will likely change as the feature gets closer to launch.
 
 1. Open the projects dialog with `cmd-option-o` and then click "Connect…".
 2. Click "Add Server"
@@ -23,11 +23,11 @@ Currently the two instances connect via Zed's servers, but we intend to build pe
    ```
 5. On the remote machine, paste the instructions from step 3.
 
-   > NOTE: Currently you must keep this process open. We are working on making it background itself.
+   > **Note**: Currently you must keep this process open. We are working on making it background itself.
    > In the meantime, you can run `nohup zed --dev-server-token YY.XXX >~/.zed-log 2>&1 &`
 
 6. On your laptop you can now open folders on the remote machine.
-   > NOTE: Zed does not currently handle opening very large directories (e.g. `/` or `~` that may have >100,000 files) very well. We are working on improving this, but suggest in the meantime opening only specific projects, or subfolders of very large mono-repos.
+   > **Note**: Zed does not currently handle opening very large directories (e.g. `/` or `~` that may have >100,000 files) very well. We are working on improving this, but suggest in the meantime opening only specific projects, or subfolders of very large mono-repos.
 
 ## Known Limitations
 

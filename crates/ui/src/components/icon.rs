@@ -41,6 +41,17 @@ impl RenderOnce for AnyIcon {
     }
 }
 
+/// The decoration for an icon.
+///
+/// For example, this can show an indicator, an "x",
+/// or a diagonal strkethrough to indicate something is disabled.
+#[derive(Debug, PartialEq, Copy, Clone, EnumIter)]
+pub enum IconDecoration {
+    Strikethrough,
+    IndicatorDot,
+    X,
+}
+
 #[derive(Default, PartialEq, Copy, Clone)]
 pub enum IconSize {
     Indicator,
@@ -119,6 +130,8 @@ pub enum IconName {
     FolderX,
     Github,
     Hash,
+    Indicator,
+    IndicatorX,
     InlayHint,
     Link,
     MagicWand,
@@ -159,6 +172,7 @@ pub enum IconName {
     SupermavenDisabled,
     SupermavenError,
     SupermavenInit,
+    Strikethrough,
     Tab,
     Terminal,
     Trash,
@@ -229,6 +243,8 @@ impl IconName {
             IconName::FolderX => "icons/stop_sharing.svg",
             IconName::Github => "icons/github.svg",
             IconName::Hash => "icons/hash.svg",
+            IconName::Indicator => "icons/indicator.svg",
+            IconName::IndicatorX => "icons/indicator_x.svg",
             IconName::InlayHint => "icons/inlay_hint.svg",
             IconName::Link => "icons/link.svg",
             IconName::MagicWand => "icons/magic_wand.svg",
@@ -269,6 +285,7 @@ impl IconName {
             IconName::SupermavenDisabled => "icons/supermaven_disabled.svg",
             IconName::SupermavenError => "icons/supermaven_error.svg",
             IconName::SupermavenInit => "icons/supermaven_init.svg",
+            IconName::Strikethrough => "icons/strikethrough.svg",
             IconName::Tab => "icons/tab.svg",
             IconName::Terminal => "icons/terminal.svg",
             IconName::Trash => "icons/trash.svg",
@@ -341,6 +358,80 @@ impl RenderOnce for Icon {
             .flex_none()
             .path(self.path)
             .text_color(self.color.color(cx))
+    }
+}
+
+#[derive(IntoElement)]
+pub struct DecoratedIcon {
+    icon: Icon,
+    decoration: IconDecoration,
+    decoration_color: Color,
+    parent_background: Option<Hsla>,
+}
+
+impl DecoratedIcon {
+    pub fn new(icon: Icon, decoration: IconDecoration) -> Self {
+        Self {
+            icon,
+            decoration,
+            decoration_color: Color::Default,
+            parent_background: None,
+        }
+    }
+
+    pub fn decoration_color(mut self, color: Color) -> Self {
+        self.decoration_color = color;
+        self
+    }
+
+    pub fn parent_background(mut self, background: Option<Hsla>) -> Self {
+        self.parent_background = background;
+        self
+    }
+}
+
+impl RenderOnce for DecoratedIcon {
+    fn render(self, cx: &mut WindowContext) -> impl IntoElement {
+        let background = self
+            .parent_background
+            .unwrap_or(cx.theme().colors().background);
+
+        let size = self.icon.size;
+
+        let decoration_icon = match self.decoration {
+            IconDecoration::Strikethrough => IconName::Strikethrough,
+            IconDecoration::IndicatorDot => IconName::Indicator,
+            IconDecoration::X => IconName::IndicatorX,
+        };
+
+        let decoration_svg = |icon: IconName| {
+            svg()
+                .absolute()
+                .top_0()
+                .left_0()
+                .path(icon.path())
+                .size(size)
+                .flex_none()
+                .text_color(self.decoration_color.color(cx))
+        };
+
+        let decoration_knockout = |icon: IconName| {
+            svg()
+                .absolute()
+                .top(-rems_from_px(2.))
+                .left(-rems_from_px(3.))
+                .path(icon.path())
+                .size(size + rems_from_px(2.))
+                .flex_none()
+                .text_color(background)
+        };
+
+        div()
+            .relative()
+            .size(self.icon.size)
+            .child(self.icon)
+            .child(decoration_knockout(decoration_icon))
+            .child(decoration_svg(decoration_icon))
     }
 }
 

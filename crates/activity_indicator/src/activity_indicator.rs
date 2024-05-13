@@ -281,11 +281,14 @@ impl ActivityIndicator {
                     message: "Installing Zed update…".to_string(),
                     on_click: None,
                 },
-                AutoUpdateStatus::Updated => Content {
+                AutoUpdateStatus::Updated { binary_path } => Content {
                     icon: None,
                     message: "Click to restart and update Zed".to_string(),
-                    on_click: Some(Arc::new(|_, cx| {
-                        workspace::restart(&Default::default(), cx)
+                    on_click: Some(Arc::new({
+                        let restart = workspace::Restart {
+                            binary_path: Some(binary_path.clone()),
+                        };
+                        move |_, cx| workspace::restart(&restart, cx)
                     })),
                 },
                 AutoUpdateStatus::Errored => Content {

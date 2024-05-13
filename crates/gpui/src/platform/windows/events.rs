@@ -171,9 +171,6 @@ fn handle_timer_msg(
     state_ptr: Rc<WindowsWindowStatePtr>,
 ) -> Option<isize> {
     if wparam.0 == SIZE_MOVE_LOOP_TIMER_ID {
-        for runnable in state_ptr.main_receiver.drain() {
-            runnable.run();
-        }
         handle_paint_msg(handle, state_ptr)
     } else {
         None
@@ -547,7 +544,7 @@ fn handle_mouse_horizontal_wheel_msg(
         let wheel_scroll_chars = lock.mouse_wheel_settings.wheel_scroll_chars;
         drop(lock);
         let wheel_distance =
-            (wparam.signed_hiword() as f32 / WHEEL_DELTA as f32) * wheel_scroll_chars as f32;
+            (-wparam.signed_hiword() as f32 / WHEEL_DELTA as f32) * wheel_scroll_chars as f32;
         let mut cursor_point = POINT {
             x: lparam.signed_loword().into(),
             y: lparam.signed_hiword().into(),
@@ -585,7 +582,10 @@ fn handle_ime_position(handle: HWND, state_ptr: Rc<WindowsWindowStatePtr>) -> Op
         let scale_factor = lock.scale_factor;
         drop(lock);
 
-        let caret_range = input_handler.selected_text_range().unwrap_or_default();
+        let Some(caret_range) = input_handler.selected_text_range() else {
+            state_ptr.state.borrow_mut().input_handler = Some(input_handler);
+            return Some(0);
+        };
         let caret_position = input_handler.bounds_for_range(caret_range).unwrap();
         state_ptr.state.borrow_mut().input_handler = Some(input_handler);
         let config = CANDIDATEFORM {

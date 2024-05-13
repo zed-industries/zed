@@ -1,4 +1,4 @@
-use anyhow::Result;
+use anyhow::{anyhow, Result};
 use client::DevServerProjectId;
 use client::{user::UserStore, Client, ClientSettings};
 use fs::Fs;
@@ -36,7 +36,7 @@ struct GlobalDevServer(Model<DevServer>);
 
 impl Global for GlobalDevServer {}
 
-pub fn init(client: Arc<Client>, app_state: AppState, cx: &mut AppContext) {
+pub fn init(client: Arc<Client>, app_state: AppState, cx: &mut AppContext) -> Task<Result<()>> {
     let dev_server = cx.new_model(|cx| DevServer::new(client.clone(), app_state, cx));
     cx.set_global(GlobalDevServer(dev_server.clone()));
 
@@ -49,42 +49,36 @@ pub fn init(client: Arc<Client>, app_state: AppState, cx: &mut AppContext) {
         });
     });
 
-    // Set up a handler when the dev server is shut down by the user pressing Ctrl-C
-    let (tx, rx) = futures::channel::oneshot::channel();
-    set_ctrlc_handler(move || tx.send(()).log_err().unwrap()).log_err();
-
-    cx.spawn(|cx| async move {
-        rx.await.log_err();
-        log::info!("Received interrupt signal");
-        cx.update(|cx| cx.quit()).log_err();
-    })
-    .detach();
+    #[cfg(not(target_os = "windows"))]
+    {
+        use signal_hook::consts::{SIGINT, SIGTERM};
+        use signal_hook::iterator::Signals;
+        // Set up a handler when the dev server is shut down
+        // with ctrl-c or kill
+        let (tx, rx) = futures::channel::oneshot::channel();
+        let mut signals = Signals::new(&[SIGTERM, SIGINT]).unwrap();
+        std::thread::spawn({
+            move || {
+                if let Some(sig) = signals.forever().next() {
+                    tx.send(sig).log_err();
+                }
+            }
+        });
+        cx.spawn(|cx| async move {
+            if let Ok(sig) = rx.await {
+                log::info!("received signal {sig:?}");
+                cx.update(|cx| cx.quit()).log_err();
+            }
+        })
+        .detach();
+    }
 
     let server_url = ClientSettings::get_global(&cx).server_url.clone();
     cx.spawn(|cx| async move {
-        match client.authenticate_and_connect(false, &cx).await {
-            Ok(_) => {
-                log::info!("Connected to {}", server_url);
-            }
-            Err(e) => {
-                log::error!("Error connecting to '{}': {}", server_url, e);
-                cx.update(|cx| cx.quit()).log_err();
-            }
-        }
-    })
-    .detach();
-}
-
-fn set_ctrlc_handler<F>(f: F) -> Result<(), ctrlc::Error>
-where
-    F: FnOnce() + 'static + Send,
-{
-    let f = std::sync::Mutex::new(Some(f));
-    ctrlc::set_handler(move || {
-        if let Ok(mut guard) = f.lock() {
-            let f = guard.take().expect("f can only be taken once");
-            f();
-        }
+        client
+            .authenticate_and_connect(false, &cx)
+            .await
+            .map_err(|e| anyhow!("Error connecting to '{}': {}", server_url, e))
     })
 }
 
@@ -186,7 +180,7 @@ impl DevServer {
 
         let path_exists = fs.is_dir(path).await;
         if !path_exists {
-            return Err(anyhow::anyhow!(ErrorCode::DevServerProjectPathDoesNotExist))?;
+            return Err(anyhow!(ErrorCode::DevServerProjectPathDoesNotExist))?;
         }
 
         Ok(proto::Ack {})

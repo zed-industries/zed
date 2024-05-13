@@ -79,10 +79,10 @@ fn main() {
                 ..Default::default()
             }),
 
-            bounds: Some(Bounds {
+            window_bounds: Some(WindowBounds::Windowed(Bounds {
                 size: size(px(1100.), px(600.)).into(),
                 origin: Point::new(DevicePixels::from(200), DevicePixels::from(200)),
-            }),
+            })),
 
             ..Default::default()
         };

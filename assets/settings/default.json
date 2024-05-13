@@ -335,6 +335,8 @@
   "autosave": "off",
   // Settings related to the editor's tab bar.
   "tab_bar": {
+    // Whether or not to show the tab bar in the editor
+    "show": true,
     // Whether or not to show the navigation history buttons.
     "show_nav_history_buttons": true
   },
@@ -366,6 +368,8 @@
   // when saving it.
   "ensure_final_newline_on_save": true,
   // Whether or not to perform a buffer format before saving
+  //
+  // Keep in mind, if the autosave with delay is enabled, format_on_save will be ignored
   "format_on_save": "on",
   // How to perform a buffer format. This setting can take 4 values:
   //
@@ -389,11 +393,13 @@
   //
   // 1. Do not soft wrap.
   //      "soft_wrap": "none",
-  // 2. Soft wrap lines that overflow the editor:
+  // 2. Prefer a single line generally, unless an overly long line is encountered.
+  //      "soft_wrap": "prefer_line",
+  // 3. Soft wrap lines that overflow the editor:
   //      "soft_wrap": "editor_width",
-  // 3. Soft wrap lines at the preferred line length
+  // 4. Soft wrap lines at the preferred line length
   //      "soft_wrap": "preferred_line_length",
-  "soft_wrap": "none",
+  "soft_wrap": "prefer_line",
   // The column at which to soft-wrap lines, for buffers where soft-wrap
   // is enabled.
   "preferred_line_length": 80,
@@ -617,7 +623,12 @@
       "format_on_save": "off"
     },
     "Elixir": {
-      "language_servers": ["elixir-ls", "!next-ls", "!lexical", "..."]
+      "language_servers": [
+        "elixir-ls",
+        "!next-ls",
+        "!lexical",
+        "..."
+      ]
     },
     "Gleam": {
       "tab_size": 2
@@ -628,13 +639,24 @@
       }
     },
     "HEEX": {
-      "language_servers": ["elixir-ls", "!next-ls", "!lexical", "..."]
+      "language_servers": [
+        "elixir-ls",
+        "!next-ls",
+        "!lexical",
+        "..."
+      ]
     },
     "Make": {
       "hard_tabs": true
     },
+    "Markdown": {
+      "format_on_save": "off"
+    },
     "Prisma": {
       "tab_size": 2
+    },
+    "Ruby": {
+      "language_servers": ["solargraph", "..."]
     }
   },
   // Zed's Prettier integration settings.

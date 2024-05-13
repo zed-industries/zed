@@ -26,6 +26,7 @@ gpui.workspace = true
 itertools.workspace = true
 language.workspace = true
 log.workspace = true
+multi_buffer.workspace = true
 nvim-rs = { git = "https://github.com/KillTheMule/nvim-rs", branch = "master", features = [
     "use_tokio",
 ], optional = true }

@@ -6,7 +6,7 @@ use anyhow::Context;
 use gpui::WindowContext;
 use language::{BasicContextProvider, ContextProvider};
 use project::{Location, WorktreeId};
-use task::{TaskContext, TaskVariables};
+use task::{TaskContext, TaskVariables, VariableName};
 use util::ResultExt;
 use workspace::Workspace;
 
@@ -79,7 +79,21 @@ pub(crate) fn task_context_with_editor(
         buffer,
         range: start..end,
     };
-    task_context_for_location(workspace, location, cx)
+    task_context_for_location(workspace, location.clone(), cx).map(|mut task_context| {
+        for range in location
+            .buffer
+            .read(cx)
+            .snapshot()
+            .runnable_ranges(location.range)
+        {
+            for (capture_name, value) in range.extra_captures {
+                task_context
+                    .task_variables
+                    .insert(VariableName::Custom(capture_name.into()), value);
+            }
+        }
+        task_context
+    })
 }
 
 pub fn task_context(workspace: &Workspace, cx: &mut WindowContext<'_>) -> TaskContext {

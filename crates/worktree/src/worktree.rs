@@ -674,7 +674,7 @@ fn start_background_scan_tasks(
     let (scan_states_tx, mut scan_states_rx) = mpsc::unbounded();
     let background_scanner = cx.background_executor().spawn({
         let abs_path = if cfg!(target_os = "windows") {
-            abs_path.canonicalize().expect("start background scan tasks failed for canonicalize path {abs_path}")
+            abs_path.canonicalize().unwrap_or_else(|_| abs_path.to_path_buf())
         } else {
             abs_path.to_path_buf()
         };
@@ -1069,7 +1069,7 @@ impl LocalWorktree {
         &self,
         path: &Path,
         cx: &mut ModelContext<Worktree>,
-    ) -> Task<Result<(File, String, Option<Rope>)>> {
+    ) -> Task<Result<(File, String, Option<String>)>> {
         let path = Arc::from(path);
         let abs_path = self.absolutize(&path);
         let fs = self.fs.clone();
@@ -1100,7 +1100,7 @@ impl LocalWorktree {
                                 if abs_path_metadata.is_dir || abs_path_metadata.is_symlink {
                                     None
                                 } else {
-                                    git_repo.lock().load_index_text(&repo_path).map(Rope::from)
+                                    git_repo.lock().load_index_text(&repo_path)
                                 }
                             }
                         }));

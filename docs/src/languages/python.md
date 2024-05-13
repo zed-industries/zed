@@ -38,6 +38,14 @@ Having done that, you would create a `pyrightconfig.json` with the following con
 }
 ```
 
+If you prefer to use a `pyproject.toml` file, you can add the following section:
+
+```toml
+[tool.pyright]
+venvPath = "."
+venv = ".venv"
+```
+
 ### Code formatting
 
 The Pyright language server does not provide code formatting. If you want to automatically reformat your Python code when saving, you'll need to specify an \_external_code formatter in your settings. See the [configuration](../configuring_zed.md) documentation for more information.

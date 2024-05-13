@@ -19,13 +19,11 @@ use time::UtcOffset;
 pub use async_context::*;
 use collections::{FxHashMap, FxHashSet, VecDeque};
 pub use entity_map::*;
+use http::{self, HttpClient};
 pub use model_context::*;
 #[cfg(any(test, feature = "test-support"))]
 pub use test_context::*;
-use util::{
-    http::{self, HttpClient},
-    ResultExt,
-};
+use util::ResultExt;
 
 use crate::{
     current_platform, init_app_menus, Action, ActionRegistry, Any, AnyView, AnyWindowHandle,
@@ -642,8 +640,8 @@ impl AppContext {
     }
 
     /// Restart the application.
-    pub fn restart(&self) {
-        self.platform.restart()
+    pub fn restart(&self, binary_path: Option<PathBuf>) {
+        self.platform.restart(binary_path)
     }
 
     /// Returns the local timezone at the platform level.

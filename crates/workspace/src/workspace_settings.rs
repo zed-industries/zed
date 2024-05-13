@@ -60,11 +60,16 @@ pub struct WorkspaceSettingsContent {
 
 #[derive(Deserialize)]
 pub struct TabBarSettings {
+    pub show: bool,
     pub show_nav_history_buttons: bool,
 }
 
 #[derive(Clone, Default, Serialize, Deserialize, JsonSchema)]
 pub struct TabBarSettingsContent {
+    /// Whether or not to show the tab bar in the editor.
+    ///
+    /// Default: top
+    pub show: Option<bool>,
     /// Whether or not to show the navigation history buttons in the tab bar.
     ///
     /// Default: true

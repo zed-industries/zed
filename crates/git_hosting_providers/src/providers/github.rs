@@ -3,12 +3,12 @@ use std::sync::{Arc, OnceLock};
 use anyhow::{bail, Context, Result};
 use async_trait::async_trait;
 use futures::AsyncReadExt;
+use http::HttpClient;
 use isahc::config::Configurable;
 use isahc::{AsyncBody, Request};
 use regex::Regex;
 use serde::Deserialize;
 use url::Url;
-use util::http::HttpClient;
 
 use git::{
     BuildCommitPermalinkParams, BuildPermalinkParams, GitHostingProvider, Oid, ParsedGitRemote,

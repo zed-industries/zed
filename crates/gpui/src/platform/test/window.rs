@@ -2,7 +2,7 @@ use crate::{
     AnyWindowHandle, AtlasKey, AtlasTextureId, AtlasTile, Bounds, DevicePixels,
     DispatchEventResult, Pixels, PlatformAtlas, PlatformDisplay, PlatformInput,
     PlatformInputHandler, PlatformWindow, Point, Size, TestPlatform, TileId, WindowAppearance,
-    WindowBackgroundAppearance, WindowParams,
+    WindowBackgroundAppearance, WindowBounds, WindowParams,
 };
 use collections::HashMap;
 use parking_lot::Mutex;
@@ -112,11 +112,11 @@ impl PlatformWindow for TestWindow {
         self.0.lock().bounds
     }
 
-    fn is_maximized(&self) -> bool {
-        false
+    fn window_bounds(&self) -> WindowBounds {
+        WindowBounds::Windowed(self.bounds())
     }
 
-    fn is_minimized(&self) -> bool {
+    fn is_maximized(&self) -> bool {
         false
     }
 

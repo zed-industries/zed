@@ -88,6 +88,14 @@ fn distance_from_clip_rect(unit_vertex: vec2<f32>, bounds: Bounds, clip_bounds: 
     return distance_from_clip_rect_impl(position, clip_bounds);
 }
 
+// https://gamedev.stackexchange.com/questions/92015/optimized-linear-to-srgb-glsl
+fn srgb_to_linear(srgb: vec3<f32>) -> vec3<f32> {
+    let cutoff = srgb < vec3<f32>(0.04045);
+    let higher = pow((srgb + vec3<f32>(0.055)) / vec3<f32>(1.055), vec3<f32>(2.4));
+    let lower = srgb / vec3<f32>(12.92);
+    return select(higher, lower, cutoff);
+}
+
 fn hsla_to_rgba(hsla: Hsla) -> vec4<f32> {
     let h = hsla.h * 6.0; // Now, it's an angle but scaled in [0, 6) range
     let s = hsla.s;
@@ -97,8 +105,7 @@ fn hsla_to_rgba(hsla: Hsla) -> vec4<f32> {
     let c = (1.0 - abs(2.0 * l - 1.0)) * s;
     let x = c * (1.0 - abs(h % 2.0 - 1.0));
     let m = l - c / 2.0;
-
-    var color = vec4<f32>(m, m, m, a);
+    var color = vec3<f32>(m);
 
     if (h >= 0.0 && h < 1.0) {
         color.r += c;
@@ -120,7 +127,12 @@ fn hsla_to_rgba(hsla: Hsla) -> vec4<f32> {
         color.b += x;
     }
 
-    return color;
+    // Input colors are assumed to be in sRGB space,
+    // but blending and rendering needs to happen in linear space.
+    // The output will be converted to sRGB by either the target
+    // texture format or the swapchain color space.
+    let linear = srgb_to_linear(color);
+    return vec4<f32>(linear, a);
 }
 
 fn over(below: vec4<f32>, above: vec4<f32>) -> vec4<f32> {
@@ -181,7 +193,8 @@ fn quad_sdf(point: vec2<f32>, bounds: Bounds, corner_radii: Corners) -> f32 {
 // target alpha compositing mode.
 fn blend_color(color: vec4<f32>, alpha_factor: f32) -> vec4<f32> {
     let alpha = color.a * alpha_factor;
-    return select(vec4<f32>(color.rgb, alpha), vec4<f32>(color.rgb, 1.0) * alpha, globals.premultiplied_alpha != 0u);
+    let multiplier = select(1.0, alpha, globals.premultiplied_alpha != 0u);
+    return vec4<f32>(color.rgb * multiplier, alpha);
 }
 
 // --- quads --- //

@@ -2,11 +2,7 @@
 
 ## Repository
 
-After cloning the repository, ensure all git submodules are initialized:
-
-```shell
-git submodule update --init --recursive
-```
+Clone down the [Zed repository](https://github.com/zed-industries/zed).
 
 ## Dependencies
 
@@ -55,6 +51,14 @@ For a release build:
 ```
 cargo run --release
 ```
+
+For a release package:
+
+```
+cargo build --release
+```
+
+the binary can be found in `target/release` folder.
 
 And to run the tests:
 

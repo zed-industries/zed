@@ -27,6 +27,7 @@ use collections::{HashMap, HashSet};
 use futures::Future;
 use gpui::{AppContext, AsyncAppContext, Model, Task};
 pub use highlight_map::HighlightMap;
+use http::HttpClient;
 use lazy_static::lazy_static;
 use lsp::{CodeActionKind, LanguageServerBinary};
 use parking_lot::Mutex;
@@ -57,10 +58,11 @@ use std::{
 };
 use syntax_map::{QueryCursorHandle, SyntaxSnapshot};
 use task::RunnableTag;
-pub use task_context::{BasicContextProvider, ContextProvider, ContextProviderWithTasks};
+pub use task_context::{
+    BasicContextProvider, ContextProvider, ContextProviderWithTasks, RunnableRange,
+};
 use theme::SyntaxTheme;
 use tree_sitter::{self, wasmtime, Query, QueryCursor, WasmStore};
-use util::http::HttpClient;
 
 pub use buffer::Operation;
 pub use buffer::*;

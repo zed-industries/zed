@@ -18,6 +18,7 @@ use gpui::{
     MouseDownEvent, NavigationDirection, Pixels, Point, PromptLevel, Render, ScrollHandle,
     Subscription, Task, View, ViewContext, VisualContext, WeakFocusHandle, WeakView, WindowContext,
 };
+use itertools::Itertools;
 use parking_lot::Mutex;
 use project::{Project, ProjectEntryId, ProjectPath};
 use serde::Deserialize;
@@ -114,6 +115,7 @@ actions!(
         ActivatePrevItem,
         ActivateNextItem,
         ActivateLastItem,
+        AlternateFile,
         CloseCleanItems,
         CloseItemsToTheLeft,
         CloseItemsToTheRight,
@@ -183,6 +185,10 @@ impl fmt::Debug for Event {
 /// responsible for managing item tabs, focus and zoom states and drag and drop features.
 /// Can be split, see `PaneGroup` for more details.
 pub struct Pane {
+    alternate_file_items: (
+        Option<Box<dyn WeakItemHandle>>,
+        Option<Box<dyn WeakItemHandle>>,
+    ),
     focus_handle: FocusHandle,
     items: Vec<Box<dyn ItemHandle>>,
     activation_history: Vec<EntityId>,
@@ -203,6 +209,7 @@ pub struct Pane {
     custom_drop_handle:
         Option<Arc<dyn Fn(&mut Pane, &dyn Any, &mut ViewContext<Pane>) -> ControlFlow<(), ()>>>,
     can_split: bool,
+    should_display_tab_bar: Rc<dyn Fn(&ViewContext<Pane>) -> bool>,
     render_tab_bar_buttons: Rc<dyn Fn(&mut Pane, &mut ViewContext<Pane>) -> AnyElement>,
     _subscriptions: Vec<Subscription>,
     tab_bar_scroll_handle: ScrollHandle,
@@ -285,6 +292,7 @@ impl Pane {
 
         let handle = cx.view().downgrade();
         Self {
+            alternate_file_items: (None, None),
             focus_handle,
             items: Vec::new(),
             activation_history: Vec::new(),
@@ -312,6 +320,7 @@ impl Pane {
             can_drop_predicate,
             custom_drop_handle: None,
             can_split: true,
+            should_display_tab_bar: Rc::new(|cx| TabBarSettings::get_global(cx).show),
             render_tab_bar_buttons: Rc::new(move |pane, cx| {
                 // Ideally we would return a vec of elements here to pass directly to the [TabBar]'s
                 // `end_slot`, but due to needing a view here that isn't possible.
@@ -385,6 +394,39 @@ impl Pane {
             ),
             _subscriptions: subscriptions,
             double_click_dispatch_action,
+        }
+    }
+
+    fn alternate_file(&mut self, cx: &mut ViewContext<Pane>) {
+        let (_, alternative) = &self.alternate_file_items;
+        if let Some(alternative) = alternative {
+            let existing = self
+                .items()
+                .find_position(|item| item.item_id() == alternative.id());
+            if let Some((ix, _)) = existing {
+                self.activate_item(ix, true, true, cx);
+            } else {
+                if let Some(upgraded) = alternative.upgrade() {
+                    self.add_item(upgraded, true, true, None, cx);
+                }
+            }
+        }
+    }
+
+    pub fn track_alternate_file_items(&mut self) {
+        if let Some(item) = self.active_item().map(|item| item.downgrade_item()) {
+            let (current, _) = &self.alternate_file_items;
+            match current {
+                Some(current) => {
+                    if current.id() != item.id() {
+                        self.alternate_file_items =
+                            (Some(item), self.alternate_file_items.0.take());
+                    }
+                }
+                None => {
+                    self.alternate_file_items = (Some(item), None);
+                }
+            }
         }
     }
 
@@ -466,6 +508,13 @@ impl Pane {
 
     pub fn activation_history(&self) -> &Vec<EntityId> {
         &self.activation_history
+    }
+
+    pub fn set_should_display_tab_bar<F>(&mut self, should_display_tab_bar: F)
+    where
+        F: 'static + Fn(&ViewContext<Pane>) -> bool,
+    {
+        self.should_display_tab_bar = Rc::new(should_display_tab_bar);
     }
 
     pub fn set_can_split(&mut self, can_split: bool, cx: &mut ViewContext<Self>) {
@@ -1355,8 +1404,15 @@ impl Pane {
         project: Model<Project>,
         cx: &mut WindowContext,
     ) -> Task<Result<()>> {
+        let format = if let AutosaveSetting::AfterDelay { .. } =
+            WorkspaceSettings::get_global(cx).autosave
+        {
+            false
+        } else {
+            true
+        };
         if Self::can_autosave_item(item, cx) {
-            item.save(true, project, cx)
+            item.save(format, project, cx)
         } else {
             Task::ready(Ok(()))
         }
@@ -1963,12 +2019,18 @@ impl Render for Pane {
             key_context.add("EmptyPane");
         }
 
+        let should_display_tab_bar = self.should_display_tab_bar.clone();
+        let display_tab_bar = should_display_tab_bar(cx);
+
         v_flex()
             .key_context(key_context)
             .track_focus(&self.focus_handle)
             .size_full()
             .flex_none()
             .overflow_hidden()
+            .on_action(cx.listener(|pane, _: &AlternateFile, cx| {
+                pane.alternate_file(cx);
+            }))
             .on_action(cx.listener(|pane, _: &SplitLeft, cx| pane.split(SplitDirection::Left, cx)))
             .on_action(cx.listener(|pane, _: &SplitUp, cx| pane.split(SplitDirection::Up, cx)))
             .on_action(
@@ -2061,7 +2123,7 @@ impl Render for Pane {
                     }
                 }),
             )
-            .when(self.active_item().is_some(), |pane| {
+            .when(self.active_item().is_some() && display_tab_bar, |pane| {
                 pane.child(self.render_tab_bar(cx))
             })
             .child({

@@ -20,6 +20,7 @@ use smol::{fs, io::AsyncReadExt};
 use settings::{Settings, SettingsSources, SettingsStore};
 use smol::{fs::File, process::Command};
 
+use http::{HttpClient, HttpClientWithUrl};
 use release_channel::{AppCommitSha, AppVersion, ReleaseChannel};
 use std::{
     env::consts::{ARCH, OS},
@@ -29,10 +30,7 @@ use std::{
     time::Duration,
 };
 use update_notification::UpdateNotification;
-use util::{
-    http::{HttpClient, HttpClientWithUrl},
-    ResultExt,
-};
+use util::ResultExt;
 use workspace::notifications::NotificationId;
 use workspace::Workspace;
 
@@ -56,14 +54,20 @@ struct UpdateRequestBody {
     telemetry: bool,
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub enum AutoUpdateStatus {
     Idle,
     Checking,
     Downloading,
     Installing,
-    Updated,
+    Updated { binary_path: PathBuf },
     Errored,
+}
+
+impl AutoUpdateStatus {
+    pub fn is_updated(&self) -> bool {
+        matches!(self, Self::Updated { .. })
+    }
 }
 
 pub struct AutoUpdater {
@@ -306,7 +310,7 @@ impl AutoUpdater {
     }
 
     pub fn poll(&mut self, cx: &mut ModelContext<Self>) {
-        if self.pending_poll.is_some() || self.status == AutoUpdateStatus::Updated {
+        if self.pending_poll.is_some() || self.status.is_updated() {
             return;
         }
 
@@ -328,7 +332,7 @@ impl AutoUpdater {
     }
 
     pub fn status(&self) -> AutoUpdateStatus {
-        self.status
+        self.status.clone()
     }
 
     pub fn dismiss_error(&mut self, cx: &mut ModelContext<Self>) {
@@ -404,6 +408,11 @@ impl AutoUpdater {
             cx.notify();
         })?;
 
+        // We store the path of our current binary, before we install, since installation might
+        // delete it. Once deleted, it's hard to get the path to our binary on Linux.
+        // So we cache it here, which allows us to then restart later on.
+        let binary_path = cx.update(|cx| cx.app_path())??;
+
         match OS {
             "macos" => install_release_macos(&temp_dir, downloaded_asset, &cx).await,
             "linux" => install_release_linux(&temp_dir, downloaded_asset, &cx).await,
@@ -413,7 +422,7 @@ impl AutoUpdater {
         this.update(&mut cx, |this, cx| {
             this.set_should_show_update_notification(true, cx)
                 .detach_and_log_err(cx);
-            this.status = AutoUpdateStatus::Updated;
+            this.status = AutoUpdateStatus::Updated { binary_path };
             cx.notify();
         })?;
 

@@ -52,14 +52,9 @@ pub struct SelectToEndOfLine {
 
 #[derive(PartialEq, Clone, Deserialize, Default)]
 pub struct ToggleCodeActions {
+    // Display row from which the action was deployed.
     #[serde(default)]
-    pub deployed_from_indicator: Option<u32>,
-}
-
-#[derive(PartialEq, Clone, Deserialize, Default)]
-pub struct ToggleTestRunner {
-    #[serde(default)]
-    pub deployed_from_row: Option<u32>,
+    pub deployed_from_indicator: Option<DisplayRow>,
 }
 
 #[derive(PartialEq, Clone, Deserialize, Default)]
@@ -82,12 +77,12 @@ pub struct ToggleComments {
 
 #[derive(PartialEq, Clone, Deserialize, Default)]
 pub struct FoldAt {
-    pub buffer_row: u32,
+    pub buffer_row: MultiBufferRow,
 }
 
 #[derive(PartialEq, Clone, Deserialize, Default)]
 pub struct UnfoldAt {
-    pub buffer_row: u32,
+    pub buffer_row: MultiBufferRow,
 }
 
 #[derive(PartialEq, Clone, Deserialize, Default)]
