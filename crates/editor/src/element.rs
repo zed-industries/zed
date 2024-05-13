@@ -1406,10 +1406,17 @@ impl EditorElement {
                 .read(cx)
                 .indent_guides_in_range(visible_buffer_range, snapshot, cx);
 
+        let active_indent_guide_indices = self
+            .editor
+            .read(cx)
+            .find_active_indent_guide_indices(&indent_guides, snapshot, cx)
+            .unwrap_or_default();
+
         Some(
             indent_guides
                 .into_iter()
-                .filter_map(|(multi_buffer_range, indent_guide)| {
+                .enumerate()
+                .filter_map(|(i, (multi_buffer_range, indent_guide))| {
                     let indent_size = self.column_pixels(indent_guide.indent_size as usize, cx);
                     let total_width = indent_size * px(indent_guide.depth as f32);
 
@@ -1417,8 +1424,6 @@ impl EditorElement {
                     if start_x >= text_origin.x {
                         let start_row = multi_buffer_range.start.to_display_point(snapshot).row();
                         let end_row = multi_buffer_range.end.to_display_point(snapshot).row() + 1;
-
-                        println!("{}, {}", start_row, end_row);
 
                         let start_y = content_origin.y + (start_row as f32 * line_height)
                             - scroll_pixel_position.y;
@@ -1430,7 +1435,7 @@ impl EditorElement {
                             length,
                             indent_size,
                             depth: indent_guide.depth,
-                            active: false, //TODO indent_guide.active,
+                            active: active_indent_guide_indices.contains(&i),
                         })
                     } else {
                         None

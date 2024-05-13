@@ -508,8 +508,9 @@ pub struct Runnable {
     pub buffer: BufferId,
 }
 
+#[derive(Clone, Debug)]
 pub struct IndentGuide {
-    pub buffer: BufferId,
+    pub buffer_id: BufferId,
     pub start_row: u32,
     pub end_row: u32,
     pub depth: u32,
@@ -3120,7 +3121,7 @@ impl BufferSnapshot {
                     indent_stack.push((
                         range,
                         IndentGuide {
-                            buffer: self.remote_id(),
+                            buffer_id: self.remote_id(),
                             start_row: first_row,
                             end_row: last_row,
                             depth: next_depth,
