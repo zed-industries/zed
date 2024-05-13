@@ -2290,7 +2290,7 @@ impl EditorElement {
 
                     if !contains_non_empty_selection {
                         let highlight_h_range =
-                            match EditorSettings::get_global(cx).current_line_highlight {
+                            match layout.position_map.snapshot.current_line_highlight {
                                 CurrentLineHighlight::Gutter => Some(Range {
                                     start: layout.hitbox.left(),
                                     end: layout.gutter_hitbox.right(),
