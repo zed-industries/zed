@@ -31,8 +31,10 @@ use simplelog::ConfigBuilder;
 use smol::process::Command;
 use std::{
     env,
+    ffi::CStr,
     fs::OpenOptions,
     io::{IsTerminal, Write},
+    mem::MaybeUninit,
     path::Path,
     process,
     sync::Arc,
@@ -306,6 +308,9 @@ fn main() {
         Task::ready(())
     } else {
         app.background_executor().spawn(async {
+            if cfg!(not(target_os = "windows")) {
+                load_shell_from_passwd().await.log_err();
+            }
             load_login_shell_environment().await.log_err();
         })
     };
@@ -678,6 +683,47 @@ fn init_stdout_logger() {
         })
         .init();
 }
+
+async fn load_shell_from_passwd() -> Result<()> {
+    let bufsize = match unsafe { libc::sysconf(libc::_SC_GETPW_R_SIZE_MAX) } {
+        n if n < 0 => 1024,
+        n => n as usize,
+    };
+    let mut buffer = Vec::with_capacity(bufsize);
+    let mut pwd: MaybeUninit<libc::passwd> = MaybeUninit::uninit();
+    let mut result: *mut libc::passwd = std::ptr::null_mut();
+
+    let uid = unsafe { libc::getuid() };
+    let status = unsafe {
+        libc::getpwuid_r(
+            uid,
+            pwd.as_mut_ptr(),
+            buffer.as_mut_ptr() as *mut _,
+            buffer.len(),
+            &mut result,
+        )
+    };
+    let entry = unsafe { pwd.assume_init() };
+
+    anyhow::ensure!(status == 0, "call to getpwui_r failed");
+    anyhow::ensure!(!result.is_null(), "passwd not found");
+    anyhow::ensure!(
+        entry.pw_uid == uid,
+        "passwd entry has different uid than getuid returned"
+    );
+
+    let shell = unsafe { CStr::from_ptr(entry.pw_shell).to_str().unwrap() };
+    if env::var("SHELL").map_or(true, |shell_env| shell_env != shell) {
+        log::info!(
+            "updating SHELL environment variable to value from passwd entry: {:?}",
+            shell,
+        );
+        env::set_var("SHELL", shell);
+    }
+
+    Ok(())
+}
+
 async fn load_login_shell_environment() -> Result<()> {
     let marker = "ZED_LOGIN_SHELL_START";
     let shell = env::var("SHELL").context(
