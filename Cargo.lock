@@ -622,6 +622,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "async-native-tls"
+version = "0.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9343dc5acf07e79ff82d0c37899f079db3534d99f189a1837c8e549c99405bec"
+dependencies = [
+ "futures-util",
+ "native-tls",
+ "thiserror",
+ "url",
+]
+
+[[package]]
 name = "async-net"
 version = "1.7.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -815,7 +827,7 @@ version = "0.16.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5682ea0913e5c20780fe5785abacb85a411e7437bf52a1bedb93ddb3972cb8dd"
 dependencies = [
- "async-native-tls",
+ "async-native-tls 0.3.3",
  "async-std",
  "futures-io",
  "futures-util",
@@ -2185,6 +2197,7 @@ name = "client"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "async-native-tls 0.5.0",
  "async-recursion 0.3.2",
  "async-tungstenite",
  "chrono",
@@ -6900,6 +6913,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ff011a302c396a5197692431fc1948019154afc178baf7d8e37367442a4601cf"
 
 [[package]]
+name = "openssl-src"
+version = "300.2.3+3.2.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5cff92b6f71555b61bb9315f7c64da3ca43d87531622120fea0195fc761b4843"
+dependencies = [
+ "cc",
+]
+
+[[package]]
 name = "openssl-sys"
 version = "0.9.93"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6907,6 +6929,7 @@ checksum = "db4d56a4c0478783083cfafcc42493dd4a981d41669da64b4572a2a089b51b1d"
 dependencies = [
  "cc",
  "libc",
+ "openssl-src",
  "pkg-config",
  "vcpkg",
 ]
