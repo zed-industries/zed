@@ -25,6 +25,7 @@ test-support = [
     "settings/test-support",
     "util/test-support",
     "workspace/test-support",
+    "http/test-support",
 ]
 
 [dependencies]
@@ -84,4 +85,5 @@ rpc = { workspace = true, features = ["test-support"] }
 settings = { workspace = true, features = ["test-support"] }
 tree-sitter-markdown.workspace = true
 util = { workspace = true, features = ["test-support"] }
+http = { workspace = true, features = ["test-support"] }
 workspace = { workspace = true, features = ["test-support"] }

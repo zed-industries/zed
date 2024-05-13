@@ -7,7 +7,9 @@ use collections::{hash_map, HashMap, HashSet};
 use git::diff::{DiffHunk, DiffHunkStatus};
 use gpui::{AppContext, Hsla, Model, Task, View};
 use language::Buffer;
-use multi_buffer::{Anchor, ExcerptRange, MultiBuffer, MultiBufferSnapshot, ToPoint};
+use multi_buffer::{
+    Anchor, ExcerptRange, MultiBuffer, MultiBufferRow, MultiBufferSnapshot, ToPoint,
+};
 use text::{BufferId, Point};
 use ui::{
     div, ActiveTheme, Context as _, IntoElement, ParentElement, Styled, ViewContext, VisualContext,
@@ -16,9 +18,9 @@ use util::{debug_panic, RangeExt};
 
 use crate::{
     git::{diff_hunk_to_display, DisplayDiffHunk},
-    hunks_for_selections, BlockDisposition, BlockId, BlockProperties, BlockStyle, DiffRowHighlight,
-    Editor, EditorSnapshot, ExpandAllHunkDiffs, RangeToAnchorExt, RevertSelectedHunks,
-    ToDisplayPoint, ToggleHunkDiff,
+    hunk_status, hunks_for_selections, BlockDisposition, BlockId, BlockProperties, BlockStyle,
+    DiffRowHighlight, Editor, EditorSnapshot, ExpandAllHunkDiffs, RangeToAnchorExt,
+    RevertSelectedHunks, ToDisplayPoint, ToggleHunkDiff,
 };
 
 #[derive(Debug, Clone)]
@@ -90,11 +92,11 @@ impl Editor {
         let hunks = snapshot
             .display_snapshot
             .buffer_snapshot
-            .git_diff_hunks_in_range(0..u32::MAX)
+            .git_diff_hunks_in_range(MultiBufferRow::MIN..MultiBufferRow::MAX)
             .filter(|hunk| {
-                let hunk_display_row_range = Point::new(hunk.associated_range.start, 0)
+                let hunk_display_row_range = Point::new(hunk.associated_range.start.0, 0)
                     .to_display_point(&snapshot.display_snapshot)
-                    ..Point::new(hunk.associated_range.end, 0)
+                    ..Point::new(hunk.associated_range.end.0, 0)
                         .to_display_point(&snapshot.display_snapshot);
                 let row_range_end =
                     display_rows_with_expanded_hunks.get(&hunk_display_row_range.start.row());
@@ -105,7 +107,7 @@ impl Editor {
 
     fn toggle_hunks_expanded(
         &mut self,
-        hunks_to_toggle: Vec<DiffHunk<u32>>,
+        hunks_to_toggle: Vec<DiffHunk<MultiBufferRow>>,
         cx: &mut ViewContext<Self>,
     ) {
         let previous_toggle_task = self.expanded_hunks.hunk_update_tasks.remove(&None);
@@ -176,10 +178,10 @@ impl Editor {
                     });
                     for remaining_hunk in hunks_to_toggle {
                         let remaining_hunk_point_range =
-                            Point::new(remaining_hunk.associated_range.start, 0)
-                                ..Point::new(remaining_hunk.associated_range.end, 0);
+                            Point::new(remaining_hunk.associated_range.start.0, 0)
+                                ..Point::new(remaining_hunk.associated_range.end.0, 0);
                         hunks_to_expand.push(HunkToExpand {
-                            status: remaining_hunk.status(),
+                            status: hunk_status(&remaining_hunk),
                             multi_buffer_range: remaining_hunk_point_range
                                 .to_anchors(&snapshot.buffer_snapshot),
                             diff_base_byte_range: remaining_hunk.diff_base_byte_range.clone(),
@@ -374,9 +376,10 @@ impl Editor {
                     }
 
                     let snapshot = editor.snapshot(cx);
-                    let buffer_snapshot = buffer.read(cx).snapshot();
-                    let mut recalculated_hunks = buffer_snapshot
-                        .git_diff_hunks_in_row_range(0..u32::MAX)
+                    let mut recalculated_hunks = snapshot
+                        .buffer_snapshot
+                        .git_diff_hunks_in_range(MultiBufferRow::MIN..MultiBufferRow::MAX)
+                        .filter(|hunk| hunk.buffer_id == buffer_id)
                         .fuse()
                         .peekable();
                     let mut highlights_to_remove =
@@ -402,7 +405,7 @@ impl Editor {
                                     .to_display_point(&snapshot)
                                     .row();
                             while let Some(buffer_hunk) = recalculated_hunks.peek() {
-                                match diff_hunk_to_display(buffer_hunk, &snapshot) {
+                                match diff_hunk_to_display(&buffer_hunk, &snapshot) {
                                     DisplayDiffHunk::Folded { display_row } => {
                                         recalculated_hunks.next();
                                         if !expanded_hunk.folded
@@ -441,7 +444,7 @@ impl Editor {
                                         } else {
                                             if !expanded_hunk.folded
                                                 && expanded_hunk_display_range == hunk_display_range
-                                                && expanded_hunk.status == buffer_hunk.status()
+                                                && expanded_hunk.status == hunk_status(buffer_hunk)
                                                 && expanded_hunk.diff_base_byte_range
                                                     == buffer_hunk.diff_base_byte_range
                                             {
@@ -614,15 +617,17 @@ fn editor_with_deleted_text(
         editor
     });
 
-    let editor_height = editor.update(cx, |editor, cx| editor.max_point(cx).row() as u8);
+    let editor_height = editor.update(cx, |editor, cx| editor.max_point(cx).row().0 as u8);
     (editor_height, editor)
 }
 
 fn buffer_diff_hunk(
     buffer_snapshot: &MultiBufferSnapshot,
     row_range: Range<Point>,
-) -> Option<DiffHunk<u32>> {
-    let mut hunks = buffer_snapshot.git_diff_hunks_in_range(row_range.start.row..row_range.end.row);
+) -> Option<DiffHunk<MultiBufferRow>> {
+    let mut hunks = buffer_snapshot.git_diff_hunks_in_range(
+        MultiBufferRow(row_range.start.row)..MultiBufferRow(row_range.end.row),
+    );
     let hunk = hunks.next()?;
     let second_hunk = hunks.next();
     if second_hunk.is_none() {

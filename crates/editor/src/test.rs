@@ -81,23 +81,30 @@ pub fn editor_hunks(
     editor: &Editor,
     snapshot: &DisplaySnapshot,
     cx: &mut ViewContext<'_, Editor>,
-) -> Vec<(String, git::diff::DiffHunkStatus, core::ops::Range<u32>)> {
+) -> Vec<(
+    String,
+    git::diff::DiffHunkStatus,
+    std::ops::Range<crate::DisplayRow>,
+)> {
+    use multi_buffer::MultiBufferRow;
     use text::Point;
+
+    use crate::hunk_status;
 
     snapshot
         .buffer_snapshot
-        .git_diff_hunks_in_range(0..u32::MAX)
+        .git_diff_hunks_in_range(MultiBufferRow::MIN..MultiBufferRow::MAX)
         .map(|hunk| {
-            let display_range = Point::new(hunk.associated_range.start, 0)
+            let display_range = Point::new(hunk.associated_range.start.0, 0)
                 .to_display_point(snapshot)
                 .row()
-                ..Point::new(hunk.associated_range.end, 0)
+                ..Point::new(hunk.associated_range.end.0, 0)
                     .to_display_point(snapshot)
                     .row();
             let (_, buffer, _) = editor
                 .buffer()
                 .read(cx)
-                .excerpt_containing(Point::new(hunk.associated_range.start, 0), cx)
+                .excerpt_containing(Point::new(hunk.associated_range.start.0, 0), cx)
                 .expect("no excerpt for expanded buffer's hunk start");
             let diff_base = buffer
                 .read(cx)
@@ -105,7 +112,7 @@ pub fn editor_hunks(
                 .expect("should have a diff base for expanded hunk")
                 .slice(hunk.diff_base_byte_range.clone())
                 .to_string();
-            (diff_base, hunk.status(), display_range)
+            (diff_base, hunk_status(&hunk), display_range)
         })
         .collect()
 }
@@ -115,7 +122,11 @@ pub fn expanded_hunks(
     editor: &Editor,
     snapshot: &DisplaySnapshot,
     cx: &mut ViewContext<'_, Editor>,
-) -> Vec<(String, git::diff::DiffHunkStatus, core::ops::Range<u32>)> {
+) -> Vec<(
+    String,
+    git::diff::DiffHunkStatus,
+    std::ops::Range<crate::DisplayRow>,
+)> {
     editor
         .expanded_hunks
         .hunks(false)
@@ -150,7 +161,9 @@ pub fn expanded_hunks(
 pub fn expanded_hunks_background_highlights(
     editor: &mut Editor,
     cx: &mut gpui::WindowContext,
-) -> Vec<std::ops::RangeInclusive<u32>> {
+) -> Vec<std::ops::RangeInclusive<crate::DisplayRow>> {
+    use crate::DisplayRow;
+
     let mut highlights = Vec::new();
 
     let mut range_start = 0;
@@ -159,19 +172,19 @@ pub fn expanded_hunks_background_highlights(
     {
         match previous_highlighted_row {
             Some(previous_row) => {
-                if previous_row + 1 != highlighted_row {
-                    highlights.push(range_start..=previous_row);
-                    range_start = highlighted_row;
+                if previous_row + 1 != highlighted_row.0 {
+                    highlights.push(DisplayRow(range_start)..=DisplayRow(previous_row));
+                    range_start = highlighted_row.0;
                 }
             }
             None => {
-                range_start = highlighted_row;
+                range_start = highlighted_row.0;
             }
         }
-        previous_highlighted_row = Some(highlighted_row);
+        previous_highlighted_row = Some(highlighted_row.0);
     }
     if let Some(previous_row) = previous_highlighted_row {
-        highlights.push(range_start..=previous_row);
+        highlights.push(DisplayRow(range_start)..=DisplayRow(previous_row));
     }
 
     highlights

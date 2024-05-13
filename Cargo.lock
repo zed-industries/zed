@@ -224,10 +224,10 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "futures 0.3.28",
+ "http 0.1.0",
  "serde",
  "serde_json",
  "tokio",
- "util",
 ]
 
 [[package]]
@@ -344,6 +344,7 @@ dependencies = [
  "fs",
  "futures 0.3.28",
  "gpui",
+ "http 0.1.0",
  "indoc",
  "language",
  "log",
@@ -383,10 +384,12 @@ dependencies = [
  "editor",
  "env_logger",
  "feature_flags",
+ "file_icons",
  "fs",
  "futures 0.3.28",
  "fuzzy",
  "gpui",
+ "http 0.1.0",
  "language",
  "languages",
  "log",
@@ -406,6 +409,7 @@ dependencies = [
  "story",
  "theme",
  "ui",
+ "unindent",
  "util",
  "workspace",
 ]
@@ -887,6 +891,7 @@ dependencies = [
  "db",
  "editor",
  "gpui",
+ "http 0.1.0",
  "isahc",
  "log",
  "markdown_preview",
@@ -932,7 +937,7 @@ dependencies = [
  "hex",
  "http 0.2.9",
  "hyper",
- "ring 0.17.7",
+ "ring",
  "time",
  "tokio",
  "tracing",
@@ -1092,7 +1097,7 @@ dependencies = [
  "once_cell",
  "p256",
  "percent-encoding",
- "ring 0.17.7",
+ "ring",
  "sha2 0.10.7",
  "subtle",
  "time",
@@ -1754,6 +1759,7 @@ dependencies = [
  "fs",
  "futures 0.3.28",
  "gpui",
+ "http 0.1.0",
  "language",
  "live_kit_client",
  "log",
@@ -1956,6 +1962,7 @@ dependencies = [
  "collections",
  "futures 0.3.28",
  "gpui",
+ "http 0.1.0",
  "language",
  "log",
  "rand 0.8.5",
@@ -2186,6 +2193,7 @@ dependencies = [
  "feature_flags",
  "futures 0.3.28",
  "gpui",
+ "http 0.1.0",
  "lazy_static",
  "log",
  "once_cell",
@@ -2316,6 +2324,7 @@ dependencies = [
  "gpui",
  "headless",
  "hex",
+ "http 0.1.0",
  "indoc",
  "language",
  "live_kit_client",
@@ -2323,6 +2332,7 @@ dependencies = [
  "log",
  "lsp",
  "menu",
+ "multi_buffer",
  "nanoid",
  "node_runtime",
  "notifications",
@@ -2384,6 +2394,7 @@ dependencies = [
  "futures 0.3.28",
  "fuzzy",
  "gpui",
+ "http 0.1.0",
  "language",
  "lazy_static",
  "menu",
@@ -2553,6 +2564,7 @@ dependencies = [
  "fs",
  "futures 0.3.28",
  "gpui",
+ "http 0.1.0",
  "indoc",
  "language",
  "lsp",
@@ -3411,6 +3423,7 @@ dependencies = [
  "fuzzy",
  "git",
  "gpui",
+ "http 0.1.0",
  "indoc",
  "itertools 0.11.0",
  "language",
@@ -3714,6 +3727,7 @@ dependencies = [
  "fs",
  "futures 0.3.28",
  "gpui",
+ "http 0.1.0",
  "isahc",
  "language",
  "log",
@@ -3861,6 +3875,7 @@ dependencies = [
  "editor",
  "futures 0.3.28",
  "gpui",
+ "http 0.1.0",
  "human_bytes",
  "isahc",
  "language",
@@ -4469,6 +4484,7 @@ dependencies = [
  "derive_more",
  "git2",
  "gpui",
+ "http 0.1.0",
  "lazy_static",
  "log",
  "parking_lot",
@@ -4508,6 +4524,7 @@ dependencies = [
  "futures 0.3.28",
  "git",
  "gpui",
+ "http 0.1.0",
  "isahc",
  "pretty_assertions",
  "regex",
@@ -4515,7 +4532,6 @@ dependencies = [
  "serde_json",
  "unindent",
  "url",
- "util",
 ]
 
 [[package]]
@@ -4593,9 +4609,9 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "futures 0.3.28",
+ "http 0.1.0",
  "serde",
  "serde_json",
- "util",
 ]
 
 [[package]]
@@ -4663,6 +4679,7 @@ dependencies = [
  "foreign-types 0.5.0",
  "futures 0.3.28",
  "gpui_macros",
+ "http 0.1.0",
  "image",
  "itertools 0.11.0",
  "lazy_static",
@@ -4980,6 +4997,20 @@ name = "hound"
 version = "3.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4d13cdbd5dbb29f9c88095bbdc2590c9cba0d0a1269b983fef6b2cdd7e9f4db1"
+
+[[package]]
+name = "http"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "futures 0.3.28",
+ "futures-lite 1.13.0",
+ "isahc",
+ "log",
+ "serde",
+ "serde_json",
+ "url",
+]
 
 [[package]]
 name = "http"
@@ -5598,6 +5629,7 @@ dependencies = [
  "git",
  "globset",
  "gpui",
+ "http 0.1.0",
  "indoc",
  "itertools 0.11.0",
  "lazy_static",
@@ -5688,6 +5720,7 @@ dependencies = [
  "feature_flags",
  "futures 0.3.28",
  "gpui",
+ "http 0.1.0",
  "language",
  "lazy_static",
  "log",
@@ -5710,7 +5743,6 @@ dependencies = [
  "tree-sitter-c",
  "tree-sitter-cpp",
  "tree-sitter-css",
- "tree-sitter-embedded-template",
  "tree-sitter-go",
  "tree-sitter-gomod",
  "tree-sitter-gowork",
@@ -6281,6 +6313,7 @@ dependencies = [
  "log",
  "parking_lot",
  "rand 0.8.5",
+ "serde",
  "settings",
  "smallvec",
  "sum_tree",
@@ -6432,6 +6465,7 @@ dependencies = [
  "async-trait",
  "async_zip",
  "futures 0.3.28",
+ "http 0.1.0",
  "log",
  "semver",
  "serde",
@@ -6826,11 +6860,11 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "futures 0.3.28",
+ "http 0.1.0",
  "isahc",
  "schemars",
  "serde",
  "serde_json",
- "util",
 ]
 
 [[package]]
@@ -7567,6 +7601,7 @@ dependencies = [
  "git2",
  "globset",
  "gpui",
+ "http 0.1.0",
  "itertools 0.11.0",
  "language",
  "log",
@@ -8191,21 +8226,6 @@ dependencies = [
 
 [[package]]
 name = "ring"
-version = "0.16.20"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3053cf52e236a3ed746dfc745aa9cacf1b791d846bdaf412f60a8d7d6e17c8fc"
-dependencies = [
- "cc",
- "libc",
- "once_cell",
- "spin 0.5.2",
- "untrusted 0.7.1",
- "web-sys",
- "winapi",
-]
-
-[[package]]
-name = "ring"
 version = "0.17.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "688c63d65483050968b2a8937f7995f443e27041a0f7700aa59b0822aedebb74"
@@ -8214,7 +8234,7 @@ dependencies = [
  "getrandom 0.2.10",
  "libc",
  "spin 0.9.8",
- "untrusted 0.9.0",
+ "untrusted",
  "windows-sys 0.48.0",
 ]
 
@@ -8367,9 +8387,9 @@ dependencies = [
 
 [[package]]
 name = "rust-embed"
-version = "8.2.0"
+version = "8.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a82c0bbc10308ed323529fd3c1dce8badda635aa319a5ff0e6466f33b8101e3f"
+checksum = "19549741604902eb99a7ed0ee177a0663ee1eda51a29f71401f166e47e77806a"
 dependencies = [
  "rust-embed-impl",
  "rust-embed-utils",
@@ -8378,9 +8398,9 @@ dependencies = [
 
 [[package]]
 name = "rust-embed-impl"
-version = "8.2.0"
+version = "8.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6227c01b1783cdfee1bcf844eb44594cd16ec71c35305bf1c9fb5aade2735e16"
+checksum = "cb9f96e283ec64401f30d3df8ee2aaeb2561f34c824381efa24a35f79bf40ee4"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -8391,9 +8411,9 @@ dependencies = [
 
 [[package]]
 name = "rust-embed-utils"
-version = "8.2.0"
+version = "8.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8cb0a25bfbb2d4b4402179c2cf030387d9990857ce08a32592c6238db9fa8665"
+checksum = "38c74a686185620830701348de757fd36bef4aa9680fd23c49fc539ddcc1af32"
 dependencies = [
  "globset",
  "sha2 0.10.7",
@@ -8479,12 +8499,12 @@ dependencies = [
 
 [[package]]
 name = "rustls"
-version = "0.21.10"
+version = "0.21.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f9d5a6813c0759e4609cd494e8e725babae6a2ca7b62a5536a13daaec6fcb7ba"
+checksum = "3f56a14d1f48b391359b22f731fd4bd7e43c97f3c50eee276f3aa09c94784d3e"
 dependencies = [
  "log",
- "ring 0.17.7",
+ "ring",
  "rustls-webpki",
  "sct",
 ]
@@ -8516,8 +8536,8 @@ version = "0.101.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8b6275d1ee7a1cd780b64aca7726599a1dbc893b1e64144529e55c3c2f745765"
 dependencies = [
- "ring 0.17.7",
- "untrusted 0.9.0",
+ "ring",
+ "untrusted",
 ]
 
 [[package]]
@@ -8641,12 +8661,12 @@ dependencies = [
 
 [[package]]
 name = "sct"
-version = "0.7.0"
+version = "0.7.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d53dcdb7c9f8158937a7981b48accfd39a43af418591a5d008c7b22b5e1b7ca4"
+checksum = "da046153aa2352493d6cb7da4b6e5c0c057d8a1d0a9aa8560baffdd945acd414"
 dependencies = [
- "ring 0.16.20",
- "untrusted 0.7.1",
+ "ring",
+ "untrusted",
 ]
 
 [[package]]
@@ -8838,6 +8858,7 @@ dependencies = [
  "futures-batch",
  "gpui",
  "heed",
+ "http 0.1.0",
  "language",
  "languages",
  "log",
@@ -9753,6 +9774,7 @@ dependencies = [
  "env_logger",
  "futures 0.3.28",
  "gpui",
+ "http 0.1.0",
  "language",
  "log",
  "postage",
@@ -9773,6 +9795,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "futures 0.3.28",
+ "http 0.1.0",
  "serde",
  "serde_json",
  "smol",
@@ -10154,6 +10177,7 @@ dependencies = [
  "ctor",
  "env_logger",
  "gpui",
+ "http 0.1.0",
  "lazy_static",
  "log",
  "parking_lot",
@@ -11128,12 +11152,6 @@ checksum = "e1766d682d402817b5ac4490b3c3002d91dfa0d22812f341609f97b08757359c"
 
 [[package]]
 name = "untrusted"
-version = "0.7.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a156c684c91ea7d62626509bce3cb4e1d9ed5c4d978f7b4352658f96a4c26b4a"
-
-[[package]]
-name = "untrusted"
 version = "0.9.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8ecb6da28b8a351d773b68d5825ac39017e680750f980f3a1a85cd8dd28a47c1"
@@ -11202,7 +11220,6 @@ dependencies = [
  "futures-lite 1.13.0",
  "git2",
  "globset",
- "isahc",
  "lazy_static",
  "log",
  "rand 0.8.5",
@@ -11214,7 +11231,6 @@ dependencies = [
  "tempfile",
  "tendril",
  "unicase",
- "url",
 ]
 
 [[package]]
@@ -11314,6 +11330,7 @@ dependencies = [
  "language",
  "log",
  "lsp",
+ "multi_buffer",
  "nvim-rs",
  "parking_lot",
  "regex",
@@ -12615,6 +12632,7 @@ dependencies = [
  "fs",
  "futures 0.3.28",
  "gpui",
+ "http 0.1.0",
  "itertools 0.11.0",
  "language",
  "lazy_static",
@@ -12650,6 +12668,7 @@ dependencies = [
  "git",
  "git2",
  "gpui",
+ "http 0.1.0",
  "ignore",
  "itertools 0.11.0",
  "language",
@@ -12899,6 +12918,7 @@ dependencies = [
  "go_to_line",
  "gpui",
  "headless",
+ "http 0.1.0",
  "image_viewer",
  "inline_completion_button",
  "install_cli",

@@ -6,7 +6,7 @@ mod vim_test_context;
 use std::time::Duration;
 
 use command_palette::CommandPalette;
-use editor::DisplayPoint;
+use editor::{display_map::DisplayRow, DisplayPoint};
 use futures::StreamExt;
 use gpui::{KeyBinding, Modifiers, MouseButton, TestAppContext};
 pub use neovim_backed_binding_test_context::*;
@@ -235,7 +235,7 @@ async fn test_selection_on_search(cx: &mut gpui::TestAppContext) {
         let highlights = editor.all_text_background_highlights(cx);
         assert_eq!(3, highlights.len());
         assert_eq!(
-            DisplayPoint::new(2, 0)..DisplayPoint::new(2, 2),
+            DisplayPoint::new(DisplayRow(2), 0)..DisplayPoint::new(DisplayRow(2), 2),
             highlights[0].0
         )
     });

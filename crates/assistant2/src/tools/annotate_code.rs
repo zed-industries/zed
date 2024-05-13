@@ -1,5 +1,5 @@
 use anyhow::Result;
-use assistant_tooling::{LanguageModelTool, ProjectContext, ToolOutput};
+use assistant_tooling::{LanguageModelTool, ProjectContext, ToolView};
 use editor::{
     display_map::{BlockContext, BlockDisposition, BlockProperties, BlockStyle},
     Editor, MultiBuffer,
@@ -230,7 +230,7 @@ impl Render for AnnotationResultView {
     }
 }
 
-impl ToolOutput for AnnotationResultView {
+impl ToolView for AnnotationResultView {
     type Input = AnnotationInput;
     type SerializedState = Option<String>;
 

@@ -1,6 +1,7 @@
 use editor::scroll::Autoscroll;
 use gpui::ViewContext;
 use language::{Bias, Point};
+use multi_buffer::MultiBufferRow;
 use workspace::Workspace;
 
 use crate::{
@@ -48,8 +49,10 @@ where
                 match vim.state().mode {
                     Mode::VisualLine => {
                         let start = Point::new(selection.start.row, 0);
-                        let end =
-                            Point::new(selection.end.row, snapshot.line_len(selection.end.row));
+                        let end = Point::new(
+                            selection.end.row,
+                            snapshot.line_len(MultiBufferRow(selection.end.row)),
+                        );
                         ranges.push(start..end);
                         cursor_positions.push(start..start);
                     }
@@ -71,7 +74,7 @@ where
                         }
                         ranges.push(start..end);
 
-                        if end.column == snapshot.line_len(end.row) {
+                        if end.column == snapshot.line_len(MultiBufferRow(end.row)) {
                             end = snapshot.clip_point(end - Point::new(0, 1), Bias::Left);
                         }
                         cursor_positions.push(end..end)

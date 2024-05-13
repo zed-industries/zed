@@ -36,10 +36,6 @@ pub fn init(
         ("c", tree_sitter_c::language()),
         ("cpp", tree_sitter_cpp::language()),
         ("css", tree_sitter_css::language()),
-        (
-            "embedded_template",
-            tree_sitter_embedded_template::language(),
-        ),
         ("go", tree_sitter_go::language()),
         ("gomod", tree_sitter_gomod::language()),
         ("gowork", tree_sitter_gowork::language()),

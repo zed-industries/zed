@@ -1,6 +1,8 @@
 use crate::Vim;
 use editor::{
-    display_map::ToDisplayPoint, scroll::ScrollAmount, DisplayPoint, Editor, EditorSettings,
+    display_map::{DisplayRow, ToDisplayPoint},
+    scroll::ScrollAmount,
+    DisplayPoint, Editor, EditorSettings,
 };
 use gpui::{actions, ViewContext};
 use language::Bias;
@@ -85,11 +87,13 @@ fn scroll_editor(
 
                 if preserve_cursor_position {
                     let old_top = old_top_anchor.to_display_point(map);
-                    let new_row = top.row() + selection.head().row() - old_top.row();
+                    let new_row =
+                        DisplayRow(top.row().0 + selection.head().row().0 - old_top.row().0);
                     head = map.clip_point(DisplayPoint::new(new_row, head.column()), Bias::Left)
                 }
-                let min_row = top.row() + vertical_scroll_margin as u32;
-                let max_row = top.row() + visible_rows - vertical_scroll_margin as u32 - 1;
+                let min_row = DisplayRow(top.row().0 + vertical_scroll_margin as u32);
+                let max_row =
+                    DisplayRow(top.row().0 + visible_rows - vertical_scroll_margin as u32 - 1);
 
                 let new_head = if head.row() < min_row {
                     map.clip_point(DisplayPoint::new(min_row, head.column()), Bias::Left)

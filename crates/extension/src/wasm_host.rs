@@ -13,6 +13,7 @@ use futures::{
     Future, FutureExt, StreamExt as _,
 };
 use gpui::{AppContext, AsyncAppContext, BackgroundExecutor, Task};
+use http::HttpClient;
 use language::LanguageRegistry;
 use node_runtime::NodeRuntime;
 use semantic_version::SemanticVersion;
@@ -20,7 +21,6 @@ use std::{
     path::{Path, PathBuf},
     sync::{Arc, OnceLock},
 };
-use util::http::HttpClient;
 use wasmtime::{
     component::{Component, ResourceTable},
     Engine, Store,

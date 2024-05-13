@@ -19,6 +19,7 @@ use collections::HashMap;
 use completion_provider::*;
 use editor::Editor;
 use feature_flags::FeatureFlagAppExt as _;
+use file_icons::FileIcons;
 use fs::Fs;
 use futures::{future::join_all, StreamExt};
 use gpui::{
@@ -126,6 +127,12 @@ impl AssistantPanel {
                 let project_index = cx.update_global(|semantic_index: &mut SemanticIndex, cx| {
                     semantic_index.project_index(project.clone(), cx)
                 });
+
+                // Used in tools to render file icons
+                cx.observe_global::<FileIcons>(|_, cx| {
+                    cx.notify();
+                })
+                .detach();
 
                 let mut tool_registry = ToolRegistry::new();
                 tool_registry

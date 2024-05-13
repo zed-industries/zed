@@ -23,8 +23,8 @@ mod inlay_map;
 mod tab_map;
 mod wrap_map;
 
-use crate::EditorStyle;
 use crate::{hover_links::InlayHighlight, movement::TextLayoutDetails, InlayId};
+use crate::{EditorStyle, RowExt};
 pub use block_map::{BlockMap, BlockPoint};
 use collections::{HashMap, HashSet};
 use fold_map::FoldMap;
@@ -34,7 +34,11 @@ use language::{
     language_settings::language_settings, OffsetUtf16, Point, Subscription as BufferSubscription,
 };
 use lsp::DiagnosticSeverity;
-use multi_buffer::{Anchor, AnchorRangeExt, MultiBuffer, MultiBufferSnapshot, ToOffset, ToPoint};
+use multi_buffer::{
+    Anchor, AnchorRangeExt, MultiBuffer, MultiBufferPoint, MultiBufferRow, MultiBufferSnapshot,
+    ToOffset, ToPoint,
+};
+use serde::Deserialize;
 use std::{any::TypeId, borrow::Cow, fmt::Debug, num::NonZeroU32, ops::Range, sync::Arc};
 use sum_tree::{Bias, TreeMap};
 use tab_map::TabMap;
@@ -42,10 +46,11 @@ use tab_map::TabMap;
 use wrap_map::WrapMap;
 
 pub use block_map::{
-    BlockBufferRows as DisplayBufferRows, BlockChunks as DisplayChunks, BlockContext,
-    BlockDisposition, BlockId, BlockProperties, BlockStyle, RenderBlock, TransformBlock,
+    BlockBufferRows, BlockChunks as DisplayChunks, BlockContext, BlockDisposition, BlockId,
+    BlockProperties, BlockStyle, RenderBlock, TransformBlock,
 };
 
+use self::block_map::BlockRow;
 pub use self::fold_map::{Fold, FoldId, FoldPoint};
 pub use self::inlay_map::{InlayOffset, InlayPoint};
 pub(crate) use inlay_map::Inlay;
@@ -64,6 +69,17 @@ pub trait ToDisplayPoint {
 
 type TextHighlights = TreeMap<Option<TypeId>, Arc<(HighlightStyle, Vec<Range<Anchor>>)>>;
 type InlayHighlights = TreeMap<TypeId, TreeMap<InlayId, (HighlightStyle, InlayHighlight)>>;
+
+#[derive(Clone)]
+pub struct DisplayBufferRows<'a>(BlockBufferRows<'a>);
+
+impl<'a> Iterator for DisplayBufferRows<'a> {
+    type Item = Option<DisplayRow>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        self.0.next().map(|row| row.map(|r| DisplayRow(r.0)))
+    }
+}
 
 /// Decides how text in a [`MultiBuffer`] should be displayed in a buffer, handling inlay hints,
 /// folding, hard tabs, soft wrapping, custom blocks (like diagnostics), and highlighting.
@@ -382,15 +398,15 @@ impl DisplaySnapshot {
         self.buffer_snapshot.len() == 0
     }
 
-    pub fn buffer_rows(&self, start_row: u32) -> DisplayBufferRows {
-        self.block_snapshot.buffer_rows(start_row)
+    pub fn display_rows(&self, start_row: DisplayRow) -> DisplayBufferRows {
+        DisplayBufferRows(self.block_snapshot.buffer_rows(BlockRow(start_row.0)))
     }
 
-    pub fn max_buffer_row(&self) -> u32 {
+    pub fn max_buffer_row(&self) -> MultiBufferRow {
         self.buffer_snapshot.max_buffer_row()
     }
 
-    pub fn prev_line_boundary(&self, mut point: Point) -> (Point, DisplayPoint) {
+    pub fn prev_line_boundary(&self, mut point: MultiBufferPoint) -> (Point, DisplayPoint) {
         loop {
             let mut inlay_point = self.inlay_snapshot.to_inlay_point(point);
             let mut fold_point = self.fold_snapshot.to_fold_point(inlay_point, Bias::Left);
@@ -408,7 +424,7 @@ impl DisplaySnapshot {
         }
     }
 
-    pub fn next_line_boundary(&self, mut point: Point) -> (Point, DisplayPoint) {
+    pub fn next_line_boundary(&self, mut point: MultiBufferPoint) -> (Point, DisplayPoint) {
         loop {
             let mut inlay_point = self.inlay_snapshot.to_inlay_point(point);
             let mut fold_point = self.fold_snapshot.to_fold_point(inlay_point, Bias::Right);
@@ -429,13 +445,14 @@ impl DisplaySnapshot {
     // used by line_mode selections and tries to match vim behaviour
     pub fn expand_to_line(&self, range: Range<Point>) -> Range<Point> {
         let new_start = if range.start.row == 0 {
-            Point::new(0, 0)
-        } else if range.start.row == self.max_buffer_row()
-            || (range.end.column > 0 && range.end.row == self.max_buffer_row())
+            MultiBufferPoint::new(0, 0)
+        } else if range.start.row == self.max_buffer_row().0
+            || (range.end.column > 0 && range.end.row == self.max_buffer_row().0)
         {
-            Point::new(
+            MultiBufferPoint::new(
                 range.start.row - 1,
-                self.buffer_snapshot.line_len(range.start.row - 1),
+                self.buffer_snapshot
+                    .line_len(MultiBufferRow(range.start.row - 1)),
             )
         } else {
             self.prev_line_boundary(range.start).0
@@ -443,9 +460,9 @@ impl DisplaySnapshot {
 
         let new_end = if range.end.column == 0 {
             range.end
-        } else if range.end.row < self.max_buffer_row() {
+        } else if range.end.row < self.max_buffer_row().0 {
             self.buffer_snapshot
-                .clip_point(Point::new(range.end.row + 1, 0), Bias::Left)
+                .clip_point(MultiBufferPoint::new(range.end.row + 1, 0), Bias::Left)
         } else {
             self.buffer_snapshot.max_point()
         };
@@ -453,7 +470,7 @@ impl DisplaySnapshot {
         new_start..new_end
     }
 
-    fn point_to_display_point(&self, point: Point, bias: Bias) -> DisplayPoint {
+    fn point_to_display_point(&self, point: MultiBufferPoint, bias: Bias) -> DisplayPoint {
         let inlay_point = self.inlay_snapshot.to_inlay_point(point);
         let fold_point = self.fold_snapshot.to_fold_point(inlay_point, bias);
         let tab_point = self.tab_snapshot.to_tab_point(fold_point);
@@ -509,10 +526,10 @@ impl DisplaySnapshot {
     }
 
     /// Returns text chunks starting at the given display row until the end of the file
-    pub fn text_chunks(&self, display_row: u32) -> impl Iterator<Item = &str> {
+    pub fn text_chunks(&self, display_row: DisplayRow) -> impl Iterator<Item = &str> {
         self.block_snapshot
             .chunks(
-                display_row..self.max_point().row() + 1,
+                display_row.0..self.max_point().row().next_row().0,
                 false,
                 Highlights::default(),
             )
@@ -520,8 +537,8 @@ impl DisplaySnapshot {
     }
 
     /// Returns text chunks starting at the end of the given display row in reverse until the start of the file
-    pub fn reverse_text_chunks(&self, display_row: u32) -> impl Iterator<Item = &str> {
-        (0..=display_row).rev().flat_map(|row| {
+    pub fn reverse_text_chunks(&self, display_row: DisplayRow) -> impl Iterator<Item = &str> {
+        (0..=display_row.0).rev().flat_map(|row| {
             self.block_snapshot
                 .chunks(row..row + 1, false, Highlights::default())
                 .map(|h| h.text)
@@ -533,12 +550,12 @@ impl DisplaySnapshot {
 
     pub fn chunks(
         &self,
-        display_rows: Range<u32>,
+        display_rows: Range<DisplayRow>,
         language_aware: bool,
         highlight_styles: HighlightStyles,
     ) -> DisplayChunks<'_> {
         self.block_snapshot.chunks(
-            display_rows,
+            display_rows.start.0..display_rows.end.0,
             language_aware,
             Highlights {
                 text_highlights: Some(&self.text_highlights),
@@ -550,7 +567,7 @@ impl DisplaySnapshot {
 
     pub fn highlighted_chunks<'a>(
         &'a self,
-        display_rows: Range<u32>,
+        display_rows: Range<DisplayRow>,
         language_aware: bool,
         editor_style: &'a EditorStyle,
     ) -> impl Iterator<Item = HighlightedChunk<'a>> {
@@ -610,7 +627,7 @@ impl DisplaySnapshot {
 
     pub fn layout_row(
         &self,
-        display_row: u32,
+        display_row: DisplayRow,
         TextLayoutDetails {
             text_system,
             editor_style,
@@ -623,7 +640,7 @@ impl DisplaySnapshot {
         let mut runs = Vec::new();
         let mut line = String::new();
 
-        let range = display_row..display_row + 1;
+        let range = display_row..display_row.next_row();
         for chunk in self.highlighted_chunks(range, false, &editor_style) {
             line.push_str(chunk.chunk);
 
@@ -663,7 +680,7 @@ impl DisplaySnapshot {
 
     pub fn display_column_for_x(
         &self,
-        display_row: u32,
+        display_row: DisplayRow,
         x: Pixels,
         details: &TextLayoutDetails,
     ) -> u32 {
@@ -732,7 +749,7 @@ impl DisplaySnapshot {
 
     pub fn clip_at_line_end(&self, point: DisplayPoint) -> DisplayPoint {
         let mut point = point.0;
-        if point.column == self.line_len(point.row) {
+        if point.column == self.line_len(DisplayRow(point.row)) {
             point.column = point.column.saturating_sub(1);
             point = self.block_snapshot.clip_point(point, Bias::Left);
         }
@@ -748,36 +765,38 @@ impl DisplaySnapshot {
 
     pub fn blocks_in_range(
         &self,
-        rows: Range<u32>,
-    ) -> impl Iterator<Item = (u32, &TransformBlock)> {
-        self.block_snapshot.blocks_in_range(rows)
+        rows: Range<DisplayRow>,
+    ) -> impl Iterator<Item = (DisplayRow, &TransformBlock)> {
+        self.block_snapshot
+            .blocks_in_range(rows.start.0..rows.end.0)
+            .map(|(row, block)| (DisplayRow(row), block))
     }
 
     pub fn intersects_fold<T: ToOffset>(&self, offset: T) -> bool {
         self.fold_snapshot.intersects_fold(offset)
     }
 
-    pub fn is_line_folded(&self, buffer_row: u32) -> bool {
+    pub fn is_line_folded(&self, buffer_row: MultiBufferRow) -> bool {
         self.fold_snapshot.is_line_folded(buffer_row)
     }
 
-    pub fn is_block_line(&self, display_row: u32) -> bool {
-        self.block_snapshot.is_block_line(display_row)
+    pub fn is_block_line(&self, display_row: DisplayRow) -> bool {
+        self.block_snapshot.is_block_line(BlockRow(display_row.0))
     }
 
-    pub fn soft_wrap_indent(&self, display_row: u32) -> Option<u32> {
+    pub fn soft_wrap_indent(&self, display_row: DisplayRow) -> Option<u32> {
         let wrap_row = self
             .block_snapshot
-            .to_wrap_point(BlockPoint::new(display_row, 0))
+            .to_wrap_point(BlockPoint::new(display_row.0, 0))
             .row();
         self.wrap_snapshot.soft_wrap_indent(wrap_row)
     }
 
     pub fn text(&self) -> String {
-        self.text_chunks(0).collect()
+        self.text_chunks(DisplayRow(0)).collect()
     }
 
-    pub fn line(&self, display_row: u32) -> String {
+    pub fn line(&self, display_row: DisplayRow) -> String {
         let mut result = String::new();
         for chunk in self.text_chunks(display_row) {
             if let Some(ix) = chunk.find('\n') {
@@ -790,7 +809,7 @@ impl DisplaySnapshot {
         result
     }
 
-    pub fn line_indent_for_buffer_row(&self, buffer_row: u32) -> (u32, bool) {
+    pub fn line_indent_for_buffer_row(&self, buffer_row: MultiBufferRow) -> (u32, bool) {
         let (buffer, range) = self
             .buffer_snapshot
             .buffer_line_for_row(buffer_row)
@@ -812,15 +831,15 @@ impl DisplaySnapshot {
         (indent_size, is_blank)
     }
 
-    pub fn line_len(&self, row: u32) -> u32 {
-        self.block_snapshot.line_len(row)
+    pub fn line_len(&self, row: DisplayRow) -> u32 {
+        self.block_snapshot.line_len(BlockRow(row.0))
     }
 
-    pub fn longest_row(&self) -> u32 {
-        self.block_snapshot.longest_row()
+    pub fn longest_row(&self) -> DisplayRow {
+        DisplayRow(self.block_snapshot.longest_row())
     }
 
-    pub fn fold_for_line(&self, buffer_row: u32) -> Option<FoldStatus> {
+    pub fn fold_for_line(&self, buffer_row: MultiBufferRow) -> Option<FoldStatus> {
         if self.is_line_folded(buffer_row) {
             Some(FoldStatus::Folded)
         } else if self.is_foldable(buffer_row) {
@@ -830,7 +849,7 @@ impl DisplaySnapshot {
         }
     }
 
-    pub fn is_foldable(&self, buffer_row: u32) -> bool {
+    pub fn is_foldable(&self, buffer_row: MultiBufferRow) -> bool {
         let max_row = self.buffer_snapshot.max_buffer_row();
         if buffer_row >= max_row {
             return false;
@@ -841,8 +860,9 @@ impl DisplaySnapshot {
             return false;
         }
 
-        for next_row in (buffer_row + 1)..=max_row {
-            let (next_indent_size, next_line_is_blank) = self.line_indent_for_buffer_row(next_row);
+        for next_row in (buffer_row.0 + 1)..=max_row.0 {
+            let (next_indent_size, next_line_is_blank) =
+                self.line_indent_for_buffer_row(MultiBufferRow(next_row));
             if next_indent_size > indent_size {
                 return true;
             } else if !next_line_is_blank {
@@ -853,20 +873,22 @@ impl DisplaySnapshot {
         false
     }
 
-    pub fn foldable_range(&self, buffer_row: u32) -> Option<Range<Point>> {
-        let start = Point::new(buffer_row, self.buffer_snapshot.line_len(buffer_row));
-        if self.is_foldable(start.row) && !self.is_line_folded(start.row) {
+    pub fn foldable_range(&self, buffer_row: MultiBufferRow) -> Option<Range<Point>> {
+        let start = MultiBufferPoint::new(buffer_row.0, self.buffer_snapshot.line_len(buffer_row));
+        if self.is_foldable(MultiBufferRow(start.row))
+            && !self.is_line_folded(MultiBufferRow(start.row))
+        {
             let (start_indent, _) = self.line_indent_for_buffer_row(buffer_row);
             let max_point = self.buffer_snapshot.max_point();
             let mut end = None;
 
-            for row in (buffer_row + 1)..=max_point.row {
-                let (indent, is_blank) = self.line_indent_for_buffer_row(row);
+            for row in (buffer_row.0 + 1)..=max_point.row {
+                let (indent, is_blank) = self.line_indent_for_buffer_row(MultiBufferRow(row));
                 if !is_blank && indent <= start_indent {
                     let prev_row = row - 1;
                     end = Some(Point::new(
                         prev_row,
-                        self.buffer_snapshot.line_len(prev_row),
+                        self.buffer_snapshot.line_len(MultiBufferRow(prev_row)),
                     ));
                     break;
                 }
@@ -903,27 +925,31 @@ impl Debug for DisplayPoint {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_fmt(format_args!(
             "DisplayPoint({}, {})",
-            self.row(),
+            self.row().0,
             self.column()
         ))
     }
 }
 
+#[derive(Debug, Copy, Clone, Default, Eq, Ord, PartialOrd, PartialEq, Deserialize, Hash)]
+#[serde(transparent)]
+pub struct DisplayRow(pub u32);
+
 impl DisplayPoint {
-    pub fn new(row: u32, column: u32) -> Self {
-        Self(BlockPoint(Point::new(row, column)))
+    pub fn new(row: DisplayRow, column: u32) -> Self {
+        Self(BlockPoint(Point::new(row.0, column)))
     }
 
     pub fn zero() -> Self {
-        Self::new(0, 0)
+        Self::new(DisplayRow(0), 0)
     }
 
     pub fn is_zero(&self) -> bool {
         self.0.is_zero()
     }
 
-    pub fn row(self) -> u32 {
-        self.0.row
+    pub fn row(self) -> DisplayRow {
+        DisplayRow(self.0.row)
     }
 
     pub fn column(self) -> u32 {
@@ -1171,7 +1197,7 @@ pub mod tests {
             let buffer = &snapshot.buffer_snapshot;
             for _ in 0..5 {
                 let row = rng.gen_range(0..=buffer.max_point().row);
-                let column = rng.gen_range(0..=buffer.line_len(row));
+                let column = rng.gen_range(0..=buffer.line_len(MultiBufferRow(row)));
                 let point = buffer.clip_point(Point::new(row, column), Left);
 
                 let (prev_buffer_bound, prev_display_bound) = snapshot.prev_line_boundary(point);
@@ -1216,12 +1242,12 @@ pub mod tests {
             }
 
             // Movement
-            let min_point = snapshot.clip_point(DisplayPoint::new(0, 0), Left);
+            let min_point = snapshot.clip_point(DisplayPoint::new(DisplayRow(0), 0), Left);
             let max_point = snapshot.clip_point(snapshot.max_point(), Right);
             for _ in 0..5 {
-                let row = rng.gen_range(0..=snapshot.max_point().row());
-                let column = rng.gen_range(0..=snapshot.line_len(row));
-                let point = snapshot.clip_point(DisplayPoint::new(row, column), Left);
+                let row = rng.gen_range(0..=snapshot.max_point().row().0);
+                let column = rng.gen_range(0..=snapshot.line_len(DisplayRow(row)));
+                let point = snapshot.clip_point(DisplayPoint::new(DisplayRow(row), column), Left);
 
                 log::info!("Moving from point {:?}", point);
 
@@ -1288,63 +1314,64 @@ pub mod tests {
 
             let snapshot = map.update(cx, |map, cx| map.snapshot(cx));
             assert_eq!(
-                snapshot.text_chunks(0).collect::<String>(),
+                snapshot.text_chunks(DisplayRow(0)).collect::<String>(),
                 "one two \nthree four \nfive\nsix seven \neight"
             );
             assert_eq!(
-                snapshot.clip_point(DisplayPoint::new(0, 8), Bias::Left),
-                DisplayPoint::new(0, 7)
+                snapshot.clip_point(DisplayPoint::new(DisplayRow(0), 8), Bias::Left),
+                DisplayPoint::new(DisplayRow(0), 7)
             );
             assert_eq!(
-                snapshot.clip_point(DisplayPoint::new(0, 8), Bias::Right),
-                DisplayPoint::new(1, 0)
+                snapshot.clip_point(DisplayPoint::new(DisplayRow(0), 8), Bias::Right),
+                DisplayPoint::new(DisplayRow(1), 0)
             );
             assert_eq!(
-                movement::right(&snapshot, DisplayPoint::new(0, 7)),
-                DisplayPoint::new(1, 0)
+                movement::right(&snapshot, DisplayPoint::new(DisplayRow(0), 7)),
+                DisplayPoint::new(DisplayRow(1), 0)
             );
             assert_eq!(
-                movement::left(&snapshot, DisplayPoint::new(1, 0)),
-                DisplayPoint::new(0, 7)
+                movement::left(&snapshot, DisplayPoint::new(DisplayRow(1), 0)),
+                DisplayPoint::new(DisplayRow(0), 7)
             );
 
-            let x = snapshot.x_for_display_point(DisplayPoint::new(1, 10), &text_layout_details);
+            let x = snapshot
+                .x_for_display_point(DisplayPoint::new(DisplayRow(1), 10), &text_layout_details);
             assert_eq!(
                 movement::up(
                     &snapshot,
-                    DisplayPoint::new(1, 10),
+                    DisplayPoint::new(DisplayRow(1), 10),
                     SelectionGoal::None,
                     false,
                     &text_layout_details,
                 ),
                 (
-                    DisplayPoint::new(0, 7),
+                    DisplayPoint::new(DisplayRow(0), 7),
                     SelectionGoal::HorizontalPosition(x.0)
                 )
             );
             assert_eq!(
                 movement::down(
                     &snapshot,
-                    DisplayPoint::new(0, 7),
+                    DisplayPoint::new(DisplayRow(0), 7),
                     SelectionGoal::HorizontalPosition(x.0),
                     false,
                     &text_layout_details
                 ),
                 (
-                    DisplayPoint::new(1, 10),
+                    DisplayPoint::new(DisplayRow(1), 10),
                     SelectionGoal::HorizontalPosition(x.0)
                 )
             );
             assert_eq!(
                 movement::down(
                     &snapshot,
-                    DisplayPoint::new(1, 10),
+                    DisplayPoint::new(DisplayRow(1), 10),
                     SelectionGoal::HorizontalPosition(x.0),
                     false,
                     &text_layout_details
                 ),
                 (
-                    DisplayPoint::new(2, 4),
+                    DisplayPoint::new(DisplayRow(2), 4),
                     SelectionGoal::HorizontalPosition(x.0)
                 )
             );
@@ -1356,7 +1383,7 @@ pub mod tests {
 
             let snapshot = map.update(cx, |map, cx| map.snapshot(cx));
             assert_eq!(
-                snapshot.text_chunks(1).collect::<String>(),
+                snapshot.text_chunks(DisplayRow(1)).collect::<String>(),
                 "three four \nfive\nsix and \nseven eight"
             );
 
@@ -1367,7 +1394,7 @@ pub mod tests {
 
             let snapshot = map.update(cx, |map, cx| map.snapshot(cx));
             assert_eq!(
-                snapshot.text_chunks(1).collect::<String>(),
+                snapshot.text_chunks(DisplayRow(1)).collect::<String>(),
                 "three \nfour five\nsix and \nseven \neight"
             )
         });
@@ -1388,9 +1415,18 @@ pub mod tests {
         buffer.update(cx, |buffer, cx| {
             buffer.edit(
                 vec![
-                    (Point::new(1, 0)..Point::new(1, 0), "\t"),
-                    (Point::new(1, 1)..Point::new(1, 1), "\t"),
-                    (Point::new(2, 1)..Point::new(2, 1), "\t"),
+                    (
+                        MultiBufferPoint::new(1, 0)..MultiBufferPoint::new(1, 0),
+                        "\t",
+                    ),
+                    (
+                        MultiBufferPoint::new(1, 1)..MultiBufferPoint::new(1, 1),
+                        "\t",
+                    ),
+                    (
+                        MultiBufferPoint::new(2, 1)..MultiBufferPoint::new(2, 1),
+                        "\t",
+                    ),
                 ],
                 None,
                 cx,
@@ -1399,7 +1435,7 @@ pub mod tests {
 
         assert_eq!(
             map.update(cx, |map, cx| map.snapshot(cx))
-                .text_chunks(1)
+                .text_chunks(DisplayRow(1))
                 .collect::<String>()
                 .lines()
                 .next(),
@@ -1407,7 +1443,7 @@ pub mod tests {
         );
         assert_eq!(
             map.update(cx, |map, cx| map.snapshot(cx))
-                .text_chunks(2)
+                .text_chunks(DisplayRow(2))
                 .collect::<String>()
                 .lines()
                 .next(),
@@ -1462,7 +1498,7 @@ pub mod tests {
         let map = cx
             .new_model(|cx| DisplayMap::new(buffer, font("Helvetica"), font_size, None, 1, 1, cx));
         assert_eq!(
-            cx.update(|cx| syntax_chunks(0..5, &map, &theme, cx)),
+            cx.update(|cx| syntax_chunks(DisplayRow(0)..DisplayRow(5), &map, &theme, cx)),
             vec![
                 ("fn ".to_string(), None),
                 ("outer".to_string(), Some(Hsla::blue())),
@@ -1473,7 +1509,7 @@ pub mod tests {
             ]
         );
         assert_eq!(
-            cx.update(|cx| syntax_chunks(3..5, &map, &theme, cx)),
+            cx.update(|cx| syntax_chunks(DisplayRow(3)..DisplayRow(5), &map, &theme, cx)),
             vec![
                 ("    fn ".to_string(), Some(Hsla::red())),
                 ("inner".to_string(), Some(Hsla::blue())),
@@ -1482,10 +1518,13 @@ pub mod tests {
         );
 
         map.update(cx, |map, cx| {
-            map.fold(vec![Point::new(0, 6)..Point::new(3, 2)], cx)
+            map.fold(
+                vec![MultiBufferPoint::new(0, 6)..MultiBufferPoint::new(3, 2)],
+                cx,
+            )
         });
         assert_eq!(
-            cx.update(|cx| syntax_chunks(0..2, &map, &theme, cx)),
+            cx.update(|cx| syntax_chunks(DisplayRow(0)..DisplayRow(2), &map, &theme, cx)),
             vec![
                 ("fn ".to_string(), None),
                 ("out".to_string(), Some(Hsla::blue())),
@@ -1548,7 +1587,7 @@ pub mod tests {
             DisplayMap::new(buffer, font("Courier"), font_size, Some(px(40.0)), 1, 1, cx)
         });
         assert_eq!(
-            cx.update(|cx| syntax_chunks(0..5, &map, &theme, cx)),
+            cx.update(|cx| syntax_chunks(DisplayRow(0)..DisplayRow(5), &map, &theme, cx)),
             [
                 ("fn \n".to_string(), None),
                 ("oute\nr".to_string(), Some(Hsla::blue())),
@@ -1556,15 +1595,18 @@ pub mod tests {
             ]
         );
         assert_eq!(
-            cx.update(|cx| syntax_chunks(3..5, &map, &theme, cx)),
+            cx.update(|cx| syntax_chunks(DisplayRow(3)..DisplayRow(5), &map, &theme, cx)),
             [("{}\n\n".to_string(), None)]
         );
 
         map.update(cx, |map, cx| {
-            map.fold(vec![Point::new(0, 6)..Point::new(3, 2)], cx)
+            map.fold(
+                vec![MultiBufferPoint::new(0, 6)..MultiBufferPoint::new(3, 2)],
+                cx,
+            )
         });
         assert_eq!(
-            cx.update(|cx| syntax_chunks(1..4, &map, &theme, cx)),
+            cx.update(|cx| syntax_chunks(DisplayRow(1)..DisplayRow(4), &map, &theme, cx)),
             [
                 ("out".to_string(), Some(Hsla::blue())),
                 ("⋯\n".to_string(), None),
@@ -1636,7 +1678,7 @@ pub mod tests {
         });
 
         assert_eq!(
-            cx.update(|cx| chunks(0..10, &map, &theme, cx)),
+            cx.update(|cx| chunks(DisplayRow(0)..DisplayRow(10), &map, &theme, cx)),
             [
                 ("const ".to_string(), None, None),
                 ("a".to_string(), None, Some(Hsla::blue())),
@@ -1732,45 +1774,57 @@ pub mod tests {
         let map = map.update(cx, |map, cx| map.snapshot(cx));
         assert_eq!(map.text(), "✅       α\nβ   \n🏀β      γ");
         assert_eq!(
-            map.text_chunks(0).collect::<String>(),
+            map.text_chunks(DisplayRow(0)).collect::<String>(),
             "✅       α\nβ   \n🏀β      γ"
         );
-        assert_eq!(map.text_chunks(1).collect::<String>(), "β   \n🏀β      γ");
-        assert_eq!(map.text_chunks(2).collect::<String>(), "🏀β      γ");
+        assert_eq!(
+            map.text_chunks(DisplayRow(1)).collect::<String>(),
+            "β   \n🏀β      γ"
+        );
+        assert_eq!(
+            map.text_chunks(DisplayRow(2)).collect::<String>(),
+            "🏀β      γ"
+        );
 
-        let point = Point::new(0, "✅\t\t".len() as u32);
-        let display_point = DisplayPoint::new(0, "✅       ".len() as u32);
+        let point = MultiBufferPoint::new(0, "✅\t\t".len() as u32);
+        let display_point = DisplayPoint::new(DisplayRow(0), "✅       ".len() as u32);
         assert_eq!(point.to_display_point(&map), display_point);
         assert_eq!(display_point.to_point(&map), point);
 
-        let point = Point::new(1, "β\t".len() as u32);
-        let display_point = DisplayPoint::new(1, "β   ".len() as u32);
+        let point = MultiBufferPoint::new(1, "β\t".len() as u32);
+        let display_point = DisplayPoint::new(DisplayRow(1), "β   ".len() as u32);
         assert_eq!(point.to_display_point(&map), display_point);
         assert_eq!(display_point.to_point(&map), point,);
 
-        let point = Point::new(2, "🏀β\t\t".len() as u32);
-        let display_point = DisplayPoint::new(2, "🏀β      ".len() as u32);
+        let point = MultiBufferPoint::new(2, "🏀β\t\t".len() as u32);
+        let display_point = DisplayPoint::new(DisplayRow(2), "🏀β      ".len() as u32);
         assert_eq!(point.to_display_point(&map), display_point);
         assert_eq!(display_point.to_point(&map), point,);
 
         // Display points inside of expanded tabs
         assert_eq!(
-            DisplayPoint::new(0, "✅      ".len() as u32).to_point(&map),
-            Point::new(0, "✅\t".len() as u32),
+            DisplayPoint::new(DisplayRow(0), "✅      ".len() as u32).to_point(&map),
+            MultiBufferPoint::new(0, "✅\t".len() as u32),
         );
         assert_eq!(
-            DisplayPoint::new(0, "✅ ".len() as u32).to_point(&map),
-            Point::new(0, "✅".len() as u32),
+            DisplayPoint::new(DisplayRow(0), "✅ ".len() as u32).to_point(&map),
+            MultiBufferPoint::new(0, "✅".len() as u32),
         );
 
         // Clipping display points inside of multi-byte characters
         assert_eq!(
-            map.clip_point(DisplayPoint::new(0, "✅".len() as u32 - 1), Left),
-            DisplayPoint::new(0, 0)
+            map.clip_point(
+                DisplayPoint::new(DisplayRow(0), "✅".len() as u32 - 1),
+                Left
+            ),
+            DisplayPoint::new(DisplayRow(0), 0)
         );
         assert_eq!(
-            map.clip_point(DisplayPoint::new(0, "✅".len() as u32 - 1), Bias::Right),
-            DisplayPoint::new(0, "✅".len() as u32)
+            map.clip_point(
+                DisplayPoint::new(DisplayRow(0), "✅".len() as u32 - 1),
+                Bias::Right
+            ),
+            DisplayPoint::new(DisplayRow(0), "✅".len() as u32)
         );
     }
 
@@ -1785,12 +1839,12 @@ pub mod tests {
         });
         assert_eq!(
             map.update(cx, |map, cx| map.snapshot(cx)).max_point(),
-            DisplayPoint::new(1, 11)
+            DisplayPoint::new(DisplayRow(1), 11)
         )
     }
 
     fn syntax_chunks(
-        rows: Range<u32>,
+        rows: Range<DisplayRow>,
         map: &Model<DisplayMap>,
         theme: &SyntaxTheme,
         cx: &mut AppContext,
@@ -1802,7 +1856,7 @@ pub mod tests {
     }
 
     fn chunks(
-        rows: Range<u32>,
+        rows: Range<DisplayRow>,
         map: &Model<DisplayMap>,
         theme: &SyntaxTheme,
         cx: &mut AppContext,

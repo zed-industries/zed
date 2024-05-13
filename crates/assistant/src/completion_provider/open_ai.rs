@@ -5,13 +5,14 @@ use anyhow::{anyhow, Result};
 use editor::{Editor, EditorElement, EditorStyle};
 use futures::{future::BoxFuture, stream::BoxStream, FutureExt, StreamExt};
 use gpui::{AnyView, AppContext, FontStyle, FontWeight, Task, TextStyle, View, WhiteSpace};
+use http::HttpClient;
 use open_ai::{stream_completion, Request, RequestMessage, Role as OpenAiRole};
 use settings::Settings;
 use std::time::Duration;
 use std::{env, sync::Arc};
 use theme::ThemeSettings;
 use ui::prelude::*;
-use util::{http::HttpClient, ResultExt};
+use util::ResultExt;
 
 pub struct OpenAiCompletionProvider {
     api_key: Option<String>,

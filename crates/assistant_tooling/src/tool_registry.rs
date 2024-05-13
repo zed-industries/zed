@@ -31,11 +31,11 @@ enum ToolFunctionCallState {
     #[default]
     Initializing,
     NoSuchTool,
-    KnownTool(Box<dyn ToolView>),
-    ExecutedTool(Box<dyn ToolView>),
+    KnownTool(Box<dyn InternalToolView>),
+    ExecutedTool(Box<dyn InternalToolView>),
 }
 
-trait ToolView {
+trait InternalToolView {
     fn view(&self) -> AnyView;
     fn generate(&self, project: &mut ProjectContext, cx: &mut WindowContext) -> String;
     fn try_set_input(&self, input: &str, cx: &mut WindowContext);
@@ -69,7 +69,7 @@ pub struct ToolFunctionDefinition {
 }
 
 pub trait LanguageModelTool {
-    type View: ToolOutput;
+    type View: ToolView;
 
     /// Returns the name of the tool.
     ///
@@ -85,7 +85,7 @@ pub trait LanguageModelTool {
 
     /// Returns the OpenAI Function definition for the tool, for direct use with OpenAI's API.
     fn definition(&self) -> ToolFunctionDefinition {
-        let root_schema = schema_for!(<Self::View as ToolOutput>::Input);
+        let root_schema = schema_for!(<Self::View as ToolView>::Input);
 
         ToolFunctionDefinition {
             name: self.name(),
@@ -98,7 +98,7 @@ pub trait LanguageModelTool {
     fn view(&self, cx: &mut WindowContext) -> View<Self::View>;
 }
 
-pub trait ToolOutput: Render {
+pub trait ToolView: Render {
     /// The input type that will be passed in to `execute` when the tool is called
     /// by the language model.
     type Input: DeserializeOwned + JsonSchema;
@@ -121,7 +121,7 @@ pub trait ToolOutput: Render {
 struct RegisteredTool {
     enabled: AtomicBool,
     type_id: TypeId,
-    build_view: Box<dyn Fn(&mut WindowContext) -> Box<dyn ToolView>>,
+    build_view: Box<dyn Fn(&mut WindowContext) -> Box<dyn InternalToolView>>,
     definition: ToolFunctionDefinition,
 }
 
@@ -304,7 +304,7 @@ impl ToolRegistry {
     }
 }
 
-impl<T: ToolOutput> ToolView for View<T> {
+impl<T: ToolView> InternalToolView for View<T> {
     fn view(&self) -> AnyView {
         self.clone().into()
     }
@@ -404,7 +404,7 @@ mod test {
         }
     }
 
-    impl ToolOutput for WeatherView {
+    impl ToolView for WeatherView {
         type Input = WeatherQuery;
 
         type SerializedState = WeatherResult;

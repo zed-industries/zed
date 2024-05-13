@@ -9,6 +9,7 @@ use editor::{
 };
 use gpui::{actions, ViewContext, WindowContext};
 use language::{Point, Selection, SelectionGoal};
+use multi_buffer::MultiBufferRow;
 use search::BufferSearchBar;
 use util::ResultExt;
 use workspace::{searchable::Direction, Workspace};
@@ -251,9 +252,9 @@ pub fn visual_block_motion(
                 break;
             }
             if tail.row() > head.row() {
-                row -= 1
+                row.0 -= 1
             } else {
-                row += 1
+                row.0 += 1
             }
         }
 
@@ -313,13 +314,15 @@ pub fn visual_object(object: Object, cx: &mut WindowContext) {
                             // trailing newline is included in its selection from the beginning.
                             if object == Object::Paragraph && range.start != range.end {
                                 let row_of_selection_end_line = selection.end.to_point(map).row;
-                                let new_selection_end =
-                                    if map.buffer_snapshot.line_len(row_of_selection_end_line) == 0
-                                    {
-                                        Point::new(row_of_selection_end_line + 1, 0)
-                                    } else {
-                                        Point::new(row_of_selection_end_line, 1)
-                                    };
+                                let new_selection_end = if map
+                                    .buffer_snapshot
+                                    .line_len(MultiBufferRow(row_of_selection_end_line))
+                                    == 0
+                                {
+                                    Point::new(row_of_selection_end_line + 1, 0)
+                                } else {
+                                    Point::new(row_of_selection_end_line, 1)
+                                };
                                 selection.end = new_selection_end.to_display_point(map);
                             }
                         }
