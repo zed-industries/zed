@@ -5,7 +5,10 @@ use crate::{
         TransformBlock,
     },
     editor_settings::{DoubleClickInMultibuffer, MultiCursorModifier, ShowScrollbar},
-    git::{blame::GitBlame, diff_hunk_to_display, DisplayDiffHunk},
+    git::{
+        blame::{CommitDetails, GitBlame},
+        diff_hunk_to_display, DisplayDiffHunk,
+    },
     hover_popover::{
         self, hover_at, HOVER_POPOVER_GAP, MIN_POPOVER_CHARACTER_WIDTH, MIN_POPOVER_LINE_HEIGHT,
     },
@@ -3431,8 +3434,15 @@ fn render_blame_entry(
         ])
         .on_mouse_down(MouseButton::Right, {
             let blame_entry = blame_entry.clone();
+            let details = details.clone();
             move |event, cx| {
-                deploy_blame_entry_context_menu(&blame_entry, editor.clone(), event.position, cx);
+                deploy_blame_entry_context_menu(
+                    &blame_entry,
+                    details.as_ref(),
+                    editor.clone(),
+                    event.position,
+                    cx,
+                );
             }
         })
         .hover(|style| style.bg(cx.theme().colors().element_hover))
@@ -3452,6 +3462,7 @@ fn render_blame_entry(
 
 fn deploy_blame_entry_context_menu(
     blame_entry: &BlameEntry,
+    details: Option<&CommitDetails>,
     editor: View<Editor>,
     position: gpui::Point<Pixels>,
     cx: &mut WindowContext<'_>,
@@ -3461,6 +3472,10 @@ fn deploy_blame_entry_context_menu(
         this.entry("Copy commit SHA", None, move |cx| {
             cx.write_to_clipboard(ClipboardItem::new(sha.clone()));
         })
+        .when_some(
+            details.and_then(|details| details.permalink.clone()),
+            |this, url| this.entry("Open permalink", None, move |cx| cx.open_url(url.as_str())),
+        )
     });
 
     editor.update(cx, move |editor, cx| {
