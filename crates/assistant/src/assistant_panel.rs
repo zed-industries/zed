@@ -1,3 +1,4 @@
+use crate::project_info;
 use crate::{
     assistant_settings::{AssistantDockPosition, AssistantSettings, ZedDotDevModel},
     codegen::{self, Codegen, CodegenKind},
@@ -116,6 +117,11 @@ impl AssistantPanel {
                 .await
                 .log_err()
                 .unwrap_or_default();
+
+            let project =
+                workspace.update(&mut cx, |workspace, _cx| workspace.project().clone())?;
+
+            let _ = project_info::identify_project(fs.clone(), project, &mut cx).log_err();
 
             // TODO: deserialize state.
             let workspace_handle = workspace.clone();

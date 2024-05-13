@@ -365,6 +365,7 @@ dependencies = [
  "telemetry_events",
  "theme",
  "tiktoken-rs",
+ "toml 0.8.10",
  "ui",
  "util",
  "uuid",
