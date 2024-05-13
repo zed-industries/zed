@@ -26,7 +26,7 @@ impl ToolStrip {
         self
     }
 
-    pub fn add_tool(mut self, tool: IconButton) -> Self {
+    pub fn tool(mut self, tool: IconButton) -> Self {
         self.tools.push(tool);
         self
     }
@@ -39,11 +39,10 @@ impl RenderOnce for ToolStrip {
         div()
             .id(self.id.clone())
             .group(group)
-            .when_else(
-                self.axis == Axis::Horizontal,
-                |axis_horizontal| axis_horizontal.h_flex(),
-                |axis_vertical| axis_vertical.v_flex(),
-            )
+            .map(|element| match self.axis {
+                Axis::Vertical => element.v_flex(),
+                Axis::Horizontal => element.h_flex(),
+            })
             .flex_none()
             .gap(Spacing::Small.rems(cx))
             .p(Spacing::XSmall.rems(cx))
@@ -51,6 +50,6 @@ impl RenderOnce for ToolStrip {
             .border_color(cx.theme().colors().border)
             .rounded(rems_from_px(6.0))
             .bg(cx.theme().colors().elevated_surface_background)
-            .children(self.tools.into_iter().map(|tool| tool))
+            .children(self.tools)
     }
 }

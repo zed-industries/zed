@@ -14,19 +14,21 @@ impl Render for ToolStripStory {
         .child(
             StorySection::new().child(StoryItem::new(
                 "Vertical Tool Strip",
-                ToolStrip::vertical("tool_strip_example")
-                    .add_tool(
-                        IconButton::new("example_tool", IconName::AudioOn)
-                            .tooltip(|cx| Tooltip::text("Example tool", cx)),
-                    )
-                    .add_tool(
-                        IconButton::new("example_tool_2", IconName::MicMute)
-                            .tooltip(|cx| Tooltip::text("Example tool 2", cx)),
-                    )
-                    .add_tool(
-                        IconButton::new("example_tool_3", IconName::Screen)
-                            .tooltip(|cx| Tooltip::text("Example tool 3", cx)),
-                    ),
+                h_flex().child(
+                    ToolStrip::vertical("tool_strip_example")
+                        .tool(
+                            IconButton::new("example_tool", IconName::AudioOn)
+                                .tooltip(|cx| Tooltip::text("Example tool", cx)),
+                        )
+                        .tool(
+                            IconButton::new("example_tool_2", IconName::MicMute)
+                                .tooltip(|cx| Tooltip::text("Example tool 2", cx)),
+                        )
+                        .tool(
+                            IconButton::new("example_tool_3", IconName::Screen)
+                                .tooltip(|cx| Tooltip::text("Example tool 3", cx)),
+                        ),
+                ),
             )),
         )
     }
