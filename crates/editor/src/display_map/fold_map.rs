@@ -4,7 +4,7 @@ use super::{
 };
 use gpui::{ElementId, HighlightStyle, Hsla};
 use language::{Chunk, Edit, Point, TextSummary};
-use multi_buffer::{Anchor, AnchorRangeExt, MultiBufferSnapshot, ToOffset};
+use multi_buffer::{Anchor, AnchorRangeExt, MultiBufferRow, MultiBufferSnapshot, ToOffset};
 use std::{
     cmp::{self, Ordering},
     iter,
@@ -629,17 +629,17 @@ impl FoldSnapshot {
         cursor.item().map_or(false, |t| t.output_text.is_some())
     }
 
-    pub fn is_line_folded(&self, buffer_row: u32) -> bool {
+    pub fn is_line_folded(&self, buffer_row: MultiBufferRow) -> bool {
         let mut inlay_point = self
             .inlay_snapshot
-            .to_inlay_point(Point::new(buffer_row, 0));
+            .to_inlay_point(Point::new(buffer_row.0, 0));
         let mut cursor = self.transforms.cursor::<InlayPoint>();
         cursor.seek(&inlay_point, Bias::Right, &());
         loop {
             match cursor.item() {
                 Some(transform) => {
                     let buffer_point = self.inlay_snapshot.to_buffer_point(inlay_point);
-                    if buffer_point.row != buffer_row {
+                    if buffer_point.row != buffer_row.0 {
                         return false;
                     } else if transform.output_text.is_some() {
                         return true;
@@ -1549,7 +1549,7 @@ mod tests {
                 .collect::<HashSet<_>>();
             for row in 0..=buffer_snapshot.max_point().row {
                 assert_eq!(
-                    snapshot.is_line_folded(row),
+                    snapshot.is_line_folded(MultiBufferRow(row)),
                     folded_buffer_rows.contains(&row),
                     "expected buffer row {}{} to be folded",
                     row,

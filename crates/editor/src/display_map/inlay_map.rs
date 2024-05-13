@@ -2,7 +2,9 @@ use crate::{HighlightStyles, InlayId};
 use collections::{BTreeMap, BTreeSet};
 use gpui::HighlightStyle;
 use language::{Chunk, Edit, Point, TextSummary};
-use multi_buffer::{Anchor, MultiBufferChunks, MultiBufferRows, MultiBufferSnapshot, ToOffset};
+use multi_buffer::{
+    Anchor, MultiBufferChunks, MultiBufferRow, MultiBufferRows, MultiBufferSnapshot, ToOffset,
+};
 use std::{
     any::TypeId,
     cmp,
@@ -182,7 +184,7 @@ pub struct InlayBufferRows<'a> {
     transforms: Cursor<'a, Transform, (InlayPoint, Point)>,
     buffer_rows: MultiBufferRows<'a>,
     inlay_row: u32,
-    max_buffer_row: u32,
+    max_buffer_row: MultiBufferRow,
 }
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
@@ -375,7 +377,7 @@ impl<'a> InlayBufferRows<'a> {
         self.transforms.seek(&inlay_point, Bias::Left, &());
 
         let mut buffer_point = self.transforms.start().1;
-        let buffer_row = if row == 0 {
+        let buffer_row = MultiBufferRow(if row == 0 {
             0
         } else {
             match self.transforms.item() {
@@ -383,9 +385,9 @@ impl<'a> InlayBufferRows<'a> {
                     buffer_point += inlay_point.0 - self.transforms.start().0 .0;
                     buffer_point.row
                 }
-                _ => cmp::min(buffer_point.row + 1, self.max_buffer_row),
+                _ => cmp::min(buffer_point.row + 1, self.max_buffer_row.0),
             }
-        };
+        });
         self.inlay_row = inlay_point.row();
         self.buffer_rows.seek(buffer_row);
     }
@@ -986,17 +988,17 @@ impl InlaySnapshot {
         let inlay_point = InlayPoint::new(row, 0);
         cursor.seek(&inlay_point, Bias::Left, &());
 
-        let max_buffer_row = self.buffer.max_point().row;
+        let max_buffer_row = MultiBufferRow(self.buffer.max_point().row);
         let mut buffer_point = cursor.start().1;
         let buffer_row = if row == 0 {
-            0
+            MultiBufferRow(0)
         } else {
             match cursor.item() {
                 Some(Transform::Isomorphic(_)) => {
                     buffer_point += inlay_point.0 - cursor.start().0 .0;
-                    buffer_point.row
+                    MultiBufferRow(buffer_point.row)
                 }
-                _ => cmp::min(buffer_point.row + 1, max_buffer_row),
+                _ => cmp::min(MultiBufferRow(buffer_point.row + 1), max_buffer_row),
             }
         };
 

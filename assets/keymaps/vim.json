@@ -1,5 +1,11 @@
 [
   {
+    "context": "ProjectPanel || Editor",
+    "bindings": {
+      "ctrl-6": "pane::AlternateFile"
+    }
+  },
+  {
     "context": "Editor && VimControl && !VimWaiting && !menu",
     "bindings": {
       "i": [

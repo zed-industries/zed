@@ -42,6 +42,7 @@ use futures::{
     stream::FuturesUnordered,
     FutureExt, SinkExt, StreamExt, TryStreamExt,
 };
+use http::IsahcHttpClient;
 use prometheus::{register_int_gauge, IntGauge};
 use rpc::{
     proto::{
@@ -73,7 +74,6 @@ use tracing::{
     field::{self},
     info_span, instrument, Instrument,
 };
-use util::http::IsahcHttpClient;
 
 use self::connection_pool::VersionedMessage;
 
@@ -4344,6 +4344,7 @@ async fn complete_with_open_ai(
         OPEN_AI_API_URL,
         &api_key,
         crate::ai::language_model_request_to_open_ai(request)?,
+        None,
     )
     .await
     .context("open_ai::stream_completion request failed within collab")?;

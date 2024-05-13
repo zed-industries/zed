@@ -2,6 +2,7 @@ use anyhow::{anyhow, Context, Result};
 use async_trait::async_trait;
 use futures::StreamExt;
 use gpui::{AsyncAppContext, Task};
+use http::github::latest_github_release;
 pub use language::*;
 use lazy_static::lazy_static;
 use lsp::LanguageServerBinary;
@@ -21,7 +22,7 @@ use std::{
         Arc,
     },
 };
-use util::{fs::remove_matching, github::latest_github_release, maybe, ResultExt};
+use util::{fs::remove_matching, maybe, ResultExt};
 
 fn server_binary_arguments() -> Vec<OsString> {
     vec!["-mode=stdio".into()]

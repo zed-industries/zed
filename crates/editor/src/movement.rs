@@ -2,10 +2,12 @@
 //! in editor given a given motion (e.g. it handles converting a "move left" command into coordinates in editor). It is exposed mostly for use by vim crate.
 
 use super::{Bias, DisplayPoint, DisplaySnapshot, SelectionGoal, ToDisplayPoint};
-use crate::{char_kind, scroll::ScrollAnchor, CharKind, EditorStyle, ToOffset, ToPoint};
+use crate::{
+    char_kind, scroll::ScrollAnchor, CharKind, DisplayRow, EditorStyle, RowExt, ToOffset, ToPoint,
+};
 use gpui::{px, Pixels, WindowTextSystem};
 use language::Point;
-use multi_buffer::MultiBufferSnapshot;
+use multi_buffer::{MultiBufferRow, MultiBufferSnapshot};
 use serde::Deserialize;
 
 use std::{ops::Range, sync::Arc};
@@ -35,7 +37,7 @@ pub struct TextLayoutDetails {
 pub fn left(map: &DisplaySnapshot, mut point: DisplayPoint) -> DisplayPoint {
     if point.column() > 0 {
         *point.column_mut() -= 1;
-    } else if point.row() > 0 {
+    } else if point.row().0 > 0 {
         *point.row_mut() -= 1;
         *point.column_mut() = map.line_len(point.row());
     }
@@ -127,7 +129,7 @@ pub(crate) fn up_by_rows(
         _ => map.x_for_display_point(start, text_layout_details),
     };
 
-    let prev_row = start.row().saturating_sub(row_count);
+    let prev_row = DisplayRow(start.row().0.saturating_sub(row_count));
     let mut point = map.clip_point(
         DisplayPoint::new(prev_row, map.line_len(prev_row)),
         Bias::Left,
@@ -137,7 +139,7 @@ pub(crate) fn up_by_rows(
     } else if preserve_column_at_start {
         return (start, goal);
     } else {
-        point = DisplayPoint::new(0, 0);
+        point = DisplayPoint::new(DisplayRow(0), 0);
         goal_x = px(0.);
     }
 
@@ -166,7 +168,7 @@ pub(crate) fn down_by_rows(
         _ => map.x_for_display_point(start, text_layout_details),
     };
 
-    let new_row = start.row() + row_count;
+    let new_row = DisplayRow(start.row().0 + row_count);
     let mut point = map.clip_point(DisplayPoint::new(new_row, 0), Bias::Right);
     if point.row() > start.row() {
         *point.column_mut() = map.display_column_for_x(point.row(), goal_x, text_layout_details)
@@ -220,7 +222,9 @@ pub fn indented_line_beginning(
     let soft_line_start = map.clip_point(DisplayPoint::new(display_point.row(), 0), Bias::Right);
     let indent_start = Point::new(
         point.row,
-        map.buffer_snapshot.indent_size_for_line(point.row).len,
+        map.buffer_snapshot
+            .indent_size_for_line(MultiBufferRow(point.row))
+            .len,
     )
     .to_display_point(map);
     let line_start = map.prev_line_boundary(point).1;
@@ -326,7 +330,7 @@ pub fn start_of_paragraph(
 
     let mut found_non_blank_line = false;
     for row in (0..point.row + 1).rev() {
-        let blank = map.buffer_snapshot.is_line_blank(row);
+        let blank = map.buffer_snapshot.is_line_blank(MultiBufferRow(row));
         if found_non_blank_line && blank {
             if count <= 1 {
                 return Point::new(row, 0).to_display_point(map);
@@ -349,13 +353,13 @@ pub fn end_of_paragraph(
     mut count: usize,
 ) -> DisplayPoint {
     let point = display_point.to_point(map);
-    if point.row == map.max_buffer_row() {
+    if point.row == map.max_buffer_row().0 {
         return map.max_point();
     }
 
     let mut found_non_blank_line = false;
-    for row in point.row..map.max_buffer_row() + 1 {
-        let blank = map.buffer_snapshot.is_line_blank(row);
+    for row in point.row..map.max_buffer_row().next_row().0 {
+        let blank = map.buffer_snapshot.is_line_blank(MultiBufferRow(row));
         if found_non_blank_line && blank {
             if count <= 1 {
                 return Point::new(row, 0).to_display_point(map);
@@ -549,13 +553,16 @@ pub fn split_display_range_by_lines(
 
     let mut start = range.start;
     // Loop over all the covered rows until the one containing the range end
-    for row in range.start.row()..range.end.row() {
-        let row_end_column = map.line_len(row);
-        let end = map.clip_point(DisplayPoint::new(row, row_end_column), Bias::Left);
+    for row in range.start.row().0..range.end.row().0 {
+        let row_end_column = map.line_len(DisplayRow(row));
+        let end = map.clip_point(
+            DisplayPoint::new(DisplayRow(row), row_end_column),
+            Bias::Left,
+        );
         if start != end {
             result.push(start..end);
         }
-        start = map.clip_point(DisplayPoint::new(row + 1, 0), Bias::Left);
+        start = map.clip_point(DisplayPoint::new(DisplayRow(row + 1), 0), Bias::Left);
     }
 
     // Add the final range from the start of the last end to the original range end.
@@ -570,7 +577,7 @@ mod tests {
     use crate::{
         display_map::Inlay,
         test::{editor_test_context::EditorTestContext, marked_display_snapshot},
-        Buffer, DisplayMap, ExcerptRange, InlayId, MultiBuffer,
+        Buffer, DisplayMap, DisplayRow, ExcerptRange, InlayId, MultiBuffer,
     };
     use gpui::{font, Context as _};
     use language::Capability;
@@ -900,126 +907,126 @@ mod tests {
 
             assert_eq!(snapshot.text(), "\n\nabc\ndefg\n\n\nhijkl\nmn");
 
-            let col_2_x =
-                snapshot.x_for_display_point(DisplayPoint::new(2, 2), &text_layout_details);
+            let col_2_x = snapshot
+                .x_for_display_point(DisplayPoint::new(DisplayRow(2), 2), &text_layout_details);
 
             // Can't move up into the first excerpt's header
             assert_eq!(
                 up(
                     &snapshot,
-                    DisplayPoint::new(2, 2),
+                    DisplayPoint::new(DisplayRow(2), 2),
                     SelectionGoal::HorizontalPosition(col_2_x.0),
                     false,
                     &text_layout_details
                 ),
                 (
-                    DisplayPoint::new(2, 0),
+                    DisplayPoint::new(DisplayRow(2), 0),
                     SelectionGoal::HorizontalPosition(0.0)
                 ),
             );
             assert_eq!(
                 up(
                     &snapshot,
-                    DisplayPoint::new(2, 0),
+                    DisplayPoint::new(DisplayRow(2), 0),
                     SelectionGoal::None,
                     false,
                     &text_layout_details
                 ),
                 (
-                    DisplayPoint::new(2, 0),
+                    DisplayPoint::new(DisplayRow(2), 0),
                     SelectionGoal::HorizontalPosition(0.0)
                 ),
             );
 
-            let col_4_x =
-                snapshot.x_for_display_point(DisplayPoint::new(3, 4), &text_layout_details);
+            let col_4_x = snapshot
+                .x_for_display_point(DisplayPoint::new(DisplayRow(3), 4), &text_layout_details);
 
             // Move up and down within first excerpt
             assert_eq!(
                 up(
                     &snapshot,
-                    DisplayPoint::new(3, 4),
+                    DisplayPoint::new(DisplayRow(3), 4),
                     SelectionGoal::HorizontalPosition(col_4_x.0),
                     false,
                     &text_layout_details
                 ),
                 (
-                    DisplayPoint::new(2, 3),
+                    DisplayPoint::new(DisplayRow(2), 3),
                     SelectionGoal::HorizontalPosition(col_4_x.0)
                 ),
             );
             assert_eq!(
                 down(
                     &snapshot,
-                    DisplayPoint::new(2, 3),
+                    DisplayPoint::new(DisplayRow(2), 3),
                     SelectionGoal::HorizontalPosition(col_4_x.0),
                     false,
                     &text_layout_details
                 ),
                 (
-                    DisplayPoint::new(3, 4),
+                    DisplayPoint::new(DisplayRow(3), 4),
                     SelectionGoal::HorizontalPosition(col_4_x.0)
                 ),
             );
 
-            let col_5_x =
-                snapshot.x_for_display_point(DisplayPoint::new(6, 5), &text_layout_details);
+            let col_5_x = snapshot
+                .x_for_display_point(DisplayPoint::new(DisplayRow(6), 5), &text_layout_details);
 
             // Move up and down across second excerpt's header
             assert_eq!(
                 up(
                     &snapshot,
-                    DisplayPoint::new(6, 5),
+                    DisplayPoint::new(DisplayRow(6), 5),
                     SelectionGoal::HorizontalPosition(col_5_x.0),
                     false,
                     &text_layout_details
                 ),
                 (
-                    DisplayPoint::new(3, 4),
+                    DisplayPoint::new(DisplayRow(3), 4),
                     SelectionGoal::HorizontalPosition(col_5_x.0)
                 ),
             );
             assert_eq!(
                 down(
                     &snapshot,
-                    DisplayPoint::new(3, 4),
+                    DisplayPoint::new(DisplayRow(3), 4),
                     SelectionGoal::HorizontalPosition(col_5_x.0),
                     false,
                     &text_layout_details
                 ),
                 (
-                    DisplayPoint::new(6, 5),
+                    DisplayPoint::new(DisplayRow(6), 5),
                     SelectionGoal::HorizontalPosition(col_5_x.0)
                 ),
             );
 
-            let max_point_x =
-                snapshot.x_for_display_point(DisplayPoint::new(7, 2), &text_layout_details);
+            let max_point_x = snapshot
+                .x_for_display_point(DisplayPoint::new(DisplayRow(7), 2), &text_layout_details);
 
             // Can't move down off the end
             assert_eq!(
                 down(
                     &snapshot,
-                    DisplayPoint::new(7, 0),
+                    DisplayPoint::new(DisplayRow(7), 0),
                     SelectionGoal::HorizontalPosition(0.0),
                     false,
                     &text_layout_details
                 ),
                 (
-                    DisplayPoint::new(7, 2),
+                    DisplayPoint::new(DisplayRow(7), 2),
                     SelectionGoal::HorizontalPosition(max_point_x.0)
                 ),
             );
             assert_eq!(
                 down(
                     &snapshot,
-                    DisplayPoint::new(7, 2),
+                    DisplayPoint::new(DisplayRow(7), 2),
                     SelectionGoal::HorizontalPosition(max_point_x.0),
                     false,
                     &text_layout_details
                 ),
                 (
-                    DisplayPoint::new(7, 2),
+                    DisplayPoint::new(DisplayRow(7), 2),
                     SelectionGoal::HorizontalPosition(max_point_x.0)
                 ),
             );
