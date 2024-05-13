@@ -1,4 +1,5 @@
 mod tasks;
+mod workspace;
 
 use anyhow::Result;
 use clap::{Parser, Subcommand};
@@ -14,6 +15,7 @@ struct Args {
 enum CliCommand {
     /// Runs `cargo clippy`.
     Clippy(tasks::clippy::ClippyArgs),
+    Licenses(tasks::licenses::LicensesArgs),
 }
 
 fn main() -> Result<()> {
@@ -21,5 +23,6 @@ fn main() -> Result<()> {
 
     match args.command {
         CliCommand::Clippy(args) => tasks::clippy::run_clippy(args),
+        CliCommand::Licenses(args) => tasks::licenses::run_licenses(args),
     }
 }
