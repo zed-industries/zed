@@ -24,29 +24,32 @@ impl HtmlExtension {
             &config.name,
             &zed::LanguageServerInstallationStatus::CheckingForUpdate,
         );
-        let version = zed::npm_package_latest_version(PACKAGE_NAME)?;
 
-        if !server_exists
-            || zed::npm_package_installed_version(PACKAGE_NAME)?.as_ref() != Some(&version)
-        {
+        let installed_version = zed::npm_package_installed_version(PACKAGE_NAME)
+            .ok()
+            .flatten();
+
+        let latest_version = zed::npm_package_latest_version(PACKAGE_NAME);
+        let should_reinstall = !server_exists
+            || match (installed_version.as_deref(), latest_version.as_deref().ok()) {
+                (Some(installed_version), Some(latest_version)) => {
+                    installed_version != latest_version
+                }
+                (Some(_), None) => false,
+                _ => true,
+            };
+
+        if should_reinstall {
             zed::set_language_server_installation_status(
                 &config.name,
                 &zed::LanguageServerInstallationStatus::Downloading,
             );
-            let result = zed::npm_install_package(PACKAGE_NAME, &version);
-            match result {
-                Ok(()) => {
-                    if !self.server_exists() {
-                        Err(format!(
-                            "installed package '{PACKAGE_NAME}' did not contain expected path '{SERVER_PATH}'",
-                        ))?;
-                    }
-                }
-                Err(error) => {
-                    if !self.server_exists() {
-                        Err(error)?;
-                    }
-                }
+
+            let result = zed::npm_install_package(PACKAGE_NAME, &latest_version?);
+            if !self.server_exists() {
+                return Err(result.err().unwrap_or_else(|| format!(
+                    "installed package '{PACKAGE_NAME}' did not contain expected path '{SERVER_PATH}'",
+                )));
             }
         }
 
