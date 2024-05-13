@@ -3101,7 +3101,7 @@ impl BufferSnapshot {
 
         let start_row = range.start.to_point(self).row;
         let end_row = range.end.to_point(self).row;
-        let row_range = start_row..end_row;
+        let row_range = start_row..=end_row;
 
         let mut result_vec = Vec::new();
         let mut indent_stack = SmallVec::<[(Range<usize>, IndentGuide); 8]>::new();

@@ -1400,6 +1400,7 @@ impl EditorElement {
         Some(shaped_lines)
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn layout_indent_guides(
         &self,
         content_origin: gpui::Point<Pixels>,
@@ -2468,7 +2469,7 @@ impl EditorElement {
         let settings = EditorSettings::get_global(cx).indent_guides;
 
         let faded_color = |color: Hsla, alpha: f32| {
-            let mut faded = color.clone();
+            let mut faded = color;
             faded.a = alpha;
             faded
         };
