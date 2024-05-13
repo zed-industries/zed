@@ -2365,7 +2365,12 @@ async fn create_dev_server(
     let (dev_server, status) = session
         .db()
         .await
-        .create_dev_server(&request.name, &hashed_access_token, session.user_id())
+        .create_dev_server(
+            &request.name,
+            request.ssh_connection_string.as_deref(),
+            &hashed_access_token,
+            session.user_id(),
+        )
         .await?;
 
     send_dev_server_projects_update(session.user_id(), status, &session).await;
@@ -2373,7 +2378,8 @@ async fn create_dev_server(
     response.send(proto::CreateDevServerResponse {
         dev_server_id: dev_server.id.0 as u64,
         access_token: auth::generate_dev_server_token(dev_server.id.0 as usize, access_token),
-        name: request.name.clone(),
+        name: request.name,
+        ssh_connection_string: request.ssh_connection_string,
     })?;
     Ok(())
 }

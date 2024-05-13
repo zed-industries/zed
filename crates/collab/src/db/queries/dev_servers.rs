@@ -73,6 +73,7 @@ impl Database {
     pub async fn create_dev_server(
         &self,
         name: &str,
+        ssh_connection_string: Option<&str>,
         hashed_access_token: &str,
         user_id: UserId,
     ) -> crate::Result<(dev_server::Model, proto::DevServerProjectsUpdate)> {

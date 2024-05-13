@@ -490,6 +490,7 @@ message ValidateDevServerProjectRequest {
 message CreateDevServer {
     reserved 1;
     string name = 2;
+    optional string ssh_connection_string = 3;
 }
 
 message RegenerateDevServerToken {
@@ -506,6 +507,7 @@ message CreateDevServerResponse {
     reserved 2;
     string access_token = 3;
     string name = 4;
+    optional string ssh_connection_string = 5;
 }
 
 message ShutdownDevServer {

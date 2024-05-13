@@ -164,11 +164,17 @@ impl Store {
     pub fn create_dev_server(
         &mut self,
         name: String,
+        ssh_connection_string: Option<String>,
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<proto::CreateDevServerResponse>> {
         let client = self.client.clone();
         cx.background_executor().spawn(async move {
-            let result = client.request(proto::CreateDevServer { name }).await?;
+            let result = client
+                .request(proto::CreateDevServer {
+                    name,
+                    ssh_connection_string,
+                })
+                .await?;
             Ok(result)
         })
     }

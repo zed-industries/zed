@@ -19,6 +19,8 @@ use theme::ThemeSettings;
 use ui::{prelude::*, Indicator, List, ListHeader, ListItem, ModalContent, ModalHeader, Tooltip};
 use ui_text_field::{FieldLabelLayout, TextField};
 use util::ResultExt;
+use workspace::item::ItemEvent;
+use workspace::item::ItemHandle;
 use workspace::{notifications::DetachAndPromptErr, AppState, ModalView, Workspace, WORKSPACE_DB};
 
 use crate::OpenRemote;
@@ -30,14 +32,17 @@ pub struct DevServerProjects {
     dev_server_store: Model<dev_server_projects::Store>,
     project_path_input: View<Editor>,
     dev_server_name_input: View<TextField>,
+    ssh_connection_string_input: View<TextField>,
     rename_dev_server_input: View<TextField>,
-    _subscription: gpui::Subscription,
+    _dev_server_subscription: Subscription,
+    _ssh_connection_input_subscription: Option<Subscription>,
 }
 
 #[derive(Default, Clone)]
 struct CreateDevServer {
     creating: bool,
     dev_server: Option<CreateDevServerResponse>,
+    // ssh_connection_string: Option<String>,
 }
 
 #[derive(Clone)]
@@ -98,6 +103,10 @@ impl DevServerProjects {
             editor.set_placeholder_text("Project path (~/work/zed, /workspace/zed, …)", cx);
             editor
         });
+        let ssh_connection_string_input = cx.new_view(|cx| {
+            TextField::new(cx, "SSH connection string", "user@host")
+                .with_label(FieldLabelLayout::Stacked)
+        });
         let dev_server_name_input =
             cx.new_view(|cx| TextField::new(cx, "Name", "").with_label(FieldLabelLayout::Stacked));
         let rename_dev_server_input =
@@ -116,9 +125,11 @@ impl DevServerProjects {
             scroll_handle: ScrollHandle::new(),
             dev_server_store,
             project_path_input,
+            ssh_connection_string_input,
             dev_server_name_input,
             rename_dev_server_input,
-            _subscription: subscription,
+            _dev_server_subscription: subscription,
+            _ssh_connection_input_subscription: None,
         }
     }
 
@@ -232,22 +243,21 @@ impl DevServerProjects {
     }
 
     pub fn create_dev_server(&mut self, cx: &mut ViewContext<Self>) {
-        let name = self
-            .dev_server_name_input
-            .read(cx)
-            .editor()
-            .read(cx)
-            .text(cx)
-            .trim()
-            .to_string();
-
-        if name == "" {
+        let name = get_text(&self.dev_server_name_input, cx);
+        if name.is_empty() {
             return;
         }
 
-        let dev_server = self
-            .dev_server_store
-            .update(cx, |store, cx| store.create_dev_server(name.clone(), cx));
+        let ssh_connection_string = get_text(&self.ssh_connection_string_input, cx);
+        let ssh_connection_string = if ssh_connection_string.is_empty() {
+            None
+        } else {
+            Some(ssh_connection_string)
+        };
+
+        let dev_server = self.dev_server_store.update(cx, |store, cx| {
+            store.create_dev_server(name.clone(), ssh_connection_string, cx)
+        });
 
         cx.spawn(|this, mut cx| async move {
             let result = dev_server.await;
@@ -277,14 +287,7 @@ impl DevServerProjects {
     }
 
     fn rename_dev_server(&mut self, id: DevServerId, cx: &mut ViewContext<Self>) {
-        let name = self
-            .rename_dev_server_input
-            .read(cx)
-            .editor()
-            .read(cx)
-            .text(cx)
-            .trim()
-            .to_string();
+        let name = get_text(&self.rename_dev_server_input, cx);
 
         let Some(dev_server) = self.dev_server_store.read(cx).dev_server(id) else {
             return;
@@ -661,6 +664,9 @@ impl DevServerProjects {
             dev_server,
         } = state;
 
+        self.ssh_connection_string_input.update(cx, |input, cx| {
+            input.set_disabled(creating || dev_server.is_some(), cx);
+        });
         self.dev_server_name_input.update(cx, |input, cx| {
             input.set_disabled(creating || dev_server.is_some(), cx);
         });
@@ -682,6 +688,18 @@ impl DevServerProjects {
                 ModalContent::new().child(
                     v_flex()
                         .w_full()
+                        .child(
+                            v_flex()
+                                .pb_2()
+                                .w_full()
+                                .px_2()
+                                .child(
+                                    div()
+                                        .pl_2()
+                                        .max_w(rems(16.))
+                                        .child(self.ssh_connection_string_input.clone()),
+                                )
+                        )
                         .child(
                             h_flex()
                                 .pb_2()
@@ -716,7 +734,8 @@ impl DevServerProjects {
                                 )
                         )
                         .when(dev_server.is_none(), |div| {
-                            div.px_2().child(Label::new("Once you have created a dev server, you will be given a command to run on the server to register it.").color(Color::Muted))
+                            div.px_2().child(Label::new("Once you have created a dev server, you will be given a command to run on the server to register it.\n\n\
+                                Ssh connection string enables remote terminals, which will run `ssh connection_string` on creation.").color(Color::Muted))
                         })
                         .when_some(dev_server.clone(), |div, dev_server| {
                             let status = self
@@ -973,14 +992,50 @@ impl DevServerProjects {
                                     .icon_position(IconPosition::Start)
                                     .tooltip(|cx| Tooltip::text("Register a new dev server", cx))
                                     .on_click(cx.listener(|this, _, cx| {
-                                        this.mode = Mode::CreateDevServer(Default::default());
+                                        this.mode =
+                                            Mode::CreateDevServer(CreateDevServer::default());
 
-                                        this.dev_server_name_input.update(cx, |input, cx| {
-                                            input.editor().update(cx, |editor, cx| {
-                                                editor.set_text("", cx);
+                                        set_text(&this.ssh_connection_string_input, "", cx);
+                                        set_text(&this.dev_server_name_input, "", cx);
+                                        let new_subscription = this
+                                            .ssh_connection_string_input
+                                            .update(cx, |input, cx| {
+                                                let dev_server_name_input =
+                                                    this.dev_server_name_input.clone();
+                                                let ssh_connection_string_input =
+                                                    this.ssh_connection_string_input.clone();
+                                                let new_subscription =
+                                                input.editor().subscribe_to_item_events(
+                                                    cx,
+                                                    Box::new(move |e, cx| {
+                                                        if let ItemEvent::Edit = e {
+                                                            let ssh_connection_string = get_text(
+                                                                &ssh_connection_string_input,
+                                                                cx,
+                                                            );
+                                                            let dev_server_name = get_text(
+                                                                &dev_server_name_input,
+                                                                cx,
+                                                            );
+
+                                                            if dev_server_name.is_empty()
+                                                                || ssh_connection_string
+                                                                    .starts_with(&dev_server_name)
+                                                            {
+                                                                set_text(
+                                                                    &dev_server_name_input,
+                                                                    &ssh_connection_string,
+                                                                    cx,
+                                                                );
+                                                            }
+                                                        }
+                                                    }),
+                                                );
+                                                input.focus_handle(cx).focus(cx);
+                                                new_subscription
                                             });
-                                            input.focus_handle(cx).focus(cx)
-                                        });
+                                        this._ssh_connection_input_subscription =
+                                            Some(new_subscription);
 
                                         cx.notify();
                                     })),
@@ -999,6 +1054,25 @@ impl DevServerProjects {
             )
     }
 }
+
+fn get_text(element: &View<TextField>, cx: &mut WindowContext) -> String {
+    element
+        .read(cx)
+        .editor()
+        .read(cx)
+        .text(cx)
+        .trim()
+        .to_string()
+}
+
+fn set_text(element: &View<TextField>, new_text: &str, cx: &mut WindowContext) {
+    element.update(cx, |text_field, cx| {
+        text_field.editor().update(cx, |editor, cx| {
+            editor.set_text(new_text, cx);
+        });
+    });
+}
+
 impl ModalView for DevServerProjects {}
 
 impl FocusableView for DevServerProjects {
