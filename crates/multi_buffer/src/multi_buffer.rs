@@ -12,9 +12,9 @@ use language::{
     char_kind,
     language_settings::{language_settings, LanguageSettings},
     AutoindentMode, Buffer, BufferChunks, BufferSnapshot, Capability, CharKind, Chunk, CursorShape,
-    DiagnosticEntry, File, IndentSize, Language, LanguageScope, OffsetRangeExt, OffsetUtf16,
-    Outline, OutlineItem, Point, PointUtf16, Runnable, Selection, TextDimension, ToOffset as _,
-    ToOffsetUtf16 as _, ToPoint as _, ToPointUtf16 as _, TransactionId, Unclipped,
+    DiagnosticEntry, File, IndentGuide, IndentSize, Language, LanguageScope, OffsetRangeExt,
+    OffsetUtf16, Outline, OutlineItem, Point, PointUtf16, Runnable, Selection, TextDimension,
+    ToOffset as _, ToOffsetUtf16 as _, ToPoint as _, ToPointUtf16 as _, TransactionId, Unclipped,
 };
 use smallvec::SmallVec;
 use std::{
@@ -3188,6 +3188,41 @@ impl MultiBufferSnapshot {
                     .skip_while(move |(match_range, _)| match_range.end < range.start)
                     .take_while(move |(match_range, _)| match_range.start < range.end)
             })
+    }
+
+    pub fn indent_guides_in_range(
+        &self,
+        range: Range<Anchor>,
+        cx: &AppContext,
+    ) -> Vec<(Range<usize>, IndentGuide)> {
+        // Fast path for singleton buffers, we can skip the conversion between offsets.
+        if let Some((_, _, snapshot)) = self.as_singleton() {
+            return snapshot
+                .indent_guides_in_range(range.start.text_anchor..range.end.text_anchor, cx);
+        }
+
+        let range = range.start.to_offset(self)..range.end.to_offset(self);
+
+        self.excerpts_for_range(range.clone())
+            .flat_map(move |(excerpt, excerpt_offset)| {
+                let excerpt_buffer_start = excerpt.range.context.start.to_offset(&excerpt.buffer);
+
+                excerpt
+                    .buffer
+                    .indent_guides_in_range(excerpt.range.context.clone(), cx)
+                    .into_iter()
+                    .map(move |(mut match_range, indent_guide)| {
+                        // Re-base onto the excerpts coordinates in the multibuffer
+                        match_range.start =
+                            excerpt_offset + (match_range.start - excerpt_buffer_start);
+                        match_range.end = excerpt_offset + (match_range.end - excerpt_buffer_start);
+
+                        (match_range, indent_guide)
+                    })
+                    .skip_while(move |(match_range, _)| match_range.end < range.start)
+                    .take_while(move |(match_range, _)| match_range.start < range.end)
+            })
+            .collect()
     }
 
     pub fn diagnostics_update_count(&self) -> usize {

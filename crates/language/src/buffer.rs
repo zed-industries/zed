@@ -508,6 +508,20 @@ pub struct Runnable {
     pub buffer: BufferId,
 }
 
+pub struct IndentGuide {
+    pub buffer: BufferId,
+    pub start_row: u32,
+    pub end_row: u32,
+    pub depth: u32,
+    pub indent_size: u32,
+}
+
+impl IndentGuide {
+    pub fn indent_width(&self) -> u32 {
+        self.indent_size * self.depth
+    }
+}
+
 impl Buffer {
     /// Create a new buffer with the given base text.
     pub fn local<T: Into<String>>(base_text: T, cx: &mut ModelContext<Self>) -> Self {
@@ -3030,6 +3044,101 @@ impl BufferSnapshot {
             syntax_matches.advance();
             test_range
         })
+    }
+
+    pub fn indent_guides_in_range(
+        &self,
+        range: Range<Anchor>,
+        cx: &AppContext,
+    ) -> Vec<(Range<usize>, IndentGuide)> {
+        fn indent_size_for_row(this: &BufferSnapshot, row: u32, cx: &AppContext) -> u32 {
+            let language = this.language_at(Point::new(row, 0));
+            language_settings(language, None, cx).tab_size.get() as u32
+        }
+
+        let start_row = range.start.to_point(self).row;
+        let end_row = range.end.to_point(self).row;
+        let row_range = start_row..end_row;
+
+        let mut result_vec = Vec::new();
+        let mut indent_stack = SmallVec::<[(Range<usize>, IndentGuide); 8]>::new();
+        let mut rows = row_range.into_iter();
+
+        while let Some(first_row) = rows.next() {
+            let current_depth = indent_stack.len() as u32;
+
+            let (mut line_indent, empty) = self.line_indent_for_row(first_row);
+
+            let mut indent_size = indent_size_for_row(self, first_row, cx);
+
+            // When encountering empty, continue until found useful line indent
+            // then add to the indent stack with the depth found
+            let mut found_indent = false;
+            let mut last_row = first_row;
+            if empty {
+                while let Some(display_row) = rows.next() {
+                    let (new_line_indent, empty) = self.line_indent_for_row(display_row);
+                    if empty {
+                        continue;
+                    }
+                    last_row = display_row;
+                    line_indent = new_line_indent;
+                    found_indent = true;
+                    indent_size = indent_size_for_row(self, first_row, cx);
+                    break;
+                }
+            } else {
+                found_indent = true
+            }
+
+            let depth = if found_indent {
+                line_indent / indent_size + ((line_indent % indent_size) > 0) as u32
+            } else {
+                current_depth
+            };
+
+            if depth < current_depth {
+                for _ in 0..(current_depth - depth) {
+                    let (mut range, mut indent) = indent_stack.pop().unwrap();
+                    if last_row != first_row {
+                        // In this case, we landed on an empty row, had to seek forward,
+                        // and discovered that the indent we where on is ending.
+                        // This means that the last display row must
+                        // be on line that ends this indent range, so we
+                        // should display the range up to the row before this
+                        indent.end_row = last_row - 1;
+                        range.end = Point::new(indent.end_row, 0).to_offset(self);
+                    }
+
+                    result_vec.push((range, indent))
+                }
+            } else if depth > current_depth {
+                for next_depth in current_depth..depth {
+                    let range = Point::new(first_row, 0).to_offset(self)
+                        ..Point::new(last_row, 0).to_offset(self);
+
+                    indent_stack.push((
+                        range,
+                        IndentGuide {
+                            buffer: self.remote_id(),
+                            start_row: first_row,
+                            end_row: last_row,
+                            depth: next_depth,
+                            indent_size,
+                        },
+                    ));
+                }
+            }
+
+            for (range, indent) in indent_stack.iter_mut() {
+                indent.end_row = last_row;
+                range.end = Point::new(indent.end_row, 0).to_offset(self);
+            }
+        }
+
+        result_vec.extend(indent_stack);
+
+        result_vec
     }
 
     /// Returns selections for remote peers intersecting the given range.

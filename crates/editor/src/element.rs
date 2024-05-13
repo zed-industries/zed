@@ -1395,8 +1395,11 @@ impl EditorElement {
 
         // TODO actually figure out why the visible range is sometimes off by one
         // Also seems fine to keep as calculating two additional lines won't really make a difference
-        let visible_buffer_range = visible_buffer_range.start.saturating_sub(1)
-            ..visible_buffer_range.end.saturating_add(1);
+        // let visible_buffer_range = visible_buffer_range.start.saturating_sub(1)
+        //     ..visible_buffer_range
+        //         .end
+        //         .saturating_add(1)
+        //         .min(snapshot.max_buffer_row());
 
         let indent_guides =
             self.editor
@@ -1406,18 +1409,16 @@ impl EditorElement {
         Some(
             indent_guides
                 .into_iter()
-                .filter_map(|indent_guide| {
+                .filter_map(|(multi_buffer_range, indent_guide)| {
                     let indent_size = self.column_pixels(indent_guide.indent_size as usize, cx);
                     let total_width = indent_size * px(indent_guide.depth as f32);
 
                     let start_x = content_origin.x + total_width - scroll_pixel_position.x;
                     if start_x >= text_origin.x {
-                        let start_row = Point::new(indent_guide.start, 0)
-                            .to_display_point(snapshot)
-                            .row();
-                        let end_row = Point::new(indent_guide.end + 1, 0)
-                            .to_display_point(snapshot)
-                            .row();
+                        let start_row = multi_buffer_range.start.to_display_point(snapshot).row();
+                        let end_row = multi_buffer_range.end.to_display_point(snapshot).row() + 1;
+
+                        println!("{}, {}", start_row, end_row);
 
                         let start_y = content_origin.y + (start_row as f32 * line_height)
                             - scroll_pixel_position.y;
@@ -1429,7 +1430,7 @@ impl EditorElement {
                             length,
                             indent_size,
                             depth: indent_guide.depth,
-                            active: indent_guide.active,
+                            active: false, //TODO indent_guide.active,
                         })
                     } else {
                         None

@@ -86,7 +86,7 @@ pub struct IndentGuides {
 #[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
 #[serde(rename_all = "snake_case")]
 pub enum IndentGuideColorMode {
-    /// Use no coloring at all.
+    /// Do not render any lines for indent guides.
     Disabled,
     /// Use the same color for all indentation levels.
     Fixed,
@@ -100,7 +100,7 @@ pub enum IndentGuideColorMode {
 #[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
 #[serde(rename_all = "snake_case")]
 pub enum IndentGuideBackgroundColorMode {
-    /// Use no coloring at all.
+    /// Do not render any background for indent guides.
     Disabled,
     /// Use a different color for each indentation level.
     IndentAware,

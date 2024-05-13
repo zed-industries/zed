@@ -2165,6 +2165,23 @@ impl BufferSnapshot {
             buffer_id: self.remote_id,
         }
     }
+
+    pub fn line_indent_for_row(&self, row: u32) -> (u32, bool) {
+        let mut indent_size = 0;
+        let mut is_blank = false;
+        for c in self.chars_at(Point::new(row, 0)) {
+            if c == ' ' || c == '\t' {
+                indent_size += 1;
+            } else {
+                if c == '\n' {
+                    is_blank = true;
+                }
+                break;
+            }
+        }
+
+        (indent_size, is_blank)
+    }
 }
 
 struct RopeBuilder<'a> {
