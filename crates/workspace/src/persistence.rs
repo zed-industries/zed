@@ -1174,8 +1174,9 @@ mod tests {
         workspace_3.location = LocalPaths::new(["/tmp3", "/tmp4", "/tmp2"]).into();
         db.save_workspace(workspace_3.clone()).await;
         assert_eq!(db.workspace_for_roots(&["/tmp2", "tmp"]), None);
+        assert_eq!(db.workspace_for_roots(&["/tmp2", "/tmp3", "/tmp4"]), None);
         assert_eq!(
-            db.workspace_for_roots(&["/tmp2", "/tmp3", "/tmp4"])
+            db.workspace_for_roots(&["/tmp3", "/tmp4", "/tmp2"])
                 .unwrap(),
             workspace_3
         );
