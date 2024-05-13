@@ -24,7 +24,6 @@ ui.workspace = true
 util.workspace = true
 workspace.workspace = true
 language.workspace = true
-smallvec.workspace = true
 
 
 [dev-dependencies]
