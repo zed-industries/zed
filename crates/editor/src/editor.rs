@@ -115,7 +115,6 @@ use selections_collection::{resolve_multiple, MutableSelectionsCollection, Selec
 use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsStore};
 use smallvec::SmallVec;
-use smol::stream::StreamExt;
 use snippet::Snippet;
 use std::ops::Not as _;
 use std::{
@@ -1577,10 +1576,25 @@ impl Editor {
                         cx.emit(EditorEvent::TitleChanged);
                     }));
                 }
-                project_subscriptions.push(cx.subscribe(project, |editor, _, event, cx| {
+                project_subscriptions.push(cx.subscribe(project, |editor, project, event, cx| {
                     if let project::Event::RefreshInlayHints = event {
                         editor.refresh_inlay_hints(InlayHintRefreshReason::RefreshRequested, cx);
-                    };
+                    } else if let project::Event::SnippetEdit(id, snippet_edits) = event {
+                        if let Some(buffer) = editor.buffer.read(cx).buffer(*id) {
+                            let focus_handle = editor.focus_handle(cx);
+                            if focus_handle.is_focused(cx) {
+                                let snapshot = buffer.read(cx).snapshot();
+                                for (range, snippet) in snippet_edits {
+                                    let editor_range = language::range_from_lsp(range.clone())
+                                        .to_offset(&snapshot);
+                                    editor.insert_snippet(&[editor_range], snippet.clone(), cx);
+                                }
+                                dbg!(project.read(cx).is_local());
+                                //editor.snipp
+                                dbg!(&buffer.read(cx).project_path(cx));
+                            }
+                        }
+                    }
                 }));
             }
         }
@@ -10649,87 +10663,6 @@ impl Editor {
 
     fn handle_focus(&mut self, cx: &mut ViewContext<Self>) {
         cx.emit(EditorEvent::Focused);
-        if let Some(project) = self.project.as_ref() {
-            let project = project.read(cx);
-            // todo: this is not right
-            let mut all_language_servers: HashMap<LanguageServerId, Arc<LanguageServer>> =
-                HashMap::new();
-            self.buffer().read(cx).for_each_buffer(|buffer| {
-                all_language_servers.extend(
-                    project
-                        .language_servers_for_buffer(buffer.read(cx), cx)
-                        .map(|(_, server)| (server.server_id(), server.clone())),
-                );
-            });
-            let (tx, mut rx) = futures::channel::mpsc::unbounded();
-            for server in all_language_servers.values() {
-                server.remove_request_handler::<ApplyWorkspaceEdit>();
-                let tx = tx.clone();
-                server
-                    .on_request::<ApplyWorkspaceEdit, _, _>({
-                        let tx = tx.clone();
-                        move |params, _| {
-                            let tx = tx.clone();
-                            async move {
-                                let tx = tx;
-                                let _ = tx.unbounded_send(params).unwrap();
-
-                                Ok(ApplyWorkspaceEditResponse {
-                                    applied: true,
-                                    failed_change: None,
-                                    failure_reason: None,
-                                })
-                            }
-                        }
-                    })
-                    .detach();
-            }
-            cx.spawn(|this, mut cx| async move {
-                while let Some(params) = rx.next().await {
-                    this.update(&mut cx, |this, cx| {
-                        if let Some(changes) = params.edit.document_changes {
-                            match changes {
-                                lsp::DocumentChanges::Edits(edits) => {
-                                    for change in edits {
-                                        for edit in change.edits {
-                                            if let lsp::Edit::Snippet(snippet) = edit {
-                                                let range = snippet.range;
-                                                let snippet =
-                                                    Snippet::parse(&snippet.snippet.value)?;
-                                                dbg!(&snippet);
-                                                this.insert_snippet(
-                                                    &[range.start.character as usize
-                                                        ..range.end.character as usize],
-                                                    snippet,
-                                                    cx,
-                                                )?;
-                                            }
-                                        }
-                                    }
-                                }
-                                lsp::DocumentChanges::Operations(_) => {}
-                            };
-                        }
-
-                        Result::<(), anyhow::Error>::Ok(())
-                    })??;
-                }
-                Result::<(), anyhow::Error>::Ok(())
-            })
-            .detach();
-            // for (language, language_server) in all_language_servers {
-            //     language_server
-            //         .on_request::<lsp::ApplyWorkspaceEdit, _, _>(|params, cx| async move {
-            //             dbg!(&params);
-            //             Ok(lsp::ApplyWorkspaceEditResponse {
-            //                 applied: true,
-            //                 failure_reason: None,
-            //                 failed_change: None,
-            //             })
-            //         })
-            //         .detach()
-            // }
-        }
         if let Some(rename) = self.pending_rename.as_ref() {
             let rename_editor_focus_handle = rename.editor.read(cx).focus_handle.clone();
             cx.focus(&rename_editor_focus_handle);

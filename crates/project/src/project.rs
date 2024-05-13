@@ -38,7 +38,7 @@ use gpui::{
     AnyModel, AppContext, AsyncAppContext, BackgroundExecutor, BorrowAppContext, Context, Entity,
     EventEmitter, Model, ModelContext, PromptLevel, Task, WeakModel,
 };
-use itertools::Itertools;
+use itertools::{Either, Itertools};
 use language::{
     language_settings::{language_settings, FormatOnSave, Formatter, InlayHintKind},
     markdown, point_to_lsp, prepare_completion_documentation,
@@ -57,7 +57,7 @@ use lsp::{
     DiagnosticSeverity, DiagnosticTag, DidChangeWatchedFilesRegistrationOptions,
     DocumentHighlightKind, Edit, LanguageServer, LanguageServerBinary, LanguageServerId,
     LspRequestFuture, MessageActionItem, OneOf, ServerCapabilities, ServerHealthStatus,
-    ServerStatus,
+    ServerStatus, SnippetTextEdit, TextEdit,
 };
 use lsp_command::*;
 use node_runtime::NodeRuntime;
@@ -333,6 +333,7 @@ pub enum Event {
     CollaboratorLeft(proto::PeerId),
     RefreshInlayHints,
     RevealInProjectPanel(ProjectEntryId),
+    SnippetEdit(BufferId, Vec<(lsp::Range, Snippet)>),
 }
 
 pub enum LanguageServerState {
@@ -6271,7 +6272,7 @@ impl Project {
                     let buffer_to_edit = this
                         .update(cx, |this, cx| {
                             this.open_local_buffer_via_lsp(
-                                op.text_document.uri,
+                                op.text_document.uri.clone(),
                                 language_server.server_id(),
                                 lsp_adapter.name.clone(),
                                 cx,
@@ -6281,14 +6282,43 @@ impl Project {
 
                     let edits = this
                         .update(cx, |this, cx| {
-                            let edits = op.edits.into_iter().map(|edit| match edit {
-                                Edit::Plain(edit) => edit,
-                                Edit::Annotated(edit) => edit.text_edit,
-                                Edit::Snippet(edit) => lsp::TextEdit {
-                                    new_text: Snippet::parse(&edit.snippet.value).unwrap().text,
-                                    range: edit.range,
-                                },
+                            let path = buffer_to_edit.read(cx).project_path(cx);
+                            let active_entry = this.active_entry;
+                            let is_active_entry = path.clone().map_or(false, |project_path| {
+                                this.entry_for_path(&project_path, cx)
+                                    .map_or(false, |entry| Some(entry.id) == active_entry)
                             });
+
+                            let (mut edits, mut snippet_edits) = (vec![], vec![]);
+                            for edit in op.edits {
+                                match edit {
+                                    Edit::Plain(edit) => edits.push(edit),
+                                    Edit::Annotated(edit) => edits.push(edit.text_edit),
+                                    Edit::Snippet(edit) => {
+                                        let Ok(snippet) = Snippet::parse(&edit.snippet.value)
+                                        else {
+                                            continue;
+                                        };
+
+                                        if is_active_entry {
+                                            snippet_edits.push((edit.range, snippet));
+                                        } else {
+                                            // Since this buffer is not focused, apply a normal edit.
+                                            edits.push(TextEdit {
+                                                range: edit.range,
+                                                new_text: snippet.text,
+                                            });
+                                        }
+                                    }
+                                }
+                            }
+                            if !snippet_edits.is_empty() {
+                                cx.emit(Event::SnippetEdit(
+                                    buffer_to_edit.read(cx).remote_id(),
+                                    snippet_edits,
+                                ));
+                            }
+
                             this.edits_from_lsp(
                                 &buffer_to_edit,
                                 edits,
