@@ -393,7 +393,6 @@ impl DisplaySnapshot {
     ) -> impl Iterator<Item = Option<MultiBufferRow>> + '_ {
         self.block_snapshot
             .buffer_rows(BlockRow(start_row.0))
-            .into_iter()
             .map(|row| row.map(|row| MultiBufferRow(row.0)))
     }
 
