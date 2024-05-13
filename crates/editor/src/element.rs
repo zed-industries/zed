@@ -1422,8 +1422,16 @@ impl EditorElement {
 
                     let start_x = content_origin.x + total_width - scroll_pixel_position.x;
                     if start_x >= text_origin.x {
+                        // Move the end range to the next line so we can calculate the correct
+                        // length of the indent guide.
+                        let mut end_range =
+                            multi_buffer_range.end.to_point(&snapshot.buffer_snapshot);
+                        if end_range.row < snapshot.buffer_snapshot.max_buffer_row() {
+                            end_range.row += 1;
+                        }
+
                         let start_row = multi_buffer_range.start.to_display_point(snapshot).row();
-                        let end_row = multi_buffer_range.end.to_display_point(snapshot).row() + 1;
+                        let end_row = end_range.to_display_point(snapshot).row();
 
                         let start_y = content_origin.y + (start_row as f32 * line_height)
                             - scroll_pixel_position.y;

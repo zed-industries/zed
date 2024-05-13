@@ -10033,43 +10033,78 @@ impl Editor {
         cx: &WindowContext,
     ) -> Option<Vec<usize>> {
         let selection = self.selections.newest::<Point>(cx);
+        let selection_range = selection.range().sorted();
 
-        let range = selection.range().sorted();
-        let buffer_start_row = range.start.row;
+        let (buffer_row_range, target_indent, buffer_id) =
+            if let Some((_, buffer_id, _)) = snapshot.buffer_snapshot.as_singleton() {
+                let buffer_start_row = selection_range.start.row;
+                let mut containing_range = None;
+                let mut target_indent = None;
+                for row in (0..=selection_range.end.row).rev() {
+                    let fold_range = snapshot.foldable_range(row);
 
-        let mut containing_range = None;
-        let mut target_indent = None;
-        for row in (0..=range.end.row).rev() {
-            let fold_range = snapshot.foldable_range(row);
+                    if let Some(fold_range) = fold_range {
+                        if fold_range.end.row >= buffer_start_row {
+                            containing_range = Some(fold_range);
+                            target_indent = Some(snapshot.line_indent_for_buffer_row(row).0);
+                            if row <= selection_range.start.row {
+                                break;
+                            }
+                        }
+                    }
+                }
+                let fold_range = containing_range?;
+                (
+                    fold_range.start.row..fold_range.end.row,
+                    target_indent?,
+                    buffer_id,
+                )
+            } else {
+                // Multibuffer does not support folds, therefore we can ignore folded lines
+                // and search the excerpt that contains the cursor
+                let excerpt = snapshot
+                    .buffer_snapshot
+                    .excerpt_containing(selection_range.clone())?;
+                let buffer_id = excerpt.buffer().remote_id();
 
-            if let Some(fold_range) = fold_range {
-                if fold_range.end.row >= buffer_start_row {
-                    containing_range = Some(fold_range);
-                    target_indent = Some(snapshot.line_indent_for_buffer_row(row).0);
-                    if row <= range.start.row {
+                let selection_range = snapshot
+                    .buffer_snapshot
+                    .point_to_offset(selection_range.start)
+                    ..snapshot
+                        .buffer_snapshot
+                        .point_to_offset(selection_range.end);
+                let excerpt_selection_range = excerpt.map_range_to_buffer(selection_range);
+                let selection_start_row = excerpt
+                    .buffer()
+                    .offset_to_point(excerpt_selection_range.start)
+                    .row;
+
+                let indent_at_cursor = excerpt.buffer().line_indent_for_row(selection_start_row).0;
+
+                // Search upwards until we find a line that has another indent
+                let mut start_row = 0;
+                let mut target_indent = None;
+                for row in (0..selection_start_row).rev() {
+                    let (indent, is_empty) = excerpt.buffer().line_indent_for_row(row);
+                    if !is_empty && indent < indent_at_cursor {
+                        start_row = row;
+                        target_indent = Some(indent);
                         break;
                     }
                 }
-            }
-        }
-        let fold_range = containing_range?;
-        let target_indent = target_indent?;
+                let max_row = excerpt.buffer().max_point().row;
+                let mut end_row = max_row;
 
-        println!("Fold range is some");
-
-        let excerpt = snapshot
-            .buffer_snapshot
-            .excerpt_containing(fold_range.clone())?;
-
-        let buffer_id = excerpt.buffer().remote_id();
-
-        let multi_buffer_range = fold_range.start.to_offset(&snapshot.buffer_snapshot)
-            ..fold_range.end.to_offset(&snapshot.buffer_snapshot);
-
-        let buffer_range = excerpt.map_range_to_buffer(multi_buffer_range);
-
-        let buffer_row_range = excerpt.buffer().offset_to_point(buffer_range.start).row
-            ..excerpt.buffer().offset_to_point(buffer_range.end).row;
+                // Search downwards until we find a line that has another indent
+                for row in selection_start_row..=max_row {
+                    let (indent, is_empty) = excerpt.buffer().line_indent_for_row(row);
+                    if !is_empty && indent < indent_at_cursor {
+                        end_row = row;
+                        break;
+                    }
+                }
+                (start_row..end_row, target_indent?, buffer_id)
+            };
 
         let candidates = indent_guides
             .iter()
