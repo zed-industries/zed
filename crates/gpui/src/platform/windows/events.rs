@@ -16,10 +16,8 @@ use windows::Win32::{
 use crate::*;
 
 pub(crate) const CURSOR_STYLE_CHANGED: u32 = WM_USER + 1;
-pub(crate) const MOUSE_WHEEL_SETTINGS_CHANGED: u32 = WM_USER + 2;
-pub(crate) const MOUSE_WHEEL_SETTINGS_SCROLL_CHARS_CHANGED: isize = 1;
-pub(crate) const MOUSE_WHEEL_SETTINGS_SCROLL_LINES_CHANGED: isize = 2;
-pub(crate) const CLOSE_ONE_WINDOW: u32 = WM_USER + 3;
+pub(crate) const CLOSE_ONE_WINDOW: u32 = WM_USER + 2;
+
 const SIZE_MOVE_LOOP_TIMER_ID: usize = 1;
 
 pub(crate) fn handle_msg(
