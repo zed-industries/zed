@@ -1,4 +1,4 @@
-use crate::{prelude::*, IconButtonShape, LabelLike, Tooltip};
+use crate::prelude::*;
 use gpui::*;
 
 #[derive(IntoElement)]
