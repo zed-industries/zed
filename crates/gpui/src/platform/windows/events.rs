@@ -179,15 +179,21 @@ fn handle_timer_msg(
 }
 
 fn handle_paint_msg(handle: HWND, state_ptr: Rc<WindowsWindowStatePtr>) -> Option<isize> {
-    let mut paint_struct = PAINTSTRUCT::default();
-    let _hdc = unsafe { BeginPaint(handle, &mut paint_struct) };
     let mut lock = state_ptr.state.borrow_mut();
+    lock.frame_count += 1;
+    let elpased = lock.last_update.elapsed().as_secs_f32();
+    if elpased > 1.0 {
+        let fps = lock.frame_count as f32 / elpased;
+        println!("FPS: {:.2}", fps);
+        lock.frame_count = 0;
+        lock.last_update = std::time::Instant::now();
+    }
     if let Some(mut request_frame) = lock.callbacks.request_frame.take() {
         drop(lock);
         request_frame();
         state_ptr.state.borrow_mut().callbacks.request_frame = Some(request_frame);
     }
-    unsafe { EndPaint(handle, &paint_struct).ok().log_err() };
+    unsafe { ValidateRect(handle, None).ok().log_err() };
     Some(0)
 }
 
