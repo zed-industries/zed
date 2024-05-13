@@ -1200,12 +1200,15 @@ impl Dispatch<wl_pointer::WlPointer, ()> for WaylandClientStatePtr {
                 }
                 match button_state {
                     wl_pointer::ButtonState::Pressed => {
-                        if let Some(pre_edit) = state.pre_edit_text.take() {
-                            if let Some(window) = state.keyboard_focused_window.clone() {
-                                drop(state);
-                                window.handle_ime_commit(pre_edit);
-                                state = client.borrow_mut();
-                            }
+                        if let (Some(window), Some(pre_edit), Some(compose_state)) = (
+                            state.keyboard_focused_window.clone(),
+                            state.pre_edit_text.take(),
+                            state.compose_state.as_mut(),
+                        ) {
+                            compose_state.reset();
+                            drop(state);
+                            window.handle_ime_commit(pre_edit);
+                            state = client.borrow_mut();
                         }
                         let click_elapsed = state.click.last_click.elapsed();
 
