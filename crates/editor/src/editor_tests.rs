@@ -15,7 +15,8 @@ use language::{
     language_settings::{AllLanguageSettings, AllLanguageSettingsContent, LanguageSettingsContent},
     BracketPairConfig,
     Capability::ReadWrite,
-    FakeLspAdapter, LanguageConfig, LanguageConfigOverride, LanguageMatcher, Override, Point,
+    FakeLspAdapter, IndentGuide, LanguageConfig, LanguageConfigOverride, LanguageMatcher, Override,
+    Point,
 };
 use parking_lot::Mutex;
 use project::project_settings::{LspSettings, ProjectSettings};
@@ -11323,105 +11324,130 @@ async fn test_multiple_expanded_hunks_merge(
     );
 }
 
-async fn assert_indent_guides(
+async fn setup_indent_guides_editor(
     text: &str,
-    range: Range<u32>,
-    expected: Vec<IndentGuide>,
     cx: &mut gpui::TestAppContext,
-) {
+) -> (BufferId, EditorTestContext) {
     init_test(cx, |_| {});
 
     let mut cx = EditorTestContext::new(cx).await;
 
-    let indent_guides = cx.update_editor(|editor, cx| {
+    let buffer_id = cx.update_editor(|editor, cx| {
         editor.set_text(text, cx);
+        let buffer_ids = editor.buffer().read(cx).excerpt_buffer_ids();
+        let buffer_id = buffer_ids[0];
+        buffer_id
+    });
+
+    (buffer_id, cx)
+}
+
+fn assert_indent_guides(range: Range<u32>, expected: Vec<IndentGuide>, cx: &mut EditorTestContext) {
+    let indent_guides = cx.update_editor(|editor, cx| {
         let snapshot = editor.snapshot(cx).display_snapshot;
         let mut indent_guides = editor.indent_guides_in_range(range, &snapshot, cx);
-        indent_guides.sort_by(|a, b| {
-            a.depth
-                .cmp(&b.depth)
-                .then(a.start.cmp(&b.start).then(a.end.cmp(&b.end)))
+        indent_guides.sort_by(|(_, a), (_, b)| {
+            a.depth.cmp(&b.depth).then(
+                a.start_row
+                    .cmp(&b.start_row)
+                    .then(a.end_row.cmp(&b.end_row)),
+            )
         });
         indent_guides
+            .into_iter()
+            .map(|(_, i)| i)
+            .collect::<Vec<_>>()
     });
+
     assert_eq!(indent_guides, expected);
 }
 
 #[gpui::test]
 async fn test_indent_guides_single_line(cx: &mut gpui::TestAppContext) {
-    assert_indent_guides(
+    let (buffer_id, mut cx) = setup_indent_guides_editor(
         &"
-        fn main() {
-            let a = 1;
-        }"
+    fn main() {
+        let a = 1;
+    }"
         .unindent(),
-        0..3,
-        vec![IndentGuide::new(1, 1, 0, 4)],
         cx,
     )
     .await;
+
+    assert_indent_guides(0..3, vec![IndentGuide::new(buffer_id, 1, 1, 0, 4)], &mut cx);
 }
 
 #[gpui::test]
 async fn test_indent_guides_simple_block(cx: &mut gpui::TestAppContext) {
-    assert_indent_guides(
+    let (buffer_id, mut cx) = setup_indent_guides_editor(
         &"
-        fn main() {
-            let a = 1;
-            let b = 2;
-        }"
+    fn main() {
+        let a = 1;
+        let b = 2;
+    }"
         .unindent(),
-        0..3,
-        vec![IndentGuide::new(1, 2, 0, 4)],
         cx,
     )
     .await;
+
+    assert_indent_guides(0..4, vec![IndentGuide::new(buffer_id, 1, 2, 0, 4)], &mut cx);
 }
 
 #[gpui::test]
 async fn test_indent_guides_nested(cx: &mut gpui::TestAppContext) {
-    assert_indent_guides(
+    let (buffer_id, mut cx) = setup_indent_guides_editor(
         &"
-        fn main() {
-            let a = 1;
-            if a == 3 {
-                let b = 2;
-            } else {
-                let c = 3;
-            }
-        }"
+    fn main() {
+        let a = 1;
+        if a == 3 {
+            let b = 2;
+        } else {
+            let c = 3;
+        }
+    }"
         .unindent(),
-        0..8,
-        vec![
-            IndentGuide::new(1, 6, 0, 4),
-            IndentGuide::new(3, 3, 1, 4),
-            IndentGuide::new(5, 5, 1, 4),
-        ],
         cx,
     )
     .await;
+
+    assert_indent_guides(
+        0..8,
+        vec![
+            IndentGuide::new(buffer_id, 1, 6, 0, 4),
+            IndentGuide::new(buffer_id, 3, 3, 1, 4),
+            IndentGuide::new(buffer_id, 5, 5, 1, 4),
+        ],
+        &mut cx,
+    );
 }
 
 #[gpui::test]
 async fn test_indent_guides_tab(cx: &mut gpui::TestAppContext) {
-    assert_indent_guides(
+    let (buffer_id, mut cx) = setup_indent_guides_editor(
         &"
-        fn main() {
-            let a = 1;
-                let b = 2;
-            let c = 3;
-        }"
+    fn main() {
+        let a = 1;
+            let b = 2;
+        let c = 3;
+    }"
         .unindent(),
-        0..5,
-        vec![IndentGuide::new(1, 3, 0, 4), IndentGuide::new(2, 2, 1, 4)],
         cx,
     )
     .await;
+
+    assert_indent_guides(
+        0..5,
+        vec![
+            IndentGuide::new(buffer_id, 1, 3, 0, 4),
+            IndentGuide::new(buffer_id, 2, 2, 1, 4),
+        ],
+        &mut cx,
+    );
 }
 
 #[gpui::test]
 async fn test_indent_guides_continues_on_empty_line(cx: &mut gpui::TestAppContext) {
-    assert_indent_guides(
+    let (buffer_id, mut cx) = setup_indent_guides_editor(
         &"
         fn main() {
             let a = 1;
@@ -11429,16 +11455,16 @@ async fn test_indent_guides_continues_on_empty_line(cx: &mut gpui::TestAppContex
             let c = 3;
         }"
         .unindent(),
-        0..5,
-        vec![IndentGuide::new(1, 3, 0, 4)],
         cx,
     )
     .await;
+
+    assert_indent_guides(0..5, vec![IndentGuide::new(buffer_id, 1, 3, 0, 4)], &mut cx);
 }
 
 #[gpui::test]
 async fn test_indent_guides_complex(cx: &mut gpui::TestAppContext) {
-    assert_indent_guides(
+    let (buffer_id, mut cx) = setup_indent_guides_editor(
         &"
         fn main() {
             let a = 1;
@@ -11452,20 +11478,24 @@ async fn test_indent_guides_complex(cx: &mut gpui::TestAppContext) {
             }
         }"
         .unindent(),
-        0..10,
-        vec![
-            IndentGuide::new(1, 9, 0, 4),
-            IndentGuide::new(6, 6, 1, 4),
-            IndentGuide::new(8, 8, 1, 4),
-        ],
         cx,
     )
     .await;
+
+    assert_indent_guides(
+        0..11,
+        vec![
+            IndentGuide::new(buffer_id, 1, 9, 0, 4),
+            IndentGuide::new(buffer_id, 6, 6, 1, 4),
+            IndentGuide::new(buffer_id, 8, 8, 1, 4),
+        ],
+        &mut cx,
+    );
 }
 
 #[gpui::test]
 async fn test_indent_guides_starts_off_screen(cx: &mut gpui::TestAppContext) {
-    assert_indent_guides(
+    let (buffer_id, mut cx) = setup_indent_guides_editor(
         &"
         fn main() {
             let a = 1;
@@ -11479,20 +11509,24 @@ async fn test_indent_guides_starts_off_screen(cx: &mut gpui::TestAppContext) {
             }
         }"
         .unindent(),
-        1..11,
-        vec![
-            IndentGuide::new(1, 9, 0, 4),
-            IndentGuide::new(6, 6, 1, 4),
-            IndentGuide::new(8, 8, 1, 4),
-        ],
         cx,
     )
     .await;
+
+    assert_indent_guides(
+        1..11,
+        vec![
+            IndentGuide::new(buffer_id, 1, 9, 0, 4),
+            IndentGuide::new(buffer_id, 6, 6, 1, 4),
+            IndentGuide::new(buffer_id, 8, 8, 1, 4),
+        ],
+        &mut cx,
+    );
 }
 
 #[gpui::test]
 async fn test_indent_guides_ends_off_screen(cx: &mut gpui::TestAppContext) {
-    assert_indent_guides(
+    let (buffer_id, mut cx) = setup_indent_guides_editor(
         &"
         fn main() {
             let a = 1;
@@ -11506,20 +11540,24 @@ async fn test_indent_guides_ends_off_screen(cx: &mut gpui::TestAppContext) {
             }
         }"
         .unindent(),
-        0..10,
-        vec![
-            IndentGuide::new(1, 9, 0, 4),
-            IndentGuide::new(6, 6, 1, 4),
-            IndentGuide::new(8, 8, 1, 4),
-        ],
         cx,
     )
     .await;
+
+    assert_indent_guides(
+        1..10,
+        vec![
+            IndentGuide::new(buffer_id, 1, 9, 0, 4),
+            IndentGuide::new(buffer_id, 6, 6, 1, 4),
+            IndentGuide::new(buffer_id, 8, 8, 1, 4),
+        ],
+        &mut cx,
+    );
 }
 
 #[gpui::test]
 async fn test_indent_guides_without_brackets(cx: &mut gpui::TestAppContext) {
-    assert_indent_guides(
+    let (buffer_id, mut cx) = setup_indent_guides_editor(
         &"
         block1
             block2
@@ -11529,15 +11567,19 @@ async fn test_indent_guides_without_brackets(cx: &mut gpui::TestAppContext) {
         block1
         block1"
             .unindent(),
-        0..7,
-        vec![
-            IndentGuide::new(1, 4, 0, 4),
-            IndentGuide::new(2, 3, 1, 4),
-            IndentGuide::new(3, 3, 2, 4),
-        ],
         cx,
     )
     .await;
+
+    assert_indent_guides(
+        1..10,
+        vec![
+            IndentGuide::new(buffer_id, 1, 4, 0, 4),
+            IndentGuide::new(buffer_id, 2, 3, 1, 4),
+            IndentGuide::new(buffer_id, 3, 3, 2, 4),
+        ],
+        &mut cx,
+    );
 }
 
 fn empty_range(row: usize, column: usize) -> Range<DisplayPoint> {

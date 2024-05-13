@@ -1421,7 +1421,7 @@ impl EditorElement {
         //     ..visible_buffer_range
         //         .end
         //         .saturating_add(1)
-        //         .min(snapshot.max_buffer_row());
+        //         .min(snapshot.max_buffer_row().0);
 
         let indent_guides =
             self.editor
@@ -2480,7 +2480,7 @@ impl EditorElement {
         for indent_guide in indent_guides {
             let indent_accent_colors = cx.theme().accents().color_for_index(indent_guide.depth);
 
-            // TODO fixed for now, expose them later
+            // TODO fixed for now, expose them through themes later
             const INDENT_AWARE_ALPHA: f32 = 0.2;
             const INDENT_AWARE_ACTIVE_ALPHA: f32 = 0.4;
             const INDENT_AWARE_BACKGROUND_ALPHA: f32 = 0.1;

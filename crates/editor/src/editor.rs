@@ -10183,7 +10183,7 @@ impl Editor {
                 )
             } else {
                 // Multibuffer does not support folds, therefore we can ignore folded lines
-                // and search the excerpt that contains the cursor
+                // and search the excerpt that contains the cursor manually without using fold information
                 let excerpt = snapshot
                     .buffer_snapshot
                     .excerpt_containing(selection_range.clone())?;

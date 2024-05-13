@@ -1254,6 +1254,15 @@ impl MultiBuffer {
         excerpts
     }
 
+    pub fn excerpt_buffer_ids(&self) -> Vec<BufferId> {
+        self.snapshot
+            .borrow()
+            .excerpts
+            .iter()
+            .map(|entry| entry.buffer_id)
+            .collect()
+    }
+
     pub fn excerpt_ids(&self) -> Vec<ExcerptId> {
         self.snapshot
             .borrow()

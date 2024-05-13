@@ -511,7 +511,7 @@ pub struct Runnable {
     pub buffer: BufferId,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct IndentGuide {
     pub buffer_id: BufferId,
     pub start_row: u32,
@@ -521,6 +521,22 @@ pub struct IndentGuide {
 }
 
 impl IndentGuide {
+    pub fn new(
+        buffer_id: BufferId,
+        start_row: u32,
+        end_row: u32,
+        depth: u32,
+        indent_size: u32,
+    ) -> Self {
+        Self {
+            buffer_id,
+            start_row,
+            end_row,
+            depth,
+            indent_size,
+        }
+    }
+
     pub fn indent_width(&self) -> u32 {
         self.indent_size * self.depth
     }
