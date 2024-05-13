@@ -3731,6 +3731,51 @@ impl MultiBufferSnapshot {
         }
     }
 
+    /// Returns excerpts overlapping the given ranges. If range spans multiple excerpts returns one range for each excerpt
+    pub fn excerpts_in_ranges(
+        &self,
+        ranges: impl IntoIterator<Item = Range<Anchor>>,
+    ) -> impl Iterator<Item = (ExcerptId, &BufferSnapshot, Range<usize>)> {
+        let mut ranges = ranges.into_iter().map(|range| range.to_offset(self));
+
+        let mut cursor = self.excerpts.cursor::<usize>();
+        let mut range = ranges.next();
+
+        iter::from_fn(move || {
+            if range.is_none() {
+                return None;
+            }
+
+            if cursor.start() >= &range.as_ref().unwrap().end {
+                range = ranges.next();
+                if range.is_none() {
+                    return None;
+                }
+
+                cursor.seek(&range.as_ref().unwrap().start, Bias::Right, &());
+                cursor.prev(&());
+            }
+
+            cursor.next(&());
+            cursor.item().map(|excerpt| {
+                let multibuffer_excerpt = MultiBufferExcerpt::new(&excerpt, *cursor.start());
+
+                let multibuffer_excerpt_range = multibuffer_excerpt
+                    .map_range_from_buffer(excerpt.range.context.to_offset(&excerpt.buffer));
+
+                let overlap_range = cmp::max(
+                    range.as_ref().unwrap().start,
+                    multibuffer_excerpt_range.start,
+                )
+                    ..cmp::min(range.as_ref().unwrap().end, multibuffer_excerpt_range.end);
+
+                let overlap_range = multibuffer_excerpt.map_range_to_buffer(overlap_range);
+
+                (excerpt.id, &excerpt.buffer, overlap_range)
+            })
+        })
+    }
+
     pub fn remote_selections_in_range<'a>(
         &'a self,
         range: &'a Range<Anchor>,
