@@ -1447,6 +1447,7 @@ impl CodeActionsMenu {
 struct ActiveDiagnosticGroup {
     primary_range: Range<Anchor>,
     primary_message: String,
+    group_id: usize,
     blocks: HashMap<BlockId, Diagnostic>,
     is_valid: bool,
 }
@@ -4508,6 +4509,7 @@ impl Editor {
                     .icon_color(Color::Muted)
                     .selected(is_active)
                     .on_click(cx.listener(move |editor, _e, cx| {
+                        editor.focus(cx);
                         editor.toggle_code_actions(
                             &ToggleCodeActions {
                                 deployed_from_indicator: Some(row),
@@ -4539,12 +4541,13 @@ impl Editor {
         row: DisplayRow,
         cx: &mut ViewContext<Self>,
     ) -> IconButton {
-        IconButton::new("code_actions_indicator", ui::IconName::Play)
+        IconButton::new("run_indicator", ui::IconName::Play)
             .icon_size(IconSize::XSmall)
             .size(ui::ButtonSize::None)
             .icon_color(Color::Muted)
             .selected(is_active)
             .on_click(cx.listener(move |editor, _e, cx| {
+                editor.focus(cx);
                 editor.toggle_code_actions(
                     &ToggleCodeActions {
                         deployed_from_indicator: Some(row),
@@ -4633,6 +4636,11 @@ impl Editor {
         snippet: Snippet,
         cx: &mut ViewContext<Self>,
     ) -> Result<()> {
+        struct Tabstop<T> {
+            is_end_tabstop: bool,
+            ranges: Vec<Range<T>>,
+        }
+
         let tabstops = self.buffer.update(cx, |buffer, cx| {
             let snippet_text: Arc<str> = snippet.text.clone().into();
             buffer.edit(
@@ -4650,6 +4658,9 @@ impl Editor {
                 .tabstops
                 .iter()
                 .map(|tabstop| {
+                    let is_end_tabstop = tabstop.first().map_or(false, |tabstop| {
+                        tabstop.is_empty() && tabstop.start == snippet.text.len() as isize
+                    });
                     let mut tabstop_ranges = tabstop
                         .iter()
                         .flat_map(|tabstop_range| {
@@ -4669,19 +4680,32 @@ impl Editor {
                         })
                         .collect::<Vec<_>>();
                     tabstop_ranges.sort_unstable_by(|a, b| a.start.cmp(&b.start, snapshot));
-                    tabstop_ranges
+
+                    Tabstop {
+                        is_end_tabstop,
+                        ranges: tabstop_ranges,
+                    }
                 })
                 .collect::<Vec<_>>()
         });
 
         if let Some(tabstop) = tabstops.first() {
             self.change_selections(Some(Autoscroll::fit()), cx, |s| {
-                s.select_ranges(tabstop.iter().cloned());
+                s.select_ranges(tabstop.ranges.iter().cloned());
             });
-            self.snippet_stack.push(SnippetState {
-                active_index: 0,
-                ranges: tabstops,
-            });
+
+            // If we're already at the last tabstop and it's at the end of the snippet,
+            // we're done, we don't need to keep the state around.
+            if !tabstop.is_end_tabstop {
+                let ranges = tabstops
+                    .into_iter()
+                    .map(|tabstop| tabstop.ranges)
+                    .collect::<Vec<_>>();
+                self.snippet_stack.push(SnippetState {
+                    active_index: 0,
+                    ranges,
+                });
+            }
 
             // Check whether the just-entered snippet ends with an auto-closable bracket.
             if self.autoclose_regions.is_empty() {
@@ -8015,7 +8039,7 @@ impl Editor {
         });
         let mut search_start = if let Some(active_primary_range) = active_primary_range.as_ref() {
             if active_primary_range.contains(&selection.head()) {
-                *active_primary_range.end()
+                *active_primary_range.start()
             } else {
                 selection.head()
             }
@@ -8024,24 +8048,38 @@ impl Editor {
         };
         let snapshot = self.snapshot(cx);
         loop {
-            let mut diagnostics = if direction == Direction::Prev {
+            let diagnostics = if direction == Direction::Prev {
                 buffer.diagnostics_in_range::<_, usize>(0..search_start, true)
             } else {
                 buffer.diagnostics_in_range::<_, usize>(search_start..buffer.len(), false)
             }
             .filter(|diagnostic| !snapshot.intersects_fold(diagnostic.range.start));
-            let group = diagnostics.find_map(|entry| {
-                if entry.diagnostic.is_primary
-                    && entry.diagnostic.severity <= DiagnosticSeverity::WARNING
-                    && !entry.range.is_empty()
-                    && Some(entry.range.end) != active_primary_range.as_ref().map(|r| *r.end())
-                    && !entry.range.contains(&search_start)
-                {
-                    Some((entry.range, entry.diagnostic.group_id))
-                } else {
-                    None
-                }
-            });
+            let group = diagnostics
+                // relies on diagnostics_in_range to return diagnostics with the same starting range to
+                // be sorted in a stable way
+                // skip until we are at current active diagnostic, if it exists
+                .skip_while(|entry| {
+                    (match direction {
+                        Direction::Prev => entry.range.start >= search_start,
+                        Direction::Next => entry.range.start <= search_start,
+                    }) && self
+                        .active_diagnostics
+                        .as_ref()
+                        .is_some_and(|a| a.group_id != entry.diagnostic.group_id)
+                })
+                .find_map(|entry| {
+                    if entry.diagnostic.is_primary
+                        && entry.diagnostic.severity <= DiagnosticSeverity::WARNING
+                        && !entry.range.is_empty()
+                        // if we match with the active diagnostic, skip it
+                        && Some(entry.diagnostic.group_id)
+                            != self.active_diagnostics.as_ref().map(|d| d.group_id)
+                    {
+                        Some((entry.range, entry.diagnostic.group_id))
+                    } else {
+                        None
+                    }
+                });
 
             if let Some((primary_range, group_id)) = group {
                 if self.activate_diagnostics(group_id, cx) {
@@ -9042,6 +9080,7 @@ impl Editor {
             Some(ActiveDiagnosticGroup {
                 primary_range,
                 primary_message,
+                group_id,
                 blocks,
                 is_valid: true,
             })
@@ -11066,7 +11105,7 @@ impl Render for Editor {
                 background,
                 local_player: cx.theme().players().local(),
                 text: text_style,
-                scrollbar_width: px(13.),
+                scrollbar_width: EditorElement::SCROLLBAR_WIDTH,
                 syntax: cx.theme().syntax().clone(),
                 status: cx.theme().status().clone(),
                 inlay_hints_style: HighlightStyle {

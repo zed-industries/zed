@@ -4,6 +4,7 @@ use anyhow::{anyhow, bail, Context, Result};
 use async_compression::futures::bufread::GzipDecoder;
 use async_tar::Archive;
 use futures::AsyncReadExt;
+use http::HttpClient;
 use semver::Version;
 use serde::Deserialize;
 use smol::io::BufReader;
@@ -15,7 +16,6 @@ use std::{
     path::{Path, PathBuf},
     sync::Arc,
 };
-use util::http::HttpClient;
 use util::ResultExt;
 
 #[cfg(windows)]

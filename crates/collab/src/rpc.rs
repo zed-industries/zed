@@ -42,6 +42,7 @@ use futures::{
     stream::FuturesUnordered,
     FutureExt, SinkExt, StreamExt, TryStreamExt,
 };
+use http::IsahcHttpClient;
 use prometheus::{register_int_gauge, IntGauge};
 use rpc::{
     proto::{
@@ -73,7 +74,6 @@ use tracing::{
     field::{self},
     info_span, instrument, Instrument,
 };
-use util::http::IsahcHttpClient;
 
 use self::connection_pool::VersionedMessage;
 

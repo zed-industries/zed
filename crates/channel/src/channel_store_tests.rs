@@ -4,9 +4,9 @@ use super::*;
 use client::{test::FakeServer, Client, UserStore};
 use clock::FakeSystemClock;
 use gpui::{AppContext, Context, Model, TestAppContext};
+use http::FakeHttpClient;
 use rpc::proto::{self};
 use settings::SettingsStore;
-use util::http::FakeHttpClient;
 
 #[gpui::test]
 fn test_update_channels(cx: &mut AppContext) {
