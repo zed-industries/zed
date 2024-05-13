@@ -4639,12 +4639,11 @@ impl Editor {
                                 delta +=
                                     snippet.text.len() as isize - insertion_range.len() as isize;
 
-                                let start = snapshot.anchor_before(
-                                    (insertion_start + tabstop_range.start) as usize,
-                                );
-                                let end = snapshot
-                                    .anchor_after((insertion_start + tabstop_range.end) as usize);
-                                start..end
+                                let start = ((insertion_start + tabstop_range.start) as usize)
+                                    .min(snapshot.len());
+                                let end = ((insertion_start + tabstop_range.end) as usize)
+                                    .min(snapshot.len());
+                                snapshot.anchor_before(start)..snapshot.anchor_after(end)
                             })
                         })
                         .collect::<Vec<_>>();
