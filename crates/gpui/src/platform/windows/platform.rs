@@ -609,8 +609,11 @@ impl Platform for WindowsPlatform {
 
     fn set_cursor_style(&self, style: CursorStyle) {
         let hcursor = load_cursor(style);
-        self.post_message(CURSOR_STYLE_CHANGED, WPARAM(0), LPARAM(hcursor.0));
-        self.state.borrow_mut().current_cursor = hcursor;
+        let mut lock = self.state.borrow_mut();
+        if lock.current_cursor.0 != hcursor.0 {
+            self.post_message(CURSOR_STYLE_CHANGED, WPARAM(0), LPARAM(hcursor.0));
+            lock.current_cursor = hcursor;
+        }
     }
 
     // todo(windows)
