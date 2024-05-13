@@ -771,7 +771,8 @@ impl AssistantPanel {
             LanguageModel::OpenAi(model) => LanguageModel::OpenAi(match &model {
                 open_ai::Model::ThreePointFiveTurbo => open_ai::Model::Four,
                 open_ai::Model::Four => open_ai::Model::FourTurbo,
-                open_ai::Model::FourTurbo => open_ai::Model::ThreePointFiveTurbo,
+                open_ai::Model::FourTurbo => open_ai::Model::FourOmni,
+                open_ai::Model::FourOmni => open_ai::Model::ThreePointFiveTurbo,
             }),
             LanguageModel::ZedDotDev(model) => LanguageModel::ZedDotDev(match &model {
                 ZedDotDevModel::Gpt3Point5Turbo => ZedDotDevModel::Gpt4,

@@ -300,7 +300,8 @@
       // 1. "gpt-3.5-turbo"
       // 2. "gpt-4"
       // 3. "gpt-4-turbo-preview"
-      "default_model": "gpt-4-turbo-preview"
+      // 4. "gpt-4o"
+      "default_model": "gpt-4o"
     }
   },
   // Whether the screen sharing icon is shown in the os status bar.
