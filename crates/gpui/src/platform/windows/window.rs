@@ -43,7 +43,7 @@ pub struct WindowsWindowState {
     pub renderer: BladeRenderer,
 
     pub click_state: ClickState,
-    pub system_settings: WindowsPlatformSystemSettings,
+    pub system_settings: WindowsSystemSettings,
     pub current_cursor: HCURSOR,
 
     pub display: WindowsDisplay,
@@ -81,7 +81,7 @@ impl WindowsWindowState {
         let callbacks = Callbacks::default();
         let input_handler = None;
         let click_state = ClickState::new();
-        let system_settings = WindowsPlatformSystemSettings::new();
+        let system_settings = WindowsSystemSettings::new();
         let fullscreen = None;
 
         Self {

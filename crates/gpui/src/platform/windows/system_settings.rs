@@ -9,7 +9,7 @@ use windows::Win32::UI::WindowsAndMessaging::{
 /// Windows settings pulled from SystemParametersInfo
 /// https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-systemparametersinfow
 #[derive(Default, Debug, Clone, Copy)]
-pub(crate) struct WindowsPlatformSystemSettings {
+pub(crate) struct WindowsSystemSettings {
     pub(crate) mouse_wheel_settings: MouseWheelSettings,
 }
 
@@ -21,7 +21,7 @@ pub(crate) struct MouseWheelSettings {
     pub(crate) wheel_scroll_lines: u32,
 }
 
-impl WindowsPlatformSystemSettings {
+impl WindowsSystemSettings {
     pub(crate) fn new() -> Self {
         let mut settings = Self::default();
         settings.init();
