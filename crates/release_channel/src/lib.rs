@@ -7,7 +7,8 @@ use std::{env, str::FromStr};
 use gpui::{AppContext, Global, SemanticVersion};
 use once_cell::sync::Lazy;
 
-static RELEASE_CHANNEL_NAME: Lazy<String> = if cfg!(debug_assertions) {
+/// stable | dev | nightly | preview
+pub static RELEASE_CHANNEL_NAME: Lazy<String> = if cfg!(debug_assertions) {
     Lazy::new(|| {
         env::var("ZED_RELEASE_CHANNEL")
             .unwrap_or_else(|_| include_str!("../../zed/RELEASE_CHANNEL").trim().to_string())

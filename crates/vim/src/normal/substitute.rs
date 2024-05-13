@@ -95,37 +95,37 @@ mod test {
 
         // supports a single cursor
         cx.set_state(indoc! {"ˇabc\n"}, Mode::Normal);
-        cx.simulate_keystrokes(["s", "x"]);
+        cx.simulate_keystrokes("s x");
         cx.assert_editor_state("xˇbc\n");
 
         // supports a selection
         cx.set_state(indoc! {"a«bcˇ»\n"}, Mode::Visual);
         cx.assert_editor_state("a«bcˇ»\n");
-        cx.simulate_keystrokes(["s", "x"]);
+        cx.simulate_keystrokes("s x");
         cx.assert_editor_state("axˇ\n");
 
         // supports counts
         cx.set_state(indoc! {"ˇabc\n"}, Mode::Normal);
-        cx.simulate_keystrokes(["2", "s", "x"]);
+        cx.simulate_keystrokes("2 s x");
         cx.assert_editor_state("xˇc\n");
 
         // supports multiple cursors
         cx.set_state(indoc! {"a«bcˇ»deˇffg\n"}, Mode::Normal);
-        cx.simulate_keystrokes(["2", "s", "x"]);
+        cx.simulate_keystrokes("2 s x");
         cx.assert_editor_state("axˇdexˇg\n");
 
         // does not read beyond end of line
         cx.set_state(indoc! {"ˇabc\n"}, Mode::Normal);
-        cx.simulate_keystrokes(["5", "s", "x"]);
+        cx.simulate_keystrokes("5 s x");
         cx.assert_editor_state("xˇ\n");
 
         // it handles multibyte characters
         cx.set_state(indoc! {"ˇcàfé\n"}, Mode::Normal);
-        cx.simulate_keystrokes(["4", "s"]);
+        cx.simulate_keystrokes("4 s");
         cx.assert_editor_state("ˇ\n");
 
         // should transactionally undo selection changes
-        cx.simulate_keystrokes(["escape", "u"]);
+        cx.simulate_keystrokes("escape u");
         cx.assert_editor_state("ˇcàfé\n");
 
         // it handles visual line mode
@@ -136,7 +136,7 @@ mod test {
             gamma"},
             Mode::Normal,
         );
-        cx.simulate_keystrokes(["shift-v", "s"]);
+        cx.simulate_keystrokes("shift-v s");
         cx.assert_editor_state(indoc! {"
             alpha
               ˇ
@@ -148,66 +148,86 @@ mod test {
         let mut cx = NeovimBackedTestContext::new(cx).await;
 
         cx.set_shared_state("The quick ˇbrown").await;
-        cx.simulate_shared_keystrokes(["v", "w", "c"]).await;
-        cx.assert_shared_state("The quick ˇ").await;
+        cx.simulate_shared_keystrokes("v w c").await;
+        cx.shared_state().await.assert_eq("The quick ˇ");
 
         cx.set_shared_state(indoc! {"
             The ˇquick brown
             fox jumps over
             the lazy dog"})
             .await;
-        cx.simulate_shared_keystrokes(["v", "w", "j", "c"]).await;
-        cx.assert_shared_state(indoc! {"
+        cx.simulate_shared_keystrokes("v w j c").await;
+        cx.shared_state().await.assert_eq(indoc! {"
             The ˇver
-            the lazy dog"})
-            .await;
+            the lazy dog"});
 
-        let cases = cx.each_marked_position(indoc! {"
-            The ˇquick brown
-            fox jumps ˇover
-            the ˇlazy dog"});
-        for initial_state in cases {
-            cx.assert_neovim_compatible(&initial_state, ["v", "w", "j", "c"])
-                .await;
-            cx.assert_neovim_compatible(&initial_state, ["v", "w", "k", "c"])
-                .await;
-        }
+        cx.simulate_at_each_offset(
+            "v w j c",
+            indoc! {"
+                    The ˇquick brown
+                    fox jumps ˇover
+                    the ˇlazy dog"},
+        )
+        .await
+        .assert_matches();
+        cx.simulate_at_each_offset(
+            "v w k c",
+            indoc! {"
+                    The ˇquick brown
+                    fox jumps ˇover
+                    the ˇlazy dog"},
+        )
+        .await
+        .assert_matches();
     }
 
     #[gpui::test]
     async fn test_visual_line_change(cx: &mut gpui::TestAppContext) {
-        let mut cx = NeovimBackedTestContext::new(cx)
-            .await
-            .binding(["shift-v", "c"]);
-        cx.assert(indoc! {"
+        let mut cx = NeovimBackedTestContext::new(cx).await;
+        cx.simulate(
+            "shift-v c",
+            indoc! {"
             The quˇick brown
             fox jumps over
-            the lazy dog"})
-            .await;
+            the lazy dog"},
+        )
+        .await
+        .assert_matches();
         // Test pasting code copied on change
-        cx.simulate_shared_keystrokes(["escape", "j", "p"]).await;
-        cx.assert_state_matches().await;
+        cx.simulate_shared_keystrokes("escape j p").await;
+        cx.shared_state().await.assert_matches();
 
-        cx.assert_all(indoc! {"
+        cx.simulate_at_each_offset(
+            "shift-v c",
+            indoc! {"
             The quick brown
             fox juˇmps over
-            the laˇzy dog"})
-            .await;
-        let mut cx = cx.binding(["shift-v", "j", "c"]);
-        cx.assert(indoc! {"
+            the laˇzy dog"},
+        )
+        .await
+        .assert_matches();
+        cx.simulate(
+            "shift-v j c",
+            indoc! {"
             The quˇick brown
             fox jumps over
-            the lazy dog"})
-            .await;
+            the lazy dog"},
+        )
+        .await
+        .assert_matches();
         // Test pasting code copied on delete
-        cx.simulate_shared_keystrokes(["escape", "j", "p"]).await;
-        cx.assert_state_matches().await;
+        cx.simulate_shared_keystrokes("escape j p").await;
+        cx.shared_state().await.assert_matches();
 
-        cx.assert_all(indoc! {"
+        cx.simulate_at_each_offset(
+            "shift-v j c",
+            indoc! {"
             The quick brown
             fox juˇmps over
-            the laˇzy dog"})
-            .await;
+            the laˇzy dog"},
+        )
+        .await
+        .assert_matches();
     }
 
     #[gpui::test]
@@ -222,55 +242,46 @@ mod test {
 
         // normal mode
         cx.set_shared_state(initial_state).await;
-        cx.simulate_shared_keystrokes(["shift-s", "o"]).await;
-        cx.assert_shared_state(indoc! {"
+        cx.simulate_shared_keystrokes("shift-s o").await;
+        cx.shared_state().await.assert_eq(indoc! {"
             The quick brown
             oˇ
             the lazy dog
-            "})
-            .await;
+            "});
 
         // visual mode
         cx.set_shared_state(initial_state).await;
-        cx.simulate_shared_keystrokes(["v", "k", "shift-s", "o"])
-            .await;
-        cx.assert_shared_state(indoc! {"
+        cx.simulate_shared_keystrokes("v k shift-s o").await;
+        cx.shared_state().await.assert_eq(indoc! {"
             oˇ
             the lazy dog
-            "})
-            .await;
+            "});
 
         // visual block mode
         cx.set_shared_state(initial_state).await;
-        cx.simulate_shared_keystrokes(["ctrl-v", "j", "shift-s", "o"])
-            .await;
-        cx.assert_shared_state(indoc! {"
+        cx.simulate_shared_keystrokes("ctrl-v j shift-s o").await;
+        cx.shared_state().await.assert_eq(indoc! {"
             The quick brown
             oˇ
-            "})
-            .await;
+            "});
 
         // visual mode including newline
         cx.set_shared_state(initial_state).await;
-        cx.simulate_shared_keystrokes(["v", "$", "shift-s", "o"])
-            .await;
-        cx.assert_shared_state(indoc! {"
+        cx.simulate_shared_keystrokes("v $ shift-s o").await;
+        cx.shared_state().await.assert_eq(indoc! {"
             The quick brown
             oˇ
             the lazy dog
-            "})
-            .await;
+            "});
 
         // indentation
         cx.set_neovim_option("shiftwidth=4").await;
         cx.set_shared_state(initial_state).await;
-        cx.simulate_shared_keystrokes([">", ">", "shift-s", "o"])
-            .await;
-        cx.assert_shared_state(indoc! {"
+        cx.simulate_shared_keystrokes("> > shift-s o").await;
+        cx.shared_state().await.assert_eq(indoc! {"
             The quick brown
                 oˇ
             the lazy dog
-            "})
-            .await;
+            "});
     }
 }

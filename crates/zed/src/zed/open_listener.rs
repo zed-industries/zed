@@ -13,12 +13,14 @@ use language::{Bias, Point};
 use std::path::Path;
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::thread;
 use std::time::Duration;
+use std::{process, thread};
 use util::paths::PathLikeWithPosition;
 use util::ResultExt;
 use workspace::item::ItemHandle;
 use workspace::{AppState, Workspace};
+
+use crate::{init_headless, init_ui};
 
 #[derive(Default, Debug)]
 pub struct OpenRequest {
@@ -116,6 +118,24 @@ impl OpenListener {
     }
 }
 
+#[cfg(target_os = "linux")]
+pub fn listen_for_cli_connections(opener: Arc<OpenListener>) -> Result<()> {
+    use release_channel::RELEASE_CHANNEL_NAME;
+    use std::os::{linux::net::SocketAddrExt, unix::net::SocketAddr, unix::net::UnixDatagram};
+
+    let uid: u32 = unsafe { libc::getuid() };
+    let sock_addr =
+        SocketAddr::from_abstract_name(format!("zed-{}-{}", *RELEASE_CHANNEL_NAME, uid))?;
+    let listener = UnixDatagram::bind_addr(&sock_addr)?;
+    thread::spawn(move || {
+        let mut buf = [0u8; 1024];
+        while let Ok(len) = listener.recv(&mut buf) {
+            opener.open_urls(vec![String::from_utf8_lossy(&buf[..len]).to_string()]);
+        }
+    });
+    Ok(())
+}
+
 fn connect_to_cli(
     server_name: &str,
 ) -> Result<(mpsc::Receiver<CliRequest>, IpcSender<CliResponse>)> {
@@ -211,7 +231,50 @@ pub async fn handle_cli_connection(
                 paths,
                 wait,
                 open_new_workspace,
+                dev_server_token,
             } => {
+                if let Some(dev_server_token) = dev_server_token {
+                    match cx
+                        .update(|cx| {
+                            init_headless(client::DevServerToken(dev_server_token), app_state, cx)
+                        })
+                        .unwrap()
+                        .await
+                    {
+                        Ok(_) => {
+                            responses
+                                .send(CliResponse::Stdout {
+                                    message: format!("zed (pid {}) connected!", process::id()),
+                                })
+                                .log_err();
+                            responses.send(CliResponse::Exit { status: 0 }).log_err();
+                        }
+                        Err(error) => {
+                            responses
+                                .send(CliResponse::Stderr {
+                                    message: format!("{}", error),
+                                })
+                                .log_err();
+                            responses.send(CliResponse::Exit { status: 1 }).log_err();
+                            cx.update(|cx| cx.quit()).log_err();
+                        }
+                    }
+                    return;
+                }
+
+                if let Err(e) = cx
+                    .update(|cx| init_ui(app_state.clone(), cx))
+                    .and_then(|r| r)
+                {
+                    responses
+                        .send(CliResponse::Stderr {
+                            message: format!("{}", e),
+                        })
+                        .log_err();
+                    responses.send(CliResponse::Exit { status: 1 }).log_err();
+                    return;
+                }
+
                 let paths = if paths.is_empty() {
                     if open_new_workspace == Some(true) {
                         vec![]

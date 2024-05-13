@@ -8,6 +8,7 @@ use clock::FakeSystemClock;
 use fs::{FakeFs, Fs, RealFs, RemoveOptions};
 use git::{repository::GitFileStatus, GITIGNORE};
 use gpui::{BorrowAppContext, ModelContext, Task, TestAppContext};
+use http::FakeHttpClient;
 use parking_lot::Mutex;
 use postage::stream::Stream;
 use pretty_assertions::assert_eq;
@@ -21,7 +22,7 @@ use std::{
     path::{Path, PathBuf},
     sync::Arc,
 };
-use util::{http::FakeHttpClient, test::temp_tree, ResultExt};
+use util::{test::temp_tree, ResultExt};
 
 #[gpui::test]
 async fn test_traversal(cx: &mut TestAppContext) {

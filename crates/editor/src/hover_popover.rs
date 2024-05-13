@@ -1,8 +1,8 @@
 use crate::{
     display_map::{InlayOffset, ToDisplayPoint},
     hover_links::{InlayHighlight, RangeInEditor},
-    Anchor, AnchorRangeExt, DisplayPoint, Editor, EditorSettings, EditorSnapshot, EditorStyle,
-    ExcerptId, Hover, RangeToAnchorExt,
+    Anchor, AnchorRangeExt, DisplayPoint, DisplayRow, Editor, EditorSettings, EditorSnapshot,
+    EditorStyle, ExcerptId, Hover, RangeToAnchorExt,
 };
 use futures::{stream::FuturesUnordered, FutureExt};
 use gpui::{
@@ -440,7 +440,7 @@ impl HoverState {
         &mut self,
         snapshot: &EditorSnapshot,
         style: &EditorStyle,
-        visible_rows: Range<u32>,
+        visible_rows: Range<DisplayRow>,
         max_size: Size<Pixels>,
         workspace: Option<WeakView<Workspace>>,
         cx: &mut ViewContext<Editor>,

@@ -1,6 +1,8 @@
 use crate::Vim;
 use editor::{
-    display_map::ToDisplayPoint, scroll::ScrollAmount, DisplayPoint, Editor, EditorSettings,
+    display_map::{DisplayRow, ToDisplayPoint},
+    scroll::ScrollAmount,
+    DisplayPoint, Editor, EditorSettings,
 };
 use gpui::{actions, ViewContext};
 use language::Bias;
@@ -85,11 +87,13 @@ fn scroll_editor(
 
                 if preserve_cursor_position {
                     let old_top = old_top_anchor.to_display_point(map);
-                    let new_row = top.row() + selection.head().row() - old_top.row();
+                    let new_row =
+                        DisplayRow(top.row().0 + selection.head().row().0 - old_top.row().0);
                     head = map.clip_point(DisplayPoint::new(new_row, head.column()), Bias::Left)
                 }
-                let min_row = top.row() + vertical_scroll_margin as u32;
-                let max_row = top.row() + visible_rows - vertical_scroll_margin as u32 - 1;
+                let min_row = DisplayRow(top.row().0 + vertical_scroll_margin as u32);
+                let max_row =
+                    DisplayRow(top.row().0 + visible_rows - vertical_scroll_margin as u32 - 1);
 
                 let new_head = if head.row() < min_row {
                     map.clip_point(DisplayPoint::new(min_row, head.column()), Bias::Left)
@@ -166,25 +170,25 @@ mod test {
         cx.update_editor(|editor, cx| {
             assert_eq!(editor.snapshot(cx).scroll_position(), point(0., 0.))
         });
-        cx.simulate_keystrokes(["ctrl-e"]);
+        cx.simulate_keystrokes("ctrl-e");
         cx.update_editor(|editor, cx| {
             assert_eq!(editor.snapshot(cx).scroll_position(), point(0., 1.))
         });
-        cx.simulate_keystrokes(["2", "ctrl-e"]);
+        cx.simulate_keystrokes("2 ctrl-e");
         cx.update_editor(|editor, cx| {
             assert_eq!(editor.snapshot(cx).scroll_position(), point(0., 3.))
         });
-        cx.simulate_keystrokes(["ctrl-y"]);
+        cx.simulate_keystrokes("ctrl-y");
         cx.update_editor(|editor, cx| {
             assert_eq!(editor.snapshot(cx).scroll_position(), point(0., 2.))
         });
 
         // does not select in normal mode
-        cx.simulate_keystrokes(["g", "g"]);
+        cx.simulate_keystrokes("g g");
         cx.update_editor(|editor, cx| {
             assert_eq!(editor.snapshot(cx).scroll_position(), point(0., 0.))
         });
-        cx.simulate_keystrokes(["ctrl-d"]);
+        cx.simulate_keystrokes("ctrl-d");
         cx.update_editor(|editor, cx| {
             assert_eq!(editor.snapshot(cx).scroll_position(), point(0., 3.0));
             assert_eq!(
@@ -194,11 +198,11 @@ mod test {
         });
 
         // does select in visual mode
-        cx.simulate_keystrokes(["g", "g"]);
+        cx.simulate_keystrokes("g g");
         cx.update_editor(|editor, cx| {
             assert_eq!(editor.snapshot(cx).scroll_position(), point(0., 0.))
         });
-        cx.simulate_keystrokes(["v", "ctrl-d"]);
+        cx.simulate_keystrokes("v ctrl-d");
         cx.update_editor(|editor, cx| {
             assert_eq!(editor.snapshot(cx).scroll_position(), point(0., 3.0));
             assert_eq!(
@@ -230,18 +234,18 @@ mod test {
 
         // skip over the scrolloff at the top
         // test ctrl-d
-        cx.simulate_shared_keystrokes(["4", "j", "ctrl-d"]).await;
-        cx.assert_state_matches().await;
-        cx.simulate_shared_keystrokes(["ctrl-d"]).await;
-        cx.assert_state_matches().await;
-        cx.simulate_shared_keystrokes(["g", "g", "ctrl-d"]).await;
-        cx.assert_state_matches().await;
+        cx.simulate_shared_keystrokes("4 j ctrl-d").await;
+        cx.shared_state().await.assert_matches();
+        cx.simulate_shared_keystrokes("ctrl-d").await;
+        cx.shared_state().await.assert_matches();
+        cx.simulate_shared_keystrokes("g g ctrl-d").await;
+        cx.shared_state().await.assert_matches();
 
         // test ctrl-u
-        cx.simulate_shared_keystrokes(["ctrl-u"]).await;
-        cx.assert_state_matches().await;
-        cx.simulate_shared_keystrokes(["ctrl-d", "ctrl-d", "4", "j", "ctrl-u", "ctrl-u"])
+        cx.simulate_shared_keystrokes("ctrl-u").await;
+        cx.shared_state().await.assert_matches();
+        cx.simulate_shared_keystrokes("ctrl-d ctrl-d 4 j ctrl-u ctrl-u")
             .await;
-        cx.assert_state_matches().await;
+        cx.shared_state().await.assert_matches();
     }
 }

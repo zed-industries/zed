@@ -19,6 +19,7 @@ test-support = [
     "settings/test-support",
     "text/test-support",
     "gpui/test-support",
+    "http/test-support",
 ]
 
 [dependencies]
@@ -53,6 +54,7 @@ clock = {workspace = true, features = ["test-support"]}
 collections = { workspace = true, features = ["test-support"] }
 git2.workspace = true
 gpui = {workspace = true, features = ["test-support"]}
+http.workspace = true
 rand.workspace = true
 settings = {workspace = true, features = ["test-support"]}
 pretty_assertions.workspace = true

@@ -557,11 +557,12 @@ mod tests {
     use client::{Client, User, UserStore};
     use clock::FakeSystemClock;
     use gpui::TestAppContext;
+    use http::FakeHttpClient;
     use language::{Language, LanguageConfig};
     use project::Project;
     use rpc::proto;
     use settings::SettingsStore;
-    use util::{http::FakeHttpClient, test::marked_text_ranges};
+    use util::test::marked_text_ranges;
 
     #[gpui::test]
     async fn test_message_editor(cx: &mut TestAppContext) {

@@ -10,13 +10,14 @@ use gpui::{
     div, rems, AppContext, DismissEvent, EventEmitter, FocusHandle, FocusableView, Model,
     PromptLevel, Render, Task, View, ViewContext,
 };
+use http::HttpClient;
 use isahc::Request;
 use language::Buffer;
 use project::Project;
 use regex::Regex;
 use serde_derive::Serialize;
 use ui::{prelude::*, Button, ButtonStyle, IconPosition, Tooltip};
-use util::{http::HttpClient, ResultExt};
+use util::ResultExt;
 use workspace::notifications::NotificationId;
 use workspace::{DismissDecision, ModalView, Toast, Workspace};
 

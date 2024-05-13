@@ -25,9 +25,10 @@ collections.workspace = true
 feature_flags.workspace = true
 futures.workspace = true
 gpui.workspace = true
+http.workspace = true
 lazy_static.workspace = true
 log.workspace = true
-once_cell = "1.19.0"
+once_cell.workspace = true
 parking_lot.workspace = true
 postage.workspace = true
 rand.workspace = true
@@ -56,3 +57,4 @@ gpui = { workspace = true, features = ["test-support"] }
 rpc = { workspace = true, features = ["test-support"] }
 settings = { workspace = true, features = ["test-support"] }
 util = { workspace = true, features = ["test-support"] }
+http = { workspace = true, features = ["test-support"] }

@@ -330,6 +330,7 @@ pub trait ItemHandle: 'static + Send {
     fn serialized_item_kind(&self) -> Option<&'static str>;
     fn show_toolbar(&self, cx: &AppContext) -> bool;
     fn pixel_position_of_cursor(&self, cx: &AppContext) -> Option<Point<Pixels>>;
+    fn downgrade_item(&self) -> Box<dyn WeakItemHandle>;
 }
 
 pub trait WeakItemHandle: Send + Sync {
@@ -701,6 +702,10 @@ impl<T: Item> ItemHandle for View<T> {
 
     fn pixel_position_of_cursor(&self, cx: &AppContext) -> Option<Point<Pixels>> {
         self.read(cx).pixel_position_of_cursor(cx)
+    }
+
+    fn downgrade_item(&self) -> Box<dyn WeakItemHandle> {
+        Box::new(self.downgrade())
     }
 }
 

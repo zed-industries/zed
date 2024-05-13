@@ -463,7 +463,7 @@ impl AppState {
         let fs = fs::FakeFs::new(cx.background_executor().clone());
         let languages = Arc::new(LanguageRegistry::test(cx.background_executor().clone()));
         let clock = Arc::new(clock::FakeSystemClock::default());
-        let http_client = util::http::FakeHttpClient::with_404_response();
+        let http_client = http::FakeHttpClient::with_404_response();
         let client = Client::new(clock, http_client.clone(), cx);
         let user_store = cx.new_model(|cx| UserStore::new(client.clone(), cx));
         let workspace_store = cx.new_model(|cx| WorkspaceStore::new(client.clone(), cx));
@@ -2499,6 +2499,9 @@ impl Workspace {
         self.zoomed_position = None;
         cx.emit(Event::ZoomChanged);
         self.update_active_view_for_followers(cx);
+        pane.model.update(cx, |pane, _| {
+            pane.track_alternate_file_items();
+        });
 
         cx.notify();
     }
@@ -2516,6 +2519,9 @@ impl Workspace {
             }
             pane::Event::Remove => self.remove_pane(pane, cx),
             pane::Event::ActivateItem { local } => {
+                pane.model.update(cx, |pane, _| {
+                    pane.track_alternate_file_items();
+                });
                 if *local {
                     self.unfollow(&pane, cx);
                 }
