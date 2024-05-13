@@ -1133,15 +1133,12 @@ mod tests {
         db.save_workspace(workspace_1.clone()).await;
         db.save_workspace(workspace_2.clone()).await;
 
-        // Test that paths are treated as a set
+        // Test that paths are not treated as a set
         assert_eq!(
             db.workspace_for_roots(&["/tmp", "/tmp2"]).unwrap(),
             workspace_1
         );
-        assert_eq!(
-            db.workspace_for_roots(&["/tmp2", "/tmp"]).unwrap(),
-            workspace_1
-        );
+        assert_eq!(db.workspace_for_roots(&["/tmp2", "/tmp"]), None);
 
         // Make sure that other keys work
         assert_eq!(db.workspace_for_roots(&["/tmp"]).unwrap(), workspace_2);
