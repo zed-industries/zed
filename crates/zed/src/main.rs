@@ -31,10 +31,8 @@ use simplelog::ConfigBuilder;
 use smol::process::Command;
 use std::{
     env,
-    ffi::CStr,
     fs::OpenOptions,
     io::{IsTerminal, Write},
-    mem::MaybeUninit,
     path::Path,
     process,
     sync::Arc,
@@ -308,7 +306,8 @@ fn main() {
         Task::ready(())
     } else {
         app.background_executor().spawn(async {
-            if cfg!(not(target_os = "windows")) {
+            #[cfg(not(target_os = "windows"))]
+            {
                 load_shell_from_passwd().await.log_err();
             }
             load_login_shell_environment().await.log_err();
@@ -691,7 +690,7 @@ async fn load_shell_from_passwd() -> Result<()> {
         n => n as usize,
     };
     let mut buffer = Vec::with_capacity(bufsize);
-    let mut pwd: MaybeUninit<libc::passwd> = MaybeUninit::uninit();
+    let mut pwd: std::mem::MaybeUninit<libc::passwd> = std::mem::MaybeUninit::uninit();
     let mut result: *mut libc::passwd = std::ptr::null_mut();
 
     let uid = unsafe { libc::getuid() };
@@ -713,7 +712,7 @@ async fn load_shell_from_passwd() -> Result<()> {
         "passwd entry has different uid than getuid returned"
     );
 
-    let shell = unsafe { CStr::from_ptr(entry.pw_shell).to_str().unwrap() };
+    let shell = unsafe { std::ffi::CStr::from_ptr(entry.pw_shell).to_str().unwrap() };
     if env::var("SHELL").map_or(true, |shell_env| shell_env != shell) {
         log::info!(
             "updating SHELL environment variable to value from passwd entry: {:?}",
