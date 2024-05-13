@@ -10,6 +10,10 @@ repository = "https://github.com/zed-industries/zed"
 name = "Solargraph"
 language = "Ruby"
 
+[language_servers.ruby-lsp]
+name = "Ruby LSP"
+language = "Ruby"
+
 [grammars.ruby]
 repository = "https://github.com/tree-sitter/tree-sitter-ruby"
 commit = "9d86f3761bb30e8dcc81e754b81d3ce91848477e"

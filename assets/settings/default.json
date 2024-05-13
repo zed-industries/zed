@@ -648,7 +648,7 @@
       "tab_size": 2
     },
     "Ruby": {
-      "language_servers": ["solargraph", "..."]
+      "language_servers": ["solargraph", "!ruby-lsp", "..."]
     }
   },
   // Zed's Prettier integration settings.
