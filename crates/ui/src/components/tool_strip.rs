@@ -49,7 +49,7 @@ impl RenderOnce for ToolStrip {
             .p(Spacing::XSmall.rems(cx))
             .border_1()
             .border_color(cx.theme().colors().border)
-            .rounded_md()
+            .rounded(rems_from_px(6.0))
             .bg(cx.theme().colors().elevated_surface_background)
             .children(self.tools.into_iter().map(|tool| tool))
     }

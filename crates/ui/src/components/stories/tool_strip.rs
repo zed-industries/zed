@@ -1,5 +1,5 @@
 use gpui::Render;
-use story::{StoryContainer, StorySection};
+use story::{StoryContainer, StoryItem, StorySection};
 
 use crate::{prelude::*, ToolStrip, Tooltip};
 
@@ -12,7 +12,8 @@ impl Render for ToolStripStory {
             "crates/ui/src/components/stories/tool_strip.rs",
         )
         .child(
-            StorySection::new().child(
+            StorySection::new().child(StoryItem::new(
+                "Vertical Tool Strip",
                 ToolStrip::vertical("tool_strip_example")
                     .add_tool(
                         IconButton::new("example_tool", IconName::AudioOn)
@@ -26,7 +27,7 @@ impl Render for ToolStripStory {
                         IconButton::new("example_tool_3", IconName::Screen)
                             .tooltip(|cx| Tooltip::text("Example tool 3", cx)),
                     ),
-            ),
+            )),
         )
     }
 }
