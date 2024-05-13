@@ -72,11 +72,11 @@ pub(crate) fn handle_msg(
         WM_XBUTTONUP => handle_xbutton_msg(wparam, lparam, handle_mouse_up_msg, state_ptr),
         WM_MOUSEWHEEL => handle_mouse_wheel_msg(handle, wparam, lparam, state_ptr),
         WM_MOUSEHWHEEL => handle_mouse_horizontal_wheel_msg(handle, wparam, lparam, state_ptr),
-        WM_SYSKEYDOWN => handle_syskeydown_msg(handle, wparam, lparam, state_ptr),
-        WM_SYSKEYUP => handle_syskeyup_msg(handle, wparam, state_ptr),
-        WM_KEYDOWN => handle_keydown_msg(handle, wparam, lparam, state_ptr),
-        WM_KEYUP => handle_keyup_msg(handle, wparam, state_ptr),
-        WM_CHAR => handle_char_msg(handle, wparam, lparam, state_ptr),
+        WM_SYSKEYDOWN => handle_syskeydown_msg(wparam, lparam, state_ptr),
+        WM_SYSKEYUP => handle_syskeyup_msg(wparam, state_ptr),
+        WM_KEYDOWN => handle_keydown_msg(wparam, lparam, state_ptr),
+        WM_KEYUP => handle_keyup_msg(wparam, state_ptr),
+        WM_CHAR => handle_char_msg(wparam, lparam, state_ptr),
         WM_IME_STARTCOMPOSITION => handle_ime_position(handle, state_ptr),
         WM_IME_COMPOSITION => handle_ime_composition(handle, lparam, state_ptr),
         WM_SETCURSOR => handle_set_cursor(lparam, state_ptr),
@@ -180,14 +180,6 @@ fn handle_timer_msg(
 
 fn handle_paint_msg(handle: HWND, state_ptr: Rc<WindowsWindowStatePtr>) -> Option<isize> {
     let mut lock = state_ptr.state.borrow_mut();
-    lock.frame_count += 1;
-    let elpased = lock.last_update.elapsed().as_secs_f32();
-    if elpased > 1.0 {
-        let fps = lock.frame_count as f32 / elpased;
-        println!("FPS: {:.2}", fps);
-        lock.frame_count = 0;
-        lock.last_update = std::time::Instant::now();
-    }
     if let Some(mut request_frame) = lock.callbacks.request_frame.take() {
         drop(lock);
         request_frame();
@@ -267,7 +259,6 @@ fn handle_mouse_move_msg(
 }
 
 fn handle_syskeydown_msg(
-    handle: HWND,
     wparam: WPARAM,
     lparam: LPARAM,
     state_ptr: Rc<WindowsWindowStatePtr>,
@@ -287,7 +278,6 @@ fn handle_syskeydown_msg(
         is_held: lparam.0 & (0x1 << 30) > 0,
     };
     let result = if func(PlatformInput::KeyDown(event)).default_prevented {
-        invalidate_client_area(handle);
         Some(0)
     } else {
         None
@@ -297,11 +287,7 @@ fn handle_syskeydown_msg(
     result
 }
 
-fn handle_syskeyup_msg(
-    handle: HWND,
-    wparam: WPARAM,
-    state_ptr: Rc<WindowsWindowStatePtr>,
-) -> Option<isize> {
+fn handle_syskeyup_msg(wparam: WPARAM, state_ptr: Rc<WindowsWindowStatePtr>) -> Option<isize> {
     // we need to call `DefWindowProcW`, or we will lose the system-wide `Alt+F4`, `Alt+{other keys}`
     // shortcuts.
     let Some(keystroke) = parse_syskeydown_msg_keystroke(wparam) else {
@@ -314,7 +300,6 @@ fn handle_syskeyup_msg(
     drop(lock);
     let event = KeyUpEvent { keystroke };
     let result = if func(PlatformInput::KeyUp(event)).default_prevented {
-        invalidate_client_area(handle);
         Some(0)
     } else {
         Some(1)
@@ -325,7 +310,6 @@ fn handle_syskeyup_msg(
 }
 
 fn handle_keydown_msg(
-    handle: HWND,
     wparam: WPARAM,
     lparam: LPARAM,
     state_ptr: Rc<WindowsWindowStatePtr>,
@@ -343,7 +327,6 @@ fn handle_keydown_msg(
         is_held: lparam.0 & (0x1 << 30) > 0,
     };
     let result = if func(PlatformInput::KeyDown(event)).default_prevented {
-        invalidate_client_area(handle);
         Some(0)
     } else {
         Some(1)
@@ -353,11 +336,7 @@ fn handle_keydown_msg(
     result
 }
 
-fn handle_keyup_msg(
-    handle: HWND,
-    wparam: WPARAM,
-    state_ptr: Rc<WindowsWindowStatePtr>,
-) -> Option<isize> {
+fn handle_keyup_msg(wparam: WPARAM, state_ptr: Rc<WindowsWindowStatePtr>) -> Option<isize> {
     let Some(keystroke) = parse_keydown_msg_keystroke(wparam) else {
         return Some(1);
     };
@@ -368,7 +347,6 @@ fn handle_keyup_msg(
     drop(lock);
     let event = KeyUpEvent { keystroke };
     let result = if func(PlatformInput::KeyUp(event)).default_prevented {
-        invalidate_client_area(handle);
         Some(0)
     } else {
         Some(1)
@@ -379,7 +357,6 @@ fn handle_keyup_msg(
 }
 
 fn handle_char_msg(
-    handle: HWND,
     wparam: WPARAM,
     lparam: LPARAM,
     state_ptr: Rc<WindowsWindowStatePtr>,
@@ -402,7 +379,6 @@ fn handle_char_msg(
     let mut lock = state_ptr.state.borrow_mut();
     lock.callbacks.input = Some(func);
     if dispatch_event_result.default_prevented || !dispatch_event_result.propagate {
-        invalidate_client_area(handle);
         return Some(0);
     }
     let Some(ime_char) = ime_key else {
@@ -413,7 +389,6 @@ fn handle_char_msg(
     };
     drop(lock);
     input_handler.replace_text_in_range(None, &ime_char);
-    invalidate_client_area(handle);
     state_ptr.state.borrow_mut().input_handler = Some(input_handler);
 
     Some(0)
@@ -654,7 +629,6 @@ fn handle_ime_composition(
         drop(lock);
         input_handler.replace_text_in_range(None, &comp_result);
         state_ptr.state.borrow_mut().input_handler = Some(input_handler);
-        invalidate_client_area(handle);
         return Some(0);
     }
     // currently, we don't care other stuff
@@ -777,7 +751,6 @@ fn handle_dpi_changed_msg(
         .context("unable to set window position after dpi has changed")
         .log_err();
     }
-    invalidate_client_area(handle);
 
     Some(0)
 }
@@ -1165,12 +1138,6 @@ fn parse_char_msg_keystroke(wparam: WPARAM) -> Option<Keystroke> {
             ime_key: Some(first_char.to_string()),
         })
     }
-}
-
-/// mark window client rect to be re-drawn
-/// https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-invalidaterect
-pub(crate) fn invalidate_client_area(handle: HWND) {
-    unsafe { InvalidateRect(handle, None, FALSE).ok().log_err() };
 }
 
 fn parse_ime_compostion_string(handle: HWND) -> Option<(String, usize)> {
