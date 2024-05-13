@@ -853,6 +853,9 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for WaylandClientStatePtr {
                 state.enter_token.take();
 
                 if let Some(window) = keyboard_focused_window {
+                    if let Some(ref mut compose) = state.compose_state {
+                        compose.reset();
+                    }
                     state.pre_edit_text.take();
                     drop(state);
                     window.handle_ime_delete();
@@ -1197,6 +1200,13 @@ impl Dispatch<wl_pointer::WlPointer, ()> for WaylandClientStatePtr {
                 }
                 match button_state {
                     wl_pointer::ButtonState::Pressed => {
+                        if let Some(pre_edit) = state.pre_edit_text.take() {
+                            if let Some(window) = state.keyboard_focused_window.clone() {
+                                drop(state);
+                                window.handle_ime_commit(pre_edit);
+                                state = client.borrow_mut();
+                            }
+                        }
                         let click_elapsed = state.click.last_click.elapsed();
 
                         if click_elapsed < DOUBLE_CLICK_INTERVAL
