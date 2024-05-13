@@ -33,7 +33,8 @@ use gpui::{
     WindowContext,
 };
 use language::{
-    language_settings::SoftWrap, Buffer, DiagnosticEntry, LanguageRegistry, Point, ToOffset as _,
+    language_settings::SoftWrap, Buffer, BufferSnapshot, DiagnosticEntry, LanguageRegistry, Point,
+    ToOffset as _,
 };
 use parking_lot::Mutex;
 use project::Project;
@@ -52,7 +53,7 @@ use workspace::{
 };
 use workspace::{notifications::NotificationId, NewFile};
 
-const MAX_RECENT_EDITORS: usize = 20;
+const MAX_RECENT_EDITORS: usize = 3;
 
 pub fn init(cx: &mut AppContext) {
     cx.observe_new_views(
@@ -1348,7 +1349,7 @@ struct Summary {
 pub struct Conversation {
     id: Option<String>,
     buffer: Model<Buffer>,
-    automatic_context: AutomaticContext,
+    ambient_context: AmbientContext,
     embedded_scope: EmbeddedScope,
     message_anchors: Vec<MessageAnchor>,
     messages_metadata: HashMap<MessageId, MessageMetadata>,
@@ -1366,22 +1367,29 @@ pub struct Conversation {
 }
 
 #[derive(Default)]
-struct AutomaticContext {
+struct AmbientContext {
     recent_buffers: RecentBuffersContext,
 }
 
 struct RecentBuffersContext {
     enabled: bool,
-    buffers: HashMap<WeakModel<Buffer>, Subscription>,
+    buffers: Vec<RecentBuffer>,
     message: String,
+    pending_message: Option<Task<()>>,
+}
+
+struct RecentBuffer {
+    buffer: WeakModel<Buffer>,
+    _subscription: Subscription,
 }
 
 impl Default for RecentBuffersContext {
     fn default() -> Self {
         Self {
             enabled: true,
-            buffers: HashMap::default(),
+            buffers: Vec::new(),
             message: String::new(),
+            pending_message: None,
         }
     }
 }
@@ -1415,7 +1423,7 @@ impl Conversation {
             message_anchors: Default::default(),
             messages_metadata: Default::default(),
             next_message_id: Default::default(),
-            automatic_context: AutomaticContext::default(),
+            ambient_context: AmbientContext::default(),
             summary: None,
             pending_summary: Task::ready(None),
             completion_count: Default::default(),
@@ -1512,7 +1520,7 @@ impl Conversation {
                 message_anchors,
                 messages_metadata: saved_conversation.message_metadata,
                 next_message_id,
-                automatic_context: AutomaticContext::default(),
+                ambient_context: AmbientContext::default(),
                 summary: Some(Summary {
                     text: saved_conversation.summary,
                     done: true,
@@ -1535,54 +1543,67 @@ impl Conversation {
     }
 
     fn toggle_recent_buffers(&mut self, cx: &mut ModelContext<Self>) {
-        self.automatic_context.recent_buffers.enabled =
-            !self.automatic_context.recent_buffers.enabled;
+        self.ambient_context.recent_buffers.enabled = !self.ambient_context.recent_buffers.enabled;
         self.update_recent_buffers_context(cx);
     }
 
-    fn set_recent_buffers(&mut self, buffers: HashSet<Model<Buffer>>, cx: &mut ModelContext<Self>) {
-        self.automatic_context
+    fn set_recent_buffers(&mut self, buffers: Vec<Model<Buffer>>, cx: &mut ModelContext<Self>) {
+        self.ambient_context.recent_buffers.buffers.clear();
+        self.ambient_context
             .recent_buffers
             .buffers
-            .retain(|buffer, _| {
-                if let Some(buffer) = buffer.upgrade() {
-                    buffers.contains(&buffer)
-                } else {
-                    false
-                }
-            });
-
-        for buffer in buffers {
-            self.automatic_context
-                .recent_buffers
-                .buffers
-                .entry(buffer.downgrade())
-                .or_insert_with(|| {
-                    cx.observe(&buffer, |this, _, cx| {
-                        this.update_recent_buffers_context(cx);
-                    })
-                });
-        }
-
+            .extend(buffers.into_iter().map(|buffer| RecentBuffer {
+                buffer: buffer.downgrade(),
+                _subscription: cx.observe(&buffer, |this, _, cx| {
+                    this.update_recent_buffers_context(cx);
+                }),
+            }));
         self.update_recent_buffers_context(cx);
     }
 
     fn update_recent_buffers_context(&mut self, cx: &mut ModelContext<Self>) {
-        self.automatic_context.recent_buffers.message.clear();
         let buffers = self
-            .automatic_context
+            .ambient_context
             .recent_buffers
             .buffers
-            .keys()
-            .filter_map(|buffer| buffer.read_with(cx, |buffer, _| buffer.snapshot()).ok())
+            .iter()
+            .filter_map(|recent| {
+                recent
+                    .buffer
+                    .read_with(cx, |buffer, cx| {
+                        (
+                            buffer.file().map(|file| file.full_path(cx)),
+                            buffer.snapshot(),
+                        )
+                    })
+                    .ok()
+            })
             .collect::<Vec<_>>();
 
-        if !self.automatic_context.recent_buffers.enabled || buffers.is_empty() {
-            return;
+        if !self.ambient_context.recent_buffers.enabled || buffers.is_empty() {
+            self.ambient_context.recent_buffers.message.clear();
+            self.ambient_context.recent_buffers.pending_message = None;
+            self.count_remaining_tokens(cx);
+            cx.notify();
+        } else {
+            self.ambient_context.recent_buffers.pending_message =
+                Some(cx.spawn(|this, mut cx| async move {
+                    let message = cx
+                        .background_executor()
+                        .spawn(async move { Self::message_for_recent_buffers(&buffers) })
+                        .await;
+                    this.update(&mut cx, |this, cx| {
+                        this.ambient_context.recent_buffers.message = message;
+                        this.count_remaining_tokens(cx);
+                        cx.notify();
+                    })
+                    .ok();
+                }));
         }
+    }
 
-        // todo!("do this in the background")
-        let message = &mut self.automatic_context.recent_buffers.message;
+    fn message_for_recent_buffers(buffers: &[(Option<PathBuf>, BufferSnapshot)]) -> String {
+        let mut message = String::new();
         writeln!(
             message,
             "The following is a list of recent buffers that the user has opened."
@@ -1609,9 +1630,9 @@ impl Conversation {
 
         message.push('\n');
         writeln!(message, "Here's the actual recent buffer list:").unwrap();
-        for buffer in buffers {
-            if let Some(file) = buffer.file() {
-                writeln!(message, "{}", file.full_path(cx).display()).unwrap();
+        for (path, buffer) in buffers {
+            if let Some(path) = path {
+                writeln!(message, "{}", path.display()).unwrap();
             } else {
                 writeln!(message, "untitled").unwrap();
             }
@@ -1681,8 +1702,18 @@ impl Conversation {
             message.push('\n');
         }
 
-        self.count_remaining_tokens(cx);
-        cx.notify();
+        writeln!(
+            message,
+            "When quoting the above code, mention which rows the code occurs at."
+        )
+        .unwrap();
+        writeln!(
+            message,
+            "Never include rows in the quoted code itself and only report lines that didn't start with a row number."
+        )
+        .unwrap();
+
+        message
     }
 
     fn handle_buffer_event(
@@ -1861,12 +1892,12 @@ impl Conversation {
 
     fn to_completion_request(&self, cx: &mut ModelContext<Conversation>) -> LanguageModelRequest {
         let messages = self
-            .automatic_context
+            .ambient_context
             .recent_buffers
             .enabled
             .then(|| LanguageModelRequestMessage {
                 role: Role::System,
-                content: self.automatic_context.recent_buffers.message.clone(),
+                content: self.ambient_context.recent_buffers.message.clone(),
             })
             .into_iter()
             .chain(
@@ -2315,7 +2346,7 @@ impl ConversationEditor {
             workspace: workspace.downgrade(),
             _subscriptions,
         };
-        this.update_recent_buffers(cx);
+        this.handle_active_item_changed(cx);
         this.update_message_headers(cx);
         this
     }
@@ -2451,25 +2482,34 @@ impl ConversationEditor {
 
     fn handle_workspace_event(
         &mut self,
-        workspace: View<Workspace>,
+        _: View<Workspace>,
         event: &WorkspaceEvent,
         cx: &mut ViewContext<Self>,
     ) {
         if let WorkspaceEvent::ActiveItemChanged = event {
-            if let Some(editor) = workspace.read(cx).active_item_as::<Editor>(cx) {
-                self.recent_editors.retain(|prev_editor| {
-                    if let Some(prev_editor) = prev_editor.upgrade() {
-                        prev_editor != editor
-                    } else {
-                        false
-                    }
-                });
-                self.recent_editors.push_back(editor.downgrade());
-                if self.recent_editors.len() > MAX_RECENT_EDITORS {
-                    self.recent_editors.pop_front();
+            self.handle_active_item_changed(cx);
+        }
+    }
+
+    fn handle_active_item_changed(&mut self, cx: &mut ViewContext<ConversationEditor>) {
+        if let Some(editor) = self
+            .workspace
+            .update(cx, |workspace, cx| workspace.active_item_as::<Editor>(cx))
+            .ok()
+            .flatten()
+        {
+            self.recent_editors.retain(|prev_editor| {
+                if let Some(prev_editor) = prev_editor.upgrade() {
+                    prev_editor != editor
+                } else {
+                    false
                 }
-                self.update_recent_buffers(cx);
+            });
+            self.recent_editors.push_back(editor.downgrade());
+            if self.recent_editors.len() > MAX_RECENT_EDITORS {
+                self.recent_editors.pop_front();
             }
+            self.update_recent_buffers(cx);
         }
     }
 
@@ -2479,7 +2519,7 @@ impl ConversationEditor {
                 .recent_editors
                 .iter()
                 .filter_map(|editor| editor.upgrade()?.read(cx).buffer().read(cx).as_singleton())
-                .collect::<HashSet<_>>();
+                .collect::<Vec<_>>();
             conversation.set_recent_buffers(recent_buffers, cx);
         });
     }
@@ -2585,7 +2625,7 @@ impl ConversationEditor {
                                                 .selected(
                                                     conversation
                                                         .read(cx)
-                                                        .automatic_context
+                                                        .ambient_context
                                                         .recent_buffers
                                                         .enabled,
                                                 )
