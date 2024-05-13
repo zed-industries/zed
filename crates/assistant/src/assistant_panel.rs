@@ -97,6 +97,7 @@ pub struct AssistantPanel {
     _watch_saved_conversations: Task<Result<()>>,
     model: LanguageModel,
     authentication_prompt: Option<AnyView>,
+    project_context_prompt: Option<String>,
 }
 
 struct ActiveConversationEditor {
@@ -121,7 +122,16 @@ impl AssistantPanel {
             let project =
                 workspace.update(&mut cx, |workspace, _cx| workspace.project().clone())?;
 
-            let _ = project_info::identify_project(fs.clone(), project, &mut cx).log_err();
+            let project_info_task =
+                project_info::identify_project(fs.clone(), project, &mut cx).log_err();
+
+            let project_context_prompt = if let Some(project_info_task) = project_info_task {
+                let project_info = project_info_task.await?;
+
+                Some(project_info.render_as_string())
+            } else {
+                None
+            };
 
             // TODO: deserialize state.
             let workspace_handle = workspace.clone();
@@ -197,6 +207,7 @@ impl AssistantPanel {
                         _watch_saved_conversations,
                         model,
                         authentication_prompt: None,
+                        project_context_prompt,
                     }
                 })
             })
@@ -740,6 +751,14 @@ impl AssistantPanel {
                 cx,
             )
         });
+        if let Some(project_context) = self.project_context_prompt.as_ref() {
+            editor.update(cx, |editor, cx| {
+                editor.editor.update(cx, |editor, cx| {
+                    editor.set_text(project_context.to_string(), cx);
+                });
+            });
+        }
+
         self.show_conversation(editor.clone(), cx);
         Some(editor)
     }

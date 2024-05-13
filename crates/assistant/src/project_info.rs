@@ -4,7 +4,7 @@ use std::sync::Arc;
 use anyhow::{anyhow, Result};
 use collections::HashMap;
 use fs::Fs;
-use gpui::{AsyncWindowContext, Model};
+use gpui::{AsyncWindowContext, Model, Task};
 use project::{Project, ProjectPath};
 use serde::Deserialize;
 
@@ -33,12 +33,13 @@ use serde::Deserialize;
 // Load the root cargo.toml
 
 #[derive(Debug)]
-struct ProjectMetadata {
+pub struct ProjectMetadata {
     pub name: Option<String>,
     pub authors: Vec<String>,
     pub description: Option<String>,
     pub version: Option<String>,
     pub license: Option<String>,
+    pub dependencies: Vec<String>,
 }
 
 impl ProjectMetadata {
@@ -49,7 +50,30 @@ impl ProjectMetadata {
             authors: Vec::new(),
             version: None,
             license: None,
+            dependencies: Vec::new(),
         }
+    }
+
+    pub fn render_as_string(&self) -> String {
+        let mut prompt = "You are in a Rust project".to_string();
+        if let Some(name) = self.name.as_ref() {
+            prompt.push_str(&format!(" named \"{name}\""));
+        }
+        prompt.push_str(". ");
+
+        if let Some(description) = self.description.as_ref() {
+            prompt.push_str("It describes itself as ");
+            prompt.push_str(&format!("\"{description}\""));
+            prompt.push_str(". ");
+        }
+
+        if !self.dependencies.is_empty() {
+            prompt.push_str("The following dependencies are installed: ");
+            prompt.push_str(&self.dependencies.join(", "));
+            prompt.push_str(". ");
+        }
+
+        prompt
     }
 }
 
@@ -63,7 +87,7 @@ pub fn identify_project(
     fs: Arc<dyn Fs>,
     project: Model<Project>,
     cx: &mut AsyncWindowContext,
-) -> Result<()> {
+) -> Result<Task<Result<ProjectMetadata>>> {
     let path_to_cargo_toml = cx.update(|cx| {
         let worktree = project
             .read(cx)
@@ -86,25 +110,22 @@ pub fn identify_project(
 
     let path_to_cargo_toml = path_to_cargo_toml.ok_or_else(|| anyhow!("no Cargo.toml"))?;
 
-    cx.spawn(|_cx| async move {
+    Ok(cx.spawn(|_cx| async move {
         let project_info = populate_project_metadata(fs, &path_to_cargo_toml).await?;
 
-        dbg!(&project_info);
-
-        anyhow::Ok(())
-    })
-    .detach();
-
-    Ok(())
+        anyhow::Ok(project_info)
+    }))
 }
 
 #[derive(Debug, Clone, Deserialize)]
 struct CargoToml {
     package: Option<Package>,
     workspace: Option<Workspace>,
+    dependencies: Option<HashMap<String, Dependency>>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "kebab-case")]
 struct Package {
     name: Option<String>,
     version: Option<String>,
@@ -112,9 +133,7 @@ struct Package {
     edition: Option<String>,
     license: Option<String>,
     description: Option<String>,
-    #[serde(rename = "rust-version")]
     rust_version: Option<String>,
-    dependencies: Option<HashMap<String, Dependency>>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -125,6 +144,7 @@ enum Dependency {
 }
 
 #[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "kebab-case")]
 struct DependencyDetails {
     version: Option<String>,
     features: Option<Vec<String>>,
@@ -137,9 +157,9 @@ struct DependencyDetails {
 }
 
 #[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "kebab-case")]
 struct Workspace {
     members: Option<Vec<String>>,
-    #[serde(rename = "default-members")]
     default_members: Option<Vec<String>>,
 }
 
@@ -165,6 +185,13 @@ async fn populate_project_metadata(fs: Arc<dyn Fs>, path: &Path) -> Result<Proje
             .package
             .clone()
             .and_then(|package| package.version),
-        license: cargo_toml.package.and_then(|package| package.license),
+        license: cargo_toml
+            .package
+            .clone()
+            .and_then(|package| package.license),
+        dependencies: cargo_toml
+            .dependencies
+            .map(|dependencies| dependencies.keys().cloned().collect::<Vec<_>>())
+            .unwrap_or_default(),
     })
 }
