@@ -90,10 +90,7 @@ use language::{BufferRow, Runnable, RunnableRange};
 use task::{ResolvedTask, TaskTemplate, TaskVariables};
 
 use hover_links::{HoverLink, HoveredLinkState, InlayHighlight};
-use lsp::{
-    ApplyWorkspaceEdit, ApplyWorkspaceEditResponse, DiagnosticSeverity, LanguageServer,
-    LanguageServerId,
-};
+use lsp::{DiagnosticSeverity, LanguageServerId};
 use mouse_context_menu::MouseContextMenu;
 use movement::TextLayoutDetails;
 pub use multi_buffer::{
@@ -1576,7 +1573,7 @@ impl Editor {
                         cx.emit(EditorEvent::TitleChanged);
                     }));
                 }
-                project_subscriptions.push(cx.subscribe(project, |editor, project, event, cx| {
+                project_subscriptions.push(cx.subscribe(project, |editor, _, event, cx| {
                     if let project::Event::RefreshInlayHints = event {
                         editor.refresh_inlay_hints(InlayHintRefreshReason::RefreshRequested, cx);
                     } else if let project::Event::SnippetEdit(id, snippet_edits) = event {
@@ -1587,11 +1584,10 @@ impl Editor {
                                 for (range, snippet) in snippet_edits {
                                     let editor_range = language::range_from_lsp(range.clone())
                                         .to_offset(&snapshot);
-                                    editor.insert_snippet(&[editor_range], snippet.clone(), cx);
+                                    editor
+                                        .insert_snippet(&[editor_range], snippet.clone(), cx)
+                                        .ok();
                                 }
-                                dbg!(project.read(cx).is_local());
-                                //editor.snipp
-                                dbg!(&buffer.read(cx).project_path(cx));
                             }
                         }
                     }

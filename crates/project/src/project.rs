@@ -38,7 +38,7 @@ use gpui::{
     AnyModel, AppContext, AsyncAppContext, BackgroundExecutor, BorrowAppContext, Context, Entity,
     EventEmitter, Model, ModelContext, PromptLevel, Task, WeakModel,
 };
-use itertools::{Either, Itertools};
+use itertools::Itertools;
 use language::{
     language_settings::{language_settings, FormatOnSave, Formatter, InlayHintKind},
     markdown, point_to_lsp, prepare_completion_documentation,
@@ -57,7 +57,7 @@ use lsp::{
     DiagnosticSeverity, DiagnosticTag, DidChangeWatchedFilesRegistrationOptions,
     DocumentHighlightKind, Edit, LanguageServer, LanguageServerBinary, LanguageServerId,
     LspRequestFuture, MessageActionItem, OneOf, ServerCapabilities, ServerHealthStatus,
-    ServerStatus, SnippetTextEdit, TextEdit,
+    ServerStatus, TextEdit,
 };
 use lsp_command::*;
 use node_runtime::NodeRuntime;
