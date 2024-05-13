@@ -62,3 +62,7 @@ http = { workspace = true, features = ["test-support"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 async-native-tls = {"version" = "0.5.0", features = ["vendored"]}
+# This is an indirect dependency of async-tungstenite that is included
+# here so we can vendor libssl with the feature flag.
+[package.metadata.cargo-machete]
+ignored = ["async-native-tls"]
