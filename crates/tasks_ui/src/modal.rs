@@ -3,13 +3,12 @@ use std::sync::Arc;
 use crate::active_item_selection_properties;
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{
-    impl_actions, rems, AppContext, DismissEvent, EventEmitter, FocusableView, InteractiveElement,
-    Model, ParentElement, Render, SharedString, Styled, Subscription, View, ViewContext,
-    VisualContext, WeakView,
+    impl_actions, rems, AnyElement, AppContext, DismissEvent, EventEmitter, FocusableView,
+    InteractiveElement, Model, ParentElement, Render, SharedString, Styled, Subscription, View,
+    ViewContext, VisualContext, WeakView,
 };
 use picker::{highlighted_match_with_paths::HighlightedText, Picker, PickerDelegate};
 use project::{Inventory, TaskSourceKind};
-use smallvec::SmallVec;
 use task::{ResolvedTask, TaskContext, TaskTemplate};
 use ui::{
     div, h_flex, v_flex, ActiveTheme, Button, ButtonCommon, ButtonSize, Clickable, Color,
@@ -355,11 +354,7 @@ impl PickerDelegate for TasksModalDelegate {
                 .get_type_icon(&name.to_lowercase())
                 .map(|icon_path| Icon::from_path(icon_path)),
         }
-        .map(|icon| {
-            icon.color(Color::Muted)
-                .size(IconSize::Small)
-                .into_any_element()
-        });
+        .map(|icon| icon.color(Color::Muted).size(IconSize::Small));
         let history_run_icon = if Some(ix) <= self.divider_index {
             Some(
                 Icon::new(IconName::HistoryRerun)
@@ -375,14 +370,12 @@ impl PickerDelegate for TasksModalDelegate {
                     .into_any_element(),
             )
         };
-        let icons = history_run_icon
-            .into_iter()
-            .chain(icon)
-            .collect::<SmallVec<[_; 2]>>();
+
         Some(
             ListItem::new(SharedString::from(format!("tasks-modal-{ix}")))
                 .inset(false)
-                .start_slot(ui::FacePile::new(icons))
+                .start_slot::<Icon>(icon)
+                .end_slot::<AnyElement>(history_run_icon)
                 .spacing(ListItemSpacing::Sparse)
                 // .map(|this| {
                 //     if Some(ix) <= self.divider_index {
@@ -473,8 +466,10 @@ impl PickerDelegate for TasksModalDelegate {
                     KeyBinding::for_action(&picker::UseSelectedQuery, cx).map(|keybind| {
                         let edit_entry_label = if is_recent_selected {
                             "Edit task"
-                        } else {
+                        } else if !self.matches.is_empty() {
                             "Edit template"
+                        } else {
+                            "Rerun last task"
                         };
 
                         Button::new("edit-current-task", edit_entry_label)
@@ -483,7 +478,7 @@ impl PickerDelegate for TasksModalDelegate {
                     }),
                 )
                 .map(|this| {
-                    if current_modifiers.alt {
+                    if current_modifiers.alt || self.matches.is_empty() {
                         this.children(
                             KeyBinding::for_action(
                                 &picker::ConfirmInput {
