@@ -4161,6 +4161,7 @@ dependencies = [
  "gpui",
  "lazy_static",
  "libc",
+ "log",
  "notify",
  "objc",
  "parking_lot",

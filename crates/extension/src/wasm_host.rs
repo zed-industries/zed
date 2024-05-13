@@ -179,8 +179,19 @@ impl WasmHost {
     }
 
     pub fn path_from_extension(&self, id: &Arc<str>, path: &Path) -> PathBuf {
+        log::debug!("path_from_extension {id:?} : {}", path.display());
+
         let extension_work_dir = self.work_dir.join(id.as_ref());
-        normalize_path(&extension_work_dir.join(path))
+        log::debug!("extension work dir: {}", extension_work_dir.display());
+
+        let normalized = normalize_path(path);
+        log::debug!("normalized: {}", normalized.display());
+
+        let mut joined = extension_work_dir;
+        joined.push(normalized);
+
+        log::debug!("joined: {}", joined.display());
+        joined
     }
 
     pub fn writeable_path_from_extension(&self, id: &Arc<str>, path: &Path) -> Result<PathBuf> {

@@ -30,6 +30,7 @@ git2.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 libc.workspace = true
+log.workspace = true
 time.workspace = true
 
 gpui = { workspace = true, optional = true }

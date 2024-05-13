@@ -13,6 +13,7 @@ use rope::Rope;
 #[cfg(any(test, feature = "test-support"))]
 use smol::io::AsyncReadExt;
 use smol::io::AsyncWriteExt;
+use std::env::consts;
 use std::io::Write;
 use std::sync::Arc;
 use std::{
@@ -1502,6 +1503,21 @@ fn chunks(rope: &Rope, line_ending: LineEnding) -> impl Iterator<Item = &str> {
 }
 
 pub fn normalize_path(path: &Path) -> PathBuf {
+    log::debug!("normalize_path path: {}", path.display());
+
+    let path = if consts::OS == "windows" {
+        // wasm is not windows-aware and will prepend a `/` to Windows-style paths
+        // on windows, no paths should start with `/` anyway (even if they did, it would be `\\`)
+        path.strip_prefix("/").unwrap_or(path)
+    } else {
+        path
+    };
+
+    log::debug!(
+        "normalize_path path after root stripping: {}",
+        path.display()
+    );
+
     let mut components = path.components().peekable();
     let mut ret = if let Some(c @ Component::Prefix(..)) = components.peek().cloned() {
         components.next();
@@ -1510,7 +1526,9 @@ pub fn normalize_path(path: &Path) -> PathBuf {
         PathBuf::new()
     };
 
+    log::debug!("normalize_path prefix: {}", ret.display());
     for component in components {
+        log::trace!("normalize_path component: {component:?}");
         match component {
             Component::Prefix(..) => unreachable!(),
             Component::RootDir => {
@@ -1525,6 +1543,8 @@ pub fn normalize_path(path: &Path) -> PathBuf {
             }
         }
     }
+
+    log::debug!("normalize_path ret: {}", ret.display());
     ret
 }
 

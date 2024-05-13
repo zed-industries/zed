@@ -13,13 +13,13 @@ use language::{
 use lsp::{CodeActionKind, LanguageServerBinary};
 use serde::Serialize;
 use serde_json::Value;
-use std::ops::Range;
 use std::{
     any::Any,
     path::{Path, PathBuf},
     pin::Pin,
     sync::Arc,
 };
+use std::{ffi::OsString, ops::Range};
 use util::{maybe, ResultExt};
 use wasmtime_wasi::WasiView as _;
 
@@ -72,6 +72,20 @@ impl LspAdapter for ExtensionLspAdapter {
                 .host
                 .path_from_extension(&self.extension.manifest.id, command.command.as_ref());
 
+            let arguments = command
+                .args
+                .iter()
+                .map(|arg| {
+                    if arg.contains(&['/', '\\']) {
+                        self.host
+                            .path_from_extension(&self.extension.manifest.id, arg.as_str().as_ref())
+                            .into_os_string()
+                    } else {
+                        OsString::from(arg)
+                    }
+                })
+                .collect::<Vec<_>>();
+
             // TODO: This should now be done via the `zed::make_file_executable` function in
             // Zed extension API, but we're leaving these existing usages in place temporarily
             // to avoid any compatibility issues between Zed and the extension versions.
@@ -94,7 +108,7 @@ impl LspAdapter for ExtensionLspAdapter {
 
             Ok(LanguageServerBinary {
                 path,
-                arguments: command.args.into_iter().map(|arg| arg.into()).collect(),
+                arguments,
                 env: Some(command.env.into_iter().collect()),
             })
         }
