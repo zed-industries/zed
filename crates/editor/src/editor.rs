@@ -4636,6 +4636,11 @@ impl Editor {
         snippet: Snippet,
         cx: &mut ViewContext<Self>,
     ) -> Result<()> {
+        struct Tabstop<T> {
+            is_end_tabstop: bool,
+            ranges: Vec<Range<T>>,
+        }
+
         let tabstops = self.buffer.update(cx, |buffer, cx| {
             let snippet_text: Arc<str> = snippet.text.clone().into();
             buffer.edit(
@@ -4653,6 +4658,9 @@ impl Editor {
                 .tabstops
                 .iter()
                 .map(|tabstop| {
+                    let is_end_tabstop = tabstop.first().map_or(false, |tabstop| {
+                        tabstop.is_empty() && tabstop.start == snippet.text.len() as isize
+                    });
                     let mut tabstop_ranges = tabstop
                         .iter()
                         .flat_map(|tabstop_range| {
@@ -4672,19 +4680,32 @@ impl Editor {
                         })
                         .collect::<Vec<_>>();
                     tabstop_ranges.sort_unstable_by(|a, b| a.start.cmp(&b.start, snapshot));
-                    tabstop_ranges
+
+                    Tabstop {
+                        is_end_tabstop,
+                        ranges: tabstop_ranges,
+                    }
                 })
                 .collect::<Vec<_>>()
         });
 
         if let Some(tabstop) = tabstops.first() {
             self.change_selections(Some(Autoscroll::fit()), cx, |s| {
-                s.select_ranges(tabstop.iter().cloned());
+                s.select_ranges(tabstop.ranges.iter().cloned());
             });
-            self.snippet_stack.push(SnippetState {
-                active_index: 0,
-                ranges: tabstops,
-            });
+
+            // If we're already at the last tabstop and it's at the end of the snippet,
+            // we're done, we don't need to keep the state around.
+            if !tabstop.is_end_tabstop {
+                let ranges = tabstops
+                    .into_iter()
+                    .map(|tabstop| tabstop.ranges)
+                    .collect::<Vec<_>>();
+                self.snippet_stack.push(SnippetState {
+                    active_index: 0,
+                    ranges,
+                });
+            }
 
             // Check whether the just-entered snippet ends with an auto-closable bracket.
             if self.autoclose_regions.is_empty() {
