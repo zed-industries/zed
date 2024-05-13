@@ -28,8 +28,8 @@ use std::ptr;
 pub fn apply_features(font: &mut Font, features: &FontFeatures) {
     unsafe {
         let native_font = font.native_font();
-        let mut feature_array = CFArrayCreateMutable(kCFAllocatorDefault, 0, &kCFTypeArrayCallBacks)
-            as CFMutableArrayRef;
+        let mut feature_array =
+            CFArrayCreateMutable(kCFAllocatorDefault, 0, &kCFTypeArrayCallBacks);
         for (tag, enable) in features.tag_value_list() {
             if !enable {
                 continue;
@@ -47,9 +47,7 @@ pub fn apply_features(font: &mut Font, features: &FontFeatures) {
                 &kCFTypeDictionaryKeyCallBacks,
                 &kCFTypeDictionaryValueCallBacks,
             );
-            for value in values {
-                CFRelease(value);
-            }
+            values.into_iter().for_each(|value| CFRelease(value));
             CFArrayAppendValue(feature_array, dict as _);
             CFRelease(dict as _);
         }
@@ -80,6 +78,7 @@ pub fn apply_features(font: &mut Font, features: &FontFeatures) {
 extern "C" {
     static kCTFontOpenTypeFeatureTag: CFStringRef;
     static kCTFontOpenTypeFeatureValue: CFStringRef;
+
     fn CTFontCreateCopyWithAttributes(
         font: CTFontRef,
         size: CGFloat,
