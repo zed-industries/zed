@@ -2,11 +2,9 @@ use std::path::Path;
 use std::sync::Arc;
 
 use anyhow::{anyhow, Result};
-use collections::HashMap;
 use fs::Fs;
 use gpui::{AsyncWindowContext, Model, Task};
 use project::{Project, ProjectPath};
-use serde::Deserialize;
 
 // Let's get all the useful info we can about the currently open Rust project
 //
@@ -117,81 +115,37 @@ pub fn identify_project(
     }))
 }
 
-#[derive(Debug, Clone, Deserialize)]
-struct CargoToml {
-    package: Option<Package>,
-    workspace: Option<Workspace>,
-    dependencies: Option<HashMap<String, Dependency>>,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-#[serde(rename_all = "kebab-case")]
-struct Package {
-    name: Option<String>,
-    version: Option<String>,
-    authors: Option<Vec<String>>,
-    edition: Option<String>,
-    license: Option<String>,
-    description: Option<String>,
-    rust_version: Option<String>,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-#[serde(untagged)]
-enum Dependency {
-    Version(String),
-    Details(DependencyDetails),
-}
-
-#[derive(Debug, Clone, Deserialize)]
-#[serde(rename_all = "kebab-case")]
-struct DependencyDetails {
-    version: Option<String>,
-    features: Option<Vec<String>>,
-    optional: Option<bool>,
-    default_features: Option<bool>,
-    path: Option<String>,
-    git: Option<String>,
-    branch: Option<String>,
-    tag: Option<String>,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-#[serde(rename_all = "kebab-case")]
-struct Workspace {
-    members: Option<Vec<String>>,
-    default_members: Option<Vec<String>>,
-}
-
 async fn populate_project_metadata(fs: Arc<dyn Fs>, path: &Path) -> Result<ProjectMetadata> {
     let buffer = fs.load(path).await?;
 
-    let cargo_toml: CargoToml = toml::from_str(&buffer)?;
+    let cargo_toml: cargo_toml::Manifest = toml::from_str(&buffer)?;
 
     dbg!(&cargo_toml);
 
     Ok(ProjectMetadata {
-        name: cargo_toml.package.clone().and_then(|package| package.name),
+        name: cargo_toml
+            .package
+            .as_ref()
+            .map(|package| package.name.clone()),
         authors: cargo_toml
             .package
-            .clone()
-            .and_then(|package| package.authors)
+            .as_ref()
+            .and_then(|package| package.authors.get().ok().cloned())
             .unwrap_or_default(),
         description: cargo_toml
             .package
-            .clone()
-            .and_then(|package| package.description),
+            .as_ref()
+            .and_then(|package| package.description.as_ref())
+            .and_then(|description| description.get().ok().cloned()),
         version: cargo_toml
             .package
-            .clone()
-            .and_then(|package| package.version),
+            .as_ref()
+            .and_then(|package| package.version.get().ok().cloned()),
         license: cargo_toml
             .package
-            .clone()
-            .and_then(|package| package.license),
-        dependencies: cargo_toml
-            .dependencies
-            .map(|dependencies| dependencies.keys().cloned().collect::<Vec<_>>())
-            .unwrap_or_default(),
+            .as_ref()
+            .and_then(|package| package.license.as_ref())
+            .and_then(|license| license.get().ok().cloned()),
+        dependencies: cargo_toml.dependencies.keys().cloned().collect(),
     })
 }
