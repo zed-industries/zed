@@ -1,7 +1,7 @@
-use gpui::{Axis, Render};
-use story::{StoryContainer, StoryItem, StorySection};
+use gpui::Render;
+use story::{StoryContainer, StorySection};
 
-use crate::{prelude::*, ToolStrip, ToolStripItem, ToolStripStyle};
+use crate::{prelude::*, ToolStrip, Tooltip};
 
 pub struct ToolStripStory;
 
@@ -12,45 +12,21 @@ impl Render for ToolStripStory {
             "crates/ui/src/components/stories/tool_strip.rs",
         )
         .child(
-            StorySection::new().child(StoryItem::new(
-                "Popover Style",
-                ToolStrip::popover(
-                    "git-hunks",
-                    vec![
-                        vec![
-                            ToolStripItem {
-                                id: "expand-diff".into(),
-                                icon: IconName::Plus,
-                                label: "Expand Diff".into(),
-                                keybinding: None,
-                                on_click: Box::new(|_, _| {
-                                    println!("Expand Diff");
-                                }),
-                            },
-                            ToolStripItem {
-                                id: "expand-diff".into(),
-                                icon: IconName::Plus,
-                                label: "Expand Diff".into(),
-                                keybinding: None,
-                                on_click: Box::new(|_, _| {
-                                    println!("Expand Diff");
-                                }),
-                            },
-                        ],
-                        vec![ToolStripItem {
-                            id: "expand-diff".into(),
-                            icon: IconName::Plus,
-                            label: "Expand Diff".into(),
-                            keybinding: None,
-                            on_click: Box::new(|_, _| {
-                                println!("Expand Diff");
-                            }),
-                        }],
-                    ],
-                )
-                .style(ToolStripStyle::Popover)
-                .axis(Axis::Vertical),
-            )),
+            StorySection::new().child(
+                ToolStrip::vertical("tool_strip_example")
+                    .add_tool(
+                        IconButton::new("example_tool", IconName::AudioOn)
+                            .tooltip(|cx| Tooltip::text("Example tool", cx)),
+                    )
+                    .add_tool(
+                        IconButton::new("example_tool_2", IconName::MicMute)
+                            .tooltip(|cx| Tooltip::text("Example tool 2", cx)),
+                    )
+                    .add_tool(
+                        IconButton::new("example_tool_3", IconName::Screen)
+                            .tooltip(|cx| Tooltip::text("Example tool 3", cx)),
+                    ),
+            ),
         )
     }
 }
