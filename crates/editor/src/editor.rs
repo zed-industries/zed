@@ -1943,13 +1943,8 @@ impl Editor {
         cx.notify();
     }
 
-    pub fn set_current_line_highlight(
-        &mut self,
-        current_line_highlight: CurrentLineHighlight,
-        cx: &mut ViewContext<Self>,
-    ) {
+    pub fn set_current_line_highlight(&mut self, current_line_highlight: CurrentLineHighlight) {
         self.current_line_highlight = current_line_highlight;
-        cx.notify();
     }
 
     pub fn set_collapse_matches(&mut self, collapse_matches: bool) {
