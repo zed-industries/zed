@@ -4,12 +4,12 @@ use http::{AsyncBody, HttpClient, Method, Request as HttpRequest};
 use isahc::config::Configurable;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
-use std::time::Duration;
 use std::env;
+use std::time::Duration;
 use std::{convert::TryFrom, future::Future};
 
 pub fn open_ai_api_url() -> String {
-    env::var("OPENAI_API_END_POINT").unwrap_or_else(|_| String::from("https://api.open.com/v1"))
+    env::var("OPENAI_API_END_POINT").unwrap_or_else(|_| String::from("https://api.openai.com/v1"))
 }
 
 #[derive(Clone, Copy, Serialize, Deserialize, Debug, Eq, PartialEq)]
