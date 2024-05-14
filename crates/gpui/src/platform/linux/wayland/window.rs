@@ -23,12 +23,13 @@ use wayland_protocols_plasma::blur::client::{org_kde_kwin_blur, org_kde_kwin_blu
 
 use crate::platform::blade::{BladeRenderer, BladeSurfaceConfig};
 use crate::platform::linux::wayland::display::WaylandDisplay;
+use crate::platform::linux::wayland::serial::SerialKind;
 use crate::platform::{PlatformAtlas, PlatformInputHandler, PlatformWindow};
 use crate::scene::Scene;
 use crate::{
     px, size, Bounds, DevicePixels, Globals, Modifiers, Pixels, PlatformDisplay, PlatformInput,
-    Point, PromptLevel, Size, WaylandClientState, WaylandClientStatePtr, WindowAppearance,
-    WindowBackgroundAppearance, WindowBounds, WindowParams,
+    Point, PromptLevel, Size, WaylandClientStatePtr, WindowAppearance, WindowBackgroundAppearance,
+    WindowBounds, WindowParams,
 };
 
 #[derive(Default)]
@@ -752,6 +753,27 @@ impl PlatformWindow for WaylandWindow {
     fn sprite_atlas(&self) -> Arc<dyn PlatformAtlas> {
         let state = self.borrow();
         state.renderer.sprite_atlas().clone()
+    }
+
+    fn show_window_menu(&self, position: Point<Pixels>) {
+        let state = self.borrow();
+        let serial = state.client.get_serial(SerialKind::MousePress);
+        state.toplevel.show_window_menu(
+            &state.globals.seat,
+            serial,
+            position.x.0 as i32,
+            position.y.0 as i32,
+        );
+    }
+
+    fn start_system_move(&self) {
+        let state = self.borrow();
+        let serial = state.client.get_serial(SerialKind::MousePress);
+        state.toplevel._move(&state.globals.seat, serial);
+    }
+
+    fn should_render_window_controls(&self) -> bool {
+        self.borrow().decoration_state == WaylandDecorationState::Client
     }
 }
 

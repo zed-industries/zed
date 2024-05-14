@@ -8,8 +8,8 @@ use windows::Win32::UI::WindowsAndMessaging::{
 
 /// Windows settings pulled from SystemParametersInfo
 /// https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-systemparametersinfow
-#[derive(Default, Debug)]
-pub(crate) struct WindowsPlatformSystemSettings {
+#[derive(Default, Debug, Clone, Copy)]
+pub(crate) struct WindowsSystemSettings {
     pub(crate) mouse_wheel_settings: MouseWheelSettings,
 }
 
@@ -21,7 +21,7 @@ pub(crate) struct MouseWheelSettings {
     pub(crate) wheel_scroll_lines: u32,
 }
 
-impl WindowsPlatformSystemSettings {
+impl WindowsSystemSettings {
     pub(crate) fn new() -> Self {
         let mut settings = Self::default();
         settings.init();
@@ -34,14 +34,12 @@ impl WindowsPlatformSystemSettings {
 }
 
 impl MouseWheelSettings {
-    pub(crate) fn update(&mut self) -> (Option<u32>, Option<u32>) {
-        (
-            self.update_wheel_scroll_chars(),
-            self.update_wheel_scroll_lines(),
-        )
+    pub(crate) fn update(&mut self) {
+        self.update_wheel_scroll_chars();
+        self.update_wheel_scroll_lines();
     }
 
-    fn update_wheel_scroll_chars(&mut self) -> Option<u32> {
+    fn update_wheel_scroll_chars(&mut self) {
         let mut value = c_uint::default();
         let result = unsafe {
             SystemParametersInfoW(
@@ -54,13 +52,10 @@ impl MouseWheelSettings {
 
         if result.log_err() != None && self.wheel_scroll_chars != value {
             self.wheel_scroll_chars = value;
-            Some(value)
-        } else {
-            None
         }
     }
 
-    fn update_wheel_scroll_lines(&mut self) -> Option<u32> {
+    fn update_wheel_scroll_lines(&mut self) {
         let mut value = c_uint::default();
         let result = unsafe {
             SystemParametersInfoW(
@@ -73,9 +68,6 @@ impl MouseWheelSettings {
 
         if result.log_err() != None && self.wheel_scroll_lines != value {
             self.wheel_scroll_lines = value;
-            Some(value)
-        } else {
-            None
         }
     }
 }

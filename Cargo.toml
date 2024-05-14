@@ -391,7 +391,7 @@ wit-component = "0.201"
 sys-locale = "0.3.1"
 
 [workspace.dependencies.windows]
-version = "0.53.0"
+version = "0.56.0"
 features = [
     "implement",
     "Foundation_Numerics",

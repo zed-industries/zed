@@ -58,7 +58,7 @@ impl Render for CollabTitlebarItem {
         let project_id = self.project.read(cx).remote_id();
         let workspace = self.workspace.upgrade();
 
-        TitleBar::new("collab-titlebar")
+        TitleBar::new("collab-titlebar", Box::new(workspace::CloseWindow))
             // note: on windows titlebar behaviour is handled by the platform implementation
             .when(cfg!(not(windows)), |this| {
                 this.on_click(|event, cx| {
@@ -73,7 +73,8 @@ impl Render for CollabTitlebarItem {
                     .gap_1()
                     .children(self.render_project_host(cx))
                     .child(self.render_project_name(cx))
-                    .children(self.render_project_branch(cx)),
+                    .children(self.render_project_branch(cx))
+                    .on_mouse_move(|_, cx| cx.stop_propagation()),
             )
             .child(
                 h_flex()
@@ -105,6 +106,7 @@ impl Render for CollabTitlebarItem {
 
                             this.children(current_user_face_pile.map(|face_pile| {
                                 v_flex()
+                                    .on_mouse_move(|_, cx| cx.stop_propagation())
                                     .child(face_pile)
                                     .child(render_color_ribbon(player_colors.local().cursor))
                             }))
@@ -167,6 +169,7 @@ impl Render for CollabTitlebarItem {
                 h_flex()
                     .gap_1()
                     .pr_1()
+                    .on_mouse_move(|_, cx| cx.stop_propagation())
                     .when_some(room, |this, room| {
                         let room = room.read(cx);
                         let project = self.project.read(cx);
