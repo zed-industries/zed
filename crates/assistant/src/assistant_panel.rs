@@ -2747,6 +2747,7 @@ impl FocusableView for InlineAssistant {
 }
 
 impl InlineAssistant {
+    #[allow(clippy::too_many_arguments)]
     fn new(
         id: usize,
         measurements: Arc<Mutex<BlockMeasurements>>,
