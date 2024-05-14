@@ -20,49 +20,43 @@ impl Solargraph {
     }
 
     pub fn label_for_completion(&self, completion: Completion) -> Option<CodeLabel> {
-        match completion.kind? {
-            CompletionKind::Method => {
-                let highlight_name = match completion.kind? {
-                    CompletionKind::Class | CompletionKind::Module => "type",
-                    CompletionKind::Constant => "constant",
-                    CompletionKind::Method => "function.method",
-                    CompletionKind::Keyword => {
-                        if completion.label.starts_with(':') {
-                            "string.special.symbol"
-                        } else {
-                            "keyword"
-                        }
-                    }
-                    CompletionKind::Variable => {
-                        if completion.label.starts_with('@') {
-                            "property"
-                        } else {
-                            return None;
-                        }
-                    }
-                    _ => return None,
-                };
-
-                let len = completion.label.len();
-                let name_span =
-                    CodeLabelSpan::literal(completion.label, Some(highlight_name.to_string()));
-
-                Some(CodeLabel {
-                    code: Default::default(),
-                    spans: if let Some(detail) = completion.detail {
-                        vec![
-                            name_span,
-                            CodeLabelSpan::literal(" ", None),
-                            CodeLabelSpan::literal(detail, None),
-                        ]
-                    } else {
-                        vec![name_span]
-                    },
-                    filter_range: (0..len).into(),
-                })
+        let highlight_name = match completion.kind? {
+            CompletionKind::Class | CompletionKind::Module => "type",
+            CompletionKind::Constant => "constant",
+            CompletionKind::Method => "function.method",
+            CompletionKind::Keyword => {
+                if completion.label.starts_with(':') {
+                    "string.special.symbol"
+                } else {
+                    "keyword"
+                }
             }
-            _ => None,
-        }
+            CompletionKind::Variable => {
+                if completion.label.starts_with('@') {
+                    "property"
+                } else {
+                    return None;
+                }
+            }
+            _ => return None,
+        };
+
+        let len = completion.label.len();
+        let name_span = CodeLabelSpan::literal(completion.label, Some(highlight_name.to_string()));
+
+        Some(CodeLabel {
+            code: Default::default(),
+            spans: if let Some(detail) = completion.detail {
+                vec![
+                    name_span,
+                    CodeLabelSpan::literal(" ", None),
+                    CodeLabelSpan::literal(detail, None),
+                ]
+            } else {
+                vec![name_span]
+            },
+            filter_range: (0..len).into(),
+        })
     }
 
     pub fn label_for_symbol(&self, symbol: Symbol) -> Option<CodeLabel> {
