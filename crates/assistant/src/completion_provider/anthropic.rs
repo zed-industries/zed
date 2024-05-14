@@ -169,32 +169,42 @@ impl AnthropicCompletionProvider {
         };
 
         let mut system_message = String::new();
-        let messages = request
-            .messages
-            .into_iter()
-            .filter_map(|message| {
-                match message.role {
-                    Role::User => Some(RequestMessage {
-                        role: AnthropicRole::User,
-                        content: message.content,
-                    }),
-                    Role::Assistant => Some(RequestMessage {
-                        role: AnthropicRole::Assistant,
-                        content: message.content,
-                    }),
-                    // Anthropic's API breaks system instructions out as a separate field rather
-                    // than having a system message role.
-                    Role::System => {
-                        if !system_message.is_empty() {
-                            system_message.push_str("\n\n");
-                        }
-                        system_message.push_str(&message.content);
 
-                        None
+        let mut messages: Vec<RequestMessage> = Vec::new();
+        for message in request.messages {
+            if message.content.is_empty() {
+                continue;
+            }
+
+            match message.role {
+                Role::User | Role::Assistant => {
+                    let role = match message.role {
+                        Role::User => AnthropicRole::User,
+                        Role::Assistant => AnthropicRole::Assistant,
+                        _ => unreachable!(),
+                    };
+
+                    if let Some(last_message) = messages.last_mut() {
+                        if last_message.role == role {
+                            last_message.content.push_str("\n\n");
+                            last_message.content.push_str(&message.content);
+                            continue;
+                        }
                     }
+
+                    messages.push(RequestMessage {
+                        role,
+                        content: message.content,
+                    });
                 }
-            })
-            .collect();
+                Role::System => {
+                    if !system_message.is_empty() {
+                        system_message.push_str("\n\n");
+                    }
+                    system_message.push_str(&message.content);
+                }
+            }
+        }
 
         Request {
             model,
