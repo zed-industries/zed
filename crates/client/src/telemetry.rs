@@ -15,9 +15,9 @@ use std::io::Write;
 use std::{env, mem, path::PathBuf, sync::Arc, time::Duration};
 use sysinfo::{CpuRefreshKind, Pid, ProcessRefreshKind, RefreshKind, System};
 use telemetry_events::{
-    ActionEvent, AppEvent, AssistantEvent, AssistantKind, CallEvent, CopilotEvent, CpuEvent,
-    EditEvent, EditorEvent, Event, EventRequestBody, EventWrapper, ExtensionEvent, MemoryEvent,
-    SettingEvent,
+    ActionEvent, AppEvent, AssistantEvent, AssistantKind, CallEvent, CpuEvent, EditEvent,
+    EditorEvent, Event, EventRequestBody, EventWrapper, ExtensionEvent, InlineCompletionEvent,
+    MemoryEvent, SettingEvent,
 };
 use tempfile::NamedTempFile;
 #[cfg(not(debug_assertions))]
@@ -241,13 +241,15 @@ impl Telemetry {
         self.report_event(event)
     }
 
-    pub fn report_copilot_event(
+    pub fn report_inline_completion_event(
         self: &Arc<Self>,
+        provider: String,
         suggestion_id: Option<String>,
         suggestion_accepted: bool,
         file_extension: Option<String>,
     ) {
-        let event = Event::Copilot(CopilotEvent {
+        let event = Event::InlineCompletion(InlineCompletionEvent {
+            provider,
             suggestion_id,
             suggestion_accepted,
             file_extension,
@@ -444,6 +446,8 @@ impl Telemetry {
                     }
 
                     {
+                        dbg!(&events);
+                        dbg!(&events.len());
                         let state = this.state.lock();
                         let request_body = EventRequestBody {
                             installation_id: state.installation_id.as_deref().map(Into::into),

@@ -59,6 +59,10 @@ impl CopilotCompletionProvider {
 }
 
 impl InlineCompletionProvider for CopilotCompletionProvider {
+    fn name() -> &'static str {
+        "copilot"
+    }
+
     fn is_enabled(
         &self,
         buffer: &Model<Buffer>,
@@ -187,7 +191,8 @@ impl InlineCompletionProvider for CopilotCompletionProvider {
                 .update(cx, |copilot, cx| copilot.accept_completion(completion, cx))
                 .detach_and_log_err(cx);
             if let Some(telemetry) = self.telemetry.as_ref() {
-                telemetry.report_copilot_event(
+                telemetry.report_inline_completion_event(
+                    Self::name().to_string(),
                     Some(completion.uuid.clone()),
                     true,
                     self.file_extension.clone(),
@@ -211,7 +216,12 @@ impl InlineCompletionProvider for CopilotCompletionProvider {
             })
             .detach_and_log_err(cx);
         if let Some(telemetry) = self.telemetry.as_ref() {
-            telemetry.report_copilot_event(None, false, self.file_extension.clone());
+            telemetry.report_inline_completion_event(
+                Self::name().to_string(),
+                None,
+                false,
+                self.file_extension.clone(),
+            );
         }
     }
 
