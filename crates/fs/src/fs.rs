@@ -415,7 +415,7 @@ impl Fs for RealFs {
         path: &Path,
         _latency: Duration,
     ) -> Pin<Box<dyn Send + Stream<Item = Vec<PathBuf>>>> {
-        use notify::{event::EventKind, Watcher};
+        use notify::{event::EventKind, event::ModifyKind, Watcher};
         // todo(linux): This spawns two threads, while the macOS impl
         // only spawns one. Can we use a OnceLock or some such to make
         // this better
@@ -443,6 +443,17 @@ impl Fs for RealFs {
                 if let Some(event) = event.ok() {
                     if event.paths.into_iter().any(|path| *path == watched_path) {
                         match event.kind {
+                            EventKind::Modify(ev) => {
+                                if matches!(ev, ModifyKind::Name(_)) {
+                                    file_watcher
+                                        .watch(
+                                            watched_path.as_path(),
+                                            notify::RecursiveMode::Recursive,
+                                        )
+                                        .log_err();
+                                    let _ = tx.try_send(vec![watched_path.clone()]).ok();
+                                }
+                            }
                             EventKind::Create(_) => {
                                 file_watcher
                                     .watch(watched_path.as_path(), notify::RecursiveMode::Recursive)

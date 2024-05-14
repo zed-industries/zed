@@ -532,6 +532,9 @@ impl DelayedDebouncedEditAction {
 
 pub enum Event {
     PaneAdded(View<Pane>),
+    PaneRemoved,
+    ItemAdded,
+    ItemRemoved,
     ActiveItemChanged,
     ContactRequestedJoin(u64),
     WorkspaceCreated(WeakView<Workspace>),
@@ -2513,7 +2516,10 @@ impl Workspace {
         cx: &mut ViewContext<Self>,
     ) {
         match event {
-            pane::Event::AddItem { item } => item.added_to_pane(self, pane, cx),
+            pane::Event::AddItem { item } => {
+                item.added_to_pane(self, pane, cx);
+                cx.emit(Event::ItemAdded);
+            }
             pane::Event::Split(direction) => {
                 self.split_and_clone(pane, *direction, cx);
             }
@@ -2696,6 +2702,7 @@ impl Workspace {
         } else {
             self.active_item_path_changed(cx);
         }
+        cx.emit(Event::PaneRemoved);
     }
 
     pub fn panes(&self) -> &[View<Pane>] {

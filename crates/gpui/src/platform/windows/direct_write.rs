@@ -81,7 +81,7 @@ impl DirectWriteComponent {
             // `DirectWriteTextSystem` to run on `win10 1703`+.
             let in_memory_loader = factory.CreateInMemoryFontFileLoader()?;
             factory.RegisterFontFileLoader(&in_memory_loader)?;
-            let builder = factory.CreateFontSetBuilder2()?;
+            let builder = factory.CreateFontSetBuilder()?;
             let mut locale_vec = vec![0u16; LOCALE_NAME_MAX_LENGTH as usize];
             GetUserDefaultLocaleName(&mut locale_vec);
             let locale = String::from_utf16_lossy(&locale_vec);
@@ -107,7 +107,7 @@ impl DirectWriteTextSystem {
             let mut result = std::mem::zeroed();
             components
                 .factory
-                .GetSystemFontCollection2(false, &mut result, true)?;
+                .GetSystemFontCollection(false, &mut result, true)?;
             result.unwrap()
         };
         let custom_font_set = unsafe { components.builder.CreateFontSet()? };
@@ -303,7 +303,7 @@ impl DirectWriteState {
         let mut collection = std::mem::zeroed();
         self.components
             .factory
-            .GetSystemFontCollection2(false, &mut collection, true)
+            .GetSystemFontCollection(false, &mut collection, true)
             .unwrap();
         self.system_font_collection = collection.unwrap();
     }
@@ -496,7 +496,7 @@ impl DirectWriteState {
         unsafe {
             let font_info = &self.fonts[font_id.0];
             let mut metrics = std::mem::zeroed();
-            font_info.font_face.GetMetrics2(&mut metrics);
+            font_info.font_face.GetMetrics(&mut metrics);
 
             FontMetrics {
                 units_per_em: metrics.Base.designUnitsPerEm as _,
@@ -549,10 +549,11 @@ impl DirectWriteState {
         };
         self.components.factory.CreateGlyphRunAnalysis(
             &glyph_run as _,
-            1.0,
             Some(&transform as _),
-            DWRITE_RENDERING_MODE_NATURAL,
+            DWRITE_RENDERING_MODE1_NATURAL,
             DWRITE_MEASURING_MODE_NATURAL,
+            DWRITE_GRID_FIT_MODE_DEFAULT,
+            DWRITE_TEXT_ANTIALIAS_MODE_CLEARTYPE,
             0.0,
             0.0,
         )
@@ -707,7 +708,7 @@ impl DirectWriteState {
             render_target.BeginDraw();
             if params.is_emoji {
                 // WARN: only DWRITE_GLYPH_IMAGE_FORMATS_COLR has been tested
-                let enumerator = self.components.factory.TranslateColorGlyphRun2(
+                let enumerator = self.components.factory.TranslateColorGlyphRun(
                     baseline_origin,
                     &glyph_run as _,
                     None,
@@ -721,7 +722,7 @@ impl DirectWriteState {
                     0,
                 )?;
                 while enumerator.MoveNext().is_ok() {
-                    let Ok(color_glyph) = enumerator.GetCurrentRun2() else {
+                    let Ok(color_glyph) = enumerator.GetCurrentRun() else {
                         break;
                     };
                     let color_glyph = &*color_glyph;
@@ -746,7 +747,7 @@ impl DirectWriteState {
                             color_glyph.Base.paletteIndex as u32,
                             color_glyph.measuringMode,
                         ),
-                        _ => render_target.DrawGlyphRun2(
+                        _ => render_target.DrawGlyphRun(
                             baseline_origin,
                             &color_glyph.Base.glyphRun,
                             Some(color_glyph.Base.glyphRunDescription as *const _),
@@ -759,6 +760,7 @@ impl DirectWriteState {
                 render_target.DrawGlyphRun(
                     baseline_origin,
                     &glyph_run,
+                    None,
                     &brush,
                     DWRITE_MEASURING_MODE_NATURAL,
                 );

@@ -11,6 +11,7 @@ doctest = false
 
 [dependencies]
 anyhow.workspace = true
+anthropic = { workspace = true, features = ["schemars"] }
 chrono.workspace = true
 client.workspace = true
 collections.workspace = true
