@@ -883,7 +883,7 @@ mod tests {
         let tasks_picker = open_spawn_tasks(&workspace, cx);
         assert_eq!(
             task_names(&tasks_picker, cx),
-            vec!["TypeScript task from file /dir/a1.ts", "Another task from file /dir/a1.ts", "Task without variables"],
+            vec!["TypeScript task from file /dir/a1.ts", "TypeScript task from file /dir/a1.ts", "Another task from file /dir/a1.ts", "Task without variables"],
             "After spawning the task and getting it into the history, it should be up in the sort as recently used"
         );
         tasks_picker.update(cx, |_, cx| {

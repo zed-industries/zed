@@ -277,7 +277,7 @@ impl Inventory {
         let resolved = tasks_by_label
             .into_iter()
             .map(|((kind, _), (task, lru_score))| (kind, task, lru_score))
-            .sorted_unstable_by(task_lru_comparator)
+            .sorted_by(task_lru_comparator)
             .filter_map(|(kind, task, lru_score)| {
                 if lru_score < not_used_score {
                     Some((kind, task))
@@ -341,6 +341,7 @@ fn task_lru_comparator(
                     &task_b.resolved_label,
                 ))
                 .then(task_a.resolved_label.cmp(&task_b.resolved_label))
+                .then(kind_a.cmp(kind_b))
         })
 }
 
@@ -538,6 +539,7 @@ mod tests {
             resolved_task_names(&inventory, None, cx),
             vec![
                 "2_task".to_string(),
+                "2_task".to_string(),
                 "1_a_task".to_string(),
                 "1_task".to_string(),
                 "3_task".to_string()
@@ -555,6 +557,9 @@ mod tests {
         assert_eq!(
             resolved_task_names(&inventory, None, cx),
             vec![
+                "3_task".to_string(),
+                "1_task".to_string(),
+                "2_task".to_string(),
                 "3_task".to_string(),
                 "1_task".to_string(),
                 "2_task".to_string(),
@@ -588,6 +593,9 @@ mod tests {
                 "3_task".to_string(),
                 "1_task".to_string(),
                 "2_task".to_string(),
+                "3_task".to_string(),
+                "1_task".to_string(),
+                "2_task".to_string(),
                 "1_a_task".to_string(),
                 "10_hello".to_string(),
                 "11_hello".to_string(),
@@ -602,6 +610,10 @@ mod tests {
         assert_eq!(
             resolved_task_names(&inventory, None, cx),
             vec![
+                "11_hello".to_string(),
+                "3_task".to_string(),
+                "1_task".to_string(),
+                "2_task".to_string(),
                 "11_hello".to_string(),
                 "3_task".to_string(),
                 "1_task".to_string(),
