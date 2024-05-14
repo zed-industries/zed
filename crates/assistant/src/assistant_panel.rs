@@ -1,7 +1,7 @@
 use crate::{
     assistant_settings::{AssistantDockPosition, AssistantSettings, ZedDotDevModel},
     codegen::{self, Codegen, CodegenKind},
-    prompt_library::PromptLibrary,
+    prompt_library::{self, PromptLibrary, PromptManager},
     prompts::generate_content_prompt,
     Assist, CompletionProvider, CycleMessageRole, InlineAssist, LanguageModel,
     LanguageModelRequest, LanguageModelRequestMessage, MessageId, MessageMetadata, MessageStatus,
@@ -95,7 +95,7 @@ pub struct AssistantPanel {
     focus_handle: FocusHandle,
     toolbar: View<Toolbar>,
     languages: Arc<LanguageRegistry>,
-    prompt_library: PromptLibrary,
+    prompt_library: Model<PromptLibrary>,
     fs: Arc<dyn Fs>,
     telemetry: Arc<Telemetry>,
     _subscriptions: Vec<Subscription>,
@@ -177,6 +177,7 @@ impl AssistantPanel {
                         }),
                     ];
                     let model = CompletionProvider::global(cx).default_model();
+                    let prompt_library = cx.new_model(|_cx| prompt_library);
 
                     cx.observe_global::<FileIcons>(|_, cx| {
                         cx.notify();
@@ -1101,6 +1102,14 @@ impl AssistantPanel {
         })
     }
 
+    fn show_prompt_manager(&mut self, cx: &mut ViewContext<Self>) {
+        if let Some(workspace) = self.workspace.upgrade() {
+            workspace.update(cx, |workspace, cx| {
+                workspace.toggle_modal(cx, |cx| PromptManager::new(self.prompt_library.clone(), cx))
+            })
+        }
+    }
+
     fn is_authenticated(&mut self, cx: &mut ViewContext<Self>) -> bool {
         CompletionProvider::global(cx).is_authenticated()
     }
@@ -1110,39 +1119,48 @@ impl AssistantPanel {
     }
 
     fn render_signed_in(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
-        let header = TabBar::new("assistant_header")
-            .start_child(h_flex().gap_1().child(self.render_popover_button(cx)))
-            .children(self.active_conversation_editor().map(|editor| {
-                h_flex()
-                    .h(rems(Tab::CONTAINER_HEIGHT_IN_REMS))
-                    .flex_1()
-                    .px_2()
-                    .child(Label::new(editor.read(cx).title(cx)).into_element())
-            }))
-            .end_child(
-                h_flex()
-                    .gap_2()
-                    .when_some(self.active_conversation_editor(), |this, editor| {
-                        let conversation = editor.read(cx).conversation.clone();
-                        this.child(
+        let header =
+            TabBar::new("assistant_header")
+                .start_child(h_flex().gap_1().child(self.render_popover_button(cx)))
+                .children(self.active_conversation_editor().map(|editor| {
+                    h_flex()
+                        .h(rems(Tab::CONTAINER_HEIGHT_IN_REMS))
+                        .flex_1()
+                        .px_2()
+                        .child(Label::new(editor.read(cx).title(cx)).into_element())
+                }))
+                .end_child(
+                    h_flex()
+                        .gap_2()
+                        .when_some(self.active_conversation_editor(), |this, editor| {
+                            let conversation = editor.read(cx).conversation.clone();
+                            this.child(
+                                h_flex()
+                                    .gap_1()
+                                    .child(self.render_model(&conversation, cx))
+                                    .children(self.render_remaining_tokens(&conversation, cx)),
+                            )
+                            .child(
+                                ui::Divider::vertical()
+                                    .inset()
+                                    .color(ui::DividerColor::Border),
+                            )
+                        })
+                        .child(
                             h_flex()
                                 .gap_1()
-                                .child(self.render_model(&conversation, cx))
-                                .children(self.render_remaining_tokens(&conversation, cx)),
-                        )
-                        .child(
-                            ui::Divider::vertical()
-                                .inset()
-                                .color(ui::DividerColor::Border),
-                        )
-                    })
-                    .child(
-                        h_flex()
-                            .gap_1()
-                            .child(self.render_inject_context_menu(cx))
-                            .child(Self::render_assist_button(cx)),
-                    ),
-            );
+                                .child(
+                                    IconButton::new("show_prompt_manager", IconName::Settings)
+                                        .icon_size(IconSize::Small)
+                                        .on_click(cx.listener(|this, _event, cx| {
+                                            this.show_prompt_manager(cx)
+                                        }))
+                                        .tooltip(|cx| Tooltip::text("Show Context Manager", cx)),
+                                )
+                                .child(self.render_inject_context_menu(cx))
+                                .child(Self::render_assist_button(cx)),
+                        ),
+                );
 
         let contents = if self.active_conversation_editor().is_some() {
             let mut registrar = DivRegistrar::new(
@@ -2787,7 +2805,7 @@ impl ConversationEditor {
             workspace.toggle_panel_focus::<AssistantPanel>(cx);
         }
 
-        if let Some(active_prompt) = panel.read(cx).prompt_library.active_prompt() {
+        if let Some(active_prompt) = panel.read(cx).prompt_library.read(cx).default_prompt() {
             panel.update(cx, |panel, cx| {
                 if let Some(conversation) = panel
                     .active_conversation_editor()
