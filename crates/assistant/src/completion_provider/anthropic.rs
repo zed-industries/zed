@@ -1,13 +1,14 @@
-use crate::assistant_settings::ZedDotDevModel;
+use crate::count_open_ai_tokens;
 use crate::{
-    assistant_settings::OpenAiModel, CompletionProvider, LanguageModel, LanguageModelRequest, Role,
+    assistant_settings::AnthropicModel, CompletionProvider, LanguageModel, LanguageModelRequest,
+    Role,
 };
+use anthropic::{stream_completion, Request, RequestMessage, Role as AnthropicRole};
 use anyhow::{anyhow, Result};
 use editor::{Editor, EditorElement, EditorStyle};
 use futures::{future::BoxFuture, stream::BoxStream, FutureExt, StreamExt};
 use gpui::{AnyView, AppContext, FontStyle, FontWeight, Task, TextStyle, View, WhiteSpace};
 use http::HttpClient;
-use open_ai::{stream_completion, Request, RequestMessage, Role as OpenAiRole};
 use settings::Settings;
 use std::time::Duration;
 use std::{env, sync::Arc};
@@ -15,18 +16,18 @@ use theme::ThemeSettings;
 use ui::prelude::*;
 use util::ResultExt;
 
-pub struct OpenAiCompletionProvider {
+pub struct AnthropicCompletionProvider {
     api_key: Option<String>,
     api_url: String,
-    default_model: OpenAiModel,
+    default_model: AnthropicModel,
     http_client: Arc<dyn HttpClient>,
     low_speed_timeout: Option<Duration>,
     settings_version: usize,
 }
 
-impl OpenAiCompletionProvider {
+impl AnthropicCompletionProvider {
     pub fn new(
-        default_model: OpenAiModel,
+        default_model: AnthropicModel,
         api_url: String,
         http_client: Arc<dyn HttpClient>,
         low_speed_timeout: Option<Duration>,
@@ -44,7 +45,7 @@ impl OpenAiCompletionProvider {
 
     pub fn update(
         &mut self,
-        default_model: OpenAiModel,
+        default_model: AnthropicModel,
         api_url: String,
         low_speed_timeout: Option<Duration>,
         settings_version: usize,
@@ -69,7 +70,7 @@ impl OpenAiCompletionProvider {
         } else {
             let api_url = self.api_url.clone();
             cx.spawn(|mut cx| async move {
-                let api_key = if let Ok(api_key) = env::var("OPENAI_API_KEY") {
+                let api_key = if let Ok(api_key) = env::var("ANTHROPIC_API_KEY") {
                     api_key
                 } else {
                     let (_, api_key) = cx
@@ -79,7 +80,7 @@ impl OpenAiCompletionProvider {
                     String::from_utf8(api_key)?
                 };
                 cx.update_global::<CompletionProvider, _>(|provider, _cx| {
-                    if let CompletionProvider::OpenAi(provider) = provider {
+                    if let CompletionProvider::Anthropic(provider) = provider {
                         provider.api_key = Some(api_key);
                     }
                 })
@@ -92,7 +93,7 @@ impl OpenAiCompletionProvider {
         cx.spawn(|mut cx| async move {
             delete_credentials.await.log_err();
             cx.update_global::<CompletionProvider, _>(|provider, _cx| {
-                if let CompletionProvider::OpenAi(provider) = provider {
+                if let CompletionProvider::Anthropic(provider) = provider {
                     provider.api_key = None;
                 }
             })
@@ -104,7 +105,7 @@ impl OpenAiCompletionProvider {
             .into()
     }
 
-    pub fn default_model(&self) -> OpenAiModel {
+    pub fn default_model(&self) -> AnthropicModel {
         self.default_model.clone()
     }
 
@@ -120,7 +121,7 @@ impl OpenAiCompletionProvider {
         &self,
         request: LanguageModelRequest,
     ) -> BoxFuture<'static, Result<BoxStream<'static, Result<String>>>> {
-        let request = self.to_open_ai_request(request);
+        let request = self.to_anthropic_request(request);
 
         let http_client = self.http_client.clone();
         let api_key = self.api_key.clone();
@@ -139,7 +140,19 @@ impl OpenAiCompletionProvider {
             let stream = response
                 .filter_map(|response| async move {
                     match response {
-                        Ok(mut response) => Some(Ok(response.choices.pop()?.delta.content?)),
+                        Ok(response) => match response {
+                            anthropic::ResponseEvent::ContentBlockStart {
+                                content_block, ..
+                            } => match content_block {
+                                anthropic::ContentBlock::Text { text } => Some(Ok(text)),
+                            },
+                            anthropic::ResponseEvent::ContentBlockDelta { delta, .. } => {
+                                match delta {
+                                    anthropic::TextDelta::TextDelta { text } => Some(Ok(text)),
+                                }
+                            }
+                            _ => None,
+                        },
                         Err(error) => Some(Err(error)),
                     }
                 })
@@ -149,83 +162,46 @@ impl OpenAiCompletionProvider {
         .boxed()
     }
 
-    fn to_open_ai_request(&self, request: LanguageModelRequest) -> Request {
+    fn to_anthropic_request(&self, request: LanguageModelRequest) -> Request {
         let model = match request.model {
-            LanguageModel::OpenAi(model) => model,
+            LanguageModel::Anthropic(model) => model,
             _ => self.default_model(),
         };
 
+        let mut system_message = String::new();
+        let messages = request
+            .messages
+            .into_iter()
+            .filter_map(|message| {
+                match message.role {
+                    Role::User => Some(RequestMessage {
+                        role: AnthropicRole::User,
+                        content: message.content,
+                    }),
+                    Role::Assistant => Some(RequestMessage {
+                        role: AnthropicRole::Assistant,
+                        content: message.content,
+                    }),
+                    // Anthropic's API breaks system instructions out as a separate field rather
+                    // than having a system message role.
+                    Role::System => {
+                        if !system_message.is_empty() {
+                            system_message.push_str("\n\n");
+                        }
+                        system_message.push_str(&message.content);
+
+                        None
+                    }
+                }
+            })
+            .collect();
+
         Request {
             model,
-            messages: request
-                .messages
-                .into_iter()
-                .map(|msg| match msg.role {
-                    Role::User => RequestMessage::User {
-                        content: msg.content,
-                    },
-                    Role::Assistant => RequestMessage::Assistant {
-                        content: Some(msg.content),
-                        tool_calls: Vec::new(),
-                    },
-                    Role::System => RequestMessage::System {
-                        content: msg.content,
-                    },
-                })
-                .collect(),
+            messages,
             stream: true,
-            stop: request.stop,
-            temperature: request.temperature,
-            tools: Vec::new(),
-            tool_choice: None,
-        }
-    }
-}
-
-pub fn count_open_ai_tokens(
-    request: LanguageModelRequest,
-    background_executor: &gpui::BackgroundExecutor,
-) -> BoxFuture<'static, Result<usize>> {
-    background_executor
-        .spawn(async move {
-            let messages = request
-                .messages
-                .into_iter()
-                .map(|message| tiktoken_rs::ChatCompletionRequestMessage {
-                    role: match message.role {
-                        Role::User => "user".into(),
-                        Role::Assistant => "assistant".into(),
-                        Role::System => "system".into(),
-                    },
-                    content: Some(message.content),
-                    name: None,
-                    function_call: None,
-                })
-                .collect::<Vec<_>>();
-
-            match request.model {
-                LanguageModel::OpenAi(OpenAiModel::FourOmni)
-                | LanguageModel::ZedDotDev(ZedDotDevModel::Gpt4Omni)
-                | LanguageModel::Anthropic(_)
-                | LanguageModel::ZedDotDev(ZedDotDevModel::Claude3Opus)
-                | LanguageModel::ZedDotDev(ZedDotDevModel::Claude3Sonnet)
-                | LanguageModel::ZedDotDev(ZedDotDevModel::Claude3Haiku) => {
-                    // Tiktoken doesn't yet support these models, so we manually use the
-                    // same tokenizer as GPT-4.
-                    tiktoken_rs::num_tokens_from_messages("gpt-4", &messages)
-                }
-                _ => tiktoken_rs::num_tokens_from_messages(request.model.id(), &messages),
-            }
-        })
-        .boxed()
-}
-
-impl From<Role> for open_ai::Role {
-    fn from(val: Role) -> Self {
-        match val {
-            Role::User => OpenAiRole::User,
-            Role::Assistant => OpenAiRole::Assistant,
-            Role::System => OpenAiRole::System,
+            system: system_message,
+            max_tokens: 4092,
         }
     }
 }
@@ -260,7 +236,7 @@ impl AuthenticationPrompt {
         cx.spawn(|_, mut cx| async move {
             write_credentials.await?;
             cx.update_global::<CompletionProvider, _>(|provider, _cx| {
-                if let CompletionProvider::OpenAi(provider) = provider {
+                if let CompletionProvider::Anthropic(provider) = provider {
                     provider.api_key = Some(api_key);
                 }
             })
@@ -297,13 +273,11 @@ impl AuthenticationPrompt {
 
 impl Render for AuthenticationPrompt {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
-        const INSTRUCTIONS: [&str; 6] = [
-            "To use the assistant panel or inline assistant, you need to add your OpenAI API key.",
-            " - You can create an API key at: platform.openai.com/api-keys",
-            " - Make sure your OpenAI account has credits",
-            " - Having a subscription for another service like GitHub Copilot won't work.",
+        const INSTRUCTIONS: [&str; 4] = [
+            "To use the assistant panel or inline assistant, you need to add your Anthropic API key.",
+            "You can create an API key at: https://console.anthropic.com/settings/keys",
             "",
-            "Paste your OpenAI API key below and hit enter to use the assistant:",
+            "Paste your Anthropic API key below and hit enter to use the assistant:",
         ];
 
         v_flex()
@@ -325,7 +299,7 @@ impl Render for AuthenticationPrompt {
             )
             .child(
                 Label::new(
-                    "You can also assign the OPENAI_API_KEY environment variable and restart Zed.",
+                    "You can also assign the ANTHROPIC_API_KEY environment variable and restart Zed.",
                 )
                 .size(LabelSize::Small),
             )

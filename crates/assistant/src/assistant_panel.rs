@@ -800,6 +800,11 @@ impl AssistantPanel {
                 open_ai::Model::FourTurbo => open_ai::Model::FourOmni,
                 open_ai::Model::FourOmni => open_ai::Model::ThreePointFiveTurbo,
             }),
+            LanguageModel::Anthropic(model) => LanguageModel::Anthropic(match &model {
+                anthropic::Model::Claude3Opus => anthropic::Model::Claude3Sonnet,
+                anthropic::Model::Claude3Sonnet => anthropic::Model::Claude3Haiku,
+                anthropic::Model::Claude3Haiku => anthropic::Model::Claude3Opus,
+            }),
             LanguageModel::ZedDotDev(model) => LanguageModel::ZedDotDev(match &model {
                 ZedDotDevModel::Gpt3Point5Turbo => ZedDotDevModel::Gpt4,
                 ZedDotDevModel::Gpt4 => ZedDotDevModel::Gpt4Turbo,
