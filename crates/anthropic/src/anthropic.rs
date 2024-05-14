@@ -11,11 +11,11 @@ pub const ANTHROPIC_API_URL: &'static str = "https://api.anthropic.com";
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
 pub enum Model {
     #[default]
-    #[serde(rename = "claude-3-opus", alias = "claude-3-opus-20240229")]
+    #[serde(alias = "claude-3-opus", rename = "claude-3-opus-20240229")]
     Claude3Opus,
-    #[serde(rename = "claude-3-sonnet", alias = "claude-3-sonnet-20240229")]
+    #[serde(alias = "claude-3-sonnet", rename = "claude-3-sonnet-20240229")]
     Claude3Sonnet,
-    #[serde(rename = "claude-3-haiku", alias = "claude-3-haiku-20240307")]
+    #[serde(alias = "claude-3-haiku", rename = "claude-3-haiku-20240307")]
     Claude3Haiku,
 }
 
