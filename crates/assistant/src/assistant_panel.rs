@@ -1,4 +1,3 @@
-use crate::project_info;
 use crate::{
     assistant_settings::{AssistantDockPosition, AssistantSettings, ZedDotDevModel},
     codegen::{self, Codegen, CodegenKind},
@@ -131,13 +130,14 @@ impl AssistantPanel {
             let project =
                 workspace.update(&mut cx, |workspace, _cx| workspace.project().clone())?;
 
-            let project_info_task =
-                project_info::identify_project(fs.clone(), project, &mut cx).log_err();
+            let project_context_task =
+                crate::ambient_context::CurrentProjectContext::load(fs.clone(), project, &mut cx)
+                    .log_err();
 
-            let project_context_prompt = if let Some(project_info_task) = project_info_task {
-                let project_info = project_info_task.await?;
+            let project_context_prompt = if let Some(project_context_task) = project_context_task {
+                let project_context = project_context_task.await?;
 
-                Some(project_info.render_as_string())
+                Some(project_context.metadata.render_as_string())
             } else {
                 None
             };
