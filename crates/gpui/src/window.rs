@@ -1143,6 +1143,23 @@ impl<'a> WindowContext<'a> {
         self.window.platform_window.zoom();
     }
 
+    /// Opens the native title bar context menu, useful when implementing client side decorations (Wayland only)
+    pub fn show_window_menu(&self, position: Point<Pixels>) {
+        self.window.platform_window.show_window_menu(position)
+    }
+
+    /// Tells the compositor to take control of window movement (Wayland only)
+    ///
+    /// Events may not be received during a move operation.
+    pub fn start_system_move(&self) {
+        self.window.platform_window.start_system_move()
+    }
+
+    /// Returns whether the title bar window controls need to be rendered by the application (Wayland and X11)
+    pub fn should_render_window_controls(&self) -> bool {
+        self.window.platform_window.should_render_window_controls()
+    }
+
     /// Updates the window's title at the platform level.
     pub fn set_window_title(&mut self, title: &str) {
         self.window.platform_window.set_title(title);

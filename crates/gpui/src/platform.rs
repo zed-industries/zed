@@ -226,6 +226,10 @@ pub(crate) trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
     #[cfg(target_os = "windows")]
     fn get_raw_handle(&self) -> windows::HWND;
 
+    fn show_window_menu(&self, position: Point<Pixels>);
+    fn start_system_move(&self);
+    fn should_render_window_controls(&self) -> bool;
+
     #[cfg(any(test, feature = "test-support"))]
     fn as_test(&mut self) -> Option<&mut TestWindow> {
         None
