@@ -488,6 +488,13 @@ pub struct Window {
     sprite_atlas: Arc<dyn PlatformAtlas>,
     text_system: Arc<WindowTextSystem>,
     rem_size: Pixels,
+    /// An override value for the window's rem size.
+    ///
+    /// This is used by `with_rem_size` to allow rendering an element tree with
+    /// a given rem size.
+    ///
+    /// Note: Right now we only allow for a single override value at a time, but
+    /// this could likely be changed to be a stack of rem sizes.
     rem_size_override: Option<Pixels>,
     pub(crate) viewport_size: Size<Pixels>,
     layout_engine: Option<TaffyLayoutEngine>,
