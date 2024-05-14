@@ -1,10 +1,10 @@
 [package]
-name = "event_stream"
+name = "event_server"
 version = "0.1.0"
 edition = "2021"
 
 [lib]
-path = "./src/event_stream.rs"
+path = "./src/event_server.rs"
 
 [dependencies]
 anyhow.workspace = true

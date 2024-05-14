@@ -35,11 +35,11 @@ impl EventServer {
 }
 
 #[derive(Deserialize, Serialize, Clone, JsonSchema, Default)]
-struct EventStreamSettings {
-    event_stream: Option<PathBuf>,
+struct EventServerSettings {
+    event_server: Option<PathBuf>,
 }
 
-impl Settings for EventStreamSettings {
+impl Settings for EventServerSettings {
     const KEY: Option<&'static str> = None;
 
     type FileContent = Self;
@@ -56,14 +56,14 @@ impl Settings for EventStreamSettings {
 }
 
 pub fn init(cx: &mut AppContext) {
-    EventStreamSettings::register(cx);
-    let mut socket_path = EventStreamSettings::get_global(cx).event_stream.clone();
+    EventServerSettings::register(cx);
+    let mut socket_path = EventServerSettings::get_global(cx).event_server.clone();
     let mut server = EventServer::new();
     server.set_socket_path(socket_path.clone(), cx).log_err();
     cx.set_global(server);
 
     cx.observe_global::<SettingsStore>(move |cx| {
-        let new_socket_path = &EventStreamSettings::get_global(cx).event_stream;
+        let new_socket_path = &EventServerSettings::get_global(cx).event_server;
         if *new_socket_path != socket_path {
             socket_path = new_socket_path.clone();
             cx.update_global(|server: &mut EventServer, cx| {

@@ -3728,7 +3728,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "event_stream"
+name = "event_server"
 version = "0.1.0"
 dependencies = [
  "anyhow",
@@ -12967,7 +12967,7 @@ dependencies = [
  "diagnostics",
  "editor",
  "env_logger",
- "event_stream",
+ "event_server",
  "extension",
  "extensions_ui",
  "feedback",
