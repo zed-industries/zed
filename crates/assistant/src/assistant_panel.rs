@@ -2591,31 +2591,31 @@ impl ConversationEditor {
                                                     Tooltip::text("Include Open Files", cx)
                                                 }),
                                         )
-                                        .child(
-                                            IconButton::new("include_terminal", IconName::Terminal)
-                                                .icon_size(IconSize::Small)
-                                                .tooltip(|cx| {
-                                                    Tooltip::text("Include Terminal", cx)
-                                                }),
-                                        )
-                                        .child(
-                                            IconButton::new(
-                                                "include_edit_history",
-                                                IconName::FileGit,
-                                            )
-                                            .icon_size(IconSize::Small)
-                                            .tooltip(
-                                                |cx| Tooltip::text("Include Edit History", cx),
-                                            ),
-                                        )
-                                        .child(
-                                            IconButton::new(
-                                                "include_file_trees",
-                                                IconName::FileTree,
-                                            )
-                                            .icon_size(IconSize::Small)
-                                            .tooltip(|cx| Tooltip::text("Include File Trees", cx)),
-                                        )
+                                        // .child(
+                                        //     IconButton::new("include_terminal", IconName::Terminal)
+                                        //         .icon_size(IconSize::Small)
+                                        //         .tooltip(|cx| {
+                                        //             Tooltip::text("Include Terminal", cx)
+                                        //         }),
+                                        // )
+                                        // .child(
+                                        //     IconButton::new(
+                                        //         "include_edit_history",
+                                        //         IconName::FileGit,
+                                        //     )
+                                        //     .icon_size(IconSize::Small)
+                                        //     .tooltip(
+                                        //         |cx| Tooltip::text("Include Edit History", cx),
+                                        //     ),
+                                        // )
+                                        // .child(
+                                        //     IconButton::new(
+                                        //         "include_file_trees",
+                                        //         IconName::FileTree,
+                                        //     )
+                                        //     .icon_size(IconSize::Small)
+                                        //     .tooltip(|cx| Tooltip::text("Include File Trees", cx)),
+                                        // )
                                         .into_any()
                                 }))
                                 .into_any_element()
