@@ -4,8 +4,10 @@ use anyhow::{Context, Result};
 use clap::Parser;
 use cli::{ipc::IpcOneShotServer, CliRequest, CliResponse, IpcHandshake};
 use std::{
-    env, fs,
+    env, fs, io,
     path::{Path, PathBuf},
+    process::ExitStatus,
+    thread::{self, JoinHandle},
 };
 use util::paths::PathLikeWithPosition;
 
@@ -14,6 +16,7 @@ struct Detect;
 trait InstalledApp {
     fn zed_version_string(&self) -> String;
     fn launch(&self, ipc_url: String) -> anyhow::Result<()>;
+    fn run_foreground(&self, ipc_url: String) -> io::Result<ExitStatus>;
 }
 
 #[derive(Parser, Debug)]
@@ -37,6 +40,9 @@ struct Args {
     /// Print Zed's version and the app path.
     #[arg(short, long)]
     version: bool,
+    /// Run zed in the foreground (useful for debugging)
+    #[arg(long)]
+    foreground: bool,
     /// Custom path to Zed.app or the zed binary
     #[arg(long)]
     zed: Option<PathBuf>,
@@ -95,13 +101,16 @@ fn main() -> Result<()> {
         paths.push(canonicalized.to_string(|path| path.display().to_string()))
     }
 
+    // {"server_url": "http://localhost:8080"}
+    // ssh -R 8080:localhost:8080 localhost
+
+    // ssh dev
+    // `gh cs ssh`
+    // `doctl ssh`
+
     let (server, server_name) =
         IpcOneShotServer::<IpcHandshake>::new().context("Handshake before Zed spawn")?;
     let url = format!("zed-cli://{server_name}");
-
-    app.launch(url)?;
-    let (_, handshake) = server.accept().context("Handshake after Zed spawn")?;
-    let (tx, rx) = (handshake.requests, handshake.responses);
 
     let open_new_workspace = if args.new {
         Some(true)
@@ -111,20 +120,33 @@ fn main() -> Result<()> {
         None
     };
 
-    tx.send(CliRequest::Open {
-        paths,
-        wait: args.wait,
-        open_new_workspace,
-        dev_server_token: args.dev_server_token,
-    })?;
+    let sender: JoinHandle<anyhow::Result<()>> = thread::spawn(move || {
+        let (_, handshake) = server.accept().context("Handshake after Zed spawn")?;
+        let (tx, rx) = (handshake.requests, handshake.responses);
+        tx.send(CliRequest::Open {
+            paths,
+            wait: args.wait,
+            open_new_workspace,
+            dev_server_token: args.dev_server_token,
+        })?;
 
-    while let Ok(response) = rx.recv() {
-        match response {
-            CliResponse::Ping => {}
-            CliResponse::Stdout { message } => println!("{message}"),
-            CliResponse::Stderr { message } => eprintln!("{message}"),
-            CliResponse::Exit { status } => std::process::exit(status),
+        while let Ok(response) = rx.recv() {
+            match response {
+                CliResponse::Ping => {}
+                CliResponse::Stdout { message } => println!("{message}"),
+                CliResponse::Stderr { message } => eprintln!("{message}"),
+                CliResponse::Exit { status } => std::process::exit(status),
+            }
         }
+
+        Ok(())
+    });
+
+    if args.foreground {
+        app.run_foreground(url)?;
+    } else {
+        app.launch(url)?;
+        sender.join().unwrap()?;
     }
 
     Ok(())
@@ -208,6 +230,10 @@ mod linux {
             }
             Ok(())
         }
+
+        fn run_foreground(&self, ipc_url: String) -> io::Result<ExitStatus> {
+            std::process::Command::new(self.0).arg(ipc_url).status()
+        }
     }
 
     impl App {
@@ -267,6 +293,9 @@ mod windows {
         fn launch(&self, _ipc_url: String) -> anyhow::Result<()> {
             unimplemented!()
         }
+        fn run_foreground(&self, _ipc_url: String) -> io::Result<ExitStatus> {
+            unimplemented!()
+        }
     }
 
     impl Detect {
@@ -288,9 +317,9 @@ mod mac_os {
     use serde::Deserialize;
     use std::{
         ffi::OsStr,
-        fs,
+        fs, io,
         path::{Path, PathBuf},
-        process::Command,
+        process::{Command, ExitStatus},
         ptr,
     };
 
@@ -441,6 +470,15 @@ mod mac_os {
             }
 
             Ok(())
+        }
+
+        fn run_foreground(&self, ipc_url: String) -> io::Result<ExitStatus> {
+            let path = match self {
+                Bundle::App { app_bundle, .. } => app_bundle.join("Contents/MacOS/zed"),
+                Bundle::LocalPath { executable, .. } => executable.clone(),
+            };
+
+            std::process::Command::new(path).arg(ipc_url).status()
         }
     }
 
