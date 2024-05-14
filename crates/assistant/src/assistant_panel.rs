@@ -23,7 +23,7 @@ use fs::Fs;
 use futures::StreamExt;
 use gpui::{
     canvas, div, point, relative, rems, uniform_list, Action, AnyView, AppContext, AsyncAppContext,
-    AsyncWindowContext, AvailableSpace, ClipboardItem, Context, EventEmitter, FocusHandle,
+    AsyncWindowContext, AvailableSpace, ClipboardItem, Context, Entity, EventEmitter, FocusHandle,
     FocusableView, FontStyle, FontWeight, HighlightStyle, InteractiveElement, IntoElement, Model,
     ModelContext, ParentElement, Pixels, Render, SharedString, StatefulInteractiveElement, Styled,
     Subscription, Task, TextStyle, UniformListScrollHandle, View, ViewContext, VisualContext,
@@ -51,7 +51,7 @@ use workspace::{
 };
 use workspace::{notifications::NotificationId, NewFile};
 
-const MAX_RECENT_EDITORS: usize = 3;
+const MAX_RECENT_BUFFERS: usize = 3;
 
 pub fn init(cx: &mut AppContext) {
     cx.observe_new_views(
@@ -1490,7 +1490,11 @@ impl Conversation {
         self.update_recent_buffers_context(cx);
     }
 
-    fn set_recent_buffers(&mut self, buffers: Vec<Model<Buffer>>, cx: &mut ModelContext<Self>) {
+    fn set_recent_buffers(
+        &mut self,
+        buffers: impl IntoIterator<Item = Model<Buffer>>,
+        cx: &mut ModelContext<Self>,
+    ) {
         self.ambient_context.recent_buffers.buffers.clear();
         self.ambient_context
             .recent_buffers
@@ -2229,7 +2233,6 @@ struct ConversationEditor {
     editor: View<Editor>,
     blocks: HashSet<BlockId>,
     scroll_position: Option<ScrollPosition>,
-    recent_editors: VecDeque<WeakView<Editor>>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -2266,23 +2269,16 @@ impl ConversationEditor {
             cx.subscribe(&workspace, Self::handle_workspace_event),
         ];
 
-        let recent_editors = workspace
-            .read(cx)
-            .items(cx)
-            .filter_map(|item| Some(item.downcast::<Editor>()?.downgrade()))
-            .take(MAX_RECENT_EDITORS)
-            .collect();
         let mut this = Self {
             conversation,
             editor,
             blocks: Default::default(),
             scroll_position: None,
-            recent_editors,
             fs,
             workspace: workspace.downgrade(),
             _subscriptions,
         };
-        this.handle_active_item_changed(cx);
+        this.update_recent_editors(cx);
         this.update_message_headers(cx);
         this
     }
@@ -2422,41 +2418,53 @@ impl ConversationEditor {
         event: &WorkspaceEvent,
         cx: &mut ViewContext<Self>,
     ) {
-        if let WorkspaceEvent::ActiveItemChanged = event {
-            self.handle_active_item_changed(cx);
+        match event {
+            WorkspaceEvent::ActiveItemChanged
+            | WorkspaceEvent::ItemAdded
+            | WorkspaceEvent::ItemRemoved
+            | WorkspaceEvent::PaneAdded(_)
+            | WorkspaceEvent::PaneRemoved => self.update_recent_editors(cx),
+            _ => {}
         }
     }
 
-    fn handle_active_item_changed(&mut self, cx: &mut ViewContext<ConversationEditor>) {
-        if let Some(editor) = self
-            .workspace
-            .update(cx, |workspace, cx| workspace.active_item_as::<Editor>(cx))
-            .ok()
-            .flatten()
-        {
-            self.recent_editors.retain(|prev_editor| {
-                if let Some(prev_editor) = prev_editor.upgrade() {
-                    prev_editor != editor
-                } else {
-                    false
-                }
-            });
-            self.recent_editors.push_back(editor.downgrade());
-            if self.recent_editors.len() > MAX_RECENT_EDITORS {
-                self.recent_editors.pop_front();
+    fn update_recent_editors(&mut self, cx: &mut ViewContext<ConversationEditor>) {
+        let Some(workspace) = self.workspace.upgrade() else {
+            return;
+        };
+
+        let mut timestamps_by_entity_id = HashMap::default();
+        for pane in workspace.read(cx).panes() {
+            let pane = pane.read(cx);
+            for entry in pane.activation_history() {
+                timestamps_by_entity_id.insert(entry.entity_id, entry.timestamp);
             }
-            self.update_recent_buffers(cx);
         }
-    }
 
-    fn update_recent_buffers(&mut self, cx: &mut ViewContext<Self>) {
+        let mut timestamps_by_buffer = HashMap::default();
+        for editor in workspace.read(cx).items_of_type::<Editor>(cx) {
+            let Some(buffer) = editor.read(cx).buffer().read(cx).as_singleton() else {
+                continue;
+            };
+
+            let new_timestamp = timestamps_by_entity_id
+                .get(&editor.entity_id())
+                .copied()
+                .unwrap_or_default();
+            let timestamp = timestamps_by_buffer.entry(buffer).or_insert(new_timestamp);
+            *timestamp = cmp::max(*timestamp, new_timestamp);
+        }
+
+        let mut recent_buffers = timestamps_by_buffer.into_iter().collect::<Vec<_>>();
+        recent_buffers.sort_unstable_by_key(|(_, timestamp)| *timestamp);
+        if recent_buffers.len() > MAX_RECENT_BUFFERS {
+            let excess = recent_buffers.len() - MAX_RECENT_BUFFERS;
+            recent_buffers.drain(..excess);
+        }
+
         self.conversation.update(cx, |conversation, cx| {
-            let recent_buffers = self
-                .recent_editors
-                .iter()
-                .filter_map(|editor| editor.upgrade()?.read(cx).buffer().read(cx).as_singleton())
-                .collect::<Vec<_>>();
-            conversation.set_recent_buffers(recent_buffers, cx);
+            conversation
+                .set_recent_buffers(recent_buffers.into_iter().map(|(buffer, _)| buffer), cx);
         });
     }
 
