@@ -29,10 +29,11 @@ pub struct LocalPaths(Arc<Vec<PathBuf>>);
 
 impl LocalPaths {
     pub fn new<P: AsRef<Path>>(paths: impl IntoIterator<Item = P>) -> Self {
-        let paths: Vec<PathBuf> = paths
+        let mut paths: Vec<PathBuf> = paths
             .into_iter()
             .map(|p| p.as_ref().to_path_buf())
             .collect();
+        paths.sort();
         Self(Arc::new(paths))
     }
 

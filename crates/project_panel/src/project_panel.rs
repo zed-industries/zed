@@ -1259,7 +1259,11 @@ impl ProjectPanel {
             let Some(destination_worktree) = project.worktree_for_entry(destination, cx) else {
                 return;
             };
-            let task = project.move_worktree(worktree_to_move, destination_worktree, cx);
+
+            let worktree_id = worktree_to_move.read(cx).id();
+            let destination_id = destination_worktree.read(cx).id();
+
+            let task = project.move_worktree(worktree_id, destination_id, cx);
             cx.foreground_executor().spawn(task).detach_and_log_err(cx);
         });
         return;

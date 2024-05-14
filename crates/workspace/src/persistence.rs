@@ -1091,10 +1091,7 @@ mod tests {
         db.save_workspace(workspace.clone()).await;
 
         let round_trip_workspace = db.workspace_for_roots(&["/tmp2", "/tmp"]);
-        assert_eq!(None, round_trip_workspace, "wrong order");
-
-        let round_trip_workspace = db.workspace_for_roots(&["/tmp", "/tmp2"]);
-        assert_eq!(workspace, round_trip_workspace.unwrap(), "correct order");
+        assert_eq!(workspace, round_trip_workspace.unwrap());
 
         // Test guaranteed duplicate IDs
         db.save_workspace(workspace.clone()).await;
@@ -1133,12 +1130,15 @@ mod tests {
         db.save_workspace(workspace_1.clone()).await;
         db.save_workspace(workspace_2.clone()).await;
 
-        // Test that paths are not treated as a set
+        // Test that paths are treated as a set
         assert_eq!(
             db.workspace_for_roots(&["/tmp", "/tmp2"]).unwrap(),
             workspace_1
         );
-        assert_eq!(db.workspace_for_roots(&["/tmp2", "/tmp"]), None);
+        assert_eq!(
+            db.workspace_for_roots(&["/tmp2", "/tmp"]).unwrap(),
+            workspace_1
+        );
 
         // Make sure that other keys work
         assert_eq!(db.workspace_for_roots(&["/tmp"]).unwrap(), workspace_2);
@@ -1174,9 +1174,8 @@ mod tests {
         workspace_3.location = LocalPaths::new(["/tmp3", "/tmp4", "/tmp2"]).into();
         db.save_workspace(workspace_3.clone()).await;
         assert_eq!(db.workspace_for_roots(&["/tmp2", "tmp"]), None);
-        assert_eq!(db.workspace_for_roots(&["/tmp2", "/tmp3", "/tmp4"]), None);
         assert_eq!(
-            db.workspace_for_roots(&["/tmp3", "/tmp4", "/tmp2"])
+            db.workspace_for_roots(&["/tmp2", "/tmp3", "/tmp4"])
                 .unwrap(),
             workspace_3
         );
