@@ -250,11 +250,31 @@ impl AssistantPanel {
         let Some(assistant) = workspace.panel::<AssistantPanel>(cx) else {
             return;
         };
-        let active_editor = if let Some(active_editor) = workspace
+
+        let conversation_editor =
+            assistant
+                .read(cx)
+                .active_conversation_editor()
+                .and_then(|editor| {
+                    let editor = &editor.read(cx).editor;
+                    if editor.read(cx).is_focused(cx) {
+                        Some(editor.clone())
+                    } else {
+                        None
+                    }
+                });
+
+        let show_include_conversation;
+        let active_editor;
+        if let Some(conversation_editor) = conversation_editor {
+            active_editor = conversation_editor;
+            show_include_conversation = false;
+        } else if let Some(workspace_editor) = workspace
             .active_item(cx)
             .and_then(|item| item.act_as::<Editor>(cx))
         {
-            active_editor
+            active_editor = workspace_editor;
+            show_include_conversation = true;
         } else {
             return;
         };
@@ -262,7 +282,7 @@ impl AssistantPanel {
 
         if assistant.update(cx, |assistant, cx| assistant.is_authenticated(cx)) {
             assistant.update(cx, |assistant, cx| {
-                assistant.new_inline_assist(&active_editor, cx, &project)
+                assistant.new_inline_assist(&active_editor, &project, show_include_conversation, cx)
             });
         } else {
             let assistant = assistant.downgrade();
@@ -272,7 +292,12 @@ impl AssistantPanel {
                     .await?;
                 if assistant.update(&mut cx, |assistant, cx| assistant.is_authenticated(cx))? {
                     assistant.update(&mut cx, |assistant, cx| {
-                        assistant.new_inline_assist(&active_editor, cx, &project)
+                        assistant.new_inline_assist(
+                            &active_editor,
+                            &project,
+                            show_include_conversation,
+                            cx,
+                        )
                     })?;
                 } else {
                     workspace.update(&mut cx, |workspace, cx| {
@@ -289,8 +314,9 @@ impl AssistantPanel {
     fn new_inline_assist(
         &mut self,
         editor: &View<Editor>,
-        cx: &mut ViewContext<Self>,
         project: &Model<Project>,
+        show_include_conversation: bool,
+        cx: &mut ViewContext<Self>,
     ) {
         let selection = editor.read(cx).selections.newest_anchor().clone();
         if selection.start.excerpt_id != selection.end.excerpt_id {
@@ -330,7 +356,8 @@ impl AssistantPanel {
             InlineAssistant::new(
                 inline_assist_id,
                 measurements.clone(),
-                self.include_conversation_in_next_inline_assist,
+                show_include_conversation,
+                show_include_conversation && self.include_conversation_in_next_inline_assist,
                 self.inline_prompt_history.clone(),
                 codegen.clone(),
                 self.workspace.clone(),
@@ -344,7 +371,7 @@ impl AssistantPanel {
             editor.insert_blocks(
                 [BlockProperties {
                     style: BlockStyle::Flex,
-                    position: snapshot.anchor_before(point_selection.head()),
+                    position: snapshot.anchor_before(Point::new(point_selection.head().row, 0)),
                     height: 2,
                     render: Box::new({
                         let inline_assistant = inline_assistant.clone();
@@ -770,7 +797,8 @@ impl AssistantPanel {
             LanguageModel::OpenAi(model) => LanguageModel::OpenAi(match &model {
                 open_ai::Model::ThreePointFiveTurbo => open_ai::Model::Four,
                 open_ai::Model::Four => open_ai::Model::FourTurbo,
-                open_ai::Model::FourTurbo => open_ai::Model::ThreePointFiveTurbo,
+                open_ai::Model::FourTurbo => open_ai::Model::FourOmni,
+                open_ai::Model::FourOmni => open_ai::Model::ThreePointFiveTurbo,
             }),
             LanguageModel::ZedDotDev(model) => LanguageModel::ZedDotDev(match &model {
                 ZedDotDevModel::Gpt3Point5Turbo => ZedDotDevModel::Gpt4,
@@ -2832,6 +2860,7 @@ struct InlineAssistant {
     prompt_editor: View<Editor>,
     workspace: WeakView<Workspace>,
     confirmed: bool,
+    show_include_conversation: bool,
     include_conversation: bool,
     measurements: Arc<Mutex<BlockMeasurements>>,
     prompt_history: VecDeque<String>,
@@ -2860,7 +2889,7 @@ impl Render for InlineAssistant {
                 h_flex()
                     .justify_center()
                     .w(measurements.gutter_width)
-                    .child(
+                    .children(self.show_include_conversation.then(|| {
                         IconButton::new("include_conversation", IconName::Ai)
                             .on_click(cx.listener(|this, _, cx| {
                                 this.toggle_include_conversation(&ToggleIncludeConversation, cx)
@@ -2872,8 +2901,8 @@ impl Render for InlineAssistant {
                                     &ToggleIncludeConversation,
                                     cx,
                                 )
-                            }),
-                    )
+                            })
+                    }))
                     .children(if let Some(error) = self.codegen.read(cx).error() {
                         let error_message = SharedString::from(error.to_string());
                         Some(
@@ -2902,9 +2931,11 @@ impl FocusableView for InlineAssistant {
 }
 
 impl InlineAssistant {
+    #[allow(clippy::too_many_arguments)]
     fn new(
         id: usize,
         measurements: Arc<Mutex<BlockMeasurements>>,
+        show_include_conversation: bool,
         include_conversation: bool,
         prompt_history: VecDeque<String>,
         codegen: Model<Codegen>,
@@ -2932,6 +2963,7 @@ impl InlineAssistant {
             prompt_editor,
             workspace,
             confirmed: false,
+            show_include_conversation,
             include_conversation,
             measurements,
             prompt_history,

@@ -183,6 +183,7 @@ pub enum IconName {
     ZedXCopilot,
     ZedAssistant,
     PullRequest,
+    HistoryRerun,
 }
 
 impl IconName {
@@ -297,6 +298,7 @@ impl IconName {
             IconName::ZedXCopilot => "icons/zed_x_copilot.svg",
             IconName::ZedAssistant => "icons/zed_assistant.svg",
             IconName::PullRequest => "icons/pull_request.svg",
+            IconName::HistoryRerun => "icons/history_rerun.svg",
         }
     }
 }
@@ -344,6 +346,14 @@ impl Icon {
     pub(crate) fn custom_size(mut self, size: Rems) -> Self {
         self.size = size;
         self
+    }
+
+    pub fn font_size(self, font_size: AbsoluteLength) -> Self {
+        let rems = match font_size {
+            AbsoluteLength::Pixels(pixels) => rems_from_px(pixels.into()),
+            AbsoluteLength::Rems(rems) => rems,
+        };
+        self.custom_size(rems)
     }
 
     pub fn transform(mut self, transformation: Transformation) -> Self {
