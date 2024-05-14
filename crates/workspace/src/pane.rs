@@ -191,7 +191,8 @@ pub struct Pane {
     ),
     focus_handle: FocusHandle,
     items: Vec<Box<dyn ItemHandle>>,
-    activation_history: Vec<EntityId>,
+    activation_history: Vec<ActivationHistoryEntry>,
+    next_activation_timestamp: Arc<AtomicUsize>,
     zoomed: bool,
     was_focused: bool,
     active_item_index: usize,
@@ -217,6 +218,11 @@ pub struct Pane {
     /// Otherwise, when `display_nav_history_buttons` is Some, it determines whether nav buttons should be displayed.
     display_nav_history_buttons: Option<bool>,
     double_click_dispatch_action: Box<dyn Action>,
+}
+
+pub struct ActivationHistoryEntry {
+    pub entity_id: EntityId,
+    pub timestamp: usize,
 }
 
 pub struct ItemNavHistory {
@@ -296,6 +302,7 @@ impl Pane {
             focus_handle,
             items: Vec::new(),
             activation_history: Vec::new(),
+            next_activation_timestamp: next_timestamp.clone(),
             was_focused: false,
             zoomed: false,
             active_item_index: 0,
@@ -506,7 +513,7 @@ impl Pane {
         self.active_item_index
     }
 
-    pub fn activation_history(&self) -> &Vec<EntityId> {
+    pub fn activation_history(&self) -> &[ActivationHistoryEntry] {
         &self.activation_history
     }
 
@@ -892,10 +899,13 @@ impl Pane {
 
             if let Some(newly_active_item) = self.items.get(index) {
                 self.activation_history
-                    .retain(|&previously_active_item_id| {
-                        previously_active_item_id != newly_active_item.item_id()
-                    });
-                self.activation_history.push(newly_active_item.item_id());
+                    .retain(|entry| entry.entity_id != newly_active_item.item_id());
+                self.activation_history.push(ActivationHistoryEntry {
+                    entity_id: newly_active_item.item_id(),
+                    timestamp: self
+                        .next_activation_timestamp
+                        .fetch_add(1, Ordering::SeqCst),
+                });
             }
 
             self.update_toolbar(cx);
@@ -1211,7 +1221,7 @@ impl Pane {
         cx: &mut ViewContext<Self>,
     ) {
         self.activation_history
-            .retain(|&history_entry| history_entry != self.items[item_index].item_id());
+            .retain(|entry| entry.entity_id != self.items[item_index].item_id());
 
         if item_index == self.active_item_index {
             let index_to_activate = self
@@ -1219,7 +1229,7 @@ impl Pane {
                 .pop()
                 .and_then(|last_activated_item| {
                     self.items.iter().enumerate().find_map(|(index, item)| {
-                        (item.item_id() == last_activated_item).then_some(index)
+                        (item.item_id() == last_activated_item.entity_id).then_some(index)
                     })
                 })
                 // We didn't have a valid activation history entry, so fallback

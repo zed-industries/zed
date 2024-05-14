@@ -6,11 +6,8 @@ mod prompts;
 mod saved_conversation;
 mod streaming_diff;
 
-mod embedded_scope;
-
 pub use assistant_panel::AssistantPanel;
 use assistant_settings::{AssistantSettings, OpenAiModel, ZedDotDevModel};
-use chrono::{DateTime, Local};
 use client::{proto, Client};
 use command_palette_hooks::CommandPaletteFilter;
 pub(crate) use completion_provider::*;
@@ -26,7 +23,6 @@ use std::{
 actions!(
     assistant,
     [
-        NewConversation,
         Assist,
         Split,
         CycleMessageRole,
@@ -35,6 +31,7 @@ actions!(
         ResetKey,
         InlineAssist,
         ToggleIncludeConversation,
+        ToggleHistory,
     ]
 );
 
@@ -93,8 +90,8 @@ impl LanguageModel {
 
     pub fn display_name(&self) -> String {
         match self {
-            LanguageModel::OpenAi(model) => format!("openai/{}", model.display_name()),
-            LanguageModel::ZedDotDev(model) => format!("zed.dev/{}", model.display_name()),
+            LanguageModel::OpenAi(model) => model.display_name().into(),
+            LanguageModel::ZedDotDev(model) => model.display_name().into(),
         }
     }
 
@@ -178,7 +175,6 @@ pub struct LanguageModelChoiceDelta {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 struct MessageMetadata {
     role: Role,
-    sent_at: DateTime<Local>,
     status: MessageStatus,
 }
 
