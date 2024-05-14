@@ -10,6 +10,7 @@ use language::Buffer;
 use multi_buffer::{
     Anchor, ExcerptRange, MultiBuffer, MultiBufferRow, MultiBufferSnapshot, ToPoint,
 };
+use settings::{Settings, SettingsStore};
 use text::{BufferId, Point};
 use ui::{
     div, ActiveTheme, Context as _, IntoElement, ParentElement, Styled, ViewContext, VisualContext,
@@ -17,9 +18,10 @@ use ui::{
 use util::{debug_panic, RangeExt};
 
 use crate::{
+    editor_settings::CurrentLineHighlight,
     git::{diff_hunk_to_display, DisplayDiffHunk},
     hunk_status, hunks_for_selections, BlockDisposition, BlockId, BlockProperties, BlockStyle,
-    DiffRowHighlight, Editor, EditorSnapshot, ExpandAllHunkDiffs, RangeToAnchorExt,
+    DiffRowHighlight, Editor, EditorSettings, EditorSnapshot, ExpandAllHunkDiffs, RangeToAnchorExt,
     RevertSelectedHunks, ToDisplayPoint, ToggleHunkDiff,
 };
 
@@ -580,12 +582,32 @@ fn editor_with_deleted_text(
             .anchor_after(editor.buffer.read(cx).len(cx));
 
         editor.highlight_rows::<DiffRowHighlight>(start..=end, Some(deleted_color), cx);
-        let hunk_related_subscription = cx.on_blur(&editor.focus_handle, |editor, cx| {
-            editor.change_selections(None, cx, |s| {
-                s.try_cancel();
-            });
-        });
-        editor._subscriptions.push(hunk_related_subscription);
+
+        let subscription_editor = parent_editor.clone();
+        editor._subscriptions.extend([
+            cx.on_blur(&editor.focus_handle, |editor, cx| {
+                editor.set_current_line_highlight(CurrentLineHighlight::None);
+                editor.change_selections(None, cx, |s| {
+                    s.try_cancel();
+                });
+                cx.notify();
+            }),
+            cx.on_focus(&editor.focus_handle, move |editor, cx| {
+                let restored_highlight = if let Some(parent_editor) = subscription_editor.upgrade()
+                {
+                    parent_editor.read(cx).current_line_highlight
+                } else {
+                    EditorSettings::get_global(cx).current_line_highlight
+                };
+                editor.set_current_line_highlight(restored_highlight);
+                cx.notify();
+            }),
+            cx.observe_global::<SettingsStore>(|editor, cx| {
+                if !editor.is_focused(cx) {
+                    editor.set_current_line_highlight(CurrentLineHighlight::None);
+                }
+            }),
+        ]);
         let original_multi_buffer_range = hunk.multi_buffer_range.clone();
         let diff_base_range = hunk.diff_base_byte_range.clone();
         editor.register_action::<RevertSelectedHunks>(move |_, cx| {

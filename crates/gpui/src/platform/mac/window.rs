@@ -1100,6 +1100,14 @@ impl PlatformWindow for MacWindow {
     fn sprite_atlas(&self) -> Arc<dyn PlatformAtlas> {
         self.0.lock().renderer.sprite_atlas().clone()
     }
+
+    fn show_window_menu(&self, _position: Point<Pixels>) {}
+
+    fn start_system_move(&self) {}
+
+    fn should_render_window_controls(&self) -> bool {
+        false
+    }
 }
 
 impl rwh::HasWindowHandle for MacWindow {

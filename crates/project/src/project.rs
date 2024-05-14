@@ -7536,13 +7536,12 @@ impl Project {
                         .flatten()
                         .chain(current_buffers)
                         .filter_map(|(buffer, path, abs_path)| {
-                            let (work_directory, repo) =
-                                snapshot.repository_and_work_directory_for_path(&path)?;
-                            let repo_entry = snapshot.get_local_repo(&repo)?;
-                            Some((buffer, path, abs_path, work_directory, repo_entry))
+                            let (repo_entry, local_repo_entry) = snapshot.repo_for_path(&path)?;
+                            Some((buffer, path, abs_path, repo_entry, local_repo_entry))
                         })
-                        .map(|(buffer, path, abs_path, work_directory, repo_entry)| {
+                        .map(|(buffer, path, abs_path, repo, local_repo_entry)| {
                             let fs = fs.clone();
+                            let snapshot = snapshot.clone();
                             async move {
                                 let abs_path_metadata = fs
                                     .metadata(&abs_path)
@@ -7557,8 +7556,11 @@ impl Project {
                                 {
                                     None
                                 } else {
-                                    let relative_path = path.strip_prefix(&work_directory).ok()?;
-                                    repo_entry.repo().lock().load_index_text(relative_path)
+                                    let relative_path = repo.relativize(&snapshot, &path).ok()?;
+                                    local_repo_entry
+                                        .repo()
+                                        .lock()
+                                        .load_index_text(&relative_path)
                                 };
                                 Some((buffer, base_text))
                             }
@@ -7653,7 +7655,7 @@ impl Project {
                                 abs_path,
                                 id_base: "local_tasks_for_worktree",
                             },
-                            StaticSource::new(TrackedFile::new(tasks_file_rx, cx)),
+                            |tx, cx| StaticSource::new(TrackedFile::new(tasks_file_rx, tx, cx)),
                             cx,
                         );
                     }
@@ -7673,12 +7675,13 @@ impl Project {
                                 abs_path,
                                 id_base: "local_vscode_tasks_for_worktree",
                             },
-                            StaticSource::new(
-                                TrackedFile::new_convertible::<task::VsCodeTaskFile>(
-                                    tasks_file_rx,
-                                    cx,
-                                ),
-                            ),
+                            |tx, cx| {
+                                StaticSource::new(TrackedFile::new_convertible::<
+                                    task::VsCodeTaskFile,
+                                >(
+                                    tasks_file_rx, tx, cx
+                                ))
+                            },
                             cx,
                         );
                     }
@@ -7931,24 +7934,17 @@ impl Project {
                     .context("worktree was not local")?
                     .snapshot();
 
-                let (work_directory, repo) = match worktree
-                    .repository_and_work_directory_for_path(&buffer_project_path.path)
-                {
-                    Some(work_dir_repo) => work_dir_repo,
-                    None => anyhow::bail!(NoRepositoryError {}),
-                };
+                let (repo_entry, local_repo_entry) =
+                    match worktree.repo_for_path(&buffer_project_path.path) {
+                        Some(repo_for_path) => repo_for_path,
+                        None => anyhow::bail!(NoRepositoryError {}),
+                    };
 
-                let repo_entry = match worktree.get_local_repo(&repo) {
-                    Some(repo_entry) => repo_entry,
-                    None => anyhow::bail!(NoRepositoryError {}),
-                };
+                let relative_path = repo_entry
+                    .relativize(&worktree, &buffer_project_path.path)
+                    .context("failed to relativize buffer path")?;
 
-                let repo = repo_entry.repo().clone();
-
-                let relative_path = buffer_project_path
-                    .path
-                    .strip_prefix(&work_directory)?
-                    .to_path_buf();
+                let repo = local_repo_entry.repo().clone();
 
                 let content = match version {
                     Some(version) => buffer.rope_for_version(&version).clone(),
@@ -7962,7 +7958,7 @@ impl Project {
                 let (repo, relative_path, content) = blame_params?;
                 let lock = repo.lock();
                 lock.blame(&relative_path, content)
-                    .with_context(|| format!("Failed to blame {relative_path:?}"))
+                    .with_context(|| format!("Failed to blame {:?}", relative_path.0))
             })
         } else {
             let project_id = self.remote_id();

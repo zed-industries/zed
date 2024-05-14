@@ -38,13 +38,13 @@ Inserting text from an editor is as simple as highlighting the text and running 
 
 ![Quoting a selection](https://zed.dev/img/assistant/quoting-a-selection.png)
 
-To submit a message, use `cmd-enter` (`assistant: assist`). Unlike typical chat applications where pressing `enter` would submit the message, in the assistant editor, our goal was to make it feel as close to a regular editor as possible. So, pressing `enter` simply inserts a newline.
+To submit a message, use `cmd-enter` (`assistant: assist`). Unlike typical chat applications where pressing `enter` would submit the message, in the assistant editor, our goal was to make it feel as close to a regular editor as possible. So, pressing `enter` simply inserts a new line.
 
 After submitting a message, the assistant's response will be streamed below, in an `Assistant` message block.
 
 ![Receiving an answer](https://zed.dev/img/assistant/receiving-an-answer.png)
 
-The stream can be cancelled at any point with `escape`. This is useful if you realize early on that the response is not what you were looking for.
+The stream can be canceled at any point with `escape`. This is useful if you realize early on that the response is not what you were looking for.
 
 If you want to start a new conversation at any time, you can use the `New Conversation` button located at the top-right corner of the assistant panel.
 
@@ -67,7 +67,7 @@ Being able to edit previous messages gives you control over how tokens are used.
 Some additional points to keep in mind:
 
 - You are free to change the model type at any point in the conversation.
-- You can cycle the role of a message block, by clicking on the role, which is useful when you receive a response in an `Assistant` block that you want to edit and send back up as a `You` block.
+- You can cycle the role of a message block by clicking on the role, which is useful when you receive a response in an `Assistant` block that you want to edit and send back up as a `You` block.
 
 ## Saving and loading conversations
 
@@ -78,3 +78,58 @@ After you submit your first message, a name for your conversation is generated b
 ## Multiple cursor demo
 
 The assistant is capable of sending multiple requests, and receiving multiple responses, in parallel. [Here's a demo](https://zed.dev/img/post/assistant/demo.webm).
+
+## Using a custom API endpoint for OpenAI
+
+You can use a custom API endpoint for OpenAI, as long as it's compatible with the OpenAI API structure.
+
+To do so, add the following to your Zed `settings.json`:
+
+```json
+{
+  "assistant": {
+    "version": "1",
+    "provider": {
+      "name": "openai",
+      "type": "openai",
+      "default_model": "gpt-4-turbo-preview",
+      "api_url": "http://localhost:11434/v1"
+    }
+  }
+}
+```
+
+The custom URL here is `http://localhost:11434/v1`.
+
+## Using Ollama on macOS
+
+You can use Ollama with the Zed assistant by making Ollama appear as an OpenAPI endpoint.
+
+1. Add the following to your Zed `settings.json`:
+
+  ```json
+  {
+    "assistant": {
+      "version": "1",
+      "provider": {
+        "name": "openai",
+        "type": "openai",
+        "default_model": "gpt-4-turbo-preview",
+        "api_url": "http://localhost:11434/v1"
+      }
+    }
+  }
+  ```
+2. Download, for example, the `mistral` model with Ollama:
+  ```
+  ollama run mistral
+  ```
+3. Copy the model and change its name to match the model in the Zed `settings.json`:
+  ```
+  ollama cp mistral gpt-4-turbo-preview
+  ```
+4. Use `assistant: reset key` (see the [Setup](#setup) section above) and enter the following API key:
+  ```
+  ollama
+  ```
+5. Restart Zed

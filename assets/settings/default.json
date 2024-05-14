@@ -73,6 +73,17 @@
   "drop_target_size": 0.2,
   // Whether the cursor blinks in the editor.
   "cursor_blink": true,
+  // How to highlight the current line in the editor.
+  //
+  // 1. Don't highlight the current line:
+  //    "none"
+  // 2. Highlight the gutter area:
+  //    "gutter"
+  // 3. Highlight the editor area:
+  //    "line"
+  // 4. Highlight the full line (default):
+  //    "all"
+  "current_line_highlight": "all",
   // Whether to pop the completions menu while typing in an editor without
   // explicitly requesting it.
   "show_completions_on_input": true,
@@ -289,7 +300,8 @@
       // 1. "gpt-3.5-turbo"
       // 2. "gpt-4"
       // 3. "gpt-4-turbo-preview"
-      "default_model": "gpt-4-turbo-preview"
+      // 4. "gpt-4o"
+      "default_model": "gpt-4o"
     }
   },
   // Whether the screen sharing icon is shown in the os status bar.
@@ -637,7 +649,7 @@
       "tab_size": 2
     },
     "Ruby": {
-      "language_servers": ["solargraph", "..."]
+      "language_servers": ["solargraph", "!ruby-lsp", "..."]
     }
   },
   // Zed's Prettier integration settings.

@@ -1,3 +1,4 @@
+use crate::assistant_settings::ZedDotDevModel;
 use crate::{
     assistant_settings::OpenAiModel, CompletionProvider, LanguageModel, LanguageModelRequest, Role,
 };
@@ -150,8 +151,8 @@ impl OpenAiCompletionProvider {
 
     fn to_open_ai_request(&self, request: LanguageModelRequest) -> Request {
         let model = match request.model {
-            LanguageModel::ZedDotDev(_) => self.default_model(),
             LanguageModel::OpenAi(model) => model,
+            _ => self.default_model(),
         };
 
         Request {
@@ -202,7 +203,19 @@ pub fn count_open_ai_tokens(
                 })
                 .collect::<Vec<_>>();
 
-            tiktoken_rs::num_tokens_from_messages(request.model.id(), &messages)
+            match request.model {
+                LanguageModel::OpenAi(OpenAiModel::FourOmni)
+                | LanguageModel::ZedDotDev(ZedDotDevModel::Gpt4Omni)
+                | LanguageModel::Anthropic(_)
+                | LanguageModel::ZedDotDev(ZedDotDevModel::Claude3Opus)
+                | LanguageModel::ZedDotDev(ZedDotDevModel::Claude3Sonnet)
+                | LanguageModel::ZedDotDev(ZedDotDevModel::Claude3Haiku) => {
+                    // Tiktoken doesn't yet support these models, so we manually use the
+                    // same tokenizer as GPT-4.
+                    tiktoken_rs::num_tokens_from_messages("gpt-4", &messages)
+                }
+                _ => tiktoken_rs::num_tokens_from_messages(request.model.id(), &messages),
+            }
         })
         .boxed()
 }

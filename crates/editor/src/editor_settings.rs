@@ -6,6 +6,7 @@ use settings::{Settings, SettingsSources};
 #[derive(Deserialize, Clone)]
 pub struct EditorSettings {
     pub cursor_blink: bool,
+    pub current_line_highlight: CurrentLineHighlight,
     pub hover_popover_enabled: bool,
     pub show_completions_on_input: bool,
     pub show_completion_documentation: bool,
@@ -22,6 +23,19 @@ pub struct EditorSettings {
     pub redact_private_values: bool,
     #[serde(default)]
     pub double_click_in_multibuffer: DoubleClickInMultibuffer,
+}
+
+#[derive(Copy, Clone, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum CurrentLineHighlight {
+    // Don't highlight the current line.
+    None,
+    // Highlight the gutter area.
+    Gutter,
+    // Highlight the editor area.
+    Line,
+    // Highlight the full line.
+    All,
 }
 
 /// When to populate a new search's query based on the text under the cursor.
@@ -105,6 +119,10 @@ pub struct EditorSettingsContent {
     ///
     /// Default: true
     pub cursor_blink: Option<bool>,
+    /// How to highlight the current line in the editor.
+    ///
+    /// Default: all
+    pub current_line_highlight: Option<CurrentLineHighlight>,
     /// Whether to show the informational hover box when moving the mouse
     /// over symbols in the editor.
     ///

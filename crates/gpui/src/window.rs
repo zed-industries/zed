@@ -51,6 +51,9 @@ mod prompts;
 
 pub use prompts::*;
 
+pub(crate) const DEFAULT_WINDOW_SIZE: Size<DevicePixels> =
+    size(DevicePixels(1024), DevicePixels(700));
+
 /// Represents the two different phases when dispatching events.
 #[derive(Default, Copy, Clone, Debug, Eq, PartialEq)]
 pub enum DispatchPhase {
@@ -199,6 +202,18 @@ impl FocusHandle {
     /// Obtains whether this handle contains the given handle in the most recently rendered frame.
     pub fn contains(&self, other: &Self, cx: &WindowContext) -> bool {
         self.id.contains(other.id, cx)
+    }
+
+    /// Dispatch an action on the element that rendered this focus handle
+    pub fn dispatch_action(&self, action: &dyn Action, cx: &mut WindowContext) {
+        if let Some(node_id) = cx
+            .window
+            .rendered_frame
+            .dispatch_tree
+            .focusable_node_id(self.id)
+        {
+            cx.dispatch_action_on_node(node_id, action)
+        }
     }
 }
 
@@ -475,7 +490,15 @@ pub struct Window {
     display_id: DisplayId,
     sprite_atlas: Arc<dyn PlatformAtlas>,
     text_system: Arc<WindowTextSystem>,
-    pub(crate) rem_size: Pixels,
+    rem_size: Pixels,
+    /// An override value for the window's rem size.
+    ///
+    /// This is used by `with_rem_size` to allow rendering an element tree with
+    /// a given rem size.
+    ///
+    /// Note: Right now we only allow for a single override value at a time, but
+    /// this could likely be changed to be a stack of rem sizes.
+    rem_size_override: Option<Pixels>,
     pub(crate) viewport_size: Size<Pixels>,
     layout_engine: Option<TaffyLayoutEngine>,
     pub(crate) root_view: Option<AnyView>,
@@ -561,7 +584,6 @@ pub(crate) struct ElementStateBox {
 }
 
 fn default_bounds(display_id: Option<DisplayId>, cx: &mut AppContext) -> Bounds<DevicePixels> {
-    const DEFAULT_WINDOW_SIZE: Size<DevicePixels> = size(DevicePixels(1024), DevicePixels(700));
     const DEFAULT_WINDOW_OFFSET: Point<DevicePixels> = point(DevicePixels(0), DevicePixels(35));
 
     cx.active_window()
@@ -573,12 +595,7 @@ fn default_bounds(display_id: Option<DisplayId>, cx: &mut AppContext) -> Bounds<
                 .unwrap_or_else(|| cx.primary_display());
 
             display
-                .map(|display| {
-                    let center = display.bounds().center();
-                    let offset = DEFAULT_WINDOW_SIZE / 2;
-                    let origin = point(center.x - offset.width, center.y - offset.height);
-                    Bounds::new(origin, DEFAULT_WINDOW_SIZE)
-                })
+                .map(|display| display.default_bounds())
                 .unwrap_or_else(|| {
                     Bounds::new(point(DevicePixels(0), DevicePixels(0)), DEFAULT_WINDOW_SIZE)
                 })
@@ -754,6 +771,7 @@ impl Window {
             sprite_atlas,
             text_system,
             rem_size: px(16.),
+            rem_size_override: None,
             viewport_size: content_size,
             layout_engine: Some(TaffyLayoutEngine::new()),
             root_view: None,
@@ -1131,6 +1149,23 @@ impl<'a> WindowContext<'a> {
         self.window.platform_window.zoom();
     }
 
+    /// Opens the native title bar context menu, useful when implementing client side decorations (Wayland only)
+    pub fn show_window_menu(&self, position: Point<Pixels>) {
+        self.window.platform_window.show_window_menu(position)
+    }
+
+    /// Tells the compositor to take control of window movement (Wayland only)
+    ///
+    /// Events may not be received during a move operation.
+    pub fn start_system_move(&self) {
+        self.window.platform_window.start_system_move()
+    }
+
+    /// Returns whether the title bar window controls need to be rendered by the application (Wayland and X11)
+    pub fn should_render_window_controls(&self) -> bool {
+        self.window.platform_window.should_render_window_controls()
+    }
+
     /// Updates the window's title at the platform level.
     pub fn set_window_title(&mut self, title: &str) {
         self.window.platform_window.set_title(title);
@@ -1176,13 +1211,40 @@ impl<'a> WindowContext<'a> {
     /// The size of an em for the base font of the application. Adjusting this value allows the
     /// UI to scale, just like zooming a web page.
     pub fn rem_size(&self) -> Pixels {
-        self.window.rem_size
+        self.window
+            .rem_size_override
+            .unwrap_or(self.window.rem_size)
     }
 
     /// Sets the size of an em for the base font of the application. Adjusting this value allows the
     /// UI to scale, just like zooming a web page.
     pub fn set_rem_size(&mut self, rem_size: impl Into<Pixels>) {
         self.window.rem_size = rem_size.into();
+    }
+
+    /// Executes the provided function with the specified rem size.
+    ///
+    /// This method must only be called as part of element drawing.
+    pub fn with_rem_size<F, R>(&mut self, rem_size: Option<impl Into<Pixels>>, f: F) -> R
+    where
+        F: FnOnce(&mut Self) -> R,
+    {
+        debug_assert!(
+            matches!(
+                self.window.draw_phase,
+                DrawPhase::Prepaint | DrawPhase::Paint
+            ),
+            "this method can only be called during request_layout, prepaint, or paint"
+        );
+
+        if let Some(rem_size) = rem_size {
+            self.window.rem_size_override = Some(rem_size.into());
+            let result = f(self);
+            self.window.rem_size_override.take();
+            result
+        } else {
+            f(self)
+        }
     }
 
     /// The line height associated with the current text style.
