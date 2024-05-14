@@ -1656,6 +1656,7 @@ message Entry {
 message RepositoryEntry {
     uint64 work_directory_id = 1;
     optional string branch = 2;
+    optional string location_in_repo = 3;
 }
 
 message StatusEntry {
