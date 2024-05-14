@@ -193,7 +193,6 @@ impl InlineCompletionProvider for CopilotCompletionProvider {
             if let Some(telemetry) = self.telemetry.as_ref() {
                 telemetry.report_inline_completion_event(
                     Self::name().to_string(),
-                    Some(completion.uuid.clone()),
                     true,
                     self.file_extension.clone(),
                 );
@@ -218,7 +217,6 @@ impl InlineCompletionProvider for CopilotCompletionProvider {
         if let Some(telemetry) = self.telemetry.as_ref() {
             telemetry.report_inline_completion_event(
                 Self::name().to_string(),
-                None,
                 false,
                 self.file_extension.clone(),
             );

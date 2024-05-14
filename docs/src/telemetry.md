@@ -97,7 +97,6 @@ The following data is sent:
   - `copilot_enabled_for_language`: A boolean that indicates whether the user has copilot enabled for the language of the file that was opened or saved
   - `milliseconds_since_first_event`: Duration of time between this event's timestamp and the timestamp of the first event in the current batch
 - `copilot`
-  - `suggestion_id`: The ID of the suggestion
   - `suggestion_accepted`: A boolean that indicates whether the suggestion was accepted or not
   - `file_extension`: The file extension of the file that was opened or saved
   - `milliseconds_since_first_event`: Same as above

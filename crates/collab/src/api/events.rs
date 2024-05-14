@@ -665,7 +665,6 @@ impl EditorEventRow {
 #[derive(Serialize, Debug, clickhouse::Row)]
 pub struct CopilotEventRow {
     pub installation_id: String,
-    pub suggestion_id: String,
     pub suggestion_accepted: bool,
     pub app_version: String,
     pub file_extension: String,
@@ -714,7 +713,6 @@ impl CopilotEventRow {
             country_code: country_code.unwrap_or("XX".to_string()),
             region_code: "".to_string(),
             city: "".to_string(),
-            suggestion_id: event.suggestion_id.unwrap_or_default(),
             suggestion_accepted: event.suggestion_accepted,
         }
     }

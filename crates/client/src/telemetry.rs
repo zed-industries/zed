@@ -244,13 +244,11 @@ impl Telemetry {
     pub fn report_inline_completion_event(
         self: &Arc<Self>,
         provider: String,
-        suggestion_id: Option<String>,
         suggestion_accepted: bool,
         file_extension: Option<String>,
     ) {
         let event = Event::InlineCompletion(InlineCompletionEvent {
             provider,
-            suggestion_id,
             suggestion_accepted,
             file_extension,
         });
