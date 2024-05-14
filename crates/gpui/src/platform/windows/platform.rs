@@ -48,7 +48,6 @@ pub(crate) struct WindowsPlatform {
 
 pub(crate) struct WindowsPlatformState {
     callbacks: PlatformCallbacks,
-    pub(crate) settings: WindowsPlatformSystemSettings,
     // NOTE: standard cursor handles don't need to close.
     pub(crate) current_cursor: HCURSOR,
 }
@@ -66,12 +65,10 @@ struct PlatformCallbacks {
 impl WindowsPlatformState {
     fn new() -> Self {
         let callbacks = PlatformCallbacks::default();
-        let settings = WindowsPlatformSystemSettings::new();
         let current_cursor = load_cursor(CursorStyle::Arrow);
 
         Self {
             callbacks,
-            settings,
             current_cursor,
         }
     }
@@ -149,28 +146,6 @@ impl WindowsPlatform {
 
         lock.is_empty()
     }
-
-    fn update_system_settings(&self) {
-        let mut lock = self.state.borrow_mut();
-        // mouse wheel
-        {
-            let (scroll_chars, scroll_lines) = lock.settings.mouse_wheel_settings.update();
-            if let Some(scroll_chars) = scroll_chars {
-                self.post_message(
-                    MOUSE_WHEEL_SETTINGS_CHANGED,
-                    WPARAM(scroll_chars as usize),
-                    LPARAM(MOUSE_WHEEL_SETTINGS_SCROLL_CHARS_CHANGED),
-                );
-            }
-            if let Some(scroll_lines) = scroll_lines {
-                self.post_message(
-                    MOUSE_WHEEL_SETTINGS_CHANGED,
-                    WPARAM(scroll_lines as usize),
-                    LPARAM(MOUSE_WHEEL_SETTINGS_SCROLL_LINES_CHANGED),
-                );
-            }
-        }
-    }
 }
 
 impl Platform for WindowsPlatform {
@@ -219,7 +194,6 @@ impl Platform for WindowsPlatform {
                                         break 'a;
                                     }
                                 }
-                                WM_SETTINGCHANGE => self.update_system_settings(),
                                 _ => {
                                     // todo(windows)
                                     // crate `windows 0.56` reports true as Err
@@ -325,7 +299,6 @@ impl Platform for WindowsPlatform {
             options,
             self.icon,
             self.foreground_executor.clone(),
-            lock.settings.mouse_wheel_settings,
             lock.current_cursor,
         );
         drop(lock);
@@ -640,8 +613,11 @@ impl Platform for WindowsPlatform {
 
     fn set_cursor_style(&self, style: CursorStyle) {
         let hcursor = load_cursor(style);
-        self.post_message(CURSOR_STYLE_CHANGED, WPARAM(0), LPARAM(hcursor.0));
-        self.state.borrow_mut().current_cursor = hcursor;
+        let mut lock = self.state.borrow_mut();
+        if lock.current_cursor.0 != hcursor.0 {
+            self.post_message(CURSOR_STYLE_CHANGED, WPARAM(0), LPARAM(hcursor.0));
+            lock.current_cursor = hcursor;
+        }
     }
 
     // todo(windows)

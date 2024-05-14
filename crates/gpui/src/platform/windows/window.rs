@@ -43,7 +43,7 @@ pub struct WindowsWindowState {
     pub renderer: BladeRenderer,
 
     pub click_state: ClickState,
-    pub mouse_wheel_settings: MouseWheelSettings,
+    pub system_settings: WindowsSystemSettings,
     pub current_cursor: HCURSOR,
 
     pub display: WindowsDisplay,
@@ -64,7 +64,6 @@ impl WindowsWindowState {
         hwnd: HWND,
         transparent: bool,
         cs: &CREATESTRUCTW,
-        mouse_wheel_settings: MouseWheelSettings,
         current_cursor: HCURSOR,
         display: WindowsDisplay,
     ) -> Self {
@@ -82,6 +81,7 @@ impl WindowsWindowState {
         let callbacks = Callbacks::default();
         let input_handler = None;
         let click_state = ClickState::new();
+        let system_settings = WindowsSystemSettings::new();
         let fullscreen = None;
 
         Self {
@@ -93,7 +93,7 @@ impl WindowsWindowState {
             input_handler,
             renderer,
             click_state,
-            mouse_wheel_settings,
+            system_settings,
             current_cursor,
             display,
             fullscreen,
@@ -195,7 +195,6 @@ impl WindowsWindowStatePtr {
             hwnd,
             context.transparent,
             cs,
-            context.mouse_wheel_settings,
             context.current_cursor,
             context.display,
         ));
@@ -229,7 +228,6 @@ struct WindowCreateContext {
     display: WindowsDisplay,
     transparent: bool,
     executor: ForegroundExecutor,
-    mouse_wheel_settings: MouseWheelSettings,
     current_cursor: HCURSOR,
 }
 
@@ -239,7 +237,6 @@ impl WindowsWindow {
         params: WindowParams,
         icon: HICON,
         executor: ForegroundExecutor,
-        mouse_wheel_settings: MouseWheelSettings,
         current_cursor: HCURSOR,
     ) -> Self {
         let classname = register_wnd_class(icon);
@@ -271,7 +268,6 @@ impl WindowsWindow {
             display,
             transparent: params.window_background != WindowBackgroundAppearance::Opaque,
             executor,
-            mouse_wheel_settings,
             current_cursor,
         };
         let lpparam = Some(&context as *const _ as *const _);
