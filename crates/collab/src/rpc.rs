@@ -4662,7 +4662,7 @@ async fn compute_embeddings(
         "openai/text-embedding-3-small" => {
             open_ai::embed(
                 session.http_client.as_ref(),
-                open_ai_api_url(),
+                open_ai_api_url().as_str(),
                 &api_key,
                 OpenAiEmbeddingModel::TextEmbedding3Small,
                 request.texts.iter().map(|text| text.as_str()),

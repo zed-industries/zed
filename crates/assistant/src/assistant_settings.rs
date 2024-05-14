@@ -168,7 +168,7 @@ impl Default for AssistantProvider {
 }
 
 fn open_ai_url() -> String {
-    open_ai_api_url().into()
+    open_ai_api_url()
 }
 
 #[derive(Default, Debug, Deserialize, Serialize)]
