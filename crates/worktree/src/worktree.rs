@@ -1941,7 +1941,9 @@ impl Snapshot {
                         RepositoryEntry {
                             work_directory: work_directory_entry,
                             branch: repository.branch.map(Into::into),
-                            // TODO: this needs to be fixed
+                            // When syncing repository entries from a peer, we don't need
+                            // the location_in_repo field, since git operations don't happen locally
+                            // anyway.
                             location_in_repo: None,
                         },
                     )
