@@ -992,6 +992,9 @@ impl Render for DevServerProjects {
             .on_mouse_down_out(cx.listener(|this, _, cx| {
                 if matches!(this.mode, Mode::Default(None)) {
                     cx.emit(DismissEvent)
+                } else {
+                    this.focus_handle(cx).focus(cx);
+                    cx.stop_propagation()
                 }
             }))
             .pb_4()
