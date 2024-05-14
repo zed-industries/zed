@@ -20,7 +20,6 @@ pub struct SupermavenCompletionProvider {
 
 // TODO in Zed
 //      Add provider (string) to event
-//      Remove completion_id all together, never used, wasted space
 // TODO in clickhouse
 //      Add a provider column, all previous values set to `copilot`
 //      Rename copilot_events to inline_completion_events (collab will need to intercept old values and rename)
@@ -117,8 +116,6 @@ impl InlineCompletionProvider for SupermavenCompletionProvider {
         if let Some(telemetry) = self.telemetry.as_ref() {
             telemetry.report_inline_completion_event(
                 Self::name().to_string(),
-                // TODO Should we be forcing this to string?
-                self.completion_id.map(|id| id.0.to_string()).clone(),
                 true,
                 self.file_extension.clone(),
             );
@@ -131,7 +128,6 @@ impl InlineCompletionProvider for SupermavenCompletionProvider {
         if let Some(telemetry) = self.telemetry.as_ref() {
             telemetry.report_inline_completion_event(
                 Self::name().to_string(),
-                None,
                 false,
                 self.file_extension.clone(),
             );

@@ -77,7 +77,6 @@ pub struct EditorEvent {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct InlineCompletionEvent {
     pub provider: String,
-    pub suggestion_id: Option<String>,
     pub suggestion_accepted: bool,
     pub file_extension: Option<String>,
 }
