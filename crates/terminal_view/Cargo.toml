@@ -16,6 +16,7 @@ doctest = false
 anyhow.workspace = true
 db.workspace = true
 collections.workspace = true
+dev_server_projects.workspace = true
 dirs = "4.0.0"
 editor.workspace = true
 futures.workspace = true

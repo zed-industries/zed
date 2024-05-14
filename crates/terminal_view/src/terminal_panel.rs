@@ -493,7 +493,25 @@ impl TerminalPanel {
         cx.spawn(|terminal_panel, mut cx| async move {
             let pane = terminal_panel.update(&mut cx, |this, _| this.pane.clone())?;
             workspace.update(&mut cx, |workspace, cx| {
-                if workspace.project().read(cx).is_remote() {
+                let project = workspace.project().read(cx);
+                if project.is_remote() {
+                    let ssh_connection_data =
+                        project
+                            .dev_server_project_id()
+                            .and_then(|dev_server_project_id| {
+                                let projects_store =
+                                    dev_server_projects::Store::global(cx).read(cx);
+                                let project_path = projects_store
+                                    .dev_server_project(dev_server_project_id)?
+                                    .path
+                                    .clone();
+                                let ssh_connection_string = projects_store
+                                    .dev_server_for_project(dev_server_project_id)?
+                                    .ssh_connection_string
+                                    .clone();
+                                Some(project_path).zip(ssh_connection_string)
+                            });
+                    dbg!(&ssh_connection_data);
                     workspace.show_error(
                         &anyhow::anyhow!("Cannot open terminals on remote projects (yet!)"),
                         cx,

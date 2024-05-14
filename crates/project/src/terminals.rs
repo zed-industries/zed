@@ -26,10 +26,30 @@ impl Project {
         window: AnyWindowHandle,
         cx: &mut ModelContext<Self>,
     ) -> anyhow::Result<Model<Terminal>> {
+        // TODO kb deduplicate into a single method on a project
+        let ssh_connection_data = self
+            .dev_server_project_id()
+            .and_then(|dev_server_project_id| {
+                let projects_store = dev_server_projects::Store::global(cx).read(cx);
+                let project_path = projects_store
+                    .dev_server_project(dev_server_project_id)?
+                    .path
+                    .clone();
+                let ssh_connection_string = projects_store
+                    .dev_server_for_project(dev_server_project_id)?
+                    .ssh_connection_string
+                    .clone();
+                Some(project_path).zip(ssh_connection_string)
+            });
         anyhow::ensure!(
-            !self.is_remote(),
-            "creating terminals as a guest is not supported yet"
+            !self.is_remote() || ssh_connection_data.is_some(),
+            "Cannot create terminal for remote project without SSH connection string yet"
         );
+
+        // TODO kb do `ssh user@host -t "cd /path/to/specific/directory && exec \$SHELL"`
+        if ssh_connection_data.is_some() {
+            dbg!("@@@@@@@@@@@@@@@", ssh_connection_data, &working_directory);
+        }
 
         // used only for TerminalSettings::get
         let worktree = {
