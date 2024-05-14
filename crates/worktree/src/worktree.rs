@@ -161,8 +161,26 @@ pub struct Snapshot {
 pub struct RepositoryEntry {
     pub(crate) work_directory: WorkDirectoryEntry,
     pub(crate) branch: Option<Arc<str>>,
-    // TODO: rename this
-    pub(crate) relative_path_to_repo_root: Option<Arc<Path>>,
+
+    /// If location_in_repo is set, it means the .git folder is external
+    /// and in a parent folder of the project root.
+    /// In that case, the work_directory field will point to the
+    /// project-root and location_in_repo contains the location of the
+    /// project-root in the repository.
+    ///
+    /// Example:
+    ///
+    ///     my_root_folder/          <-- repository root
+    ///       .git
+    ///       my_sub_folder_1/
+    ///         project_root/        <-- Project root, Zed opened here
+    ///           ...
+    ///
+    /// For this setup, the attributes will have the following values:
+    ///
+    ///     work_directory: pointing to "" entry
+    ///     location_in_repo: Some("my_sub_folder_1/project_root")
+    pub(crate) location_in_repo: Option<Arc<Path>>,
 }
 
 impl RepositoryEntry {
@@ -187,12 +205,29 @@ impl RepositoryEntry {
         }
     }
 
+    /// relativize returns the given project path relative to the root folder of the
+    /// repository.
+    /// If the root of the repository (and its .git folder) are located in a parent folder
+    /// of the project root folder, then the returned RepoPath is relative to the root
+    /// of the repository and not a valid path inside the project.
     pub fn relativize(&self, worktree: &Snapshot, path: &Path) -> Result<RepoPath> {
-        if let Some(repo_root) = &self.relative_path_to_repo_root {
-            self.work_directory
-                .relativize(worktree, &repo_root.join(path))
+        let relativize_path = |path: &Path| {
+            let entry = worktree
+                .entry_for_id(self.work_directory.0)
+                .ok_or_else(|| anyhow!("entry not found"))?;
+            println!("path: {:?}, entry.path: {:?}", path, entry.path);
+
+            let relativized_path = path
+                .strip_prefix(&entry.path)
+                .map_err(|_| anyhow!("could not relativize {:?} against {:?}", path, entry.path))?;
+
+            Ok(relativized_path.into())
+        };
+
+        if let Some(location_in_repo) = &self.location_in_repo {
+            relativize_path(&location_in_repo.join(path))
         } else {
-            self.work_directory.relativize(worktree, path)
+            relativize_path(path)
         }
     }
 }
@@ -206,8 +241,11 @@ impl From<&RepositoryEntry> for proto::RepositoryEntry {
     }
 }
 
-/// TODO: This comment is now wrong
-/// This path corresponds to the 'content path' (the folder that contains the .git)
+/// This path corresponds to the 'content path' of a repository in relation
+/// to Zed's project root.
+/// In the majority of the cases, this is the folder that contains the .git folder.
+/// But if a sub-folder of a git repository is opened, this corresponds to the
+/// project root and the .git folder is located in a parent directory.
 #[derive(Clone, Debug, Ord, PartialOrd, Eq, PartialEq)]
 pub struct RepositoryWorkDirectory(pub(crate) Arc<Path>);
 
@@ -225,19 +263,6 @@ impl AsRef<Path> for RepositoryWorkDirectory {
 
 #[derive(Clone, Debug, Ord, PartialOrd, Eq, PartialEq)]
 pub struct WorkDirectoryEntry(ProjectEntryId);
-
-impl WorkDirectoryEntry {
-    // TODO: Remove this
-    pub(crate) fn relativize(&self, worktree: &Snapshot, path: &Path) -> Result<RepoPath> {
-        let entry = worktree
-            .entry_for_id(self.0)
-            .ok_or_else(|| anyhow!("entry not found"))?;
-        let path = path
-            .strip_prefix(&entry.path)
-            .map_err(|_| anyhow!("could not relativize {:?} against {:?}", path, entry.path))?;
-        Ok(path.into())
-    }
-}
 
 impl Deref for WorkDirectoryEntry {
     type Target = ProjectEntryId;
@@ -1921,7 +1946,7 @@ impl Snapshot {
                             work_directory: work_directory_entry,
                             branch: repository.branch.map(Into::into),
                             // TODO: this needs to be fixed
-                            relative_path_to_repo_root: None,
+                            location_in_repo: None,
                         },
                     )
                 }
@@ -2753,6 +2778,7 @@ impl BackgroundScannerState {
                 }
             }
         }
+
         snapshot
             .git_repositories
             .retain(|work_directory_id, _| ids_to_preserve.contains(work_directory_id));
@@ -2802,7 +2828,7 @@ impl BackgroundScannerState {
         &mut self,
         work_dir_path: Arc<Path>,
         dot_git_path: Arc<Path>,
-        relative_path_to_repo_root: Option<Arc<Path>>,
+        location_in_repo: Option<Arc<Path>>,
         fs: &dyn Fs,
     ) -> Option<(
         RepositoryWorkDirectory,
@@ -2828,7 +2854,7 @@ impl BackgroundScannerState {
             RepositoryEntry {
                 work_directory: work_dir_id.into(),
                 branch: repo_lock.branch_name().map(Into::into),
-                relative_path_to_repo_root,
+                location_in_repo,
             },
         );
 
@@ -2871,7 +2897,6 @@ impl BackgroundScannerState {
             let Some(mtime) = entry.mtime else {
                 continue;
             };
-            let repo_path = RepoPath(repo_path.to_path_buf());
             let git_file_status = combine_git_statuses(
                 staged_statuses.get(&repo_path).copied(),
                 repo.unstaged_status(&repo_path, mtime),
@@ -3541,19 +3566,36 @@ impl BackgroundScanner {
                     // TODO: Open the repository and check whether git knows about our folder. if not
                     // don't add it.
 
-                    // We associate the external git repo with our root folder.
+                    // We canonicalize, since the FS events use the canonicalized path.
+                    let external_dot_git_canonical_path =
+                        match self.fs.canonicalize(&external_dot_git).await {
+                            Ok(path) => path,
+                            Err(err) => {
+                                log::error!(
+                                "failed to canonicalize external dot git path. path: {}, error: {}",
+                                external_dot_git.display(),
+                                err
+                            );
+                                continue;
+                            }
+                        };
+
+                    // We associate the external git repo with our root folder and
+                    // also mark where in the git repo the root folder is located.
                     if let Some(relative_path_to_repo_root) =
                         root_abs_path.strip_prefix(ancestor).log_err()
                     {
                         self.state.lock().build_git_repository_for_path(
                             Arc::from(Path::new("")),
-                            external_dot_git.clone().into(),
+                            external_dot_git_canonical_path.clone().into(),
                             Some(relative_path_to_repo_root.into()),
                             self.fs.as_ref(),
                         );
 
-                        let external_events =
-                            self.fs.watch(&external_dot_git, FS_WATCH_LATENCY).await;
+                        let external_events = self
+                            .fs
+                            .watch(&external_dot_git_canonical_path, FS_WATCH_LATENCY)
+                            .await;
 
                         fs_events_rx = select(fs_events_rx, external_events).boxed()
                     }
@@ -3666,14 +3708,6 @@ impl BackgroundScanner {
                 return;
             }
         };
-        let git_dir_paths = self
-            .state
-            .lock()
-            .snapshot
-            .git_repositories
-            .iter()
-            .map(|(_, entry)| entry.git_dir_path.clone())
-            .collect::<Vec<_>>();
 
         let mut relative_paths = Vec::with_capacity(abs_paths.len());
         let mut dot_git_paths_to_reload = HashSet::default();
@@ -3700,7 +3734,7 @@ impl BackgroundScanner {
                     if let Ok(path) = abs_path.strip_prefix(&root_canonical_path) {
                         path.into()
                     } else {
-                        if git_dir_paths.iter().any(|git_dir_path| abs_path.strip_prefix(git_dir_path).is_ok()) {
+                        if is_git_related {
                             log::debug!(
                               "ignoring event {abs_path:?}, since it's in git dir outside of root path {root_canonical_path:?}",
                             );
@@ -4593,6 +4627,12 @@ pub trait WorktreeModelHandle {
         &self,
         cx: &'a mut gpui::TestAppContext,
     ) -> futures::future::LocalBoxFuture<'a, ()>;
+
+    #[cfg(any(test, feature = "test-support"))]
+    fn flush_fs_events_in_root_git_repository<'a>(
+        &self,
+        cx: &'a mut gpui::TestAppContext,
+    ) -> futures::future::LocalBoxFuture<'a, ()>;
 }
 
 impl WorktreeModelHandle for Model<Worktree> {
@@ -4628,6 +4668,72 @@ impl WorktreeModelHandle for Model<Worktree> {
                 .unwrap();
             cx.condition(&tree, |tree, _| tree.entry_for_path(file_name).is_none())
                 .await;
+
+            cx.update(|cx| tree.read(cx).as_local().unwrap().scan_complete())
+                .await;
+        }
+        .boxed_local()
+    }
+
+    // This function is similar to flush_fs_events, except that it waits for events to be flushed in
+    // the .git folder of the root repository.
+    // The reason for its existence is that a repository's .git folder might live *outside* of the
+    // worktree and thus its FS events might go through a different path.
+    // In order to flush those, we need to create artificial events in the .git folder and wait
+    // for the repository to be reloaded.
+    #[cfg(any(test, feature = "test-support"))]
+    fn flush_fs_events_in_root_git_repository<'a>(
+        &self,
+        cx: &'a mut gpui::TestAppContext,
+    ) -> futures::future::LocalBoxFuture<'a, ()> {
+        let file_name = "fs-event-sentinel";
+
+        let tree = self.clone();
+        let (fs, root_path, mut git_dir_scan_id) = self.update(cx, |tree, _| {
+            let tree = tree.as_local().unwrap();
+            let root_entry = tree.root_git_entry().unwrap();
+            let local_repo_entry = tree.get_local_repo(&root_entry).unwrap();
+            (
+                tree.fs.clone(),
+                local_repo_entry.git_dir_path.clone(),
+                local_repo_entry.git_dir_scan_id,
+            )
+        });
+
+        let scan_id_increased = |tree: &mut Worktree, git_dir_scan_id: &mut usize| {
+            let root_entry = tree.root_git_entry().unwrap();
+            let local_repo_entry = tree
+                .as_local()
+                .unwrap()
+                .get_local_repo(&root_entry)
+                .unwrap();
+
+            if local_repo_entry.git_dir_scan_id > *git_dir_scan_id {
+                *git_dir_scan_id = local_repo_entry.git_dir_scan_id;
+                true
+            } else {
+                false
+            }
+        };
+
+        async move {
+            fs.create_file(&root_path.join(file_name), Default::default())
+                .await
+                .unwrap();
+
+            cx.condition(&tree, |tree, _| {
+                scan_id_increased(tree, &mut git_dir_scan_id)
+            })
+            .await;
+
+            fs.remove_file(&root_path.join(file_name), Default::default())
+                .await
+                .unwrap();
+
+            cx.condition(&tree, |tree, _| {
+                scan_id_increased(tree, &mut git_dir_scan_id)
+            })
+            .await;
 
             cx.update(|cx| tree.read(cx).as_local().unwrap().scan_complete())
                 .await;
