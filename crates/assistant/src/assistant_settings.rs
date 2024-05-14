@@ -16,8 +16,9 @@ use settings::{Settings, SettingsSources};
 pub enum ZedDotDevModel {
     Gpt3Point5Turbo,
     Gpt4,
-    #[default]
     Gpt4Turbo,
+    #[default]
+    Gpt4Omni,
     Claude3Opus,
     Claude3Sonnet,
     Claude3Haiku,
@@ -55,6 +56,7 @@ impl<'de> Deserialize<'de> for ZedDotDevModel {
                     "gpt-3.5-turbo" => Ok(ZedDotDevModel::Gpt3Point5Turbo),
                     "gpt-4" => Ok(ZedDotDevModel::Gpt4),
                     "gpt-4-turbo-preview" => Ok(ZedDotDevModel::Gpt4Turbo),
+                    "gpt-4o" => Ok(ZedDotDevModel::Gpt4Omni),
                     _ => Ok(ZedDotDevModel::Custom(value.to_owned())),
                 }
             }
@@ -74,6 +76,7 @@ impl JsonSchema for ZedDotDevModel {
             "gpt-3.5-turbo".to_owned(),
             "gpt-4".to_owned(),
             "gpt-4-turbo-preview".to_owned(),
+            "gpt-4o".to_owned(),
         ];
         Schema::Object(SchemaObject {
             instance_type: Some(InstanceType::String.into()),
@@ -100,6 +103,7 @@ impl ZedDotDevModel {
             Self::Gpt3Point5Turbo => "gpt-3.5-turbo",
             Self::Gpt4 => "gpt-4",
             Self::Gpt4Turbo => "gpt-4-turbo-preview",
+            Self::Gpt4Omni => "gpt-4o",
             Self::Claude3Opus => "claude-3-opus",
             Self::Claude3Sonnet => "claude-3-sonnet",
             Self::Claude3Haiku => "claude-3-haiku",
@@ -112,6 +116,7 @@ impl ZedDotDevModel {
             Self::Gpt3Point5Turbo => "GPT 3.5 Turbo",
             Self::Gpt4 => "GPT 4",
             Self::Gpt4Turbo => "GPT 4 Turbo",
+            Self::Gpt4Omni => "GPT 4 Omni",
             Self::Claude3Opus => "Claude 3 Opus",
             Self::Claude3Sonnet => "Claude 3 Sonnet",
             Self::Claude3Haiku => "Claude 3 Haiku",
@@ -123,7 +128,7 @@ impl ZedDotDevModel {
         match self {
             Self::Gpt3Point5Turbo => 2048,
             Self::Gpt4 => 4096,
-            Self::Gpt4Turbo => 128000,
+            Self::Gpt4Turbo | Self::Gpt4Omni => 128000,
             Self::Claude3Opus | Self::Claude3Sonnet | Self::Claude3Haiku => 200000,
             Self::Custom(_) => 4096, // TODO: Make this configurable
         }
