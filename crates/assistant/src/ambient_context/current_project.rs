@@ -58,11 +58,9 @@ impl CurrentProjectContext {
                 return;
             };
 
-            let message_task = cx.background_executor().spawn(async move {
-                let project_metadata = ProjectMetadata::build(fs, &path_to_cargo_toml).await?;
-
-                anyhow::Ok(project_metadata.render_as_string())
-            });
+            let message_task = cx
+                .background_executor()
+                .spawn(async move { Self::build_message(fs, &path_to_cargo_toml).await });
 
             if let Some(message) = message_task.await.log_err() {
                 conversation
@@ -73,6 +71,42 @@ impl CurrentProjectContext {
                     .log_err();
             }
         }));
+    }
+
+    async fn build_message(fs: Arc<dyn Fs>, path_to_cargo_toml: &Path) -> Result<String> {
+        let buffer = fs.load(&path_to_cargo_toml).await?;
+        let cargo_toml: cargo_toml::Manifest = toml::from_str(&buffer)?;
+
+        let mut message = String::new();
+
+        let name = cargo_toml
+            .package
+            .as_ref()
+            .map(|package| package.name.as_str());
+        if let Some(name) = name {
+            message.push_str(&format!(" named \"{name}\""));
+        }
+        message.push_str(". ");
+
+        let description = cargo_toml
+            .package
+            .as_ref()
+            .and_then(|package| package.description.as_ref())
+            .and_then(|description| description.get().ok().cloned());
+        if let Some(description) = description.as_ref() {
+            message.push_str("It describes itself as ");
+            message.push_str(&format!("\"{description}\""));
+            message.push_str(". ");
+        }
+
+        let dependencies = cargo_toml.dependencies.keys().cloned().collect::<Vec<_>>();
+        if !dependencies.is_empty() {
+            message.push_str("The following dependencies are installed: ");
+            message.push_str(&dependencies.join(", "));
+            message.push_str(". ");
+        }
+
+        Ok(message)
     }
 
     fn path_to_cargo_toml(
@@ -103,71 +137,5 @@ impl CurrentProjectContext {
 
             Ok(path_to_cargo_toml)
         })?
-    }
-}
-
-#[derive(Debug)]
-pub struct ProjectMetadata {
-    pub name: Option<String>,
-    pub authors: Vec<String>,
-    pub description: Option<String>,
-    pub version: Option<String>,
-    pub license: Option<String>,
-    pub dependencies: Vec<String>,
-}
-
-impl ProjectMetadata {
-    async fn build(fs: Arc<dyn Fs>, path: &Path) -> Result<Self> {
-        let buffer = fs.load(path).await?;
-        let cargo_toml: cargo_toml::Manifest = toml::from_str(&buffer)?;
-
-        Ok(Self {
-            name: cargo_toml
-                .package
-                .as_ref()
-                .map(|package| package.name.clone()),
-            authors: cargo_toml
-                .package
-                .as_ref()
-                .and_then(|package| package.authors.get().ok().cloned())
-                .unwrap_or_default(),
-            description: cargo_toml
-                .package
-                .as_ref()
-                .and_then(|package| package.description.as_ref())
-                .and_then(|description| description.get().ok().cloned()),
-            version: cargo_toml
-                .package
-                .as_ref()
-                .and_then(|package| package.version.get().ok().cloned()),
-            license: cargo_toml
-                .package
-                .as_ref()
-                .and_then(|package| package.license.as_ref())
-                .and_then(|license| license.get().ok().cloned()),
-            dependencies: cargo_toml.dependencies.keys().cloned().collect(),
-        })
-    }
-
-    pub fn render_as_string(&self) -> String {
-        let mut prompt = "You are in a Rust project".to_string();
-        if let Some(name) = self.name.as_ref() {
-            prompt.push_str(&format!(" named \"{name}\""));
-        }
-        prompt.push_str(". ");
-
-        if let Some(description) = self.description.as_ref() {
-            prompt.push_str("It describes itself as ");
-            prompt.push_str(&format!("\"{description}\""));
-            prompt.push_str(". ");
-        }
-
-        if !self.dependencies.is_empty() {
-            prompt.push_str("The following dependencies are installed: ");
-            prompt.push_str(&self.dependencies.join(", "));
-            prompt.push_str(". ");
-        }
-
-        prompt
     }
 }
