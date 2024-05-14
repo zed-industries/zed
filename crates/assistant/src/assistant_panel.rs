@@ -1905,6 +1905,10 @@ impl Conversation {
         let messages = recent_buffers_context
             .into_iter()
             .chain(current_project_context)
+            .chain([LanguageModelRequestMessage {
+                role: Role::System,
+                content: include_str!("./system_prompts/edits.md").to_string(),
+            }])
             .chain(
                 self.messages(cx)
                     .filter(|message| matches!(message.status, MessageStatus::Done))
