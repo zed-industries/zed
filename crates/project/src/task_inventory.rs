@@ -522,15 +522,17 @@ mod tests {
         inventory.update(cx, |inventory, cx| {
             inventory.add_source(
                 TaskSourceKind::UserInput,
-                |tx, cx| static_test_source(
-                    vec![
-                        "1_task".to_string(),
-                        "2_task".to_string(),
-                        "1_a_task".to_string(),
-                    ],
-                    tx,
-                    cx,
-                ),
+                |tx, cx| {
+                    static_test_source(
+                        vec![
+                            "1_task".to_string(),
+                            "2_task".to_string(),
+                            "1_a_task".to_string(),
+                        ],
+                        tx,
+                        cx,
+                    )
+                },
                 cx,
             );
         });
@@ -591,7 +593,9 @@ mod tests {
         inventory.update(cx, |inventory, cx| {
             inventory.add_source(
                 TaskSourceKind::UserInput,
-                |tx, cx| static_test_source(vec!["10_hello".to_string(), "11_hello".to_string()],tx, cx),
+                |tx, cx| {
+                    static_test_source(vec!["10_hello".to_string(), "11_hello".to_string()], tx, cx)
+                },
                 cx,
             );
         });
@@ -659,7 +663,13 @@ mod tests {
         inventory_with_statics.update(cx, |inventory, cx| {
             inventory.add_source(
                 TaskSourceKind::UserInput,
-                |tx, cx| static_test_source(vec!["user_input".to_string(), common_name.to_string()],tx, cx),
+                |tx, cx| {
+                    static_test_source(
+                        vec!["user_input".to_string(), common_name.to_string()],
+                        tx,
+                        cx,
+                    )
+                },
                 cx,
             );
             inventory.add_source(
@@ -667,10 +677,13 @@ mod tests {
                     id_base: "test source",
                     abs_path: path_1.to_path_buf(),
                 },
-                |tx, cx| static_test_source(
-                    vec!["static_source_1".to_string(), common_name.to_string()],tx,
-                    cx,
-                ),
+                |tx, cx| {
+                    static_test_source(
+                        vec!["static_source_1".to_string(), common_name.to_string()],
+                        tx,
+                        cx,
+                    )
+                },
                 cx,
             );
             inventory.add_source(
@@ -678,10 +691,13 @@ mod tests {
                     id_base: "test source",
                     abs_path: path_2.to_path_buf(),
                 },
-                |tx, cx| static_test_source(
-                    vec!["static_source_2".to_string(), common_name.to_string()],tx,
-                    cx,
-                ),
+                |tx, cx| {
+                    static_test_source(
+                        vec!["static_source_2".to_string(), common_name.to_string()],
+                        tx,
+                        cx,
+                    )
+                },
                 cx,
             );
             inventory.add_source(
@@ -690,7 +706,13 @@ mod tests {
                     abs_path: worktree_path_1.to_path_buf(),
                     id_base: "test_source",
                 },
-                |tx, cx| static_test_source(vec!["worktree_1".to_string(), common_name.to_string()], tx,cx),
+                |tx, cx| {
+                    static_test_source(
+                        vec!["worktree_1".to_string(), common_name.to_string()],
+                        tx,
+                        cx,
+                    )
+                },
                 cx,
             );
             inventory.add_source(
@@ -699,7 +721,13 @@ mod tests {
                     abs_path: worktree_path_2.to_path_buf(),
                     id_base: "test_source",
                 },
-                |tx, cx| static_test_source(vec!["worktree_2".to_string(), common_name.to_string()], tx, cx),
+                |tx, cx| {
+                    static_test_source(
+                        vec!["worktree_2".to_string(), common_name.to_string()],
+                        tx,
+                        cx,
+                    )
+                },
                 cx,
             );
         });
