@@ -818,7 +818,11 @@ impl Vim {
             // disables vim if the rename editor is focused,
             // but not if the command palette is open.
             } else if editor.focus_handle(cx).contains_focused(cx) {
-                editor.remove_keymap_context_layer::<Self>(cx)
+                if editor.key_context(cx).contains("renaming") {
+                    editor.remove_keymap_context_layer::<Self>(cx);
+                } else {
+                    editor.set_keymap_context_layer::<Self>(state.keymap_context_layer(), cx);
+                }
             }
         });
     }

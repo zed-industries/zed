@@ -70,8 +70,10 @@ pub fn deploy_context_menu(
             s.set_pending_display_range(point..point, SelectMode::Character);
         });
 
+        let focus = cx.focused();
         ui::ContextMenu::build(cx, |menu, _cx| {
-            menu.action("Rename Symbol", Box::new(Rename))
+            let builder = menu
+                .action("Rename Symbol", Box::new(Rename))
                 .action("Go to Definition", Box::new(GoToDefinition))
                 .action("Go to Type Definition", Box::new(GoToTypeDefinition))
                 .action("Go to Implementation", Box::new(GoToImplementation))
@@ -84,7 +86,11 @@ pub fn deploy_context_menu(
                 )
                 .separator()
                 .action("Reveal in Finder", Box::new(RevealInFinder))
-                .action("Open in Terminal", Box::new(OpenInTerminal))
+                .action("Open in Terminal", Box::new(OpenInTerminal));
+            match focus {
+                Some(focus) => builder.context(focus),
+                None => builder,
+            }
         })
     };
     let mouse_context_menu = MouseContextMenu::new(position, context_menu, cx);

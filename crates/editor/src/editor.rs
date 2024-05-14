@@ -1713,7 +1713,7 @@ impl Editor {
         this
     }
 
-    fn key_context(&self, cx: &AppContext) -> KeyContext {
+    pub fn key_context(&self, cx: &AppContext) -> KeyContext {
         let mut key_context = KeyContext::new_with_defaults();
         key_context.add("Editor");
         let mode = match self.mode {
