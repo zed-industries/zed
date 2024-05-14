@@ -247,7 +247,6 @@ impl NodeRuntime for RealNodeRuntime {
             }
 
             let mut command = Command::new(node_binary);
-            command.env_clear();
             command.env("PATH", env_path);
             command.arg(npm_file).arg(subcommand);
             command.args(["--cache".into(), installation_path.join("cache")]);
