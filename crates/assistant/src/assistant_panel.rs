@@ -8,6 +8,7 @@ use crate::{
     Split, ToggleFocus, ToggleHistory, ToggleIncludeConversation,
 };
 use anyhow::{anyhow, Result};
+use client::telemetry::Telemetry;
 use collections::{hash_map, HashMap, HashSet, VecDeque};
 use editor::{
     actions::{MoveDown, MoveUp},
@@ -38,7 +39,15 @@ use parking_lot::Mutex;
 use project::Project;
 use search::{buffer_search::DivRegistrar, BufferSearchBar};
 use settings::Settings;
-use std::{cmp, fmt::Write, iter, ops::Range, path::PathBuf, sync::Arc, time::Duration};
+use std::{
+    cmp,
+    fmt::Write,
+    iter,
+    ops::Range,
+    path::PathBuf,
+    sync::Arc,
+    time::{Duration, Instant},
+};
 use telemetry_events::AssistantKind;
 use theme::ThemeSettings;
 use ui::{popover_menu, prelude::*, ButtonLike, ContextMenu, Tab, TabBar, Tooltip};
@@ -86,6 +95,7 @@ pub struct AssistantPanel {
     toolbar: View<Toolbar>,
     languages: Arc<LanguageRegistry>,
     fs: Arc<dyn Fs>,
+    telemetry: Arc<Telemetry>,
     _subscriptions: Vec<Subscription>,
     next_inline_assist_id: usize,
     pending_inline_assists: HashMap<usize, PendingInlineAssist>,
@@ -179,6 +189,7 @@ impl AssistantPanel {
                         toolbar,
                         languages: workspace.app_state().languages.clone(),
                         fs: workspace.app_state().fs.clone(),
+                        telemetry: workspace.client().telemetry().clone(),
                         width: None,
                         height: None,
                         _subscriptions: subscriptions,
@@ -347,9 +358,16 @@ impl AssistantPanel {
         };
 
         let inline_assist_id = post_inc(&mut self.next_inline_assist_id);
+        let telemetry = self.telemetry.clone();
 
-        let codegen =
-            cx.new_model(|cx| Codegen::new(editor.read(cx).buffer().clone(), codegen_kind, cx));
+        let codegen = cx.new_model(|cx| {
+            Codegen::new(
+                editor.read(cx).buffer().clone(),
+                codegen_kind,
+                Some(telemetry),
+                cx,
+            )
+        });
 
         let measurements = Arc::new(Mutex::new(BlockMeasurements::default()));
         let inline_assistant = cx.new_view(|cx| {
@@ -360,7 +378,6 @@ impl AssistantPanel {
                 show_include_conversation && self.include_conversation_in_next_inline_assist,
                 self.inline_prompt_history.clone(),
                 codegen.clone(),
-                self.workspace.clone(),
                 cx,
             )
         });
@@ -1039,6 +1056,7 @@ impl AssistantPanel {
         let fs = self.fs.clone();
         let workspace = self.workspace.clone();
         let languages = self.languages.clone();
+        let telemetry = self.telemetry.clone();
         cx.spawn(|this, mut cx| async move {
             let saved_conversation = SavedConversation::load(&path, fs.as_ref()).await?;
             let model = this.update(&mut cx, |this, _| this.model.clone())?;
@@ -1047,6 +1065,7 @@ impl AssistantPanel {
                 model,
                 path.clone(),
                 languages,
+                Some(telemetry),
                 &mut cx,
             )
             .await?;
@@ -1345,6 +1364,7 @@ pub struct Conversation {
     pending_save: Task<Result<()>>,
     path: Option<PathBuf>,
     _subscriptions: Vec<Subscription>,
+    telemetry: Option<Arc<Telemetry>>,
 }
 
 #[derive(Default)]
@@ -1381,6 +1401,7 @@ impl Conversation {
     fn new(
         model: LanguageModel,
         language_registry: Arc<LanguageRegistry>,
+        telemetry: Option<Arc<Telemetry>>,
         cx: &mut ModelContext<Self>,
     ) -> Self {
         let markdown = language_registry.language_for_name("Markdown");
@@ -1415,6 +1436,7 @@ impl Conversation {
             pending_save: Task::ready(Ok(())),
             path: None,
             buffer,
+            telemetry,
         };
 
         let message = MessageAnchor {
@@ -1461,6 +1483,7 @@ impl Conversation {
         model: LanguageModel,
         path: PathBuf,
         language_registry: Arc<LanguageRegistry>,
+        telemetry: Option<Arc<Telemetry>>,
         cx: &mut AsyncAppContext,
     ) -> Result<Model<Self>> {
         let id = match saved_conversation.id {
@@ -1513,6 +1536,7 @@ impl Conversation {
                 pending_save: Task::ready(Ok(())),
                 path: Some(path),
                 buffer,
+                telemetry,
             };
             this.count_remaining_tokens(cx);
             this
@@ -1806,10 +1830,15 @@ impl Conversation {
             let task = cx.spawn({
                 |this, mut cx| async move {
                     let assistant_message_id = assistant_message.id;
+                    let mut response_latency = None;
                     let stream_completion = async {
+                        let request_start = Instant::now();
                         let mut messages = stream.await?;
 
                         while let Some(message) = messages.next().await {
+                            if response_latency.is_none() {
+                                response_latency = Some(request_start.elapsed());
+                            }
                             let text = message?;
 
                             this.update(&mut cx, |this, cx| {
@@ -1848,16 +1877,26 @@ impl Conversation {
                         if let Some(metadata) =
                             this.messages_metadata.get_mut(&assistant_message.id)
                         {
-                            match result {
-                                Ok(_) => {
-                                    metadata.status = MessageStatus::Done;
-                                }
-                                Err(error) => {
-                                    metadata.status = MessageStatus::Error(SharedString::from(
-                                        error.to_string().trim().to_string(),
-                                    ));
-                                }
+                            let error_message = result
+                                .err()
+                                .map(|error| error.to_string().trim().to_string());
+                            if let Some(error_message) = error_message.as_ref() {
+                                metadata.status =
+                                    MessageStatus::Error(SharedString::from(error_message.clone()));
+                            } else {
+                                metadata.status = MessageStatus::Done;
                             }
+
+                            if let Some(telemetry) = this.telemetry.as_ref() {
+                                telemetry.report_assistant_event(
+                                    this.id.clone(),
+                                    AssistantKind::Panel,
+                                    this.model.telemetry_id(),
+                                    response_latency,
+                                    error_message,
+                                );
+                            }
+
                             cx.emit(ConversationEvent::MessagesEdited);
                         }
                     })
@@ -2278,7 +2317,9 @@ impl ConversationEditor {
         workspace: View<Workspace>,
         cx: &mut ViewContext<Self>,
     ) -> Self {
-        let conversation = cx.new_model(|cx| Conversation::new(model, language_registry, cx));
+        let telemetry = workspace.read(cx).client().telemetry().clone();
+        let conversation =
+            cx.new_model(|cx| Conversation::new(model, language_registry, Some(telemetry), cx));
         Self::for_conversation(conversation, fs, workspace, cx)
     }
 
@@ -2318,15 +2359,6 @@ impl ConversationEditor {
     }
 
     fn assist(&mut self, _: &Assist, cx: &mut ViewContext<Self>) {
-        self.conversation.update(cx, |conversation, cx| {
-            report_assistant_event(
-                self.workspace.clone(),
-                Some(conversation),
-                AssistantKind::Panel,
-                cx,
-            )
-        });
-
         let cursors = self.cursors(cx);
 
         let user_messages = self.conversation.update(cx, |conversation, cx| {
@@ -2864,7 +2896,6 @@ enum InlineAssistantEvent {
 struct InlineAssistant {
     id: usize,
     prompt_editor: View<Editor>,
-    workspace: WeakView<Workspace>,
     confirmed: bool,
     show_include_conversation: bool,
     include_conversation: bool,
@@ -2945,7 +2976,6 @@ impl InlineAssistant {
         include_conversation: bool,
         prompt_history: VecDeque<String>,
         codegen: Model<Codegen>,
-        workspace: WeakView<Workspace>,
         cx: &mut ViewContext<Self>,
     ) -> Self {
         let prompt_editor = cx.new_view(|cx| {
@@ -2967,7 +2997,6 @@ impl InlineAssistant {
         Self {
             id,
             prompt_editor,
-            workspace,
             confirmed: false,
             show_include_conversation,
             include_conversation,
@@ -3016,8 +3045,6 @@ impl InlineAssistant {
         if self.confirmed {
             cx.emit(InlineAssistantEvent::Dismissed);
         } else {
-            report_assistant_event(self.workspace.clone(), None, AssistantKind::Inline, cx);
-
             let prompt = self.prompt_editor.read(cx).text(cx);
             self.prompt_editor
                 .update(cx, |editor, _cx| editor.set_read_only(true));
@@ -3147,30 +3174,6 @@ fn merge_ranges(ranges: &mut Vec<Range<Anchor>>, buffer: &MultiBufferSnapshot) {
     }
 }
 
-fn report_assistant_event(
-    workspace: WeakView<Workspace>,
-    conversation: Option<&Conversation>,
-    assistant_kind: AssistantKind,
-    cx: &mut AppContext,
-) {
-    let Some(workspace) = workspace.upgrade() else {
-        return;
-    };
-
-    let client = workspace.read(cx).project().read(cx).client();
-    let telemetry = client.telemetry();
-
-    let conversation_id = conversation.and_then(|conversation| conversation.id.clone());
-    let model_id = conversation
-        .map(|c| c.model.telemetry_id())
-        .unwrap_or_else(|| {
-            CompletionProvider::global(cx)
-                .default_model()
-                .telemetry_id()
-        });
-    telemetry.report_assistant_event(conversation_id, assistant_kind, model_id)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -3187,7 +3190,7 @@ mod tests {
         let registry = Arc::new(LanguageRegistry::test(cx.background_executor().clone()));
 
         let conversation =
-            cx.new_model(|cx| Conversation::new(LanguageModel::default(), registry, cx));
+            cx.new_model(|cx| Conversation::new(LanguageModel::default(), registry, None, cx));
         let buffer = conversation.read(cx).buffer.clone();
 
         let message_1 = conversation.read(cx).message_anchors[0].clone();
@@ -3319,7 +3322,7 @@ mod tests {
         let registry = Arc::new(LanguageRegistry::test(cx.background_executor().clone()));
 
         let conversation =
-            cx.new_model(|cx| Conversation::new(LanguageModel::default(), registry, cx));
+            cx.new_model(|cx| Conversation::new(LanguageModel::default(), registry, None, cx));
         let buffer = conversation.read(cx).buffer.clone();
 
         let message_1 = conversation.read(cx).message_anchors[0].clone();
@@ -3418,7 +3421,7 @@ mod tests {
         init(cx);
         let registry = Arc::new(LanguageRegistry::test(cx.background_executor().clone()));
         let conversation =
-            cx.new_model(|cx| Conversation::new(LanguageModel::default(), registry, cx));
+            cx.new_model(|cx| Conversation::new(LanguageModel::default(), registry, None, cx));
         let buffer = conversation.read(cx).buffer.clone();
 
         let message_1 = conversation.read(cx).message_anchors[0].clone();
@@ -3502,8 +3505,9 @@ mod tests {
         cx.set_global(CompletionProvider::Fake(FakeCompletionProvider::default()));
         cx.update(init);
         let registry = Arc::new(LanguageRegistry::test(cx.executor()));
-        let conversation =
-            cx.new_model(|cx| Conversation::new(LanguageModel::default(), registry.clone(), cx));
+        let conversation = cx.new_model(|cx| {
+            Conversation::new(LanguageModel::default(), registry.clone(), None, cx)
+        });
         let buffer = conversation.read_with(cx, |conversation, _| conversation.buffer.clone());
         let message_0 =
             conversation.read_with(cx, |conversation, _| conversation.message_anchors[0].id);
@@ -3542,6 +3546,7 @@ mod tests {
             LanguageModel::default(),
             Default::default(),
             registry.clone(),
+            None,
             &mut cx.to_async(),
         )
         .await
