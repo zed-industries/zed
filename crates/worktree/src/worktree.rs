@@ -3564,25 +3564,26 @@ impl BackgroundScanner {
                 let external_dot_git = external_git_repo.join(&*DOT_GIT);
 
                 // We canonicalize, since the FS events use the canonicalized path.
-                if let Some((external_dot_git_canonical_path, relative_path_to_repo_root)) = self
-                    .fs
-                    .canonicalize(&external_dot_git)
-                    .await
-                    .log_err()
-                    .zip(root_abs_path.strip_prefix(external_git_repo).log_err())
+                let dot_git_canonical_path =
+                    self.fs.canonicalize(&external_dot_git).await.log_err();
+                let location_in_repo = root_abs_path.strip_prefix(external_git_repo).log_err();
+
+                if let Some((dot_git_canonical_path, location_in_repo)) =
+                    dot_git_canonical_path.zip(location_in_repo)
                 {
                     // We associate the external git repo with our root folder and
                     // also mark where in the git repo the root folder is located.
+
                     self.state.lock().build_git_repository_for_path(
                         Arc::from(Path::new("")),
-                        external_dot_git_canonical_path.clone().into(),
-                        Some(relative_path_to_repo_root.into()),
+                        dot_git_canonical_path.clone().into(),
+                        Some(location_in_repo.into()),
                         self.fs.as_ref(),
                     );
 
                     let external_events = self
                         .fs
-                        .watch(&external_dot_git_canonical_path, FS_WATCH_LATENCY)
+                        .watch(&dot_git_canonical_path, FS_WATCH_LATENCY)
                         .await;
 
                     fs_events_rx = select(fs_events_rx, external_events).boxed()
