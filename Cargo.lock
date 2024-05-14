@@ -3728,6 +3728,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "event_stream"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "gpui",
+ "schemars",
+ "serde",
+ "serde_json",
+ "settings",
+ "smol",
+ "util",
+]
+
+[[package]]
 name = "exec"
 version = "0.3.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -12953,6 +12967,7 @@ dependencies = [
  "diagnostics",
  "editor",
  "env_logger",
+ "event_stream",
  "extension",
  "extensions_ui",
  "feedback",
