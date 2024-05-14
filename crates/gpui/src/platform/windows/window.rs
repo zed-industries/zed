@@ -258,13 +258,17 @@ impl WindowsWindow {
         );
         let dwstyle = WS_THICKFRAME | WS_SYSMENU | WS_MAXIMIZEBOX | WS_MINIMIZEBOX;
         let hinstance = get_module_handle();
+        let display = if let Some(display_id) = params.display_id {
+            // if we obtain a display_id, then this ID must be valid.
+            WindowsDisplay::new(display_id).unwrap()
+        } else {
+            WindowsDisplay::primary_monitor().unwrap()
+        };
         let mut context = WindowCreateContext {
             inner: None,
             handle,
             hide_title_bar,
-            // todo(windows) move window to target monitor
-            // options.display_id
-            display: WindowsDisplay::primary_monitor().unwrap(),
+            display,
             transparent: params.window_background != WindowBackgroundAppearance::Opaque,
             executor,
             mouse_wheel_settings,
@@ -297,10 +301,16 @@ impl WindowsWindow {
                 ..Default::default()
             };
             GetWindowPlacement(raw_hwnd, &mut placement).log_err();
-            placement.rcNormalPosition.left = params.bounds.left().0;
-            placement.rcNormalPosition.right = params.bounds.right().0;
-            placement.rcNormalPosition.top = params.bounds.top().0;
-            placement.rcNormalPosition.bottom = params.bounds.bottom().0;
+            // the bounds may be not inside the display
+            let bounds = if display.check_given_bounds(params.bounds) {
+                params.bounds
+            } else {
+                display.default_bounds()
+            };
+            placement.rcNormalPosition.left = bounds.left().0;
+            placement.rcNormalPosition.right = bounds.right().0;
+            placement.rcNormalPosition.top = bounds.top().0;
+            placement.rcNormalPosition.bottom = bounds.bottom().0;
             SetWindowPlacement(raw_hwnd, &placement).log_err();
         }
         unsafe { ShowWindow(raw_hwnd, SW_SHOW).ok().log_err() };

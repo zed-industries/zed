@@ -51,6 +51,9 @@ mod prompts;
 
 pub use prompts::*;
 
+pub(crate) const DEFAULT_WINDOW_SIZE: Size<DevicePixels> =
+    size(DevicePixels(1024), DevicePixels(700));
+
 /// Represents the two different phases when dispatching events.
 #[derive(Default, Copy, Clone, Debug, Eq, PartialEq)]
 pub enum DispatchPhase {
@@ -573,7 +576,6 @@ pub(crate) struct ElementStateBox {
 }
 
 fn default_bounds(display_id: Option<DisplayId>, cx: &mut AppContext) -> Bounds<DevicePixels> {
-    const DEFAULT_WINDOW_SIZE: Size<DevicePixels> = size(DevicePixels(1024), DevicePixels(700));
     const DEFAULT_WINDOW_OFFSET: Point<DevicePixels> = point(DevicePixels(0), DevicePixels(35));
 
     cx.active_window()
@@ -585,12 +587,7 @@ fn default_bounds(display_id: Option<DisplayId>, cx: &mut AppContext) -> Bounds<
                 .unwrap_or_else(|| cx.primary_display());
 
             display
-                .map(|display| {
-                    let center = display.bounds().center();
-                    let offset = DEFAULT_WINDOW_SIZE / 2;
-                    let origin = point(center.x - offset.width, center.y - offset.height);
-                    Bounds::new(origin, DEFAULT_WINDOW_SIZE)
-                })
+                .map(|display| display.default_bounds())
                 .unwrap_or_else(|| {
                     Bounds::new(point(DevicePixels(0), DevicePixels(0)), DEFAULT_WINDOW_SIZE)
                 })

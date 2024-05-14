@@ -25,10 +25,11 @@ mod test;
 mod windows;
 
 use crate::{
-    Action, AnyWindowHandle, AsyncWindowContext, BackgroundExecutor, Bounds, DevicePixels,
+    point, Action, AnyWindowHandle, AsyncWindowContext, BackgroundExecutor, Bounds, DevicePixels,
     DispatchEventResult, Font, FontId, FontMetrics, FontRun, ForegroundExecutor, GlyphId, Keymap,
     LineLayout, Pixels, PlatformInput, Point, RenderGlyphParams, RenderImageParams,
     RenderSvgParams, Scene, SharedString, Size, Task, TaskLabel, WindowContext,
+    DEFAULT_WINDOW_SIZE,
 };
 use anyhow::Result;
 use async_task::Runnable;
@@ -167,6 +168,14 @@ pub trait PlatformDisplay: Send + Sync + Debug {
 
     /// Get the bounds for this display
     fn bounds(&self) -> Bounds<DevicePixels>;
+
+    /// Get the default bounds for this display to place a window
+    fn default_bounds(&self) -> Bounds<DevicePixels> {
+        let center = self.bounds().center();
+        let offset = DEFAULT_WINDOW_SIZE / 2;
+        let origin = point(center.x - offset.width, center.y - offset.height);
+        Bounds::new(origin, DEFAULT_WINDOW_SIZE)
+    }
 }
 
 /// An opaque identifier for a hardware display

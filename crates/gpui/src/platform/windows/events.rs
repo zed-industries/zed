@@ -39,6 +39,7 @@ pub(crate) fn handle_msg(
         WM_TIMER => handle_timer_msg(handle, wparam, state_ptr),
         WM_NCCALCSIZE => handle_calc_client_size(handle, wparam, lparam, state_ptr),
         WM_DPICHANGED => handle_dpi_changed_msg(handle, wparam, lparam, state_ptr),
+        WM_DISPLAYCHANGE => handle_display_change_msg(handle, state_ptr),
         WM_NCHITTEST => handle_hit_test_msg(handle, msg, wparam, lparam, state_ptr),
         WM_PAINT => handle_paint_msg(handle, state_ptr),
         WM_CLOSE => handle_close_msg(state_ptr),
@@ -112,6 +113,8 @@ fn handle_move_msg(
     {
         // center of the window may have moved to another monitor
         let monitor = unsafe { MonitorFromWindow(handle, MONITOR_DEFAULTTONULL) };
+        // minimize the window can trigger this event too, in this case,
+        // monitor is invalid, we do nothing.
         if !monitor.is_invalid() && lock.display.handle != monitor {
             // we will get the same monitor if we only have one
             lock.display = WindowsDisplay::new_with_handle(monitor);
@@ -772,6 +775,41 @@ fn handle_dpi_changed_msg(
     }
     invalidate_client_area(handle);
 
+    Some(0)
+}
+
+/// The following conditions will trigger this event:
+/// 1. The monitor on which the window is located goes offline or changes resolution.
+/// 2. Another monitor goes offline, is plugged in, or changes resolution.
+///
+/// In either case, the window will only receive information from the monitor on which
+/// it is located.
+///
+/// For example, in the case of condition 2, where the monitor on which the window is
+/// located has actually changed nothing, it will still receive this event.
+fn handle_display_change_msg(handle: HWND, state_ptr: Rc<WindowsWindowStatePtr>) -> Option<isize> {
+    // NOTE:
+    // Even the `lParam` holds the resolution of the screen, we just ignore it.
+    // Because WM_DPICHANGED, WM_MOVE, WM_SIEZ will come first, window reposition and resize
+    // are handled there.
+    // So we only care about if monitor is disconnected.
+    let previous_monitor = state_ptr.as_ref().state.borrow().display;
+    if WindowsDisplay::is_connected(previous_monitor.handle) {
+        // we are fine, other display changed
+        return None;
+    }
+    // display disconnected
+    // in this case, the OS will move our window to another monitor, and minimize it.
+    // we deminimize the window and query the monitor after moving
+    unsafe { ShowWindow(handle, SW_SHOWNORMAL) };
+    let new_monitor = unsafe { MonitorFromWindow(handle, MONITOR_DEFAULTTONULL) };
+    // all monitors disconnected
+    if new_monitor.is_invalid() {
+        log::error!("No monitor detected!");
+        return None;
+    }
+    let new_display = WindowsDisplay::new_with_handle(new_monitor);
+    state_ptr.as_ref().state.borrow_mut().display = new_display;
     Some(0)
 }
 
