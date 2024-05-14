@@ -1,6 +1,8 @@
 use gpui::{Subscription, Task, WeakModel};
 use language::Buffer;
 
+use crate::{LanguageModelRequestMessage, Role};
+
 pub struct RecentBuffersContext {
     pub enabled: bool,
     pub buffers: Vec<RecentBuffer>,
@@ -21,5 +23,15 @@ impl Default for RecentBuffersContext {
             message: String::new(),
             pending_message: None,
         }
+    }
+}
+
+impl RecentBuffersContext {
+    /// Returns the [`RecentBuffersContext`] as a message to the language model.
+    pub fn to_message(&self) -> Option<LanguageModelRequestMessage> {
+        self.enabled.then(|| LanguageModelRequestMessage {
+            role: Role::System,
+            content: self.message.clone(),
+        })
     }
 }

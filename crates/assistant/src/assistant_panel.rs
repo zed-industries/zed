@@ -778,6 +778,7 @@ impl AssistantPanel {
                 cx,
             )
         });
+
         self.show_conversation(editor.clone(), cx);
         Some(editor)
     }
@@ -1351,7 +1352,7 @@ struct Summary {
 pub struct Conversation {
     id: Option<String>,
     buffer: Model<Buffer>,
-    ambient_context: AmbientContext,
+    pub(crate) ambient_context: AmbientContext,
     message_anchors: Vec<MessageAnchor>,
     messages_metadata: HashMap<MessageId, MessageMetadata>,
     next_message_id: MessageId,
@@ -1519,6 +1520,17 @@ impl Conversation {
     fn toggle_recent_buffers(&mut self, cx: &mut ModelContext<Self>) {
         self.ambient_context.recent_buffers.enabled = !self.ambient_context.recent_buffers.enabled;
         self.update_recent_buffers_context(cx);
+    }
+
+    fn toggle_current_project_context(
+        &mut self,
+        fs: Arc<dyn Fs>,
+        project: WeakModel<Project>,
+        cx: &mut ModelContext<Self>,
+    ) {
+        self.ambient_context.current_project.enabled =
+            !self.ambient_context.current_project.enabled;
+        self.ambient_context.current_project.update(fs, project, cx);
     }
 
     fn set_recent_buffers(
@@ -1887,15 +1899,12 @@ impl Conversation {
     }
 
     fn to_completion_request(&self, cx: &mut ModelContext<Conversation>) -> LanguageModelRequest {
-        let messages = self
-            .ambient_context
-            .recent_buffers
-            .enabled
-            .then(|| LanguageModelRequestMessage {
-                role: Role::System,
-                content: self.ambient_context.recent_buffers.message.clone(),
-            })
+        let recent_buffers_context = self.ambient_context.recent_buffers.to_message();
+        let current_project_context = self.ambient_context.current_project.to_message();
+
+        let messages = recent_buffers_context
             .into_iter()
+            .chain(current_project_context)
             .chain(
                 self.messages(cx)
                     .filter(|message| matches!(message.status, MessageStatus::Done))
@@ -2533,6 +2542,11 @@ impl ConversationEditor {
     }
 
     fn update_message_headers(&mut self, cx: &mut ViewContext<Self>) {
+        let project = self
+            .workspace
+            .update(cx, |workspace, _cx| workspace.project().downgrade())
+            .unwrap();
+
         self.editor.update(cx, |editor, cx| {
             let buffer = editor.buffer().read(cx).snapshot(cx);
             let excerpt_id = *buffer.as_singleton().unwrap().0;
@@ -2549,6 +2563,8 @@ impl ConversationEditor {
                     height: 2,
                     style: BlockStyle::Sticky,
                     render: Box::new({
+                        let fs = self.fs.clone();
+                        let project = project.clone();
                         let conversation = self.conversation.clone();
                         move |cx| {
                             let message_id = message.id;
@@ -2630,31 +2646,40 @@ impl ConversationEditor {
                                                     Tooltip::text("Include Open Files", cx)
                                                 }),
                                         )
-                                        // .child(
-                                        //     IconButton::new("include_terminal", IconName::Terminal)
-                                        //         .icon_size(IconSize::Small)
-                                        //         .tooltip(|cx| {
-                                        //             Tooltip::text("Include Terminal", cx)
-                                        //         }),
-                                        // )
-                                        // .child(
-                                        //     IconButton::new(
-                                        //         "include_edit_history",
-                                        //         IconName::FileGit,
-                                        //     )
-                                        //     .icon_size(IconSize::Small)
-                                        //     .tooltip(
-                                        //         |cx| Tooltip::text("Include Edit History", cx),
-                                        //     ),
-                                        // )
-                                        // .child(
-                                        //     IconButton::new(
-                                        //         "include_file_trees",
-                                        //         IconName::FileTree,
-                                        //     )
-                                        //     .icon_size(IconSize::Small)
-                                        //     .tooltip(|cx| Tooltip::text("Include File Trees", cx)),
-                                        // )
+                                        .child(
+                                            IconButton::new(
+                                                "include_current_project",
+                                                IconName::FileTree,
+                                            )
+                                            .icon_size(IconSize::Small)
+                                            .selected(
+                                                conversation
+                                                    .read(cx)
+                                                    .ambient_context
+                                                    .current_project
+                                                    .enabled,
+                                            )
+                                            .on_click({
+                                                let fs = fs.clone();
+                                                let project = project.clone();
+                                                let conversation = conversation.downgrade();
+                                                move |_, cx| {
+                                                    let fs = fs.clone();
+                                                    let project = project.clone();
+                                                    conversation
+                                                        .update(cx, |conversation, cx| {
+                                                            conversation
+                                                                .toggle_current_project_context(
+                                                                    fs, project, cx,
+                                                                );
+                                                        })
+                                                        .ok();
+                                                }
+                                            })
+                                            .tooltip(
+                                                |cx| Tooltip::text("Include Current Project", cx),
+                                            ),
+                                        )
                                         .into_any()
                                 }))
                                 .into_any_element()

@@ -336,6 +336,7 @@ version = "0.1.0"
 dependencies = [
  "anthropic",
  "anyhow",
+ "cargo_toml",
  "chrono",
  "client",
  "collections",
@@ -368,6 +369,7 @@ dependencies = [
  "telemetry_events",
  "theme",
  "tiktoken-rs",
+ "toml 0.8.10",
  "ui",
  "util",
  "uuid",
