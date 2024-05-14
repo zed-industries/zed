@@ -58,7 +58,9 @@ use super::super::{open_uri_internal, read_fd, DOUBLE_CLICK_INTERVAL};
 use super::display::WaylandDisplay;
 use super::window::{ImeInput, WaylandWindowStatePtr};
 use crate::platform::linux::is_within_click_distance;
-use crate::platform::linux::wayland::clipboard::{Clipboard, FILE_LIST_MIME_TYPE, TEXT_MIME_TYPE};
+use crate::platform::linux::wayland::clipboard::{
+    Clipboard, DataOffer, DataOffersMap, FILE_LIST_MIME_TYPE, TEXT_MIME_TYPE,
+};
 use crate::platform::linux::wayland::cursor::Cursor;
 use crate::platform::linux::wayland::serial::{SerialKind, SerialTracker};
 use crate::platform::linux::wayland::window::WaylandWindow;
@@ -206,6 +208,7 @@ pub(crate) struct WaylandClientState {
     loop_handle: LoopHandle<'static, WaylandClientStatePtr>,
     cursor_style: Option<CursorStyle>,
     clipboard: Clipboard,
+    data_offers: DataOffersMap,
     cursor: Cursor,
     event_loop: Option<EventLoop<'static, WaylandClientStatePtr>>,
     common: LinuxCommon,
@@ -512,7 +515,8 @@ impl WaylandClient {
             loop_handle: handle.clone(),
             enter_token: None,
             cursor_style: None,
-            clipboard: Clipboard::new(),
+            clipboard: Clipboard::new(conn.clone()),
+            data_offers: DataOffersMap::new(),
             cursor,
             event_loop: Some(event_loop),
 
@@ -677,7 +681,7 @@ impl LinuxClient for WaylandClient {
             let data_source = data_device_manager.create_data_source(&state.globals.qh, ());
             data_source.offer(TEXT_MIME_TYPE.to_string());
             data_device.set_selection(Some(&data_source), serial);
-            state.clipboard.set_pending_write(item.text);
+            state.clipboard.set_contents(item.text);
         }
     }
 
@@ -687,19 +691,6 @@ impl LinuxClient for WaylandClient {
     }
 
     fn read_from_clipboard(&self) -> Option<crate::ClipboardItem> {
-        // TODO
-        // self.0
-        //     .borrow_mut()
-        //     .clipboard
-        //     .as_mut()
-        //     .unwrap()
-        //     .get_contents()
-        //     .ok()
-        //     .map(|s| crate::ClipboardItem {
-        //         text: s,
-        //         metadata: None,
-        //     })
-        // None
         self.0
             .borrow_mut()
             .clipboard
@@ -1089,6 +1080,7 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for WaylandClientStatePtr {
                 let keyboard_focused_window = get_window(&mut state, &surface.id());
                 state.keyboard_focused_window = None;
                 state.enter_token.take();
+                state.clipboard.set_offer(None);
 
                 if let Some(window) = keyboard_focused_window {
                     if let Some(ref mut compose) = state.compose_state {
@@ -1678,12 +1670,19 @@ impl Dispatch<wl_data_device::WlDataDevice, ()> for WaylandClientStatePtr {
 
         match event {
             // Clipboard
-            // wl_data_device::Event::DataOffer { id: data_offer } => {
-            //     println!("data_offer event: {data_offer:?}");
-            // }
+            wl_data_device::Event::DataOffer { id: data_offer } => {
+                state
+                    .data_offers
+                    .insert(data_offer.id(), DataOffer::new(data_offer));
+            }
             wl_data_device::Event::Selection { id: data_offer } => {
-                println!("selection event: {data_offer:?}");
-                state.clipboard.set_pending_read(data_offer);
+                if let Some(offer) = data_offer {
+                    let offer = state.data_offers.get(&offer.id());
+                    let offer = offer.cloned();
+                    state.clipboard.set_offer(offer);
+                } else {
+                    state.clipboard.set_offer(None);
+                }
             }
 
             // Drag and drop
@@ -1823,9 +1822,16 @@ impl Dispatch<wl_data_offer::WlDataOffer, ()> for WaylandClientStatePtr {
 
         match event {
             wl_data_offer::Event::Offer { mime_type } => {
-                if mime_type == TEXT_MIME_TYPE || mime_type == FILE_LIST_MIME_TYPE {
+                // Drag and drop
+                if mime_type == FILE_LIST_MIME_TYPE {
                     let serial = state.serial_tracker.get(SerialKind::DataDevice);
+                    let mime_type = mime_type.clone();
                     data_offer.accept(serial, Some(mime_type));
+                }
+
+                // Clipboard
+                if let Some(offer) = state.data_offers.get_mut(&data_offer.id()) {
+                    offer.add_mime_type(mime_type);
                 }
             }
             _ => {}
