@@ -10152,7 +10152,7 @@ impl Editor {
         indent_guides: &[(Range<usize>, language::IndentGuide)],
         snapshot: &DisplaySnapshot,
         cx: &WindowContext,
-    ) -> Option<Vec<usize>> {
+    ) -> Option<HashSet<usize>> {
         let selection = self.selections.newest::<Point>(cx);
         let selection_range = selection.range().sorted();
 
@@ -10282,13 +10282,13 @@ impl Editor {
             return None;
         }
 
-        let mut matches = Vec::new();
+        let mut matches = HashSet::default();
 
         for (i, (_, indent)) in candidates.iter() {
             // Find matches that are either an exact match, or partially on screen, or inside the fold
             if buffer_row_range.start <= indent.start_row && indent.end_row <= buffer_row_range.end
             {
-                matches.push(*i);
+                matches.insert(*i);
             }
         }
 
