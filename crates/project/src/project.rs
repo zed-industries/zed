@@ -2694,7 +2694,7 @@ impl Project {
                     };
 
                     let next_version = previous_snapshot.version + 1;
-
+                    dbg!(next_version);
                     buffer_snapshots.push(LspBufferSnapshot {
                         version: next_version,
                         snapshot: next_snapshot.clone(),

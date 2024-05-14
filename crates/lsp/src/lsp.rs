@@ -842,6 +842,7 @@ impl LanguageServer {
         let prev_handler = self.notification_handlers.lock().insert(
             method,
             Box::new(move |_, params, cx| {
+                dbg!(&params);
                 if let Some(params) = serde_json::from_str(params).log_err() {
                     f(params, cx);
                 }
