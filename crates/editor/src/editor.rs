@@ -53,6 +53,7 @@ use convert_case::{Case, Casing};
 use debounced_delay::DebouncedDelay;
 pub use display_map::DisplayPoint;
 use display_map::*;
+use editor_settings::CurrentLineHighlight;
 pub use editor_settings::EditorSettings;
 use element::LineWithInvisibles;
 pub use element::{
@@ -465,6 +466,7 @@ pub struct Editor {
     pending_rename: Option<RenameState>,
     searchable: bool,
     cursor_shape: CursorShape,
+    current_line_highlight: CurrentLineHighlight,
     collapse_matches: bool,
     autoindent_mode: Option<AutoindentMode>,
     workspace: Option<(WeakView<Workspace>, WorkspaceId)>,
@@ -519,6 +521,7 @@ pub struct EditorSnapshot {
     is_focused: bool,
     scroll_anchor: ScrollAnchor,
     ongoing_scroll: OngoingScroll,
+    current_line_highlight: CurrentLineHighlight,
 }
 
 const GIT_BLAME_GUTTER_WIDTH_CHARS: f32 = 53.;
@@ -1636,6 +1639,7 @@ impl Editor {
             pending_rename: Default::default(),
             searchable: true,
             cursor_shape: Default::default(),
+            current_line_highlight: EditorSettings::get_global(cx).current_line_highlight,
             autoindent_mode: Some(AutoindentMode::EachLine),
             collapse_matches: false,
             workspace: None,
@@ -1850,6 +1854,7 @@ impl Editor {
             ongoing_scroll: self.scroll_manager.ongoing_scroll(),
             placeholder_text: self.placeholder_text.clone(),
             is_focused: self.focus_handle.is_focused(cx),
+            current_line_highlight: self.current_line_highlight,
         }
     }
 
@@ -1936,6 +1941,10 @@ impl Editor {
     pub fn set_cursor_shape(&mut self, cursor_shape: CursorShape, cx: &mut ViewContext<Self>) {
         self.cursor_shape = cursor_shape;
         cx.notify();
+    }
+
+    pub fn set_current_line_highlight(&mut self, current_line_highlight: CurrentLineHighlight) {
+        self.current_line_highlight = current_line_highlight;
     }
 
     pub fn set_collapse_matches(&mut self, collapse_matches: bool) {
@@ -4509,6 +4518,7 @@ impl Editor {
                     .icon_color(Color::Muted)
                     .selected(is_active)
                     .on_click(cx.listener(move |editor, _e, cx| {
+                        editor.focus(cx);
                         editor.toggle_code_actions(
                             &ToggleCodeActions {
                                 deployed_from_indicator: Some(row),
@@ -4540,12 +4550,13 @@ impl Editor {
         row: DisplayRow,
         cx: &mut ViewContext<Self>,
     ) -> IconButton {
-        IconButton::new("code_actions_indicator", ui::IconName::Play)
+        IconButton::new("run_indicator", ui::IconName::Play)
             .icon_size(IconSize::XSmall)
             .size(ui::ButtonSize::None)
             .icon_color(Color::Muted)
             .selected(is_active)
             .on_click(cx.listener(move |editor, _e, cx| {
+                editor.focus(cx);
                 editor.toggle_code_actions(
                     &ToggleCodeActions {
                         deployed_from_indicator: Some(row),
@@ -4634,6 +4645,11 @@ impl Editor {
         snippet: Snippet,
         cx: &mut ViewContext<Self>,
     ) -> Result<()> {
+        struct Tabstop<T> {
+            is_end_tabstop: bool,
+            ranges: Vec<Range<T>>,
+        }
+
         let tabstops = self.buffer.update(cx, |buffer, cx| {
             let snippet_text: Arc<str> = snippet.text.clone().into();
             buffer.edit(
@@ -4651,6 +4667,9 @@ impl Editor {
                 .tabstops
                 .iter()
                 .map(|tabstop| {
+                    let is_end_tabstop = tabstop.first().map_or(false, |tabstop| {
+                        tabstop.is_empty() && tabstop.start == snippet.text.len() as isize
+                    });
                     let mut tabstop_ranges = tabstop
                         .iter()
                         .flat_map(|tabstop_range| {
@@ -4660,29 +4679,41 @@ impl Editor {
                                 delta +=
                                     snippet.text.len() as isize - insertion_range.len() as isize;
 
-                                let start = snapshot.anchor_before(
-                                    (insertion_start + tabstop_range.start) as usize,
-                                );
-                                let end = snapshot
-                                    .anchor_after((insertion_start + tabstop_range.end) as usize);
-                                start..end
+                                let start = ((insertion_start + tabstop_range.start) as usize)
+                                    .min(snapshot.len());
+                                let end = ((insertion_start + tabstop_range.end) as usize)
+                                    .min(snapshot.len());
+                                snapshot.anchor_before(start)..snapshot.anchor_after(end)
                             })
                         })
                         .collect::<Vec<_>>();
                     tabstop_ranges.sort_unstable_by(|a, b| a.start.cmp(&b.start, snapshot));
-                    tabstop_ranges
+
+                    Tabstop {
+                        is_end_tabstop,
+                        ranges: tabstop_ranges,
+                    }
                 })
                 .collect::<Vec<_>>()
         });
 
         if let Some(tabstop) = tabstops.first() {
             self.change_selections(Some(Autoscroll::fit()), cx, |s| {
-                s.select_ranges(tabstop.iter().cloned());
+                s.select_ranges(tabstop.ranges.iter().cloned());
             });
-            self.snippet_stack.push(SnippetState {
-                active_index: 0,
-                ranges: tabstops,
-            });
+
+            // If we're already at the last tabstop and it's at the end of the snippet,
+            // we're done, we don't need to keep the state around.
+            if !tabstop.is_end_tabstop {
+                let ranges = tabstops
+                    .into_iter()
+                    .map(|tabstop| tabstop.ranges)
+                    .collect::<Vec<_>>();
+                self.snippet_stack.push(SnippetState {
+                    active_index: 0,
+                    ranges,
+                });
+            }
 
             // Check whether the just-entered snippet ends with an auto-closable bracket.
             if self.autoclose_regions.is_empty() {
@@ -10261,6 +10292,7 @@ impl Editor {
         let editor_settings = EditorSettings::get_global(cx);
         self.scroll_manager.vertical_scroll_margin = editor_settings.vertical_scroll_margin;
         self.show_breadcrumbs = editor_settings.toolbar.breadcrumbs;
+        self.current_line_highlight = editor_settings.current_line_highlight;
 
         if self.mode == EditorMode::Full {
             let inline_blame_enabled = ProjectSettings::get_global(cx).git.inline_blame_enabled();

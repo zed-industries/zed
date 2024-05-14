@@ -200,6 +200,18 @@ impl FocusHandle {
     pub fn contains(&self, other: &Self, cx: &WindowContext) -> bool {
         self.id.contains(other.id, cx)
     }
+
+    /// Dispatch an action on the element that rendered this focus handle
+    pub fn dispatch_action(&self, action: &dyn Action, cx: &mut WindowContext) {
+        if let Some(node_id) = cx
+            .window
+            .rendered_frame
+            .dispatch_tree
+            .focusable_node_id(self.id)
+        {
+            cx.dispatch_action_on_node(node_id, action)
+        }
+    }
 }
 
 impl Clone for FocusHandle {

@@ -3,17 +3,18 @@ use std::sync::Arc;
 use crate::active_item_selection_properties;
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{
-    impl_actions, rems, AppContext, DismissEvent, EventEmitter, FocusableView, InteractiveElement,
-    Model, ParentElement, Render, SharedString, Styled, Subscription, View, ViewContext,
-    VisualContext, WeakView,
+    impl_actions, rems, AnyElement, AppContext, DismissEvent, EventEmitter, FocusableView,
+    InteractiveElement, Model, ParentElement, Render, SharedString, Styled, Subscription, View,
+    ViewContext, VisualContext, WeakView,
 };
 use picker::{highlighted_match_with_paths::HighlightedText, Picker, PickerDelegate};
 use project::{Inventory, TaskSourceKind};
 use task::{ResolvedTask, TaskContext, TaskTemplate};
 use ui::{
-    div, v_flex, ButtonCommon, ButtonSize, Clickable, Color, FluentBuilder as _, Icon, IconButton,
-    IconButtonShape, IconName, IconSize, ListItem, ListItemSpacing, RenderOnce, Selectable,
-    Tooltip, WindowContext,
+    div, h_flex, v_flex, ActiveTheme, Button, ButtonCommon, ButtonSize, Clickable, Color,
+    FluentBuilder as _, Icon, IconButton, IconButtonShape, IconName, IconSize, IntoElement,
+    KeyBinding, LabelSize, ListItem, ListItemSpacing, RenderOnce, Selectable, Tooltip,
+    WindowContext,
 };
 use util::ResultExt;
 use workspace::{tasks::schedule_resolved_task, ModalView, Workspace};
@@ -87,7 +88,7 @@ impl TasksModalDelegate {
             selected_index: 0,
             prompt: String::default(),
             task_context,
-            placeholder_text: Arc::from("Run a task..."),
+            placeholder_text: Arc::from("Find a task, or run a command"),
         }
     }
 
@@ -352,12 +353,37 @@ impl PickerDelegate for TasksModalDelegate {
             TaskSourceKind::Language { name } => file_icons::FileIcons::get(cx)
                 .get_type_icon(&name.to_lowercase())
                 .map(|icon_path| Icon::from_path(icon_path)),
+        }
+        .map(|icon| icon.color(Color::Muted).size(IconSize::Small));
+        let history_run_icon = if Some(ix) <= self.divider_index {
+            Some(
+                Icon::new(IconName::HistoryRerun)
+                    .color(Color::Muted)
+                    .size(IconSize::Small)
+                    .into_any_element(),
+            )
+        } else {
+            Some(
+                v_flex()
+                    .flex_none()
+                    .size(IconSize::Small.rems())
+                    .into_any_element(),
+            )
         };
 
         Some(
             ListItem::new(SharedString::from(format!("tasks-modal-{ix}")))
-                .inset(true)
+                .inset(false)
+                .start_slot::<Icon>(icon)
+                .end_slot::<AnyElement>(history_run_icon)
                 .spacing(ListItemSpacing::Sparse)
+                // .map(|this| {
+                //     if Some(ix) <= self.divider_index {
+                //         this.start_slot(Icon::new(IconName::HistoryRerun).size(IconSize::Small))
+                //     } else {
+                //         this.start_slot(v_flex().flex_none().size(IconSize::Small.rems()))
+                //     }
+                // })
                 .when_some(tooltip_label, |list_item, item_label| {
                     list_item.tooltip(move |_| item_label.clone())
                 })
@@ -392,11 +418,7 @@ impl PickerDelegate for TasksModalDelegate {
                     } else {
                         item
                     };
-                    if let Some(icon) = icon {
-                        item.end_slot(icon)
-                    } else {
-                        item
-                    }
+                    item
                 })
                 .selected(selected)
                 .child(highlighted_location.render(cx)),
@@ -428,6 +450,80 @@ impl PickerDelegate for TasksModalDelegate {
         } else {
             Vec::new()
         }
+    }
+    fn render_footer(&self, cx: &mut ViewContext<Picker<Self>>) -> Option<gpui::AnyElement> {
+        let is_recent_selected = self.divider_index >= Some(self.selected_index);
+        let current_modifiers = cx.modifiers();
+        Some(
+            h_flex()
+                .w_full()
+                .h_8()
+                .p_2()
+                .justify_between()
+                .rounded_b_md()
+                .bg(cx.theme().colors().ghost_element_selected)
+                .children(
+                    KeyBinding::for_action(&picker::UseSelectedQuery, cx).map(|keybind| {
+                        let edit_entry_label = if is_recent_selected {
+                            "Edit task"
+                        } else if !self.matches.is_empty() {
+                            "Edit template"
+                        } else {
+                            "Rerun last task"
+                        };
+
+                        Button::new("edit-current-task", edit_entry_label)
+                            .label_size(LabelSize::Small)
+                            .key_binding(keybind)
+                    }),
+                )
+                .map(|this| {
+                    if current_modifiers.alt || self.matches.is_empty() {
+                        this.children(
+                            KeyBinding::for_action(
+                                &picker::ConfirmInput {
+                                    secondary: current_modifiers.secondary(),
+                                },
+                                cx,
+                            )
+                            .map(|keybind| {
+                                let spawn_oneshot_label = if current_modifiers.secondary() {
+                                    "Spawn oneshot without history"
+                                } else {
+                                    "Spawn oneshot"
+                                };
+
+                                Button::new("spawn-onehshot", spawn_oneshot_label)
+                                    .label_size(LabelSize::Small)
+                                    .key_binding(keybind)
+                            }),
+                        )
+                    } else if current_modifiers.secondary() {
+                        this.children(KeyBinding::for_action(&menu::SecondaryConfirm, cx).map(
+                            |keybind| {
+                                let label = if is_recent_selected {
+                                    "Rerun without history"
+                                } else {
+                                    "Spawn without history"
+                                };
+                                Button::new("spawn", label)
+                                    .label_size(LabelSize::Small)
+                                    .key_binding(keybind)
+                            },
+                        ))
+                    } else {
+                        this.children(KeyBinding::for_action(&menu::Confirm, cx).map(|keybind| {
+                            let run_entry_label =
+                                if is_recent_selected { "Rerun" } else { "Spawn" };
+
+                            Button::new("spawn", run_entry_label)
+                                .label_size(LabelSize::Small)
+                                .key_binding(keybind)
+                        }))
+                    }
+                })
+                .into_any_element(),
+        )
     }
 }
 
@@ -787,7 +883,7 @@ mod tests {
         let tasks_picker = open_spawn_tasks(&workspace, cx);
         assert_eq!(
             task_names(&tasks_picker, cx),
-            vec!["TypeScript task from file /dir/a1.ts", "Another task from file /dir/a1.ts", "Task without variables"],
+            vec!["TypeScript task from file /dir/a1.ts", "TypeScript task from file /dir/a1.ts", "Another task from file /dir/a1.ts", "Task without variables"],
             "After spawning the task and getting it into the history, it should be up in the sort as recently used"
         );
         tasks_picker.update(cx, |_, cx| {
