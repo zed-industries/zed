@@ -78,3 +78,58 @@ After you submit your first message, a name for your conversation is generated b
 ## Multiple cursor demo
 
 The assistant is capable of sending multiple requests, and receiving multiple responses, in parallel. [Here's a demo](https://zed.dev/img/post/assistant/demo.webm).
+
+## Using a custom API endpoint for OpenAI
+
+You can use a custom API endpoint for OpenAI, as long as it's compatible with the OpenAI API structure.
+
+To do so, add the following to your Zed `settings.json`:
+
+```json
+{
+  "assistant": {
+    "version": "1",
+    "provider": {
+      "name": "openai",
+      "type": "openai",
+      "default_model": "gpt-4-turbo-preview",
+      "api_url": "http://localhost:11434/v1"
+    }
+  }
+}
+```
+
+The custom URL here is `http://localhost:11434/v1`.
+
+## Using Ollama on macOS
+
+You can use Ollama with the Zed assistant by making Ollama appear as an OpenAPI endpoint.
+
+1. Add the following to your Zed `settings.json`:
+
+  ```json
+  {
+    "assistant": {
+      "version": "1",
+      "provider": {
+        "name": "openai",
+        "type": "openai",
+        "default_model": "gpt-4-turbo-preview",
+        "api_url": "http://localhost:11434/v1"
+      }
+    }
+  }
+  ```
+2. Download, for example, the `mistral` model with Ollama:
+  ```
+  ollama run mistral
+  ```
+3. Copy the model and change its name to match the model in the Zed `settings.json`:
+  ```
+  ollama cp mistral gpt-4-turbo-preview
+  ```
+4. Use `assistant: reset key` (see the [Setup](#setup) section above) and enter the following API key:
+  ```
+  ollama
+  ```
+5. Restart Zed
