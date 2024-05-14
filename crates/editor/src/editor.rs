@@ -10162,7 +10162,7 @@ impl Editor {
         cx: &WindowContext,
     ) -> Option<HashSet<usize>> {
         let selection = self.selections.newest::<Point>(cx);
-        let selection_range = selection.range().sorted();
+        let selection_range = selection.range();
 
         let (buffer_row_range, buffer_snapshot, buffer_id) =
             if let Some((_, buffer_id, _)) = snapshot.buffer_snapshot.as_singleton() {
@@ -10172,34 +10172,23 @@ impl Editor {
                     buffer_id,
                 )
             } else {
-                let excerpt = snapshot
+                let (buffer_snapshot, start_point) = snapshot
                     .buffer_snapshot
-                    .excerpt_containing(selection_range.clone())?;
+                    .buffer_line_for_row(MultiBufferRow(selection_range.start.row))?;
 
-                let buffer_id = excerpt.buffer().remote_id();
-                let buffer_snapshot = excerpt.buffer();
-
-                let selection_range = snapshot
+                let (buffer_snapshot_end, end_point) = snapshot
                     .buffer_snapshot
-                    .point_to_offset(selection_range.start)
-                    ..snapshot
-                        .buffer_snapshot
-                        .point_to_offset(selection_range.end);
-                let excerpt_selection_range = excerpt.map_range_to_buffer(selection_range);
-                let selection_start_row = excerpt
-                    .buffer()
-                    .offset_to_point(excerpt_selection_range.start)
-                    .row;
-                let selection_end_row = excerpt
-                    .buffer()
-                    .offset_to_point(excerpt_selection_range.end)
-                    .row;
+                    .buffer_line_for_row(MultiBufferRow(selection_range.end.row))?;
 
-                (
-                    selection_start_row..selection_end_row,
-                    Some(buffer_snapshot),
-                    buffer_id,
-                )
+                let start_row = start_point.start.row;
+                let mut end_row = end_point.start.row;
+
+                if buffer_snapshot.remote_id() != buffer_snapshot_end.remote_id() {
+                    end_row = buffer_snapshot.max_point().row;
+                }
+
+                let buffer_id = buffer_snapshot.remote_id();
+                (start_row..end_row, Some(buffer_snapshot), buffer_id)
             };
 
         let mut containing_range = None;
