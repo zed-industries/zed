@@ -799,7 +799,9 @@ fn handle_display_change_msg(handle: HWND, state_ptr: Rc<WindowsWindowStatePtr>)
     // display disconnected
     // in this case, the OS will move our window to another monitor, and minimize it.
     // we deminimize the window and query the monitor after moving
-    unsafe { ShowWindow(handle, SW_SHOWNORMAL) };
+    unsafe {
+        let _ = ShowWindow(handle, SW_SHOWNORMAL);
+    };
     let new_monitor = unsafe { MonitorFromWindow(handle, MONITOR_DEFAULTTONULL) };
     // all monitors disconnected
     if new_monitor.is_invalid() {
