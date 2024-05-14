@@ -59,7 +59,7 @@ use xkbcommon::xkb::ffi::XKB_KEYMAP_FORMAT_TEXT_V1;
 use xkbcommon::xkb::{self, Keycode, KEYMAP_COMPILE_NO_FLAGS};
 
 use super::super::{open_uri_internal, read_fd, DOUBLE_CLICK_INTERVAL};
-use super::window::{WaylandWindowState, WaylandWindowStatePtr};
+use super::window::{ImeInput, WaylandWindowState, WaylandWindowStatePtr};
 use crate::platform::linux::is_within_click_distance;
 use crate::platform::linux::wayland::cursor::Cursor;
 use crate::platform::linux::wayland::serial::{SerialKind, SerialTracker};
@@ -858,7 +858,7 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for WaylandClientStatePtr {
                     }
                     state.pre_edit_text.take();
                     drop(state);
-                    window.handle_ime_delete();
+                    window.handle_ime(ImeInput::DeleteText);
                     window.set_focused(false);
                 }
             }
@@ -916,7 +916,7 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for WaylandClientStatePtr {
                                     let pre_edit =
                                         state.pre_edit_text.clone().unwrap_or(String::default());
                                     drop(state);
-                                    focused_window.handle_ime_preedit(pre_edit);
+                                    focused_window.handle_ime(ImeInput::SetMarkedText(pre_edit));
                                     state = client.borrow_mut();
                                 }
 
@@ -929,12 +929,13 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for WaylandClientStatePtr {
                                     let pre_edit = state.pre_edit_text.take();
                                     drop(state);
                                     if let Some(pre_edit) = pre_edit {
-                                        focused_window.handle_ime_commit(pre_edit);
+                                        focused_window.handle_ime(ImeInput::InsertText(pre_edit));
                                     }
                                     if let Some(current_key) =
                                         Keystroke::underlying_dead_key(keysym)
                                     {
-                                        focused_window.handle_ime_preedit(current_key);
+                                        focused_window
+                                            .handle_ime(ImeInput::SetMarkedText(current_key));
                                     }
                                     compose.feed(keysym);
                                     state = client.borrow_mut();
@@ -1041,7 +1042,7 @@ impl Dispatch<zwp_text_input_v3::ZwpTextInputV3, ()> for WaylandClientStatePtr {
 
                 if let Some(commit_text) = text {
                     drop(state);
-                    window.handle_ime_commit(commit_text);
+                    window.handle_ime(ImeInput::InsertText(commit_text));
                 }
             }
             zwp_text_input_v3::Event::PreeditString {
@@ -1060,7 +1061,7 @@ impl Dispatch<zwp_text_input_v3::ZwpTextInputV3, ()> for WaylandClientStatePtr {
 
                 if let Some(text) = state.pre_edit_text.take() {
                     drop(state);
-                    window.handle_ime_preedit(text);
+                    window.handle_ime(ImeInput::SetMarkedText(text));
                     if let Some(area) = window.get_ime_area() {
                         text_input.set_cursor_rectangle(
                             area.origin.x.0 as i32,
@@ -1074,7 +1075,7 @@ impl Dispatch<zwp_text_input_v3::ZwpTextInputV3, ()> for WaylandClientStatePtr {
                     }
                 } else {
                     drop(state);
-                    window.handle_ime_delete();
+                    window.handle_ime(ImeInput::DeleteText);
                 }
             }
             _ => {}
@@ -1200,14 +1201,14 @@ impl Dispatch<wl_pointer::WlPointer, ()> for WaylandClientStatePtr {
                 }
                 match button_state {
                     wl_pointer::ButtonState::Pressed => {
-                        if let (Some(window), Some(pre_edit), Some(compose_state)) = (
+                        if let (Some(window), Some(text), Some(compose_state)) = (
                             state.keyboard_focused_window.clone(),
                             state.pre_edit_text.take(),
                             state.compose_state.as_mut(),
                         ) {
                             compose_state.reset();
                             drop(state);
-                            window.handle_ime_commit(pre_edit);
+                            window.handle_ime(ImeInput::InsertText(text));
                             state = client.borrow_mut();
                         }
                         let click_elapsed = state.click.last_click.elapsed();
