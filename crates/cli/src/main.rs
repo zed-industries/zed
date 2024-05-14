@@ -101,13 +101,6 @@ fn main() -> Result<()> {
         paths.push(canonicalized.to_string(|path| path.display().to_string()))
     }
 
-    // {"server_url": "http://localhost:8080"}
-    // ssh -R 8080:localhost:8080 localhost
-
-    // ssh dev
-    // `gh cs ssh`
-    // `doctl ssh`
-
     let (server, server_name) =
         IpcOneShotServer::<IpcHandshake>::new().context("Handshake before Zed spawn")?;
     let url = format!("zed-cli://{server_name}");
