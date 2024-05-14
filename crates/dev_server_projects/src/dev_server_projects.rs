@@ -39,6 +39,7 @@ impl From<proto::DevServerProject> for DevServerProject {
 pub struct DevServer {
     pub id: DevServerId,
     pub name: SharedString,
+    pub ssh_connection_string: Option<SharedString>,
     pub status: DevServerStatus,
 }
 
@@ -48,6 +49,7 @@ impl From<proto::DevServer> for DevServer {
             id: DevServerId(dev_server.dev_server_id),
             status: dev_server.status(),
             name: dev_server.name.into(),
+            ssh_connection_string: dev_server.ssh_connection_string.map(|s| s.into()),
         }
     }
 }

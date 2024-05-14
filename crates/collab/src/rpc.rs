@@ -2379,7 +2379,6 @@ async fn create_dev_server(
         dev_server_id: dev_server.id.0 as u64,
         access_token: auth::generate_dev_server_token(dev_server.id.0 as usize, access_token),
         name: request.name,
-        ssh_connection_string: request.ssh_connection_string,
     })?;
     Ok(())
 }
