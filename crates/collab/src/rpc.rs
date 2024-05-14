@@ -4341,7 +4341,7 @@ async fn complete_with_open_ai(
 ) -> Result<()> {
     let mut completion_stream = open_ai::stream_completion(
         session.http_client.as_ref(),
-        open_ai_api_url(),
+        open_ai_api_url().as_str(),
         &api_key,
         crate::ai::language_model_request_to_open_ai(request)?,
         None,
