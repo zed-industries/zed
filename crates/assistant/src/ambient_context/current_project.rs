@@ -18,6 +18,7 @@ pub struct CurrentProjectContext {
     pub pending_message: Option<Task<()>>,
 }
 
+#[allow(clippy::derivable_impls)]
 impl Default for CurrentProjectContext {
     fn default() -> Self {
         Self {
@@ -82,7 +83,7 @@ impl CurrentProjectContext {
     }
 
     async fn build_message(fs: Arc<dyn Fs>, path_to_cargo_toml: &Path) -> Result<String> {
-        let buffer = fs.load(&path_to_cargo_toml).await?;
+        let buffer = fs.load(path_to_cargo_toml).await?;
         let cargo_toml: cargo_toml::Manifest = toml::from_str(&buffer)?;
 
         let mut message = String::new();
