@@ -45,6 +45,7 @@ ui.workspace = true
 util.workspace = true
 uuid.workspace = true
 workspace.workspace = true
+serde_yml = "0.0.6"
 
 [dev-dependencies]
 ctor.workspace = true

@@ -1,6 +1,7 @@
 use crate::{
     assistant_settings::{AssistantDockPosition, AssistantSettings, ZedDotDevModel},
     codegen::{self, Codegen, CodegenKind},
+    prompt_library::PromptLibrary,
     prompts::generate_content_prompt,
     Assist, CompletionProvider, CycleMessageRole, InlineAssist, LanguageModel,
     LanguageModelRequest, LanguageModelRequestMessage, MessageId, MessageMetadata, MessageStatus,
@@ -94,6 +95,7 @@ pub struct AssistantPanel {
     focus_handle: FocusHandle,
     toolbar: View<Toolbar>,
     languages: Arc<LanguageRegistry>,
+    prompt_library: PromptLibrary,
     fs: Arc<dyn Fs>,
     telemetry: Arc<Telemetry>,
     _subscriptions: Vec<Subscription>,
@@ -125,6 +127,9 @@ impl AssistantPanel {
                 .await
                 .log_err()
                 .unwrap_or_default();
+
+            let mut prompt_library = PromptLibrary::new();
+            prompt_library.load_prompts(fs.clone()).log_err();
 
             // TODO: deserialize state.
             let workspace_handle = workspace.clone();
@@ -188,6 +193,7 @@ impl AssistantPanel {
                         focus_handle,
                         toolbar,
                         languages: workspace.app_state().languages.clone(),
+                        prompt_library,
                         fs: workspace.app_state().fs.clone(),
                         telemetry: workspace.client().telemetry().clone(),
                         width: None,
@@ -1002,6 +1008,17 @@ impl AssistantPanel {
                                         &Default::default(),
                                         cx,
                                     )
+                                })
+                                .ok();
+                        }
+                    })
+                    // This is an MVP approach to allow us to play around with the prompt library. I don't expect this to be the long term approach.
+                    .entry("Insert Active Prompt", None, {
+                        let workspace = workspace.clone();
+                        move |cx| {
+                            workspace
+                                .update(cx, |workspace, cx| {
+                                    ConversationEditor::insert_active_prompt(workspace, cx)
                                 })
                                 .ok();
                         }
@@ -2755,6 +2772,32 @@ impl ConversationEditor {
                         conversation
                             .editor
                             .update(cx, |editor, cx| editor.insert(&text, cx))
+                    });
+                };
+            });
+        }
+    }
+
+    fn insert_active_prompt(workspace: &mut Workspace, cx: &mut ViewContext<Workspace>) {
+        let Some(panel) = workspace.panel::<AssistantPanel>(cx) else {
+            return;
+        };
+
+        if !panel.focus_handle(cx).contains_focused(cx) {
+            workspace.toggle_panel_focus::<AssistantPanel>(cx);
+        }
+
+        if let Some(active_prompt) = panel.read(cx).prompt_library.active_prompt() {
+            panel.update(cx, |panel, cx| {
+                if let Some(conversation) = panel
+                    .active_conversation_editor()
+                    .cloned()
+                    .or_else(|| panel.new_conversation(cx))
+                {
+                    conversation.update(cx, |conversation, cx| {
+                        conversation
+                            .editor
+                            .update(cx, |editor, cx| editor.insert(&active_prompt, cx))
                     });
                 };
             });
