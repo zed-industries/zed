@@ -306,7 +306,7 @@ fn main() {
         Task::ready(())
     } else {
         app.background_executor().spawn(async {
-            #[cfg(unix))]
+            #[cfg(unix)]
             {
                 load_shell_from_passwd().await.log_err();
             }
