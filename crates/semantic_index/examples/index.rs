@@ -45,7 +45,7 @@ fn main() {
         let embedding_provider = Arc::new(OpenAiEmbeddingProvider::new(
             http.clone(),
             OpenAiEmbeddingModel::TextEmbedding3Small,
-            open_ai::OPEN_AI_API_URL.to_string(),
+            open_ai::open_ai_api_url(),
             api_key,
         ));
 

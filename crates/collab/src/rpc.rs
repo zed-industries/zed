@@ -32,7 +32,7 @@ use axum::{
 use collections::{HashMap, HashSet};
 pub use connection_pool::{ConnectionPool, ZedVersion};
 use core::fmt::{self, Debug, Formatter};
-use open_ai::{OpenAiEmbeddingModel, OPEN_AI_API_URL};
+use open_ai::{OpenAiEmbeddingModel, open_ai_api_url};
 use sha2::Digest;
 use supermaven_api::{CreateExternalUserRequest, SupermavenAdminApi};
 
@@ -4341,7 +4341,7 @@ async fn complete_with_open_ai(
 ) -> Result<()> {
     let mut completion_stream = open_ai::stream_completion(
         session.http_client.as_ref(),
-        OPEN_AI_API_URL,
+        open_ai_api_url(),
         &api_key,
         crate::ai::language_model_request_to_open_ai(request)?,
         None,
@@ -4662,7 +4662,7 @@ async fn compute_embeddings(
         "openai/text-embedding-3-small" => {
             open_ai::embed(
                 session.http_client.as_ref(),
-                OPEN_AI_API_URL,
+                open_ai_api_url(),
                 &api_key,
                 OpenAiEmbeddingModel::TextEmbedding3Small,
                 request.texts.iter().map(|text| text.as_str()),

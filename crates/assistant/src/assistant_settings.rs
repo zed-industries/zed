@@ -1,6 +1,7 @@
 use std::fmt;
 
 use gpui::Pixels;
+use open_ai::open_ai_api_url;
 pub use open_ai::Model as OpenAiModel;
 use schemars::{
     schema::{InstanceType, Metadata, Schema, SchemaObject},
@@ -167,7 +168,7 @@ impl Default for AssistantProvider {
 }
 
 fn open_ai_url() -> String {
-    "https://api.openai.com/v1".into()
+    open_ai_api_url().into()
 }
 
 #[derive(Default, Debug, Deserialize, Serialize)]
