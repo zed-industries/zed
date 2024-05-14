@@ -163,7 +163,8 @@ mod linux {
             unix::net::{SocketAddr, UnixDatagram},
         },
         path::{Path, PathBuf},
-        process, thread,
+        process::{self, ExitStatus},
+        thread,
         time::Duration,
     };
 
@@ -232,7 +233,9 @@ mod linux {
         }
 
         fn run_foreground(&self, ipc_url: String) -> io::Result<ExitStatus> {
-            std::process::Command::new(self.0).arg(ipc_url).status()
+            std::process::Command::new(self.0.clone())
+                .arg(ipc_url)
+                .status()
         }
     }
 
@@ -283,7 +286,9 @@ mod linux {
 #[cfg(target_os = "windows")]
 mod windows {
     use crate::{Detect, InstalledApp};
+    use std::io;
     use std::path::Path;
+    use std::process::ExitStatus;
 
     struct App;
     impl InstalledApp for App {
