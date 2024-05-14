@@ -418,15 +418,6 @@ impl WaylandWindowStatePtr {
     }
 
     pub fn handle_ime_commit(&self, text: String) {
-        if let Some(ref mut fun) = self.callbacks.borrow_mut().input {
-            if !fun(PlatformInput::KeyUp(crate::KeyUpEvent {
-                keystroke: crate::Keystroke::default(),
-            }))
-            .propagate
-            {
-                return;
-            }
-        }
         let mut state = self.state.borrow_mut();
         if let Some(mut input_handler) = state.input_handler.take() {
             drop(state);
@@ -436,15 +427,6 @@ impl WaylandWindowStatePtr {
     }
 
     pub fn handle_ime_preedit(&self, text: String) {
-        if let Some(ref mut fun) = self.callbacks.borrow_mut().input {
-            if !fun(PlatformInput::KeyUp(crate::KeyUpEvent {
-                keystroke: crate::Keystroke::default(),
-            }))
-            .propagate
-            {
-                return;
-            }
-        }
         let mut state = self.state.borrow_mut();
         if let Some(mut input_handler) = state.input_handler.take() {
             drop(state);
