@@ -81,6 +81,7 @@ impl ZedDotDevCompletionProvider {
             LanguageModel::OpenAi(_) => future::ready(Err(anyhow!("invalid model"))).boxed(),
             LanguageModel::ZedDotDev(ZedDotDevModel::Gpt4)
             | LanguageModel::ZedDotDev(ZedDotDevModel::Gpt4Turbo)
+            | LanguageModel::ZedDotDev(ZedDotDevModel::Gpt4Omni)
             | LanguageModel::ZedDotDev(ZedDotDevModel::Gpt3Point5Turbo) => {
                 count_open_ai_tokens(request, cx.background_executor())
             }

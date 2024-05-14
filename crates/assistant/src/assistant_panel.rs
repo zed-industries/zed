@@ -803,12 +803,13 @@ impl AssistantPanel {
             LanguageModel::ZedDotDev(model) => LanguageModel::ZedDotDev(match &model {
                 ZedDotDevModel::Gpt3Point5Turbo => ZedDotDevModel::Gpt4,
                 ZedDotDevModel::Gpt4 => ZedDotDevModel::Gpt4Turbo,
-                ZedDotDevModel::Gpt4Turbo => ZedDotDevModel::Claude3Opus,
+                ZedDotDevModel::Gpt4Turbo => ZedDotDevModel::Gpt4Omni,
+                ZedDotDevModel::Gpt4Omni => ZedDotDevModel::Claude3Opus,
                 ZedDotDevModel::Claude3Opus => ZedDotDevModel::Claude3Sonnet,
                 ZedDotDevModel::Claude3Sonnet => ZedDotDevModel::Claude3Haiku,
                 ZedDotDevModel::Claude3Haiku => {
                     match CompletionProvider::global(cx).default_model() {
-                        LanguageModel::ZedDotDev(custom) => custom,
+                        LanguageModel::ZedDotDev(custom @ ZedDotDevModel::Custom(_)) => custom,
                         _ => ZedDotDevModel::Gpt3Point5Turbo,
                     }
                 }
