@@ -1572,9 +1572,9 @@ impl Conversation {
         writeln!(message, "path/to/file.md").unwrap();
         writeln!(message, "```markdown").unwrap();
         writeln!(message, "1 The quick brown fox").unwrap();
-        writeln!(message, "2 jumps over teh layz").unwrap();
-        writeln!(message, "             --- error: misspelled 'the'").unwrap();
-        writeln!(message, "                 ---- error: misspelled 'lazy'").unwrap();
+        writeln!(message, "2 jumps over one active").unwrap();
+        writeln!(message, "             --- error: should be 'the'").unwrap();
+        writeln!(message, "                 ------ error: should be 'lazy'").unwrap();
         writeln!(message, "3 dog").unwrap();
         writeln!(message, "```").unwrap();
 
