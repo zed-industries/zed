@@ -12,7 +12,7 @@ workspace = true
 
 [features]
 default = []
-test-support = ["backtrace", "collections/test-support", "util/test-support"]
+test-support = ["backtrace", "collections/test-support", "util/test-support", "http/test-support"]
 runtime_shaders = []
 macos-blade = ["blade-graphics", "blade-macros", "bytemuck"]
 
@@ -35,6 +35,7 @@ etagere = "0.2"
 futures.workspace = true
 font-kit = { git = "https://github.com/zed-industries/font-kit", rev = "5a5c4d4" }
 gpui_macros.workspace = true
+http.workspace = true
 image = "0.23"
 itertools.workspace = true
 lazy_static.workspace = true
@@ -72,6 +73,7 @@ waker-fn = "1.1.0"
 backtrace = "0.3"
 collections = { workspace = true, features = ["test-support"] }
 util = { workspace = true, features = ["test-support"] }
+http = { workspace = true, features = ["test-support"] }
 
 [target.'cfg(target_os = "macos")'.build-dependencies]
 bindgen = "0.65.1"

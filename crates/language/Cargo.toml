@@ -34,6 +34,7 @@ fuzzy.workspace = true
 git.workspace = true
 globset.workspace = true
 gpui.workspace = true
+http.workspace = true
 itertools.workspace = true
 lazy_static.workspace = true
 log.workspace = true
@@ -82,3 +83,4 @@ tree-sitter-rust.workspace = true
 tree-sitter-typescript.workspace = true
 unindent.workspace = true
 util = { workspace = true, features = ["test-support"] }
+http = { workspace = true, features = ["test-support"] }

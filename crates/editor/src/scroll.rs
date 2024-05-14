@@ -6,8 +6,8 @@ use crate::{
     display_map::{DisplaySnapshot, ToDisplayPoint},
     hover_popover::hide_hover,
     persistence::DB,
-    Anchor, DisplayPoint, Editor, EditorEvent, EditorMode, EditorSettings, InlayHintRefreshReason,
-    MultiBufferSnapshot, ToPoint,
+    Anchor, DisplayPoint, DisplayRow, Editor, EditorEvent, EditorMode, EditorSettings,
+    InlayHintRefreshReason, MultiBufferSnapshot, RowExt, ToPoint,
 };
 pub use autoscroll::{Autoscroll, AutoscrollStrategy};
 use gpui::{point, px, AppContext, Entity, Global, Pixels, Task, ViewContext, WindowContext};
@@ -48,7 +48,7 @@ impl ScrollAnchor {
         if self.anchor == Anchor::min() {
             scroll_position.y = 0.;
         } else {
-            let scroll_top = self.anchor.to_display_point(snapshot).row() as f32;
+            let scroll_top = self.anchor.to_display_point(snapshot).row().as_f32();
             scroll_position.y = scroll_top + scroll_position.y;
         }
         scroll_position
@@ -200,7 +200,7 @@ impl ScrollManager {
             )
         } else {
             let scroll_top_buffer_point =
-                DisplayPoint::new(scroll_position.y as u32, 0).to_point(&map);
+                DisplayPoint::new(DisplayRow(scroll_position.y as u32), 0).to_point(&map);
             let top_anchor = map
                 .buffer_snapshot
                 .anchor_at(scroll_top_buffer_point, Bias::Right);
@@ -210,7 +210,7 @@ impl ScrollManager {
                     anchor: top_anchor,
                     offset: point(
                         scroll_position.x.max(0.),
-                        scroll_position.y - top_anchor.to_display_point(&map).row() as f32,
+                        scroll_position.y - top_anchor.to_display_point(&map).row().as_f32(),
                     ),
                 },
                 scroll_top_buffer_point.row,
@@ -472,7 +472,7 @@ impl Editor {
         }
 
         if let Some(visible_lines) = self.visible_line_count() {
-            if newest_head.row() < screen_top.row() + visible_lines as u32 {
+            if newest_head.row() < DisplayRow(screen_top.row().0 + visible_lines as u32) {
                 return Ordering::Equal;
             }
         }

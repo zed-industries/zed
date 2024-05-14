@@ -1,15 +1,13 @@
 use crate::{
     assistant_settings::{AssistantDockPosition, AssistantSettings, ZedDotDevModel},
     codegen::{self, Codegen, CodegenKind},
-    embedded_scope::EmbeddedScope,
     prompts::generate_content_prompt,
-    Assist, CompletionProvider, CycleMessageRole, InjectSearch, InlineAssist, LanguageModel,
+    Assist, CompletionProvider, CycleMessageRole, InlineAssist, LanguageModel,
     LanguageModelRequest, LanguageModelRequestMessage, MessageId, MessageMetadata, MessageStatus,
     QuoteSelection, ResetKey, Role, SavedConversation, SavedConversationMetadata, SavedMessage,
     Split, ToggleFocus, ToggleHistory, ToggleIncludeConversation,
 };
 use anyhow::{anyhow, Result};
-use chrono::{DateTime, Local};
 use collections::{hash_map, HashMap, HashSet, VecDeque};
 use editor::{
     actions::{MoveDown, MoveUp},
@@ -17,25 +15,25 @@ use editor::{
         BlockContext, BlockDisposition, BlockId, BlockProperties, BlockStyle, ToDisplayPoint,
     },
     scroll::{Autoscroll, AutoscrollStrategy},
-    Anchor, Editor, EditorElement, EditorEvent, EditorStyle, MultiBuffer, MultiBufferSnapshot,
+    Anchor, Editor, EditorElement, EditorEvent, EditorStyle, MultiBufferSnapshot, RowExt,
     ToOffset as _, ToPoint,
 };
 use file_icons::FileIcons;
 use fs::Fs;
 use futures::StreamExt;
 use gpui::{
-    canvas, div, point, relative, rems, uniform_list, Action, AnyElement, AnyView, AppContext,
-    AsyncAppContext, AsyncWindowContext, AvailableSpace, ClipboardItem, Context, Entity,
-    EventEmitter, FocusHandle, FocusableView, FontStyle, FontWeight, HighlightStyle,
-    InteractiveElement, IntoElement, Model, ModelContext, ParentElement, Pixels, Render,
-    SharedString, StatefulInteractiveElement, Styled, Subscription, Task, TextStyle,
-    UniformListScrollHandle, View, ViewContext, VisualContext, WeakModel, WeakView, WhiteSpace,
-    WindowContext,
+    canvas, div, point, relative, rems, uniform_list, Action, AnyView, AppContext, AsyncAppContext,
+    AsyncWindowContext, AvailableSpace, ClipboardItem, Context, EventEmitter, FocusHandle,
+    FocusableView, FontStyle, FontWeight, HighlightStyle, InteractiveElement, IntoElement, Model,
+    ModelContext, ParentElement, Pixels, Render, SharedString, StatefulInteractiveElement, Styled,
+    Subscription, Task, TextStyle, UniformListScrollHandle, View, ViewContext, VisualContext,
+    WeakModel, WeakView, WhiteSpace, WindowContext,
 };
 use language::{
     language_settings::SoftWrap, Buffer, BufferSnapshot, DiagnosticEntry, LanguageRegistry, Point,
     ToOffset as _,
 };
+use multi_buffer::MultiBufferRow;
 use parking_lot::Mutex;
 use project::Project;
 use search::{buffer_search::DivRegistrar, BufferSearchBar};
@@ -308,7 +306,7 @@ impl AssistantPanel {
             if point_selection.end.column == 0 {
                 point_selection.end.row -= 1;
             }
-            point_selection.end.column = snapshot.line_len(point_selection.end.row);
+            point_selection.end.column = snapshot.line_len(MultiBufferRow(point_selection.end.row));
         }
 
         let codegen_kind = if point_selection.start == point_selection.end {
@@ -895,8 +893,6 @@ impl AssistantPanel {
     fn render_popover_button(&self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         let assistant = cx.view().clone();
         let zoomed = self.zoomed;
-        let show_saved = self.show_saved_conversations;
-
         popover_menu("assistant-popover")
             .trigger(IconButton::new("trigger", IconName::Menu))
             .menu(move |cx| {
@@ -927,56 +923,41 @@ impl AssistantPanel {
             })
     }
 
-    fn render_inject_context_menu(&self, cx: &mut ViewContext<Self>) -> impl Element {
-        let assistant = cx.view().clone();
+    fn render_inject_context_menu(&self, _cx: &mut ViewContext<Self>) -> impl Element {
+        let workspace = self.workspace.clone();
 
         popover_menu("inject-context-menu")
             .trigger(IconButton::new("trigger", IconName::Quote).tooltip(|cx| {
-                Tooltip::with_meta("Insert Context", None, "Type # to insert via keyboard", cx)
+                // Tooltip::with_meta("Insert Context", None, "Type # to insert via keyboard", cx)
+                Tooltip::text("Insert Context", cx)
             }))
             .menu(move |cx| {
-                let assistant = assistant.clone();
                 ContextMenu::build(cx, |menu, _cx| {
-                    menu.entry("Insert Search", None, {
-                        let assistant = assistant.clone();
-                        move |_cx| {}
-                    })
-                    .entry("Insert Docs", None, {
-                        let assistant = assistant.clone();
-                        move |cx| {}
-                    })
-                    .entry("Quote Selection", None, {
-                        let assistant = assistant.clone();
-                        move |cx| {}
+                    // menu.entry("Insert Search", None, {
+                    //     let assistant = assistant.clone();
+                    //     move |_cx| {}
+                    // })
+                    // .entry("Insert Docs", None, {
+                    //     let assistant = assistant.clone();
+                    //     move |cx| {}
+                    // })
+                    menu.entry("Quote Selection", None, {
+                        let workspace = workspace.clone();
+                        move |cx| {
+                            workspace
+                                .update(cx, |workspace, cx| {
+                                    ConversationEditor::quote_selection(
+                                        workspace,
+                                        &Default::default(),
+                                        cx,
+                                    )
+                                })
+                                .ok();
+                        }
                     })
                 })
                 .into()
             })
-    }
-
-    fn render_context_injector_buttons(&self, cx: &mut ViewContext<Self>) -> Vec<IconButton> {
-        vec![
-            IconButton::new("search", IconName::MagnifyingGlass)
-                .icon_size(IconSize::Small)
-                .tooltip(|cx| Tooltip::text("Include Search Results", cx)),
-            IconButton::new("documentation", IconName::FileDoc)
-                .icon_size(IconSize::Small)
-                .tooltip(|cx| Tooltip::text("Include Documentation", cx)),
-            IconButton::new("quote_selection", IconName::Quote)
-                .icon_size(IconSize::Small)
-                .tooltip(|cx| Tooltip::text("Quote Selection", cx)),
-        ]
-    }
-
-    fn render_split_button(cx: &mut ViewContext<Self>) -> impl IntoElement {
-        IconButton::new("split_button", IconName::Snip)
-            .on_click(cx.listener(|this, _event, cx| {
-                if let Some(active_editor) = this.active_conversation_editor() {
-                    active_editor.update(cx, |editor, cx| editor.split(&Default::default(), cx));
-                }
-            }))
-            .icon_size(IconSize::Small)
-            .tooltip(|cx| Tooltip::for_action("Split Message", &Split, cx))
     }
 
     fn render_assist_button(cx: &mut ViewContext<Self>) -> impl IntoElement {
@@ -988,44 +969,6 @@ impl AssistantPanel {
             }))
             .icon_size(IconSize::Small)
             .tooltip(|cx| Tooltip::for_action("Assist", &Assist, cx))
-    }
-
-    fn render_quote_button(cx: &mut ViewContext<Self>) -> impl IntoElement {
-        IconButton::new("quote_button", IconName::Quote)
-            .on_click(cx.listener(|this, _event, cx| {
-                if let Some(workspace) = this.workspace.upgrade() {
-                    cx.window_context().defer(move |cx| {
-                        workspace.update(cx, |workspace, cx| {
-                            ConversationEditor::quote_selection(workspace, &Default::default(), cx)
-                        });
-                    });
-                }
-            }))
-            .icon_size(IconSize::Small)
-            .tooltip(|cx| Tooltip::for_action("Quote Selection", &QuoteSelection, cx))
-    }
-
-    fn render_plus_button(cx: &mut ViewContext<Self>) -> impl IntoElement {
-        IconButton::new("plus_button", IconName::Quote)
-            .on_click(cx.listener(|this, _event, cx| {
-                this.new_conversation(cx);
-            }))
-            .icon_size(IconSize::Small)
-            .tooltip(|cx| Tooltip::for_action("Add Context", &NewFile, cx))
-    }
-
-    fn render_zoom_button(&self, cx: &mut ViewContext<Self>) -> impl IntoElement {
-        let zoomed = self.zoomed;
-        IconButton::new("zoom_button", IconName::Maximize)
-            .on_click(cx.listener(|this, _event, cx| {
-                this.toggle_zoom(&ToggleZoom, cx);
-            }))
-            .selected(zoomed)
-            .selected_icon(IconName::Minimize)
-            .icon_size(IconSize::Small)
-            .tooltip(move |cx| {
-                Tooltip::for_action(if zoomed { "Zoom Out" } else { "Zoom In" }, &ToggleZoom, cx)
-            })
     }
 
     fn render_saved_conversation(
@@ -1123,7 +1066,12 @@ impl AssistantPanel {
                                 .color(ui::DividerColor::Border),
                         )
                     })
-                    .child(h_flex().gap_1().child(self.render_inject_context_menu(cx))),
+                    .child(
+                        h_flex()
+                            .gap_1()
+                            .child(self.render_inject_context_menu(cx))
+                            .child(Self::render_assist_button(cx)),
+                    ),
             );
 
         let contents = if self.active_conversation_editor().is_some() {
@@ -1350,7 +1298,6 @@ pub struct Conversation {
     id: Option<String>,
     buffer: Model<Buffer>,
     ambient_context: AmbientContext,
-    embedded_scope: EmbeddedScope,
     message_anchors: Vec<MessageAnchor>,
     messages_metadata: HashMap<MessageId, MessageMetadata>,
     next_message_id: MessageId,
@@ -1400,7 +1347,6 @@ impl Conversation {
     fn new(
         model: LanguageModel,
         language_registry: Arc<LanguageRegistry>,
-        embedded_scope: EmbeddedScope,
         cx: &mut ModelContext<Self>,
     ) -> Self {
         let markdown = language_registry.language_for_name("Markdown");
@@ -1435,7 +1381,6 @@ impl Conversation {
             pending_save: Task::ready(Ok(())),
             path: None,
             buffer,
-            embedded_scope,
         };
 
         let message = MessageAnchor {
@@ -1447,7 +1392,6 @@ impl Conversation {
             message.id,
             MessageMetadata {
                 role: Role::User,
-                sent_at: Local::now(),
                 status: MessageStatus::Done,
             },
         );
@@ -1535,7 +1479,6 @@ impl Conversation {
                 pending_save: Task::ready(Ok(())),
                 path: Some(path),
                 buffer,
-                embedded_scope: EmbeddedScope::new(),
             };
             this.count_remaining_tokens(cx);
             this
@@ -1588,6 +1531,9 @@ impl Conversation {
         } else {
             self.ambient_context.recent_buffers.pending_message =
                 Some(cx.spawn(|this, mut cx| async move {
+                    const DEBOUNCE_TIMEOUT: Duration = Duration::from_millis(100);
+                    cx.background_executor().timer(DEBOUNCE_TIMEOUT).await;
+
                     let message = cx
                         .background_executor()
                         .spawn(async move { Self::message_for_recent_buffers(&buffers) })
@@ -1963,14 +1909,8 @@ impl Conversation {
             };
             self.message_anchors
                 .insert(next_message_ix, message.clone());
-            self.messages_metadata.insert(
-                message.id,
-                MessageMetadata {
-                    role,
-                    sent_at: Local::now(),
-                    status,
-                },
-            );
+            self.messages_metadata
+                .insert(message.id, MessageMetadata { role, status });
             cx.emit(ConversationEvent::MessagesEdited);
             Some(message)
         } else {
@@ -2027,7 +1967,6 @@ impl Conversation {
                 suffix.id,
                 MessageMetadata {
                     role,
-                    sent_at: Local::now(),
                     status: MessageStatus::Done,
                 },
             );
@@ -2072,7 +2011,6 @@ impl Conversation {
                         selection.id,
                         MessageMetadata {
                             role,
-                            sent_at: Local::now(),
                             status: MessageStatus::Done,
                         },
                     );
@@ -2204,7 +2142,6 @@ impl Conversation {
                     id: message_anchor.id,
                     anchor: message_anchor.start,
                     role: metadata.role,
-                    sent_at: metadata.sent_at,
                     status: metadata.status.clone(),
                 });
             }
@@ -2304,8 +2241,7 @@ impl ConversationEditor {
         workspace: View<Workspace>,
         cx: &mut ViewContext<Self>,
     ) -> Self {
-        let conversation = cx
-            .new_model(|cx| Conversation::new(model, language_registry, EmbeddedScope::new(), cx));
+        let conversation = cx.new_model(|cx| Conversation::new(model, language_registry, cx));
         Self::for_conversation(conversation, fs, workspace, cx)
     }
 
@@ -2447,7 +2383,7 @@ impl ConversationEditor {
                         let snapshot = editor.snapshot(cx);
                         let cursor_point = scroll_position.cursor.to_display_point(&snapshot);
                         let scroll_top =
-                            cursor_point.row() as f32 - scroll_position.offset_before_cursor.y;
+                            cursor_point.row().as_f32() - scroll_position.offset_before_cursor.y;
                         editor.set_scroll_position(
                             point(scroll_position.offset_before_cursor.x, scroll_top),
                             cx,
@@ -2528,7 +2464,10 @@ impl ConversationEditor {
         self.editor.update(cx, |editor, cx| {
             let snapshot = editor.snapshot(cx);
             let cursor = editor.selections.newest_anchor().head();
-            let cursor_row = cursor.to_display_point(&snapshot.display_snapshot).row() as f32;
+            let cursor_row = cursor
+                .to_display_point(&snapshot.display_snapshot)
+                .row()
+                .as_f32();
             let scroll_position = editor
                 .scroll_manager
                 .anchor()
@@ -2794,22 +2733,6 @@ impl ConversationEditor {
         });
     }
 
-    fn inject_search(&mut self, _: &InjectSearch, cx: &mut ViewContext<Self>) {
-        self.editor.update(cx, |editor, cx| {
-            editor.insert_blocks(
-                [BlockProperties {
-                    position: editor.selections.newest_anchor().head(),
-                    height: todo!(),
-                    style: todo!(),
-                    render: todo!(),
-                    disposition: todo!(),
-                }],
-                Some(Autoscroll::newest()),
-                cx,
-            );
-        })
-    }
-
     fn save(&mut self, _: &Save, cx: &mut ViewContext<Self>) {
         self.conversation.update(cx, |conversation, cx| {
             conversation.save(None, self.fs.clone(), cx)
@@ -2824,120 +2747,12 @@ impl ConversationEditor {
             .map(|summary| summary.text.clone())
             .unwrap_or_else(|| "New Conversation".into())
     }
-
-    fn render_embedded_scope(&self, cx: &mut ViewContext<Self>) -> Option<impl Element> {
-        let active_buffer = self
-            .conversation
-            .read(cx)
-            .embedded_scope
-            .active_buffer()?
-            .clone();
-
-        Some(
-            div()
-                .p_4()
-                .v_flex()
-                .child(
-                    div()
-                        .h_flex()
-                        .items_center()
-                        .child(Icon::new(IconName::File))
-                        .child(
-                            div()
-                                .h_6()
-                                .child(Label::new("File Contexts"))
-                                .ml_1()
-                                .font_weight(FontWeight::SEMIBOLD),
-                        ),
-                )
-                .child(
-                    div()
-                        .ml_4()
-                        .child(self.render_active_buffer(active_buffer, cx)),
-                ),
-        )
-    }
-
-    fn render_active_buffer(
-        &self,
-        buffer: Model<MultiBuffer>,
-        cx: &mut ViewContext<Self>,
-    ) -> impl Element {
-        let buffer = buffer.read(cx);
-        let icon_path;
-        let path;
-        if let Some(singleton) = buffer.as_singleton() {
-            let singleton = singleton.read(cx);
-
-            path = singleton.file().map(|file| file.full_path(cx));
-
-            icon_path = path
-                .as_ref()
-                .and_then(|path| FileIcons::get_icon(path.as_path(), cx))
-                .map(SharedString::from)
-                .unwrap_or_else(|| SharedString::from("icons/file_icons/file.svg"));
-        } else {
-            icon_path = SharedString::from("icons/file_icons/file.svg");
-            path = None;
-        }
-
-        let file_name = path.map_or("Untitled".to_string(), |path| {
-            path.to_string_lossy().to_string()
-        });
-
-        let enabled = self
-            .conversation
-            .read(cx)
-            .embedded_scope
-            .active_buffer_enabled();
-
-        let file_name_text_color = if enabled {
-            Color::Default
-        } else {
-            Color::Disabled
-        };
-
-        div()
-            .id("active-buffer")
-            .h_flex()
-            .cursor_pointer()
-            .child(Icon::from_path(icon_path).color(file_name_text_color))
-            .child(
-                div()
-                    .h_6()
-                    .child(Label::new(file_name).color(file_name_text_color))
-                    .ml_1(),
-            )
-            .children(enabled.then(|| {
-                div()
-                    .child(Icon::new(IconName::Check).color(file_name_text_color))
-                    .ml_1()
-            }))
-            .on_click(cx.listener(move |this, _, cx| {
-                this.conversation.update(cx, |conversation, cx| {
-                    conversation
-                        .embedded_scope
-                        .set_active_buffer_enabled(!enabled);
-                    cx.notify();
-                })
-            }))
-    }
 }
 
 impl EventEmitter<ConversationEditorEvent> for ConversationEditor {}
 
 impl Render for ConversationEditor {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl Element {
-        //
-        // The ConversationEditor has two main segments
-        //
-        // 1. Messages Editor
-        // 2. Context
-        //   - File Context (currently only the active file)
-        //   - Project Diagnostics (Planned)
-        //   - Deep Code Context (Planned, for query and other tools for the model)
-        //
-
         div()
             .key_context("ConversationEditor")
             .capture_action(cx.listener(ConversationEditor::cancel_last_assist))
@@ -2946,7 +2761,6 @@ impl Render for ConversationEditor {
             .capture_action(cx.listener(ConversationEditor::cycle_message_role))
             .on_action(cx.listener(ConversationEditor::assist))
             .on_action(cx.listener(ConversationEditor::split))
-            .on_action(cx.listener(ConversationEditor::inject_search))
             .size_full()
             .v_flex()
             .child(
@@ -2956,7 +2770,6 @@ impl Render for ConversationEditor {
                     .bg(cx.theme().colors().editor_background)
                     .child(self.editor.clone()),
             )
-            .child(div().flex_shrink().children(self.render_embedded_scope(cx)))
     }
 }
 
@@ -2979,7 +2792,6 @@ pub struct Message {
     id: MessageId,
     anchor: language::Anchor,
     role: Role,
-    sent_at: DateTime<Local>,
     status: MessageStatus,
 }
 
@@ -3328,9 +3140,8 @@ mod tests {
         init(cx);
         let registry = Arc::new(LanguageRegistry::test(cx.background_executor().clone()));
 
-        let conversation = cx.new_model(|cx| {
-            Conversation::new(LanguageModel::default(), registry, EmbeddedScope::new(), cx)
-        });
+        let conversation =
+            cx.new_model(|cx| Conversation::new(LanguageModel::default(), registry, cx));
         let buffer = conversation.read(cx).buffer.clone();
 
         let message_1 = conversation.read(cx).message_anchors[0].clone();
@@ -3461,9 +3272,8 @@ mod tests {
         init(cx);
         let registry = Arc::new(LanguageRegistry::test(cx.background_executor().clone()));
 
-        let conversation = cx.new_model(|cx| {
-            Conversation::new(LanguageModel::default(), registry, EmbeddedScope::new(), cx)
-        });
+        let conversation =
+            cx.new_model(|cx| Conversation::new(LanguageModel::default(), registry, cx));
         let buffer = conversation.read(cx).buffer.clone();
 
         let message_1 = conversation.read(cx).message_anchors[0].clone();
@@ -3561,9 +3371,8 @@ mod tests {
         cx.set_global(settings_store);
         init(cx);
         let registry = Arc::new(LanguageRegistry::test(cx.background_executor().clone()));
-        let conversation = cx.new_model(|cx| {
-            Conversation::new(LanguageModel::default(), registry, EmbeddedScope::new(), cx)
-        });
+        let conversation =
+            cx.new_model(|cx| Conversation::new(LanguageModel::default(), registry, cx));
         let buffer = conversation.read(cx).buffer.clone();
 
         let message_1 = conversation.read(cx).message_anchors[0].clone();
@@ -3647,14 +3456,8 @@ mod tests {
         cx.set_global(CompletionProvider::Fake(FakeCompletionProvider::default()));
         cx.update(init);
         let registry = Arc::new(LanguageRegistry::test(cx.executor()));
-        let conversation = cx.new_model(|cx| {
-            Conversation::new(
-                LanguageModel::default(),
-                registry.clone(),
-                EmbeddedScope::new(),
-                cx,
-            )
-        });
+        let conversation =
+            cx.new_model(|cx| Conversation::new(LanguageModel::default(), registry.clone(), cx));
         let buffer = conversation.read_with(cx, |conversation, _| conversation.buffer.clone());
         let message_0 =
             conversation.read_with(cx, |conversation, _| conversation.message_anchors[0].id);

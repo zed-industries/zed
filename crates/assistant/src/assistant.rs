@@ -6,11 +6,8 @@ mod prompts;
 mod saved_conversation;
 mod streaming_diff;
 
-mod embedded_scope;
-
 pub use assistant_panel::AssistantPanel;
 use assistant_settings::{AssistantSettings, OpenAiModel, ZedDotDevModel};
-use chrono::{DateTime, Local};
 use client::{proto, Client};
 use command_palette_hooks::CommandPaletteFilter;
 pub(crate) use completion_provider::*;
@@ -34,7 +31,6 @@ actions!(
         ResetKey,
         InlineAssist,
         ToggleIncludeConversation,
-        InjectSearch,
         ToggleHistory,
     ]
 );
@@ -179,7 +175,6 @@ pub struct LanguageModelChoiceDelta {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 struct MessageMetadata {
     role: Role,
-    sent_at: DateTime<Local>,
     status: MessageStatus,
 }
 

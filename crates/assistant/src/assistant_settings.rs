@@ -153,6 +153,8 @@ pub enum AssistantProvider {
         default_model: OpenAiModel,
         #[serde(default = "open_ai_url")]
         api_url: String,
+        #[serde(default)]
+        low_speed_timeout_in_seconds: Option<u64>,
     },
 }
 
@@ -222,12 +224,14 @@ impl AssistantSettingsContent {
                     Some(AssistantProvider::OpenAi {
                         default_model: settings.default_open_ai_model.clone().unwrap_or_default(),
                         api_url: open_ai_api_url.clone(),
+                        low_speed_timeout_in_seconds: None,
                     })
                 } else {
                     settings.default_open_ai_model.clone().map(|open_ai_model| {
                         AssistantProvider::OpenAi {
                             default_model: open_ai_model,
                             api_url: open_ai_url(),
+                            low_speed_timeout_in_seconds: None,
                         }
                     })
                 },
@@ -364,14 +368,17 @@ impl Settings for AssistantSettings {
                         AssistantProvider::OpenAi {
                             default_model,
                             api_url,
+                            low_speed_timeout_in_seconds,
                         },
                         AssistantProvider::OpenAi {
                             default_model: default_model_override,
                             api_url: api_url_override,
+                            low_speed_timeout_in_seconds: low_speed_timeout_in_seconds_override,
                         },
                     ) => {
                         *default_model = default_model_override;
                         *api_url = api_url_override;
+                        *low_speed_timeout_in_seconds = low_speed_timeout_in_seconds_override;
                     }
                     (merged, provider_override) => {
                         *merged = provider_override;
@@ -408,7 +415,8 @@ mod tests {
             AssistantSettings::get_global(cx).provider,
             AssistantProvider::OpenAi {
                 default_model: OpenAiModel::FourTurbo,
-                api_url: open_ai_url()
+                api_url: open_ai_url(),
+                low_speed_timeout_in_seconds: None,
             }
         );
 
@@ -429,7 +437,8 @@ mod tests {
             AssistantSettings::get_global(cx).provider,
             AssistantProvider::OpenAi {
                 default_model: OpenAiModel::FourTurbo,
-                api_url: "test-url".into()
+                api_url: "test-url".into(),
+                low_speed_timeout_in_seconds: None,
             }
         );
         cx.update_global::<SettingsStore, _>(|store, cx| {
@@ -448,7 +457,8 @@ mod tests {
             AssistantSettings::get_global(cx).provider,
             AssistantProvider::OpenAi {
                 default_model: OpenAiModel::Four,
-                api_url: open_ai_url()
+                api_url: open_ai_url(),
+                low_speed_timeout_in_seconds: None,
             }
         );
 

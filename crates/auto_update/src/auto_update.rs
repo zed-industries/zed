@@ -20,6 +20,7 @@ use smol::{fs, io::AsyncReadExt};
 use settings::{Settings, SettingsSources, SettingsStore};
 use smol::{fs::File, process::Command};
 
+use http::{HttpClient, HttpClientWithUrl};
 use release_channel::{AppCommitSha, AppVersion, ReleaseChannel};
 use std::{
     env::consts::{ARCH, OS},
@@ -29,10 +30,7 @@ use std::{
     time::Duration,
 };
 use update_notification::UpdateNotification;
-use util::{
-    http::{HttpClient, HttpClientWithUrl},
-    ResultExt,
-};
+use util::ResultExt;
 use workspace::notifications::NotificationId;
 use workspace::Workspace;
 

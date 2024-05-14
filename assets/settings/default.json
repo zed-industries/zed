@@ -73,6 +73,17 @@
   "drop_target_size": 0.2,
   // Whether the cursor blinks in the editor.
   "cursor_blink": true,
+  // How to highlight the current line in the editor.
+  //
+  // 1. Don't highlight the current line:
+  //    "none"
+  // 2. Highlight the gutter area:
+  //    "gutter"
+  // 3. Highlight the editor area:
+  //    "line"
+  // 4. Highlight the full line (default):
+  //    "all"
+  "current_line_highlight": "all",
   // Whether to pop the completions menu while typing in an editor without
   // explicitly requesting it.
   "show_completions_on_input": true,
@@ -349,6 +360,8 @@
   // when saving it.
   "ensure_final_newline_on_save": true,
   // Whether or not to perform a buffer format before saving
+  //
+  // Keep in mind, if the autosave with delay is enabled, format_on_save will be ignored
   "format_on_save": "on",
   // How to perform a buffer format. This setting can take 4 values:
   //
@@ -633,6 +646,9 @@
     },
     "Prisma": {
       "tab_size": 2
+    },
+    "Ruby": {
+      "language_servers": ["solargraph", "!ruby-lsp", "..."]
     }
   },
   // Zed's Prettier integration settings.
