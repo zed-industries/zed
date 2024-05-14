@@ -32,7 +32,7 @@ use axum::{
 use collections::{HashMap, HashSet};
 pub use connection_pool::{ConnectionPool, ZedVersion};
 use core::fmt::{self, Debug, Formatter};
-use open_ai::{OpenAiEmbeddingModel, open_ai_api_url};
+use open_ai::{open_ai_api_url, OpenAiEmbeddingModel};
 use sha2::Digest;
 use supermaven_api::{CreateExternalUserRequest, SupermavenAdminApi};
 
