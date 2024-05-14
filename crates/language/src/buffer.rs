@@ -3184,6 +3184,51 @@ impl BufferSnapshot {
         result_vec
     }
 
+    pub fn foldable_range(&self, buffer_row: u32) -> Option<Range<Point>> {
+        let start = Point::new(buffer_row, self.line_len(buffer_row));
+        if self.is_foldable(start.row) {
+            let (start_indent, _) = self.line_indent_for_row(buffer_row);
+            let max_point = self.max_point();
+            let mut end = None;
+
+            for row in (buffer_row + 1)..=max_point.row {
+                let (indent, is_blank) = self.line_indent_for_row(row);
+                if !is_blank && indent <= start_indent {
+                    let prev_row = row - 1;
+                    end = Some(Point::new(prev_row, self.line_len(prev_row)));
+                    break;
+                }
+            }
+            let end = end.unwrap_or(max_point);
+            Some(start..end)
+        } else {
+            None
+        }
+    }
+
+    pub fn is_foldable(&self, buffer_row: u32) -> bool {
+        let max_row = self.max_point().row;
+        if buffer_row >= max_row {
+            return false;
+        }
+
+        let (indent_size, is_blank) = self.line_indent_for_row(buffer_row);
+        if is_blank {
+            return false;
+        }
+
+        for next_row in (buffer_row + 1)..=max_row {
+            let (next_indent_size, next_line_is_blank) = self.line_indent_for_row(next_row);
+            if next_indent_size > indent_size {
+                return true;
+            } else if !next_line_is_blank {
+                break;
+            }
+        }
+
+        false
+    }
+
     /// Returns selections for remote peers intersecting the given range.
     #[allow(clippy::type_complexity)]
     pub fn remote_selections_in_range(
