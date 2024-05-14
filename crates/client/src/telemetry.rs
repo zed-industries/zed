@@ -444,8 +444,6 @@ impl Telemetry {
                     }
 
                     {
-                        dbg!(&events);
-                        dbg!(&events.len());
                         let state = this.state.lock();
                         let request_body = EventRequestBody {
                             installation_id: state.installation_id.as_deref().map(Into::into),

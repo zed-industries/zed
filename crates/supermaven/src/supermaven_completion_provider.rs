@@ -18,19 +18,6 @@ pub struct SupermavenCompletionProvider {
     telemetry: Option<Arc<Telemetry>>,
 }
 
-// TODO in Zed
-//      Add provider (string) to event
-// TODO in clickhouse
-//      Add a provider column, all previous values set to `copilot`
-//      Rename copilot_events to inline_completion_events (collab will need to intercept old values and rename)
-//      Remove completion_id all together, never used, wasted space
-// TODO in collab
-//      Intercept table name from old clients and rename to inline_completion_events
-//      Remove completion_id all together, never used, wasted space
-// TODO test
-// TODO make charts around percentage of accepted / discarded completions for all providers
-// TODO why are these events being spammed?
-
 impl SupermavenCompletionProvider {
     pub fn new(supermaven: Model<Supermaven>) -> Self {
         Self {
