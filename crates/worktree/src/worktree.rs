@@ -215,7 +215,6 @@ impl RepositoryEntry {
             let entry = worktree
                 .entry_for_id(self.work_directory.0)
                 .ok_or_else(|| anyhow!("entry not found"))?;
-            println!("path: {:?}, entry.path: {:?}", path, entry.path);
 
             let relativized_path = path
                 .strip_prefix(&entry.path)
