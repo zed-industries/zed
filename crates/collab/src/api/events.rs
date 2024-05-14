@@ -785,6 +785,8 @@ pub struct AssistantEventRow {
     conversation_id: String,
     kind: String,
     model: String,
+    response_latency_in_ms: Option<i64>,
+    error_message: Option<String>,
 }
 
 impl AssistantEventRow {
@@ -811,6 +813,10 @@ impl AssistantEventRow {
             conversation_id: event.conversation_id.unwrap_or_default(),
             kind: event.kind.to_string(),
             model: event.model,
+            response_latency_in_ms: event
+                .response_latency
+                .map(|latency| latency.as_millis() as i64),
+            error_message: event.error_message,
         }
     }
 }
