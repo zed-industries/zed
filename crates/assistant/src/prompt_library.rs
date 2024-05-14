@@ -1,14 +1,3 @@
-// TODO:
-// This PR:
-// - [ ] Add prompt library to assistant
-// - [ ] Add a simple button to inject active prompts in to the buffer
-// - [ ] Add basic docs on the shape of a UserPrompt and the prompt libary
-//
-// Next steps:
-// - [ ] Add default/example prompts to the library
-// - [ ] Add a way to activate/deactivate prompts
-// - [ ] Add a way to use all active prompts for a given language
-
 use fs::Fs;
 use futures::StreamExt;
 use serde::{Deserialize, Serialize};
