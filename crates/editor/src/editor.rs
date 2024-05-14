@@ -135,7 +135,7 @@ use theme::{
 };
 use ui::{
     h_flex, prelude::*, ButtonSize, ButtonStyle, IconButton, IconName, IconSize, ListItem, Popover,
-    Tooltip,
+    TextSize, Tooltip,
 };
 use util::{defer, maybe, post_inc, RangeExt, ResultExt, TryFutureExt};
 use workspace::item::{ItemHandle, PreviewTabsSettings};
@@ -4505,7 +4505,7 @@ impl Editor {
 
     fn render_code_actions_indicator(
         &self,
-        _style: &EditorStyle,
+        style: &EditorStyle,
         row: DisplayRow,
         is_active: bool,
         cx: &mut ViewContext<Self>,
@@ -4513,8 +4513,7 @@ impl Editor {
         if self.available_code_actions.is_some() {
             Some(
                 IconButton::new("code_actions_indicator", ui::IconName::Bolt)
-                    .icon_size(IconSize::XSmall)
-                    .size(ui::ButtonSize::None)
+                    .icon_size(IconSize::from_font_size(style.text.font_size))
                     .icon_color(Color::Muted)
                     .selected(is_active)
                     .on_click(cx.listener(move |editor, _e, cx| {
@@ -4545,14 +4544,14 @@ impl Editor {
 
     fn render_run_indicator(
         &self,
-        _style: &EditorStyle,
+        style: &EditorStyle,
         is_active: bool,
         row: DisplayRow,
         cx: &mut ViewContext<Self>,
     ) -> IconButton {
         IconButton::new("run_indicator", ui::IconName::Play)
-            .icon_size(IconSize::XSmall)
-            .size(ui::ButtonSize::None)
+            .icon_size(IconSize::from_font_size(style.text.font_size))
+            // .size(ui::ButtonSize::None)
             .icon_color(Color::Muted)
             .selected(is_active)
             .on_click(cx.listener(move |editor, _e, cx| {

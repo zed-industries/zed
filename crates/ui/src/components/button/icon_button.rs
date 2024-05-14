@@ -143,6 +143,7 @@ impl RenderOnce for IconButton {
                         IconSize::XSmall => Spacing::None.px(cx),
                         IconSize::Small => Spacing::XSmall.px(cx),
                         IconSize::Medium => Spacing::XSmall.px(cx),
+                        IconSize::Custom(rems) => rems.to_pixels(cx.rem_size()),
                     };
 
                     this.width((icon_size + padding * 2.).into())

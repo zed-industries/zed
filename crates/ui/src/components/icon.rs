@@ -59,6 +59,11 @@ pub enum IconSize {
     Small,
     #[default]
     Medium,
+    /// Sets a custom size for the icon, in [`Rems`].
+    ///
+    /// Don't use this unless there is a very specific, justifiable
+    /// reason to be breaking out of the system's icon sizes.
+    Custom(Rems),
 }
 
 impl IconSize {
@@ -68,7 +73,16 @@ impl IconSize {
             IconSize::XSmall => rems_from_px(12.),
             IconSize::Small => rems_from_px(14.),
             IconSize::Medium => rems_from_px(16.),
+            IconSize::Custom(rems) => rems,
         }
+    }
+
+    pub fn from_font_size(font_size: AbsoluteLength) -> Self {
+        let rems = match font_size {
+            AbsoluteLength::Pixels(px) => rems_from_px(px.into()),
+            AbsoluteLength::Rems(rems) => rems,
+        };
+        IconSize::Custom(rems)
     }
 }
 
@@ -340,8 +354,9 @@ impl Icon {
 
     /// Sets a custom size for the icon, in [`Rems`].
     ///
-    /// Not to be exposed outside of the `ui` crate.
-    pub(crate) fn custom_size(mut self, size: Rems) -> Self {
+    /// Don't use this unless there is a very specific, justifiable
+    /// reason to be breaking out of the system's icon sizes.
+    pub fn custom_size(mut self, size: Rems) -> Self {
         self.size = size;
         self
     }
