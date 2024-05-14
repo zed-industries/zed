@@ -378,13 +378,15 @@ pub async fn post_events(
                 country_code.clone(),
             )),
             Event::InlineCompletion(event) => {
-                to_upload.copilot_events.push(CopilotEventRow::from_event(
-                    event.clone(),
-                    &wrapper,
-                    &request_body,
-                    first_event_at,
-                    country_code.clone(),
-                ))
+                to_upload
+                    .inline_completion_events
+                    .push(InlineCompletionEventRow::from_event(
+                        event.clone(),
+                        &wrapper,
+                        &request_body,
+                        first_event_at,
+                        country_code.clone(),
+                    ))
             }
             Event::Call(event) => to_upload.call_events.push(CallEventRow::from_event(
                 event.clone(),
@@ -467,7 +469,7 @@ pub async fn post_events(
 #[derive(Default)]
 struct ToUpload {
     editor_events: Vec<EditorEventRow>,
-    copilot_events: Vec<CopilotEventRow>,
+    inline_completion_events: Vec<InlineCompletionEventRow>,
     assistant_events: Vec<AssistantEventRow>,
     call_events: Vec<CallEventRow>,
     cpu_events: Vec<CpuEventRow>,
@@ -486,14 +488,14 @@ impl ToUpload {
             .await
             .with_context(|| format!("failed to upload to table '{EDITOR_EVENTS_TABLE}'"))?;
 
-        const COPILOT_EVENTS_TABLE: &str = "copilot_events";
+        const INLINE_COMPLETION_EVENTS_TABLE: &str = "inline_completion_events";
         Self::upload_to_table(
-            COPILOT_EVENTS_TABLE,
-            &self.copilot_events,
+            INLINE_COMPLETION_EVENTS_TABLE,
+            &self.inline_completion_events,
             clickhouse_client,
         )
         .await
-        .with_context(|| format!("failed to upload to table '{COPILOT_EVENTS_TABLE}'"))?;
+        .with_context(|| format!("failed to upload to table '{INLINE_COMPLETION_EVENTS_TABLE}'"))?;
 
         const ASSISTANT_EVENTS_TABLE: &str = "assistant_events";
         Self::upload_to_table(
@@ -663,8 +665,9 @@ impl EditorEventRow {
 }
 
 #[derive(Serialize, Debug, clickhouse::Row)]
-pub struct CopilotEventRow {
+pub struct InlineCompletionEventRow {
     pub installation_id: String,
+    pub provider: String,
     pub suggestion_accepted: bool,
     pub app_version: String,
     pub file_extension: String,
@@ -684,7 +687,7 @@ pub struct CopilotEventRow {
     pub patch: Option<i32>,
 }
 
-impl CopilotEventRow {
+impl InlineCompletionEventRow {
     fn from_event(
         event: InlineCompletionEvent,
         wrapper: &EventWrapper,
@@ -713,6 +716,7 @@ impl CopilotEventRow {
             country_code: country_code.unwrap_or("XX".to_string()),
             region_code: "".to_string(),
             city: "".to_string(),
+            provider: event.provider,
             suggestion_accepted: event.suggestion_accepted,
         }
     }
