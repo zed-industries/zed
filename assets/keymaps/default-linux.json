@@ -53,6 +53,7 @@
       // "alt-d": "editor::DeleteToNextWordEnd",
       "ctrl-x": "editor::Cut",
       "ctrl-c": "editor::Copy",
+      "ctrl-insert": "editor::Copy",
       "ctrl-v": "editor::Paste",
       "shift-insert": "editor::Paste",
       "ctrl-z": "editor::Undo",
@@ -547,6 +548,7 @@
       "alt-ctrl-n": "project_panel::NewDirectory",
       "ctrl-x": "project_panel::Cut",
       "ctrl-c": "project_panel::Copy",
+      "ctrl-insert": "project_panel::Copy",
       "ctrl-v": "project_panel::Paste",
       "shift-insert": "project_panel::Paste",
       "ctrl-alt-c": "project_panel::CopyPath",
@@ -610,6 +612,7 @@
     "bindings": {
       "ctrl-alt-space": "terminal::ShowCharacterPalette",
       "shift-ctrl-c": "terminal::Copy",
+      "ctrl-insert": "terminal::Copy",
       "shift-ctrl-v": "terminal::Paste",
       "shift-insert": "terminal::Paste",
       "up": ["terminal::SendKeystroke", "up"],
