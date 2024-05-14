@@ -4,6 +4,7 @@ use dev_server_projects::{DevServer, DevServerId, DevServerProject, DevServerPro
 use editor::Editor;
 use feature_flags::FeatureFlagAppExt;
 use feature_flags::FeatureFlagViewExt;
+use gpui::Subscription;
 use gpui::{
     percentage, Action, Animation, AnimationExt, AnyElement, AppContext, ClipboardItem,
     DismissEvent, EventEmitter, FocusHandle, FocusableView, Model, ScrollHandle, Transformation,
@@ -53,10 +54,10 @@ enum EditDevServerState {
     RegeneratedToken(RegenerateDevServerTokenResponse),
 }
 
-#[derive(Clone)]
 struct CreateDevServerProject {
     dev_server_id: DevServerId,
     creating: bool,
+    _opening: Option<Subscription>,
 }
 
 enum Mode {
@@ -94,7 +95,7 @@ impl DevServerProjects {
     pub fn new(cx: &mut ViewContext<Self>) -> Self {
         let project_path_input = cx.new_view(|cx| {
             let mut editor = Editor::single_line(cx);
-            editor.set_placeholder_text("Project path", cx);
+            editor.set_placeholder_text("Project path (~/work/zed, /workspace/zed, …)", cx);
             editor
         });
         let dev_server_name_input =
@@ -165,15 +166,45 @@ impl DevServerProjects {
         cx.spawn(|this, mut cx| async move {
             let result = create.await;
             this.update(&mut cx, |this, cx| {
-                if result.is_ok() {
-                    this.project_path_input.update(cx, |editor, cx| {
-                        editor.set_text("", cx);
-                    });
-                    this.mode = Mode::Default(None);
+                if let Ok(result) = &result {
+                    if let Some(dev_server_project_id) =
+                        result.dev_server_project.as_ref().map(|p| p.id)
+                    {
+                        let subscription =
+                            cx.observe(&this.dev_server_store, move |this, store, cx| {
+                                if let Some(project_id) = store
+                                    .read(cx)
+                                    .dev_server_project(DevServerProjectId(dev_server_project_id))
+                                    .and_then(|p| p.project_id)
+                                {
+                                    this.project_path_input.update(cx, |editor, cx| {
+                                        editor.set_text("", cx);
+                                    });
+                                    this.mode = Mode::Default(None);
+                                    if let Some(app_state) = AppState::global(cx).upgrade() {
+                                        workspace::join_dev_server_project(
+                                            project_id, app_state, None, cx,
+                                        )
+                                        .detach_and_prompt_err(
+                                            "Could not join project",
+                                            cx,
+                                            |_, _| None,
+                                        )
+                                    }
+                                }
+                            });
+
+                        this.mode = Mode::Default(Some(CreateDevServerProject {
+                            dev_server_id,
+                            creating: true,
+                            _opening: Some(subscription),
+                        }));
+                    }
                 } else {
                     this.mode = Mode::Default(Some(CreateDevServerProject {
                         dev_server_id,
                         creating: false,
+                        _opening: None,
                     }));
                 }
             })
@@ -196,6 +227,7 @@ impl DevServerProjects {
         self.mode = Mode::Default(Some(CreateDevServerProject {
             dev_server_id,
             creating: true,
+            _opening: None,
         }));
     }
 
@@ -443,109 +475,74 @@ impl DevServerProjects {
     fn render_dev_server(
         &mut self,
         dev_server: &DevServer,
-        mut create_project: Option<CreateDevServerProject>,
+        create_project: Option<bool>,
         cx: &mut ViewContext<Self>,
     ) -> impl IntoElement {
         let dev_server_id = dev_server.id;
         let status = dev_server.status;
         let dev_server_name = dev_server.name.clone();
-        if create_project
-            .as_ref()
-            .is_some_and(|cp| cp.dev_server_id != dev_server.id)
-        {
-            create_project = None;
-        }
 
         v_flex()
             .w_full()
             .child(
-                h_flex()
-                    .group("dev-server")
-                    .justify_between()
-                    .child(
-                        h_flex()
-                            .gap_2()
-                            .child(
-                                div()
-                                    .id(("status", dev_server.id.0))
-                                    .relative()
-                                    .child(Icon::new(IconName::Server).size(IconSize::Small))
-                                    .child(
-                                        div().absolute().bottom_0().left(rems_from_px(8.0)).child(
-                                            Indicator::dot().color(match status {
-                                                DevServerStatus::Online => Color::Created,
-                                                DevServerStatus::Offline => Color::Hidden,
-                                            }),
-                                        ),
-                                    )
-                                    .tooltip(move |cx| {
-                                        Tooltip::text(
-                                            match status {
-                                                DevServerStatus::Online => "Online",
-                                                DevServerStatus::Offline => "Offline",
-                                            },
-                                            cx,
-                                        )
+                h_flex().group("dev-server").justify_between().child(
+                    h_flex()
+                        .gap_2()
+                        .child(
+                            div()
+                                .id(("status", dev_server.id.0))
+                                .relative()
+                                .child(Icon::new(IconName::Server).size(IconSize::Small))
+                                .child(div().absolute().bottom_0().left(rems_from_px(8.0)).child(
+                                    Indicator::dot().color(match status {
+                                        DevServerStatus::Online => Color::Created,
+                                        DevServerStatus::Offline => Color::Hidden,
                                     }),
-                            )
-                            .child(dev_server_name.clone())
-                            .child(
-                                h_flex()
-                                    .visible_on_hover("dev-server")
-                                    .gap_1()
-                                    .child(
-                                        IconButton::new("edit-dev-server", IconName::Pencil)
-                                            .on_click(cx.listener(move |this, _, cx| {
-                                                this.mode = Mode::EditDevServer(EditDevServer {
-                                                    dev_server_id,
-                                                    state: EditDevServerState::Default,
-                                                });
-                                                let dev_server_name = dev_server_name.clone();
-                                                this.rename_dev_server_input.update(
-                                                    cx,
-                                                    move |input, cx| {
-                                                        input.editor().update(
-                                                            cx,
-                                                            move |editor, cx| {
-                                                                editor.set_text(dev_server_name, cx)
-                                                            },
-                                                        )
-                                                    },
-                                                )
-                                            }))
-                                            .tooltip(|cx| Tooltip::text("Edit dev server", cx)),
+                                ))
+                                .tooltip(move |cx| {
+                                    Tooltip::text(
+                                        match status {
+                                            DevServerStatus::Online => "Online",
+                                            DevServerStatus::Offline => "Offline",
+                                        },
+                                        cx,
                                     )
-                                    .child({
-                                        let dev_server_id = dev_server.id;
-                                        IconButton::new("remove-dev-server", IconName::Trash)
-                                            .on_click(cx.listener(move |this, _, cx| {
-                                                this.delete_dev_server(dev_server_id, cx)
-                                            }))
-                                            .tooltip(|cx| Tooltip::text("Remove dev server", cx))
-                                    }),
-                            ),
-                    )
-                    .child(
-                        h_flex().gap_1().child(
-                            IconButton::new(
-                                ("add-remote-project", dev_server_id.0),
-                                IconName::Plus,
-                            )
-                            .tooltip(|cx| Tooltip::text("Add a remote project", cx))
-                            .on_click(cx.listener(
-                                move |this, _, cx| {
-                                    if let Mode::Default(project) = &mut this.mode {
-                                        *project = Some(CreateDevServerProject {
-                                            dev_server_id,
-                                            creating: false,
-                                        });
-                                    }
-                                    this.project_path_input.read(cx).focus_handle(cx).focus(cx);
-                                    cx.notify();
-                                },
-                            )),
+                                }),
+                        )
+                        .child(dev_server_name.clone())
+                        .child(
+                            h_flex()
+                                .visible_on_hover("dev-server")
+                                .gap_1()
+                                .child(
+                                    IconButton::new("edit-dev-server", IconName::Pencil)
+                                        .on_click(cx.listener(move |this, _, cx| {
+                                            this.mode = Mode::EditDevServer(EditDevServer {
+                                                dev_server_id,
+                                                state: EditDevServerState::Default,
+                                            });
+                                            let dev_server_name = dev_server_name.clone();
+                                            this.rename_dev_server_input.update(
+                                                cx,
+                                                move |input, cx| {
+                                                    input.editor().update(cx, move |editor, cx| {
+                                                        editor.set_text(dev_server_name, cx)
+                                                    })
+                                                },
+                                            )
+                                        }))
+                                        .tooltip(|cx| Tooltip::text("Edit dev server", cx)),
+                                )
+                                .child({
+                                    let dev_server_id = dev_server.id;
+                                    IconButton::new("remove-dev-server", IconName::Trash)
+                                        .on_click(cx.listener(move |this, _, cx| {
+                                            this.delete_dev_server(dev_server_id, cx)
+                                        }))
+                                        .tooltip(|cx| Tooltip::text("Remove dev server", cx))
+                                }),
                         ),
-                    ),
+                ),
             )
             .child(
                 v_flex()
@@ -567,8 +564,32 @@ impl DevServerProjects {
                                     .iter()
                                     .map(|p| self.render_dev_server_project(p, cx)),
                             )
-                            .when_some(create_project, |el, create_project| {
-                                el.child(self.render_create_new_project(&create_project, cx))
+                            .when(
+                                create_project.is_none()
+                                    && dev_server.status == DevServerStatus::Online,
+                                |el| {
+                                    el.child(
+                                        ListItem::new("new-remote_project")
+                                            .start_slot(Icon::new(IconName::Plus))
+                                            .child(Label::new("Open folder…"))
+                                            .on_click(cx.listener(move |this, _, cx| {
+                                                this.mode =
+                                                    Mode::Default(Some(CreateDevServerProject {
+                                                        dev_server_id,
+                                                        creating: false,
+                                                        _opening: None,
+                                                    }));
+                                                this.project_path_input
+                                                    .read(cx)
+                                                    .focus_handle(cx)
+                                                    .focus(cx);
+                                                cx.notify();
+                                            })),
+                                    )
+                                },
+                            )
+                            .when_some(create_project, |el, creating| {
+                                el.child(self.render_create_new_project(creating, cx))
                             }),
                     ),
             )
@@ -576,29 +597,24 @@ impl DevServerProjects {
 
     fn render_create_new_project(
         &mut self,
-        create_project: &CreateDevServerProject,
+        creating: bool,
         _: &mut ViewContext<Self>,
     ) -> impl IntoElement {
         ListItem::new("create-remote-project")
+            .disabled(true)
             .start_slot(Icon::new(IconName::FileTree).color(Color::Muted))
             .child(self.project_path_input.clone())
-            .child(
-                div()
-                    .w(IconSize::Medium.rems())
-                    .when(create_project.creating, |el| {
-                        el.child(
-                            Icon::new(IconName::ArrowCircle)
-                                .size(IconSize::Medium)
-                                .with_animation(
-                                    "arrow-circle",
-                                    Animation::new(Duration::from_secs(2)).repeat(),
-                                    |icon, delta| {
-                                        icon.transform(Transformation::rotate(percentage(delta)))
-                                    },
-                                ),
-                        )
-                    }),
-            )
+            .child(div().w(IconSize::Medium.rems()).when(creating, |el| {
+                el.child(
+                    Icon::new(IconName::ArrowCircle)
+                        .size(IconSize::Medium)
+                        .with_animation(
+                            "arrow-circle",
+                            Animation::new(Duration::from_secs(2)).repeat(),
+                            |icon, delta| icon.transform(Transformation::rotate(percentage(delta))),
+                        ),
+                )
+            }))
     }
 
     fn render_dev_server_project(
@@ -920,7 +936,18 @@ impl DevServerProjects {
         let Mode::Default(create_dev_server_project) = &self.mode else {
             unreachable!()
         };
-        let create_dev_server_project = create_dev_server_project.clone();
+
+        let mut is_creating = None;
+        let mut creating_dev_server = None;
+        if let Some(CreateDevServerProject {
+            creating,
+            dev_server_id,
+            ..
+        }) = create_dev_server_project
+        {
+            is_creating = Some(*creating);
+            creating_dev_server = Some(*dev_server_id);
+        };
 
         v_flex()
             .id("scroll-container")
@@ -960,12 +987,13 @@ impl DevServerProjects {
                             ),
                         ))
                         .children(dev_servers.iter().map(|dev_server| {
-                            self.render_dev_server(
-                                dev_server,
-                                create_dev_server_project.clone(),
-                                cx,
-                            )
-                            .into_any_element()
+                            let creating = if creating_dev_server == Some(dev_server.id) {
+                                is_creating
+                            } else {
+                                None
+                            };
+                            self.render_dev_server(dev_server, creating, cx)
+                                .into_any_element()
                         })),
                 ),
             )
