@@ -696,8 +696,6 @@ impl Database {
                         worktree.updated_repositories.push(proto::RepositoryEntry {
                             work_directory_id: db_repository.work_directory_id as u64,
                             branch: db_repository.branch,
-                            // TODO: What do we put in here?
-                            location_in_repo: None,
                         });
                     }
                 }

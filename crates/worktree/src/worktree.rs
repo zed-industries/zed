@@ -233,10 +233,6 @@ impl From<&RepositoryEntry> for proto::RepositoryEntry {
         proto::RepositoryEntry {
             work_directory_id: value.work_directory.to_proto(),
             branch: value.branch.as_ref().map(|str| str.to_string()),
-            location_in_repo: value
-                .location_in_repo
-                .as_ref()
-                .map(|str| str.display().to_string()),
         }
     }
 }

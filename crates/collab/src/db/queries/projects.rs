@@ -742,8 +742,6 @@ impl Database {
                         proto::RepositoryEntry {
                             work_directory_id: db_repository_entry.work_directory_id as u64,
                             branch: db_repository_entry.branch,
-                            // TODO: What do we put in here?
-                            location_in_repo: None,
                         },
                     );
                 }
