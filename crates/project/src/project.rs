@@ -7957,7 +7957,7 @@ impl Project {
                 let (repo, relative_path, content) = blame_params?;
                 let lock = repo.lock();
                 lock.blame(&relative_path, content)
-                    .with_context(|| format!("Failed to blame {relative_path:?}"))
+                    .with_context(|| format!("Failed to blame {:?}", relative_path.0))
             })
         } else {
             let project_id = self.remote_id();
