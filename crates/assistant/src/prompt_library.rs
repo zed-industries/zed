@@ -83,10 +83,10 @@ pub struct UserPrompt {
 
 impl UserPrompt {
     fn parse_metadata(content: &str) -> anyhow::Result<(PromptMetadata, String)> {
-        let parts: Vec<&str> = content.splitn(3, "---").collect();
+        let parts: Vec<&str> = content.splitn(3, "+++").collect();
         if parts.len() >= 3 {
             let frontmatter_str = parts[1].trim();
-            let metadata: PromptMetadata = serde_yml::from_str(frontmatter_str)
+            let metadata: PromptMetadata = toml::from_str(frontmatter_str)
                 .map_err(|e| anyhow::anyhow!("Failed to parse front matter: {}", e))?;
 
             let content_body = parts.get(2).map_or("", |s| *s).trim();
