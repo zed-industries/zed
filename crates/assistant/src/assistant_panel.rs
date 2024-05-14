@@ -1,3 +1,4 @@
+use crate::ambient_context::{AmbientContext, RecentBuffer};
 use crate::{
     assistant_settings::{AssistantDockPosition, AssistantSettings, ZedDotDevModel},
     codegen::{self, Codegen, CodegenKind},
@@ -1365,34 +1366,6 @@ pub struct Conversation {
     path: Option<PathBuf>,
     _subscriptions: Vec<Subscription>,
     telemetry: Option<Arc<Telemetry>>,
-}
-
-#[derive(Default)]
-struct AmbientContext {
-    recent_buffers: RecentBuffersContext,
-}
-
-struct RecentBuffersContext {
-    enabled: bool,
-    buffers: Vec<RecentBuffer>,
-    message: String,
-    pending_message: Option<Task<()>>,
-}
-
-struct RecentBuffer {
-    buffer: WeakModel<Buffer>,
-    _subscription: Subscription,
-}
-
-impl Default for RecentBuffersContext {
-    fn default() -> Self {
-        Self {
-            enabled: true,
-            buffers: Vec::new(),
-            message: String::new(),
-            pending_message: None,
-        }
-    }
 }
 
 impl EventEmitter<ConversationEvent> for Conversation {}
