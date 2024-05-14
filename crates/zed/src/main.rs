@@ -306,7 +306,7 @@ fn main() {
         Task::ready(())
     } else {
         app.background_executor().spawn(async {
-            #[cfg(not(target_os = "windows"))]
+            #[cfg(unix))]
             {
                 load_shell_from_passwd().await.log_err();
             }
@@ -683,7 +683,7 @@ fn init_stdout_logger() {
         .init();
 }
 
-#[cfg(not(target_os = "windows"))]
+#[cfg(unix)]
 async fn load_shell_from_passwd() -> Result<()> {
     let bufsize = match unsafe { libc::sysconf(libc::_SC_GETPW_R_SIZE_MAX) } {
         n if n < 0 => 1024,
