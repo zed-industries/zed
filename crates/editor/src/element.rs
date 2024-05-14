@@ -1430,25 +1430,33 @@ impl EditorElement {
 
             // If there is a block (e.g. diagnostic) in between the start of the indent guide and the line above,
             // we want to extend the indent guide to the start of the block.
-            for height in snapshot
-                .blocks_in_range(prev_line..row_range.start)
-                .map(|(_, b)| b.height())
-            {
-                offset_y -= height as f32 * line_height;
-                length += height as f32 * line_height;
+            let mut block_height = 0;
+            let mut block_offset = 0;
+            let mut found_excerpt_header = false;
+            for (_, block) in snapshot.blocks_in_range(prev_line..row_range.start) {
+                if matches!(block, TransformBlock::ExcerptHeader { .. }) {
+                    found_excerpt_header = true;
+                    break;
+                }
+                block_offset += block.height();
+                block_height += block.height();
+            }
+            if !found_excerpt_header {
+                offset_y -= block_offset as f32 * line_height;
+                length += block_height as f32 * line_height;
             }
 
             // If there is a block (e.g. diagnostic) at the end of an multibuffer excerpt,
             // we want to ensure that the indent guide stops before the excerpt header.
             let mut block_height = 0;
-            let mut found_header = false;
-            for block in snapshot.blocks_in_range(row_range.end..cons_line) {
-                if matches!(block.1, TransformBlock::ExcerptHeader { .. }) {
-                    found_header = true;
+            let mut found_excerpt_header = false;
+            for (_, block) in snapshot.blocks_in_range(row_range.end..cons_line) {
+                if matches!(block, TransformBlock::ExcerptHeader { .. }) {
+                    found_excerpt_header = true;
                 }
-                block_height += block.1.height();
+                block_height += block.height();
             }
-            if found_header {
+            if found_excerpt_header {
                 length -= block_height as f32 * line_height;
             }
 
