@@ -1581,6 +1581,10 @@ impl Editor {
                         editor.refresh_inlay_hints(InlayHintRefreshReason::RefreshRequested, cx);
                     };
                 }));
+                let task_inventory = project.read(cx).task_inventory().clone();
+                project_subscriptions.push(cx.observe(&task_inventory, |editor, _, cx| {
+                    editor.tasks_update_task = Some(editor.refresh_runnables(cx));
+                }));
             }
         }
 

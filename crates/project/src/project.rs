@@ -7655,7 +7655,7 @@ impl Project {
                                 abs_path,
                                 id_base: "local_tasks_for_worktree",
                             },
-                            StaticSource::new(TrackedFile::new(tasks_file_rx, cx)),
+                            |tx, cx| StaticSource::new(TrackedFile::new(tasks_file_rx, tx, cx)),
                             cx,
                         );
                     }
@@ -7675,12 +7675,13 @@ impl Project {
                                 abs_path,
                                 id_base: "local_vscode_tasks_for_worktree",
                             },
-                            StaticSource::new(
-                                TrackedFile::new_convertible::<task::VsCodeTaskFile>(
-                                    tasks_file_rx,
-                                    cx,
-                                ),
-                            ),
+                            |tx, cx| {
+                                StaticSource::new(TrackedFile::new_convertible::<
+                                    task::VsCodeTaskFile,
+                                >(
+                                    tasks_file_rx, tx, cx
+                                ))
+                            },
                             cx,
                         );
                     }
