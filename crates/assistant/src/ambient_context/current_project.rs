@@ -1,5 +1,6 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::time::Duration;
 
 use anyhow::{anyhow, Result};
 use fs::Fs;
@@ -41,24 +42,10 @@ impl CurrentProjectContext {
             return;
         }
 
-        // self.ambient_context.recent_buffers.pending_message =
-        //     Some(cx.spawn(|this, mut cx| async move {
-        //         const DEBOUNCE_TIMEOUT: Duration = Duration::from_millis(100);
-        //         cx.background_executor().timer(DEBOUNCE_TIMEOUT).await;
-
-        //         let message = cx
-        //             .background_executor()
-        //             .spawn(async move { Self::message_for_recent_buffers(&buffers) })
-        //             .await;
-        //         this.update(&mut cx, |this, cx| {
-        //             this.ambient_context.recent_buffers.message = message;
-        //             this.count_remaining_tokens(cx);
-        //             cx.notify();
-        //         })
-        //         .ok();
-        //     }));
-
         self.pending_message = Some(cx.spawn(|conversation, mut cx| async move {
+            const DEBOUNCE_TIMEOUT: Duration = Duration::from_millis(100);
+            cx.background_executor().timer(DEBOUNCE_TIMEOUT).await;
+
             let Some(path_to_cargo_toml) = Self::path_to_cargo_toml(project, &mut cx).log_err()
             else {
                 return;
