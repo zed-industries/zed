@@ -3388,7 +3388,11 @@ fn render_inline_blame_entry(
         .font_family(style.text.font().family)
         .text_color(cx.theme().status().hint)
         .line_height(style.text.line_height)
-        .child(Icon::new(IconName::FileGit).color(Color::Hint))
+        .child(
+            Icon::new(IconName::FileGit)
+                .color(Color::Hint)
+                .font_size(style.text.font_size),
+        )
         .child(text)
         .gap_2()
         .hoverable_tooltip(move |_| tooltip.clone().into())
