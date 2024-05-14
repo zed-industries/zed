@@ -490,7 +490,15 @@ pub struct Window {
     display_id: DisplayId,
     sprite_atlas: Arc<dyn PlatformAtlas>,
     text_system: Arc<WindowTextSystem>,
-    pub(crate) rem_size: Pixels,
+    rem_size: Pixels,
+    /// An override value for the window's rem size.
+    ///
+    /// This is used by `with_rem_size` to allow rendering an element tree with
+    /// a given rem size.
+    ///
+    /// Note: Right now we only allow for a single override value at a time, but
+    /// this could likely be changed to be a stack of rem sizes.
+    rem_size_override: Option<Pixels>,
     pub(crate) viewport_size: Size<Pixels>,
     layout_engine: Option<TaffyLayoutEngine>,
     pub(crate) root_view: Option<AnyView>,
@@ -763,6 +771,7 @@ impl Window {
             sprite_atlas,
             text_system,
             rem_size: px(16.),
+            rem_size_override: None,
             viewport_size: content_size,
             layout_engine: Some(TaffyLayoutEngine::new()),
             root_view: None,
@@ -1202,13 +1211,40 @@ impl<'a> WindowContext<'a> {
     /// The size of an em for the base font of the application. Adjusting this value allows the
     /// UI to scale, just like zooming a web page.
     pub fn rem_size(&self) -> Pixels {
-        self.window.rem_size
+        self.window
+            .rem_size_override
+            .unwrap_or(self.window.rem_size)
     }
 
     /// Sets the size of an em for the base font of the application. Adjusting this value allows the
     /// UI to scale, just like zooming a web page.
     pub fn set_rem_size(&mut self, rem_size: impl Into<Pixels>) {
         self.window.rem_size = rem_size.into();
+    }
+
+    /// Executes the provided function with the specified rem size.
+    ///
+    /// This method must only be called as part of element drawing.
+    pub fn with_rem_size<F, R>(&mut self, rem_size: Option<impl Into<Pixels>>, f: F) -> R
+    where
+        F: FnOnce(&mut Self) -> R,
+    {
+        debug_assert!(
+            matches!(
+                self.window.draw_phase,
+                DrawPhase::Prepaint | DrawPhase::Paint
+            ),
+            "this method can only be called during request_layout, prepaint, or paint"
+        );
+
+        if let Some(rem_size) = rem_size {
+            self.window.rem_size_override = Some(rem_size.into());
+            let result = f(self);
+            self.window.rem_size_override.take();
+            result
+        } else {
+            f(self)
+        }
     }
 
     /// The line height associated with the current text style.
