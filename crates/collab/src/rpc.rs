@@ -4489,8 +4489,8 @@ async fn complete_with_anthropic(
         .collect();
 
     let mut stream = anthropic::stream_completion(
-        session.http_client.clone(),
-        "https://api.anthropic.com",
+        session.http_client.as_ref(),
+        anthropic::ANTHROPIC_API_URL,
         &api_key,
         anthropic::Request {
             model,
@@ -4499,6 +4499,7 @@ async fn complete_with_anthropic(
             system: system_message,
             max_tokens: 4092,
         },
+        None,
     )
     .await?;
 

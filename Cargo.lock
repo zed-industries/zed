@@ -225,6 +225,8 @@ dependencies = [
  "anyhow",
  "futures 0.3.28",
  "http 0.1.0",
+ "isahc",
+ "schemars",
  "serde",
  "serde_json",
  "tokio",
@@ -332,6 +334,7 @@ dependencies = [
 name = "assistant"
 version = "0.1.0"
 dependencies = [
+ "anthropic",
  "anyhow",
  "chrono",
  "client",

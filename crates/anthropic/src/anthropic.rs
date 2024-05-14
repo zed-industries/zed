@@ -1,17 +1,21 @@
 use anyhow::{anyhow, Result};
 use futures::{io::BufReader, stream::BoxStream, AsyncBufReadExt, AsyncReadExt, StreamExt};
 use http::{AsyncBody, HttpClient, Method, Request as HttpRequest};
+use isahc::config::Configurable;
 use serde::{Deserialize, Serialize};
-use std::{convert::TryFrom, sync::Arc};
+use std::{convert::TryFrom, time::Duration};
 
+pub const ANTHROPIC_API_URL: &'static str = "https://api.anthropic.com";
+
+#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
 pub enum Model {
     #[default]
-    #[serde(rename = "claude-3-opus-20240229")]
+    #[serde(rename = "claude-3-opus", alias = "claude-3-opus-20240229")]
     Claude3Opus,
-    #[serde(rename = "claude-3-sonnet-20240229")]
+    #[serde(rename = "claude-3-sonnet", alias = "claude-3-sonnet-20240229")]
     Claude3Sonnet,
-    #[serde(rename = "claude-3-haiku-20240307")]
+    #[serde(rename = "claude-3-haiku", alias = "claude-3-haiku-20240307")]
     Claude3Haiku,
 }
 
@@ -25,6 +29,14 @@ impl Model {
             Ok(Self::Claude3Haiku)
         } else {
             Err(anyhow!("Invalid model id: {}", id))
+        }
+    }
+
+    pub fn id(&self) -> &'static str {
+        match self {
+            Model::Claude3Opus => "claude-3-opus-20240229",
+            Model::Claude3Sonnet => "claude-3-sonnet-20240229",
+            Model::Claude3Haiku => "claude-3-opus-20240307",
         }
     }
 
@@ -141,20 +153,24 @@ pub enum TextDelta {
 }
 
 pub async fn stream_completion(
-    client: Arc<dyn HttpClient>,
+    client: &dyn HttpClient,
     api_url: &str,
     api_key: &str,
     request: Request,
+    low_speed_timeout: Option<Duration>,
 ) -> Result<BoxStream<'static, Result<ResponseEvent>>> {
     let uri = format!("{api_url}/v1/messages");
-    let request = HttpRequest::builder()
+    let mut request_builder = HttpRequest::builder()
         .method(Method::POST)
         .uri(uri)
         .header("Anthropic-Version", "2023-06-01")
-        .header("Anthropic-Beta", "messages-2023-12-15")
+        .header("Anthropic-Beta", "tools-2024-04-04")
         .header("X-Api-Key", api_key)
-        .header("Content-Type", "application/json")
-        .body(AsyncBody::from(serde_json::to_string(&request)?))?;
+        .header("Content-Type", "application/json");
+    if let Some(low_speed_timeout) = low_speed_timeout {
+        request_builder = request_builder.low_speed_timeout(100, low_speed_timeout);
+    }
+    let request = request_builder.body(AsyncBody::from(serde_json::to_string(&request)?))?;
     let mut response = client.send(request).await?;
     if response.status().is_success() {
         let reader = BufReader::new(response.into_body());
