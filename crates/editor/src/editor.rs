@@ -1713,7 +1713,13 @@ impl Editor {
         this
     }
 
-    pub fn key_context(&self, cx: &AppContext) -> KeyContext {
+    pub fn mouse_menu_is_focused(&self, cx: &mut WindowContext) -> bool {
+        self.mouse_context_menu
+            .as_ref()
+            .is_some_and(|menu| menu.context_menu.focus_handle(cx).is_focused(cx))
+    }
+
+    fn key_context(&self, cx: &AppContext) -> KeyContext {
         let mut key_context = KeyContext::new_with_defaults();
         key_context.add("Editor");
         let mode = match self.mode {
