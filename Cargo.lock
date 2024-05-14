@@ -10088,6 +10088,7 @@ dependencies = [
  "fuzzy",
  "gpui",
  "language",
+ "menu",
  "picker",
  "project",
  "schemars",

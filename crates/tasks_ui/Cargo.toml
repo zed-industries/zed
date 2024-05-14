@@ -13,6 +13,7 @@ editor.workspace = true
 file_icons.workspace = true
 fuzzy.workspace = true
 gpui.workspace = true
+menu.workspace = true
 picker.workspace = true
 project.workspace = true
 task.workspace = true
