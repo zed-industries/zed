@@ -344,6 +344,14 @@ impl Icon {
         self
     }
 
+    pub fn font_size(self, font_size: AbsoluteLength) -> Self {
+        let rems = match font_size {
+            AbsoluteLength::Pixels(pixels) => rems_from_px(pixels.into()),
+            AbsoluteLength::Rems(rems) => rems,
+        };
+        self.custom_size(rems)
+    }
+
     pub fn transform(mut self, transformation: Transformation) -> Self {
         self.transformation = transformation;
         self
