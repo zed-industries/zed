@@ -3508,6 +3508,7 @@ impl BackgroundScanner {
 
         // Populate ignores above the root.
         let root_abs_path = self.state.lock().snapshot.abs_path.clone();
+        let mut external_git_repo = None;
         for (index, ancestor) in root_abs_path.ancestors().enumerate() {
             if index != 0 {
                 if let Ok(ignore) =
@@ -3521,6 +3522,9 @@ impl BackgroundScanner {
                 }
             }
             if ancestor.join(&*DOT_GIT).is_dir() {
+                if index != 0 {
+                    external_git_repo = Some(ancestor.to_path_buf());
+                }
                 // Reached root of git repository.
                 break;
             }
@@ -3550,54 +3554,37 @@ impl BackgroundScanner {
             state.snapshot.completed_scan_id = state.snapshot.scan_id;
         }
 
-        // If we don't have a git repository at the root, we walk up directories until we found one
-        // TODO: yes, this is duplicated work from above, fix this
-
+        // If we don't have a git repository at the root, we check whether we found an external
+        // git repository.
         if self.state.lock().snapshot.root_git_entry().is_none() {
-            let root_abs_path = self.state.lock().snapshot.abs_path.clone();
+            if let Some(external_git_repo) = external_git_repo {
+                let root_abs_path = self.state.lock().snapshot.abs_path.clone();
+                let external_dot_git = external_git_repo.join(&*DOT_GIT);
 
-            for ancestor in root_abs_path.ancestors().skip(1) {
-                let external_dot_git = ancestor.join(&*DOT_GIT);
-                if external_dot_git.is_dir() {
-                    // TODO: Open the repository and check whether git knows about our folder. if not
-                    // don't add it.
-
-                    // We canonicalize, since the FS events use the canonicalized path.
-                    let external_dot_git_canonical_path =
-                        match self.fs.canonicalize(&external_dot_git).await {
-                            Ok(path) => path,
-                            Err(err) => {
-                                log::error!(
-                                "failed to canonicalize external dot git path. path: {}, error: {}",
-                                external_dot_git.display(),
-                                err
-                            );
-                                continue;
-                            }
-                        };
-
+                // We canonicalize, since the FS events use the canonicalized path.
+                if let Some((external_dot_git_canonical_path, relative_path_to_repo_root)) = self
+                    .fs
+                    .canonicalize(&external_dot_git)
+                    .await
+                    .log_err()
+                    .zip(root_abs_path.strip_prefix(external_git_repo).log_err())
+                {
                     // We associate the external git repo with our root folder and
                     // also mark where in the git repo the root folder is located.
-                    if let Some(relative_path_to_repo_root) =
-                        root_abs_path.strip_prefix(ancestor).log_err()
-                    {
-                        self.state.lock().build_git_repository_for_path(
-                            Arc::from(Path::new("")),
-                            external_dot_git_canonical_path.clone().into(),
-                            Some(relative_path_to_repo_root.into()),
-                            self.fs.as_ref(),
-                        );
+                    self.state.lock().build_git_repository_for_path(
+                        Arc::from(Path::new("")),
+                        external_dot_git_canonical_path.clone().into(),
+                        Some(relative_path_to_repo_root.into()),
+                        self.fs.as_ref(),
+                    );
 
-                        let external_events = self
-                            .fs
-                            .watch(&external_dot_git_canonical_path, FS_WATCH_LATENCY)
-                            .await;
+                    let external_events = self
+                        .fs
+                        .watch(&external_dot_git_canonical_path, FS_WATCH_LATENCY)
+                        .await;
 
-                        fs_events_rx = select(fs_events_rx, external_events).boxed()
-                    }
-
-                    break;
-                }
+                    fs_events_rx = select(fs_events_rx, external_events).boxed()
+                };
             }
         }
 
