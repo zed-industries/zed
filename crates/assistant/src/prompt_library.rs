@@ -61,8 +61,7 @@ impl PromptLibrary {
 
         active_prompt_ids
             .iter()
-            .map(|id| self.prompts.get(id).map(|p| p.content.clone()))
-            .flatten()
+            .filter_map(|id| self.prompts.get(id).map(|p| p.content.clone()))
             .collect::<Vec<_>>()
             .join("\n\n---\n\n")
     }
