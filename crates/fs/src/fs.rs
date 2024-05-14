@@ -409,13 +409,13 @@ impl Fs for RealFs {
         })))
     }
 
-    #[cfg(target_os = "windows")]
+    #[cfg(not(target_os = "macos"))]
     async fn watch(
         &self,
         path: &Path,
         _latency: Duration,
     ) -> Pin<Box<dyn Send + Stream<Item = Vec<PathBuf>>>> {
-        use notify::{event::EventKind, Watcher};
+        use notify::{event::EventKind, event::ModifyKind, Watcher};
         // todo(linux): This spawns two threads, while the macOS impl
         // only spawns one. Can we use a OnceLock or some such to make
         // this better
@@ -443,6 +443,17 @@ impl Fs for RealFs {
                 if let Some(event) = event.ok() {
                     if event.paths.into_iter().any(|path| *path == watched_path) {
                         match event.kind {
+                            EventKind::Modify(ev) => {
+                                if matches!(ev, ModifyKind::Name(_)) {
+                                    file_watcher
+                                        .watch(
+                                            watched_path.as_path(),
+                                            notify::RecursiveMode::Recursive,
+                                        )
+                                        .log_err();
+                                    let _ = tx.try_send(vec![watched_path.clone()]).ok();
+                                }
+                            }
                             EventKind::Create(_) => {
                                 file_watcher
                                     .watch(watched_path.as_path(), notify::RecursiveMode::Recursive)
@@ -459,83 +470,6 @@ impl Fs for RealFs {
                 }
             }
         })
-        .expect("Could not start file watcher");
-
-        parent_watcher
-            .watch(
-                path.parent()
-                    .expect("Watching root is probably not what you want"),
-                notify::RecursiveMode::NonRecursive,
-            )
-            .expect("Could not start watcher on parent directory");
-
-        Box::pin(rx.chain(futures::stream::once(async move {
-            drop(parent_watcher);
-            vec![]
-        })))
-    }
-
-    #[cfg(target_os = "linux")]
-    async fn watch(
-        &self,
-        path: &Path,
-        _latency: Duration,
-    ) -> Pin<Box<dyn Send + Stream<Item = Vec<PathBuf>>>> {
-        use notify::{event::EventKind, Watcher};
-        // todo(linux): This spawns two threads, while the macOS impl
-        // only spawns one. Can we use a OnceLock or some such to make
-        // this better
-
-        let (tx, rx) = smol::channel::unbounded();
-        let config =
-            notify::Config::default().with_poll_interval(std::time::Duration::from_millis(100));
-
-        let mut file_watcher = notify::PollWatcher::new(
-            {
-                let tx = tx.clone();
-                move |event: Result<notify::Event, _>| {
-                    if let Some(event) = event.log_err() {
-                        tx.try_send(event.paths).ok();
-                    }
-                }
-            },
-            config,
-        )
-        .expect("Could not start file watcher");
-
-        file_watcher
-            .watch(path, notify::RecursiveMode::Recursive)
-            .ok(); // It's ok if this fails, the parent watcher will add it.
-
-        let mut parent_watcher = notify::PollWatcher::new(
-            {
-                let watched_path = path.to_path_buf();
-                let tx = tx.clone();
-                move |event: Result<notify::Event, _>| {
-                    if let Some(event) = event.ok() {
-                        if event.paths.into_iter().any(|path| *path == watched_path) {
-                            match event.kind {
-                                EventKind::Create(_) => {
-                                    file_watcher
-                                        .watch(
-                                            watched_path.as_path(),
-                                            notify::RecursiveMode::Recursive,
-                                        )
-                                        .log_err();
-                                    let _ = tx.try_send(vec![watched_path.clone()]).ok();
-                                }
-                                EventKind::Remove(_) => {
-                                    file_watcher.unwatch(&watched_path).log_err();
-                                    let _ = tx.try_send(vec![watched_path.clone()]).ok();
-                                }
-                                _ => {}
-                            }
-                        }
-                    }
-                }
-            },
-            config,
-        )
         .expect("Could not start file watcher");
 
         parent_watcher
