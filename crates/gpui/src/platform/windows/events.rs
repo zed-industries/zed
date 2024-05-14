@@ -186,7 +186,7 @@ fn handle_paint_msg(handle: HWND, state_ptr: Rc<WindowsWindowStatePtr>) -> Optio
         request_frame();
         state_ptr.state.borrow_mut().callbacks.request_frame = Some(request_frame);
     }
-    unsafe { EndPaint(handle, &paint_struct) };
+    unsafe { EndPaint(handle, &paint_struct).ok().log_err() };
     Some(0)
 }
 
@@ -509,7 +509,7 @@ fn handle_mouse_wheel_msg(
             x: lparam.signed_loword().into(),
             y: lparam.signed_hiword().into(),
         };
-        unsafe { ScreenToClient(handle, &mut cursor_point) };
+        unsafe { ScreenToClient(handle, &mut cursor_point).ok().log_err() };
         let event = ScrollWheelEvent {
             position: logical_point(cursor_point.x as f32, cursor_point.y as f32, scale_factor),
             delta: ScrollDelta::Lines(Point {
@@ -549,7 +549,7 @@ fn handle_mouse_horizontal_wheel_msg(
             x: lparam.signed_loword().into(),
             y: lparam.signed_hiword().into(),
         };
-        unsafe { ScreenToClient(handle, &mut cursor_point) };
+        unsafe { ScreenToClient(handle, &mut cursor_point).ok().log_err() };
         let event = ScrollWheelEvent {
             position: logical_point(cursor_point.x as f32, cursor_point.y as f32, scale_factor),
             delta: ScrollDelta::Lines(Point {
@@ -598,8 +598,8 @@ fn handle_ime_position(handle: HWND, state_ptr: Rc<WindowsWindowStatePtr>) -> Op
             },
             ..Default::default()
         };
-        ImmSetCandidateWindow(ctx, &config as _);
-        ImmReleaseContext(handle, ctx);
+        ImmSetCandidateWindow(ctx, &config as _).ok().log_err();
+        ImmReleaseContext(handle, ctx).ok().log_err();
         Some(0)
     }
 }
@@ -694,7 +694,11 @@ fn handle_activate_msg(
     let activated = wparam.loword() > 0;
     if state_ptr.hide_title_bar {
         if let Some(titlebar_rect) = state_ptr.state.borrow().get_titlebar_rect().log_err() {
-            unsafe { InvalidateRect(handle, Some(&titlebar_rect), FALSE) };
+            unsafe {
+                InvalidateRect(handle, Some(&titlebar_rect), FALSE)
+                    .ok()
+                    .log_err()
+            };
         }
     }
     let this = state_ptr.clone();
@@ -811,7 +815,7 @@ fn handle_hit_test_msg(
         x: lparam.signed_loword().into(),
         y: lparam.signed_hiword().into(),
     };
-    unsafe { ScreenToClient(handle, &mut cursor_point) };
+    unsafe { ScreenToClient(handle, &mut cursor_point).ok().log_err() };
     if cursor_point.y > 0 && cursor_point.y < frame_y + padding {
         return Some(HTTOP as _);
     }
@@ -853,7 +857,7 @@ fn handle_nc_mouse_move_msg(
             x: lparam.signed_loword().into(),
             y: lparam.signed_hiword().into(),
         };
-        unsafe { ScreenToClient(handle, &mut cursor_point) };
+        unsafe { ScreenToClient(handle, &mut cursor_point).ok().log_err() };
         let event = MouseMoveEvent {
             position: logical_point(cursor_point.x as f32, cursor_point.y as f32, scale_factor),
             pressed_button: None,
@@ -890,7 +894,7 @@ fn handle_nc_mouse_down_msg(
             x: lparam.signed_loword().into(),
             y: lparam.signed_hiword().into(),
         };
-        unsafe { ScreenToClient(handle, &mut cursor_point) };
+        unsafe { ScreenToClient(handle, &mut cursor_point).ok().log_err() };
         let physical_point = point(DevicePixels(cursor_point.x), DevicePixels(cursor_point.y));
         let click_count = lock.click_state.update(button, physical_point);
         drop(lock);
@@ -936,7 +940,7 @@ fn handle_nc_mouse_up_msg(
             x: lparam.signed_loword().into(),
             y: lparam.signed_hiword().into(),
         };
-        unsafe { ScreenToClient(handle, &mut cursor_point) };
+        unsafe { ScreenToClient(handle, &mut cursor_point).ok().log_err() };
         let event = MouseUpEvent {
             button,
             position: logical_point(cursor_point.x as f32, cursor_point.y as f32, scale_factor),
@@ -959,13 +963,13 @@ fn handle_nc_mouse_up_msg(
     if button == MouseButton::Left {
         match wparam.0 as u32 {
             HTMINBUTTON => unsafe {
-                ShowWindowAsync(handle, SW_MINIMIZE);
+                ShowWindowAsync(handle, SW_MINIMIZE).ok().log_err();
             },
             HTMAXBUTTON => unsafe {
                 if state_ptr.state.borrow().is_maximized() {
-                    ShowWindowAsync(handle, SW_NORMAL);
+                    ShowWindowAsync(handle, SW_NORMAL).ok().log_err();
                 } else {
-                    ShowWindowAsync(handle, SW_MAXIMIZE);
+                    ShowWindowAsync(handle, SW_MAXIMIZE).ok().log_err();
                 }
             },
             HTCLOSE => unsafe {
@@ -1140,7 +1144,7 @@ fn parse_char_msg_keystroke(wparam: WPARAM) -> Option<Keystroke> {
 /// mark window client rect to be re-drawn
 /// https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-invalidaterect
 pub(crate) fn invalidate_client_area(handle: HWND) {
-    unsafe { InvalidateRect(handle, None, FALSE) };
+    unsafe { InvalidateRect(handle, None, FALSE).ok().log_err() };
 }
 
 fn parse_ime_compostion_string(handle: HWND) -> Option<(String, usize)> {
@@ -1164,7 +1168,7 @@ fn parse_ime_compostion_string(handle: HWND) -> Option<(String, usize)> {
         } else {
             None
         };
-        ImmReleaseContext(handle, ctx);
+        ImmReleaseContext(handle, ctx).ok().log_err();
         result
     }
 }
@@ -1173,7 +1177,7 @@ fn retrieve_composition_cursor_position(handle: HWND) -> usize {
     unsafe {
         let ctx = ImmGetContext(handle);
         let ret = ImmGetCompositionStringW(ctx, GCS_CURSORPOS, None, 0);
-        ImmReleaseContext(handle, ctx);
+        ImmReleaseContext(handle, ctx).ok().log_err();
         ret as usize
     }
 }
@@ -1199,7 +1203,7 @@ fn parse_ime_compostion_result(handle: HWND) -> Option<String> {
         } else {
             None
         };
-        ImmReleaseContext(handle, ctx);
+        ImmReleaseContext(handle, ctx).ok().log_err();
         result
     }
 }

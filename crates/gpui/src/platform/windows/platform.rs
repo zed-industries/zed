@@ -114,7 +114,9 @@ impl WindowsPlatform {
                     None,
                     HRGN::default(),
                     RDW_INVALIDATE | RDW_UPDATENOW,
-                );
+                )
+                .ok()
+                .log_err();
             }
         }
     }
@@ -219,7 +221,9 @@ impl Platform for WindowsPlatform {
                                 }
                                 WM_SETTINGCHANGE => self.update_system_settings(),
                                 _ => {
-                                    TranslateMessage(&msg);
+                                    // todo(windows)
+                                    // crate `windows 0.56` reports true as Err
+                                    TranslateMessage(&msg).as_bool();
                                     DispatchMessageW(&msg);
                                 }
                             }
