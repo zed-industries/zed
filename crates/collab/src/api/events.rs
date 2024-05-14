@@ -15,8 +15,9 @@ use serde::{Serialize, Serializer};
 use sha2::{Digest, Sha256};
 use std::sync::{Arc, OnceLock};
 use telemetry_events::{
-    ActionEvent, AppEvent, AssistantEvent, CallEvent, CopilotEvent, CpuEvent, EditEvent,
-    EditorEvent, Event, EventRequestBody, EventWrapper, ExtensionEvent, MemoryEvent, SettingEvent,
+    ActionEvent, AppEvent, AssistantEvent, CallEvent, CpuEvent, EditEvent, EditorEvent, Event,
+    EventRequestBody, EventWrapper, ExtensionEvent, InlineCompletionEvent, MemoryEvent,
+    SettingEvent,
 };
 use uuid::Uuid;
 
@@ -376,13 +377,15 @@ pub async fn post_events(
                 first_event_at,
                 country_code.clone(),
             )),
-            Event::Copilot(event) => to_upload.copilot_events.push(CopilotEventRow::from_event(
-                event.clone(),
-                &wrapper,
-                &request_body,
-                first_event_at,
-                country_code.clone(),
-            )),
+            Event::InlineCompletion(event) => {
+                to_upload.copilot_events.push(CopilotEventRow::from_event(
+                    event.clone(),
+                    &wrapper,
+                    &request_body,
+                    first_event_at,
+                    country_code.clone(),
+                ))
+            }
             Event::Call(event) => to_upload.call_events.push(CallEventRow::from_event(
                 event.clone(),
                 &wrapper,
@@ -684,7 +687,7 @@ pub struct CopilotEventRow {
 
 impl CopilotEventRow {
     fn from_event(
-        event: CopilotEvent,
+        event: InlineCompletionEvent,
         wrapper: &EventWrapper,
         body: &EventRequestBody,
         first_event_at: chrono::DateTime<chrono::Utc>,
