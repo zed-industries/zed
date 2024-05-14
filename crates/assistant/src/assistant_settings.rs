@@ -414,7 +414,7 @@ mod tests {
         assert_eq!(
             AssistantSettings::get_global(cx).provider,
             AssistantProvider::OpenAi {
-                default_model: OpenAiModel::FourTurbo,
+                default_model: OpenAiModel::FourOmni,
                 api_url: open_ai_url(),
                 low_speed_timeout_in_seconds: None,
             }
@@ -436,7 +436,7 @@ mod tests {
         assert_eq!(
             AssistantSettings::get_global(cx).provider,
             AssistantProvider::OpenAi {
-                default_model: OpenAiModel::FourTurbo,
+                default_model: OpenAiModel::FourOmni,
                 api_url: "test-url".into(),
                 low_speed_timeout_in_seconds: None,
             }

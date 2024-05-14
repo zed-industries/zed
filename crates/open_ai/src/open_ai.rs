@@ -51,8 +51,10 @@ pub enum Model {
     #[serde(rename = "gpt-4", alias = "gpt-4-0613")]
     Four,
     #[serde(rename = "gpt-4-turbo-preview", alias = "gpt-4-1106-preview")]
-    #[default]
     FourTurbo,
+    #[serde(rename = "gpt-4o", alias = "gpt-4o-2024-05-13")]
+    #[default]
+    FourOmni,
 }
 
 impl Model {
@@ -61,6 +63,7 @@ impl Model {
             "gpt-3.5-turbo" => Ok(Self::ThreePointFiveTurbo),
             "gpt-4" => Ok(Self::Four),
             "gpt-4-turbo-preview" => Ok(Self::FourTurbo),
+            "gpt-4o" => Ok(Self::FourOmni),
             _ => Err(anyhow!("invalid model id")),
         }
     }
@@ -70,6 +73,7 @@ impl Model {
             Self::ThreePointFiveTurbo => "gpt-3.5-turbo",
             Self::Four => "gpt-4",
             Self::FourTurbo => "gpt-4-turbo-preview",
+            Self::FourOmni => "gpt-4o",
         }
     }
 
@@ -78,6 +82,7 @@ impl Model {
             Self::ThreePointFiveTurbo => "gpt-3.5-turbo",
             Self::Four => "gpt-4",
             Self::FourTurbo => "gpt-4-turbo",
+            Self::FourOmni => "gpt-4o",
         }
     }
 
@@ -86,6 +91,7 @@ impl Model {
             Model::ThreePointFiveTurbo => 4096,
             Model::Four => 8192,
             Model::FourTurbo => 128000,
+            Model::FourOmni => 128000,
         }
     }
 }
