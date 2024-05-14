@@ -5,8 +5,8 @@ use crate::{
         TransformBlock,
     },
     editor_settings::{
-        DoubleClickInMultibuffer, IndentGuideBackgroundColorMode, IndentGuideColorMode,
-        MultiCursorModifier, ShowScrollbar,
+        CurrentLineHighlight, DoubleClickInMultibuffer, IndentGuideBackgroundColorMode,
+        IndentGuideColorMode, MultiCursorModifier, ShowScrollbar,
     },
     git::{
         blame::{CommitDetails, GitBlame},
@@ -2400,18 +2400,39 @@ impl EditorElement {
                     }
 
                     if !contains_non_empty_selection {
-                        let origin = point(
-                            layout.hitbox.origin.x,
-                            layout.hitbox.origin.y
-                                + (start_row.as_f32() - scroll_top)
-                                    * layout.position_map.line_height,
-                        );
-                        let size = size(
-                            layout.hitbox.size.width,
-                            layout.position_map.line_height * (end_row - start_row.0 + 1) as f32,
-                        );
-                        let active_line_bg = cx.theme().colors().editor_active_line_background;
-                        cx.paint_quad(fill(Bounds { origin, size }, active_line_bg));
+                        let highlight_h_range =
+                            match layout.position_map.snapshot.current_line_highlight {
+                                CurrentLineHighlight::Gutter => Some(Range {
+                                    start: layout.hitbox.left(),
+                                    end: layout.gutter_hitbox.right(),
+                                }),
+                                CurrentLineHighlight::Line => Some(Range {
+                                    start: layout.text_hitbox.bounds.left(),
+                                    end: layout.text_hitbox.bounds.right(),
+                                }),
+                                CurrentLineHighlight::All => Some(Range {
+                                    start: layout.hitbox.left(),
+                                    end: layout.hitbox.right(),
+                                }),
+                                CurrentLineHighlight::None => None,
+                            };
+                        if let Some(range) = highlight_h_range {
+                            let active_line_bg = cx.theme().colors().editor_active_line_background;
+                            let bounds = Bounds {
+                                origin: point(
+                                    range.start,
+                                    layout.hitbox.origin.y
+                                        + (start_row.as_f32() - scroll_top)
+                                            * layout.position_map.line_height,
+                                ),
+                                size: size(
+                                    range.end - range.start,
+                                    layout.position_map.line_height
+                                        * (end_row - start_row.0 + 1) as f32,
+                                ),
+                            };
+                            cx.paint_quad(fill(bounds, active_line_bg));
+                        }
                     }
                 }
 
@@ -3559,7 +3580,11 @@ fn render_inline_blame_entry(
         .font_family(style.text.font().family)
         .text_color(cx.theme().status().hint)
         .line_height(style.text.line_height)
-        .child(Icon::new(IconName::FileGit).color(Color::Hint))
+        .child(
+            Icon::new(IconName::FileGit)
+                .color(Color::Hint)
+                .font_size(style.text.font_size),
+        )
         .child(text)
         .gap_2()
         .hoverable_tooltip(move |_| tooltip.clone().into())
