@@ -18,7 +18,7 @@ The assistant panel provides you with a way to interact with OpenAI's large lang
 
 The OpenAI API key will be saved in your keychain.
 
-Zed will also use the `OPENAI_API_KEY` environment variable if it's defined. If you need to reset your OpenAI API key, focus on the assistant panel and run the command palette action `assistant: reset key`.
+Zed will also use the `OPENAI_API_KEY` and `OPENAI_API_END_POINT` environment variable if it's defined. If you need to reset your OpenAI API key, focus on the assistant panel and run the command palette action `assistant: reset key`.
 
 ## Having a conversation
 
