@@ -1,5 +1,4 @@
 use crate::face_pile::FacePile;
-use auto_update::AutoUpdateStatus;
 use call::{ActiveCall, ParticipantLocation, Room};
 use client::{proto::PeerId, Client, User, UserStore};
 use gpui::{
@@ -18,7 +17,7 @@ use ui::{
 };
 use util::ResultExt;
 use vcs_menu::{build_branch_list, BranchList, OpenRecent as ToggleVcsMenu};
-use workspace::{notifications::NotifyResultExt, Workspace};
+use workspace::Workspace;
 
 const MAX_PROJECT_NAME_LENGTH: usize = 40;
 const MAX_BRANCH_NAME_LENGTH: usize = 40;
@@ -306,17 +305,7 @@ impl Render for CollabTitlebarItem {
                         })
                         .child(div().pr_2())
                     })
-                    .map(|el| {
-                        let status = self.client.status();
-                        let status = &*status.borrow();
-                        if matches!(status, client::Status::Connected { .. }) {
-                            el.child(self.render_user_menu_button(cx))
-                        } else {
-                            el.children(self.render_connection_status(status, cx))
-                                .child(self.render_sign_in_button(cx))
-                                .child(self.render_user_menu_button(cx))
-                        }
-                    }),
+                    .map(|el| el.child(self.render_user_menu_button(cx))),
             )
     }
 }
@@ -657,70 +646,6 @@ impl CollabTitlebarItem {
         Some(view)
     }
 
-    fn render_connection_status(
-        &self,
-        status: &client::Status,
-        cx: &mut ViewContext<Self>,
-    ) -> Option<AnyElement> {
-        match status {
-            client::Status::ConnectionError
-            | client::Status::ConnectionLost
-            | client::Status::Reauthenticating { .. }
-            | client::Status::Reconnecting { .. }
-            | client::Status::ReconnectionError { .. } => Some(
-                div()
-                    .id("disconnected")
-                    .child(Icon::new(IconName::Disconnected).size(IconSize::Small))
-                    .tooltip(|cx| Tooltip::text("Disconnected", cx))
-                    .into_any_element(),
-            ),
-            client::Status::UpgradeRequired => {
-                let auto_updater = auto_update::AutoUpdater::get(cx);
-                let label = match auto_updater.map(|auto_update| auto_update.read(cx).status()) {
-                    Some(AutoUpdateStatus::Updated { .. }) => "Please restart Zed to Collaborate",
-                    Some(AutoUpdateStatus::Installing)
-                    | Some(AutoUpdateStatus::Downloading)
-                    | Some(AutoUpdateStatus::Checking) => "Updating...",
-                    Some(AutoUpdateStatus::Idle) | Some(AutoUpdateStatus::Errored) | None => {
-                        "Please update Zed to Collaborate"
-                    }
-                };
-
-                Some(
-                    Button::new("connection-status", label)
-                        .label_size(LabelSize::Small)
-                        .on_click(|_, cx| {
-                            if let Some(auto_updater) = auto_update::AutoUpdater::get(cx) {
-                                if auto_updater.read(cx).status().is_updated() {
-                                    workspace::restart(&Default::default(), cx);
-                                    return;
-                                }
-                            }
-                            auto_update::check(&Default::default(), cx);
-                        })
-                        .into_any_element(),
-                )
-            }
-            _ => None,
-        }
-    }
-
-    pub fn render_sign_in_button(&mut self, _: &mut ViewContext<Self>) -> Button {
-        let client = self.client.clone();
-        Button::new("sign_in", "Sign in")
-            .label_size(LabelSize::Small)
-            .on_click(move |_, cx| {
-                let client = client.clone();
-                cx.spawn(move |mut cx| async move {
-                    client
-                        .authenticate_and_connect(true, &cx)
-                        .await
-                        .notify_async_err(&mut cx);
-                })
-                .detach();
-            })
-    }
-
     pub fn render_user_menu_button(&mut self, cx: &mut ViewContext<Self>) -> impl Element {
         if let Some(user) = self.user_store.read(cx).current_user() {
             popover_menu("user-menu")
@@ -753,6 +678,8 @@ impl CollabTitlebarItem {
                         menu.action("Settings", zed_actions::OpenSettings.boxed_clone())
                             .action("Extensions", extensions_ui::Extensions.boxed_clone())
                             .action("Themes...", theme_selector::Toggle::default().boxed_clone())
+                            .separator()
+                            .action("Sign In", client::SignIn.boxed_clone())
                     })
                     .into()
                 })
