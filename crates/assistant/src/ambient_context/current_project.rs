@@ -9,6 +9,7 @@ use project::{Project, ProjectPath};
 use util::ResultExt;
 
 use crate::assistant_panel::Conversation;
+use crate::{LanguageModelRequestMessage, Role};
 
 /// Ambient context about the current project.
 pub struct CurrentProjectContext {
@@ -28,6 +29,14 @@ impl Default for CurrentProjectContext {
 }
 
 impl CurrentProjectContext {
+    /// Returns the [`CurrentProjectContext`] as a message to the language model.
+    pub fn to_message(&self) -> Option<LanguageModelRequestMessage> {
+        self.enabled.then(|| LanguageModelRequestMessage {
+            role: Role::System,
+            content: self.message.clone(),
+        })
+    }
+
     /// Updates the [`CurrentProjectContext`] for the given [`Project`].
     pub fn update(
         &mut self,
@@ -65,7 +74,6 @@ impl CurrentProjectContext {
             if let Some(message) = message_task.await.log_err() {
                 conversation
                     .update(&mut cx, |conversation, _cx| {
-                        dbg!(&message);
                         conversation.ambient_context.current_project.message = message;
                     })
                     .log_err();

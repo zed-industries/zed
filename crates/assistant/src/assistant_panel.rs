@@ -1899,15 +1899,12 @@ impl Conversation {
     }
 
     fn to_completion_request(&self, cx: &mut ModelContext<Conversation>) -> LanguageModelRequest {
-        let messages = self
-            .ambient_context
-            .recent_buffers
-            .enabled
-            .then(|| LanguageModelRequestMessage {
-                role: Role::System,
-                content: self.ambient_context.recent_buffers.message.clone(),
-            })
+        let recent_buffers_context = self.ambient_context.recent_buffers.to_message();
+        let current_project_context = self.ambient_context.current_project.to_message();
+
+        let messages = recent_buffers_context
             .into_iter()
+            .chain(current_project_context)
             .chain(
                 self.messages(cx)
                     .filter(|message| matches!(message.status, MessageStatus::Done))
