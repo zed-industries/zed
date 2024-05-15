@@ -4,11 +4,10 @@
 use std::{
     cell::{Cell, RefCell},
     ffi::{c_void, OsString},
-    mem::transmute,
     os::windows::ffi::{OsStrExt, OsStringExt},
     path::{Path, PathBuf},
     rc::Rc,
-    sync::{Arc, OnceLock},
+    sync::Arc,
 };
 
 use ::util::ResultExt;
@@ -26,7 +25,6 @@ use windows::{
     Win32::{
         Foundation::*,
         Graphics::Gdi::*,
-        Media::*,
         Security::Credentials::*,
         Storage::FileSystem::*,
         System::{Com::*, LibraryLoader::*, Ole::*, SystemInformation::*, Threading::*, Time::*},
@@ -164,9 +162,7 @@ impl Platform for WindowsPlatform {
     fn run(&self, on_finish_launching: Box<dyn 'static + FnOnce()>) {
         on_finish_launching();
         let vsync_event = create_event().unwrap();
-        let timer_stop_event = create_event().unwrap();
-        let raw_timer_stop_event = timer_stop_event.to_raw();
-        begin_vsync_timer(vsync_event.to_raw(), timer_stop_event);
+        begin_vsync(vsync_event.to_raw());
         'a: loop {
             let wait_result = unsafe {
                 MsgWaitForMultipleObjects(
@@ -210,7 +206,6 @@ impl Platform for WindowsPlatform {
                 }
             }
         }
-        end_vsync_timer(raw_timer_stop_event);
 
         if let Some(ref mut callback) = self.state.borrow_mut().callbacks.quit {
             callback();
@@ -761,72 +756,13 @@ unsafe fn show_savefile_dialog(directory: PathBuf) -> Result<IFileSaveDialog> {
     Ok(dialog)
 }
 
-fn begin_vsync_timer(vsync_event: HANDLE, timer_stop_event: OwnedHandle) {
-    let vsync_fn = select_vsync_fn();
-    std::thread::spawn(move || loop {
-        if vsync_fn(timer_stop_event.to_raw()) {
-            if unsafe { SetEvent(vsync_event) }.log_err().is_none() {
-                break;
-            }
+fn begin_vsync(vsync_evnet: HANDLE) {
+    std::thread::spawn(move || unsafe {
+        loop {
+            windows::Win32::Graphics::Dwm::DwmFlush().log_err();
+            SetEvent(vsync_evnet).log_err();
         }
     });
-}
-
-fn end_vsync_timer(timer_stop_event: HANDLE) {
-    unsafe { SetEvent(timer_stop_event) }.log_err();
-}
-
-fn select_vsync_fn() -> Box<dyn Fn(HANDLE) -> bool + Send> {
-    if let Some(dcomp_fn) = load_dcomp_vsync_fn() {
-        log::info!("use DCompositionWaitForCompositorClock for vsync");
-        return Box::new(move |timer_stop_event| {
-            // will be 0 if woken up by timer_stop_event or 1 if the compositor clock ticked
-            // SEE: https://learn.microsoft.com/en-us/windows/win32/directcomp/compositor-clock/compositor-clock
-            (unsafe { dcomp_fn(1, &timer_stop_event, INFINITE) }) == 1
-        });
-    }
-    log::info!("use fallback vsync function");
-    Box::new(fallback_vsync_fn())
-}
-
-fn load_dcomp_vsync_fn() -> Option<unsafe extern "system" fn(u32, *const HANDLE, u32) -> u32> {
-    static FN: OnceLock<Option<unsafe extern "system" fn(u32, *const HANDLE, u32) -> u32>> =
-        OnceLock::new();
-    *FN.get_or_init(|| {
-        let hmodule = unsafe { LoadLibraryW(windows::core::w!("dcomp.dll")) }.ok()?;
-        let address = unsafe {
-            GetProcAddress(
-                hmodule,
-                windows::core::s!("DCompositionWaitForCompositorClock"),
-            )
-        }?;
-        Some(unsafe { transmute(address) })
-    })
-}
-
-fn fallback_vsync_fn() -> impl Fn(HANDLE) -> bool + Send {
-    let freq = WindowsDisplay::primary_monitor()
-        .and_then(|monitor| monitor.frequency())
-        .unwrap_or(60);
-    log::info!("primaly refresh rate is {freq}Hz");
-
-    let interval = (1000 / freq).max(1);
-    log::info!("expected interval is {interval}ms");
-
-    unsafe { timeBeginPeriod(1) };
-
-    struct TimePeriod;
-    impl Drop for TimePeriod {
-        fn drop(&mut self) {
-            unsafe { timeEndPeriod(1) };
-        }
-    }
-    let period = TimePeriod;
-
-    move |timer_stop_event| {
-        let _ = (&period,);
-        (unsafe { WaitForSingleObject(timer_stop_event, interval) }) == WAIT_TIMEOUT
-    }
 }
 
 fn load_icon() -> Result<HICON> {
