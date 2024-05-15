@@ -652,7 +652,7 @@ impl AppContext {
     }
 
     /// Updates the http client assigned to GPUI
-    pub fn udpate_http_client(&mut self, new_client: Arc<dyn HttpClient>) {
+    pub fn update_http_client(&mut self, new_client: Arc<dyn HttpClient>) {
         self.http_client = new_client;
     }
 

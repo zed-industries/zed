@@ -343,7 +343,7 @@ fn main() {
 
         client::init_settings(cx);
         let client = Client::production(cx);
-        cx.udpate_http_client(client.http_client().clone());
+        cx.update_http_client(client.http_client().clone());
         let mut languages =
             LanguageRegistry::new(login_shell_env_loaded, cx.background_executor().clone());
         languages.set_language_server_download_dir(paths::LANGUAGES_DIR.clone());
