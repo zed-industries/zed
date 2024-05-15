@@ -11,9 +11,9 @@
     "args": ["test", "--failed"]
   },
   {
-    "label": "mix test $ZED_SYMBOL",
+    "label": "mix test $ZED_FILE",
     "command": "mix",
-    "args": ["test", "$ZED_SYMBOL"]
+    "args": ["test", "$ZED_FILE"]
   },
   {
     "label": "mix test $ZED_FILE:$ZED_ROW",
