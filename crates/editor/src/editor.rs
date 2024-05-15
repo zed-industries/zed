@@ -509,6 +509,7 @@ pub struct Editor {
     expect_bounds_change: Option<Bounds<Pixels>>,
     tasks: HashMap<(BufferId, BufferRow), (usize, RunnableTasks)>,
     tasks_update_task: Option<Task<()>>,
+    did_trigger_completion_on_input: bool,
 }
 
 #[derive(Clone)]
@@ -1700,6 +1701,7 @@ impl Editor {
                 }),
             ],
             tasks_update_task: None,
+            did_trigger_completion_on_input: false,
         };
         this.tasks_update_task = Some(this.refresh_runnables(cx));
         this._subscriptions.extend(project_subscriptions);
@@ -2135,7 +2137,9 @@ impl Editor {
                     })
                     .detach();
 
-                    self.show_completions(&ShowCompletions, cx);
+                    if !self.did_trigger_completion_on_input {
+                        self.show_completions(&ShowCompletions, cx);
+                    }
                 } else {
                     drop(context_menu);
                     self.hide_context_menu(cx);
@@ -2841,7 +2845,12 @@ impl Editor {
 
             drop(snapshot);
             let had_active_inline_completion = this.has_active_inline_completion(cx);
+
+            let trigger_in_words = !had_active_inline_completion;
+            this.trigger_completion_on_input(&text, trigger_in_words, cx);
+
             this.change_selections(Some(Autoscroll::fit()), cx, |s| s.select(new_selections));
+            this.did_trigger_completion_on_input = false;
 
             if brace_inserted {
                 // If we inserted a brace while composing text (i.e. typing `"` on a
@@ -2856,8 +2865,6 @@ impl Editor {
                 }
             }
 
-            let trigger_in_words = !had_active_inline_completion;
-            this.trigger_completion_on_input(&text, trigger_in_words, cx);
             this.refresh_inline_completion(true, cx);
         });
     }
@@ -3228,6 +3235,7 @@ impl Editor {
             .read(cx)
             .is_completion_trigger(selection.head(), text, trigger_in_words, cx)
         {
+            self.did_trigger_completion_on_input = true;
             self.show_completions(&ShowCompletions, cx);
         } else {
             self.hide_context_menu(cx);
