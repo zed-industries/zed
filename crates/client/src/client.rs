@@ -140,8 +140,8 @@ impl Settings for ProxySettings {
 }
 
 pub fn init_settings(cx: &mut AppContext) {
+    TelemetrySettings::register(cx);
     cx.update_global(|store: &mut SettingsStore, cx| {
-        store.register_setting::<TelemetrySettings>(cx);
         store.register_setting::<ClientSettings>(cx);
         store.register_setting::<ProxySettings>(cx);
     });
