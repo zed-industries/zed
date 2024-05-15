@@ -23,17 +23,6 @@
     },
     "modules": [
         {
-            "name": "host-spawn",
-            "buildsystem": "simple",
-            "build-commands": [
-                "go build",
-                "install -Dm755 ./host-spawn -t /app/bin"
-            ],
-            "sources": [
-                "host-spawn/sources.json"
-            ]
-        },
-        {
             "name": "Zed",
             "buildsystem": "simple",
             "build-options": {

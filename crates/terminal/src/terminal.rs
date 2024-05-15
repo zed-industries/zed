@@ -333,7 +333,7 @@ impl TerminalBuilder {
 
             let mut command =
                 process::Process::new(shell_command.clone().unwrap_or("".to_string()));
-            command.flatpak_use_pty().envs(&env).args(additional_args);
+            command.envs(&env).args(additional_args);
 
             alacritty_terminal::tty::Options {
                 shell: if shell_command.is_none() {
@@ -341,7 +341,7 @@ impl TerminalBuilder {
                 } else {
                     Some(alacritty_terminal::tty::Shell::new(
                         command.get_actual_program().to_str().unwrap().to_string(),
-                        command.get_actual_args(),
+                        command.get_passed_args(),
                     ))
                 },
                 working_directory: working_directory.clone(),

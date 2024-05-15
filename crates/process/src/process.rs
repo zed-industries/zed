@@ -15,7 +15,7 @@ use std::os::windows::process::CommandExt;
 /// program to be executed. Additional builder methods allow the configuration
 /// to be changed (for example, by adding arguments) prior to spawning
 /// This wraps both std::process::Command and smol::process::Command as well as
-/// providing support for spawning threads using [https://github.com/1player/host-spawn](host-spawn) when in flatpak
+/// providing support for spawning threads using [https://man7.org/linux/man-pages/man1/flatpak-spawn.1.html](flatpak-spawn) when in flatpak
 /// environments.
 pub struct Process {
     program: PathBuf,
@@ -30,7 +30,6 @@ pub struct Process {
     cleared_env: bool,
     removed_envs: Vec<OsString>,
 
-    flatpak_use_pty: bool,
     #[cfg(windows)]
     windows_creation_flags: u32,
 }
@@ -43,7 +42,6 @@ impl Process {
     /// * Inherit the current process's environment
     /// * Inherit the current process's working directory
     /// * Inherit stdin/stdout/stderr for [`spawn`] or [`status`], but create pipes for [`output`]
-    /// * Run host-spawn with `-no-pty` in a flatpak
     ///
     /// [`spawn`]: Self::spawn
     /// [`status`]: Self::status
@@ -81,16 +79,9 @@ impl Process {
             cleared_env: false,
             removed_envs: Vec::new(),
 
-            flatpak_use_pty: false,
             #[cfg(windows)]
             windows_creation_flags: 0,
         }
-    }
-
-    /// Makes host-spawn pass `-pty` when in a flatpak sandbox.
-    pub fn flatpak_use_pty(&mut self) -> &mut Self {
-        self.flatpak_use_pty = true;
-        self
     }
 
     /// Adds an argument to pass to the program.
@@ -355,27 +346,27 @@ impl Process {
 
     /// Gets the actual program passed to std::process::Command or
     /// smol::process::Command. When compiled for flatpak, this is
-    /// `/app/bin/host-spawn`, and is `self.get_program()` otherwise.
+    /// `flatpak-spawn`, and is `self.get_program()` otherwise.
     pub fn get_actual_program(&self) -> PathBuf {
         #[cfg(feature = "flatpak")]
-        return <PathBuf as std::str::FromStr>::from_str("/app/bin/host-spawn").unwrap();
+        return <PathBuf as std::str::FromStr>::from_str("flatpak-spawn").unwrap();
         #[cfg(not(feature = "flatpak"))]
         return self.program.clone();
     }
 
     /// Gets the actual arguments passed to std::process::Command or
     /// smol::process::Command. When compiled for flatpak, this includes
-    /// arguments meant for host-spawn as well as the target program. Outside
-    /// of flatpak this is the same as `self.get_args()`.
-    pub fn get_actual_args(&mut self) -> Vec<String> {
-        let command = self.make_command_common(true);
+    /// arguments meant for flatpak-spawn as well as the target program.
+    /// Outside of flatpak this is the same as `self.get_args()`.
+    pub fn get_passed_args(&mut self) -> Vec<String> {
+        let command = self.make_command_common();
         command
             .get_args()
             .map(|arg| arg.to_str().unwrap().to_string())
             .collect()
     }
 
-    fn make_command_common(&mut self, only_args: bool) -> std::process::Command {
+    fn make_command_common(&mut self) -> std::process::Command {
         let env = self
             .envs
             .clone()
@@ -391,32 +382,28 @@ impl Process {
         let mut command = std::process::Command::new(&self.program);
         #[cfg(feature = "flatpak")]
         let mut command = {
-            let mut command = std::process::Command::new("/app/bin/host-spawn");
+            let mut command = std::process::Command::new("flatpak-spawn");
+            command.arg("--host");
             if let Some(working_directory) = &self.working_dir {
-                command.arg("-directory").arg(working_directory);
+                command.arg(format!(
+                    "--directory={}",
+                    working_directory.to_str().unwrap()
+                ));
             }
-            if !env.is_empty() {
-                command.arg("-env").arg(
-                    env.iter()
-                        .map(|(key, _)| key.clone())
-                        .collect::<Vec<_>>()
-                        .join(&OsString::from(",")),
-                );
+            for (k, v) in &env {
+                command.arg(format!(
+                    "--env={}={}",
+                    k.as_os_str().to_str().unwrap(),
+                    v.as_os_str().to_str().unwrap()
+                ));
             }
-            command.arg(if self.flatpak_use_pty {
-                "-pty"
-            } else {
-                "-no-pty"
-            });
             command.arg(self.program.as_os_str());
             command
         };
 
-        if !only_args {
-            command.env_clear().envs(env);
-            if let Some(working_directory) = &self.working_dir {
-                command.current_dir(working_directory);
-            }
+        command.env_clear().envs(env);
+        if let Some(working_directory) = &self.working_dir {
+            command.current_dir(working_directory);
         }
 
         for (arg, is_raw) in &self.args {
@@ -431,9 +418,9 @@ impl Process {
     }
 
     fn make_command(&mut self) -> std::process::Command {
-        let mut command = self.make_command_common(false);
+        let mut command = self.make_command_common();
         if self.stdin.is_some() {
-            command.stdin(self.stdin.take().unwrap()); // smol::process::Command::from doesn't work with stdin et al
+            command.stdin(self.stdin.take().unwrap());
         }
         if self.stdout.is_some() {
             command.stdout(self.stdout.take().unwrap());
@@ -445,9 +432,9 @@ impl Process {
     }
 
     fn make_async_command(&mut self, kill_on_drop: bool) -> smol::process::Command {
-        let mut command = smol::process::Command::from(self.make_command_common(false));
+        let mut command = smol::process::Command::from(self.make_command_common());
         if self.stdin.is_some() {
-            command.stdin(self.stdin.take().unwrap()); // smol::process::Command::from doesn't work with stdin et al
+            command.stdin(self.stdin.take().unwrap());
         }
         if self.stdout.is_some() {
             command.stdout(self.stdout.take().unwrap());
