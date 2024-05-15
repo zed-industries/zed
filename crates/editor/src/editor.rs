@@ -8324,9 +8324,27 @@ impl Editor {
 
                         let range = target.range.to_offset(target.buffer.read(cx));
                         let range = editor.range_for_match(&range);
+
+                        /// If select range has more than one line, we
+                        /// just point the cursor to range.start.
+                        fn check_multiline_range(
+                            buffer: &Buffer,
+                            range: Range<usize>,
+                        ) -> Range<usize> {
+                            if buffer.offset_to_point(range.start).row
+                                == buffer.offset_to_point(range.end).row
+                            {
+                                range
+                            } else {
+                                range.start..range.start
+                            }
+                        }
+
                         if Some(&target.buffer) == editor.buffer.read(cx).as_singleton().as_ref() {
+                            let buffer = target.buffer.read(cx);
+                            let range = check_multiline_range(buffer, range);
                             editor.change_selections(Some(Autoscroll::focused()), cx, |s| {
-                                s.select_ranges([range.start..range.start]);
+                                s.select_ranges([range]);
                             });
                         } else {
                             cx.window_context().defer(move |cx| {
@@ -8344,11 +8362,13 @@ impl Editor {
                                     // When selecting a definition in a different buffer, disable the nav history
                                     // to avoid creating a history entry at the previous cursor location.
                                     pane.update(cx, |pane, _| pane.disable_history());
+                                    let buffer = target.buffer.read(cx);
+                                    let range = check_multiline_range(buffer, range);
                                     target_editor.change_selections(
                                         Some(Autoscroll::focused()),
                                         cx,
                                         |s| {
-                                            s.select_ranges([range.start..range.start]);
+                                            s.select_ranges([range]);
                                         },
                                     );
                                     pane.update(cx, |pane, _| pane.enable_history());
