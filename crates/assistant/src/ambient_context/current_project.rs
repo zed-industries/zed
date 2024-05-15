@@ -74,8 +74,9 @@ impl CurrentProjectContext {
 
             if let Some(message) = message_task.await.log_err() {
                 conversation
-                    .update(&mut cx, |conversation, _cx| {
+                    .update(&mut cx, |conversation, cx| {
                         conversation.ambient_context.current_project.message = message;
+                        cx.notify();
                     })
                     .log_err();
             }
