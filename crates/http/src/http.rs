@@ -8,7 +8,6 @@ pub use isahc::{
     http::{Method, StatusCode, Uri},
     AsyncBody, Error, HttpClient as IsahcHttpClient, Request, Response,
 };
-use serde::Deserialize;
 #[cfg(feature = "test-support")]
 use std::fmt;
 use std::{
@@ -46,11 +45,6 @@ fn get_proxy(proxy: Option<String>) -> Option<isahc::http::Uri> {
             );
             None
         })
-}
-
-#[derive(Deserialize)]
-pub struct ProxySettings {
-    proxy: String,
 }
 
 /// An [`HttpClient`] that has a base URL.
