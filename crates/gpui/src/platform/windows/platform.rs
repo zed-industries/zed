@@ -625,17 +625,11 @@ impl Platform for WindowsPlatform {
         false
     }
 
-    fn write_to_primary(&self, _item: ClipboardItem) {}
-
     fn write_to_clipboard(&self, item: ClipboardItem) {
         if item.text.len() > 0 {
             let mut ctx = ClipboardContext::new().unwrap();
             ctx.set_contents(item.text().to_owned()).unwrap();
         }
-    }
-
-    fn read_from_primary(&self) -> Option<ClipboardItem> {
-        None
     }
 
     fn read_from_clipboard(&self) -> Option<ClipboardItem> {
