@@ -9,6 +9,15 @@ repository = "https://github.com/zed-industries/zed"
 [language_servers.vscode-html-language-server]
 name = "vscode-html-language-server"
 language = "HTML"
+languages = ["TypeScript", "HTML", "TSX", "JavaScript", "JSDoc"]
+
+[language_servers.vscode-html-language-server.language_ids]
+"HTML" = "html"
+"PHP" = "php"
+"ERB" = "eruby"
+"JavaScript" = "javascriptreact"
+"TSX" = "typescriptreact"
+"CSS" = "css"
 
 [grammars.html]
 repository = "https://github.com/tree-sitter/tree-sitter-html"
