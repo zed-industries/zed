@@ -3,7 +3,7 @@ use std::sync::Arc;
 use crate::active_item_selection_properties;
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{
-    impl_actions, rems, AnyElement, AppContext, DismissEvent, EventEmitter, FocusableView,
+    impl_actions, rems, Action, AnyElement, AppContext, DismissEvent, EventEmitter, FocusableView,
     InteractiveElement, Model, ParentElement, Render, SharedString, Styled, Subscription, View,
     ViewContext, VisualContext, WeakView,
 };
@@ -475,29 +475,30 @@ impl PickerDelegate for TasksModalDelegate {
                         Button::new("edit-current-task", edit_entry_label)
                             .label_size(LabelSize::Small)
                             .key_binding(keybind)
+                            .on_click(|_, cx| {
+                                cx.dispatch_action(picker::UseSelectedQuery.boxed_clone())
+                            })
                     }),
                 )
                 .map(|this| {
-                    if current_modifiers.alt || self.matches.is_empty() {
-                        this.children(
-                            KeyBinding::for_action(
-                                &picker::ConfirmInput {
-                                    secondary: current_modifiers.secondary(),
-                                },
-                                cx,
-                            )
-                            .map(|keybind| {
-                                let spawn_oneshot_label = if current_modifiers.secondary() {
-                                    "Spawn oneshot without history"
-                                } else {
-                                    "Spawn oneshot"
-                                };
+                    if (current_modifiers.alt || self.matches.is_empty()) && !self.prompt.is_empty()
+                    {
+                        let action = picker::ConfirmInput {
+                            secondary: current_modifiers.secondary(),
+                        }
+                        .boxed_clone();
+                        this.children(KeyBinding::for_action(&*action, cx).map(|keybind| {
+                            let spawn_oneshot_label = if current_modifiers.secondary() {
+                                "Spawn oneshot without history"
+                            } else {
+                                "Spawn oneshot"
+                            };
 
-                                Button::new("spawn-onehshot", spawn_oneshot_label)
-                                    .label_size(LabelSize::Small)
-                                    .key_binding(keybind)
-                            }),
-                        )
+                            Button::new("spawn-onehshot", spawn_oneshot_label)
+                                .label_size(LabelSize::Small)
+                                .key_binding(keybind)
+                                .on_click(move |_, cx| cx.dispatch_action(action.boxed_clone()))
+                        }))
                     } else if current_modifiers.secondary() {
                         this.children(KeyBinding::for_action(&menu::SecondaryConfirm, cx).map(
                             |keybind| {
@@ -509,6 +510,9 @@ impl PickerDelegate for TasksModalDelegate {
                                 Button::new("spawn", label)
                                     .label_size(LabelSize::Small)
                                     .key_binding(keybind)
+                                    .on_click(move |_, cx| {
+                                        cx.dispatch_action(menu::SecondaryConfirm.boxed_clone())
+                                    })
                             },
                         ))
                     } else {
@@ -519,6 +523,9 @@ impl PickerDelegate for TasksModalDelegate {
                             Button::new("spawn", run_entry_label)
                                 .label_size(LabelSize::Small)
                                 .key_binding(keybind)
+                                .on_click(|_, cx| {
+                                    cx.dispatch_action(menu::Confirm.boxed_clone());
+                                })
                         }))
                     }
                 })
