@@ -84,7 +84,7 @@ impl PromptLibrary {
         for (id, prompt) in &prompts_with_ids {
             log::info!("Loaded prompt: {} - {}", id, prompt.content);
         }
-        // -- debug --
+        // -- /debug --
         let mut state = self.state.write();
         state.prompts.extend(prompts_with_ids);
         state.version += 1;
@@ -98,12 +98,12 @@ impl PromptLibrary {
         if state.default_prompts.is_empty() {
             // -- debug --
             println!("No default prompts set");
-            // -- debug --
+            // -- /debug --
             None
         } else {
             // -- debug --
             println!("Default prompts: {:?}", state.default_prompts);
-            // -- debug --
+            // -- /debug --
             Some(self.join_default_prompts())
         }
     }
@@ -146,6 +146,15 @@ impl PromptLibrary {
         state.prompts.values().cloned().collect()
     }
 
+    pub fn prompts_with_ids(&self) -> Vec<(String, UserPrompt)> {
+        let state = self.state.read();
+        state
+            .prompts
+            .iter()
+            .map(|(id, prompt)| (id.clone(), prompt.clone()))
+            .collect()
+    }
+
     pub fn default_prompts(&self) -> Vec<UserPrompt> {
         let state = self.state.read();
         state
@@ -154,9 +163,14 @@ impl PromptLibrary {
             .filter_map(|id| state.prompts.get(id).map(|p| p.clone()))
             .collect()
     }
+
+    pub fn default_prompt_ids(&self) -> Vec<String> {
+        let state = self.state.read();
+        state.default_prompts.clone()
+    }
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub struct PromptMetadata {
     title: String,
     author: String,
@@ -164,7 +178,7 @@ pub struct PromptMetadata {
     languages: Option<Vec<String>>,
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub struct UserPrompt {
     metadata: PromptMetadata,
     content: String,
@@ -239,15 +253,15 @@ impl PromptManager {
 }
 
 impl Render for PromptManager {
-    fn render(&mut self, cx: &mut ui::prelude::ViewContext<Self>) -> impl IntoElement {
-        let prompts_state = self.prompt_library.state.read();
-
-        let prompts = prompts_state
-            .prompts
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+        let prompts = self
+            .prompt_library
+            .prompts_with_ids()
             .clone()
             .into_iter()
             .collect::<Vec<_>>();
-        let default_prompts = prompts_state.default_prompts.clone();
+
+        let default_prompt_ids = self.prompt_library.default_prompt_ids();
 
         v_flex()
             .elevation_3(cx)
@@ -262,14 +276,11 @@ impl Render for PromptManager {
                     .px(Spacing::Large.rems(cx))
                     .when_else(
                         prompts.len() > 0,
-                        |no_items| {
-                            no_items.child(Label::new("No prompts").color(Color::Placeholder))
-                        },
                         |with_items| {
                             with_items.children(prompts.into_iter().map(|(id, prompt)| {
                                 let prompt = prompt.clone();
                                 let prompt_id = id.clone();
-                                let is_default = default_prompts.contains(&id);
+                                let is_default = default_prompt_ids.contains(&id);
 
                                 v_flex().p(Spacing::Small.rems(cx)).child(
                                     h_flex()
@@ -284,6 +295,9 @@ impl Render for PromptManager {
                                         ),
                                 )
                             }))
+                        },
+                        |no_items| {
+                            no_items.child(Label::new("No prompts").color(Color::Placeholder))
                         },
                     ),
             )

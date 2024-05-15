@@ -128,10 +128,12 @@ impl AssistantPanel {
                 .log_err()
                 .unwrap_or_default();
 
-            let prompt_library = PromptLibrary::init(fs.clone())
-                .await
-                .log_err()
-                .unwrap_or_default();
+            let prompt_library = Arc::new(
+                PromptLibrary::init(fs.clone())
+                    .await
+                    .log_err()
+                    .unwrap_or_default(),
+            );
 
             // TODO: deserialize state.
             let workspace_handle = workspace.clone();
@@ -195,7 +197,7 @@ impl AssistantPanel {
                         focus_handle,
                         toolbar,
                         languages: workspace.app_state().languages.clone(),
-                        prompt_library: Arc::new(prompt_library),
+                        prompt_library,
                         fs: workspace.app_state().fs.clone(),
                         telemetry: workspace.client().telemetry().clone(),
                         width: None,
