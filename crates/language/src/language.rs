@@ -847,7 +847,6 @@ pub struct Grammar {
     pub(crate) brackets_config: Option<BracketConfig>,
     pub(crate) redactions_config: Option<RedactionConfig>,
     pub(crate) runnable_config: Option<RunnableConfig>,
-    pub suggested_edits_config: Option<SuggestedEditConfig>,
     pub(crate) indents_config: Option<IndentConfig>,
     pub outline_config: Option<OutlineConfig>,
     pub embedding_config: Option<EmbeddingConfig>,
@@ -902,12 +901,6 @@ struct RunnableConfig {
     pub run_capture_ix: u32,
 }
 
-pub struct SuggestedEditConfig {
-    pub query: Query,
-    /// Index of the capture that corresponds to @content
-    pub content_capture_ix: u32,
-}
-
 struct OverrideConfig {
     query: Query,
     values: HashMap<u32, (String, LanguageConfigOverride)>,
@@ -950,7 +943,6 @@ impl Language {
                     override_config: None,
                     redactions_config: None,
                     runnable_config: None,
-                    suggested_edits_config: None,
                     error_query: Query::new(&ts_language, "(ERROR) @error").unwrap(),
                     ts_language,
                     highlight_map: Default::default(),
@@ -1011,11 +1003,6 @@ impl Language {
                 .with_runnable_query(query.as_ref())
                 .context("Error loading tests query")?;
         }
-        if let Some(query) = queries.suggested_edits {
-            self = self
-                .with_suggested_edit_query(query.as_ref())
-                .context("Error loading tests query")?;
-        }
         Ok(self)
     }
 
@@ -1050,24 +1037,6 @@ impl Language {
                 runnable_tags,
             });
         }
-
-        Ok(self)
-    }
-
-    pub fn with_suggested_edit_query(mut self, source: &str) -> Result<Self> {
-        let grammar = self
-            .grammar_mut()
-            .ok_or_else(|| anyhow!("cannot mutate grammar"))?;
-
-        let query = Query::new(&grammar.ts_language, source)?;
-        let content_capture_ix = query
-            .capture_index_for_name("content")
-            .ok_or_else(|| anyhow!("content capture not found"))?;
-
-        grammar.suggested_edits_config = Some(SuggestedEditConfig {
-            query,
-            content_capture_ix,
-        });
 
         Ok(self)
     }

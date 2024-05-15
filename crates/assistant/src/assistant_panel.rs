@@ -1522,7 +1522,6 @@ impl Conversation {
             this.update(&mut cx, |this, cx| {
                 this.buffer
                     .update(cx, |buffer, cx| buffer.set_language(Some(markdown), cx));
-                this.parse_edit_suggestions(cx);
             })
         })
         .detach_and_log_err(cx);
@@ -1547,80 +1546,80 @@ impl Conversation {
     ) {
         if *event == language::Event::Edited {
             self.count_remaining_tokens(cx);
-            self.parse_edit_suggestions(cx);
             cx.emit(ConversationEvent::MessagesEdited);
         }
     }
 
-    fn parse_edit_suggestions(&mut self, cx: &mut ModelContext<Self>) {
-        // todo!("do this in the background")
-        let conversation_buffer = self.buffer.read(cx).snapshot();
+    // todo!("delete this")
+    // fn parse_edit_suggestions(&mut self, cx: &mut ModelContext<Self>) {
+    //     // todo!("do this in the background")
+    //     let conversation_buffer = self.buffer.read(cx).snapshot();
 
-        let mut matches = conversation_buffer.matches(0..conversation_buffer.len(), |grammar| {
-            Some(&grammar.suggested_edits_config.as_ref()?.query)
-        });
+    //     let mut matches = conversation_buffer.matches(0..conversation_buffer.len(), |grammar| {
+    //         Some(&grammar.suggested_edits_config.as_ref()?.query)
+    //     });
 
-        self.edit_suggestions.clear();
-        while let Some(mat) = matches.peek() {
-            let grammars = matches.grammars();
-            if let Some(suggested_edits_config) =
-                grammars[mat.grammar_index].suggested_edits_config.as_ref()
-            {
-                if let Some(content_capture) = mat
-                    .captures
-                    .iter()
-                    .find(|capture| capture.index == suggested_edits_config.content_capture_ix)
-                {
-                    let mut source_range = content_capture.node.byte_range();
-                    if conversation_buffer.chars_at(source_range.end - 1).next() == Some('\n') {
-                        source_range.end -= 1;
-                    }
+    //     self.edit_suggestions.clear();
+    //     while let Some(mat) = matches.peek() {
+    //         let grammars = matches.grammars();
+    //         if let Some(suggested_edits_config) =
+    //             grammars[mat.grammar_index].suggested_edits_config.as_ref()
+    //         {
+    //             if let Some(content_capture) = mat
+    //                 .captures
+    //                 .iter()
+    //                 .find(|capture| capture.index == suggested_edits_config.content_capture_ix)
+    //             {
+    //                 let mut source_range = content_capture.node.byte_range();
+    //                 if conversation_buffer.chars_at(source_range.end - 1).next() == Some('\n') {
+    //                     source_range.end -= 1;
+    //                 }
 
-                    let suggestion_source = conversation_buffer
-                        .text_for_range(source_range.clone())
-                        .collect::<String>();
-                    let suggestion_source = suggestion_source
-                        .strip_prefix("```zed_edit\n")
-                        .unwrap_or(suggestion_source.as_str())
-                        .strip_suffix("\n```")
-                        .unwrap_or(suggestion_source.as_str());
-                    let mut parts = suggestion_source.split("\n----------------\n");
-                    if let Some(((path, deletion), new_text)) =
-                        parts.next().zip(parts.next()).zip(parts.next())
-                    {
-                        let mut row_range = None;
-                        for deletion_line in deletion.lines() {
-                            let leading_digit_count = deletion_line
-                                .chars()
-                                .take_while(|ch| ch.is_ascii_digit())
-                                .count();
-                            if let Ok(row) = deletion_line[..leading_digit_count].parse() {
-                                let row_range = row_range.get_or_insert_with(|| row..row + 1);
-                                row_range.end = row + 1;
-                            }
-                        }
+    //                 let suggestion_source = conversation_buffer
+    //                     .text_for_range(source_range.clone())
+    //                     .collect::<String>();
+    //                 let suggestion_source = suggestion_source
+    //                     .strip_prefix("```zed_edit\n")
+    //                     .unwrap_or(suggestion_source.as_str())
+    //                     .strip_suffix("\n```")
+    //                     .unwrap_or(suggestion_source.as_str());
+    //                 let mut parts = suggestion_source.split("\n----------------\n");
+    //                 if let Some(((path, deletion), new_text)) =
+    //                     parts.next().zip(parts.next()).zip(parts.next())
+    //                 {
+    //                     let mut row_range = None;
+    //                     for deletion_line in deletion.lines() {
+    //                         let leading_digit_count = deletion_line
+    //                             .chars()
+    //                             .take_while(|ch| ch.is_ascii_digit())
+    //                             .count();
+    //                         if let Ok(row) = deletion_line[..leading_digit_count].parse() {
+    //                             let row_range = row_range.get_or_insert_with(|| row..row + 1);
+    //                             row_range.end = row + 1;
+    //                         }
+    //                     }
 
-                        if let Some(row_range) = row_range {
-                            let source_range = conversation_buffer.anchor_after(source_range.start)
-                                ..conversation_buffer.anchor_before(source_range.end);
-                            self.edit_suggestions.push(EditSuggestion {
-                                source_range,
-                                full_path: if path == "untitled" {
-                                    None
-                                } else {
-                                    Some(PathBuf::from(path))
-                                },
-                                row_range,
-                                new_text: new_text.to_string(),
-                            })
-                        }
-                    }
-                }
-            }
+    //                     if let Some(row_range) = row_range {
+    //                         let source_range = conversation_buffer.anchor_after(source_range.start)
+    //                             ..conversation_buffer.anchor_before(source_range.end);
+    //                         self.edit_suggestions.push(EditSuggestion {
+    //                             source_range,
+    //                             full_path: if path == "untitled" {
+    //                                 None
+    //                             } else {
+    //                                 Some(PathBuf::from(path))
+    //                             },
+    //                             row_range,
+    //                             new_text: new_text.to_string(),
+    //                         })
+    //                     }
+    //                 }
+    //             }
+    //         }
 
-            matches.advance();
-        }
-    }
+    //         matches.advance();
+    //     }
+    // }
 
     pub(crate) fn count_remaining_tokens(&mut self, cx: &mut ModelContext<Self>) {
         let request = self.to_completion_request(cx);
@@ -1739,7 +1738,21 @@ impl Conversation {
                                         .map_or(buffer.len(), |message| {
                                             message.start.to_offset(buffer).saturating_sub(1)
                                         });
+
+                                    let message_start_offset =
+                                        this.message_anchors[message_ix].start.to_offset(buffer);
+                                    let message_end_offset = offset + text.len();
+
                                     buffer.edit([(offset..offset, text)], None, cx);
+
+                                    let mut message_lines = buffer
+                                        .text_for_range(message_start_offset..message_end_offset)
+                                        .lines();
+                                    while let Some(message_line) = message_lines.next() {
+                                        // as soon as we parse a new edit suggestion, emit an event
+                                        // the editor will catch that event and add/remove block decorations
+                                        // as needed.
+                                    }
                                 });
                                 cx.emit(ConversationEvent::StreamedCompletion);
 
