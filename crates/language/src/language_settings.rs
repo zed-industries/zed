@@ -264,12 +264,11 @@ pub struct LanguageSettingsContent {
     /// Default: auto
     #[serde(default)]
     pub formatter: Option<Formatter>,
-    /// TODO kb docs
     /// Zed's Prettier integration settings.
-    /// If Prettier is enabled, Zed will use this for its Prettier instance for any applicable file, if
-    /// the project has no other Prettier installed.
+    /// Allows to enable/disable formatting with Prettier
+    /// and configure default Prettier, used when no project-level Prettier installation is found.
     ///
-    /// Default: {}
+    /// Default: off
     #[serde(default)]
     pub prettier: Option<PrettierSettings>,
     /// Whether to use language servers to provide code intelligence.
@@ -750,44 +749,28 @@ fn merge_settings(settings: &mut LanguageSettings, src: &LanguageSettingsContent
     merge(&mut settings.inlay_hints, src.inlay_hints);
 }
 
-/// TODO kb docs
+/// Allows to enable/disable formatting with Prettier
+/// and configure default Prettier, used when no project-level Prettier installation is found.
+/// Prettier formatting is disabled by default.
 #[derive(Default, Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct PrettierSettings {
-    /// TODO kb docs
+    /// Enables or disables formatting with Prettier for a given language.
     #[serde(default)]
-    enabled: bool,
+    pub allowed: bool,
 
-    /// TODO kb docs
+    /// Forces Prettier integration to use a specific parser name when formatting files with the language.
     #[serde(default)]
     pub parser: Option<String>,
 
-    /// TODO kb docs
+    /// Forces Prettier integration to use specific plugins when formatting files with the language.
+    /// The default Prettier will be installed with these plugins.
     #[serde(default)]
     pub plugins: HashSet<String>,
 
-    /// Default prettier options, in the format as in package.json section for prettier.
-    /// If Prettier is enabled, and there's no other prettier instance installed in the project,
-    /// these settings will be used with the default prettier instance.
+    /// Default Prettier options, in the format as in package.json section for Prettier.
+    /// If project installs Prettier via its package.json, these options will be ignored.
     #[serde(flatten)]
     pub options: HashMap<String, serde_json::Value>,
-}
-
-impl PrettierSettings {
-    /// TODO kb docs
-    pub fn new_enabled() -> Self {
-        Self {
-            enabled: true,
-            ..Self::default()
-        }
-    }
-
-    /// TODO kb docs
-    pub fn enabled(&self) -> bool {
-        self.enabled
-            || self.parser.is_some()
-            || !self.plugins.is_empty()
-            || !self.options.is_empty()
-    }
 }
 
 #[cfg(test)]

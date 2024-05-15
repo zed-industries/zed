@@ -224,8 +224,8 @@ impl Prettier {
                         let language_settings = language_settings(buffer_language, buffer.file(), cx);
                         let prettier_settings = &language_settings.prettier;
                         anyhow::ensure!(
-                            prettier_settings.enabled(),
-                            "Cannot format: prettier is disabled for language {buffer_language:?}"
+                            prettier_settings.allowed,
+                            "Cannot format: prettier is not allowed for language {buffer_language:?}"
                         );
                         let prettier_node_modules = self.prettier_dir().join("node_modules");
                         anyhow::ensure!(

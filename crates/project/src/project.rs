@@ -4854,7 +4854,7 @@ impl Project {
                     }
                 }
                 (Formatter::Auto, FormatOnSave::On | FormatOnSave::Off) => {
-                    let prettier = if prettier_settings.enabled() {
+                    let prettier = if prettier_settings.allowed {
                         prettier_support::format_with_prettier(&project, buffer, &mut cx)
                             .await
                             .transpose()
@@ -4882,7 +4882,7 @@ impl Project {
                     }
                 }
                 (Formatter::Prettier, FormatOnSave::On | FormatOnSave::Off) => {
-                    if prettier_settings.enabled() {
+                    if prettier_settings.allowed {
                         if let Some(operation) =
                             prettier_support::format_with_prettier(&project, buffer, &mut cx).await
                         {

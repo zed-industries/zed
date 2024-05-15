@@ -6263,7 +6263,10 @@ async fn test_document_format_manual_trigger(cx: &mut gpui::TestAppContext) {
     update_test_language_settings(cx, |settings| {
         // Enable Prettier formatting for the same buffer, and ensure
         // LSP is called instead of Prettier.
-        settings.defaults.prettier = Some(PrettierSettings::new_enabled());
+        settings.defaults.prettier = Some(PrettierSettings {
+            allowed: true,
+            ..PrettierSettings::default()
+        });
     });
     let mut fake_servers = language_registry.register_fake_lsp_adapter(
         "Rust",
@@ -8620,7 +8623,10 @@ async fn test_document_format_with_prettier(cx: &mut gpui::TestAppContext) {
         Some(tree_sitter_rust::language()),
     )));
     update_test_language_settings(cx, |settings| {
-        settings.defaults.prettier = Some(PrettierSettings::new_enabled());
+        settings.defaults.prettier = Some(PrettierSettings {
+            allowed: true,
+            ..PrettierSettings::default()
+        });
     });
 
     let test_plugin = "test_plugin";

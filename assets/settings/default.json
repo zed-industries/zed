@@ -103,14 +103,7 @@
   // Hide the values of in variables from visual display in private files
   "redact_private_values": false,
   // Globs to match against file paths to determine if a file is private.
-  "private_files": [
-    "**/.env*",
-    "**/*.pem",
-    "**/*.key",
-    "**/*.cert",
-    "**/*.crt",
-    "**/secrets.yml"
-  ],
+  "private_files": ["**/.env*", "**/*.pem", "**/*.key", "**/*.cert", "**/*.crt", "**/secrets.yml"],
   // Whether to use additional LSP queries to format (and amend) the code after
   // every "trigger" symbol input, defined by LSP server capabilities.
   "use_on_type_format": true,
@@ -311,9 +304,7 @@
   // The list of language servers to use (or disable) for all languages.
   //
   // This is typically customized on a per-language basis.
-  "language_servers": [
-    "..."
-  ],
+  "language_servers": ["..."],
   // When to automatically save edited buffers. This setting can
   // take four values.
   //
@@ -448,9 +439,7 @@
   "copilot": {
     // The set of glob patterns for which copilot should be disabled
     // in any matching file.
-    "disabled_globs": [
-      ".env"
-    ]
+    "disabled_globs": [".env"]
   },
   // Settings specific to journaling
   "journal": {
@@ -561,12 +550,7 @@
         // Default directories to search for virtual environments, relative
         // to the current working directory. We recommend overriding this
         // in your project's settings, rather than globally.
-        "directories": [
-          ".env",
-          "env",
-          ".venv",
-          "venv"
-        ],
+        "directories": [".env", "env", ".venv", "venv"],
         // Can also be 'csh', 'fish', and `nushell`
         "activate_script": "default"
       }
@@ -616,12 +600,7 @@
       "format_on_save": "off"
     },
     "Elixir": {
-      "language_servers": [
-        "elixir-ls",
-        "!next-ls",
-        "!lexical",
-        "..."
-      ]
+      "language_servers": ["elixir-ls", "!next-ls", "!lexical", "..."]
     },
     "Gleam": {
       "tab_size": 2
@@ -632,12 +611,7 @@
       }
     },
     "HEEX": {
-      "language_servers": [
-        "elixir-ls",
-        "!next-ls",
-        "!lexical",
-        "..."
-      ]
+      "language_servers": ["elixir-ls", "!next-ls", "!lexical", "..."]
     },
     "Make": {
       "hard_tabs": true
@@ -653,10 +627,20 @@
     }
   },
   // Zed's Prettier integration settings.
-  // If Prettier is enabled, Zed will use this for its Prettier instance for any applicable file, if
-  // project has no other Prettier installed.
+  // Allows to enable/disable formatting with Prettier
+  // and configure default Prettier, used when no project-level Prettier installation is found.
   "prettier": {
-    // Use regular Prettier json configuration:
+    // // Whether to consider prettier formatter or not when attempting to format a file.
+    // "enabled": false,
+    //
+    // // Use regular Prettier json configuration.
+    // // If Prettier is enabled, Zed will use this for its Prettier instance for any applicable file, if
+    // // the project has no other Prettier installed.
+    // "plugins": [],
+    //
+    // // Use regular Prettier json configuration.
+    // // If Prettier is enabled, Zed will use this for its Prettier instance for any applicable file, if
+    // // the project has no other Prettier installed.
     // "trailingComma": "es5",
     // "tabWidth": 4,
     // "semi": false,
