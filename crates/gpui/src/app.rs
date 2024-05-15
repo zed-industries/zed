@@ -115,7 +115,7 @@ impl App {
         Self(AppContext::new(
             current_platform(),
             Arc::new(()),
-            http::client(),
+            http::client(None),
         ))
     }
 

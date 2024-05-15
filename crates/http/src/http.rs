@@ -8,6 +8,7 @@ pub use isahc::{
     http::{Method, StatusCode, Uri},
     AsyncBody, Error, HttpClient as IsahcHttpClient, Request, Response,
 };
+use serde::Deserialize;
 #[cfg(feature = "test-support")]
 use std::fmt;
 use std::{
@@ -16,7 +17,7 @@ use std::{
 };
 pub use url::Url;
 
-fn http_proxy_from_env() -> Option<isahc::http::Uri> {
+fn get_proxy(proxy: Option<String>) -> Option<isahc::http::Uri> {
     macro_rules! try_env {
         ($($env:literal),+) => {
             $(
@@ -27,15 +28,29 @@ fn http_proxy_from_env() -> Option<isahc::http::Uri> {
         };
     }
 
-    try_env!(
-        "ALL_PROXY",
-        "all_proxy",
-        "HTTPS_PROXY",
-        "https_proxy",
-        "HTTP_PROXY",
-        "http_proxy"
-    );
-    None
+    proxy
+        .and_then(|input| {
+            input
+                .parse::<isahc::http::Uri>()
+                .inspect_err(|e| log::error!("Error parsing proxy settings: {}", e))
+                .ok()
+        })
+        .or_else(|| {
+            try_env!(
+                "ALL_PROXY",
+                "all_proxy",
+                "HTTPS_PROXY",
+                "https_proxy",
+                "HTTP_PROXY",
+                "http_proxy"
+            );
+            None
+        })
+}
+
+#[derive(Deserialize)]
+pub struct ProxySettings {
+    proxy: String,
 }
 
 /// An [`HttpClient`] that has a base URL.
@@ -46,10 +61,12 @@ pub struct HttpClientWithUrl {
 
 impl HttpClientWithUrl {
     /// Returns a new [`HttpClientWithUrl`] with the given base URL.
-    pub fn new(base_url: impl Into<String>) -> Self {
+    pub fn new(base_url: impl Into<String>, proxy: Option<String>) -> Self {
+        println!("Configure proxy: {:?}", proxy);
         Self {
             base_url: Mutex::new(base_url.into()),
-            client: client(),
+            // client: client(proxy),
+            client: client(proxy),
         }
     }
 
@@ -155,12 +172,12 @@ pub trait HttpClient: Send + Sync {
     }
 }
 
-pub fn client() -> Arc<dyn HttpClient> {
+pub fn client(proxy: Option<String>) -> Arc<dyn HttpClient> {
     Arc::new(
         isahc::HttpClient::builder()
             .connect_timeout(Duration::from_secs(5))
             .low_speed_timeout(100, Duration::from_secs(5))
-            .proxy(http_proxy_from_env())
+            .proxy(get_proxy(proxy))
             .build()
             .unwrap(),
     )

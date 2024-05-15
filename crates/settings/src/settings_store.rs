@@ -418,6 +418,7 @@ impl SettingsStore {
         if settings.is_object() {
             self.raw_default_settings = settings;
             self.recompute_values(None, cx)?;
+            println!("Setting: {:#?}", self);
             Ok(())
         } else {
             Err(anyhow!("settings must be an object"))
