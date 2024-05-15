@@ -3119,12 +3119,26 @@ impl BufferSnapshot {
             let mut found_indent = false;
             let mut last_row = first_row;
             if empty {
-                while let Some(display_row) = rows.next() {
-                    let (new_line_indent, empty) = self.line_indent_for_row(display_row);
+                let mut trailing_row = end_row;
+                while !found_indent {
+                    let target_row = if let Some(display_row) = rows.next() {
+                        display_row
+                    } else {
+                        // This means we reached the end of the given range and found empty lines at the end.
+                        // We need to traverse further until we find a non-empty line to know if we need to add
+                        // an indent guide for the last visible indent.
+                        trailing_row += 1;
+                        if trailing_row > self.max_point().row {
+                            break;
+                        }
+                        trailing_row
+                    };
+
+                    let (new_line_indent, empty) = self.line_indent_for_row(target_row);
                     if empty {
                         continue;
                     }
-                    last_row = display_row;
+                    last_row = target_row.min(end_row);
                     line_indent = new_line_indent;
                     found_indent = true;
                     indent_size = indent_size_for_row(self, first_row, cx);

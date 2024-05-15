@@ -11629,6 +11629,8 @@ async fn test_indent_continuing_off_screen(cx: &mut gpui::TestAppContext) {
         &"
         block1
 
+
+
             block2
         "
         .unindent(),
@@ -11637,7 +11639,7 @@ async fn test_indent_continuing_off_screen(cx: &mut gpui::TestAppContext) {
     .await;
 
     assert_indent_guides(
-        0..2,
+        0..1,
         vec![IndentGuide::new(buffer_id, 1, 1, 0, 4)],
         None,
         &mut cx,
