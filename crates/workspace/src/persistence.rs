@@ -12,7 +12,7 @@ use sqlez::{
     statement::Statement,
 };
 
-use util::{unzip_option, ResultExt};
+use util::ResultExt;
 use uuid::Uuid;
 
 use crate::WorkspaceId;
@@ -777,7 +777,7 @@ impl WorkspaceDb {
                 children,
                 flexes,
             } => {
-                let (parent_id, position) = unzip_option(parent);
+                let (parent_id, position) = parent.unzip();
 
                 let flex_string = flexes
                     .as_ref()
@@ -828,7 +828,7 @@ impl WorkspaceDb {
         ))?((workspace_id, pane.active))?
         .ok_or_else(|| anyhow!("Could not retrieve inserted pane_id"))?;
 
-        let (parent_id, order) = unzip_option(parent);
+        let (parent_id, order) = parent.unzip();
         conn.exec_bound(sql!(
             INSERT INTO center_panes(pane_id, parent_group_id, position)
             VALUES (?, ?, ?)
