@@ -133,7 +133,6 @@ impl Settings for ProxySettings {
         Ok(Self {
             proxy: sources
                 .user
-                .as_ref()
                 .and_then(|value| value.proxy.clone())
                 .or(sources.default.proxy.clone()),
         })
