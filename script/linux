@@ -41,6 +41,8 @@ if [[ -n $dnf ]]; then
     libxkbcommon-x11-devel
     openssl-devel
     libzstd-devel
+    perl-FindBin
+    perl-IPC-Cmd
     vulkan-loader
   )
 
