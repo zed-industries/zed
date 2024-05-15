@@ -19,6 +19,7 @@
 
 mod block_map;
 mod fold_map;
+mod foldable;
 mod inlay_map;
 mod tab_map;
 mod wrap_map;
@@ -28,7 +29,9 @@ use crate::{EditorStyle, RowExt};
 pub use block_map::{BlockMap, BlockPoint};
 use collections::{HashMap, HashSet};
 use fold_map::FoldMap;
-use gpui::{Font, HighlightStyle, Hsla, LineLayout, Model, ModelContext, Pixels, UnderlineStyle};
+use gpui::{
+    AnyView, Font, HighlightStyle, Hsla, LineLayout, Model, ModelContext, Pixels, UnderlineStyle,
+};
 use inlay_map::InlayMap;
 use language::{
     language_settings::language_settings, OffsetUtf16, Point, Subscription as BufferSubscription,
@@ -50,6 +53,8 @@ pub use block_map::{
     BlockProperties, BlockStyle, RenderBlock, TransformBlock,
 };
 
+pub use foldable::*;
+
 use self::block_map::BlockRow;
 pub use self::fold_map::{Fold, FoldId, FoldPoint};
 pub use self::inlay_map::{InlayOffset, InlayPoint};
@@ -59,6 +64,12 @@ pub(crate) use inlay_map::Inlay;
 pub enum FoldStatus {
     Folded,
     Foldable,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct FoldIndicator {
+    toggle: Option<AnyView>,
+    folded: bool,
 }
 
 const UNNECESSARY_CODE_FADE: f32 = 0.3;
@@ -92,6 +103,8 @@ pub struct DisplayMap {
     text_highlights: TextHighlights,
     /// Regions of inlays that should be highlighted.
     inlay_highlights: InlayHighlights,
+    /// A container for explicitly foldable ranges, which supersede indentation based fold range suggestions.
+    foldable_ranges: FoldableRanges,
     pub clip_at_line_ends: bool,
 }
 
@@ -124,6 +137,7 @@ impl DisplayMap {
             block_map,
             text_highlights: Default::default(),
             inlay_highlights: Default::default(),
+            foldable_ranges: Default::default(),
             clip_at_line_ends: false,
         }
     }
@@ -832,6 +846,8 @@ impl DisplaySnapshot {
     pub fn longest_row(&self) -> DisplayRow {
         DisplayRow(self.block_snapshot.longest_row())
     }
+
+    pub fn fold_indicator_for_row(&self, buffer_row: MultiBufferRow) -> Option<FoldIndicator> {}
 
     pub fn fold_for_line(&self, buffer_row: MultiBufferRow) -> Option<FoldStatus> {
         if self.is_line_folded(buffer_row) {
