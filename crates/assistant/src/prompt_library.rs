@@ -6,7 +6,7 @@ use parking_lot::{Mutex, RwLock};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
-use ui::{prelude::*, IconButtonShape, ModalHeader};
+use ui::{prelude::*, Checkbox, Divider, IconButtonShape, ModalHeader};
 use util::paths::PROMPTS_DIR;
 use workspace::ModalView;
 
@@ -284,7 +284,9 @@ impl Render for PromptManager {
             .child(
                 h_flex()
                     .justify_between()
-                    .child(Headline::new("Prompt Manager"))
+                    .py(Spacing::Medium.rems(cx))
+                    .px(Spacing::Large.rems(cx))
+                    .child(Headline::new("Prompt Manager").size(HeadlineSize::Small))
                     .child(
                         IconButton::new("dismiss", IconName::Close)
                             .shape(IconButtonShape::Square)
@@ -295,6 +297,15 @@ impl Render for PromptManager {
                 v_flex()
                     .py(Spacing::Medium.rems(cx))
                     .px(Spacing::Large.rems(cx))
+                    .child(
+                        Label::new("Add, remove and discover new contexts for the assistant.")
+                            .color(Color::Muted),
+                    )
+                    .child(
+                        div()
+                            .py(Spacing::Large.rems(cx))
+                            .child(Divider::horizontal()),
+                    )
                     .when_else(
                         prompts.len() > 0,
                         |with_items| {
@@ -302,43 +313,47 @@ impl Render for PromptManager {
                                 let prompt_library = prompt_library.clone();
                                 let prompt = prompt.clone();
                                 let prompt_id = id.clone();
+                                let shared_string_id: SharedString = id.clone().into();
 
                                 let default_prompt_ids =
                                     prompt_library.clone().default_prompt_ids();
                                 let is_default = default_prompt_ids.contains(&id);
+                                // We'll use this for conditionally enabled prompts
+                                // like those loaded only for certain languages
+                                let is_conditional = false;
+                                let selection = match (is_default, is_conditional) {
+                                    (_, true) => Selection::Indeterminate,
+                                    (true, _) => Selection::Selected,
+                                    (false, _) => Selection::Unselected,
+                                };
 
                                 v_flex().p(Spacing::Small.rems(cx)).child(
                                     h_flex()
                                         .justify_between()
                                         .child(
-                                            h_flex().child(Label::new(prompt.metadata.title)).when(
-                                                is_default,
-                                                |this| {
-                                                    this.child(
-                                                        Label::new("(Default)").color(Color::Muted),
-                                                    )
-                                                },
-                                            ),
+                                            h_flex()
+                                                .gap(Spacing::Large.rems(cx))
+                                                .child(
+                                                    Checkbox::new(shared_string_id, selection)
+                                                        .on_click(move |_, cx| {
+                                                            if is_default {
+                                                                prompt_library
+                                                                    .clone()
+                                                                    .remove_prompt_from_default(
+                                                                        prompt_id.clone(),
+                                                                    );
+                                                            } else {
+                                                                prompt_library
+                                                                    .clone()
+                                                                    .add_prompt_to_default(
+                                                                        prompt_id.clone(),
+                                                                    );
+                                                            }
+                                                        }),
+                                                )
+                                                .child(Label::new(prompt.metadata.title)),
                                         )
-                                        .child(
-                                            Button::new("add-prompt", "Add")
-                                                .selected(is_default)
-                                                .on_click(move |_, cx| {
-                                                    if is_default {
-                                                        prompt_library
-                                                            .clone()
-                                                            .remove_prompt_from_default(
-                                                                prompt_id.clone(),
-                                                            );
-                                                    } else {
-                                                        prompt_library
-                                                            .clone()
-                                                            .add_prompt_to_default(
-                                                                prompt_id.clone(),
-                                                            );
-                                                    }
-                                                }),
-                                        ),
+                                        .child(div()),
                                 )
                             }))
                         },
