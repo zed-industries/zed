@@ -1353,6 +1353,7 @@ pub struct Conversation {
     id: Option<String>,
     buffer: Model<Buffer>,
     pub(crate) ambient_context: AmbientContext,
+    edit_suggestions: Vec<EditSuggestion>,
     message_anchors: Vec<MessageAnchor>,
     messages_metadata: HashMap<MessageId, MessageMetadata>,
     next_message_id: MessageId,
@@ -1391,6 +1392,7 @@ impl Conversation {
             messages_metadata: Default::default(),
             next_message_id: Default::default(),
             ambient_context: AmbientContext::default(),
+            edit_suggestions: Vec::new(),
             summary: None,
             pending_summary: Task::ready(None),
             completion_count: Default::default(),
@@ -1490,6 +1492,7 @@ impl Conversation {
                 messages_metadata: saved_conversation.message_metadata,
                 next_message_id,
                 ambient_context: AmbientContext::default(),
+                edit_suggestions: Vec::new(),
                 summary: Some(Summary {
                     text: saved_conversation.summary,
                     done: true,
@@ -1732,15 +1735,14 @@ impl Conversation {
     }
 
     fn parse_edit_suggestions(&mut self, cx: &mut ModelContext<Self>) {
-        let buffer = self.buffer.read(cx).snapshot();
+        let conversation_buffer = self.buffer.read(cx).snapshot();
 
-        let mut matches = buffer.matches(0..buffer.len(), |grammar| {
+        let mut matches = conversation_buffer.matches(0..conversation_buffer.len(), |grammar| {
             Some(&grammar.suggested_edits_config.as_ref()?.query)
         });
 
-        // self.edit_suggestions.clear();
+        self.edit_suggestions.clear();
         while let Some(mat) = matches.peek() {
-            dbg!(&mat);
             let grammars = matches.grammars();
             if let Some(suggested_edits_config) =
                 grammars[mat.grammar_index].suggested_edits_config.as_ref()
@@ -1750,16 +1752,45 @@ impl Conversation {
                     .iter()
                     .find(|capture| capture.index == suggested_edits_config.content_capture_ix)
                 {
-                    let range = content_capture.node.byte_range();
-                    let suggestion_source = buffer.text_for_range(range).collect::<String>();
+                    let mut source_range = content_capture.node.byte_range();
+                    if conversation_buffer.chars_at(source_range.end - 1).next() == Some('\n') {
+                        source_range.end -= 1;
+                    }
+
+                    let suggestion_source = conversation_buffer
+                        .text_for_range(source_range.clone())
+                        .collect::<String>();
                     let suggestion_source = suggestion_source
+                        .strip_prefix("```zed_edit\n")
+                        .unwrap_or(suggestion_source.as_str())
                         .strip_suffix("\n```")
                         .unwrap_or(suggestion_source.as_str());
                     let mut parts = suggestion_source.split("\n----------------\n");
-                    if let Some(((filename, deletion), insertion)) =
+                    if let Some(((path, deletion), new_text)) =
                         parts.next().zip(parts.next()).zip(parts.next())
                     {
-                        dbg!(filename, deletion, insertion);
+                        let mut row_range = None;
+                        for deletion_line in deletion.lines() {
+                            let leading_digit_count = deletion_line
+                                .chars()
+                                .take_while(|ch| ch.is_ascii_digit())
+                                .count();
+                            if let Ok(row) = deletion_line[..leading_digit_count].parse() {
+                                let row_range = row_range.get_or_insert_with(|| row..row + 1);
+                                row_range.end = row + 1;
+                            }
+                        }
+
+                        if let Some(row_range) = row_range {
+                            let source_range = conversation_buffer.anchor_after(source_range.start)
+                                ..conversation_buffer.anchor_before(source_range.end);
+                            self.edit_suggestions.push(EditSuggestion {
+                                source_range,
+                                path: PathBuf::from(path),
+                                row_range,
+                                new_text: new_text.to_string(),
+                            })
+                        }
                     }
                 }
             }
@@ -2317,6 +2348,14 @@ impl Conversation {
     }
 }
 
+#[derive(Debug, PartialEq)]
+struct EditSuggestion {
+    source_range: Range<language::Anchor>,
+    path: PathBuf,
+    row_range: Range<u32>,
+    new_text: String,
+}
+
 struct PendingCompletion {
     id: usize,
     _task: Task<()>,
@@ -2465,6 +2504,38 @@ impl ConversationEditor {
                 self.conversation.update(cx, |conversation, cx| {
                     conversation.save(Some(Duration::from_millis(500)), self.fs.clone(), cx);
                 });
+
+                self.editor.update(cx, |editor, cx| {
+                    let buffer = editor.buffer().read(cx).snapshot(cx);
+                    let excerpt_id = *buffer.as_singleton().unwrap().0;
+                    let conversation = self.conversation.read(cx);
+                    let highlighted_rows = conversation
+                        .edit_suggestions
+                        .iter()
+                        .map(|suggestion| {
+                            let start = buffer
+                                .anchor_in_excerpt(excerpt_id, suggestion.source_range.start)
+                                .unwrap();
+                            let end = buffer
+                                .anchor_in_excerpt(excerpt_id, suggestion.source_range.end)
+                                .unwrap();
+                            start..=end
+                        })
+                        .collect::<Vec<_>>();
+
+                    editor.clear_row_highlights::<EditSuggestion>();
+                    for range in highlighted_rows {
+                        editor.highlight_rows::<EditSuggestion>(
+                            range,
+                            Some(
+                                cx.theme()
+                                    .colors()
+                                    .editor_document_highlight_read_background,
+                            ),
+                            cx,
+                        );
+                    }
+                })
             }
             ConversationEvent::SummaryChanged => {
                 cx.emit(ConversationEditorEvent::TabContentChanged);

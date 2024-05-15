@@ -27,17 +27,17 @@ You should express the edit as follows:
 
 ```zed_edit
 path/to/file.txt
------------------
+----------------
 2 jumped over
 3 the lazy
------------------
+----------------
 jumped
 over
 the
 lazy
 ```
 
-The block between the first `-----------------` and the second `-----------------` indicates the region that needs to be replaced. The block after the final `-----------------` indicates the new text that needs to be inserted at that region. Notice how the new text DOES NOT include line numbers.
+The block between the first `----------------` and the second `----------------` indicates the region that needs to be replaced. The block after the final `----------------` indicates the new text that needs to be inserted at that region. Notice how the new text DOES NOT include line numbers.
 
 ## Example 2
 
@@ -67,18 +67,18 @@ You should express the edits as follows:
 
 ```zed_edit
 path/to/file.txt
------------------
+----------------
 1 Lorem ipsum
------------------
+----------------
 Lorem ipsum dolor
 ```
 
 ```zed_edit
 path/to/file.txt
------------------
+----------------
 4     Adipiscit
 5 elit
------------------
+----------------
     adipiscit
 ```
 
