@@ -9,3 +9,9 @@ pub struct AmbientContext {
     pub recent_buffers: RecentBuffersContext,
     pub current_project: CurrentProjectContext,
 }
+
+#[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Clone, Copy)]
+pub enum ContextUpdated {
+    Updating,
+    Disabled,
+}
