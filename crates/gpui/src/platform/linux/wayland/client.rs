@@ -679,6 +679,7 @@ impl LinuxClient for WaylandClient {
         if state.mouse_focused_window.is_some() || state.keyboard_focused_window.is_some() {
             let serial = state.serial_tracker.get(SerialKind::KeyEnter);
             let data_source = data_device_manager.create_data_source(&state.globals.qh, ());
+            data_source.offer(state.clipboard.self_mime());
             data_source.offer(TEXT_MIME_TYPE.to_string());
             data_device.set_selection(Some(&data_source), serial);
             state.clipboard.set_contents(item.text);

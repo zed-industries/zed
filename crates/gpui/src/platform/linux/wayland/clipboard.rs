@@ -18,6 +18,7 @@ pub(crate) const FILE_LIST_MIME_TYPE: &str = "text/uri-list";
 
 pub(crate) struct Clipboard {
     connection: Connection,
+    self_mime: String,
     contents: Option<String>,
     // External clipboard contents
     cached_read: Option<String>,
@@ -87,6 +88,7 @@ impl Clipboard {
     pub fn new(connection: Connection) -> Self {
         Self {
             connection,
+            self_mime: format!("pid/{}", std::process::id()),
             contents: None,
             cached_read: None,
             current_offer: None,
@@ -105,6 +107,10 @@ impl Clipboard {
         self.current_offer = data_offer;
     }
 
+    pub fn self_mime(&self) -> String {
+        self.self_mime.clone()
+    }
+
     pub fn handle_send(&self, _mime_type: String, fd: OwnedFd) {
         if let Some(contents) = &self.contents {
             let mut file = FileDescriptor::new(fd);
@@ -120,6 +126,9 @@ impl Clipboard {
         }
 
         let data_offer = self.current_offer.clone()?;
+        if data_offer.has_mime_type(&self.self_mime) {
+            return self.contents.clone();
+        }
         if !data_offer.has_mime_type(TEXT_MIME_TYPE) {
             return None;
         }
