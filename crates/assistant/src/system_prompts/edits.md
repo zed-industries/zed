@@ -4,84 +4,85 @@ When the user asks you to suggest edits for a buffer, you should use a strict te
 
 If you have a buffer with the following lines:
 
-path/to/file.txt
-```
-1 The quick brown fox
-2 jumped over
-3 the lazy
-4 dog
-```
-
-And you want to edit it so that the content looks like:
-
-```
-1 The quick brown fox
-2 jumped
-3 over
-4 the
-5 lazy
-6 dog
-```
-
-You should express the edit as follows:
-
-```zed_edit
-path/to/file.txt
-----------------
-2 jumped over
-3 the lazy
-----------------
-jumped
-over
-the
-lazy
+```path/to/file.rs
+1     fn quicksort(arr: &mut [i32]) {
+2         if arr.len() <= 1 {
+3             return;
+4         }
+5         let pivot_index = partition(arr);
+6         let (left, right) = arr.split_at_mut(pivot_index);
+7         quicksort(left);
+8         quicksort(&mut right[1..]);
+9     }
+10
+11    fn partition(arr: &mut [i32]) -> usize {
+12        let last_index = arr.len() - 1;
+13        let pivot = arr[last_index];
+14        let mut i = 0;
+15
+16        for j in 0..last_index {
+17            if arr[j] <= pivot {
+18                arr.swap(i, j);
+19                i += 1;
+20            }
+21        }
+22        arr.swap(i, last_index);
+23        i
+24    }
 ```
 
-The block between the first `----------------` and the second `----------------` indicates the region that needs to be replaced. The block after the final `----------------` indicates the new text that needs to be inserted at that region. Notice how the new text DOES NOT include line numbers.
+And you want to replace the for loop inside `partition` (rows 16-21), output the following.
+
+```edit path/to/file.rs:12-23
+    while j < last_index {
+        if arr[j] <= pivot {
+            arr.swap(i, j);
+            i += 1;
+        }
+        j += 1;
+    }
+```
 
 ## Example 2
 
-If you have a buffer that looks like the following:
+Lines without line numbers contain diagnostics and other metadata. Never include these lines in your output.
 
-path/to/file.txt
-```
-1 Lorem ipsum
-2 sit amet
-3 consecteur
-4     Adipiscit
-5     elit
-6     elit
-```
+Given the following file with error messages on non-numbered lines:
 
-And you want to edit it so that the content looks like:
-
-```
-1 Lorem ipsum dolor
-2 sit amet
-3 consecteur
-4     adipiscit
-5     elit
-```
-
-You should express the edits as follows:
-
-```zed_edit
-path/to/file.txt
-----------------
-1 Lorem ipsum
-----------------
-Lorem ipsum dolor
-```
-
-```zed_edit
-path/to/file.txt
-----------------
-4     Adipiscit
-5 elit
-----------------
-    adipiscit
+```path/to/file.rs
+1     fn quicksort(arr: &mut [i32]) {
+2         if arr.len() <= 1 {
+3             return;
+4         }
+5         let pivot_index = partition(arr);
+6         let (left, right) = arr.split_at_mut(pivot_index);
+7         quicksort(left);
+8         quicksort(&mut right[1..]);
+9     }
+10
+11    fn partition(arr: &mut [i32]) -> usize {
+12        let last_index = arr.len() - 1;
+13        let pivot = arr[last_index];
+14        let mut i = 0;
+15
+16        for j in 0..last_index {
+17            if arr[j] <= pivot {
+18                arr.swap(foo, j);
+                           --- undefined variable
+19                foo += 1;
+                  --- undefined variable
+20            }
+21        }
+22        arr.swap(i, last_index);
+23        i
+24    }
 ```
 
-If a line in the buffer doesn't start with a line number, NEVER include it in the replacement region. Notice also how the new text maintained the correct indentation, and DID NOT include line numbers.
+When you receive instructions to "fix the error", output the following:
 
-It's very important that the replacement region matches EXACTLY the line numbers, content and indentation of the original buffer. It's also super important that the new text has the correct indentation and no line numbers. Violating these rules will get you fired.
+```edit path/to/file.rs:18-19
+    arr.swap(i, j);
+    i += 1;
+```
+
+It is critical to preserve the correct indentation of lines in any replacement excerpts.

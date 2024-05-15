@@ -144,8 +144,7 @@ fn message_for_recent_buffers(buffers: Vec<SourceBufferSnapshot>) -> Rope {
         "Lines that don't have a number correspond to errors and warnings. For example:"
     )
     .unwrap();
-    writeln!(message, "path/to/file.md").unwrap();
-    writeln!(message, "```markdown").unwrap();
+    writeln!(message, "```path/to/file.md").unwrap();
     writeln!(message, "1 The quick brown fox").unwrap();
     writeln!(message, "2 jumps over one active").unwrap();
     writeln!(message, "             --- error: should be 'the'").unwrap();
@@ -157,15 +156,9 @@ fn message_for_recent_buffers(buffers: Vec<SourceBufferSnapshot>) -> Rope {
     writeln!(message, "Here's the actual recent buffer list:").unwrap();
     for buffer in buffers {
         if let Some(path) = buffer.full_path {
-            writeln!(message, "{}", path.display()).unwrap();
+            writeln!(message, "```{}", path.display()).unwrap();
         } else {
-            writeln!(message, "untitled").unwrap();
-        }
-
-        if let Some(language) = buffer.snapshot.language() {
-            writeln!(message, "```{}", language.name().to_lowercase()).unwrap();
-        } else {
-            writeln!(message, "```").unwrap();
+            writeln!(message, "```untitled").unwrap();
         }
 
         let mut diagnostics = buffer

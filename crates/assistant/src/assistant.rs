@@ -34,6 +34,7 @@ actions!(
         InlineAssist,
         ToggleIncludeConversation,
         ToggleHistory,
+        ApplyEdit
     ]
 );
 

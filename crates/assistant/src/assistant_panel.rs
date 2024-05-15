@@ -3,7 +3,7 @@ use crate::{
     assistant_settings::{AssistantDockPosition, AssistantSettings, ZedDotDevModel},
     codegen::{self, Codegen, CodegenKind},
     prompts::generate_content_prompt,
-    Assist, CompletionProvider, CycleMessageRole, InlineAssist, LanguageModel,
+    ApplyEdit, Assist, CompletionProvider, CycleMessageRole, InlineAssist, LanguageModel,
     LanguageModelRequest, LanguageModelRequestMessage, MessageId, MessageMetadata, MessageStatus,
     QuoteSelection, ResetKey, Role, SavedConversation, SavedConversationMetadata, SavedMessage,
     Split, ToggleFocus, ToggleHistory, ToggleIncludeConversation,
@@ -34,11 +34,11 @@ use gpui::{
 use language::{language_settings::SoftWrap, Buffer, LanguageRegistry, Point, ToOffset as _};
 use multi_buffer::MultiBufferRow;
 use parking_lot::Mutex;
-use project::Project;
+use project::{Project, ProjectTransaction};
 use search::{buffer_search::DivRegistrar, BufferSearchBar};
 use settings::Settings;
 use std::{
-    cmp,
+    cmp::{self, Ordering},
     fmt::Write,
     iter,
     ops::Range,
@@ -1378,7 +1378,7 @@ impl Conversation {
         cx: &mut ModelContext<Self>,
     ) -> Self {
         let buffer = cx.new_model(|cx| {
-            let mut buffer = Buffer::local("", cx);
+            let mut buffer = Buffer::local(include_str!("./system_prompts/edits.md"), cx);
             buffer.set_language_registry(language_registry.clone());
             buffer
         });
@@ -1413,12 +1413,13 @@ impl Conversation {
         this.messages_metadata.insert(
             message.id,
             MessageMetadata {
-                role: Role::User,
+                role: Role::System,
                 status: MessageStatus::Done,
-                ambient_context: this.ambient_context.snapshot(),
+                ambient_context: AmbientContextSnapshot::default(),
             },
         );
 
+        this.insert_message_after(message.id, Role::User, MessageStatus::Done, cx);
         this.set_language(cx);
         this.count_remaining_tokens(cx);
         this
@@ -1552,6 +1553,7 @@ impl Conversation {
     }
 
     fn parse_edit_suggestions(&mut self, cx: &mut ModelContext<Self>) {
+        // todo!("do this in the background")
         let conversation_buffer = self.buffer.read(cx).snapshot();
 
         let mut matches = conversation_buffer.matches(0..conversation_buffer.len(), |grammar| {
@@ -1603,7 +1605,11 @@ impl Conversation {
                                 ..conversation_buffer.anchor_before(source_range.end);
                             self.edit_suggestions.push(EditSuggestion {
                                 source_range,
-                                path: PathBuf::from(path),
+                                full_path: if path == "untitled" {
+                                    None
+                                } else {
+                                    Some(PathBuf::from(path))
+                                },
                                 row_range,
                                 new_text: new_text.to_string(),
                             })
@@ -1800,10 +1806,6 @@ impl Conversation {
         let messages = recent_buffers_context
             .into_iter()
             .chain(current_project_context)
-            .chain([LanguageModelRequestMessage {
-                role: Role::System,
-                content: include_str!("./system_prompts/edits.md").to_string(),
-            }])
             .chain(
                 self.messages(cx)
                     .filter(|message| matches!(message.status, MessageStatus::Done))
@@ -2177,7 +2179,7 @@ impl Conversation {
 #[derive(Debug, PartialEq)]
 struct EditSuggestion {
     source_range: Range<language::Anchor>,
-    path: PathBuf,
+    full_path: Option<PathBuf>,
     row_range: Range<u32>,
     new_text: String,
 }
@@ -2757,6 +2759,69 @@ impl ConversationEditor {
         });
     }
 
+    fn apply_edit(&mut self, _: &ApplyEdit, cx: &mut ViewContext<Self>) {
+        let conversation = self.conversation.read(cx);
+        let buffer_handle = conversation.buffer.clone();
+        let buffer = buffer_handle.read(cx);
+        let mut cursors_by_suggestion_index = HashMap::default();
+        for selection in self.editor.read(cx).selections.disjoint_anchors().iter() {
+            let cursor = selection.head().text_anchor;
+            let ix = conversation.edit_suggestions.binary_search_by(|probe| {
+                if probe.source_range.end.cmp(&cursor, buffer).is_lt() {
+                    Ordering::Less
+                } else if probe.source_range.start.cmp(&cursor, buffer).is_gt() {
+                    Ordering::Greater
+                } else {
+                    Ordering::Equal
+                }
+            });
+
+            if let Ok(ix) = ix {
+                cursors_by_suggestion_index.insert(ix, cursor.to_offset(buffer));
+            }
+        }
+
+        let mut edits_by_buffer = HashMap::default();
+        for (suggestion_ix, cursor_offset) in cursors_by_suggestion_index {
+            let suggestion = &conversation.edit_suggestions[suggestion_ix];
+            if let Some(message) = conversation.message_for_offset(cursor_offset, cx) {
+                if let Some(buffer) = message
+                    .ambient_context
+                    .recent_buffers
+                    .source_buffers
+                    .iter()
+                    .find(|source_buffer| source_buffer.full_path == suggestion.full_path)
+                {
+                    if let Some(model) = buffer.model.upgrade() {
+                        // todo!("sanitize row ranges")
+                        // todo!("produce a diff")
+                        let edit_start = buffer
+                            .snapshot
+                            .anchor_after(Point::new(suggestion.row_range.start, 0));
+                        let edit_end = buffer
+                            .snapshot
+                            .anchor_before(Point::new(suggestion.row_range.end, 0));
+                        edits_by_buffer
+                            .entry(model)
+                            .or_insert(Vec::new())
+                            .push((edit_start..edit_end, suggestion.new_text.clone()));
+                    }
+                }
+            }
+        }
+
+        // let mut project_transaction = ProjectTransaction::default();
+        // for (buffer_handle, edits) in edits_by_buffer {
+        //     buffer_handle.update(cx, |buffer, cx| {
+        //         buffer.start_transaction();
+        //         buffer.edit(edits, None, cx);
+        //         if let Some(transaction_id) = buffer.end_transaction(cx) {
+        //             project_transaction.0.insert(buffer_handle, transaction_id);
+        //         }
+        //     })
+        // }
+    }
+
     fn save(&mut self, _: &Save, cx: &mut ViewContext<Self>) {
         self.conversation.update(cx, |conversation, cx| {
             conversation.save(None, self.fs.clone(), cx)
@@ -2785,6 +2850,7 @@ impl Render for ConversationEditor {
             .capture_action(cx.listener(ConversationEditor::cycle_message_role))
             .on_action(cx.listener(ConversationEditor::assist))
             .on_action(cx.listener(ConversationEditor::split))
+            .on_action(cx.listener(ConversationEditor::apply_edit))
             .size_full()
             .v_flex()
             .child(
