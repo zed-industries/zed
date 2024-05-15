@@ -593,11 +593,27 @@
   },
   // Different settings for specific languages.
   "languages": {
-    "C++": {
-      "format_on_save": "off"
+    "Astro": {
+      "prettier": {
+        "allowed": true,
+        "plugins": ["prettier-plugin-astro"]
+      }
+    },
+    "Blade": {
+      "prettier": {
+        "allowed": true
+      }
     },
     "C": {
       "format_on_save": "off"
+    },
+    "C++": {
+      "format_on_save": "off"
+    },
+    "CSS": {
+      "prettier": {
+        "allowed": true
+      }
     },
     "Elixir": {
       "language_servers": ["elixir-ls", "!next-ls", "!lexical", "..."]
@@ -610,20 +626,103 @@
         "source.organizeImports": true
       }
     },
+    "GraphQL": {
+      "prettier": {
+        "allowed": true
+      }
+    },
     "HEEX": {
       "language_servers": ["elixir-ls", "!next-ls", "!lexical", "..."]
+    },
+    "HTML": {
+      "prettier": {
+        "allowed": true
+      }
+    },
+    "Java": {
+      "prettier": {
+        "allowed": true,
+        "plugins": ["prettier-plugin-java"]
+      }
+    },
+    "JavaScript": {
+      "prettier": {
+        "allowed": true
+      }
+    },
+    "JSON": {
+      "prettier": {
+        "allowed": true
+      }
     },
     "Make": {
       "hard_tabs": true
     },
     "Markdown": {
-      "format_on_save": "off"
+      "format_on_save": "off",
+      "prettier": {
+        "allowed": true
+      }
+    },
+    "PHP": {
+      "prettier": {
+        "allowed": true,
+        "plugins": ["@prettier/plugin-php"]
+      }
     },
     "Prisma": {
       "tab_size": 2
     },
     "Ruby": {
       "language_servers": ["solargraph", "!ruby-lsp", "..."]
+    },
+    "SCSS": {
+      "prettier": {
+        "allowed": true
+      }
+    },
+    "SQL": {
+      "prettier": {
+        "allowed": true,
+        "plugins": ["prettier-plugin-sql"]
+      }
+    },
+    "Svelte": {
+      "prettier": {
+        "allowed": true,
+        "plugins": ["prettier-plugin-svelte"]
+      }
+    },
+    "TSX": {
+      "prettier": {
+        "allowed": true
+      }
+    },
+    "Twig": {
+      "prettier": {
+        "allowed": true
+      }
+    },
+    "TypeScript": {
+      "prettier": {
+        "allowed": true
+      }
+    },
+    "Vue.js": {
+      "prettier": {
+        "allowed": true
+      }
+    },
+    "XML": {
+      "prettier": {
+        "allowed": true,
+        "plugins": ["@prettier/plugin-xml"]
+      }
+    },
+    "YAML": {
+      "prettier": {
+        "allowed": true
+      }
     }
   },
   // Zed's Prettier integration settings.
@@ -631,15 +730,15 @@
   // and configure default Prettier, used when no project-level Prettier installation is found.
   "prettier": {
     // // Whether to consider prettier formatter or not when attempting to format a file.
-    // "enabled": false,
+    // "allowed": false,
     //
     // // Use regular Prettier json configuration.
-    // // If Prettier is enabled, Zed will use this for its Prettier instance for any applicable file, if
+    // // If Prettier is allowed, Zed will use this for its Prettier instance for any applicable file, if
     // // the project has no other Prettier installed.
     // "plugins": [],
     //
     // // Use regular Prettier json configuration.
-    // // If Prettier is enabled, Zed will use this for its Prettier instance for any applicable file, if
+    // // If Prettier is allowed, Zed will use this for its Prettier instance for any applicable file, if
     // // the project has no other Prettier installed.
     // "trailingComma": "es5",
     // "tabWidth": 4,
