@@ -108,7 +108,7 @@ impl PromptLibrary {
         }
     }
 
-    pub fn add_to_default_prompt(&self, prompt_ids: Vec<String>) -> anyhow::Result<()> {
+    pub fn add_prompts_to_default(&self, prompt_ids: Vec<String>) -> anyhow::Result<()> {
         let mut state = self.state.write();
 
         let ids_to_add: Vec<String> = prompt_ids
@@ -122,7 +122,18 @@ impl PromptLibrary {
         Ok(())
     }
 
-    pub fn remove_from_default_prompt(&self, prompt_id: String) -> anyhow::Result<()> {
+    pub fn add_prompt_to_default(&self, prompt_id: String) -> anyhow::Result<()> {
+        let mut state = self.state.write();
+
+        if !state.default_prompts.contains(&prompt_id) && state.prompts.contains_key(&prompt_id) {
+            state.default_prompts.push(prompt_id);
+            state.version += 1;
+        }
+
+        Ok(())
+    }
+
+    pub fn remove_prompt_from_default(&self, prompt_id: String) -> anyhow::Result<()> {
         let mut state = self.state.write();
 
         state.default_prompts.retain(|id| id != &prompt_id);
@@ -254,14 +265,15 @@ impl PromptManager {
 
 impl Render for PromptManager {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
-        let prompts = self
-            .prompt_library
+        let prompt_library = self.prompt_library.clone();
+        let prompts = prompt_library
+            .clone()
             .prompts_with_ids()
             .clone()
             .into_iter()
             .collect::<Vec<_>>();
 
-        let default_prompt_ids = self.prompt_library.default_prompt_ids();
+        let default_prompts = prompt_library.clone().default_prompts();
 
         v_flex()
             .elevation_3(cx)
@@ -269,7 +281,11 @@ impl Render for PromptManager {
             .flex_none()
             .w(rems(32.))
             .min_h(rems(1.))
-            .child(ModalHeader::new("prompt-manager-header").child(Headline::new("Prompt Manager")))
+            .child(
+                ModalHeader::new("prompt-manager-header")
+                    .child(Headline::new("Prompt Manager"))
+                    .show_dismiss_button(true),
+            )
             .child(
                 v_flex()
                     .py(Spacing::Medium.rems(cx))
@@ -278,19 +294,44 @@ impl Render for PromptManager {
                         prompts.len() > 0,
                         |with_items| {
                             with_items.children(prompts.into_iter().map(|(id, prompt)| {
+                                let prompt_library = prompt_library.clone();
                                 let prompt = prompt.clone();
                                 let prompt_id = id.clone();
+
+                                let default_prompt_ids =
+                                    prompt_library.clone().default_prompt_ids();
                                 let is_default = default_prompt_ids.contains(&id);
 
                                 v_flex().p(Spacing::Small.rems(cx)).child(
                                     h_flex()
                                         .justify_between()
-                                        .child(Label::new(prompt.metadata.title))
+                                        .child(
+                                            h_flex().child(Label::new(prompt.metadata.title)).when(
+                                                is_default,
+                                                |this| {
+                                                    this.child(
+                                                        Label::new("(Default)").color(Color::Muted),
+                                                    )
+                                                },
+                                            ),
+                                        )
                                         .child(
                                             Button::new("add-prompt", "Add")
                                                 .selected(is_default)
                                                 .on_click(move |_, cx| {
-                                                    println!("Clicked {}!", prompt_id);
+                                                    if is_default {
+                                                        prompt_library
+                                                            .clone()
+                                                            .remove_prompt_from_default(
+                                                                prompt_id.clone(),
+                                                            );
+                                                    } else {
+                                                        prompt_library
+                                                            .clone()
+                                                            .add_prompt_to_default(
+                                                                prompt_id.clone(),
+                                                            );
+                                                    }
                                                 }),
                                         ),
                                 )
