@@ -1,5 +1,5 @@
-use crate::ambient_context::{AmbientContext, RecentBuffer};
 use crate::{
+    ambient_context::*,
     assistant_settings::{AssistantDockPosition, AssistantSettings, ZedDotDevModel},
     codegen::{self, Codegen, CodegenKind},
     prompts::generate_content_prompt,
@@ -31,10 +31,7 @@ use gpui::{
     Subscription, Task, TextStyle, UniformListScrollHandle, View, ViewContext, VisualContext,
     WeakModel, WeakView, WhiteSpace, WindowContext,
 };
-use language::{
-    language_settings::SoftWrap, Buffer, BufferSnapshot, DiagnosticEntry, LanguageRegistry, Point,
-    ToOffset as _,
-};
+use language::{language_settings::SoftWrap, Buffer, LanguageRegistry, Point, ToOffset as _};
 use multi_buffer::MultiBufferRow;
 use parking_lot::Mutex;
 use project::Project;
@@ -1418,6 +1415,7 @@ impl Conversation {
             MessageMetadata {
                 role: Role::User,
                 status: MessageStatus::Done,
+                ambient_context: this.ambient_context.snapshot(),
             },
         );
 
@@ -1529,11 +1527,6 @@ impl Conversation {
         .detach_and_log_err(cx);
     }
 
-    fn toggle_recent_buffers(&mut self, cx: &mut ModelContext<Self>) {
-        self.ambient_context.recent_buffers.enabled = !self.ambient_context.recent_buffers.enabled;
-        self.update_recent_buffers_context(cx);
-    }
-
     fn toggle_current_project_context(
         &mut self,
         fs: Arc<dyn Fs>,
@@ -1543,182 +1536,6 @@ impl Conversation {
         self.ambient_context.current_project.enabled =
             !self.ambient_context.current_project.enabled;
         self.ambient_context.current_project.update(fs, project, cx);
-    }
-
-    fn set_recent_buffers(
-        &mut self,
-        buffers: impl IntoIterator<Item = Model<Buffer>>,
-        cx: &mut ModelContext<Self>,
-    ) {
-        self.ambient_context.recent_buffers.buffers.clear();
-        self.ambient_context
-            .recent_buffers
-            .buffers
-            .extend(buffers.into_iter().map(|buffer| RecentBuffer {
-                buffer: buffer.downgrade(),
-                _subscription: cx.observe(&buffer, |this, _, cx| {
-                    this.update_recent_buffers_context(cx);
-                }),
-            }));
-        self.update_recent_buffers_context(cx);
-    }
-
-    fn update_recent_buffers_context(&mut self, cx: &mut ModelContext<Self>) {
-        let buffers = self
-            .ambient_context
-            .recent_buffers
-            .buffers
-            .iter()
-            .filter_map(|recent| {
-                recent
-                    .buffer
-                    .read_with(cx, |buffer, cx| {
-                        (
-                            buffer.file().map(|file| file.full_path(cx)),
-                            buffer.snapshot(),
-                        )
-                    })
-                    .ok()
-            })
-            .collect::<Vec<_>>();
-
-        if !self.ambient_context.recent_buffers.enabled || buffers.is_empty() {
-            self.ambient_context.recent_buffers.message.clear();
-            self.ambient_context.recent_buffers.pending_message = None;
-            self.count_remaining_tokens(cx);
-            cx.notify();
-        } else {
-            self.ambient_context.recent_buffers.pending_message =
-                Some(cx.spawn(|this, mut cx| async move {
-                    const DEBOUNCE_TIMEOUT: Duration = Duration::from_millis(100);
-                    cx.background_executor().timer(DEBOUNCE_TIMEOUT).await;
-
-                    let message = cx
-                        .background_executor()
-                        .spawn(async move { Self::message_for_recent_buffers(&buffers) })
-                        .await;
-                    this.update(&mut cx, |this, cx| {
-                        this.ambient_context.recent_buffers.message = message;
-                        this.count_remaining_tokens(cx);
-                        cx.notify();
-                    })
-                    .ok();
-                }));
-        }
-    }
-
-    fn message_for_recent_buffers(buffers: &[(Option<PathBuf>, BufferSnapshot)]) -> String {
-        let mut message = String::new();
-        writeln!(
-            message,
-            "The following is a list of recent buffers that the user has opened."
-        )
-        .unwrap();
-        writeln!(
-            message,
-            "For every line in the buffer, I will include a row number that line corresponds to."
-        )
-        .unwrap();
-        writeln!(
-            message,
-            "Lines that don't have a number correspond to errors and warnings. For example:"
-        )
-        .unwrap();
-        writeln!(message, "path/to/file.md").unwrap();
-        writeln!(message, "```markdown").unwrap();
-        writeln!(message, "1 The quick brown fox").unwrap();
-        writeln!(message, "2 jumps over one active").unwrap();
-        writeln!(message, "             --- error: should be 'the'").unwrap();
-        writeln!(message, "                 ------ error: should be 'lazy'").unwrap();
-        writeln!(message, "3 dog").unwrap();
-        writeln!(message, "```").unwrap();
-
-        message.push('\n');
-        writeln!(message, "Here's the actual recent buffer list:").unwrap();
-        for (path, buffer) in buffers {
-            if let Some(path) = path {
-                writeln!(message, "{}", path.display()).unwrap();
-            } else {
-                writeln!(message, "untitled").unwrap();
-            }
-
-            if let Some(language) = buffer.language() {
-                writeln!(message, "```{}", language.name().to_lowercase()).unwrap();
-            } else {
-                writeln!(message, "```").unwrap();
-            }
-
-            let mut diagnostics = buffer
-                .diagnostics_in_range::<_, Point>(
-                    language::Anchor::MIN..language::Anchor::MAX,
-                    false,
-                )
-                .peekable();
-
-            let mut active_diagnostics = Vec::<DiagnosticEntry<Point>>::new();
-            const GUTTER_PADDING: usize = 4;
-            let gutter_width =
-                ((buffer.max_point().row + 1) as f32).log10() as usize + 1 + GUTTER_PADDING;
-            for buffer_row in 0..=buffer.max_point().row {
-                let display_row = buffer_row + 1;
-                active_diagnostics.retain(|diagnostic| {
-                    (diagnostic.range.start.row..=diagnostic.range.end.row).contains(&buffer_row)
-                });
-                while diagnostics.peek().map_or(false, |diagnostic| {
-                    (diagnostic.range.start.row..=diagnostic.range.end.row).contains(&buffer_row)
-                }) {
-                    active_diagnostics.push(diagnostics.next().unwrap());
-                }
-
-                let row_width = (display_row as f32).log10() as usize + 1;
-                write!(message, "{}", display_row).unwrap();
-                if row_width < gutter_width {
-                    message.extend(iter::repeat(' ').take(gutter_width - row_width));
-                }
-
-                for chunk in buffer.text_for_range(
-                    Point::new(buffer_row, 0)..Point::new(buffer_row, buffer.line_len(buffer_row)),
-                ) {
-                    message.push_str(chunk);
-                }
-                message.push('\n');
-
-                for diagnostic in &active_diagnostics {
-                    message.extend(iter::repeat(' ').take(gutter_width));
-
-                    let start_column = if diagnostic.range.start.row == buffer_row {
-                        message
-                            .extend(iter::repeat(' ').take(diagnostic.range.start.column as usize));
-                        diagnostic.range.start.column
-                    } else {
-                        0
-                    };
-                    let end_column = if diagnostic.range.end.row == buffer_row {
-                        diagnostic.range.end.column
-                    } else {
-                        buffer.line_len(buffer_row)
-                    };
-
-                    message.extend(iter::repeat('-').take((end_column - start_column) as usize));
-                    writeln!(message, " {}", diagnostic.diagnostic.message).unwrap();
-                }
-            }
-
-            message.push('\n');
-        }
-
-        writeln!(
-            message,
-            "When quoting the above code, mention which rows the code occurs at."
-        )
-        .unwrap();
-        writeln!(
-            message,
-            "Never include rows in the quoted code itself and only report lines that didn't start with a row number."
-        )
-        .unwrap();
-
-        message
     }
 
     fn handle_buffer_event(
@@ -2050,8 +1867,14 @@ impl Conversation {
             };
             self.message_anchors
                 .insert(next_message_ix, message.clone());
-            self.messages_metadata
-                .insert(message.id, MessageMetadata { role, status });
+            self.messages_metadata.insert(
+                message.id,
+                MessageMetadata {
+                    role,
+                    status,
+                    ambient_context: self.ambient_context.snapshot(),
+                },
+            );
             cx.emit(ConversationEvent::MessagesEdited);
             Some(message)
         } else {
@@ -2109,6 +1932,7 @@ impl Conversation {
                 MessageMetadata {
                     role,
                     status: MessageStatus::Done,
+                    ambient_context: message.ambient_context.clone(),
                 },
             );
 
@@ -2153,6 +1977,7 @@ impl Conversation {
                         MessageMetadata {
                             role,
                             status: MessageStatus::Done,
+                            ambient_context: message.ambient_context,
                         },
                     );
                     (Some(selection), Some(suffix))
@@ -2284,6 +2109,7 @@ impl Conversation {
                     anchor: message_anchor.start,
                     role: metadata.role,
                     status: metadata.status.clone(),
+                    ambient_context: metadata.ambient_context.clone(),
                 });
             }
             None
@@ -2634,7 +2460,9 @@ impl ConversationEditor {
 
         self.conversation.update(cx, |conversation, cx| {
             conversation
-                .set_recent_buffers(recent_buffers.into_iter().map(|(buffer, _)| buffer), cx);
+                .ambient_context
+                .recent_buffers
+                .reset(recent_buffers.into_iter().map(|(buffer, _)| buffer), cx);
         });
     }
 
@@ -2759,7 +2587,9 @@ impl ConversationEditor {
                                                         conversation
                                                             .update(cx, |conversation, cx| {
                                                                 conversation
-                                                                    .toggle_recent_buffers(cx);
+                                                                    .ambient_context
+                                                                    .recent_buffers
+                                                                    .toggle(cx);
                                                             })
                                                             .ok();
                                                     }
@@ -2987,6 +2817,7 @@ pub struct Message {
     anchor: language::Anchor,
     role: Role,
     status: MessageStatus,
+    ambient_context: AmbientContextSnapshot,
 }
 
 impl Message {

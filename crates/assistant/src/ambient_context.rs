@@ -9,3 +9,16 @@ pub struct AmbientContext {
     pub recent_buffers: RecentBuffersContext,
     pub current_project: CurrentProjectContext,
 }
+
+impl AmbientContext {
+    pub fn snapshot(&self) -> AmbientContextSnapshot {
+        AmbientContextSnapshot {
+            recent_buffers: self.recent_buffers.snapshot.clone(),
+        }
+    }
+}
+
+#[derive(Clone, Default, Debug)]
+pub struct AmbientContextSnapshot {
+    pub recent_buffers: RecentBuffersSnapshot,
+}

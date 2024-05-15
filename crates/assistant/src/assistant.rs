@@ -7,6 +7,7 @@ mod prompts;
 mod saved_conversation;
 mod streaming_diff;
 
+use ambient_context::AmbientContextSnapshot;
 pub use assistant_panel::AssistantPanel;
 use assistant_settings::{AnthropicModel, AssistantSettings, OpenAiModel, ZedDotDevModel};
 use client::{proto, Client};
@@ -182,6 +183,8 @@ pub struct LanguageModelChoiceDelta {
 struct MessageMetadata {
     role: Role,
     status: MessageStatus,
+    #[serde(skip)]
+    ambient_context: AmbientContextSnapshot,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
