@@ -6,6 +6,10 @@ from Cloudflare.
 
 On push to `main`, both of these (and the files they depend on) are uploaded to Cloudflare.
 
+### Deployment
+
+These functions are deployed on push to main by the deploy_cloudflare.yml workflow. Worker Rules in Cloudflare intercept requests to zed.dev and proxy them to the appropriate workers.
+
 ### Testing
 
 You can use [wrangler](https://developers.cloudflare.com/workers/cli-wrangler/install-update) to test these workers locally, or to deploy custom versions.
