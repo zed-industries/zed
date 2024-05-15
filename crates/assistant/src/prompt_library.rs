@@ -6,7 +6,7 @@ use parking_lot::{Mutex, RwLock};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
-use ui::{prelude::*, ModalHeader};
+use ui::{prelude::*, IconButtonShape, ModalHeader};
 use util::paths::PROMPTS_DIR;
 use workspace::ModalView;
 
@@ -282,9 +282,14 @@ impl Render for PromptManager {
             .w(rems(32.))
             .min_h(rems(1.))
             .child(
-                ModalHeader::new("prompt-manager-header")
+                h_flex()
+                    .justify_between()
                     .child(Headline::new("Prompt Manager"))
-                    .show_dismiss_button(true),
+                    .child(
+                        IconButton::new("dismiss", IconName::Close)
+                            .shape(IconButtonShape::Square)
+                            .on_click(cx.listener(|this, _event, cx| cx.emit(DismissEvent))),
+                    ),
             )
             .child(
                 v_flex()
@@ -345,7 +350,6 @@ impl Render for PromptManager {
     }
 }
 
-impl EventEmitter<DismissEvent> for PromptManager {}
 impl ModalView for PromptManager {}
 
 impl FocusableView for PromptManager {
@@ -353,3 +357,5 @@ impl FocusableView for PromptManager {
         self.focus_handle.clone()
     }
 }
+
+impl EventEmitter<DismissEvent> for PromptManager {}
