@@ -89,9 +89,7 @@ pub struct LanguageSettings {
     /// How to perform a buffer format.
     pub formatter: Formatter,
     /// Zed's Prettier integration settings.
-    /// If Prettier is enabled, Zed will use this for its Prettier instance for any applicable file, if
-    /// the project has no other Prettier installed.
-    pub prettier: HashMap<String, serde_json::Value>,
+    pub prettier: PrettierSettings,
     /// Whether to use language servers to provide code intelligence.
     pub enable_language_server: bool,
     /// The list of language servers to use (or disable) for this language.
@@ -266,13 +264,14 @@ pub struct LanguageSettingsContent {
     /// Default: auto
     #[serde(default)]
     pub formatter: Option<Formatter>,
+    /// TODO kb docs
     /// Zed's Prettier integration settings.
     /// If Prettier is enabled, Zed will use this for its Prettier instance for any applicable file, if
     /// the project has no other Prettier installed.
     ///
     /// Default: {}
     #[serde(default)]
-    pub prettier: Option<HashMap<String, serde_json::Value>>,
+    pub prettier: Option<PrettierSettings>,
     /// Whether to use language servers to provide code intelligence.
     ///
     /// Default: true
@@ -749,6 +748,46 @@ fn merge_settings(settings: &mut LanguageSettings, src: &LanguageSettingsContent
         src.extend_comment_on_newline,
     );
     merge(&mut settings.inlay_hints, src.inlay_hints);
+}
+
+/// TODO kb docs
+#[derive(Default, Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct PrettierSettings {
+    /// TODO kb docs
+    #[serde(default)]
+    enabled: bool,
+
+    /// TODO kb docs
+    #[serde(default)]
+    pub parser: Option<String>,
+
+    /// TODO kb docs
+    #[serde(default)]
+    pub plugins: HashSet<String>,
+
+    /// Default prettier options, in the format as in package.json section for prettier.
+    /// If Prettier is enabled, and there's no other prettier instance installed in the project,
+    /// these settings will be used with the default prettier instance.
+    #[serde(flatten)]
+    pub options: HashMap<String, serde_json::Value>,
+}
+
+impl PrettierSettings {
+    /// TODO kb docs
+    pub fn new_enabled() -> Self {
+        Self {
+            enabled: true,
+            ..Self::default()
+        }
+    }
+
+    /// TODO kb docs
+    pub fn enabled(&self) -> bool {
+        self.enabled
+            || self.parser.is_some()
+            || !self.plugins.is_empty()
+            || !self.options.is_empty()
+    }
 }
 
 #[cfg(test)]

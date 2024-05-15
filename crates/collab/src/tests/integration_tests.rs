@@ -17,7 +17,7 @@ use gpui::{
     MouseDownEvent, TestAppContext,
 };
 use language::{
-    language_settings::{AllLanguageSettings, Formatter},
+    language_settings::{AllLanguageSettings, Formatter, PrettierSettings},
     tree_sitter_rust, Diagnostic, DiagnosticEntry, FakeLspAdapter, Language, LanguageConfig,
     LanguageMatcher, LineEnding, OffsetRangeExt, Point, Rope,
 };
@@ -4488,6 +4488,7 @@ async fn test_prettier_formatting_buffer(
         cx.update_global(|store: &mut SettingsStore, cx| {
             store.update_user_settings::<AllLanguageSettings>(cx, |file| {
                 file.defaults.formatter = Some(Formatter::Auto);
+                file.defaults.prettier = Some(PrettierSettings::new_enabled());
             });
         });
     });
@@ -4495,6 +4496,7 @@ async fn test_prettier_formatting_buffer(
         cx.update_global(|store: &mut SettingsStore, cx| {
             store.update_user_settings::<AllLanguageSettings>(cx, |file| {
                 file.defaults.formatter = Some(Formatter::LanguageServer);
+                file.defaults.prettier = Some(PrettierSettings::new_enabled());
             });
         });
     });

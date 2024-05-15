@@ -12,7 +12,9 @@ use futures::StreamExt;
 use gpui::{div, TestAppContext, VisualTestContext, WindowBounds, WindowOptions};
 use indoc::indoc;
 use language::{
-    language_settings::{AllLanguageSettings, AllLanguageSettingsContent, LanguageSettingsContent},
+    language_settings::{
+        AllLanguageSettings, AllLanguageSettingsContent, LanguageSettingsContent, PrettierSettings,
+    },
     BracketPairConfig,
     Capability::ReadWrite,
     FakeLspAdapter, LanguageConfig, LanguageConfigOverride, LanguageMatcher, Override, Point,
@@ -6254,13 +6256,15 @@ async fn test_document_format_manual_trigger(cx: &mut gpui::TestAppContext) {
                 path_suffixes: vec!["rs".to_string()],
                 ..Default::default()
             },
-            // Enable Prettier formatting for the same buffer, and ensure
-            // LSP is called instead of Prettier.
-            prettier_parser_name: Some("test_parser".to_string()),
-            ..Default::default()
+            ..LanguageConfig::default()
         },
         Some(tree_sitter_rust::language()),
     )));
+    update_test_language_settings(cx, |settings| {
+        // Enable Prettier formatting for the same buffer, and ensure
+        // LSP is called instead of Prettier.
+        settings.defaults.prettier = Some(PrettierSettings::new_enabled());
+    });
     let mut fake_servers = language_registry.register_fake_lsp_adapter(
         "Rust",
         FakeLspAdapter {
@@ -8611,11 +8615,13 @@ async fn test_document_format_with_prettier(cx: &mut gpui::TestAppContext) {
                 path_suffixes: vec!["ts".to_string()],
                 ..Default::default()
             },
-            prettier_parser_name: Some("test_parser".to_string()),
             ..Default::default()
         },
         Some(tree_sitter_rust::language()),
     )));
+    update_test_language_settings(cx, |settings| {
+        settings.defaults.prettier = Some(PrettierSettings::new_enabled());
+    });
 
     let test_plugin = "test_plugin";
     let _ = language_registry.register_fake_lsp_adapter(
