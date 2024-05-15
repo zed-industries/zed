@@ -12,7 +12,9 @@ use futures::StreamExt;
 use gpui::{div, TestAppContext, VisualTestContext, WindowBounds, WindowOptions};
 use indoc::indoc;
 use language::{
-    language_settings::{AllLanguageSettings, AllLanguageSettingsContent, LanguageSettingsContent},
+    language_settings::{
+        AllLanguageSettings, AllLanguageSettingsContent, LanguageSettingsContent, PrettierSettings,
+    },
     BracketPairConfig,
     Capability::ReadWrite,
     FakeLspAdapter, LanguageConfig, LanguageConfigOverride, LanguageMatcher, Override, Point,
@@ -6254,13 +6256,18 @@ async fn test_document_format_manual_trigger(cx: &mut gpui::TestAppContext) {
                 path_suffixes: vec!["rs".to_string()],
                 ..Default::default()
             },
-            // Enable Prettier formatting for the same buffer, and ensure
-            // LSP is called instead of Prettier.
-            prettier_parser_name: Some("test_parser".to_string()),
-            ..Default::default()
+            ..LanguageConfig::default()
         },
         Some(tree_sitter_rust::language()),
     )));
+    update_test_language_settings(cx, |settings| {
+        // Enable Prettier formatting for the same buffer, and ensure
+        // LSP is called instead of Prettier.
+        settings.defaults.prettier = Some(PrettierSettings {
+            allowed: true,
+            ..PrettierSettings::default()
+        });
+    });
     let mut fake_servers = language_registry.register_fake_lsp_adapter(
         "Rust",
         FakeLspAdapter {
@@ -8599,27 +8606,32 @@ async fn test_document_format_with_prettier(cx: &mut gpui::TestAppContext) {
     });
 
     let fs = FakeFs::new(cx.executor());
-    fs.insert_file("/file.rs", Default::default()).await;
+    fs.insert_file("/file.ts", Default::default()).await;
 
-    let project = Project::test(fs, ["/file.rs".as_ref()], cx).await;
+    let project = Project::test(fs, ["/file.ts".as_ref()], cx).await;
     let language_registry = project.read_with(cx, |project, _| project.languages().clone());
 
     language_registry.add(Arc::new(Language::new(
         LanguageConfig {
-            name: "Rust".into(),
+            name: "TypeScript".into(),
             matcher: LanguageMatcher {
-                path_suffixes: vec!["rs".to_string()],
+                path_suffixes: vec!["ts".to_string()],
                 ..Default::default()
             },
-            prettier_parser_name: Some("test_parser".to_string()),
             ..Default::default()
         },
         Some(tree_sitter_rust::language()),
     )));
+    update_test_language_settings(cx, |settings| {
+        settings.defaults.prettier = Some(PrettierSettings {
+            allowed: true,
+            ..PrettierSettings::default()
+        });
+    });
 
     let test_plugin = "test_plugin";
     let _ = language_registry.register_fake_lsp_adapter(
-        "Rust",
+        "TypeScript",
         FakeLspAdapter {
             prettier_plugins: vec![test_plugin],
             ..Default::default()
@@ -8628,7 +8640,7 @@ async fn test_document_format_with_prettier(cx: &mut gpui::TestAppContext) {
 
     let prettier_format_suffix = project::TEST_PRETTIER_FORMAT_SUFFIX;
     let buffer = project
-        .update(cx, |project, cx| project.open_local_buffer("/file.rs", cx))
+        .update(cx, |project, cx| project.open_local_buffer("/file.ts", cx))
         .await
         .unwrap();
 

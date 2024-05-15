@@ -715,15 +715,6 @@ impl LanguageRegistry {
             .unwrap_or_default()
     }
 
-    pub fn all_prettier_plugins(&self) -> Vec<Arc<str>> {
-        let state = self.state.read();
-        state
-            .languages
-            .iter()
-            .flat_map(|language| language.config.prettier_plugins.iter().cloned())
-            .collect()
-    }
-
     pub fn update_lsp_status(
         &self,
         server_name: LanguageServerName,
