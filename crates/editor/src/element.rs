@@ -3241,6 +3241,7 @@ impl EditorElement {
                         MouseButton::Right => editor.update(cx, |editor, cx| {
                             Self::mouse_right_down(editor, event, &position_map, &text_hitbox, cx);
                         }),
+                        #[cfg(target_os = "linux")]
                         MouseButton::Middle => editor.update(cx, |editor, cx| {
                             Self::mouse_middle_down(editor, event, &position_map, &text_hitbox, cx);
                         }),
