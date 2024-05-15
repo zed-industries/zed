@@ -61,6 +61,11 @@
   "{" @punctuation.special
   "}" @punctuation.special) @embedded
 
+; Variables
+
+(assignment
+  left: (identifier) @variable)
+
 ; Docstrings.
 (function_definition
   "async"?
