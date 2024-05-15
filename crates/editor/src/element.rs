@@ -3728,7 +3728,6 @@ impl EditorElement {
                         Some(pixels * rem_size_scale)
                     }
                     AbsoluteLength::Rems(rems) => {
-                        println!("here!!!!");
                         Some(rems.to_pixels(ui::BASE_REM_SIZE_IN_PX.into()))
                     }
                 }
