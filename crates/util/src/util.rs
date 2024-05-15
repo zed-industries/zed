@@ -431,16 +431,6 @@ pub fn asset_str<A: rust_embed::RustEmbed>(path: &str) -> Cow<'static, str> {
     }
 }
 
-// copy unstable standard feature option unzip
-// https://github.com/rust-lang/rust/issues/87800
-// Remove when this ship in Rust 1.66 or 1.67
-pub fn unzip_option<T, U>(option: Option<(T, U)>) -> (Option<T>, Option<U>) {
-    match option {
-        Some((a, b)) => (Some(a), Some(b)),
-        None => (None, None),
-    }
-}
-
 /// Expands to an immediately-invoked function expression. Good for using the ? operator
 /// in functions which do not return an Option or Result.
 ///
