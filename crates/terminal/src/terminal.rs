@@ -1234,6 +1234,7 @@ impl Terminal {
                     .push_back(InternalEvent::SetSelection(Some((sel, point))));
             }
         } else if e.button == MouseButton::Middle {
+            #[cfg(target_os = "linux")]
             if let Some(item) = cx.read_from_primary() {
                 let text = item.text().to_string();
                 self.input(text);
