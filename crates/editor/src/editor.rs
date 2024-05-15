@@ -509,7 +509,6 @@ pub struct Editor {
     expect_bounds_change: Option<Bounds<Pixels>>,
     tasks: HashMap<(BufferId, BufferRow), (usize, RunnableTasks)>,
     tasks_update_task: Option<Task<()>>,
-    did_trigger_completion_on_input: bool,
 }
 
 #[derive(Clone)]
@@ -1701,7 +1700,6 @@ impl Editor {
                 }),
             ],
             tasks_update_task: None,
-            did_trigger_completion_on_input: false,
         };
         this.tasks_update_task = Some(this.refresh_runnables(cx));
         this._subscriptions.extend(project_subscriptions);
@@ -2036,6 +2034,7 @@ impl Editor {
         &mut self,
         local: bool,
         old_cursor_position: &Anchor,
+        show_completions: bool,
         cx: &mut ViewContext<Self>,
     ) {
         // Copy selections to primary selection buffer
@@ -2137,7 +2136,7 @@ impl Editor {
                     })
                     .detach();
 
-                    if !self.did_trigger_completion_on_input {
+                    if show_completions {
                         self.show_completions(&ShowCompletions, cx);
                     }
                 } else {
@@ -2189,7 +2188,7 @@ impl Editor {
             if let Some(autoscroll) = autoscroll {
                 self.request_autoscroll(autoscroll, cx);
             }
-            self.selections_did_change(true, &old_cursor_position, cx);
+            self.selections_did_change(true, &old_cursor_position, true, cx);
         }
 
         result
@@ -2847,10 +2846,20 @@ impl Editor {
             let had_active_inline_completion = this.has_active_inline_completion(cx);
 
             let trigger_in_words = !had_active_inline_completion;
-            this.trigger_completion_on_input(&text, trigger_in_words, cx);
+            let completions_triggered =
+                this.trigger_completion_on_input(&text, trigger_in_words, cx);
 
-            this.change_selections(Some(Autoscroll::fit()), cx, |s| s.select(new_selections));
-            this.did_trigger_completion_on_input = false;
+            let old_cursor_position = this.selections.newest_anchor().head();
+            this.push_to_selection_history();
+
+            let (changed, _) = this
+                .selections
+                .change_with(cx, |s| s.select(new_selections));
+
+            if changed {
+                this.request_autoscroll(Autoscroll::fit(), cx);
+                this.selections_did_change(true, &old_cursor_position, !completions_triggered, cx);
+            }
 
             if brace_inserted {
                 // If we inserted a brace while composing text (i.e. typing `"` on a
@@ -3224,9 +3233,9 @@ impl Editor {
         text: &str,
         trigger_in_words: bool,
         cx: &mut ViewContext<Self>,
-    ) {
+    ) -> bool {
         if !EditorSettings::get_global(cx).show_completions_on_input {
-            return;
+            return true;
         }
 
         let selection = self.selections.newest_anchor();
@@ -3235,10 +3244,11 @@ impl Editor {
             .read(cx)
             .is_completion_trigger(selection.head(), text, trigger_in_words, cx)
         {
-            self.did_trigger_completion_on_input = true;
             self.show_completions(&ShowCompletions, cx);
+            return true;
         } else {
             self.hide_context_menu(cx);
+            return false;
         }
     }
 
@@ -9158,7 +9168,7 @@ impl Editor {
                 s.clear_pending();
             }
         });
-        self.selections_did_change(false, &old_cursor_position, cx);
+        self.selections_did_change(false, &old_cursor_position, true, cx);
     }
 
     fn push_to_selection_history(&mut self) {
