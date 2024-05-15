@@ -41,6 +41,7 @@ use std::{
     cmp::{self, Ordering},
     fmt::Write,
     iter,
+    num::NonZeroU32,
     ops::Range,
     path::PathBuf,
     sync::Arc,
@@ -1745,28 +1746,11 @@ impl Conversation {
 
                                     buffer.edit([(offset..offset, text)], None, cx);
 
-                                    let mut message_lines = buffer
-                                        .text_for_range(message_start_offset..message_end_offset)
-                                        .lines();
-                                    while let Some(message_line) = message_lines.next() {
-                                        // as soon as we parse a new edit suggestion, emit an event
-                                        // the editor will catch that event and add/remove block decorations
-                                        // as needed.
-                                        // From:
-                                        // ```edit filename.rs
-                                        // 10 bla
-                                        // ...
-                                        // 11 bla
-                                        // -------------
-                                        // foo
-                                        //
-                                        // To:
-                                        //
-                                        // [block decoration of rows 10-11]
-                                        // ```rs
-                                        // foo
-                                        //
-                                    }
+                                    parse_edit_suggestions(
+                                        buffer,
+                                        message_start_offset..message_end_offset,
+                                        &mut this.edit_suggestions,
+                                    );
                                 });
                                 cx.emit(ConversationEvent::StreamedCompletion);
 
@@ -2201,6 +2185,178 @@ impl Conversation {
             Ok(())
         });
     }
+}
+
+#[derive(Debug)]
+enum EditParsingState {
+    None,
+    AfterHeader {
+        path: PathBuf,
+        start_anchor: language::Anchor,
+    },
+    AfterFirstReplacedLine {
+        path: PathBuf,
+        start_anchor: language::Anchor,
+        start_row: u32,
+        after_ellipsis: bool,
+    },
+    AfterReplacedRange {
+        path: PathBuf,
+        start_anchor: language::Anchor,
+        start_row: u32,
+        end_row: u32,
+    },
+    InNewText {
+        path: PathBuf,
+        start_anchor: language::Anchor,
+        start_row: u32,
+        end_row: u32,
+        new_text: String,
+    },
+}
+
+fn parse_edit_suggestions(
+    buffer: &Buffer,
+    buffer_range: Range<usize>,
+    output: &mut Vec<EditSuggestion>,
+) {
+    let mut offset = buffer_range.start;
+    let mut state = EditParsingState::None;
+    let mut message_lines = buffer.text_for_range(buffer_range).lines();
+    while let Some(message_line) = message_lines.next() {
+        match state {
+            EditParsingState::None => {
+                if let Some(rest) = message_line.strip_prefix("```edit ") {
+                    let path = PathBuf::from(rest.trim());
+                    state = EditParsingState::AfterHeader {
+                        path,
+                        start_anchor: buffer.anchor_before(offset),
+                    };
+                }
+            }
+            EditParsingState::AfterHeader { path, start_anchor } => {
+                if let Ok(start_line) = parse_line_number(message_line) {
+                    state = EditParsingState::AfterFirstReplacedLine {
+                        path,
+                        start_anchor,
+                        start_row: start_line,
+                        after_ellipsis: false,
+                    };
+                } else {
+                    state = EditParsingState::None;
+                }
+            }
+            EditParsingState::AfterFirstReplacedLine {
+                path,
+                start_anchor,
+                start_row,
+                after_ellipsis: true,
+            } => {
+                if let Ok(end_line) = parse_line_number(message_line) {
+                    state = EditParsingState::AfterReplacedRange {
+                        path,
+                        start_anchor,
+                        start_row,
+                        // Increment end line by one to make the range exclusive.
+                        end_row: end_line + 1,
+                    };
+                } else {
+                    state = EditParsingState::None;
+                }
+            }
+            EditParsingState::AfterFirstReplacedLine {
+                path,
+                start_anchor,
+                start_row,
+                after_ellipsis: false,
+            } => {
+                if message_line == "..." {
+                    state = EditParsingState::AfterFirstReplacedLine {
+                        path,
+                        start_anchor,
+                        start_row,
+                        after_ellipsis: true,
+                    };
+                } else if message_line == "---" {
+                    state = EditParsingState::InNewText {
+                        path,
+                        start_anchor,
+                        start_row,
+                        end_row: start_row + 1,
+                        new_text: String::new(),
+                    };
+                } else {
+                    state = EditParsingState::None;
+                }
+            }
+            EditParsingState::AfterReplacedRange {
+                path,
+                start_anchor,
+                start_row,
+                end_row,
+            } => {
+                if message_line == "---" {
+                    state = EditParsingState::InNewText {
+                        path,
+                        start_anchor,
+                        start_row,
+                        end_row,
+                        new_text: String::new(),
+                    };
+                } else {
+                    state = EditParsingState::None;
+                }
+            }
+            EditParsingState::InNewText {
+                path,
+                start_anchor,
+                start_row,
+                end_row,
+                mut new_text,
+            } => {
+                if message_line == "```" {
+                    let end_anchor = buffer.anchor_after(offset + message_line.len());
+                    match output.binary_search_by(|suggestion| {
+                        suggestion.source_range.start.cmp(&start_anchor, buffer)
+                    }) {
+                        Ok(_) => {}
+                        Err(ix) => {
+                            output.insert(
+                                ix,
+                                EditSuggestion {
+                                    source_range: start_anchor..end_anchor,
+                                    full_path: Some(path),
+                                    row_range: start_row..end_row,
+                                    new_text,
+                                },
+                            );
+                        }
+                    }
+                    state = EditParsingState::None;
+                } else {
+                    new_text.push_str(message_line);
+                    new_text.push('\n');
+                    state = EditParsingState::InNewText {
+                        path,
+                        start_anchor,
+                        start_row,
+                        end_row,
+                        new_text,
+                    };
+                }
+            }
+        }
+        offset += message_line.len() + 1;
+    }
+}
+
+fn parse_line_number(message_line: &str) -> Result<u32> {
+    Ok(message_line
+        .chars()
+        .take_while(|char| char.is_ascii_digit())
+        .collect::<String>()
+        .parse::<NonZeroU32>()
+        .map(|number| number.get() - 1)?)
 }
 
 #[derive(Debug, PartialEq)]
@@ -3220,10 +3376,14 @@ fn merge_ranges(ranges: &mut Vec<Range<Anchor>>, buffer: &MultiBufferSnapshot) {
 
 #[cfg(test)]
 mod tests {
+    use std::path::Path;
+
     use super::*;
     use crate::{FakeCompletionProvider, MessageId};
     use gpui::{AppContext, TestAppContext};
     use settings::SettingsStore;
+    use unindent::Unindent;
+    use util::test::marked_text_ranges;
 
     #[gpui::test]
     fn test_inserting_and_removing_messages(cx: &mut AppContext) {
@@ -3540,6 +3700,80 @@ mod tests {
                 .map(|message| message.id)
                 .collect()
         }
+    }
+
+    #[gpui::test]
+    fn test_parse_edit_suggestions(cx: &mut AppContext) {
+        cx.new_model(|cx| {
+            let (text, code_block_ranges) = marked_text_ranges(
+                &"
+                some output:
+
+                «```edit src/foo.rs
+                100    let a = 1;
+                ...
+                103    let e = 1;
+                ---
+                    let w = 1;
+                    let x = 1;
+                    let y = 1;
+                    let z = 1;
+                ```»
+
+                some more output:
+
+                «```edit src/foo.rs
+                200    let f = 1;
+                ---
+                    let g = 1;
+                    let h = 1;
+                ```»
+
+                and the conclusion.
+                "
+                .unindent(),
+                false,
+            );
+
+            let buffer = Buffer::local(&text, cx);
+
+            let mut suggestions = vec![];
+            parse_edit_suggestions(&buffer, 0..buffer.len(), &mut suggestions);
+
+            assert_eq!(
+                suggestions,
+                vec![
+                    EditSuggestion {
+                        source_range: buffer.anchor_before(code_block_ranges[0].start)
+                            ..buffer.anchor_after(code_block_ranges[0].end),
+                        full_path: Some(Path::new("src/foo.rs").into()),
+                        row_range: 99..103,
+                        new_text: [
+                            "    let w = 1;",
+                            "    let x = 1;",
+                            "    let y = 1;",
+                            "    let z = 1;",
+                            "",
+                        ]
+                        .join("\n"),
+                    },
+                    EditSuggestion {
+                        source_range: buffer.anchor_before(code_block_ranges[1].start)
+                            ..buffer.anchor_after(code_block_ranges[1].end),
+                        full_path: Some(Path::new("src/foo.rs").into()),
+                        row_range: 199..200,
+                        new_text: [
+                            "    let g = 1;", //
+                            "    let h = 1;",
+                            "",
+                        ]
+                        .join("\n"),
+                    }
+                ]
+            );
+
+            buffer
+        });
     }
 
     #[gpui::test]

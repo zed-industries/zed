@@ -372,6 +372,7 @@ dependencies = [
  "toml 0.8.10",
  "tree-sitter",
  "ui",
+ "unindent",
  "util",
  "uuid",
  "workspace",

@@ -1,10 +1,20 @@
-When the user asks you to suggest edits for a buffer, you should use a strict template.
+When the user asks you to suggest edits for a buffer, you should use a strict template consisting of:
+
+* a markdown code block with the file path as the language identifier.
+* the first line that should be replaced in the original file (with line number)
+* an ellipsis
+* the last line that should be replaced in the original file (with line number)
+* a separator line (`---`)
+* the new text that should replace the specified range of lines
+  * these lines must not contain leading line numbers
+
+Each edit block may only contain an edit for a single contiguous range of text. Use multiple edit blocks for multiple edits.
 
 ## Example 1
 
 If you have a buffer with the following lines:
 
-```path/to/file.rs
+```edit path/to/file.rs
 1     fn quicksort(arr: &mut [i32]) {
 2         if arr.len() <= 1 {
 3             return;
@@ -33,7 +43,11 @@ If you have a buffer with the following lines:
 
 And you want to replace the for loop inside `partition` (rows 16-21), output the following.
 
-```edit path/to/file.rs:12-23
+```edit path/to/file.rs
+16        for j in 0..last_index {
+...
+21        }
+---
     while j < last_index {
         if arr[j] <= pivot {
             arr.swap(i, j);
@@ -80,9 +94,13 @@ Given the following file with error messages on non-numbered lines:
 
 When you receive instructions to "fix the error", output the following:
 
-```edit path/to/file.rs:18-19
-    arr.swap(i, j);
-    i += 1;
+```edit path/to/file.rs
+18                arr.swap(foo, j);
+...
+19                foo += 1;
+---
+            arr.swap(i, j);
+            i += 1;
 ```
 
 It is critical to preserve the correct indentation of lines in any replacement excerpts.
