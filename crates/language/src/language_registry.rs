@@ -125,6 +125,7 @@ pub const QUERY_FILENAME_PREFIXES: &[(
     ("overrides", |q| &mut q.overrides),
     ("redactions", |q| &mut q.redactions),
     ("runnables", |q| &mut q.runnables),
+    ("suggested_edits", |q| &mut q.suggested_edits),
 ];
 
 /// Tree-sitter language queries for a given language.
@@ -139,6 +140,7 @@ pub struct LanguageQueries {
     pub overrides: Option<Cow<'static, str>>,
     pub redactions: Option<Cow<'static, str>>,
     pub runnables: Option<Cow<'static, str>>,
+    pub suggested_edits: Option<Cow<'static, str>>,
 }
 
 #[derive(Clone, Default)]

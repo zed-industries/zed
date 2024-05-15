@@ -1367,6 +1367,7 @@ pub struct Conversation {
     path: Option<PathBuf>,
     _subscriptions: Vec<Subscription>,
     telemetry: Option<Arc<Telemetry>>,
+    language_registry: Arc<LanguageRegistry>,
 }
 
 impl EventEmitter<ConversationEvent> for Conversation {}
@@ -1378,18 +1379,9 @@ impl Conversation {
         telemetry: Option<Arc<Telemetry>>,
         cx: &mut ModelContext<Self>,
     ) -> Self {
-        let markdown = language_registry.language_for_name("Markdown");
         let buffer = cx.new_model(|cx| {
             let mut buffer = Buffer::local("", cx);
-            buffer.set_language_registry(language_registry);
-            cx.spawn(|buffer, mut cx| async move {
-                let markdown = markdown.await?;
-                buffer.update(&mut cx, |buffer: &mut Buffer, cx| {
-                    buffer.set_language(Some(markdown), cx)
-                })?;
-                anyhow::Ok(())
-            })
-            .detach_and_log_err(cx);
+            buffer.set_language_registry(language_registry.clone());
             buffer
         });
 
@@ -1411,6 +1403,7 @@ impl Conversation {
             path: None,
             buffer,
             telemetry,
+            language_registry,
         };
 
         let message = MessageAnchor {
@@ -1426,6 +1419,7 @@ impl Conversation {
             },
         );
 
+        this.set_language(cx);
         this.count_remaining_tokens(cx);
         this
     }
@@ -1477,7 +1471,7 @@ impl Conversation {
                 });
                 next_message_id = cmp::max(next_message_id, MessageId(message.id.0 + 1));
             }
-            buffer.set_language_registry(language_registry);
+            buffer.set_language_registry(language_registry.clone());
             cx.spawn(|buffer, mut cx| async move {
                 let markdown = markdown.await?;
                 buffer.update(&mut cx, |buffer: &mut Buffer, cx| {
@@ -1489,7 +1483,7 @@ impl Conversation {
             buffer
         })?;
 
-        cx.new_model(|cx| {
+        cx.new_model(move |cx| {
             let mut this = Self {
                 id,
                 message_anchors,
@@ -1511,10 +1505,25 @@ impl Conversation {
                 path: Some(path),
                 buffer,
                 telemetry,
+                language_registry,
             };
+            this.set_language(cx);
             this.count_remaining_tokens(cx);
             this
         })
+    }
+
+    fn set_language(&mut self, cx: &mut ModelContext<Self>) {
+        let markdown = self.language_registry.language_for_name("Markdown");
+        cx.spawn(|this, mut cx| async move {
+            let markdown = markdown.await?;
+            this.update(&mut cx, |this, cx| {
+                this.buffer
+                    .update(cx, |buffer, cx| buffer.set_language(Some(markdown), cx));
+                this.parse_edit_suggestions(cx);
+            })
+        })
+        .detach_and_log_err(cx);
     }
 
     fn toggle_recent_buffers(&mut self, cx: &mut ModelContext<Self>) {
@@ -1717,7 +1726,45 @@ impl Conversation {
     ) {
         if *event == language::Event::Edited {
             self.count_remaining_tokens(cx);
+            self.parse_edit_suggestions(cx);
             cx.emit(ConversationEvent::MessagesEdited);
+        }
+    }
+
+    fn parse_edit_suggestions(&mut self, cx: &mut ModelContext<Self>) {
+        let buffer = self.buffer.read(cx).snapshot();
+
+        let mut matches = buffer.matches(0..buffer.len(), |grammar| {
+            Some(&grammar.suggested_edits_config.as_ref()?.query)
+        });
+
+        // self.edit_suggestions.clear();
+        while let Some(mat) = matches.peek() {
+            dbg!(&mat);
+            let grammars = matches.grammars();
+            if let Some(suggested_edits_config) =
+                grammars[mat.grammar_index].suggested_edits_config.as_ref()
+            {
+                if let Some(content_capture) = mat
+                    .captures
+                    .iter()
+                    .find(|capture| capture.index == suggested_edits_config.content_capture_ix)
+                {
+                    let range = content_capture.node.byte_range();
+                    let suggestion_source = buffer.text_for_range(range).collect::<String>();
+                    let suggestion_source = suggestion_source
+                        .strip_suffix("\n```")
+                        .unwrap_or(suggestion_source.as_str());
+                    let mut parts = suggestion_source.split("\n----------------\n");
+                    if let Some(((filename, deletion), insertion)) =
+                        parts.next().zip(parts.next()).zip(parts.next())
+                    {
+                        dbg!(filename, deletion, insertion);
+                    }
+                }
+            }
+
+            matches.advance();
         }
     }
 

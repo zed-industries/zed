@@ -370,6 +370,7 @@ dependencies = [
  "theme",
  "tiktoken-rs",
  "toml 0.8.10",
+ "tree-sitter",
  "ui",
  "util",
  "uuid",
