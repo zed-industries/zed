@@ -58,7 +58,7 @@ impl HttpClientWithUrl {
     /// Returns a new [`HttpClientWithUrl`] with the given base URL.
     pub fn new(base_url: impl Into<String>, unparsed_proxy: Option<String>) -> Self {
         let proxy = get_proxy(unparsed_proxy);
-        let proxy_settings = proxy.as_ref().and_then(|p| Some(p.to_string()));
+        let proxy_settings = proxy.as_ref().map(|p| p.to_string());
         Self {
             base_url: Mutex::new(base_url.into()),
             client: client(proxy),
