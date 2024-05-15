@@ -264,10 +264,7 @@ impl X11Client {
 
         let (xim_tx, xim_rx) = channel::channel::<XimCallbackEvent>();
 
-        let ximc = match X11rbClient::init(Rc::clone(&xcb_connection), x_root_index, None) {
-            Ok(c) => Some(c),
-            Err(_) => None,
-        };
+        let ximc = X11rbClient::init(Rc::clone(&xcb_connection), x_root_index, None).ok();
         let xim_handler = if ximc.is_some() {
             Some(XimHandler::new(xim_tx))
         } else {
