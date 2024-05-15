@@ -651,6 +651,11 @@ impl AppContext {
         self.platform.local_timezone()
     }
 
+    /// Updates the http client assigned to GPUI
+    pub fn udpate_http_client(&mut self, new_client: Arc<dyn HttpClient>) {
+        self.http_client = new_client;
+    }
+
     /// Returns the http client assigned to GPUI
     pub fn http_client(&self) -> Arc<dyn HttpClient> {
         self.http_client.clone()
