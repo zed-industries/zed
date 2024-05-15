@@ -56,10 +56,8 @@ pub struct HttpClientWithUrl {
 impl HttpClientWithUrl {
     /// Returns a new [`HttpClientWithUrl`] with the given base URL.
     pub fn new(base_url: impl Into<String>, proxy: Option<String>) -> Self {
-        println!("Configure proxy: {:?}", proxy);
         Self {
             base_url: Mutex::new(base_url.into()),
-            // client: client(proxy),
             client: client(proxy),
         }
     }
