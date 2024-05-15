@@ -841,5 +841,5 @@
   // Default: long
   "line_indicator_format": "long",
   // TODO:
-  "proxy": ""
+  "proxy": null
 }

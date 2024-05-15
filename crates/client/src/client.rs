@@ -134,19 +134,8 @@ impl Settings for ProxySettings {
             proxy: sources
                 .user
                 .as_ref()
-                .and_then(|value| {
-                    value
-                        .proxy
-                        .as_ref()
-                        .and_then(|p| if p.len() == 0 { None } else { Some(p.clone()) })
-                })
-                .or(sources.default.proxy.as_ref().and_then(|p| {
-                    if p.len() == 0 {
-                        None
-                    } else {
-                        Some(p.clone())
-                    }
-                })),
+                .and_then(|value| value.proxy.clone())
+                .or(sources.default.proxy.clone()),
         })
     }
 }
