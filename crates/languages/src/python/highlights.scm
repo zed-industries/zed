@@ -62,7 +62,6 @@
   "}" @punctuation.special) @embedded
 
 ; Variables
-
 (assignment
   left: (identifier) @variable)
 
