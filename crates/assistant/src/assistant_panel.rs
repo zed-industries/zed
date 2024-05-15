@@ -1,7 +1,7 @@
 use crate::{
     assistant_settings::{AssistantDockPosition, AssistantSettings, ZedDotDevModel},
     codegen::{self, Codegen, CodegenKind},
-    prompt_library::{self, PromptLibrary, PromptManager},
+    prompt_library::{PromptLibrary, PromptManager},
     prompts::generate_content_prompt,
     Assist, CompletionProvider, CycleMessageRole, InlineAssist, LanguageModel,
     LanguageModelRequest, LanguageModelRequestMessage, MessageId, MessageMetadata, MessageStatus,
@@ -95,7 +95,7 @@ pub struct AssistantPanel {
     focus_handle: FocusHandle,
     toolbar: View<Toolbar>,
     languages: Arc<LanguageRegistry>,
-    prompt_library: Model<PromptLibrary>,
+    prompt_library: Arc<PromptLibrary>,
     fs: Arc<dyn Fs>,
     telemetry: Arc<Telemetry>,
     _subscriptions: Vec<Subscription>,
@@ -128,8 +128,10 @@ impl AssistantPanel {
                 .log_err()
                 .unwrap_or_default();
 
-            let mut prompt_library = PromptLibrary::new();
-            prompt_library.load_prompts(fs.clone()).log_err();
+            let prompt_library = PromptLibrary::init(fs.clone())
+                .await
+                .log_err()
+                .unwrap_or_default();
 
             // TODO: deserialize state.
             let workspace_handle = workspace.clone();
@@ -177,7 +179,6 @@ impl AssistantPanel {
                         }),
                     ];
                     let model = CompletionProvider::global(cx).default_model();
-                    let prompt_library = cx.new_model(|_cx| prompt_library);
 
                     cx.observe_global::<FileIcons>(|_, cx| {
                         cx.notify();
@@ -194,7 +195,7 @@ impl AssistantPanel {
                         focus_handle,
                         toolbar,
                         languages: workspace.app_state().languages.clone(),
-                        prompt_library,
+                        prompt_library: Arc::new(prompt_library),
                         fs: workspace.app_state().fs.clone(),
                         telemetry: workspace.client().telemetry().clone(),
                         width: None,
@@ -2805,7 +2806,7 @@ impl ConversationEditor {
             workspace.toggle_panel_focus::<AssistantPanel>(cx);
         }
 
-        if let Some(active_prompt) = panel.read(cx).prompt_library.read(cx).default_prompt() {
+        if let Some(default_prompt) = panel.read(cx).prompt_library.clone().default_prompt() {
             panel.update(cx, |panel, cx| {
                 if let Some(conversation) = panel
                     .active_conversation_editor()
@@ -2815,11 +2816,11 @@ impl ConversationEditor {
                     conversation.update(cx, |conversation, cx| {
                         conversation
                             .editor
-                            .update(cx, |editor, cx| editor.insert(&active_prompt, cx))
+                            .update(cx, |editor, cx| editor.insert(&default_prompt, cx))
                     });
                 };
             });
-        }
+        };
     }
 
     fn copy(&mut self, _: &editor::actions::Copy, cx: &mut ViewContext<Self>) {

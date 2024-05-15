@@ -2,6 +2,7 @@
 use fs::Fs;
 use futures::StreamExt;
 use gpui::{AppContext, DismissEvent, EventEmitter, FocusHandle, FocusableView, Model, Render};
+use parking_lot::{Mutex, RwLock};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -9,64 +10,149 @@ use ui::{prelude::*, ModalHeader};
 use util::paths::PROMPTS_DIR;
 use workspace::ModalView;
 
-pub struct PromptLibrary {
+pub struct PromptLibraryState {
+    /// The default prompt all assistant contexts will start with
+    system_prompt: String,
+    /// All [UserPrompt]s loaded into the library
     prompts: HashMap<String, UserPrompt>,
+    /// Prompts included in the default prompt
     default_prompts: Vec<String>,
+    /// Prompts that are currently enabled. This is different from
+    /// the default prompt in that it may change during a conversation
+    enabled_prompts: Vec<String>,
+    /// Prompts that have a pending update that hasn't been applied yet
+    updateable_prompts: Vec<String>,
+    /// Prompts that have been changed since they were loaded
+    /// and can be reverted to their original state
+    revertable_prompts: Vec<String>,
+    version: usize,
+}
+
+pub struct PromptLibrary {
+    state: RwLock<PromptLibraryState>,
+}
+
+impl Default for PromptLibrary {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl PromptLibrary {
-    pub fn new() -> Self {
+    fn new() -> Self {
         Self {
-            prompts: HashMap::new(),
-            default_prompts: Vec::new(),
+            state: RwLock::new(PromptLibraryState {
+                system_prompt: String::new(),
+                prompts: HashMap::new(),
+                default_prompts: Vec::new(),
+                enabled_prompts: Vec::new(),
+                updateable_prompts: Vec::new(),
+                revertable_prompts: Vec::new(),
+                version: 0,
+            }),
         }
     }
 
-    pub fn load_prompts(&mut self, fs: Arc<dyn Fs>) -> anyhow::Result<()> {
+    pub async fn init(fs: Arc<dyn Fs>) -> anyhow::Result<Self> {
+        // -- debug --
+        println!("Initializing prompt library");
+        // -- /debug --
+        let prompt_library = PromptLibrary::new();
+        prompt_library.load_prompts(fs)?;
+        // -- debug --
+        println!(
+            "Loaded {:?} prompts",
+            prompt_library.state.read().prompts.len()
+        );
+        let prompts = prompt_library.state.read().prompts.clone();
+        prompt_library.state.write().default_prompts = prompts.keys().cloned().collect();
+        // -- /debug --
+        Ok(prompt_library)
+    }
+
+    fn load_prompts(&self, fs: Arc<dyn Fs>) -> anyhow::Result<()> {
         let prompts = futures::executor::block_on(UserPrompt::list(fs))?;
-        for prompt in prompts {
-            let id = uuid::Uuid::new_v4().to_string();
-            self.prompts.insert(id.clone(), prompt);
-            // temp for testing, activate all prompts as they are loaded
-            self.default_prompts.push(id);
+        let prompts_with_ids = prompts
+            .clone()
+            .into_iter()
+            .map(|prompt| {
+                let id = uuid::Uuid::new_v4().to_string();
+                (id, prompt)
+            })
+            .collect::<Vec<_>>();
+        // -- debug --
+        for (id, prompt) in &prompts_with_ids {
+            log::info!("Loaded prompt: {} - {}", id, prompt.content);
         }
+        // -- debug --
+        let mut state = self.state.write();
+        state.prompts.extend(prompts_with_ids);
+        state.version += 1;
+
         Ok(())
     }
 
     pub fn default_prompt(&self) -> Option<String> {
-        if self.default_prompts.is_empty() {
+        let mut state = self.state.read();
+
+        if state.default_prompts.is_empty() {
+            // -- debug --
+            println!("No default prompts set");
+            // -- debug --
             None
         } else {
+            // -- debug --
+            println!("Default prompts: {:?}", state.default_prompts);
+            // -- debug --
             Some(self.join_default_prompts())
         }
     }
 
-    pub fn add_to_default_prompt(&mut self, prompt_ids: Vec<String>) -> anyhow::Result<()> {
+    pub fn add_to_default_prompt(&self, prompt_ids: Vec<String>) -> anyhow::Result<()> {
+        let mut state = self.state.write();
+
         let ids_to_add: Vec<String> = prompt_ids
             .into_iter()
-            .filter(|id| !self.default_prompts.contains(id) && self.prompts.contains_key(id))
+            .filter(|id| !state.default_prompts.contains(id) && state.prompts.contains_key(id))
             .collect();
 
-        for id in ids_to_add {
-            self.default_prompts.push(id);
-        }
+        state.default_prompts.extend(ids_to_add);
+        state.version += 1;
 
         Ok(())
     }
 
-    pub fn remove_from_default_prompt(&mut self, prompt_id: String) -> anyhow::Result<()> {
-        self.default_prompts.retain(|id| id != &prompt_id);
+    pub fn remove_from_default_prompt(&self, prompt_id: String) -> anyhow::Result<()> {
+        let mut state = self.state.write();
+
+        state.default_prompts.retain(|id| id != &prompt_id);
+        state.version += 1;
         Ok(())
     }
 
-    pub fn join_default_prompts(&self) -> String {
-        let active_prompt_ids = &self.default_prompts;
+    fn join_default_prompts(&self) -> String {
+        let state = self.state.read();
+        let active_prompt_ids = state.default_prompts.iter().cloned().collect::<Vec<_>>();
 
         active_prompt_ids
             .iter()
-            .filter_map(|id| self.prompts.get(id).map(|p| p.content.clone()))
+            .filter_map(|id| state.prompts.get(id).map(|p| p.content.clone()))
             .collect::<Vec<_>>()
             .join("\n\n---\n\n")
+    }
+
+    pub fn prompts(&self) -> Vec<UserPrompt> {
+        let state = self.state.read();
+        state.prompts.values().cloned().collect()
+    }
+
+    pub fn default_prompts(&self) -> Vec<UserPrompt> {
+        let state = self.state.read();
+        state
+            .default_prompts
+            .iter()
+            .filter_map(|id| state.prompts.get(id).map(|p| p.clone()))
+            .collect()
     }
 }
 
@@ -135,11 +221,11 @@ impl UserPrompt {
 
 pub struct PromptManager {
     focus_handle: FocusHandle,
-    prompt_library: Model<PromptLibrary>,
+    prompt_library: Arc<PromptLibrary>,
 }
 
 impl PromptManager {
-    pub fn new(prompt_library: Model<PromptLibrary>, cx: &mut WindowContext) -> Self {
+    pub fn new(prompt_library: Arc<PromptLibrary>, cx: &mut WindowContext) -> Self {
         let focus_handle = cx.focus_handle();
         Self {
             focus_handle,
@@ -154,9 +240,14 @@ impl PromptManager {
 
 impl Render for PromptManager {
     fn render(&mut self, cx: &mut ui::prelude::ViewContext<Self>) -> impl IntoElement {
-        let prompts_map = self.prompt_library.read(cx).prompts.clone();
-        let default_prompts = self.prompt_library.read(cx).default_prompts.clone();
-        let prompts = prompts_map.into_iter().collect::<Vec<_>>();
+        let prompts_state = self.prompt_library.state.read();
+
+        let prompts = prompts_state
+            .prompts
+            .clone()
+            .into_iter()
+            .collect::<Vec<_>>();
+        let default_prompts = prompts_state.default_prompts.clone();
 
         v_flex()
             .elevation_3(cx)
@@ -179,7 +270,6 @@ impl Render for PromptManager {
                                 let prompt = prompt.clone();
                                 let prompt_id = id.clone();
                                 let is_default = default_prompts.contains(&id);
-                                let prompt_library = self.prompt_library.clone();
 
                                 v_flex().p(Spacing::Small.rems(cx)).child(
                                     h_flex()
@@ -189,10 +279,7 @@ impl Render for PromptManager {
                                             Button::new("add-prompt", "Add")
                                                 .selected(is_default)
                                                 .on_click(move |_, cx| {
-                                                    // prompt_library
-                                                    //     .read(cx)
-                                                    //     .add_to_default_prompt(vec![prompt_id.clone()])
-                                                    //     .unwrap();
+                                                    println!("Clicked {}!", prompt_id);
                                                 }),
                                         ),
                                 )
