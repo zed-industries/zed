@@ -1,4 +1,4 @@
-use crate::ambient_context::{AmbientContext, RecentBuffer};
+use crate::ambient_context::{AmbientContext, ContextUpdated, RecentBuffer};
 use crate::{
     assistant_settings::{AssistantDockPosition, AssistantSettings, ZedDotDevModel},
     codegen::{self, Codegen, CodegenKind},
@@ -1516,7 +1516,12 @@ impl Conversation {
 
     fn toggle_recent_buffers(&mut self, cx: &mut ModelContext<Self>) {
         self.ambient_context.recent_buffers.enabled = !self.ambient_context.recent_buffers.enabled;
-        self.ambient_context.recent_buffers.update(cx);
+        match self.ambient_context.recent_buffers.update(cx) {
+            ContextUpdated::Updating => {}
+            ContextUpdated::Disabled => {
+                self.count_remaining_tokens(cx);
+            }
+        }
     }
 
     fn toggle_current_project_context(
@@ -1527,7 +1532,12 @@ impl Conversation {
     ) {
         self.ambient_context.current_project.enabled =
             !self.ambient_context.current_project.enabled;
-        self.ambient_context.current_project.update(fs, project, cx);
+        match self.ambient_context.current_project.update(fs, project, cx) {
+            ContextUpdated::Updating => {}
+            ContextUpdated::Disabled => {
+                self.count_remaining_tokens(cx);
+            }
+        }
     }
 
     fn set_recent_buffers(
@@ -1542,10 +1552,20 @@ impl Conversation {
             .extend(buffers.into_iter().map(|buffer| RecentBuffer {
                 buffer: buffer.downgrade(),
                 _subscription: cx.observe(&buffer, |this, _, cx| {
-                    this.ambient_context.recent_buffers.update(cx);
+                    match this.ambient_context.recent_buffers.update(cx) {
+                        ContextUpdated::Updating => {}
+                        ContextUpdated::Disabled => {
+                            this.count_remaining_tokens(cx);
+                        }
+                    }
                 }),
             }));
-        self.ambient_context.recent_buffers.update(cx);
+        match self.ambient_context.recent_buffers.update(cx) {
+            ContextUpdated::Updating => {}
+            ContextUpdated::Disabled => {
+                self.count_remaining_tokens(cx);
+            }
+        }
     }
 
     fn handle_buffer_event(

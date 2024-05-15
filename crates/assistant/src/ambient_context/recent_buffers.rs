@@ -6,6 +6,7 @@ use std::time::Duration;
 use gpui::{ModelContext, Subscription, Task, WeakModel};
 use language::{Buffer, BufferSnapshot, DiagnosticEntry, Point};
 
+use crate::ambient_context::ContextUpdated;
 use crate::assistant_panel::Conversation;
 use crate::{LanguageModelRequestMessage, Role};
 
@@ -41,7 +42,7 @@ impl RecentBuffersContext {
         })
     }
 
-    pub fn update(&mut self, cx: &mut ModelContext<Conversation>) {
+    pub fn update(&mut self, cx: &mut ModelContext<Conversation>) -> ContextUpdated {
         let buffers = self
             .buffers
             .iter()
@@ -62,6 +63,7 @@ impl RecentBuffersContext {
             self.message.clear();
             self.pending_message = None;
             cx.notify();
+            ContextUpdated::Disabled
         } else {
             self.pending_message = Some(cx.spawn(|this, mut cx| async move {
                 const DEBOUNCE_TIMEOUT: Duration = Duration::from_millis(100);
@@ -73,10 +75,13 @@ impl RecentBuffersContext {
                     .await;
                 this.update(&mut cx, |conversation, cx| {
                     conversation.ambient_context.recent_buffers.message = message;
+                    conversation.count_remaining_tokens(cx);
                     cx.notify();
                 })
                 .ok();
             }));
+
+            ContextUpdated::Updating
         }
     }
 
