@@ -1752,6 +1752,20 @@ impl Conversation {
                                         // as soon as we parse a new edit suggestion, emit an event
                                         // the editor will catch that event and add/remove block decorations
                                         // as needed.
+                                        // From:
+                                        // ```edit filename.rs
+                                        // 10 bla
+                                        // ...
+                                        // 11 bla
+                                        // -------------
+                                        // foo
+                                        //
+                                        // To:
+                                        //
+                                        // [block decoration of rows 10-11]
+                                        // ```rs
+                                        // foo
+                                        //
                                     }
                                 });
                                 cx.emit(ConversationEvent::StreamedCompletion);
