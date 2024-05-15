@@ -840,6 +840,10 @@ impl BufferSearchBar {
         }
     }
 
+    pub fn has_active_match(&self) -> bool {
+        self.active_match_index.is_some()
+    }
+
     fn clear_matches(&mut self, cx: &mut ViewContext<Self>) {
         let mut active_item_matches = None;
         for (searchable_item, matches) in self.searchable_items_with_matches.drain() {
