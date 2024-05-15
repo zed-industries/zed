@@ -1195,7 +1195,7 @@ impl Terminal {
         &mut self,
         e: &MouseDownEvent,
         origin: Point<Pixels>,
-        cx: &mut ModelContext<Self>,
+        _cx: &mut ModelContext<Self>,
     ) {
         let position = e.position - origin;
         let point = grid_point(
@@ -1235,7 +1235,7 @@ impl Terminal {
             }
         } else if e.button == MouseButton::Middle {
             #[cfg(target_os = "linux")]
-            if let Some(item) = cx.read_from_primary() {
+            if let Some(item) = _cx.read_from_primary() {
                 let text = item.text().to_string();
                 self.input(text);
             }

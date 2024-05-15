@@ -530,6 +530,7 @@ impl EditorElement {
         cx.stop_propagation();
     }
 
+    #[cfg(target_os = "linux")]
     fn mouse_middle_down(
         editor: &mut Editor,
         event: &MouseDownEvent,
