@@ -206,10 +206,6 @@ impl RealNodeRuntime {
 
         anyhow::Ok(node_dir)
     }
-
-    // pub fn configure_proxy(&self) {
-    //     if self.http.
-    // }
 }
 
 #[async_trait::async_trait]
