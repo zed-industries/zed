@@ -468,7 +468,7 @@
     //         }
     //     }
     "shell": "system",
-    // Where to dock terminals panel. Can be 'left', 'right', 'bottom'.
+    // Where to dock terminals panel. Can be `left`, `right`, `bottom`.
     "dock": "bottom",
     // Default width when the terminal is docked to the left or right.
     "default_width": 640,
@@ -551,7 +551,7 @@
         // to the current working directory. We recommend overriding this
         // in your project's settings, rather than globally.
         "directories": [".env", "env", ".venv", "venv"],
-        // Can also be 'csh', 'fish', and `nushell`
+        // Can also be `csh`, `fish`, and `nushell`
         "activate_script": "default"
       }
     },
@@ -576,7 +576,7 @@
   // use those languages.
   //
   // For example, to treat files like `foo.notjs` as JavaScript,
-  // and 'Embargo.lock' as TOML:
+  // and `Embargo.lock` as TOML:
   //
   // {
   //   "JavaScript": ["notjs"],
