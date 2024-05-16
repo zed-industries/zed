@@ -1017,7 +1017,6 @@ impl AssistantPanel {
                                 .ok();
                         }
                     })
-                    // This is an MVP approach to allow us to play around with the prompt library. I don't expect this to be the long term approach.
                     .entry("Insert Active Prompt", None, {
                         let workspace = workspace.clone();
                         move |cx| {

@@ -443,6 +443,7 @@ impl Render for PromptManager {
     }
 }
 
+impl EventEmitter<DismissEvent> for PromptManager {}
 impl ModalView for PromptManager {}
 
 impl FocusableView for PromptManager {
@@ -450,5 +451,3 @@ impl FocusableView for PromptManager {
         self.focus_handle.clone()
     }
 }
-
-impl EventEmitter<DismissEvent> for PromptManager {}
