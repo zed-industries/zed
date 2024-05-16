@@ -37,14 +37,13 @@ use language::{
 };
 use multi_buffer::MultiBufferRow;
 use parking_lot::Mutex;
-use project::{Project, ProjectTransaction};
+use project::{search::SearchQuery, Project, ProjectTransaction};
 use search::{buffer_search::DivRegistrar, BufferSearchBar};
 use settings::Settings;
 use std::{
     cmp::{self, Ordering},
     fmt::Write,
     iter,
-    num::NonZeroU32,
     ops::Range,
     path::PathBuf,
     sync::Arc,
@@ -2198,27 +2197,15 @@ impl Conversation {
 #[derive(Debug)]
 enum EditParsingState {
     None,
-    AfterHeader {
+    InOldText {
         path: PathBuf,
         start_anchor: language::Anchor,
-    },
-    AfterFirstReplacedLine {
-        path: PathBuf,
-        start_anchor: language::Anchor,
-        start_row: u32,
-        after_ellipsis: bool,
-    },
-    AfterReplacedRange {
-        path: PathBuf,
-        start_anchor: language::Anchor,
-        start_row: u32,
-        end_row: u32,
+        old_text: String,
     },
     InNewText {
         path: PathBuf,
         start_anchor: language::Anchor,
-        start_row: u32,
-        end_row: u32,
+        old_text: String,
         new_text: String,
     },
 }
@@ -2241,90 +2228,39 @@ fn parse_edit_suggestions(
             EditParsingState::None => {
                 if let Some(rest) = message_line.strip_prefix("```edit ") {
                     let path = PathBuf::from(rest.trim());
-                    state = EditParsingState::AfterHeader {
+                    state = EditParsingState::InOldText {
                         path,
                         start_anchor: buffer.anchor_before(offset),
+                        old_text: String::new(),
                     };
                 }
             }
-            EditParsingState::AfterHeader { path, start_anchor } => {
-                if let Ok(start_line) = parse_line_number(message_line) {
-                    state = EditParsingState::AfterFirstReplacedLine {
-                        path,
-                        start_anchor,
-                        start_row: start_line,
-                        after_ellipsis: false,
-                    };
-                } else {
-                    state = EditParsingState::None;
-                }
-            }
-            EditParsingState::AfterFirstReplacedLine {
+            EditParsingState::InOldText {
                 path,
                 start_anchor,
-                start_row,
-                after_ellipsis: true,
-            } => {
-                if let Ok(end_line) = parse_line_number(message_line) {
-                    state = EditParsingState::AfterReplacedRange {
-                        path,
-                        start_anchor,
-                        start_row,
-                        // Increment end line by one to make the range exclusive.
-                        end_row: end_line + 1,
-                    };
-                } else {
-                    state = EditParsingState::None;
-                }
-            }
-            EditParsingState::AfterFirstReplacedLine {
-                path,
-                start_anchor,
-                start_row,
-                after_ellipsis: false,
-            } => {
-                if message_line == "..." {
-                    state = EditParsingState::AfterFirstReplacedLine {
-                        path,
-                        start_anchor,
-                        start_row,
-                        after_ellipsis: true,
-                    };
-                } else if message_line == "---" {
-                    state = EditParsingState::InNewText {
-                        path,
-                        start_anchor,
-                        start_row,
-                        end_row: start_row + 1,
-                        new_text: String::new(),
-                    };
-                } else {
-                    state = EditParsingState::None;
-                }
-            }
-            EditParsingState::AfterReplacedRange {
-                path,
-                start_anchor,
-                start_row,
-                end_row,
+                mut old_text,
             } => {
                 if message_line == "---" {
                     state = EditParsingState::InNewText {
                         path,
                         start_anchor,
-                        start_row,
-                        end_row,
+                        old_text,
                         new_text: String::new(),
                     };
                 } else {
-                    state = EditParsingState::None;
+                    old_text.push_str(message_line);
+                    old_text.push('\n');
+                    state = EditParsingState::InOldText {
+                        path,
+                        start_anchor,
+                        old_text,
+                    };
                 }
             }
             EditParsingState::InNewText {
                 path,
                 start_anchor,
-                start_row,
-                end_row,
+                old_text,
                 mut new_text,
             } => {
                 if message_line == "```" {
@@ -2339,7 +2275,7 @@ fn parse_edit_suggestions(
                                 EditSuggestion {
                                     source_range: start_anchor..end_anchor,
                                     full_path: Some(path),
-                                    row_range: start_row..end_row,
+                                    old_text,
                                     new_text,
                                 },
                             );
@@ -2352,8 +2288,7 @@ fn parse_edit_suggestions(
                     state = EditParsingState::InNewText {
                         path,
                         start_anchor,
-                        start_row,
-                        end_row,
+                        old_text,
                         new_text,
                     };
                 }
@@ -2363,20 +2298,11 @@ fn parse_edit_suggestions(
     }
 }
 
-fn parse_line_number(message_line: &str) -> Result<u32> {
-    Ok(message_line
-        .chars()
-        .take_while(|char| char.is_ascii_digit())
-        .collect::<String>()
-        .parse::<NonZeroU32>()
-        .map(|number| number.get() - 1)?)
-}
-
 #[derive(Debug, PartialEq)]
 struct EditSuggestion {
     source_range: Range<language::Anchor>,
     full_path: Option<PathBuf>,
-    row_range: Range<u32>,
+    old_text: String,
     new_text: String,
 }
 
@@ -2980,6 +2906,7 @@ impl ConversationEditor {
         let mut edits_by_buffer = HashMap::default();
         for (suggestion_ix, cursor_offset) in cursors_by_suggestion_index {
             let suggestion = &conversation.edit_suggestions[suggestion_ix];
+
             if let Some(message) = conversation.message_for_offset(cursor_offset, cx) {
                 if let Some(buffer) = message
                     .ambient_context
@@ -2989,25 +2916,40 @@ impl ConversationEditor {
                     .find(|source_buffer| source_buffer.full_path == suggestion.full_path)
                 {
                     if let Some(model) = buffer.model.upgrade() {
-                        // todo!("sanitize row ranges")
-                        // todo!("produce a diff")
-                        let edit_start = buffer
-                            .snapshot
-                            .anchor_after(Point::new(suggestion.row_range.start, 0));
-                        let edit_end = buffer
-                            .snapshot
-                            .anchor_before(Point::new(suggestion.row_range.end, 0));
-                        edits_by_buffer
-                            .entry(model)
-                            .or_insert(Vec::new())
-                            .push((edit_start..edit_end, suggestion.new_text.clone()));
+                        if let Some(query) = SearchQuery::text(
+                            suggestion.old_text.clone(),
+                            false,
+                            true,
+                            false,
+                            Vec::new(),
+                            Vec::new(),
+                        )
+                        .log_err()
+                        {
+                            let snapshot = model.read(cx).snapshot();
+                            // todo!("do this in the background")
+                            let ranges = cx
+                                .background_executor()
+                                .block(query.search(&snapshot, None));
+                            if let Some(range) = ranges.first() {
+                                let edit_start = snapshot.anchor_after(range.start);
+                                let edit_end = snapshot.anchor_before(range.end);
+                                edits_by_buffer
+                                    .entry(model)
+                                    .or_insert(Vec::new())
+                                    .push((edit_start..edit_end, suggestion.new_text.clone()));
+                            }
+                        }
                     }
                 }
             }
         }
 
         let mut project_transaction = ProjectTransaction::default();
-        for (buffer_handle, edits) in edits_by_buffer {
+        for (buffer_handle, mut edits) in edits_by_buffer {
+            let snapshot = buffer_handle.read(cx).snapshot();
+            edits.sort_by(|(range1, _), (range2, _)| range1.start.cmp(&range2.start, &snapshot));
+
             buffer_handle.update(cx, |buffer, cx| {
                 buffer.start_transaction();
                 buffer.edit(edits, None, cx);
@@ -3742,23 +3684,20 @@ mod tests {
                 some output:
 
                 «```edit src/foo.rs
-                100    let a = 1;
-                ...
-                103    let e = 1;
+                    let a = 1;
+                    let b = 2;
                 ---
                     let w = 1;
-                    let x = 1;
-                    let y = 1;
-                    let z = 1;
+                    let x = 2;
+                    let y = 3;
+                    let z = 4;
                 ```»
 
                 some more output:
 
                 «```edit src/foo.rs
-                200    let f = 1;
+                    let c = 1;
                 ---
-                    let g = 1;
-                    let h = 1;
                 ```»
 
                 and the conclusion.
@@ -3779,12 +3718,17 @@ mod tests {
                         source_range: buffer.anchor_before(code_block_ranges[0].start)
                             ..buffer.anchor_after(code_block_ranges[0].end),
                         full_path: Some(Path::new("src/foo.rs").into()),
-                        row_range: 99..103,
+                        old_text: [
+                            "    let a = 1;", //
+                            "    let b = 2;",
+                            "",
+                        ]
+                        .join("\n"),
                         new_text: [
                             "    let w = 1;",
-                            "    let x = 1;",
-                            "    let y = 1;",
-                            "    let z = 1;",
+                            "    let x = 2;",
+                            "    let y = 3;",
+                            "    let z = 4;",
                             "",
                         ]
                         .join("\n"),
@@ -3793,13 +3737,12 @@ mod tests {
                         source_range: buffer.anchor_before(code_block_ranges[1].start)
                             ..buffer.anchor_after(code_block_ranges[1].end),
                         full_path: Some(Path::new("src/foo.rs").into()),
-                        row_range: 199..200,
-                        new_text: [
-                            "    let g = 1;", //
-                            "    let h = 1;",
+                        old_text: [
+                            "    let c = 1;", //
                             "",
                         ]
                         .join("\n"),
+                        new_text: String::new(),
                     }
                 ]
             );
