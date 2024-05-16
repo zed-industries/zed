@@ -40,6 +40,7 @@ pub enum ComponentStory {
     ToggleButton,
     ToolStrip,
     ViewportUnits,
+    WithRemSize,
 }
 
 impl ComponentStory {
@@ -76,6 +77,7 @@ impl ComponentStory {
             Self::ToggleButton => cx.new_view(|_| ui::ToggleButtonStory).into(),
             Self::ToolStrip => cx.new_view(|_| ui::ToolStripStory).into(),
             Self::ViewportUnits => cx.new_view(|_| crate::stories::ViewportUnitsStory).into(),
+            Self::WithRemSize => cx.new_view(|_| crate::stories::WithRemSizeStory).into(),
             Self::Picker => PickerStory::new(cx).into(),
         }
     }
