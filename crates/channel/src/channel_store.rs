@@ -832,24 +832,20 @@ impl ChannelStore {
                     limit: limit as u64,
                 })
                 .await?;
-
-            let user_ids = response.members.iter().map(|m| m.user_id).collect();
-            let user_store = user_store
-                .upgrade()
-                .ok_or_else(|| anyhow!("user store dropped"))?;
-            let users = user_store
-                .update(&mut cx, |user_store, cx| user_store.get_users(user_ids, cx))?
-                .await?;
-
-            Ok(users
-                .into_iter()
-                .zip(response.members)
-                .map(|(user, member)| ChannelMembership {
-                    user,
-                    role: member.role(),
-                    kind: member.kind(),
-                })
-                .collect())
+            user_store.update(&mut cx, |user_store, cx| {
+                user_store.insert(response.users);
+                response
+                    .members
+                    .into_iter()
+                    .filter_map(|member| {
+                        Some(ChannelMembership {
+                            user: user_store.get_cached_user(member.user_id)?,
+                            role: member.role(),
+                            kind: member.kind(),
+                        })
+                    })
+                    .collect()
+            })
         })
     }
 
