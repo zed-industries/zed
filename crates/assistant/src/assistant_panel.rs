@@ -1,3 +1,4 @@
+use crate::ambient_context::{AmbientContext, ContextUpdated, RecentBuffer};
 use crate::{
     assistant_settings::{AssistantDockPosition, AssistantSettings, ZedDotDevModel},
     codegen::{self, Codegen, CodegenKind},
@@ -8,6 +9,7 @@ use crate::{
     Split, ToggleFocus, ToggleHistory, ToggleIncludeConversation,
 };
 use anyhow::{anyhow, Result};
+use client::telemetry::Telemetry;
 use collections::{hash_map, HashMap, HashSet, VecDeque};
 use editor::{
     actions::{MoveDown, MoveUp},
@@ -29,16 +31,21 @@ use gpui::{
     Subscription, Task, TextStyle, UniformListScrollHandle, View, ViewContext, VisualContext,
     WeakModel, WeakView, WhiteSpace, WindowContext,
 };
-use language::{
-    language_settings::SoftWrap, Buffer, BufferSnapshot, DiagnosticEntry, LanguageRegistry, Point,
-    ToOffset as _,
-};
+use language::{language_settings::SoftWrap, Buffer, LanguageRegistry, Point, ToOffset as _};
 use multi_buffer::MultiBufferRow;
 use parking_lot::Mutex;
 use project::Project;
 use search::{buffer_search::DivRegistrar, BufferSearchBar};
 use settings::Settings;
-use std::{cmp, fmt::Write, iter, ops::Range, path::PathBuf, sync::Arc, time::Duration};
+use std::{
+    cmp,
+    fmt::Write,
+    iter,
+    ops::Range,
+    path::PathBuf,
+    sync::Arc,
+    time::{Duration, Instant},
+};
 use telemetry_events::AssistantKind;
 use theme::ThemeSettings;
 use ui::{popover_menu, prelude::*, ButtonLike, ContextMenu, Tab, TabBar, Tooltip};
@@ -86,6 +93,7 @@ pub struct AssistantPanel {
     toolbar: View<Toolbar>,
     languages: Arc<LanguageRegistry>,
     fs: Arc<dyn Fs>,
+    telemetry: Arc<Telemetry>,
     _subscriptions: Vec<Subscription>,
     next_inline_assist_id: usize,
     pending_inline_assists: HashMap<usize, PendingInlineAssist>,
@@ -179,6 +187,7 @@ impl AssistantPanel {
                         toolbar,
                         languages: workspace.app_state().languages.clone(),
                         fs: workspace.app_state().fs.clone(),
+                        telemetry: workspace.client().telemetry().clone(),
                         width: None,
                         height: None,
                         _subscriptions: subscriptions,
@@ -347,9 +356,16 @@ impl AssistantPanel {
         };
 
         let inline_assist_id = post_inc(&mut self.next_inline_assist_id);
+        let telemetry = self.telemetry.clone();
 
-        let codegen =
-            cx.new_model(|cx| Codegen::new(editor.read(cx).buffer().clone(), codegen_kind, cx));
+        let codegen = cx.new_model(|cx| {
+            Codegen::new(
+                editor.read(cx).buffer().clone(),
+                codegen_kind,
+                Some(telemetry),
+                cx,
+            )
+        });
 
         let measurements = Arc::new(Mutex::new(BlockMeasurements::default()));
         let inline_assistant = cx.new_view(|cx| {
@@ -360,7 +376,6 @@ impl AssistantPanel {
                 show_include_conversation && self.include_conversation_in_next_inline_assist,
                 self.inline_prompt_history.clone(),
                 codegen.clone(),
-                self.workspace.clone(),
                 cx,
             )
         });
@@ -760,6 +775,7 @@ impl AssistantPanel {
                 cx,
             )
         });
+
         self.show_conversation(editor.clone(), cx);
         Some(editor)
     }
@@ -799,6 +815,11 @@ impl AssistantPanel {
                 open_ai::Model::Four => open_ai::Model::FourTurbo,
                 open_ai::Model::FourTurbo => open_ai::Model::FourOmni,
                 open_ai::Model::FourOmni => open_ai::Model::ThreePointFiveTurbo,
+            }),
+            LanguageModel::Anthropic(model) => LanguageModel::Anthropic(match &model {
+                anthropic::Model::Claude3Opus => anthropic::Model::Claude3Sonnet,
+                anthropic::Model::Claude3Sonnet => anthropic::Model::Claude3Haiku,
+                anthropic::Model::Claude3Haiku => anthropic::Model::Claude3Opus,
             }),
             LanguageModel::ZedDotDev(model) => LanguageModel::ZedDotDev(match &model {
                 ZedDotDevModel::Gpt3Point5Turbo => ZedDotDevModel::Gpt4,
@@ -1034,6 +1055,7 @@ impl AssistantPanel {
         let fs = self.fs.clone();
         let workspace = self.workspace.clone();
         let languages = self.languages.clone();
+        let telemetry = self.telemetry.clone();
         cx.spawn(|this, mut cx| async move {
             let saved_conversation = SavedConversation::load(&path, fs.as_ref()).await?;
             let model = this.update(&mut cx, |this, _| this.model.clone())?;
@@ -1042,6 +1064,7 @@ impl AssistantPanel {
                 model,
                 path.clone(),
                 languages,
+                Some(telemetry),
                 &mut cx,
             )
             .await?;
@@ -1326,7 +1349,7 @@ struct Summary {
 pub struct Conversation {
     id: Option<String>,
     buffer: Model<Buffer>,
-    ambient_context: AmbientContext,
+    pub(crate) ambient_context: AmbientContext,
     message_anchors: Vec<MessageAnchor>,
     messages_metadata: HashMap<MessageId, MessageMetadata>,
     next_message_id: MessageId,
@@ -1340,34 +1363,7 @@ pub struct Conversation {
     pending_save: Task<Result<()>>,
     path: Option<PathBuf>,
     _subscriptions: Vec<Subscription>,
-}
-
-#[derive(Default)]
-struct AmbientContext {
-    recent_buffers: RecentBuffersContext,
-}
-
-struct RecentBuffersContext {
-    enabled: bool,
-    buffers: Vec<RecentBuffer>,
-    message: String,
-    pending_message: Option<Task<()>>,
-}
-
-struct RecentBuffer {
-    buffer: WeakModel<Buffer>,
-    _subscription: Subscription,
-}
-
-impl Default for RecentBuffersContext {
-    fn default() -> Self {
-        Self {
-            enabled: true,
-            buffers: Vec::new(),
-            message: String::new(),
-            pending_message: None,
-        }
-    }
+    telemetry: Option<Arc<Telemetry>>,
 }
 
 impl EventEmitter<ConversationEvent> for Conversation {}
@@ -1376,6 +1372,7 @@ impl Conversation {
     fn new(
         model: LanguageModel,
         language_registry: Arc<LanguageRegistry>,
+        telemetry: Option<Arc<Telemetry>>,
         cx: &mut ModelContext<Self>,
     ) -> Self {
         let markdown = language_registry.language_for_name("Markdown");
@@ -1410,6 +1407,7 @@ impl Conversation {
             pending_save: Task::ready(Ok(())),
             path: None,
             buffer,
+            telemetry,
         };
 
         let message = MessageAnchor {
@@ -1456,6 +1454,7 @@ impl Conversation {
         model: LanguageModel,
         path: PathBuf,
         language_registry: Arc<LanguageRegistry>,
+        telemetry: Option<Arc<Telemetry>>,
         cx: &mut AsyncAppContext,
     ) -> Result<Model<Self>> {
         let id = match saved_conversation.id {
@@ -1508,6 +1507,7 @@ impl Conversation {
                 pending_save: Task::ready(Ok(())),
                 path: Some(path),
                 buffer,
+                telemetry,
             };
             this.count_remaining_tokens(cx);
             this
@@ -1516,7 +1516,28 @@ impl Conversation {
 
     fn toggle_recent_buffers(&mut self, cx: &mut ModelContext<Self>) {
         self.ambient_context.recent_buffers.enabled = !self.ambient_context.recent_buffers.enabled;
-        self.update_recent_buffers_context(cx);
+        match self.ambient_context.recent_buffers.update(cx) {
+            ContextUpdated::Updating => {}
+            ContextUpdated::Disabled => {
+                self.count_remaining_tokens(cx);
+            }
+        }
+    }
+
+    fn toggle_current_project_context(
+        &mut self,
+        fs: Arc<dyn Fs>,
+        project: WeakModel<Project>,
+        cx: &mut ModelContext<Self>,
+    ) {
+        self.ambient_context.current_project.enabled =
+            !self.ambient_context.current_project.enabled;
+        match self.ambient_context.current_project.update(fs, project, cx) {
+            ContextUpdated::Updating => {}
+            ContextUpdated::Disabled => {
+                self.count_remaining_tokens(cx);
+            }
+        }
     }
 
     fn set_recent_buffers(
@@ -1531,168 +1552,20 @@ impl Conversation {
             .extend(buffers.into_iter().map(|buffer| RecentBuffer {
                 buffer: buffer.downgrade(),
                 _subscription: cx.observe(&buffer, |this, _, cx| {
-                    this.update_recent_buffers_context(cx);
+                    match this.ambient_context.recent_buffers.update(cx) {
+                        ContextUpdated::Updating => {}
+                        ContextUpdated::Disabled => {
+                            this.count_remaining_tokens(cx);
+                        }
+                    }
                 }),
             }));
-        self.update_recent_buffers_context(cx);
-    }
-
-    fn update_recent_buffers_context(&mut self, cx: &mut ModelContext<Self>) {
-        let buffers = self
-            .ambient_context
-            .recent_buffers
-            .buffers
-            .iter()
-            .filter_map(|recent| {
-                recent
-                    .buffer
-                    .read_with(cx, |buffer, cx| {
-                        (
-                            buffer.file().map(|file| file.full_path(cx)),
-                            buffer.snapshot(),
-                        )
-                    })
-                    .ok()
-            })
-            .collect::<Vec<_>>();
-
-        if !self.ambient_context.recent_buffers.enabled || buffers.is_empty() {
-            self.ambient_context.recent_buffers.message.clear();
-            self.ambient_context.recent_buffers.pending_message = None;
-            self.count_remaining_tokens(cx);
-            cx.notify();
-        } else {
-            self.ambient_context.recent_buffers.pending_message =
-                Some(cx.spawn(|this, mut cx| async move {
-                    const DEBOUNCE_TIMEOUT: Duration = Duration::from_millis(100);
-                    cx.background_executor().timer(DEBOUNCE_TIMEOUT).await;
-
-                    let message = cx
-                        .background_executor()
-                        .spawn(async move { Self::message_for_recent_buffers(&buffers) })
-                        .await;
-                    this.update(&mut cx, |this, cx| {
-                        this.ambient_context.recent_buffers.message = message;
-                        this.count_remaining_tokens(cx);
-                        cx.notify();
-                    })
-                    .ok();
-                }));
+        match self.ambient_context.recent_buffers.update(cx) {
+            ContextUpdated::Updating => {}
+            ContextUpdated::Disabled => {
+                self.count_remaining_tokens(cx);
+            }
         }
-    }
-
-    fn message_for_recent_buffers(buffers: &[(Option<PathBuf>, BufferSnapshot)]) -> String {
-        let mut message = String::new();
-        writeln!(
-            message,
-            "The following is a list of recent buffers that the user has opened."
-        )
-        .unwrap();
-        writeln!(
-            message,
-            "For every line in the buffer, I will include a row number that line corresponds to."
-        )
-        .unwrap();
-        writeln!(
-            message,
-            "Lines that don't have a number correspond to errors and warnings. For example:"
-        )
-        .unwrap();
-        writeln!(message, "path/to/file.md").unwrap();
-        writeln!(message, "```markdown").unwrap();
-        writeln!(message, "1 The quick brown fox").unwrap();
-        writeln!(message, "2 jumps over one active").unwrap();
-        writeln!(message, "             --- error: should be 'the'").unwrap();
-        writeln!(message, "                 ------ error: should be 'lazy'").unwrap();
-        writeln!(message, "3 dog").unwrap();
-        writeln!(message, "```").unwrap();
-
-        message.push('\n');
-        writeln!(message, "Here's the actual recent buffer list:").unwrap();
-        for (path, buffer) in buffers {
-            if let Some(path) = path {
-                writeln!(message, "{}", path.display()).unwrap();
-            } else {
-                writeln!(message, "untitled").unwrap();
-            }
-
-            if let Some(language) = buffer.language() {
-                writeln!(message, "```{}", language.name().to_lowercase()).unwrap();
-            } else {
-                writeln!(message, "```").unwrap();
-            }
-
-            let mut diagnostics = buffer
-                .diagnostics_in_range::<_, Point>(
-                    language::Anchor::MIN..language::Anchor::MAX,
-                    false,
-                )
-                .peekable();
-
-            let mut active_diagnostics = Vec::<DiagnosticEntry<Point>>::new();
-            const GUTTER_PADDING: usize = 4;
-            let gutter_width =
-                ((buffer.max_point().row + 1) as f32).log10() as usize + 1 + GUTTER_PADDING;
-            for buffer_row in 0..=buffer.max_point().row {
-                let display_row = buffer_row + 1;
-                active_diagnostics.retain(|diagnostic| {
-                    (diagnostic.range.start.row..=diagnostic.range.end.row).contains(&buffer_row)
-                });
-                while diagnostics.peek().map_or(false, |diagnostic| {
-                    (diagnostic.range.start.row..=diagnostic.range.end.row).contains(&buffer_row)
-                }) {
-                    active_diagnostics.push(diagnostics.next().unwrap());
-                }
-
-                let row_width = (display_row as f32).log10() as usize + 1;
-                write!(message, "{}", display_row).unwrap();
-                if row_width < gutter_width {
-                    message.extend(iter::repeat(' ').take(gutter_width - row_width));
-                }
-
-                for chunk in buffer.text_for_range(
-                    Point::new(buffer_row, 0)..Point::new(buffer_row, buffer.line_len(buffer_row)),
-                ) {
-                    message.push_str(chunk);
-                }
-                message.push('\n');
-
-                for diagnostic in &active_diagnostics {
-                    message.extend(iter::repeat(' ').take(gutter_width));
-
-                    let start_column = if diagnostic.range.start.row == buffer_row {
-                        message
-                            .extend(iter::repeat(' ').take(diagnostic.range.start.column as usize));
-                        diagnostic.range.start.column
-                    } else {
-                        0
-                    };
-                    let end_column = if diagnostic.range.end.row == buffer_row {
-                        diagnostic.range.end.column
-                    } else {
-                        buffer.line_len(buffer_row)
-                    };
-
-                    message.extend(iter::repeat('-').take((end_column - start_column) as usize));
-                    writeln!(message, " {}", diagnostic.diagnostic.message).unwrap();
-                }
-            }
-
-            message.push('\n');
-        }
-
-        writeln!(
-            message,
-            "When quoting the above code, mention which rows the code occurs at."
-        )
-        .unwrap();
-        writeln!(
-            message,
-            "Never include rows in the quoted code itself and only report lines that didn't start with a row number."
-        )
-        .unwrap();
-
-        message
     }
 
     fn handle_buffer_event(
@@ -1801,10 +1674,15 @@ impl Conversation {
             let task = cx.spawn({
                 |this, mut cx| async move {
                     let assistant_message_id = assistant_message.id;
+                    let mut response_latency = None;
                     let stream_completion = async {
+                        let request_start = Instant::now();
                         let mut messages = stream.await?;
 
                         while let Some(message) = messages.next().await {
+                            if response_latency.is_none() {
+                                response_latency = Some(request_start.elapsed());
+                            }
                             let text = message?;
 
                             this.update(&mut cx, |this, cx| {
@@ -1843,16 +1721,26 @@ impl Conversation {
                         if let Some(metadata) =
                             this.messages_metadata.get_mut(&assistant_message.id)
                         {
-                            match result {
-                                Ok(_) => {
-                                    metadata.status = MessageStatus::Done;
-                                }
-                                Err(error) => {
-                                    metadata.status = MessageStatus::Error(SharedString::from(
-                                        error.to_string().trim().to_string(),
-                                    ));
-                                }
+                            let error_message = result
+                                .err()
+                                .map(|error| error.to_string().trim().to_string());
+                            if let Some(error_message) = error_message.as_ref() {
+                                metadata.status =
+                                    MessageStatus::Error(SharedString::from(error_message.clone()));
+                            } else {
+                                metadata.status = MessageStatus::Done;
                             }
+
+                            if let Some(telemetry) = this.telemetry.as_ref() {
+                                telemetry.report_assistant_event(
+                                    this.id.clone(),
+                                    AssistantKind::Panel,
+                                    this.model.telemetry_id(),
+                                    response_latency,
+                                    error_message,
+                                );
+                            }
+
                             cx.emit(ConversationEvent::MessagesEdited);
                         }
                     })
@@ -1870,15 +1758,12 @@ impl Conversation {
     }
 
     fn to_completion_request(&self, cx: &mut ModelContext<Conversation>) -> LanguageModelRequest {
-        let messages = self
-            .ambient_context
-            .recent_buffers
-            .enabled
-            .then(|| LanguageModelRequestMessage {
-                role: Role::System,
-                content: self.ambient_context.recent_buffers.message.clone(),
-            })
+        let recent_buffers_context = self.ambient_context.recent_buffers.to_message();
+        let current_project_context = self.ambient_context.current_project.to_message();
+
+        let messages = recent_buffers_context
             .into_iter()
+            .chain(current_project_context)
             .chain(
                 self.messages(cx)
                     .filter(|message| matches!(message.status, MessageStatus::Done))
@@ -2273,7 +2158,9 @@ impl ConversationEditor {
         workspace: View<Workspace>,
         cx: &mut ViewContext<Self>,
     ) -> Self {
-        let conversation = cx.new_model(|cx| Conversation::new(model, language_registry, cx));
+        let telemetry = workspace.read(cx).client().telemetry().clone();
+        let conversation =
+            cx.new_model(|cx| Conversation::new(model, language_registry, Some(telemetry), cx));
         Self::for_conversation(conversation, fs, workspace, cx)
     }
 
@@ -2313,15 +2200,6 @@ impl ConversationEditor {
     }
 
     fn assist(&mut self, _: &Assist, cx: &mut ViewContext<Self>) {
-        self.conversation.update(cx, |conversation, cx| {
-            report_assistant_event(
-                self.workspace.clone(),
-                Some(conversation),
-                AssistantKind::Panel,
-                cx,
-            )
-        });
-
         let cursors = self.cursors(cx);
 
         let user_messages = self.conversation.update(cx, |conversation, cx| {
@@ -2523,6 +2401,11 @@ impl ConversationEditor {
     }
 
     fn update_message_headers(&mut self, cx: &mut ViewContext<Self>) {
+        let project = self
+            .workspace
+            .update(cx, |workspace, _cx| workspace.project().downgrade())
+            .unwrap();
+
         self.editor.update(cx, |editor, cx| {
             let buffer = editor.buffer().read(cx).snapshot(cx);
             let excerpt_id = *buffer.as_singleton().unwrap().0;
@@ -2539,6 +2422,8 @@ impl ConversationEditor {
                     height: 2,
                     style: BlockStyle::Sticky,
                     render: Box::new({
+                        let fs = self.fs.clone();
+                        let project = project.clone();
                         let conversation = self.conversation.clone();
                         move |cx| {
                             let message_id = message.id;
@@ -2620,31 +2505,40 @@ impl ConversationEditor {
                                                     Tooltip::text("Include Open Files", cx)
                                                 }),
                                         )
-                                        // .child(
-                                        //     IconButton::new("include_terminal", IconName::Terminal)
-                                        //         .icon_size(IconSize::Small)
-                                        //         .tooltip(|cx| {
-                                        //             Tooltip::text("Include Terminal", cx)
-                                        //         }),
-                                        // )
-                                        // .child(
-                                        //     IconButton::new(
-                                        //         "include_edit_history",
-                                        //         IconName::FileGit,
-                                        //     )
-                                        //     .icon_size(IconSize::Small)
-                                        //     .tooltip(
-                                        //         |cx| Tooltip::text("Include Edit History", cx),
-                                        //     ),
-                                        // )
-                                        // .child(
-                                        //     IconButton::new(
-                                        //         "include_file_trees",
-                                        //         IconName::FileTree,
-                                        //     )
-                                        //     .icon_size(IconSize::Small)
-                                        //     .tooltip(|cx| Tooltip::text("Include File Trees", cx)),
-                                        // )
+                                        .child(
+                                            IconButton::new(
+                                                "include_current_project",
+                                                IconName::FileTree,
+                                            )
+                                            .icon_size(IconSize::Small)
+                                            .selected(
+                                                conversation
+                                                    .read(cx)
+                                                    .ambient_context
+                                                    .current_project
+                                                    .enabled,
+                                            )
+                                            .on_click({
+                                                let fs = fs.clone();
+                                                let project = project.clone();
+                                                let conversation = conversation.downgrade();
+                                                move |_, cx| {
+                                                    let fs = fs.clone();
+                                                    let project = project.clone();
+                                                    conversation
+                                                        .update(cx, |conversation, cx| {
+                                                            conversation
+                                                                .toggle_current_project_context(
+                                                                    fs, project, cx,
+                                                                );
+                                                        })
+                                                        .ok();
+                                                }
+                                            })
+                                            .tooltip(
+                                                |cx| Tooltip::text("Include Current Project", cx),
+                                            ),
+                                        )
                                         .into_any()
                                 }))
                                 .into_any_element()
@@ -2859,7 +2753,6 @@ enum InlineAssistantEvent {
 struct InlineAssistant {
     id: usize,
     prompt_editor: View<Editor>,
-    workspace: WeakView<Workspace>,
     confirmed: bool,
     show_include_conversation: bool,
     include_conversation: bool,
@@ -2940,7 +2833,6 @@ impl InlineAssistant {
         include_conversation: bool,
         prompt_history: VecDeque<String>,
         codegen: Model<Codegen>,
-        workspace: WeakView<Workspace>,
         cx: &mut ViewContext<Self>,
     ) -> Self {
         let prompt_editor = cx.new_view(|cx| {
@@ -2962,7 +2854,6 @@ impl InlineAssistant {
         Self {
             id,
             prompt_editor,
-            workspace,
             confirmed: false,
             show_include_conversation,
             include_conversation,
@@ -3011,8 +2902,6 @@ impl InlineAssistant {
         if self.confirmed {
             cx.emit(InlineAssistantEvent::Dismissed);
         } else {
-            report_assistant_event(self.workspace.clone(), None, AssistantKind::Inline, cx);
-
             let prompt = self.prompt_editor.read(cx).text(cx);
             self.prompt_editor
                 .update(cx, |editor, _cx| editor.set_read_only(true));
@@ -3142,30 +3031,6 @@ fn merge_ranges(ranges: &mut Vec<Range<Anchor>>, buffer: &MultiBufferSnapshot) {
     }
 }
 
-fn report_assistant_event(
-    workspace: WeakView<Workspace>,
-    conversation: Option<&Conversation>,
-    assistant_kind: AssistantKind,
-    cx: &mut AppContext,
-) {
-    let Some(workspace) = workspace.upgrade() else {
-        return;
-    };
-
-    let client = workspace.read(cx).project().read(cx).client();
-    let telemetry = client.telemetry();
-
-    let conversation_id = conversation.and_then(|conversation| conversation.id.clone());
-    let model_id = conversation
-        .map(|c| c.model.telemetry_id())
-        .unwrap_or_else(|| {
-            CompletionProvider::global(cx)
-                .default_model()
-                .telemetry_id()
-        });
-    telemetry.report_assistant_event(conversation_id, assistant_kind, model_id)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -3182,7 +3047,7 @@ mod tests {
         let registry = Arc::new(LanguageRegistry::test(cx.background_executor().clone()));
 
         let conversation =
-            cx.new_model(|cx| Conversation::new(LanguageModel::default(), registry, cx));
+            cx.new_model(|cx| Conversation::new(LanguageModel::default(), registry, None, cx));
         let buffer = conversation.read(cx).buffer.clone();
 
         let message_1 = conversation.read(cx).message_anchors[0].clone();
@@ -3314,7 +3179,7 @@ mod tests {
         let registry = Arc::new(LanguageRegistry::test(cx.background_executor().clone()));
 
         let conversation =
-            cx.new_model(|cx| Conversation::new(LanguageModel::default(), registry, cx));
+            cx.new_model(|cx| Conversation::new(LanguageModel::default(), registry, None, cx));
         let buffer = conversation.read(cx).buffer.clone();
 
         let message_1 = conversation.read(cx).message_anchors[0].clone();
@@ -3413,7 +3278,7 @@ mod tests {
         init(cx);
         let registry = Arc::new(LanguageRegistry::test(cx.background_executor().clone()));
         let conversation =
-            cx.new_model(|cx| Conversation::new(LanguageModel::default(), registry, cx));
+            cx.new_model(|cx| Conversation::new(LanguageModel::default(), registry, None, cx));
         let buffer = conversation.read(cx).buffer.clone();
 
         let message_1 = conversation.read(cx).message_anchors[0].clone();
@@ -3497,8 +3362,9 @@ mod tests {
         cx.set_global(CompletionProvider::Fake(FakeCompletionProvider::default()));
         cx.update(init);
         let registry = Arc::new(LanguageRegistry::test(cx.executor()));
-        let conversation =
-            cx.new_model(|cx| Conversation::new(LanguageModel::default(), registry.clone(), cx));
+        let conversation = cx.new_model(|cx| {
+            Conversation::new(LanguageModel::default(), registry.clone(), None, cx)
+        });
         let buffer = conversation.read_with(cx, |conversation, _| conversation.buffer.clone());
         let message_0 =
             conversation.read_with(cx, |conversation, _| conversation.message_anchors[0].id);
@@ -3537,6 +3403,7 @@ mod tests {
             LanguageModel::default(),
             Default::default(),
             registry.clone(),
+            None,
             &mut cx.to_async(),
         )
         .await

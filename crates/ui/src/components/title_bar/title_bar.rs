@@ -1,6 +1,7 @@
-use gpui::{AnyElement, Interactivity, Stateful};
+use gpui::{Action, AnyElement, Interactivity, Stateful};
 use smallvec::SmallVec;
 
+use crate::components::title_bar::linux_window_controls::LinuxWindowControls;
 use crate::components::title_bar::windows_window_controls::WindowsWindowControls;
 use crate::prelude::*;
 
@@ -9,6 +10,7 @@ pub struct TitleBar {
     platform_style: PlatformStyle,
     content: Stateful<Div>,
     children: SmallVec<[AnyElement; 2]>,
+    close_window_action: Box<dyn Action>,
 }
 
 impl TitleBar {
@@ -45,11 +47,12 @@ impl TitleBar {
         }
     }
 
-    pub fn new(id: impl Into<ElementId>) -> Self {
+    pub fn new(id: impl Into<ElementId>, close_window_action: Box<dyn Action>) -> Self {
         Self {
             platform_style: PlatformStyle::platform(),
             content: div().id(id.into()),
             children: SmallVec::new(),
+            close_window_action,
         }
     }
 
@@ -110,6 +113,23 @@ impl RenderOnce for TitleBar {
             .when(
                 self.platform_style == PlatformStyle::Windows && !cx.is_fullscreen(),
                 |title_bar| title_bar.child(WindowsWindowControls::new(height)),
+            )
+            .when(
+                self.platform_style == PlatformStyle::Linux
+                    && !cx.is_fullscreen()
+                    && cx.should_render_window_controls(),
+                |title_bar| {
+                    title_bar
+                        .child(LinuxWindowControls::new(height, self.close_window_action))
+                        .on_mouse_down(gpui::MouseButton::Right, move |ev, cx| {
+                            cx.show_window_menu(ev.position)
+                        })
+                        .on_mouse_move(move |ev, cx| {
+                            if ev.dragging() {
+                                cx.start_system_move();
+                            }
+                        })
+                },
             )
     }
 }

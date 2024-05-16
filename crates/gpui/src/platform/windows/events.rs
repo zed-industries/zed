@@ -16,10 +16,8 @@ use windows::Win32::{
 use crate::*;
 
 pub(crate) const CURSOR_STYLE_CHANGED: u32 = WM_USER + 1;
-pub(crate) const MOUSE_WHEEL_SETTINGS_CHANGED: u32 = WM_USER + 2;
-pub(crate) const MOUSE_WHEEL_SETTINGS_SCROLL_CHARS_CHANGED: isize = 1;
-pub(crate) const MOUSE_WHEEL_SETTINGS_SCROLL_LINES_CHANGED: isize = 2;
-pub(crate) const CLOSE_ONE_WINDOW: u32 = WM_USER + 3;
+pub(crate) const CLOSE_ONE_WINDOW: u32 = WM_USER + 2;
+
 const SIZE_MOVE_LOOP_TIMER_ID: usize = 1;
 
 pub(crate) fn handle_msg(
@@ -39,6 +37,7 @@ pub(crate) fn handle_msg(
         WM_TIMER => handle_timer_msg(handle, wparam, state_ptr),
         WM_NCCALCSIZE => handle_calc_client_size(handle, wparam, lparam, state_ptr),
         WM_DPICHANGED => handle_dpi_changed_msg(handle, wparam, lparam, state_ptr),
+        WM_DISPLAYCHANGE => handle_display_change_msg(handle, state_ptr),
         WM_NCHITTEST => handle_hit_test_msg(handle, msg, wparam, lparam, state_ptr),
         WM_PAINT => handle_paint_msg(handle, state_ptr),
         WM_CLOSE => handle_close_msg(state_ptr),
@@ -73,16 +72,16 @@ pub(crate) fn handle_msg(
         WM_XBUTTONUP => handle_xbutton_msg(wparam, lparam, handle_mouse_up_msg, state_ptr),
         WM_MOUSEWHEEL => handle_mouse_wheel_msg(handle, wparam, lparam, state_ptr),
         WM_MOUSEHWHEEL => handle_mouse_horizontal_wheel_msg(handle, wparam, lparam, state_ptr),
-        WM_SYSKEYDOWN => handle_syskeydown_msg(handle, wparam, lparam, state_ptr),
-        WM_SYSKEYUP => handle_syskeyup_msg(handle, wparam, state_ptr),
-        WM_KEYDOWN => handle_keydown_msg(handle, wparam, lparam, state_ptr),
-        WM_KEYUP => handle_keyup_msg(handle, wparam, state_ptr),
-        WM_CHAR => handle_char_msg(handle, wparam, lparam, state_ptr),
+        WM_SYSKEYDOWN => handle_syskeydown_msg(wparam, lparam, state_ptr),
+        WM_SYSKEYUP => handle_syskeyup_msg(wparam, state_ptr),
+        WM_KEYDOWN => handle_keydown_msg(wparam, lparam, state_ptr),
+        WM_KEYUP => handle_keyup_msg(wparam, state_ptr),
+        WM_CHAR => handle_char_msg(wparam, lparam, state_ptr),
         WM_IME_STARTCOMPOSITION => handle_ime_position(handle, state_ptr),
         WM_IME_COMPOSITION => handle_ime_composition(handle, lparam, state_ptr),
         WM_SETCURSOR => handle_set_cursor(lparam, state_ptr),
+        WM_SETTINGCHANGE => handle_system_settings_changed(state_ptr),
         CURSOR_STYLE_CHANGED => handle_cursor_changed(lparam, state_ptr),
-        MOUSE_WHEEL_SETTINGS_CHANGED => handle_mouse_wheel_settings_msg(wparam, lparam, state_ptr),
         _ => None,
     };
     if let Some(n) = handled {
@@ -112,6 +111,8 @@ fn handle_move_msg(
     {
         // center of the window may have moved to another monitor
         let monitor = unsafe { MonitorFromWindow(handle, MONITOR_DEFAULTTONULL) };
+        // minimize the window can trigger this event too, in this case,
+        // monitor is invalid, we do nothing.
         if !monitor.is_invalid() && lock.display.handle != monitor {
             // we will get the same monitor if we only have one
             lock.display = WindowsDisplay::new_with_handle(monitor);
@@ -178,15 +179,13 @@ fn handle_timer_msg(
 }
 
 fn handle_paint_msg(handle: HWND, state_ptr: Rc<WindowsWindowStatePtr>) -> Option<isize> {
-    let mut paint_struct = PAINTSTRUCT::default();
-    let _hdc = unsafe { BeginPaint(handle, &mut paint_struct) };
     let mut lock = state_ptr.state.borrow_mut();
     if let Some(mut request_frame) = lock.callbacks.request_frame.take() {
         drop(lock);
         request_frame();
         state_ptr.state.borrow_mut().callbacks.request_frame = Some(request_frame);
     }
-    unsafe { EndPaint(handle, &paint_struct) };
+    unsafe { ValidateRect(handle, None).ok().log_err() };
     Some(0)
 }
 
@@ -260,7 +259,6 @@ fn handle_mouse_move_msg(
 }
 
 fn handle_syskeydown_msg(
-    handle: HWND,
     wparam: WPARAM,
     lparam: LPARAM,
     state_ptr: Rc<WindowsWindowStatePtr>,
@@ -280,7 +278,6 @@ fn handle_syskeydown_msg(
         is_held: lparam.0 & (0x1 << 30) > 0,
     };
     let result = if func(PlatformInput::KeyDown(event)).default_prevented {
-        invalidate_client_area(handle);
         Some(0)
     } else {
         None
@@ -290,11 +287,7 @@ fn handle_syskeydown_msg(
     result
 }
 
-fn handle_syskeyup_msg(
-    handle: HWND,
-    wparam: WPARAM,
-    state_ptr: Rc<WindowsWindowStatePtr>,
-) -> Option<isize> {
+fn handle_syskeyup_msg(wparam: WPARAM, state_ptr: Rc<WindowsWindowStatePtr>) -> Option<isize> {
     // we need to call `DefWindowProcW`, or we will lose the system-wide `Alt+F4`, `Alt+{other keys}`
     // shortcuts.
     let Some(keystroke) = parse_syskeydown_msg_keystroke(wparam) else {
@@ -307,7 +300,6 @@ fn handle_syskeyup_msg(
     drop(lock);
     let event = KeyUpEvent { keystroke };
     let result = if func(PlatformInput::KeyUp(event)).default_prevented {
-        invalidate_client_area(handle);
         Some(0)
     } else {
         Some(1)
@@ -318,7 +310,6 @@ fn handle_syskeyup_msg(
 }
 
 fn handle_keydown_msg(
-    handle: HWND,
     wparam: WPARAM,
     lparam: LPARAM,
     state_ptr: Rc<WindowsWindowStatePtr>,
@@ -336,7 +327,6 @@ fn handle_keydown_msg(
         is_held: lparam.0 & (0x1 << 30) > 0,
     };
     let result = if func(PlatformInput::KeyDown(event)).default_prevented {
-        invalidate_client_area(handle);
         Some(0)
     } else {
         Some(1)
@@ -346,11 +336,7 @@ fn handle_keydown_msg(
     result
 }
 
-fn handle_keyup_msg(
-    handle: HWND,
-    wparam: WPARAM,
-    state_ptr: Rc<WindowsWindowStatePtr>,
-) -> Option<isize> {
+fn handle_keyup_msg(wparam: WPARAM, state_ptr: Rc<WindowsWindowStatePtr>) -> Option<isize> {
     let Some(keystroke) = parse_keydown_msg_keystroke(wparam) else {
         return Some(1);
     };
@@ -361,7 +347,6 @@ fn handle_keyup_msg(
     drop(lock);
     let event = KeyUpEvent { keystroke };
     let result = if func(PlatformInput::KeyUp(event)).default_prevented {
-        invalidate_client_area(handle);
         Some(0)
     } else {
         Some(1)
@@ -372,7 +357,6 @@ fn handle_keyup_msg(
 }
 
 fn handle_char_msg(
-    handle: HWND,
     wparam: WPARAM,
     lparam: LPARAM,
     state_ptr: Rc<WindowsWindowStatePtr>,
@@ -395,7 +379,6 @@ fn handle_char_msg(
     let mut lock = state_ptr.state.borrow_mut();
     lock.callbacks.input = Some(func);
     if dispatch_event_result.default_prevented || !dispatch_event_result.propagate {
-        invalidate_client_area(handle);
         return Some(0);
     }
     let Some(ime_char) = ime_key else {
@@ -406,7 +389,6 @@ fn handle_char_msg(
     };
     drop(lock);
     input_handler.replace_text_in_range(None, &ime_char);
-    invalidate_client_area(handle);
     state_ptr.state.borrow_mut().input_handler = Some(input_handler);
 
     Some(0)
@@ -501,7 +483,7 @@ fn handle_mouse_wheel_msg(
     let mut lock = state_ptr.state.borrow_mut();
     if let Some(mut callback) = lock.callbacks.input.take() {
         let scale_factor = lock.scale_factor;
-        let wheel_scroll_lines = lock.mouse_wheel_settings.wheel_scroll_lines;
+        let wheel_scroll_lines = lock.system_settings.mouse_wheel_settings.wheel_scroll_lines;
         drop(lock);
         let wheel_distance =
             (wparam.signed_hiword() as f32 / WHEEL_DELTA as f32) * wheel_scroll_lines as f32;
@@ -509,7 +491,7 @@ fn handle_mouse_wheel_msg(
             x: lparam.signed_loword().into(),
             y: lparam.signed_hiword().into(),
         };
-        unsafe { ScreenToClient(handle, &mut cursor_point) };
+        unsafe { ScreenToClient(handle, &mut cursor_point).ok().log_err() };
         let event = ScrollWheelEvent {
             position: logical_point(cursor_point.x as f32, cursor_point.y as f32, scale_factor),
             delta: ScrollDelta::Lines(Point {
@@ -541,7 +523,7 @@ fn handle_mouse_horizontal_wheel_msg(
     let mut lock = state_ptr.state.borrow_mut();
     if let Some(mut callback) = lock.callbacks.input.take() {
         let scale_factor = lock.scale_factor;
-        let wheel_scroll_chars = lock.mouse_wheel_settings.wheel_scroll_chars;
+        let wheel_scroll_chars = lock.system_settings.mouse_wheel_settings.wheel_scroll_chars;
         drop(lock);
         let wheel_distance =
             (-wparam.signed_hiword() as f32 / WHEEL_DELTA as f32) * wheel_scroll_chars as f32;
@@ -549,7 +531,7 @@ fn handle_mouse_horizontal_wheel_msg(
             x: lparam.signed_loword().into(),
             y: lparam.signed_hiword().into(),
         };
-        unsafe { ScreenToClient(handle, &mut cursor_point) };
+        unsafe { ScreenToClient(handle, &mut cursor_point).ok().log_err() };
         let event = ScrollWheelEvent {
             position: logical_point(cursor_point.x as f32, cursor_point.y as f32, scale_factor),
             delta: ScrollDelta::Lines(Point {
@@ -598,8 +580,8 @@ fn handle_ime_position(handle: HWND, state_ptr: Rc<WindowsWindowStatePtr>) -> Op
             },
             ..Default::default()
         };
-        ImmSetCandidateWindow(ctx, &config as _);
-        ImmReleaseContext(handle, ctx);
+        ImmSetCandidateWindow(ctx, &config as _).ok().log_err();
+        ImmReleaseContext(handle, ctx).ok().log_err();
         Some(0)
     }
 }
@@ -647,7 +629,6 @@ fn handle_ime_composition(
         drop(lock);
         input_handler.replace_text_in_range(None, &comp_result);
         state_ptr.state.borrow_mut().input_handler = Some(input_handler);
-        invalidate_client_area(handle);
         return Some(0);
     }
     // currently, we don't care other stuff
@@ -694,7 +675,11 @@ fn handle_activate_msg(
     let activated = wparam.loword() > 0;
     if state_ptr.hide_title_bar {
         if let Some(titlebar_rect) = state_ptr.state.borrow().get_titlebar_rect().log_err() {
-            unsafe { InvalidateRect(handle, Some(&titlebar_rect), FALSE) };
+            unsafe {
+                InvalidateRect(handle, Some(&titlebar_rect), FALSE)
+                    .ok()
+                    .log_err()
+            };
         }
     }
     let this = state_ptr.clone();
@@ -766,8 +751,44 @@ fn handle_dpi_changed_msg(
         .context("unable to set window position after dpi has changed")
         .log_err();
     }
-    invalidate_client_area(handle);
 
+    Some(0)
+}
+
+/// The following conditions will trigger this event:
+/// 1. The monitor on which the window is located goes offline or changes resolution.
+/// 2. Another monitor goes offline, is plugged in, or changes resolution.
+///
+/// In either case, the window will only receive information from the monitor on which
+/// it is located.
+///
+/// For example, in the case of condition 2, where the monitor on which the window is
+/// located has actually changed nothing, it will still receive this event.
+fn handle_display_change_msg(handle: HWND, state_ptr: Rc<WindowsWindowStatePtr>) -> Option<isize> {
+    // NOTE:
+    // Even the `lParam` holds the resolution of the screen, we just ignore it.
+    // Because WM_DPICHANGED, WM_MOVE, WM_SIEZ will come first, window reposition and resize
+    // are handled there.
+    // So we only care about if monitor is disconnected.
+    let previous_monitor = state_ptr.as_ref().state.borrow().display;
+    if WindowsDisplay::is_connected(previous_monitor.handle) {
+        // we are fine, other display changed
+        return None;
+    }
+    // display disconnected
+    // in this case, the OS will move our window to another monitor, and minimize it.
+    // we deminimize the window and query the monitor after moving
+    unsafe {
+        let _ = ShowWindow(handle, SW_SHOWNORMAL);
+    };
+    let new_monitor = unsafe { MonitorFromWindow(handle, MONITOR_DEFAULTTONULL) };
+    // all monitors disconnected
+    if new_monitor.is_invalid() {
+        log::error!("No monitor detected!");
+        return None;
+    }
+    let new_display = WindowsDisplay::new_with_handle(new_monitor);
+    state_ptr.as_ref().state.borrow_mut().display = new_display;
     Some(0)
 }
 
@@ -811,7 +832,7 @@ fn handle_hit_test_msg(
         x: lparam.signed_loword().into(),
         y: lparam.signed_hiword().into(),
     };
-    unsafe { ScreenToClient(handle, &mut cursor_point) };
+    unsafe { ScreenToClient(handle, &mut cursor_point).ok().log_err() };
     if cursor_point.y > 0 && cursor_point.y < frame_y + padding {
         return Some(HTTOP as _);
     }
@@ -853,7 +874,7 @@ fn handle_nc_mouse_move_msg(
             x: lparam.signed_loword().into(),
             y: lparam.signed_hiword().into(),
         };
-        unsafe { ScreenToClient(handle, &mut cursor_point) };
+        unsafe { ScreenToClient(handle, &mut cursor_point).ok().log_err() };
         let event = MouseMoveEvent {
             position: logical_point(cursor_point.x as f32, cursor_point.y as f32, scale_factor),
             pressed_button: None,
@@ -890,7 +911,7 @@ fn handle_nc_mouse_down_msg(
             x: lparam.signed_loword().into(),
             y: lparam.signed_hiword().into(),
         };
-        unsafe { ScreenToClient(handle, &mut cursor_point) };
+        unsafe { ScreenToClient(handle, &mut cursor_point).ok().log_err() };
         let physical_point = point(DevicePixels(cursor_point.x), DevicePixels(cursor_point.y));
         let click_count = lock.click_state.update(button, physical_point);
         drop(lock);
@@ -936,7 +957,7 @@ fn handle_nc_mouse_up_msg(
             x: lparam.signed_loword().into(),
             y: lparam.signed_hiword().into(),
         };
-        unsafe { ScreenToClient(handle, &mut cursor_point) };
+        unsafe { ScreenToClient(handle, &mut cursor_point).ok().log_err() };
         let event = MouseUpEvent {
             button,
             position: logical_point(cursor_point.x as f32, cursor_point.y as f32, scale_factor),
@@ -959,13 +980,13 @@ fn handle_nc_mouse_up_msg(
     if button == MouseButton::Left {
         match wparam.0 as u32 {
             HTMINBUTTON => unsafe {
-                ShowWindowAsync(handle, SW_MINIMIZE);
+                ShowWindowAsync(handle, SW_MINIMIZE).ok().log_err();
             },
             HTMAXBUTTON => unsafe {
                 if state_ptr.state.borrow().is_maximized() {
-                    ShowWindowAsync(handle, SW_NORMAL);
+                    ShowWindowAsync(handle, SW_NORMAL).ok().log_err();
                 } else {
-                    ShowWindowAsync(handle, SW_MAXIMIZE);
+                    ShowWindowAsync(handle, SW_MAXIMIZE).ok().log_err();
                 }
             },
             HTCLOSE => unsafe {
@@ -995,28 +1016,10 @@ fn handle_set_cursor(lparam: LPARAM, state_ptr: Rc<WindowsWindowStatePtr>) -> Op
     Some(1)
 }
 
-fn handle_mouse_wheel_settings_msg(
-    wparam: WPARAM,
-    lparam: LPARAM,
-    state_ptr: Rc<WindowsWindowStatePtr>,
-) -> Option<isize> {
-    match lparam.0 {
-        1 => {
-            state_ptr
-                .state
-                .borrow_mut()
-                .mouse_wheel_settings
-                .wheel_scroll_chars = wparam.0 as u32
-        }
-        2 => {
-            state_ptr
-                .state
-                .borrow_mut()
-                .mouse_wheel_settings
-                .wheel_scroll_lines = wparam.0 as u32
-        }
-        _ => unreachable!(),
-    }
+fn handle_system_settings_changed(state_ptr: Rc<WindowsWindowStatePtr>) -> Option<isize> {
+    let mut lock = state_ptr.state.borrow_mut();
+    // mouse wheel
+    lock.system_settings.mouse_wheel_settings.update();
     Some(0)
 }
 
@@ -1137,12 +1140,6 @@ fn parse_char_msg_keystroke(wparam: WPARAM) -> Option<Keystroke> {
     }
 }
 
-/// mark window client rect to be re-drawn
-/// https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-invalidaterect
-pub(crate) fn invalidate_client_area(handle: HWND) {
-    unsafe { InvalidateRect(handle, None, FALSE) };
-}
-
 fn parse_ime_compostion_string(handle: HWND) -> Option<(String, usize)> {
     unsafe {
         let ctx = ImmGetContext(handle);
@@ -1164,7 +1161,7 @@ fn parse_ime_compostion_string(handle: HWND) -> Option<(String, usize)> {
         } else {
             None
         };
-        ImmReleaseContext(handle, ctx);
+        ImmReleaseContext(handle, ctx).ok().log_err();
         result
     }
 }
@@ -1173,7 +1170,7 @@ fn retrieve_composition_cursor_position(handle: HWND) -> usize {
     unsafe {
         let ctx = ImmGetContext(handle);
         let ret = ImmGetCompositionStringW(ctx, GCS_CURSORPOS, None, 0);
-        ImmReleaseContext(handle, ctx);
+        ImmReleaseContext(handle, ctx).ok().log_err();
         ret as usize
     }
 }
@@ -1199,7 +1196,7 @@ fn parse_ime_compostion_result(handle: HWND) -> Option<String> {
         } else {
             None
         };
-        ImmReleaseContext(handle, ctx);
+        ImmReleaseContext(handle, ctx).ok().log_err();
         result
     }
 }

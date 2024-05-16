@@ -129,6 +129,7 @@ xkbcommon = { version = "0.7", features = ["wayland", "x11"] }
 
 [target.'cfg(windows)'.dependencies]
 windows.workspace = true
+windows-core = "0.56"
 
 [target.'cfg(windows)'.build-dependencies]
 embed-resource = "2.4"

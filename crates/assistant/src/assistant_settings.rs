@@ -1,5 +1,6 @@
 use std::fmt;
 
+pub use anthropic::Model as AnthropicModel;
 use gpui::Pixels;
 pub use open_ai::Model as OpenAiModel;
 use schemars::{
@@ -161,6 +162,15 @@ pub enum AssistantProvider {
         #[serde(default)]
         low_speed_timeout_in_seconds: Option<u64>,
     },
+    #[serde(rename = "anthropic")]
+    Anthropic {
+        #[serde(default)]
+        default_model: AnthropicModel,
+        #[serde(default = "anthropic_api_url")]
+        api_url: String,
+        #[serde(default)]
+        low_speed_timeout_in_seconds: Option<u64>,
+    },
 }
 
 impl Default for AssistantProvider {
@@ -172,7 +182,11 @@ impl Default for AssistantProvider {
 }
 
 fn open_ai_url() -> String {
-    "https://api.openai.com/v1".into()
+    open_ai::OPEN_AI_API_URL.to_string()
+}
+
+fn anthropic_api_url() -> String {
+    anthropic::ANTHROPIC_API_URL.to_string()
 }
 
 #[derive(Default, Debug, Deserialize, Serialize)]

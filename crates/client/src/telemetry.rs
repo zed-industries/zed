@@ -261,11 +261,15 @@ impl Telemetry {
         conversation_id: Option<String>,
         kind: AssistantKind,
         model: String,
+        response_latency: Option<Duration>,
+        error_message: Option<String>,
     ) {
         let event = Event::Assistant(AssistantEvent {
             conversation_id,
             kind,
             model: model.to_string(),
+            response_latency,
+            error_message,
         });
 
         self.report_event(event)

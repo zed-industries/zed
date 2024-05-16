@@ -89,9 +89,7 @@ pub struct LanguageSettings {
     /// How to perform a buffer format.
     pub formatter: Formatter,
     /// Zed's Prettier integration settings.
-    /// If Prettier is enabled, Zed will use this for its Prettier instance for any applicable file, if
-    /// the project has no other Prettier installed.
-    pub prettier: HashMap<String, serde_json::Value>,
+    pub prettier: PrettierSettings,
     /// Whether to use language servers to provide code intelligence.
     pub enable_language_server: bool,
     /// The list of language servers to use (or disable) for this language.
@@ -267,12 +265,12 @@ pub struct LanguageSettingsContent {
     #[serde(default)]
     pub formatter: Option<Formatter>,
     /// Zed's Prettier integration settings.
-    /// If Prettier is enabled, Zed will use this for its Prettier instance for any applicable file, if
-    /// the project has no other Prettier installed.
+    /// Allows to enable/disable formatting with Prettier
+    /// and configure default Prettier, used when no project-level Prettier installation is found.
     ///
-    /// Default: {}
+    /// Default: off
     #[serde(default)]
-    pub prettier: Option<HashMap<String, serde_json::Value>>,
+    pub prettier: Option<PrettierSettings>,
     /// Whether to use language servers to provide code intelligence.
     ///
     /// Default: true
@@ -749,6 +747,30 @@ fn merge_settings(settings: &mut LanguageSettings, src: &LanguageSettingsContent
         src.extend_comment_on_newline,
     );
     merge(&mut settings.inlay_hints, src.inlay_hints);
+}
+
+/// Allows to enable/disable formatting with Prettier
+/// and configure default Prettier, used when no project-level Prettier installation is found.
+/// Prettier formatting is disabled by default.
+#[derive(Default, Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct PrettierSettings {
+    /// Enables or disables formatting with Prettier for a given language.
+    #[serde(default)]
+    pub allowed: bool,
+
+    /// Forces Prettier integration to use a specific parser name when formatting files with the language.
+    #[serde(default)]
+    pub parser: Option<String>,
+
+    /// Forces Prettier integration to use specific plugins when formatting files with the language.
+    /// The default Prettier will be installed with these plugins.
+    #[serde(default)]
+    pub plugins: HashSet<String>,
+
+    /// Default Prettier options, in the format as in package.json section for Prettier.
+    /// If project installs Prettier via its package.json, these options will be ignored.
+    #[serde(flatten)]
+    pub options: HashMap<String, serde_json::Value>,
 }
 
 #[cfg(test)]

@@ -516,6 +516,9 @@ pub fn select_match(
         pane.update(cx, |pane, cx| {
             if let Some(search_bar) = pane.toolbar().read(cx).item_of_type::<BufferSearchBar>() {
                 search_bar.update(cx, |search_bar, cx| {
+                    if !search_bar.has_active_match() || !search_bar.show(cx) {
+                        return;
+                    }
                     // without update_match_index there is a bug when the cursor is before the first match
                     search_bar.update_match_index(cx);
                     search_bar.select_match(direction.opposite(), 1, cx);
