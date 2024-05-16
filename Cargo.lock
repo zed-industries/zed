@@ -10185,7 +10185,6 @@ dependencies = [
  "client",
  "collections",
  "db",
- "dev_server_projects",
  "dirs 4.0.0",
  "editor",
  "futures 0.3.28",
