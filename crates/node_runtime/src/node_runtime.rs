@@ -7,10 +7,12 @@ use futures::AsyncReadExt;
 use http::HttpClient;
 use semver::Version;
 use serde::Deserialize;
+use smol::future::FutureExt;
 use smol::io::BufReader;
 use smol::{fs, lock::Mutex, process::Command};
 use std::io;
 use std::process::{Output, Stdio};
+use std::time::Duration;
 use std::{
     env::consts,
     path::{Path, PathBuf},
@@ -297,21 +299,24 @@ impl NodeRuntime for RealNodeRuntime {
     }
 
     async fn npm_package_latest_version(&self, name: &str) -> Result<String> {
-        let output = self
-            .run_npm_subcommand(
-                None,
-                "info",
-                &[
-                    name,
-                    "--json",
-                    "--fetch-retry-mintimeout",
-                    "2000",
-                    "--fetch-retry-maxtimeout",
-                    "5000",
-                    "--fetch-timeout",
-                    "5000",
-                ],
-            )
+        let args = [
+            name,
+            "--json",
+            "--fetch-retry-mintimeout",
+            "2000",
+            "--fetch-retry-maxtimeout",
+            "5000",
+            "--fetch-timeout",
+            "5000",
+        ];
+        let npm_info_task = self.run_npm_subcommand(None, "info", &args);
+
+        let output = npm_info_task
+            .race(async {
+                // We have a manual timer here, because `npm info` does block infinitely when offline.
+                smol::Timer::after(Duration::from_secs(6)).await;
+                Err(anyhow!("fetching latest npm version timed out"))
+            })
             .await?;
 
         let mut info: NpmInfo = serde_json::from_slice(&output.stdout)?;
