@@ -718,7 +718,7 @@ impl Database {
                     ))
                     .order_by(
                         Expr::cust(
-                            "(role != 'admin', role != 'member', role != 'guest', github_login)",
+                            "(role != 'admin', role != 'member', role != 'guest', !accepted, github_login)",
                         ),
                         sea_orm::Order::Asc,
                     )

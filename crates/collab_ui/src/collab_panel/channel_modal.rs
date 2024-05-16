@@ -310,7 +310,7 @@ impl PickerDelegate for ChannelModalDelegate {
                                 picker.delegate.has_all_members =
                                     query == "" && members.len() < 100;
                                 picker.delegate.matching_member_indices =
-                                    (0..members.len() - 1).collect();
+                                    (0..members.len()).collect();
                                 picker.delegate.members = members;
                                 cx.notify();
                             })?;

@@ -123,6 +123,7 @@ impl Channel {
     }
 }
 
+#[derive(Debug)]
 pub struct ChannelMembership {
     pub user: Arc<User>,
     pub kind: proto::channel_member::Kind,
@@ -832,7 +833,7 @@ impl ChannelStore {
                     limit: limit as u64,
                 })
                 .await?;
-            user_store.update(&mut cx, |user_store, cx| {
+            user_store.update(&mut cx, |user_store, _| {
                 user_store.insert(response.users);
                 response
                     .members
