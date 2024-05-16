@@ -115,7 +115,7 @@ impl HttpClient for Arc<HttpClientWithUrl> {
     }
 
     fn proxy(&self) -> Option<&str> {
-        self.proxy.as_ref().map(|x| x.as_str())
+        self.proxy.as_deref()
     }
 }
 
@@ -128,7 +128,7 @@ impl HttpClient for HttpClientWithUrl {
     }
 
     fn proxy(&self) -> Option<&str> {
-        self.proxy.as_ref().map(|x| x.as_str())
+        self.proxy.as_deref()
     }
 }
 
