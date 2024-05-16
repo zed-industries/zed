@@ -1495,14 +1495,30 @@ impl LspCommand for GetCompletions {
             })?
             .ok_or_else(|| anyhow!("no such language server"))?;
 
-        let default_data = response_list
+        let item_defaults = response_list
             .as_ref()
-            .and_then(|list| list.item_defaults.as_ref())
-            .and_then(|defaults| defaults.data.as_ref());
+            .and_then(|list| list.item_defaults.as_ref());
 
-        if let Some(default_data) = default_data {
-            for item in completions.iter_mut() {
-                item.data = Some(default_data.clone())
+        if let Some(item_defaults) = item_defaults {
+            let default_data = item_defaults.data.as_ref();
+            let default_commit_characters = item_defaults.commit_characters.as_ref();
+            let default_insert_text_mode = item_defaults.insert_text_mode.as_ref();
+
+            if default_data.is_some()
+                || default_commit_characters.is_some()
+                || default_insert_text_mode.is_some()
+            {
+                for item in completions.iter_mut() {
+                    if let Some(data) = default_data {
+                        item.data = Some(data.clone())
+                    }
+                    if let Some(characters) = default_commit_characters {
+                        item.commit_characters = Some(characters.clone())
+                    }
+                    if let Some(text_mode) = default_insert_text_mode {
+                        item.insert_text_mode = Some(text_mode.clone())
+                    }
+                }
             }
         }
 
