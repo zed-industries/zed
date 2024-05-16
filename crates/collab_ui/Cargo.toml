@@ -34,7 +34,6 @@ auto_update.workspace = true
 call.workspace = true
 channel.workspace = true
 client.workspace = true
-clock.workspace = true
 collections.workspace = true
 db.workspace = true
 editor.workspace = true
