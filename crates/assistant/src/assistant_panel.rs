@@ -1,4 +1,5 @@
 use crate::ambient_context::{AmbientContext, ContextUpdated, RecentBuffer};
+use crate::InsertActivePrompt;
 use crate::{
     assistant_settings::{AssistantDockPosition, AssistantSettings, ZedDotDevModel},
     codegen::{self, Codegen, CodegenKind},
@@ -75,6 +76,7 @@ pub fn init(cx: &mut AppContext) {
                 })
                 .register_action(AssistantPanel::inline_assist)
                 .register_action(AssistantPanel::cancel_last_inline_assist)
+                .register_action(ConversationEditor::insert_active_prompt)
                 .register_action(ConversationEditor::quote_selection);
         },
     )
@@ -1021,7 +1023,11 @@ impl AssistantPanel {
                         move |cx| {
                             workspace
                                 .update(cx, |workspace, cx| {
-                                    ConversationEditor::insert_active_prompt(workspace, cx)
+                                    ConversationEditor::insert_active_prompt(
+                                        workspace,
+                                        &Default::default(),
+                                        cx,
+                                    )
                                 })
                                 .ok();
                         }
@@ -1151,15 +1157,15 @@ impl AssistantPanel {
                         .child(
                             h_flex()
                                 .gap_1()
+                                .child(self.render_inject_context_menu(cx))
                                 .child(
-                                    IconButton::new("show_prompt_manager", IconName::Settings)
+                                    IconButton::new("show_prompt_manager", IconName::Library)
                                         .icon_size(IconSize::Small)
                                         .on_click(cx.listener(|this, _event, cx| {
                                             this.show_prompt_manager(cx)
                                         }))
-                                        .tooltip(|cx| Tooltip::text("Show Context Manager", cx)),
+                                        .tooltip(|cx| Tooltip::text("Prompt Library…", cx)),
                                 )
-                                .child(self.render_inject_context_menu(cx))
                                 .child(Self::render_assist_button(cx)),
                         ),
                 );
@@ -2656,7 +2662,11 @@ impl ConversationEditor {
         }
     }
 
-    fn insert_active_prompt(workspace: &mut Workspace, cx: &mut ViewContext<Workspace>) {
+    fn insert_active_prompt(
+        workspace: &mut Workspace,
+        _: &InsertActivePrompt,
+        cx: &mut ViewContext<Workspace>,
+    ) {
         let Some(panel) = workspace.panel::<AssistantPanel>(cx) else {
             return;
         };

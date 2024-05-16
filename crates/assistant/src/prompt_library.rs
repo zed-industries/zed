@@ -1,6 +1,6 @@
 use fs::Fs;
 use futures::StreamExt;
-use gpui::{actions, AppContext, DismissEvent, EventEmitter, FocusHandle, FocusableView, Render};
+use gpui::{AppContext, DismissEvent, EventEmitter, FocusHandle, FocusableView, Render};
 use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -8,8 +8,6 @@ use std::sync::Arc;
 use ui::{prelude::*, Checkbox, ModalHeader};
 use util::{paths::PROMPTS_DIR, ResultExt};
 use workspace::ModalView;
-
-actions!(prompt_library, [RevealPrompt]);
 
 pub struct PromptLibraryState {
     /// The default prompt all assistant contexts will start with
@@ -53,11 +51,6 @@ impl PromptLibrary {
     pub async fn init(fs: Arc<dyn Fs>) -> anyhow::Result<Self> {
         let prompt_library = PromptLibrary::new();
         prompt_library.load_prompts(fs)?;
-        // -- debug --
-        // TODO: Don't load all prompts into the default prompt
-        let prompts = prompt_library.state.read().prompts.clone();
-        prompt_library.state.write().default_prompts = prompts.keys().cloned().collect();
-        // -- /debug --
         Ok(prompt_library)
     }
 
@@ -71,11 +64,6 @@ impl PromptLibrary {
                 (id, prompt)
             })
             .collect::<Vec<_>>();
-        // -- debug --
-        for (id, prompt) in &prompts_with_ids {
-            log::info!("Loaded prompt: {} - {}", id, prompt.prompt);
-        }
-        // -- /debug --
         let mut state = self.state.write();
         state.prompts.extend(prompts_with_ids);
         state.version += 1;
@@ -263,7 +251,7 @@ impl Render for PromptManager {
             .overflow_hidden()
             .child(
                 ModalHeader::new("prompt-manager-header")
-                    .child(Headline::new("Prompt Manager").size(HeadlineSize::Small))
+                    .child(Headline::new("Prompt Library").size(HeadlineSize::Small))
                     .show_dismiss_button(true),
             )
             .child(

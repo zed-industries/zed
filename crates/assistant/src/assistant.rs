@@ -32,6 +32,7 @@ actions!(
         ToggleFocus,
         ResetKey,
         InlineAssist,
+        InsertActivePrompt,
         ToggleIncludeConversation,
         ToggleHistory,
     ]
