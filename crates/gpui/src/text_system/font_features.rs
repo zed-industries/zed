@@ -1,14 +1,7 @@
 use std::sync::Arc;
 
-use crate::SharedString;
-use itertools::Itertools;
-use schemars::{
-    schema::{InstanceType, Schema, SchemaObject, SingleOrVec},
-    JsonSchema,
-};
-
 /// The OpenType features that can be configured for a given font.
-#[derive(Default, Clone, Eq, PartialEq, Hash, JsonSchema)]
+#[derive(Default, Clone, Eq, PartialEq, Hash, schemars::JsonSchema)]
 pub struct FontFeatures(pub Option<Arc<Vec<(String, u32)>>>);
 
 impl FontFeatures {
@@ -134,24 +127,3 @@ impl serde::Serialize for FontFeatures {
         map.end()
     }
 }
-
-// impl JsonSchema for FontFeatures {
-//     fn schema_name() -> String {
-//         "FontFeatures".into()
-//     }
-
-//     fn json_schema(_: &mut schemars::gen::SchemaGenerator) -> Schema {
-//         let mut schema = SchemaObject::default();
-//         let properties = &mut schema.object().properties;
-//         let feature_schema = Schema::Object(SchemaObject {
-//             instance_type: Some(SingleOrVec::Single(Box::new(InstanceType::Boolean))),
-//             ..Default::default()
-//         });
-
-//         $(
-//             properties.insert(stringify!($name).to_owned(), feature_schema.clone());
-//         )*
-
-//         schema.into()
-//     }
-// }
