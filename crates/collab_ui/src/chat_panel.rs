@@ -78,12 +78,14 @@ impl ChatPanel {
         let fs = workspace.app_state().fs.clone();
         let client = workspace.app_state().client.clone();
         let channel_store = ChannelStore::global(cx);
+        let user_store = workspace.app_state().user_store.clone();
         let languages = workspace.app_state().languages.clone();
 
         let input_editor = cx.new_view(|cx| {
             MessageEditor::new(
                 languages.clone(),
-                channel_store.clone(),
+                user_store.clone(),
+                None,
                 cx.new_view(|cx| Editor::auto_height(4, cx)),
                 cx,
             )
@@ -231,19 +233,12 @@ impl ChatPanel {
 
     fn set_active_chat(&mut self, chat: Model<ChannelChat>, cx: &mut ViewContext<Self>) {
         if self.active_chat.as_ref().map(|e| &e.0) != Some(&chat) {
-            let channel_id = chat.read(cx).channel_id;
-            {
-                self.markdown_data.clear();
-
-                let chat = chat.read(cx);
-                let channel_name = chat.channel(cx).map(|channel| channel.name.clone());
-                let message_count = chat.message_count();
-                self.message_list.reset(message_count);
-                self.message_editor.update(cx, |editor, cx| {
-                    editor.set_channel(channel_id, channel_name, cx);
-                    editor.clear_reply_to_message_id();
-                });
-            };
+            self.markdown_data.clear();
+            self.message_list.reset(chat.read(cx).message_count());
+            self.message_editor.update(cx, |editor, cx| {
+                editor.set_channel_chat(chat.clone(), cx);
+                editor.clear_reply_to_message_id();
+            });
             let subscription = cx.subscribe(&chat, Self::channel_did_change);
             self.active_chat = Some((chat, subscription));
             self.acknowledge_last_message(cx);

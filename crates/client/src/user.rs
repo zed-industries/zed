@@ -89,6 +89,7 @@ pub enum ContactRequestStatus {
 
 pub struct UserStore {
     users: HashMap<u64, Arc<User>>,
+    by_github_login: HashMap<String, u64>,
     participant_indices: HashMap<u64, ParticipantIndex>,
     update_contacts_tx: mpsc::UnboundedSender<UpdateContacts>,
     current_user: watch::Receiver<Option<Arc<User>>>,
@@ -144,6 +145,7 @@ impl UserStore {
         ];
         Self {
             users: Default::default(),
+            by_github_login: Default::default(),
             current_user: current_user_rx,
             contacts: Default::default(),
             incoming_contact_requests: Default::default(),
@@ -231,6 +233,7 @@ impl UserStore {
     #[cfg(feature = "test-support")]
     pub fn clear_cache(&mut self) {
         self.users.clear();
+        self.by_github_login.clear();
     }
 
     async fn handle_update_invite_info(
@@ -644,6 +647,12 @@ impl UserStore {
         })
     }
 
+    pub fn cached_user_by_github_login(&self, github_login: &str) -> Option<Arc<User>> {
+        self.by_github_login
+            .get(github_login)
+            .and_then(|id| self.users.get(id).cloned())
+    }
+
     pub fn current_user(&self) -> Option<Arc<User>> {
         self.current_user.borrow().clone()
     }
@@ -670,6 +679,8 @@ impl UserStore {
                 this.update(&mut cx, |this, _| {
                     for user in &users {
                         this.users.insert(user.id, user.clone());
+                        this.by_github_login
+                            .insert(user.github_login.clone(), user.id);
                     }
                 })
                 .ok();
