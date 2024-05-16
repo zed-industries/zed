@@ -319,6 +319,15 @@ impl LspAdapter for EsLintLspAdapter {
                 },
                 "problems": problems,
                 "codeActionOnSave": code_action_on_save,
+                "codeAction": {
+                    "disableRuleComment": {
+                        "enable": true,
+                        "location": "separateLine",
+                    },
+                    "showDocumentation": {
+                        "enable": true
+                    }
+                },
                 "experimental": {
                     "useFlatConfig": use_flat_config,
                 },
