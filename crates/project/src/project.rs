@@ -7985,13 +7985,19 @@ impl Project {
 
             cx.spawn(|_| async move {
                 let project_id = project_id.context("unable to get project id for buffer")?;
-                let response = client
-                    .request(proto::BlameBuffer {
-                        project_id,
-                        buffer_id: buffer_id.into(),
-                        version: serialize_version(&version),
-                    })
-                    .await?;
+                let request = client.request(proto::BlameBuffer {
+                    project_id,
+                    buffer_id: buffer_id.into(),
+                    version: serialize_version(&version),
+                });
+                let response = match request.await {
+                    Ok(response) => response,
+                    Err(error) => {
+                        let is_no_repo_err = error.downcast_ref::<NoRepositoryError>().is_some();
+                        println!("error: {:?}, is_no_repo_err: {:?}", error, is_no_repo_err);
+                        return Err(error);
+                    }
+                };
 
                 Ok(deserialize_blame_buffer_response(response))
             })
