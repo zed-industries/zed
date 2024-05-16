@@ -175,7 +175,6 @@ fn init_ui(app_state: Arc<AppState>, cx: &mut AppContext) -> Result<()> {
     inline_completion_registry::init(app_state.client.telemetry().clone(), cx);
 
     assistant::init(app_state.client.clone(), cx);
-    assistant2::init(app_state.client.clone(), cx);
 
     cx.observe_global::<SettingsStore>({
         let languages = app_state.languages.clone();
@@ -343,6 +342,7 @@ fn main() {
 
         client::init_settings(cx);
         let client = Client::production(cx);
+        cx.update_http_client(client.http_client().clone());
         let mut languages =
             LanguageRegistry::new(login_shell_env_loaded, cx.background_executor().clone());
         languages.set_language_server_download_dir(paths::LANGUAGES_DIR.clone());
@@ -942,7 +942,8 @@ fn watch_languages(_fs: Arc<dyn fs::Fs>, _languages: Arc<LanguageRegistry>, _cx:
 fn watch_file_types(fs: Arc<dyn fs::Fs>, cx: &mut AppContext) {
     use std::time::Duration;
 
-    use gpui::BorrowAppContext;
+    use file_icons::FileIcons;
+    use gpui::UpdateGlobal;
 
     let path = {
         let p = Path::new("assets/icons/file_icons/file_types.json");
@@ -956,7 +957,7 @@ fn watch_file_types(fs: Arc<dyn fs::Fs>, cx: &mut AppContext) {
         let mut events = fs.watch(path.as_path(), Duration::from_millis(100)).await;
         while (events.next().await).is_some() {
             cx.update(|cx| {
-                cx.update_global(|file_types, _| {
+                FileIcons::update_global(cx, |file_types, _cx| {
                     *file_types = file_icons::FileIcons::new(Assets);
                 });
             })

@@ -550,6 +550,7 @@ pub enum FormatTrigger {
 
 // Currently, formatting operations are represented differently depending on
 // whether they come from a language server or an external command.
+#[derive(Debug)]
 enum FormatOperation {
     Lsp(Vec<(Range<Anchor>, String)>),
     External(Diff),
@@ -1088,11 +1089,8 @@ impl Project {
                                 .push((file.worktree.clone(), Arc::clone(language)));
                         }
                     }
-                    language_formatters_to_check.push((
-                        buffer_file.map(|f| f.worktree_id(cx)),
-                        Arc::clone(language),
-                        settings.clone(),
-                    ));
+                    language_formatters_to_check
+                        .push((buffer_file.map(|f| f.worktree_id(cx)), settings.clone()));
                 }
             }
         }
@@ -1148,9 +1146,9 @@ impl Project {
         }
 
         let mut prettier_plugins_by_worktree = HashMap::default();
-        for (worktree, language, settings) in language_formatters_to_check {
+        for (worktree, language_settings) in language_formatters_to_check {
             if let Some(plugins) =
-                prettier_support::prettier_plugins_for_language(&language, &settings)
+                prettier_support::prettier_plugins_for_language(&language_settings)
             {
                 prettier_plugins_by_worktree
                     .entry(worktree)
@@ -1159,7 +1157,11 @@ impl Project {
             }
         }
         for (worktree, prettier_plugins) in prettier_plugins_by_worktree {
-            self.install_default_prettier(worktree, prettier_plugins.into_iter(), cx);
+            self.install_default_prettier(
+                worktree,
+                prettier_plugins.into_iter().map(Arc::from),
+                cx,
+            );
         }
 
         // Start all the newly-enabled language servers.
@@ -3070,10 +3072,12 @@ impl Project {
         let settings = language_settings(Some(&new_language), buffer_file.as_ref(), cx).clone();
         let buffer_file = File::from_dyn(buffer_file.as_ref());
         let worktree = buffer_file.as_ref().map(|f| f.worktree_id(cx));
-        if let Some(prettier_plugins) =
-            prettier_support::prettier_plugins_for_language(&new_language, &settings)
-        {
-            self.install_default_prettier(worktree, prettier_plugins.iter().cloned(), cx);
+        if let Some(prettier_plugins) = prettier_support::prettier_plugins_for_language(&settings) {
+            self.install_default_prettier(
+                worktree,
+                prettier_plugins.iter().map(|s| Arc::from(s.as_str())),
+                cx,
+            );
         };
         if let Some(file) = buffer_file {
             let worktree = file.worktree.clone();
@@ -4786,6 +4790,11 @@ impl Project {
                 .zip(buffer_abs_path.as_ref());
 
             let mut format_operation = None;
+            let prettier_settings = buffer.read_with(&mut cx, |buffer, cx| {
+                language_settings(buffer.language(), buffer.file(), cx)
+                    .prettier
+                    .clone()
+            })?;
             match (&settings.formatter, &settings.format_on_save) {
                 (_, FormatOnSave::Off) if trigger == FormatTrigger::Save => {}
 
@@ -4845,11 +4854,18 @@ impl Project {
                     }
                 }
                 (Formatter::Auto, FormatOnSave::On | FormatOnSave::Off) => {
-                    let prettier =
-                        prettier_support::format_with_prettier(&project, buffer, &mut cx).await;
+                    let prettier = if prettier_settings.allowed {
+                        prettier_support::format_with_prettier(&project, buffer, &mut cx)
+                            .await
+                            .transpose()
+                            .ok()
+                            .flatten()
+                    } else {
+                        None
+                    };
 
                     if let Some(operation) = prettier {
-                        format_operation = Some(operation?);
+                        format_operation = Some(operation);
                     } else if let Some((language_server, buffer_abs_path)) = server_and_buffer {
                         format_operation = Some(FormatOperation::Lsp(
                             Self::format_via_lsp(
@@ -4866,11 +4882,12 @@ impl Project {
                     }
                 }
                 (Formatter::Prettier, FormatOnSave::On | FormatOnSave::Off) => {
-                    let prettier =
-                        prettier_support::format_with_prettier(&project, buffer, &mut cx).await;
-
-                    if let Some(operation) = prettier {
-                        format_operation = Some(operation?);
+                    if prettier_settings.allowed {
+                        if let Some(operation) =
+                            prettier_support::format_with_prettier(&project, buffer, &mut cx).await
+                        {
+                            format_operation = Some(operation?);
+                        }
                     }
                 }
             };

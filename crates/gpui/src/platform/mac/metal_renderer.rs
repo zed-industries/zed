@@ -4,6 +4,7 @@ use crate::{
     Hsla, MonochromeSprite, Path, PathId, PathVertex, PolychromeSprite, PrimitiveBatch, Quad,
     ScaledPixels, Scene, Shadow, Size, Surface, Underline,
 };
+use anyhow::{anyhow, Result};
 use block::ConcreteBlock;
 use cocoa::{
     base::{NO, YES},
@@ -27,9 +28,8 @@ pub(crate) type PointF = crate::Point<f32>;
 const SHADERS_METALLIB: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/shaders.metallib"));
 #[cfg(feature = "runtime_shaders")]
 const SHADERS_SOURCE_FILE: &str = include_str!(concat!(env!("OUT_DIR"), "/stitched_shaders.metal"));
-const INSTANCE_BUFFER_SIZE: usize = 2 * 1024 * 1024; // This is an arbitrary decision. There's probably a more optimal value (maybe even we could adjust dynamically...)
 
-pub type Context = Arc<Mutex<Vec<metal::Buffer>>>;
+pub type Context = Arc<Mutex<InstanceBufferPool>>;
 pub type Renderer = MetalRenderer;
 
 pub unsafe fn new_renderer(
@@ -40,6 +40,51 @@ pub unsafe fn new_renderer(
     _transparent: bool,
 ) -> Renderer {
     MetalRenderer::new(context)
+}
+
+pub(crate) struct InstanceBufferPool {
+    buffer_size: usize,
+    buffers: Vec<metal::Buffer>,
+}
+
+impl Default for InstanceBufferPool {
+    fn default() -> Self {
+        Self {
+            buffer_size: 2 * 1024 * 1024,
+            buffers: Vec::new(),
+        }
+    }
+}
+
+pub(crate) struct InstanceBuffer {
+    metal_buffer: metal::Buffer,
+    size: usize,
+}
+
+impl InstanceBufferPool {
+    pub(crate) fn reset(&mut self, buffer_size: usize) {
+        self.buffer_size = buffer_size;
+        self.buffers.clear();
+    }
+
+    pub(crate) fn acquire(&mut self, device: &metal::Device) -> InstanceBuffer {
+        let buffer = self.buffers.pop().unwrap_or_else(|| {
+            device.new_buffer(
+                self.buffer_size as u64,
+                MTLResourceOptions::StorageModeManaged,
+            )
+        });
+        InstanceBuffer {
+            metal_buffer: buffer,
+            size: self.buffer_size,
+        }
+    }
+
+    pub(crate) fn release(&mut self, buffer: InstanceBuffer) {
+        if buffer.size == self.buffer_size {
+            self.buffers.push(buffer.metal_buffer)
+        }
+    }
 }
 
 pub(crate) struct MetalRenderer {
@@ -57,13 +102,13 @@ pub(crate) struct MetalRenderer {
     surfaces_pipeline_state: metal::RenderPipelineState,
     unit_vertices: metal::Buffer,
     #[allow(clippy::arc_with_non_send_sync)]
-    instance_buffer_pool: Arc<Mutex<Vec<metal::Buffer>>>,
+    instance_buffer_pool: Arc<Mutex<InstanceBufferPool>>,
     sprite_atlas: Arc<MetalAtlas>,
     core_video_texture_cache: CVMetalTextureCache,
 }
 
 impl MetalRenderer {
-    pub fn new(instance_buffer_pool: Arc<Mutex<Vec<metal::Buffer>>>) -> Self {
+    pub fn new(instance_buffer_pool: Arc<Mutex<InstanceBufferPool>>) -> Self {
         let device: metal::Device = if let Some(device) = metal::Device::system_default() {
             device
         } else {
@@ -256,24 +301,74 @@ impl MetalRenderer {
             );
             return;
         };
-        let mut instance_buffer = self.instance_buffer_pool.lock().pop().unwrap_or_else(|| {
-            self.device.new_buffer(
-                INSTANCE_BUFFER_SIZE as u64,
-                MTLResourceOptions::StorageModeManaged,
-            )
-        });
+
+        loop {
+            let mut instance_buffer = self.instance_buffer_pool.lock().acquire(&self.device);
+
+            let command_buffer =
+                self.draw_primitives(scene, &mut instance_buffer, drawable, viewport_size);
+
+            match command_buffer {
+                Ok(command_buffer) => {
+                    let instance_buffer_pool = self.instance_buffer_pool.clone();
+                    let instance_buffer = Cell::new(Some(instance_buffer));
+                    let block = ConcreteBlock::new(move |_| {
+                        if let Some(instance_buffer) = instance_buffer.take() {
+                            instance_buffer_pool.lock().release(instance_buffer);
+                        }
+                    });
+                    let block = block.copy();
+                    command_buffer.add_completed_handler(&block);
+
+                    if self.presents_with_transaction {
+                        command_buffer.commit();
+                        command_buffer.wait_until_scheduled();
+                        drawable.present();
+                    } else {
+                        command_buffer.present_drawable(drawable);
+                        command_buffer.commit();
+                    }
+                    return;
+                }
+                Err(err) => {
+                    log::error!(
+                        "failed to render: {}. retrying with larger instance buffer size",
+                        err
+                    );
+                    let mut instance_buffer_pool = self.instance_buffer_pool.lock();
+                    let buffer_size = instance_buffer_pool.buffer_size;
+                    if buffer_size >= 256 * 1024 * 1024 {
+                        log::error!("instance buffer size grew too large: {}", buffer_size);
+                        break;
+                    }
+                    instance_buffer_pool.reset(buffer_size * 2);
+                    log::info!(
+                        "increased instance buffer size to {}",
+                        instance_buffer_pool.buffer_size
+                    );
+                }
+            }
+        }
+    }
+
+    fn draw_primitives(
+        &mut self,
+        scene: &Scene,
+        instance_buffer: &mut InstanceBuffer,
+        drawable: &metal::MetalDrawableRef,
+        viewport_size: Size<DevicePixels>,
+    ) -> Result<metal::CommandBuffer> {
         let command_queue = self.command_queue.clone();
         let command_buffer = command_queue.new_command_buffer();
         let mut instance_offset = 0;
 
         let Some(path_tiles) = self.rasterize_paths(
             scene.paths(),
-            &mut instance_buffer,
+            instance_buffer,
             &mut instance_offset,
             command_buffer,
         ) else {
-            log::error!("failed to rasterize {} paths", scene.paths().len());
-            return;
+            return Err(anyhow!("failed to rasterize {} paths", scene.paths().len()));
         };
 
         let render_pass_descriptor = metal::RenderPassDescriptor::new();
@@ -302,14 +397,14 @@ impl MetalRenderer {
             let ok = match batch {
                 PrimitiveBatch::Shadows(shadows) => self.draw_shadows(
                     shadows,
-                    &mut instance_buffer,
+                    instance_buffer,
                     &mut instance_offset,
                     viewport_size,
                     command_encoder,
                 ),
                 PrimitiveBatch::Quads(quads) => self.draw_quads(
                     quads,
-                    &mut instance_buffer,
+                    instance_buffer,
                     &mut instance_offset,
                     viewport_size,
                     command_encoder,
@@ -317,14 +412,14 @@ impl MetalRenderer {
                 PrimitiveBatch::Paths(paths) => self.draw_paths(
                     paths,
                     &path_tiles,
-                    &mut instance_buffer,
+                    instance_buffer,
                     &mut instance_offset,
                     viewport_size,
                     command_encoder,
                 ),
                 PrimitiveBatch::Underlines(underlines) => self.draw_underlines(
                     underlines,
-                    &mut instance_buffer,
+                    instance_buffer,
                     &mut instance_offset,
                     viewport_size,
                     command_encoder,
@@ -335,7 +430,7 @@ impl MetalRenderer {
                 } => self.draw_monochrome_sprites(
                     texture_id,
                     sprites,
-                    &mut instance_buffer,
+                    instance_buffer,
                     &mut instance_offset,
                     viewport_size,
                     command_encoder,
@@ -346,14 +441,14 @@ impl MetalRenderer {
                 } => self.draw_polychrome_sprites(
                     texture_id,
                     sprites,
-                    &mut instance_buffer,
+                    instance_buffer,
                     &mut instance_offset,
                     viewport_size,
                     command_encoder,
                 ),
                 PrimitiveBatch::Surfaces(surfaces) => self.draw_surfaces(
                     surfaces,
-                    &mut instance_buffer,
+                    instance_buffer,
                     &mut instance_offset,
                     viewport_size,
                     command_encoder,
@@ -361,7 +456,8 @@ impl MetalRenderer {
             };
 
             if !ok {
-                log::error!("scene too large: {} paths, {} shadows, {} quads, {} underlines, {} mono, {} poly, {} surfaces",
+                command_encoder.end_encoding();
+                return Err(anyhow!("scene too large: {} paths, {} shadows, {} quads, {} underlines, {} mono, {} poly, {} surfaces",
                     scene.paths.len(),
                     scene.shadows.len(),
                     scene.quads.len(),
@@ -369,47 +465,28 @@ impl MetalRenderer {
                     scene.monochrome_sprites.len(),
                     scene.polychrome_sprites.len(),
                     scene.surfaces.len(),
-                );
-                break;
+                ));
             }
         }
 
         command_encoder.end_encoding();
 
-        instance_buffer.did_modify_range(NSRange {
+        instance_buffer.metal_buffer.did_modify_range(NSRange {
             location: 0,
             length: instance_offset as NSUInteger,
         });
-
-        let instance_buffer_pool = self.instance_buffer_pool.clone();
-        let instance_buffer = Cell::new(Some(instance_buffer));
-        let block = ConcreteBlock::new(move |_| {
-            if let Some(instance_buffer) = instance_buffer.take() {
-                instance_buffer_pool.lock().push(instance_buffer);
-            }
-        });
-        let block = block.copy();
-        command_buffer.add_completed_handler(&block);
-
-        self.sprite_atlas.clear_textures(AtlasTextureKind::Path);
-
-        if self.presents_with_transaction {
-            command_buffer.commit();
-            command_buffer.wait_until_scheduled();
-            drawable.present();
-        } else {
-            command_buffer.present_drawable(drawable);
-            command_buffer.commit();
-        }
+        Ok(command_buffer.to_owned())
     }
 
     fn rasterize_paths(
         &mut self,
         paths: &[Path<ScaledPixels>],
-        instance_buffer: &mut metal::Buffer,
+        instance_buffer: &mut InstanceBuffer,
         instance_offset: &mut usize,
         command_buffer: &metal::CommandBufferRef,
     ) -> Option<HashMap<PathId, AtlasTile>> {
+        self.sprite_atlas.clear_textures(AtlasTextureKind::Path);
+
         let mut tiles = HashMap::default();
         let mut vertices_by_texture_id = HashMap::default();
         for path in paths {
@@ -436,7 +513,7 @@ impl MetalRenderer {
             align_offset(instance_offset);
             let vertices_bytes_len = mem::size_of_val(vertices.as_slice());
             let next_offset = *instance_offset + vertices_bytes_len;
-            if next_offset > INSTANCE_BUFFER_SIZE {
+            if next_offset > instance_buffer.size {
                 return None;
             }
 
@@ -455,7 +532,7 @@ impl MetalRenderer {
             command_encoder.set_render_pipeline_state(&self.paths_rasterization_pipeline_state);
             command_encoder.set_vertex_buffer(
                 PathRasterizationInputIndex::Vertices as u64,
-                Some(instance_buffer),
+                Some(&instance_buffer.metal_buffer),
                 *instance_offset as u64,
             );
             let texture_size = Size {
@@ -468,8 +545,9 @@ impl MetalRenderer {
                 &texture_size as *const Size<DevicePixels> as *const _,
             );
 
-            let buffer_contents =
-                unsafe { (instance_buffer.contents() as *mut u8).add(*instance_offset) };
+            let buffer_contents = unsafe {
+                (instance_buffer.metal_buffer.contents() as *mut u8).add(*instance_offset)
+            };
             unsafe {
                 ptr::copy_nonoverlapping(
                     vertices.as_ptr() as *const u8,
@@ -493,7 +571,7 @@ impl MetalRenderer {
     fn draw_shadows(
         &mut self,
         shadows: &[Shadow],
-        instance_buffer: &mut metal::Buffer,
+        instance_buffer: &mut InstanceBuffer,
         instance_offset: &mut usize,
         viewport_size: Size<DevicePixels>,
         command_encoder: &metal::RenderCommandEncoderRef,
@@ -511,12 +589,12 @@ impl MetalRenderer {
         );
         command_encoder.set_vertex_buffer(
             ShadowInputIndex::Shadows as u64,
-            Some(instance_buffer),
+            Some(&instance_buffer.metal_buffer),
             *instance_offset as u64,
         );
         command_encoder.set_fragment_buffer(
             ShadowInputIndex::Shadows as u64,
-            Some(instance_buffer),
+            Some(&instance_buffer.metal_buffer),
             *instance_offset as u64,
         );
 
@@ -528,10 +606,10 @@ impl MetalRenderer {
 
         let shadow_bytes_len = mem::size_of_val(shadows);
         let buffer_contents =
-            unsafe { (instance_buffer.contents() as *mut u8).add(*instance_offset) };
+            unsafe { (instance_buffer.metal_buffer.contents() as *mut u8).add(*instance_offset) };
 
         let next_offset = *instance_offset + shadow_bytes_len;
-        if next_offset > INSTANCE_BUFFER_SIZE {
+        if next_offset > instance_buffer.size {
             return false;
         }
 
@@ -556,7 +634,7 @@ impl MetalRenderer {
     fn draw_quads(
         &mut self,
         quads: &[Quad],
-        instance_buffer: &mut metal::Buffer,
+        instance_buffer: &mut InstanceBuffer,
         instance_offset: &mut usize,
         viewport_size: Size<DevicePixels>,
         command_encoder: &metal::RenderCommandEncoderRef,
@@ -574,12 +652,12 @@ impl MetalRenderer {
         );
         command_encoder.set_vertex_buffer(
             QuadInputIndex::Quads as u64,
-            Some(instance_buffer),
+            Some(&instance_buffer.metal_buffer),
             *instance_offset as u64,
         );
         command_encoder.set_fragment_buffer(
             QuadInputIndex::Quads as u64,
-            Some(instance_buffer),
+            Some(&instance_buffer.metal_buffer),
             *instance_offset as u64,
         );
 
@@ -591,10 +669,10 @@ impl MetalRenderer {
 
         let quad_bytes_len = mem::size_of_val(quads);
         let buffer_contents =
-            unsafe { (instance_buffer.contents() as *mut u8).add(*instance_offset) };
+            unsafe { (instance_buffer.metal_buffer.contents() as *mut u8).add(*instance_offset) };
 
         let next_offset = *instance_offset + quad_bytes_len;
-        if next_offset > INSTANCE_BUFFER_SIZE {
+        if next_offset > instance_buffer.size {
             return false;
         }
 
@@ -616,7 +694,7 @@ impl MetalRenderer {
         &mut self,
         paths: &[Path<ScaledPixels>],
         tiles_by_path_id: &HashMap<PathId, AtlasTile>,
-        instance_buffer: &mut metal::Buffer,
+        instance_buffer: &mut InstanceBuffer,
         instance_offset: &mut usize,
         viewport_size: Size<DevicePixels>,
         command_encoder: &metal::RenderCommandEncoderRef,
@@ -675,7 +753,7 @@ impl MetalRenderer {
 
                 command_encoder.set_vertex_buffer(
                     SpriteInputIndex::Sprites as u64,
-                    Some(instance_buffer),
+                    Some(&instance_buffer.metal_buffer),
                     *instance_offset as u64,
                 );
                 command_encoder.set_vertex_bytes(
@@ -685,7 +763,7 @@ impl MetalRenderer {
                 );
                 command_encoder.set_fragment_buffer(
                     SpriteInputIndex::Sprites as u64,
-                    Some(instance_buffer),
+                    Some(&instance_buffer.metal_buffer),
                     *instance_offset as u64,
                 );
                 command_encoder
@@ -693,12 +771,13 @@ impl MetalRenderer {
 
                 let sprite_bytes_len = mem::size_of_val(sprites.as_slice());
                 let next_offset = *instance_offset + sprite_bytes_len;
-                if next_offset > INSTANCE_BUFFER_SIZE {
+                if next_offset > instance_buffer.size {
                     return false;
                 }
 
-                let buffer_contents =
-                    unsafe { (instance_buffer.contents() as *mut u8).add(*instance_offset) };
+                let buffer_contents = unsafe {
+                    (instance_buffer.metal_buffer.contents() as *mut u8).add(*instance_offset)
+                };
 
                 unsafe {
                     ptr::copy_nonoverlapping(
@@ -724,7 +803,7 @@ impl MetalRenderer {
     fn draw_underlines(
         &mut self,
         underlines: &[Underline],
-        instance_buffer: &mut metal::Buffer,
+        instance_buffer: &mut InstanceBuffer,
         instance_offset: &mut usize,
         viewport_size: Size<DevicePixels>,
         command_encoder: &metal::RenderCommandEncoderRef,
@@ -742,12 +821,12 @@ impl MetalRenderer {
         );
         command_encoder.set_vertex_buffer(
             UnderlineInputIndex::Underlines as u64,
-            Some(instance_buffer),
+            Some(&instance_buffer.metal_buffer),
             *instance_offset as u64,
         );
         command_encoder.set_fragment_buffer(
             UnderlineInputIndex::Underlines as u64,
-            Some(instance_buffer),
+            Some(&instance_buffer.metal_buffer),
             *instance_offset as u64,
         );
 
@@ -759,10 +838,10 @@ impl MetalRenderer {
 
         let underline_bytes_len = mem::size_of_val(underlines);
         let buffer_contents =
-            unsafe { (instance_buffer.contents() as *mut u8).add(*instance_offset) };
+            unsafe { (instance_buffer.metal_buffer.contents() as *mut u8).add(*instance_offset) };
 
         let next_offset = *instance_offset + underline_bytes_len;
-        if next_offset > INSTANCE_BUFFER_SIZE {
+        if next_offset > instance_buffer.size {
             return false;
         }
 
@@ -788,7 +867,7 @@ impl MetalRenderer {
         &mut self,
         texture_id: AtlasTextureId,
         sprites: &[MonochromeSprite],
-        instance_buffer: &mut metal::Buffer,
+        instance_buffer: &mut InstanceBuffer,
         instance_offset: &mut usize,
         viewport_size: Size<DevicePixels>,
         command_encoder: &metal::RenderCommandEncoderRef,
@@ -797,6 +876,15 @@ impl MetalRenderer {
             return true;
         }
         align_offset(instance_offset);
+
+        let sprite_bytes_len = mem::size_of_val(sprites);
+        let buffer_contents =
+            unsafe { (instance_buffer.metal_buffer.contents() as *mut u8).add(*instance_offset) };
+
+        let next_offset = *instance_offset + sprite_bytes_len;
+        if next_offset > instance_buffer.size {
+            return false;
+        }
 
         let texture = self.sprite_atlas.metal_texture(texture_id);
         let texture_size = size(
@@ -811,7 +899,7 @@ impl MetalRenderer {
         );
         command_encoder.set_vertex_buffer(
             SpriteInputIndex::Sprites as u64,
-            Some(instance_buffer),
+            Some(&instance_buffer.metal_buffer),
             *instance_offset as u64,
         );
         command_encoder.set_vertex_bytes(
@@ -826,19 +914,10 @@ impl MetalRenderer {
         );
         command_encoder.set_fragment_buffer(
             SpriteInputIndex::Sprites as u64,
-            Some(instance_buffer),
+            Some(&instance_buffer.metal_buffer),
             *instance_offset as u64,
         );
         command_encoder.set_fragment_texture(SpriteInputIndex::AtlasTexture as u64, Some(&texture));
-
-        let sprite_bytes_len = mem::size_of_val(sprites);
-        let buffer_contents =
-            unsafe { (instance_buffer.contents() as *mut u8).add(*instance_offset) };
-
-        let next_offset = *instance_offset + sprite_bytes_len;
-        if next_offset > INSTANCE_BUFFER_SIZE {
-            return false;
-        }
 
         unsafe {
             ptr::copy_nonoverlapping(
@@ -862,7 +941,7 @@ impl MetalRenderer {
         &mut self,
         texture_id: AtlasTextureId,
         sprites: &[PolychromeSprite],
-        instance_buffer: &mut metal::Buffer,
+        instance_buffer: &mut InstanceBuffer,
         instance_offset: &mut usize,
         viewport_size: Size<DevicePixels>,
         command_encoder: &metal::RenderCommandEncoderRef,
@@ -885,7 +964,7 @@ impl MetalRenderer {
         );
         command_encoder.set_vertex_buffer(
             SpriteInputIndex::Sprites as u64,
-            Some(instance_buffer),
+            Some(&instance_buffer.metal_buffer),
             *instance_offset as u64,
         );
         command_encoder.set_vertex_bytes(
@@ -900,17 +979,17 @@ impl MetalRenderer {
         );
         command_encoder.set_fragment_buffer(
             SpriteInputIndex::Sprites as u64,
-            Some(instance_buffer),
+            Some(&instance_buffer.metal_buffer),
             *instance_offset as u64,
         );
         command_encoder.set_fragment_texture(SpriteInputIndex::AtlasTexture as u64, Some(&texture));
 
         let sprite_bytes_len = mem::size_of_val(sprites);
         let buffer_contents =
-            unsafe { (instance_buffer.contents() as *mut u8).add(*instance_offset) };
+            unsafe { (instance_buffer.metal_buffer.contents() as *mut u8).add(*instance_offset) };
 
         let next_offset = *instance_offset + sprite_bytes_len;
-        if next_offset > INSTANCE_BUFFER_SIZE {
+        if next_offset > instance_buffer.size {
             return false;
         }
 
@@ -935,7 +1014,7 @@ impl MetalRenderer {
     fn draw_surfaces(
         &mut self,
         surfaces: &[Surface],
-        instance_buffer: &mut metal::Buffer,
+        instance_buffer: &mut InstanceBuffer,
         instance_offset: &mut usize,
         viewport_size: Size<DevicePixels>,
         command_encoder: &metal::RenderCommandEncoderRef,
@@ -990,13 +1069,13 @@ impl MetalRenderer {
 
             align_offset(instance_offset);
             let next_offset = *instance_offset + mem::size_of::<Surface>();
-            if next_offset > INSTANCE_BUFFER_SIZE {
+            if next_offset > instance_buffer.size {
                 return false;
             }
 
             command_encoder.set_vertex_buffer(
                 SurfaceInputIndex::Surfaces as u64,
-                Some(instance_buffer),
+                Some(&instance_buffer.metal_buffer),
                 *instance_offset as u64,
             );
             command_encoder.set_vertex_bytes(
@@ -1014,7 +1093,8 @@ impl MetalRenderer {
             );
 
             unsafe {
-                let buffer_contents = (instance_buffer.contents() as *mut u8).add(*instance_offset)
+                let buffer_contents = (instance_buffer.metal_buffer.contents() as *mut u8)
+                    .add(*instance_offset)
                     as *mut SurfaceBounds;
                 ptr::write(
                     buffer_contents,

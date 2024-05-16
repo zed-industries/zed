@@ -2,7 +2,7 @@ use anyhow::Result;
 use assistant_tooling::ToolFunctionDefinition;
 use client::{proto, Client};
 use futures::{future::BoxFuture, stream::BoxStream, FutureExt, StreamExt};
-use gpui::{AppContext, Global};
+use gpui::Global;
 use std::sync::Arc;
 
 pub use open_ai::RequestMessage as CompletionMessage;
@@ -11,10 +11,6 @@ pub use open_ai::RequestMessage as CompletionMessage;
 pub struct CompletionProvider(Arc<dyn CompletionProviderBackend>);
 
 impl CompletionProvider {
-    pub fn get(cx: &AppContext) -> &Self {
-        cx.global::<CompletionProvider>()
-    }
-
     pub fn new(backend: impl CompletionProviderBackend) -> Self {
         Self(Arc::new(backend))
     }

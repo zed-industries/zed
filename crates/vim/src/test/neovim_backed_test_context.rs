@@ -1,4 +1,4 @@
-use gpui::{px, size, BorrowAppContext, Context};
+use gpui::{px, size, Context, UpdateGlobal};
 use indoc::indoc;
 use settings::SettingsStore;
 use std::{
@@ -196,7 +196,7 @@ impl NeovimBackedTestContext {
             .await;
 
         self.update(|cx| {
-            cx.update_global(|settings: &mut SettingsStore, cx| {
+            SettingsStore::update_global(cx, |settings, cx| {
                 settings.update_user_settings::<AllLanguageSettings>(cx, |settings| {
                     settings.defaults.soft_wrap = Some(SoftWrap::PreferredLineLength);
                     settings.defaults.preferred_line_length = Some(columns);

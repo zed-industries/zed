@@ -14,7 +14,7 @@ use futures::{
 use gpui::{AsyncAppContext, Model, ModelContext, Task, WeakModel};
 use language::{
     language_settings::{Formatter, LanguageSettings},
-    Buffer, Language, LanguageServerName, LocalFile,
+    Buffer, LanguageServerName, LocalFile,
 };
 use lsp::{LanguageServer, LanguageServerId};
 use node_runtime::NodeRuntime;
@@ -25,20 +25,12 @@ use crate::{
     Event, File, FormatOperation, PathChange, Project, ProjectEntryId, Worktree, WorktreeId,
 };
 
-pub fn prettier_plugins_for_language<'a>(
-    language: &'a Arc<Language>,
+pub fn prettier_plugins_for_language(
     language_settings: &LanguageSettings,
-) -> Option<&'a Vec<Arc<str>>> {
+) -> Option<&HashSet<String>> {
     match &language_settings.formatter {
-        Formatter::Prettier { .. } | Formatter::Auto => {}
-        Formatter::LanguageServer | Formatter::External { .. } | Formatter::CodeActions(_) => {
-            return None
-        }
-    };
-    if language.prettier_parser_name().is_some() {
-        Some(language.prettier_plugins())
-    } else {
-        None
+        Formatter::Prettier { .. } | Formatter::Auto => Some(&language_settings.prettier.plugins),
+        Formatter::LanguageServer | Formatter::External { .. } | Formatter::CodeActions(_) => None,
     }
 }
 
@@ -110,6 +102,7 @@ pub struct DefaultPrettier {
     installed_plugins: HashSet<Arc<str>>,
 }
 
+#[derive(Debug)]
 pub enum PrettierInstallation {
     NotInstalled {
         attempts: usize,
@@ -121,7 +114,7 @@ pub enum PrettierInstallation {
 
 pub type PrettierTask = Shared<Task<Result<Arc<Prettier>, Arc<anyhow::Error>>>>;
 
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct PrettierInstance {
     attempt: usize,
     prettier: Option<PrettierTask>,
@@ -295,20 +288,15 @@ fn start_prettier(
 ) -> PrettierTask {
     cx.spawn(|project, mut cx| async move {
         log::info!("Starting prettier at path {prettier_dir:?}");
-        let language_registry = project.update(&mut cx, |project, _| project.languages.clone())?;
-        let new_server_id = language_registry.next_language_server_id();
+        let new_server_id = project.update(&mut cx, |project, _| {
+            project.languages.next_language_server_id()
+        })?;
 
-        let new_prettier = Prettier::start(
-            new_server_id,
-            prettier_dir,
-            node,
-            language_registry,
-            cx.clone(),
-        )
-        .await
-        .context("default prettier spawn")
-        .map(Arc::new)
-        .map_err(Arc::new)?;
+        let new_prettier = Prettier::start(new_server_id, prettier_dir, node, cx.clone())
+            .await
+            .context("default prettier spawn")
+            .map(Arc::new)
+            .map_err(Arc::new)?;
         register_new_prettier(&project, &new_prettier, worktree_id, new_server_id, &mut cx);
         Ok(new_prettier)
     })
@@ -526,10 +514,7 @@ impl Project {
         }
         let buffer = buffer.read(cx);
         let buffer_file = buffer.file();
-        let Some(buffer_language) = buffer.language() else {
-            return Task::ready(None);
-        };
-        if buffer_language.prettier_parser_name().is_none() {
+        if buffer.language().is_none() {
             return Task::ready(None);
         }
         let Some(node) = self.node.clone() else {

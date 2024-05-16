@@ -1,7 +1,9 @@
-use crate::ambient_context::{AmbientContext, RecentBuffer};
+use crate::ambient_context::{AmbientContext, ContextUpdated, RecentBuffer};
+use crate::InsertActivePrompt;
 use crate::{
     assistant_settings::{AssistantDockPosition, AssistantSettings, ZedDotDevModel},
     codegen::{self, Codegen, CodegenKind},
+    prompt_library::{PromptLibrary, PromptManager},
     prompts::generate_content_prompt,
     Assist, CompletionProvider, CycleMessageRole, InlineAssist, LanguageModel,
     LanguageModelRequest, LanguageModelRequestMessage, MessageId, MessageMetadata, MessageStatus,
@@ -28,13 +30,10 @@ use gpui::{
     AsyncWindowContext, AvailableSpace, ClipboardItem, Context, Entity, EventEmitter, FocusHandle,
     FocusableView, FontStyle, FontWeight, HighlightStyle, InteractiveElement, IntoElement, Model,
     ModelContext, ParentElement, Pixels, Render, SharedString, StatefulInteractiveElement, Styled,
-    Subscription, Task, TextStyle, UniformListScrollHandle, View, ViewContext, VisualContext,
-    WeakModel, WeakView, WhiteSpace, WindowContext,
+    Subscription, Task, TextStyle, UniformListScrollHandle, UpdateGlobal, View, ViewContext,
+    VisualContext, WeakModel, WeakView, WhiteSpace, WindowContext,
 };
-use language::{
-    language_settings::SoftWrap, Buffer, BufferSnapshot, DiagnosticEntry, LanguageRegistry, Point,
-    ToOffset as _,
-};
+use language::{language_settings::SoftWrap, Buffer, LanguageRegistry, Point, ToOffset as _};
 use multi_buffer::MultiBufferRow;
 use parking_lot::Mutex;
 use project::Project;
@@ -77,6 +76,7 @@ pub fn init(cx: &mut AppContext) {
                 })
                 .register_action(AssistantPanel::inline_assist)
                 .register_action(AssistantPanel::cancel_last_inline_assist)
+                .register_action(ConversationEditor::insert_active_prompt)
                 .register_action(ConversationEditor::quote_selection);
         },
     )
@@ -95,6 +95,7 @@ pub struct AssistantPanel {
     focus_handle: FocusHandle,
     toolbar: View<Toolbar>,
     languages: Arc<LanguageRegistry>,
+    prompt_library: Arc<PromptLibrary>,
     fs: Arc<dyn Fs>,
     telemetry: Arc<Telemetry>,
     _subscriptions: Vec<Subscription>,
@@ -126,6 +127,13 @@ impl AssistantPanel {
                 .await
                 .log_err()
                 .unwrap_or_default();
+
+            let prompt_library = Arc::new(
+                PromptLibrary::init(fs.clone())
+                    .await
+                    .log_err()
+                    .unwrap_or_default(),
+            );
 
             // TODO: deserialize state.
             let workspace_handle = workspace.clone();
@@ -189,6 +197,7 @@ impl AssistantPanel {
                         focus_handle,
                         toolbar,
                         languages: workspace.app_state().languages.clone(),
+                        prompt_library,
                         fs: workspace.app_state().fs.clone(),
                         telemetry: workspace.client().telemetry().clone(),
                         width: None,
@@ -243,7 +252,7 @@ impl AssistantPanel {
             || prev_settings_version != CompletionProvider::global(cx).settings_version()
         {
             self.authentication_prompt =
-                Some(cx.update_global::<CompletionProvider, _>(|provider, cx| {
+                Some(CompletionProvider::update_global(cx, |provider, cx| {
                     provider.authentication_prompt(cx)
                 }));
         }
@@ -1008,6 +1017,20 @@ impl AssistantPanel {
                                 .ok();
                         }
                     })
+                    .entry("Insert Active Prompt", None, {
+                        let workspace = workspace.clone();
+                        move |cx| {
+                            workspace
+                                .update(cx, |workspace, cx| {
+                                    ConversationEditor::insert_active_prompt(
+                                        workspace,
+                                        &Default::default(),
+                                        cx,
+                                    )
+                                })
+                                .ok();
+                        }
+                    })
                 })
                 .into()
             })
@@ -1086,48 +1109,65 @@ impl AssistantPanel {
         })
     }
 
+    fn show_prompt_manager(&mut self, cx: &mut ViewContext<Self>) {
+        if let Some(workspace) = self.workspace.upgrade() {
+            workspace.update(cx, |workspace, cx| {
+                workspace.toggle_modal(cx, |cx| PromptManager::new(self.prompt_library.clone(), cx))
+            })
+        }
+    }
+
     fn is_authenticated(&mut self, cx: &mut ViewContext<Self>) -> bool {
         CompletionProvider::global(cx).is_authenticated()
     }
 
     fn authenticate(&mut self, cx: &mut ViewContext<Self>) -> Task<Result<()>> {
-        cx.update_global::<CompletionProvider, _>(|provider, cx| provider.authenticate(cx))
+        CompletionProvider::update_global(cx, |provider, cx| provider.authenticate(cx))
     }
 
     fn render_signed_in(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
-        let header = TabBar::new("assistant_header")
-            .start_child(h_flex().gap_1().child(self.render_popover_button(cx)))
-            .children(self.active_conversation_editor().map(|editor| {
-                h_flex()
-                    .h(rems(Tab::CONTAINER_HEIGHT_IN_REMS))
-                    .flex_1()
-                    .px_2()
-                    .child(Label::new(editor.read(cx).title(cx)).into_element())
-            }))
-            .end_child(
-                h_flex()
-                    .gap_2()
-                    .when_some(self.active_conversation_editor(), |this, editor| {
-                        let conversation = editor.read(cx).conversation.clone();
-                        this.child(
+        let header =
+            TabBar::new("assistant_header")
+                .start_child(h_flex().gap_1().child(self.render_popover_button(cx)))
+                .children(self.active_conversation_editor().map(|editor| {
+                    h_flex()
+                        .h(rems(Tab::CONTAINER_HEIGHT_IN_REMS))
+                        .flex_1()
+                        .px_2()
+                        .child(Label::new(editor.read(cx).title(cx)).into_element())
+                }))
+                .end_child(
+                    h_flex()
+                        .gap_2()
+                        .when_some(self.active_conversation_editor(), |this, editor| {
+                            let conversation = editor.read(cx).conversation.clone();
+                            this.child(
+                                h_flex()
+                                    .gap_1()
+                                    .child(self.render_model(&conversation, cx))
+                                    .children(self.render_remaining_tokens(&conversation, cx)),
+                            )
+                            .child(
+                                ui::Divider::vertical()
+                                    .inset()
+                                    .color(ui::DividerColor::Border),
+                            )
+                        })
+                        .child(
                             h_flex()
                                 .gap_1()
-                                .child(self.render_model(&conversation, cx))
-                                .children(self.render_remaining_tokens(&conversation, cx)),
-                        )
-                        .child(
-                            ui::Divider::vertical()
-                                .inset()
-                                .color(ui::DividerColor::Border),
-                        )
-                    })
-                    .child(
-                        h_flex()
-                            .gap_1()
-                            .child(self.render_inject_context_menu(cx))
-                            .child(Self::render_assist_button(cx)),
-                    ),
-            );
+                                .child(self.render_inject_context_menu(cx))
+                                .child(
+                                    IconButton::new("show_prompt_manager", IconName::Library)
+                                        .icon_size(IconSize::Small)
+                                        .on_click(cx.listener(|this, _event, cx| {
+                                            this.show_prompt_manager(cx)
+                                        }))
+                                        .tooltip(|cx| Tooltip::text("Prompt Library…", cx)),
+                                )
+                                .child(Self::render_assist_button(cx)),
+                        ),
+                );
 
         let contents = if self.active_conversation_editor().is_some() {
             let mut registrar = DivRegistrar::new(
@@ -1519,7 +1559,12 @@ impl Conversation {
 
     fn toggle_recent_buffers(&mut self, cx: &mut ModelContext<Self>) {
         self.ambient_context.recent_buffers.enabled = !self.ambient_context.recent_buffers.enabled;
-        self.update_recent_buffers_context(cx);
+        match self.ambient_context.recent_buffers.update(cx) {
+            ContextUpdated::Updating => {}
+            ContextUpdated::Disabled => {
+                self.count_remaining_tokens(cx);
+            }
+        }
     }
 
     fn toggle_current_project_context(
@@ -1530,7 +1575,12 @@ impl Conversation {
     ) {
         self.ambient_context.current_project.enabled =
             !self.ambient_context.current_project.enabled;
-        self.ambient_context.current_project.update(fs, project, cx);
+        match self.ambient_context.current_project.update(fs, project, cx) {
+            ContextUpdated::Updating => {}
+            ContextUpdated::Disabled => {
+                self.count_remaining_tokens(cx);
+            }
+        }
     }
 
     fn set_recent_buffers(
@@ -1545,168 +1595,20 @@ impl Conversation {
             .extend(buffers.into_iter().map(|buffer| RecentBuffer {
                 buffer: buffer.downgrade(),
                 _subscription: cx.observe(&buffer, |this, _, cx| {
-                    this.update_recent_buffers_context(cx);
+                    match this.ambient_context.recent_buffers.update(cx) {
+                        ContextUpdated::Updating => {}
+                        ContextUpdated::Disabled => {
+                            this.count_remaining_tokens(cx);
+                        }
+                    }
                 }),
             }));
-        self.update_recent_buffers_context(cx);
-    }
-
-    fn update_recent_buffers_context(&mut self, cx: &mut ModelContext<Self>) {
-        let buffers = self
-            .ambient_context
-            .recent_buffers
-            .buffers
-            .iter()
-            .filter_map(|recent| {
-                recent
-                    .buffer
-                    .read_with(cx, |buffer, cx| {
-                        (
-                            buffer.file().map(|file| file.full_path(cx)),
-                            buffer.snapshot(),
-                        )
-                    })
-                    .ok()
-            })
-            .collect::<Vec<_>>();
-
-        if !self.ambient_context.recent_buffers.enabled || buffers.is_empty() {
-            self.ambient_context.recent_buffers.message.clear();
-            self.ambient_context.recent_buffers.pending_message = None;
-            self.count_remaining_tokens(cx);
-            cx.notify();
-        } else {
-            self.ambient_context.recent_buffers.pending_message =
-                Some(cx.spawn(|this, mut cx| async move {
-                    const DEBOUNCE_TIMEOUT: Duration = Duration::from_millis(100);
-                    cx.background_executor().timer(DEBOUNCE_TIMEOUT).await;
-
-                    let message = cx
-                        .background_executor()
-                        .spawn(async move { Self::message_for_recent_buffers(&buffers) })
-                        .await;
-                    this.update(&mut cx, |this, cx| {
-                        this.ambient_context.recent_buffers.message = message;
-                        this.count_remaining_tokens(cx);
-                        cx.notify();
-                    })
-                    .ok();
-                }));
+        match self.ambient_context.recent_buffers.update(cx) {
+            ContextUpdated::Updating => {}
+            ContextUpdated::Disabled => {
+                self.count_remaining_tokens(cx);
+            }
         }
-    }
-
-    fn message_for_recent_buffers(buffers: &[(Option<PathBuf>, BufferSnapshot)]) -> String {
-        let mut message = String::new();
-        writeln!(
-            message,
-            "The following is a list of recent buffers that the user has opened."
-        )
-        .unwrap();
-        writeln!(
-            message,
-            "For every line in the buffer, I will include a row number that line corresponds to."
-        )
-        .unwrap();
-        writeln!(
-            message,
-            "Lines that don't have a number correspond to errors and warnings. For example:"
-        )
-        .unwrap();
-        writeln!(message, "path/to/file.md").unwrap();
-        writeln!(message, "```markdown").unwrap();
-        writeln!(message, "1 The quick brown fox").unwrap();
-        writeln!(message, "2 jumps over one active").unwrap();
-        writeln!(message, "             --- error: should be 'the'").unwrap();
-        writeln!(message, "                 ------ error: should be 'lazy'").unwrap();
-        writeln!(message, "3 dog").unwrap();
-        writeln!(message, "```").unwrap();
-
-        message.push('\n');
-        writeln!(message, "Here's the actual recent buffer list:").unwrap();
-        for (path, buffer) in buffers {
-            if let Some(path) = path {
-                writeln!(message, "{}", path.display()).unwrap();
-            } else {
-                writeln!(message, "untitled").unwrap();
-            }
-
-            if let Some(language) = buffer.language() {
-                writeln!(message, "```{}", language.name().to_lowercase()).unwrap();
-            } else {
-                writeln!(message, "```").unwrap();
-            }
-
-            let mut diagnostics = buffer
-                .diagnostics_in_range::<_, Point>(
-                    language::Anchor::MIN..language::Anchor::MAX,
-                    false,
-                )
-                .peekable();
-
-            let mut active_diagnostics = Vec::<DiagnosticEntry<Point>>::new();
-            const GUTTER_PADDING: usize = 4;
-            let gutter_width =
-                ((buffer.max_point().row + 1) as f32).log10() as usize + 1 + GUTTER_PADDING;
-            for buffer_row in 0..=buffer.max_point().row {
-                let display_row = buffer_row + 1;
-                active_diagnostics.retain(|diagnostic| {
-                    (diagnostic.range.start.row..=diagnostic.range.end.row).contains(&buffer_row)
-                });
-                while diagnostics.peek().map_or(false, |diagnostic| {
-                    (diagnostic.range.start.row..=diagnostic.range.end.row).contains(&buffer_row)
-                }) {
-                    active_diagnostics.push(diagnostics.next().unwrap());
-                }
-
-                let row_width = (display_row as f32).log10() as usize + 1;
-                write!(message, "{}", display_row).unwrap();
-                if row_width < gutter_width {
-                    message.extend(iter::repeat(' ').take(gutter_width - row_width));
-                }
-
-                for chunk in buffer.text_for_range(
-                    Point::new(buffer_row, 0)..Point::new(buffer_row, buffer.line_len(buffer_row)),
-                ) {
-                    message.push_str(chunk);
-                }
-                message.push('\n');
-
-                for diagnostic in &active_diagnostics {
-                    message.extend(iter::repeat(' ').take(gutter_width));
-
-                    let start_column = if diagnostic.range.start.row == buffer_row {
-                        message
-                            .extend(iter::repeat(' ').take(diagnostic.range.start.column as usize));
-                        diagnostic.range.start.column
-                    } else {
-                        0
-                    };
-                    let end_column = if diagnostic.range.end.row == buffer_row {
-                        diagnostic.range.end.column
-                    } else {
-                        buffer.line_len(buffer_row)
-                    };
-
-                    message.extend(iter::repeat('-').take((end_column - start_column) as usize));
-                    writeln!(message, " {}", diagnostic.diagnostic.message).unwrap();
-                }
-            }
-
-            message.push('\n');
-        }
-
-        writeln!(
-            message,
-            "When quoting the above code, mention which rows the code occurs at."
-        )
-        .unwrap();
-        writeln!(
-            message,
-            "Never include rows in the quoted code itself and only report lines that didn't start with a row number."
-        )
-        .unwrap();
-
-        message
     }
 
     fn handle_buffer_event(
@@ -2757,6 +2659,36 @@ impl ConversationEditor {
                 };
             });
         }
+    }
+
+    fn insert_active_prompt(
+        workspace: &mut Workspace,
+        _: &InsertActivePrompt,
+        cx: &mut ViewContext<Workspace>,
+    ) {
+        let Some(panel) = workspace.panel::<AssistantPanel>(cx) else {
+            return;
+        };
+
+        if !panel.focus_handle(cx).contains_focused(cx) {
+            workspace.toggle_panel_focus::<AssistantPanel>(cx);
+        }
+
+        if let Some(default_prompt) = panel.read(cx).prompt_library.clone().default_prompt() {
+            panel.update(cx, |panel, cx| {
+                if let Some(conversation) = panel
+                    .active_conversation_editor()
+                    .cloned()
+                    .or_else(|| panel.new_conversation(cx))
+                {
+                    conversation.update(cx, |conversation, cx| {
+                        conversation
+                            .editor
+                            .update(cx, |editor, cx| editor.insert(&default_prompt, cx))
+                    });
+                };
+            });
+        };
     }
 
     fn copy(&mut self, _: &editor::actions::Copy, cx: &mut ViewContext<Self>) {

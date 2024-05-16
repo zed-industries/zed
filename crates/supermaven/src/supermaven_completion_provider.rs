@@ -1,30 +1,46 @@
 use crate::{Supermaven, SupermavenCompletionStateId};
 use anyhow::Result;
+use client::telemetry::Telemetry;
 use editor::{Direction, InlineCompletionProvider};
 use futures::StreamExt as _;
-use gpui::{AppContext, Model, ModelContext, Task};
+use gpui::{AppContext, EntityId, Model, ModelContext, Task};
 use language::{language_settings::all_language_settings, Anchor, Buffer};
-use std::time::Duration;
+use std::{path::Path, sync::Arc, time::Duration};
 
 pub const DEBOUNCE_TIMEOUT: Duration = Duration::from_millis(75);
 
 pub struct SupermavenCompletionProvider {
     supermaven: Model<Supermaven>,
+    buffer_id: Option<EntityId>,
     completion_id: Option<SupermavenCompletionStateId>,
+    file_extension: Option<String>,
     pending_refresh: Task<Result<()>>,
+    telemetry: Option<Arc<Telemetry>>,
 }
 
 impl SupermavenCompletionProvider {
     pub fn new(supermaven: Model<Supermaven>) -> Self {
         Self {
             supermaven,
+            buffer_id: None,
             completion_id: None,
+            file_extension: None,
             pending_refresh: Task::ready(Ok(())),
+            telemetry: None,
         }
+    }
+
+    pub fn with_telemetry(mut self, telemetry: Arc<Telemetry>) -> Self {
+        self.telemetry = Some(telemetry);
+        self
     }
 }
 
 impl InlineCompletionProvider for SupermavenCompletionProvider {
+    fn name() -> &'static str {
+        "supermaven"
+    }
+
     fn is_enabled(&self, buffer: &Model<Buffer>, cursor_position: Anchor, cx: &AppContext) -> bool {
         if !self.supermaven.read(cx).is_enabled() {
             return false;
@@ -58,6 +74,15 @@ impl InlineCompletionProvider for SupermavenCompletionProvider {
             while let Some(()) = completion.updates.next().await {
                 this.update(&mut cx, |this, cx| {
                     this.completion_id = Some(completion.id);
+                    this.buffer_id = Some(buffer_handle.entity_id());
+                    this.file_extension = buffer_handle.read(cx).file().and_then(|file| {
+                        Some(
+                            Path::new(file.file_name(cx))
+                                .extension()?
+                                .to_str()?
+                                .to_string(),
+                        )
+                    });
                     cx.notify();
                 })?;
             }
@@ -75,11 +100,30 @@ impl InlineCompletionProvider for SupermavenCompletionProvider {
     }
 
     fn accept(&mut self, _cx: &mut ModelContext<Self>) {
+        if let Some(telemetry) = self.telemetry.as_ref() {
+            if let Some(_) = self.completion_id {
+                telemetry.report_inline_completion_event(
+                    Self::name().to_string(),
+                    true,
+                    self.file_extension.clone(),
+                );
+            }
+        }
         self.pending_refresh = Task::ready(Ok(()));
         self.completion_id = None;
     }
 
     fn discard(&mut self, _cx: &mut ModelContext<Self>) {
+        if let Some(telemetry) = self.telemetry.as_ref() {
+            if let Some(_) = self.completion_id {
+                telemetry.report_inline_completion_event(
+                    Self::name().to_string(),
+                    false,
+                    self.file_extension.clone(),
+                );
+            }
+        }
+
         self.pending_refresh = Task::ready(Ok(()));
         self.completion_id = None;
     }

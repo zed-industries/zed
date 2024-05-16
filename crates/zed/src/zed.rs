@@ -225,30 +225,6 @@ pub fn initialize_workspace(app_state: Arc<AppState>, cx: &mut AppContext) {
         })
         .detach();
 
-        let mut current_user = app_state.user_store.read(cx).watch_current_user();
-
-        cx.spawn(|workspace_handle, mut cx| async move {
-            while let Some(user) = current_user.next().await {
-                if user.is_some() {
-                    // User known now, can check feature flags / staff
-                    // At this point, should have the user with staff status available
-                    let use_assistant2 = cx.update(|cx| assistant2::enabled(cx))?;
-                    if use_assistant2 {
-                        let panel =
-                            assistant2::AssistantPanel::load(workspace_handle.clone(), cx.clone())
-                                .await?;
-                        workspace_handle.update(&mut cx, |workspace, cx| {
-                            workspace.add_panel(panel, cx);
-                        })?;
-                    }
-
-                    break;
-                }
-            }
-            anyhow::Ok(())
-        })
-        .detach();
-
         workspace
             .register_action(about)
             .register_action(|_, _: &Minimize, cx| {

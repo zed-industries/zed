@@ -337,7 +337,7 @@ subtle = "2.5.0"
 sysinfo = "0.30.7"
 tempfile = "3.9.0"
 thiserror = "1.0.29"
-tiktoken-rs = "0.5.7"
+tiktoken-rs = "0.5.9"
 time = { version = "0.3", features = [
     "macros",
     "parsing",
@@ -402,11 +402,11 @@ features = [
     "Win32_Graphics_Direct2D",
     "Win32_Graphics_Direct2D_Common",
     "Win32_Graphics_DirectWrite",
+    "Win32_Graphics_Dwm",
     "Win32_Graphics_Dxgi_Common",
     "Win32_Graphics_Gdi",
     "Win32_Graphics_Imaging",
     "Win32_Graphics_Imaging_D2D",
-    "Win32_Media",
     "Win32_Security",
     "Win32_Security_Credentials",
     "Win32_Storage_FileSystem",
