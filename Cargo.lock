@@ -2412,7 +2412,6 @@ dependencies = [
  "call",
  "channel",
  "client",
- "clock",
  "collections",
  "db",
  "dev_server_projects",
