@@ -31,7 +31,10 @@ use gpui::{
     Subscription, Task, TextStyle, UniformListScrollHandle, View, ViewContext, VisualContext,
     WeakModel, WeakView, WhiteSpace, WindowContext,
 };
-use language::{language_settings::SoftWrap, Buffer, LanguageRegistry, Point, ToOffset as _};
+use language::{
+    language_settings::SoftWrap, Buffer, LanguageRegistry, OffsetRangeExt as _, Point,
+    ToOffset as _,
+};
 use multi_buffer::MultiBufferRow;
 use parking_lot::Mutex;
 use project::{Project, ProjectTransaction};
@@ -1511,6 +1514,8 @@ impl Conversation {
                 language_registry,
             };
             this.set_language(cx);
+            let buffer = this.buffer.read(cx);
+            parse_edit_suggestions(buffer, 0..buffer.len(), &mut this.edit_suggestions);
             this.count_remaining_tokens(cx);
             this
         })
@@ -1733,22 +1738,25 @@ impl Conversation {
                                     .iter()
                                     .position(|message| message.id == assistant_message_id)?;
                                 this.buffer.update(cx, |buffer, cx| {
-                                    let offset = this.message_anchors[message_ix + 1..]
+                                    let message_start_offset =
+                                        this.message_anchors[message_ix].start.to_offset(buffer);
+                                    let message_old_end_offset = this.message_anchors
+                                        [message_ix + 1..]
                                         .iter()
                                         .find(|message| message.start.is_valid(buffer))
                                         .map_or(buffer.len(), |message| {
                                             message.start.to_offset(buffer).saturating_sub(1)
                                         });
-
-                                    let message_start_offset =
-                                        this.message_anchors[message_ix].start.to_offset(buffer);
-                                    let message_end_offset = offset + text.len();
-
-                                    buffer.edit([(offset..offset, text)], None, cx);
-
+                                    let message_new_end_offset =
+                                        message_old_end_offset + text.len();
+                                    buffer.edit(
+                                        [(message_old_end_offset..message_old_end_offset, text)],
+                                        None,
+                                        cx,
+                                    );
                                     parse_edit_suggestions(
                                         buffer,
-                                        message_start_offset..message_end_offset,
+                                        message_start_offset..message_new_end_offset,
                                         &mut this.edit_suggestions,
                                     );
                                 });
@@ -2220,6 +2228,11 @@ fn parse_edit_suggestions(
     buffer_range: Range<usize>,
     output: &mut Vec<EditSuggestion>,
 ) {
+    output.retain(|suggestion| {
+        let range = suggestion.source_range.to_offset(buffer);
+        range.end < buffer_range.start || range.start > buffer_range.end
+    });
+
     let mut offset = buffer_range.start;
     let mut state = EditParsingState::None;
     let mut message_lines = buffer.text_for_range(buffer_range).lines();
@@ -2993,16 +3006,35 @@ impl ConversationEditor {
             }
         }
 
-        // let mut project_transaction = ProjectTransaction::default();
-        // for (buffer_handle, edits) in edits_by_buffer {
-        //     buffer_handle.update(cx, |buffer, cx| {
-        //         buffer.start_transaction();
-        //         buffer.edit(edits, None, cx);
-        //         if let Some(transaction_id) = buffer.end_transaction(cx) {
-        //             project_transaction.0.insert(buffer_handle, transaction_id);
-        //         }
-        //     })
-        // }
+        let mut project_transaction = ProjectTransaction::default();
+        for (buffer_handle, edits) in edits_by_buffer {
+            buffer_handle.update(cx, |buffer, cx| {
+                buffer.start_transaction();
+                buffer.edit(edits, None, cx);
+                buffer.end_transaction(cx);
+                if let Some(transaction) = buffer.finalize_last_transaction() {
+                    project_transaction
+                        .0
+                        .insert(buffer_handle.clone(), transaction.clone());
+                }
+            })
+        }
+
+        self.editor.update(cx, |editor, cx| {
+            if let Some(workspace) = editor.workspace() {
+                cx.spawn(|editor, cx| async move {
+                    Editor::open_project_transaction(
+                        &editor,
+                        workspace.downgrade(),
+                        project_transaction,
+                        "Title this".into(),
+                        cx,
+                    )
+                    .await
+                })
+                .detach_and_log_err(cx);
+            }
+        });
     }
 
     fn save(&mut self, _: &Save, cx: &mut ViewContext<Self>) {
