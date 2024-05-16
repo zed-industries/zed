@@ -7,17 +7,18 @@ use schemars::{
     JsonSchema,
 };
 
+/// The OpenType features that can be configured for a given font.
 #[derive(Default, Clone, Eq, PartialEq, Hash, JsonSchema)]
-pub struct FontFeatures(pub Option<Arc<Vec<(String, usize)>>>);
+pub struct FontFeatures(pub Option<Arc<Vec<(String, u32)>>>);
 
 impl FontFeatures {
     /// Get the tag name list of the font OpenType features
     /// only enabled or disabled features are returned
-    pub fn tag_value_list(&self) -> Vec<(String, bool)> {
+    pub fn tag_value_list(&self) -> Vec<(String, u32)> {
         let mut result = Vec::new();
         if let Some(ref feature_list) = self.0 {
             for (tag, value) in feature_list.iter() {
-                result.push((tag.clone(), true));
+                result.push((tag.clone(), *value));
             }
         }
         result
@@ -76,7 +77,7 @@ impl<'de> serde::Deserialize<'de> for FontFeatures {
                         }
                         Err(e) => {
                             println!("Font err: {:?}", e);
-                            match access.next_entry::<String, Option<usize>>() {
+                            match access.next_entry::<String, Option<u32>>() {
                                 Ok(Some((key, value))) => {
                                     if key.len() != 4 && !key.is_ascii() {
                                         log::error!("Incorrect feature name: {}", key);
