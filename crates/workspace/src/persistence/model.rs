@@ -44,7 +44,8 @@ impl LocalPaths {
 
 impl From<LocalPaths> for SerializedWorkspaceLocation {
     fn from(local_paths: LocalPaths) -> Self {
-        Self::Local(local_paths)
+        let order = LocalPathsOrder::default_for_paths(&local_paths);
+        Self::Local(local_paths, order)
     }
 }
 
@@ -65,6 +66,48 @@ impl Column for LocalPaths {
         };
 
         Ok((Self(paths), start_index + 1))
+    }
+}
+
+#[derive(Debug, PartialEq, Clone)]
+pub struct LocalPathsOrder(Arc<Vec<usize>>);
+
+impl LocalPathsOrder {
+    pub fn new(order: impl IntoIterator<Item = usize>) -> Self {
+        let order: Vec<usize> = order.into_iter().collect();
+        Self(Arc::new(order))
+    }
+
+    pub fn order(&self) -> Arc<Vec<usize>> {
+        self.0.clone()
+    }
+
+    pub fn default_for_paths(paths: &LocalPaths) -> Self {
+        Self::default_for_length(paths.0.len())
+    }
+
+    pub fn default_for_length(length: usize) -> Self {
+        Self::new(0..length)
+    }
+}
+
+impl StaticColumnCount for LocalPathsOrder {}
+impl Bind for &LocalPathsOrder {
+    fn bind(&self, statement: &Statement, start_index: i32) -> Result<i32> {
+        statement.bind(&bincode::serialize(&self.0)?, start_index)
+    }
+}
+
+impl Column for LocalPathsOrder {
+    fn column(statement: &mut Statement, start_index: i32) -> Result<(Self, i32)> {
+        let order_blob = statement.column_blob(start_index)?;
+        let order: Arc<Vec<usize>> = if order_blob.is_empty() {
+            Default::default()
+        } else {
+            bincode::deserialize(order_blob).context("Bincode deserialization of order failed")?
+        };
+
+        Ok((Self(order), start_index + 1))
     }
 }
 
@@ -101,7 +144,7 @@ impl Column for SerializedDevServerProject {
 
 #[derive(Debug, PartialEq, Clone)]
 pub enum SerializedWorkspaceLocation {
-    Local(LocalPaths),
+    Local(LocalPaths, LocalPathsOrder),
     DevServer(SerializedDevServerProject),
 }
 

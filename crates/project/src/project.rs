@@ -1309,6 +1309,27 @@ impl Project {
             .map(|tree| tree.read(cx).root_name())
     }
 
+    pub fn worktree_order_index<'a>(
+        &'a self,
+        cx: &'a AppContext,
+    ) -> impl 'a + Iterator<Item = usize> {
+        self.worktree_order
+            .iter()
+            .filter_map(|id| self.worktrees().position(|wt| wt.read(cx).id() == *id))
+    }
+
+    pub fn set_worktree_order_from_indexes(
+        &mut self,
+        indexes: Vec<usize>,
+        cx: &mut ModelContext<Self>,
+    ) {
+        self.worktree_order = indexes
+            .iter()
+            .filter_map(|index| self.worktrees().nth(*index))
+            .map(|worktree| worktree.read(cx).id())
+            .collect();
+    }
+
     pub fn worktree_for_id(&self, id: WorktreeId, cx: &AppContext) -> Option<Model<Worktree>> {
         self.worktrees()
             .find(|worktree| worktree.read(cx).id() == id)
