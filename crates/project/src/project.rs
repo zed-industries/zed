@@ -1328,6 +1328,8 @@ impl Project {
             .filter_map(|index| self.worktrees().nth(*index))
             .map(|worktree| worktree.read(cx).id())
             .collect();
+        cx.emit(Event::WorktreeOrderChanged);
+        self.metadata_changed(cx);
     }
 
     pub fn worktree_for_id(&self, id: WorktreeId, cx: &AppContext) -> Option<Model<Worktree>> {
