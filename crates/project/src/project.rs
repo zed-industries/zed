@@ -7114,13 +7114,8 @@ impl Project {
             return Task::ready(Err(anyhow!("Destination worktree not found")));
         };
 
-        let insert_idx = match worktree_idx <= destination_idx {
-            true => destination_idx,
-            false => destination_idx + 1,
-        };
-
         self.worktree_order.remove(worktree_idx);
-        self.worktree_order.insert(insert_idx, worktree);
+        self.worktree_order.insert(destination_idx, worktree);
 
         cx.emit(Event::WorktreeOrderChanged);
         self.metadata_changed(cx);
