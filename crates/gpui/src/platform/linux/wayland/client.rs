@@ -23,7 +23,7 @@ use wayland_client::event_created_child;
 use wayland_client::globals::{registry_queue_init, GlobalList, GlobalListContents};
 use wayland_client::protocol::wl_callback::{self, WlCallback};
 use wayland_client::protocol::wl_data_device_manager::DndAction;
-use wayland_client::protocol::wl_pointer::{AxisRelativeDirection, AxisSource};
+use wayland_client::protocol::wl_pointer::AxisSource;
 use wayland_client::protocol::wl_seat::WlSeat;
 use wayland_client::protocol::{
     wl_data_device, wl_data_device_manager, wl_data_offer, wl_data_source, wl_output, wl_region,
@@ -1334,24 +1334,6 @@ impl Dispatch<wl_pointer::WlPointer, ()> for WaylandClientStatePtr {
                     _ => unreachable!(),
                 }
             }
-            wl_pointer::Event::AxisRelativeDirection {
-                axis: WEnum::Value(axis),
-                direction: WEnum::Value(direction),
-            } => match (axis, direction) {
-                (wl_pointer::Axis::VerticalScroll, AxisRelativeDirection::Identical) => {
-                    state.vertical_modifier = -1.0
-                }
-                (wl_pointer::Axis::VerticalScroll, AxisRelativeDirection::Inverted) => {
-                    state.vertical_modifier = 1.0
-                }
-                (wl_pointer::Axis::HorizontalScroll, AxisRelativeDirection::Identical) => {
-                    state.horizontal_modifier = -1.0
-                }
-                (wl_pointer::Axis::HorizontalScroll, AxisRelativeDirection::Inverted) => {
-                    state.horizontal_modifier = 1.0
-                }
-                _ => unreachable!(),
-            },
             wl_pointer::Event::AxisValue120 {
                 axis: WEnum::Value(axis),
                 value120,
