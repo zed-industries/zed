@@ -40,14 +40,10 @@ pub struct Popover {
 
 impl RenderOnce for Popover {
     fn render(self, cx: &mut WindowContext) -> impl IntoElement {
-        h_flex()
-            .items_start()
+        div()
+            .flex()
             .gap_1()
-            .child(
-                div()
-                    .flex()
-                    .child(v_flex().elevation_2(cx).px_1().children(self.children)),
-            )
+            .child(v_flex().elevation_2(cx).px_1().children(self.children))
             .when_some(self.aside, |this, aside| {
                 this.child(
                     v_flex()
