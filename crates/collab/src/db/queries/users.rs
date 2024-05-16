@@ -48,7 +48,7 @@ impl Database {
 
     /// Returns all users by ID. There are no access checks here, so this should only be used internally.
     pub async fn get_users_by_ids(&self, ids: Vec<UserId>) -> Result<Vec<user::Model>> {
-        if ids.len() >= 10000 as usize {
+        if ids.len() >= 10000_usize {
             return Err(anyhow!("too many users"))?;
         }
         self.transaction(|tx| async {
