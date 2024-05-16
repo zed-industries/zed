@@ -174,7 +174,7 @@ pub fn initialize_workspace(app_state: Arc<AppState>, cx: &mut AppContext) {
                             id_base: "global_tasks",
                             abs_path: paths::TASKS.clone(),
                         },
-                        StaticSource::new(TrackedFile::new(tasks_file_rx, cx)),
+                        |tx, cx| StaticSource::new(TrackedFile::new(tasks_file_rx, tx, cx)),
                         cx,
                     );
                 })

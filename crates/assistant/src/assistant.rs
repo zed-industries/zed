@@ -1,3 +1,4 @@
+mod ambient_context;
 pub mod assistant_panel;
 pub mod assistant_settings;
 mod codegen;

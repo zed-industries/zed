@@ -813,12 +813,11 @@ impl Vim {
             editor.set_input_enabled(!state.vim_controlled());
             editor.set_autoindent(state.should_autoindent());
             editor.selections.line_mode = matches!(state.mode, Mode::VisualLine);
-            if editor.is_focused(cx) {
+            if editor.is_focused(cx) || editor.mouse_menu_is_focused(cx) {
                 editor.set_keymap_context_layer::<Self>(state.keymap_context_layer(), cx);
-            // disables vim if the rename editor is focused,
-            // but not if the command palette is open.
+                // disable vim mode if a sub-editor (inline assist, rename, etc.) is focused
             } else if editor.focus_handle(cx).contains_focused(cx) {
-                editor.remove_keymap_context_layer::<Self>(cx)
+                editor.remove_keymap_context_layer::<Self>(cx);
             }
         });
     }

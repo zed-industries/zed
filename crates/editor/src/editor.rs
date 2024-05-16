@@ -1581,6 +1581,10 @@ impl Editor {
                         editor.refresh_inlay_hints(InlayHintRefreshReason::RefreshRequested, cx);
                     };
                 }));
+                let task_inventory = project.read(cx).task_inventory().clone();
+                project_subscriptions.push(cx.observe(&task_inventory, |editor, _, cx| {
+                    editor.tasks_update_task = Some(editor.refresh_runnables(cx));
+                }));
             }
         }
 
@@ -1715,6 +1719,12 @@ impl Editor {
 
         this.report_editor_event("open", None, cx);
         this
+    }
+
+    pub fn mouse_menu_is_focused(&self, cx: &mut WindowContext) -> bool {
+        self.mouse_context_menu
+            .as_ref()
+            .is_some_and(|menu| menu.context_menu.focus_handle(cx).is_focused(cx))
     }
 
     fn key_context(&self, cx: &AppContext) -> KeyContext {
@@ -4550,7 +4560,7 @@ impl Editor {
         row: DisplayRow,
         cx: &mut ViewContext<Self>,
     ) -> IconButton {
-        IconButton::new("run_indicator", ui::IconName::Play)
+        IconButton::new(("run_indicator", row.0 as usize), ui::IconName::Play)
             .icon_size(IconSize::XSmall)
             .size(ui::ButtonSize::None)
             .icon_color(Color::Muted)
@@ -8355,7 +8365,25 @@ impl Editor {
 
                         let range = target.range.to_offset(target.buffer.read(cx));
                         let range = editor.range_for_match(&range);
+
+                        /// If select range has more than one line, we
+                        /// just point the cursor to range.start.
+                        fn check_multiline_range(
+                            buffer: &Buffer,
+                            range: Range<usize>,
+                        ) -> Range<usize> {
+                            if buffer.offset_to_point(range.start).row
+                                == buffer.offset_to_point(range.end).row
+                            {
+                                range
+                            } else {
+                                range.start..range.start
+                            }
+                        }
+
                         if Some(&target.buffer) == editor.buffer.read(cx).as_singleton().as_ref() {
+                            let buffer = target.buffer.read(cx);
+                            let range = check_multiline_range(buffer, range);
                             editor.change_selections(Some(Autoscroll::focused()), cx, |s| {
                                 s.select_ranges([range]);
                             });
@@ -8375,6 +8403,8 @@ impl Editor {
                                     // When selecting a definition in a different buffer, disable the nav history
                                     // to avoid creating a history entry at the previous cursor location.
                                     pane.update(cx, |pane, _| pane.disable_history());
+                                    let buffer = target.buffer.read(cx);
+                                    let range = check_multiline_range(buffer, range);
                                     target_editor.change_selections(
                                         Some(Autoscroll::focused()),
                                         cx,

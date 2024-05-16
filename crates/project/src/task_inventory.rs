@@ -7,7 +7,11 @@ use std::{
 };
 
 use collections::{btree_map, BTreeMap, VecDeque};
-use gpui::{AppContext, Context, Model, ModelContext};
+use futures::{
+    channel::mpsc::{unbounded, UnboundedSender},
+    StreamExt,
+};
+use gpui::{AppContext, Context, Model, ModelContext, Task};
 use itertools::Itertools;
 use language::Language;
 use task::{
@@ -20,6 +24,8 @@ use worktree::WorktreeId;
 pub struct Inventory {
     sources: Vec<SourceInInventory>,
     last_scheduled_tasks: VecDeque<(TaskSourceKind, ResolvedTask)>,
+    update_sender: UnboundedSender<()>,
+    _update_pooler: Task<anyhow::Result<()>>,
 }
 
 struct SourceInInventory {
@@ -82,9 +88,22 @@ impl TaskSourceKind {
 
 impl Inventory {
     pub fn new(cx: &mut AppContext) -> Model<Self> {
-        cx.new_model(|_| Self {
-            sources: Vec::new(),
-            last_scheduled_tasks: VecDeque::new(),
+        cx.new_model(|cx| {
+            let (update_sender, mut rx) = unbounded();
+            let _update_pooler = cx.spawn(|this, mut cx| async move {
+                while let Some(()) = rx.next().await {
+                    this.update(&mut cx, |_, cx| {
+                        cx.notify();
+                    })?;
+                }
+                Ok(())
+            });
+            Self {
+                sources: Vec::new(),
+                last_scheduled_tasks: VecDeque::new(),
+                update_sender,
+                _update_pooler,
+            }
         })
     }
 
@@ -94,7 +113,7 @@ impl Inventory {
     pub fn add_source(
         &mut self,
         kind: TaskSourceKind,
-        source: StaticSource,
+        create_source: impl FnOnce(UnboundedSender<()>, &mut AppContext) -> StaticSource,
         cx: &mut ModelContext<Self>,
     ) {
         let abs_path = kind.abs_path();
@@ -104,7 +123,7 @@ impl Inventory {
                 return;
             }
         }
-
+        let source = create_source(self.update_sender.clone(), cx);
         let source = SourceInInventory { source, kind };
         self.sources.push(source);
         cx.notify();
@@ -375,7 +394,7 @@ mod test_inventory {
 
     use crate::Inventory;
 
-    use super::{task_source_kind_preference, TaskSourceKind};
+    use super::{task_source_kind_preference, TaskSourceKind, UnboundedSender};
 
     #[derive(Debug, Clone, PartialEq, Eq)]
     pub struct TestTask {
@@ -384,6 +403,7 @@ mod test_inventory {
 
     pub(super) fn static_test_source(
         task_names: impl IntoIterator<Item = String>,
+        updates: UnboundedSender<()>,
         cx: &mut AppContext,
     ) -> StaticSource {
         let tasks = TaskTemplates(
@@ -397,7 +417,7 @@ mod test_inventory {
                 .collect(),
         );
         let (tx, rx) = futures::channel::mpsc::unbounded();
-        let file = TrackedFile::new(rx, cx);
+        let file = TrackedFile::new(rx, updates, cx);
         tx.unbounded_send(serde_json::to_string(&tasks).unwrap())
             .unwrap();
         StaticSource::new(file)
@@ -495,21 +515,24 @@ mod tests {
         inventory.update(cx, |inventory, cx| {
             inventory.add_source(
                 TaskSourceKind::UserInput,
-                static_test_source(vec!["3_task".to_string()], cx),
+                |tx, cx| static_test_source(vec!["3_task".to_string()], tx, cx),
                 cx,
             );
         });
         inventory.update(cx, |inventory, cx| {
             inventory.add_source(
                 TaskSourceKind::UserInput,
-                static_test_source(
-                    vec![
-                        "1_task".to_string(),
-                        "2_task".to_string(),
-                        "1_a_task".to_string(),
-                    ],
-                    cx,
-                ),
+                |tx, cx| {
+                    static_test_source(
+                        vec![
+                            "1_task".to_string(),
+                            "2_task".to_string(),
+                            "1_a_task".to_string(),
+                        ],
+                        tx,
+                        cx,
+                    )
+                },
                 cx,
             );
         });
@@ -570,7 +593,9 @@ mod tests {
         inventory.update(cx, |inventory, cx| {
             inventory.add_source(
                 TaskSourceKind::UserInput,
-                static_test_source(vec!["10_hello".to_string(), "11_hello".to_string()], cx),
+                |tx, cx| {
+                    static_test_source(vec!["10_hello".to_string(), "11_hello".to_string()], tx, cx)
+                },
                 cx,
             );
         });
@@ -638,7 +663,13 @@ mod tests {
         inventory_with_statics.update(cx, |inventory, cx| {
             inventory.add_source(
                 TaskSourceKind::UserInput,
-                static_test_source(vec!["user_input".to_string(), common_name.to_string()], cx),
+                |tx, cx| {
+                    static_test_source(
+                        vec!["user_input".to_string(), common_name.to_string()],
+                        tx,
+                        cx,
+                    )
+                },
                 cx,
             );
             inventory.add_source(
@@ -646,10 +677,13 @@ mod tests {
                     id_base: "test source",
                     abs_path: path_1.to_path_buf(),
                 },
-                static_test_source(
-                    vec!["static_source_1".to_string(), common_name.to_string()],
-                    cx,
-                ),
+                |tx, cx| {
+                    static_test_source(
+                        vec!["static_source_1".to_string(), common_name.to_string()],
+                        tx,
+                        cx,
+                    )
+                },
                 cx,
             );
             inventory.add_source(
@@ -657,10 +691,13 @@ mod tests {
                     id_base: "test source",
                     abs_path: path_2.to_path_buf(),
                 },
-                static_test_source(
-                    vec!["static_source_2".to_string(), common_name.to_string()],
-                    cx,
-                ),
+                |tx, cx| {
+                    static_test_source(
+                        vec!["static_source_2".to_string(), common_name.to_string()],
+                        tx,
+                        cx,
+                    )
+                },
                 cx,
             );
             inventory.add_source(
@@ -669,7 +706,13 @@ mod tests {
                     abs_path: worktree_path_1.to_path_buf(),
                     id_base: "test_source",
                 },
-                static_test_source(vec!["worktree_1".to_string(), common_name.to_string()], cx),
+                |tx, cx| {
+                    static_test_source(
+                        vec!["worktree_1".to_string(), common_name.to_string()],
+                        tx,
+                        cx,
+                    )
+                },
                 cx,
             );
             inventory.add_source(
@@ -678,7 +721,13 @@ mod tests {
                     abs_path: worktree_path_2.to_path_buf(),
                     id_base: "test_source",
                 },
-                static_test_source(vec!["worktree_2".to_string(), common_name.to_string()], cx),
+                |tx, cx| {
+                    static_test_source(
+                        vec!["worktree_2".to_string(), common_name.to_string()],
+                        tx,
+                        cx,
+                    )
+                },
                 cx,
             );
         });
