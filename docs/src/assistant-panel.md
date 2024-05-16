@@ -144,11 +144,11 @@ These are useful for:
 - Adding single prompts to your current context to help guide the assistant's responses.
 - (In the future) dynamically adding certain prompts to the assistant based on the current context, such as the presence of Rust code or a specific async runtime you want to work with.
 
-You can access the prompt manager by running the command palette action `prompt library: toggle prompt manager` or selecting `Open Prompt Manager` from the assistant panel's more menu.
+You can access the prompt manager by selecting `Prompt Library...` from the assistant panel's more menu.
 
 By default when opening the assistant, the prompt manager will load any custom prompts present in your `~/.config/zed/prompts` directory.
 
-Checked prompts are included in your "default prompt", which can be inserted into the assitant by running `assistant: insert default prompt` or clicking the `Insert Default Prompt` button in the assistant panel's more menu.
+Checked prompts are included in your "default prompt", which can be inserted into the assistant by running `assistant: insert default prompt` or clicking the `Insert Default Prompt` button in the assistant panel's more menu.
 
 ### Creating a custom prompt
 
