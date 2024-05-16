@@ -1088,7 +1088,7 @@ impl AssistantPanel {
     }
 
     fn authenticate(&mut self, cx: &mut ViewContext<Self>) -> Task<Result<()>> {
-        cx.update_global::<CompletionProvider, _>(|provider, cx| provider.authenticate(cx))
+        CompletionProvider::update_global(cx, |provider, cx| provider.authenticate(cx))
     }
 
     fn render_signed_in(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
