@@ -1,6 +1,8 @@
 use crate::Project;
 use collections::HashMap;
-use gpui::{AnyWindowHandle, Context, Entity, Model, ModelContext, WeakModel};
+use gpui::{
+    AnyWindowHandle, AppContext, Context, Entity, Model, ModelContext, SharedString, WeakModel,
+};
 use settings::{Settings, SettingsLocation};
 use smol::channel::bounded;
 use std::path::{Path, PathBuf};
@@ -18,17 +20,18 @@ pub struct Terminals {
     pub(crate) local_handles: Vec<WeakModel<terminal::Terminal>>,
 }
 
+#[derive(Debug, Clone)]
+pub struct ConnectRemoteTerminal {
+    pub ssh_connection_string: SharedString,
+    pub project_path: SharedString,
+}
+
 impl Project {
-    pub fn create_terminal(
-        &mut self,
-        working_directory: Option<PathBuf>,
-        spawn_task: Option<SpawnInTerminal>,
-        window: AnyWindowHandle,
-        cx: &mut ModelContext<Self>,
-    ) -> anyhow::Result<Model<Terminal>> {
-        // TODO kb deduplicate into a single method on a project
-        let ssh_connection_data = self
-            .dev_server_project_id()
+    pub fn remote_terminal_connection_data(
+        &self,
+        cx: &AppContext,
+    ) -> Option<ConnectRemoteTerminal> {
+        self.dev_server_project_id()
             .and_then(|dev_server_project_id| {
                 let projects_store = dev_server_projects::Store::global(cx).read(cx);
                 let project_path = projects_store
@@ -40,16 +43,31 @@ impl Project {
                     .ssh_connection_string
                     .clone();
                 Some(project_path).zip(ssh_connection_string)
-            });
-        anyhow::ensure!(
-            !self.is_remote() || ssh_connection_data.is_some(),
-            "Cannot create terminal for remote project without SSH connection string yet"
-        );
+            })
+            .map(
+                |(project_path, ssh_connection_string)| ConnectRemoteTerminal {
+                    ssh_connection_string,
+                    project_path,
+                },
+            )
+    }
 
-        // TODO kb do `ssh user@host -t "cd /path/to/specific/directory && exec \$SHELL"`
-        if ssh_connection_data.is_some() {
-            dbg!("@@@@@@@@@@@@@@@", ssh_connection_data, &working_directory);
-        }
+    pub fn create_terminal(
+        &mut self,
+        working_directory: Option<PathBuf>,
+        spawn_task: Option<SpawnInTerminal>,
+        window: AnyWindowHandle,
+        cx: &mut ModelContext<Self>,
+    ) -> anyhow::Result<Model<Terminal>> {
+        let remote_connection_data = if self.is_remote() {
+            let remote_connection_data = self.remote_terminal_connection_data(cx);
+            if remote_connection_data.is_none() {
+                anyhow::bail!("Cannot create terminal for remote project without connection data")
+            }
+            remote_connection_data
+        } else {
+            None
+        };
 
         // used only for TerminalSettings::get
         let worktree = {
@@ -68,7 +86,7 @@ impl Project {
             path,
         });
 
-        let is_terminal = spawn_task.is_none();
+        let is_terminal = spawn_task.is_none() && remote_connection_data.is_none();
         let settings = TerminalSettings::get(settings_location, cx);
         let python_settings = settings.detect_venv.clone();
         let (completion_tx, completion_rx) = bounded(1);
@@ -81,7 +99,25 @@ impl Project {
             .as_deref()
             .unwrap_or_else(|| Path::new(""));
 
-        let (spawn_task, shell) = if let Some(spawn_task) = spawn_task {
+        let (spawn_task, shell) = if let Some(remote_connection_data) = remote_connection_data {
+            log::debug!("Connecting to a remote server: {remote_connection_data:?}");
+
+            (
+                None,
+                Shell::WithArguments {
+                    program: "ssh".to_string(),
+                    args: vec![
+                        remote_connection_data.ssh_connection_string.to_string(),
+                        // TODO kb do `ssh user@host -t "cd /path/to/specific/directory && exec \$SHELL"`
+                        // "-t".to_string(),
+                        // format!(
+                        //     "cd \"{}\" && exec $SHELL",
+                        //     remote_connection_data.project_path
+                        // ),
+                    ],
+                },
+            )
+        } else if let Some(spawn_task) = spawn_task {
             log::debug!("Spawning task: {spawn_task:?}");
             env.extend(spawn_task.env);
             // Activate minimal Python virtual environment
