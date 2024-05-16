@@ -3683,10 +3683,15 @@ async fn get_channel_members(
 ) -> Result<()> {
     let db = session.db().await;
     let channel_id = ChannelId::from_proto(request.channel_id);
-    let members = db
-        .get_channel_participant_details(channel_id, session.user_id())
+    let limit = if request.limit == 0 {
+        u16::MAX as u64
+    } else {
+        request.limit
+    };
+    let (members, users) = db
+        .get_channel_participant_details(channel_id, &request.query, limit, session.user_id())
         .await?;
-    response.send(proto::GetChannelMembersResponse { members })?;
+    response.send(proto::GetChannelMembersResponse { members, users })?;
     Ok(())
 }
 

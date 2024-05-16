@@ -1268,10 +1268,13 @@ message DeleteChannel {
 
 message GetChannelMembers {
     uint64 channel_id = 1;
+    string query = 2;
+    uint64 limit = 3;
 }
 
 message GetChannelMembersResponse {
     repeated ChannelMember members = 1;
+    repeated User users = 2;
 }
 
 message ChannelMember {

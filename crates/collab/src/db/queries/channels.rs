@@ -700,62 +700,65 @@ impl Database {
     pub async fn get_channel_participant_details(
         &self,
         channel_id: ChannelId,
+        filter: &str,
+        limit: u64,
         user_id: UserId,
-    ) -> Result<Vec<proto::ChannelMember>> {
-        let (role, members) = self
+    ) -> Result<(Vec<proto::ChannelMember>, Vec<proto::User>)> {
+        let members = self
             .transaction(move |tx| async move {
                 let channel = self.get_channel_internal(channel_id, &tx).await?;
-                let role = self
-                    .check_user_is_channel_participant(&channel, user_id, &tx)
+                self.check_user_is_channel_participant(&channel, user_id, &tx)
                     .await?;
-                Ok((
-                    role,
-                    self.get_channel_participant_details_internal(&channel, &tx)
-                        .await?,
-                ))
+                let members = channel_member::Entity::find()
+                    .find_also_related(user::Entity)
+                    .filter(channel_member::Column::ChannelId.eq(channel.root_id()))
+                    .filter(Expr::cust_with_values(
+                        "github_login ILIKE $1",
+                        [Self::fuzzy_like_string(filter)],
+                    ))
+                    .order_by(
+                        Expr::cust(
+                            "(role != 'admin', role != 'member', role != 'guest', github_login)",
+                        ),
+                        sea_orm::Order::Asc,
+                    )
+                    .limit(limit)
+                    .all(&*tx)
+                    .await?;
+
+                Ok(members)
             })
             .await?;
 
-        if role == ChannelRole::Admin {
-            Ok(members
-                .into_iter()
-                .map(|channel_member| proto::ChannelMember {
-                    role: channel_member.role.into(),
-                    user_id: channel_member.user_id.to_proto(),
-                    kind: if channel_member.accepted {
+        let mut users: Vec<proto::User> = Vec::with_capacity(members.len());
+
+        let members = members
+            .into_iter()
+            .map(|(member, user)| {
+                if let Some(user) = user {
+                    users.push(proto::User {
+                        id: user.id.to_proto(),
+                        avatar_url: format!(
+                            "https://github.com/{}.png?size=128",
+                            user.github_login
+                        ),
+                        github_login: user.github_login,
+                    })
+                }
+                proto::ChannelMember {
+                    role: member.role.into(),
+                    user_id: member.user_id.to_proto(),
+                    kind: if member.accepted {
                         Kind::Member
                     } else {
                         Kind::Invitee
                     }
                     .into(),
-                })
-                .collect())
-        } else {
-            return Ok(members
-                .into_iter()
-                .filter_map(|member| {
-                    if !member.accepted {
-                        return None;
-                    }
-                    Some(proto::ChannelMember {
-                        role: member.role.into(),
-                        user_id: member.user_id.to_proto(),
-                        kind: Kind::Member.into(),
-                    })
-                })
-                .collect());
-        }
-    }
+                }
+            })
+            .collect();
 
-    async fn get_channel_participant_details_internal(
-        &self,
-        channel: &channel::Model,
-        tx: &DatabaseTransaction,
-    ) -> Result<Vec<channel_member::Model>> {
-        Ok(channel_member::Entity::find()
-            .filter(channel_member::Column::ChannelId.eq(channel.root_id()))
-            .all(tx)
-            .await?)
+        Ok((members, users))
     }
 
     /// Returns the participants in the given channel.
@@ -764,8 +767,9 @@ impl Database {
         channel: &channel::Model,
         tx: &DatabaseTransaction,
     ) -> Result<Vec<UserId>> {
-        let participants = self
-            .get_channel_participant_details_internal(channel, tx)
+        let participants = channel_member::Entity::find()
+            .filter(channel_member::Column::ChannelId.eq(channel.root_id()))
+            .all(tx)
             .await?;
         Ok(participants
             .into_iter()

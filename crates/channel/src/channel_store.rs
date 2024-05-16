@@ -815,9 +815,11 @@ impl ChannelStore {
             Ok(())
         })
     }
-    pub fn get_channel_member_details(
+    pub fn fuzzy_search_members(
         &self,
         channel_id: ChannelId,
+        query: String,
+        limit: u16,
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<Vec<ChannelMembership>>> {
         let client = self.client.clone();
@@ -826,6 +828,8 @@ impl ChannelStore {
             let response = client
                 .request(proto::GetChannelMembers {
                     channel_id: channel_id.0,
+                    query,
+                    limit: limit as u64,
                 })
                 .await?;
 

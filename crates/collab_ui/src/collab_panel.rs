@@ -1859,12 +1859,8 @@ impl CollabPanel {
         let workspace = self.workspace.clone();
         let user_store = self.user_store.clone();
         let channel_store = self.channel_store.clone();
-        let members = self.channel_store.update(cx, |channel_store, cx| {
-            channel_store.get_channel_member_details(channel_id, cx)
-        });
 
         cx.spawn(|_, mut cx| async move {
-            let members = members.await?;
             workspace.update(&mut cx, |workspace, cx| {
                 workspace.toggle_modal(cx, |cx| {
                     ChannelModal::new(
@@ -1872,7 +1868,6 @@ impl CollabPanel {
                         channel_store.clone(),
                         channel_id,
                         mode,
-                        members,
                         cx,
                     )
                 });
