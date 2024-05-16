@@ -199,7 +199,6 @@ impl HttpClient for isahc::HttpClient {
     }
 
     fn proxy(&self) -> &Option<String> {
-        // TODO:
         &None
     }
 }
