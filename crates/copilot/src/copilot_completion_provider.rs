@@ -22,6 +22,7 @@ pub struct CopilotCompletionProvider {
     pending_cycling_refresh: Task<Result<()>>,
     copilot: Model<Copilot>,
     telemetry: Option<Arc<Telemetry>>,
+    should_allow_event_to_send: bool,
 }
 
 impl CopilotCompletionProvider {
@@ -36,6 +37,7 @@ impl CopilotCompletionProvider {
             pending_cycling_refresh: Task::ready(Ok(())),
             copilot,
             telemetry: None,
+            should_allow_event_to_send: false,
         }
     }
 
@@ -103,6 +105,7 @@ impl InlineCompletionProvider for CopilotCompletionProvider {
 
             this.update(&mut cx, |this, cx| {
                 if !completions.is_empty() {
+                    this.should_allow_event_to_send = true;
                     this.cycled = false;
                     this.pending_cycling_refresh = Task::ready(Ok(()));
                     this.completions.clear();
@@ -191,13 +194,17 @@ impl InlineCompletionProvider for CopilotCompletionProvider {
                 .update(cx, |copilot, cx| copilot.accept_completion(completion, cx))
                 .detach_and_log_err(cx);
             if let Some(telemetry) = self.telemetry.as_ref() {
-                telemetry.report_inline_completion_event(
-                    Self::name().to_string(),
-                    true,
-                    self.file_extension.clone(),
-                );
+                if self.should_allow_event_to_send {
+                    telemetry.report_inline_completion_event(
+                        Self::name().to_string(),
+                        true,
+                        self.file_extension.clone(),
+                    );
+                }
             }
         }
+
+        self.should_allow_event_to_send = false;
     }
 
     fn discard(&mut self, cx: &mut ModelContext<Self>) {
@@ -214,13 +221,18 @@ impl InlineCompletionProvider for CopilotCompletionProvider {
                 copilot.discard_completions(&self.completions, cx)
             })
             .detach_and_log_err(cx);
+
         if let Some(telemetry) = self.telemetry.as_ref() {
-            telemetry.report_inline_completion_event(
-                Self::name().to_string(),
-                false,
-                self.file_extension.clone(),
-            );
+            if self.should_allow_event_to_send {
+                telemetry.report_inline_completion_event(
+                    Self::name().to_string(),
+                    false,
+                    self.file_extension.clone(),
+                );
+            }
         }
+
+        self.should_allow_event_to_send = false;
     }
 
     fn active_completion_text<'a>(

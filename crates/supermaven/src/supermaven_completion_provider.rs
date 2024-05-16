@@ -101,11 +101,13 @@ impl InlineCompletionProvider for SupermavenCompletionProvider {
 
     fn accept(&mut self, _cx: &mut ModelContext<Self>) {
         if let Some(telemetry) = self.telemetry.as_ref() {
-            telemetry.report_inline_completion_event(
-                Self::name().to_string(),
-                true,
-                self.file_extension.clone(),
-            );
+            if let Some(_) = self.completion_id {
+                telemetry.report_inline_completion_event(
+                    Self::name().to_string(),
+                    true,
+                    self.file_extension.clone(),
+                );
+            }
         }
         self.pending_refresh = Task::ready(Ok(()));
         self.completion_id = None;
@@ -113,11 +115,13 @@ impl InlineCompletionProvider for SupermavenCompletionProvider {
 
     fn discard(&mut self, _cx: &mut ModelContext<Self>) {
         if let Some(telemetry) = self.telemetry.as_ref() {
-            telemetry.report_inline_completion_event(
-                Self::name().to_string(),
-                false,
-                self.file_extension.clone(),
-            );
+            if let Some(_) = self.completion_id {
+                telemetry.report_inline_completion_event(
+                    Self::name().to_string(),
+                    false,
+                    self.file_extension.clone(),
+                );
+            }
         }
 
         self.pending_refresh = Task::ready(Ok(()));
