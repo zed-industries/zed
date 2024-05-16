@@ -3,8 +3,8 @@ use feature_flags::FeatureFlagAppExt;
 use fs::Fs;
 use fuzzy::{match_strings, StringMatch, StringMatchCandidate};
 use gpui::{
-    actions, impl_actions, AppContext, DismissEvent, EventEmitter, FocusableView, ReadGlobal,
-    Render, View, ViewContext, VisualContext, WeakView,
+    actions, impl_actions, AppContext, DismissEvent, EventEmitter, FocusableView, Render, View,
+    ViewContext, VisualContext, WeakView,
 };
 use picker::{Picker, PickerDelegate};
 use serde::Deserialize;

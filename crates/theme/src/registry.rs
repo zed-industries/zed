@@ -6,7 +6,7 @@ use collections::HashMap;
 use derive_more::{Deref, DerefMut};
 use fs::Fs;
 use futures::StreamExt;
-use gpui::{AppContext, AssetSource, Global, HighlightStyle, ReadGlobal, SharedString};
+use gpui::{AppContext, AssetSource, Global, HighlightStyle, SharedString};
 use parking_lot::RwLock;
 use refineable::Refineable;
 use util::ResultExt;
@@ -42,14 +42,12 @@ pub struct ThemeRegistry {
     assets: Box<dyn AssetSource>,
 }
 
-impl<'a> ReadGlobal<'a, Arc<Self>> for ThemeRegistry {
+impl ThemeRegistry {
     /// Returns the global [`ThemeRegistry`].
-    fn global(cx: &'a AppContext) -> Arc<Self> {
+    pub fn global(cx: &AppContext) -> Arc<Self> {
         cx.global::<GlobalThemeRegistry>().0.clone()
     }
-}
 
-impl ThemeRegistry {
     /// Returns the global [`ThemeRegistry`].
     ///
     /// Inserts a default [`ThemeRegistry`] if one does not yet exist.

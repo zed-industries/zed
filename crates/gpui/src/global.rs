@@ -16,15 +16,15 @@ pub trait Global: 'static {
 }
 
 /// A trait for reading a global value from the context.
-pub trait ReadGlobal<'a, Output = &'a Self> {
+pub trait ReadGlobal {
     /// Returns the global instance of the implementing type.
     ///
     /// Panics if a global for that type has not been assigned.
-    fn global(cx: &'a AppContext) -> Output;
+    fn global(cx: &AppContext) -> &Self;
 }
 
-impl<'a, T: Global> ReadGlobal<'a> for T {
-    fn global(cx: &'a AppContext) -> &'a Self {
+impl<T: Global> ReadGlobal for T {
+    fn global(cx: &AppContext) -> &Self {
         cx.global::<T>()
     }
 }
