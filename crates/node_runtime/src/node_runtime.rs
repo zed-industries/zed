@@ -266,8 +266,18 @@ impl NodeRuntime for RealNodeRuntime {
                 command.args(["--prefix".into(), directory.to_path_buf()]);
             }
 
+            if let Some(proxy) = http::http_proxy_from_env() {
+                command.args(["--proxy".into(), proxy.to_string()]);
+            }
+
             #[cfg(windows)]
-            command.creation_flags(windows::Win32::System::Threading::CREATE_NO_WINDOW.0);
+            {
+                // SYSTEMROOT is a critical environment variables for Windows.
+                if let Some(val) = std::env::var("SYSTEMROOT") {
+                    command.env("SYSTEMROOT", val);
+                }
+                command.creation_flags(windows::Win32::System::Threading::CREATE_NO_WINDOW.0);
+            }
 
             command.output().await.map_err(|e| anyhow!("{e}"))
         };
