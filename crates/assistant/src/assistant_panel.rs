@@ -41,7 +41,7 @@ use project::{search::SearchQuery, Project, ProjectTransaction};
 use search::{buffer_search::DivRegistrar, BufferSearchBar};
 use settings::Settings;
 use std::{
-    cmp::{self, Ordering},
+    cmp,
     fmt::Write,
     iter,
     ops::Range,
@@ -2298,7 +2298,7 @@ fn parse_edit_suggestions(
     }
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 struct EditSuggestion {
     source_range: Range<language::Anchor>,
     full_path: Option<PathBuf>,
@@ -2885,29 +2885,37 @@ impl ConversationEditor {
         let conversation = self.conversation.read(cx);
         let buffer_handle = conversation.buffer.clone();
         let buffer = buffer_handle.read(cx);
-        let mut cursors_by_suggestion_index = HashMap::default();
-        for selection in self.editor.read(cx).selections.disjoint_anchors().iter() {
-            let cursor = selection.head().text_anchor;
-            let ix = conversation.edit_suggestions.binary_search_by(|probe| {
-                if probe.source_range.end.cmp(&cursor, buffer).is_lt() {
-                    Ordering::Less
-                } else if probe.source_range.start.cmp(&cursor, buffer).is_gt() {
-                    Ordering::Greater
-                } else {
-                    Ordering::Equal
+
+        let selections = self.editor.read(cx).selections.disjoint_anchors();
+        let mut selections = selections.iter().peekable();
+        let selected_suggestions = conversation.edit_suggestions.iter().filter(|suggestion| {
+            while let Some(selection) = selections.peek() {
+                if selection
+                    .end
+                    .text_anchor
+                    .cmp(&suggestion.source_range.start, buffer)
+                    .is_lt()
+                {
+                    selections.next();
+                    continue;
                 }
-            });
-
-            if let Ok(ix) = ix {
-                cursors_by_suggestion_index.insert(ix, cursor.to_offset(buffer));
+                if selection
+                    .start
+                    .text_anchor
+                    .cmp(&suggestion.source_range.end, buffer)
+                    .is_gt()
+                {
+                    break;
+                }
+                return true;
             }
-        }
+            false
+        });
 
-        let mut edits_by_buffer = HashMap::default();
-        for (suggestion_ix, cursor_offset) in cursors_by_suggestion_index {
-            let suggestion = &conversation.edit_suggestions[suggestion_ix];
-
-            if let Some(message) = conversation.message_for_offset(cursor_offset, cx) {
+        let mut suggestions_by_buffer = HashMap::default();
+        for suggestion in selected_suggestions {
+            let offset = suggestion.source_range.start.to_offset(buffer);
+            if let Some(message) = conversation.message_for_offset(offset, cx) {
                 if let Some(buffer) = message
                     .ambient_context
                     .recent_buffers
@@ -2915,68 +2923,90 @@ impl ConversationEditor {
                     .iter()
                     .find(|source_buffer| source_buffer.full_path == suggestion.full_path)
                 {
-                    if let Some(model) = buffer.model.upgrade() {
-                        if let Some(query) = SearchQuery::text(
-                            suggestion.old_text.clone(),
-                            false,
-                            true,
-                            false,
-                            Vec::new(),
-                            Vec::new(),
-                        )
-                        .log_err()
-                        {
-                            let snapshot = model.read(cx).snapshot();
-                            // todo!("do this in the background")
-                            let ranges = cx
-                                .background_executor()
-                                .block(query.search(&snapshot, None));
-                            if let Some(range) = ranges.first() {
-                                let edit_start = snapshot.anchor_after(range.start);
-                                let edit_end = snapshot.anchor_before(range.end);
-                                edits_by_buffer
-                                    .entry(model)
-                                    .or_insert(Vec::new())
-                                    .push((edit_start..edit_end, suggestion.new_text.clone()));
-                            }
-                        }
+                    if let Some(buffer) = buffer.model.upgrade() {
+                        suggestions_by_buffer
+                            .entry(buffer.clone())
+                            .or_insert_with(|| (buffer.read(cx).snapshot(), Vec::new()))
+                            .1
+                            .push(suggestion.clone());
                     }
                 }
             }
         }
 
-        let mut project_transaction = ProjectTransaction::default();
-        for (buffer_handle, mut edits) in edits_by_buffer {
-            let snapshot = buffer_handle.read(cx).snapshot();
-            edits.sort_by(|(range1, _), (range2, _)| range1.start.cmp(&range2.start, &snapshot));
-
-            buffer_handle.update(cx, |buffer, cx| {
-                buffer.start_transaction();
-                buffer.edit(edits, None, cx);
-                buffer.end_transaction(cx);
-                if let Some(transaction) = buffer.finalize_last_transaction() {
-                    project_transaction
-                        .0
-                        .insert(buffer_handle.clone(), transaction.clone());
-                }
-            })
-        }
-
-        self.editor.update(cx, |editor, cx| {
-            if let Some(workspace) = editor.workspace() {
-                cx.spawn(|editor, cx| async move {
-                    Editor::open_project_transaction(
-                        &editor,
-                        workspace.downgrade(),
-                        project_transaction,
-                        "Title this".into(),
-                        cx,
-                    )
-                    .await
+        cx.spawn(|this, mut cx| async move {
+            let edits_by_buffer = cx
+                .background_executor()
+                .spawn(async move {
+                    let mut result = HashMap::default();
+                    for (buffer, (snapshot, suggestions)) in suggestions_by_buffer {
+                        let edits =
+                            result
+                                .entry(buffer)
+                                .or_insert(Vec::<(Range<language::Anchor>, _)>::new());
+                        for suggestion in suggestions {
+                            if let Some(query) = SearchQuery::text(
+                                suggestion.old_text.clone(),
+                                false,
+                                true,
+                                false,
+                                Vec::new(),
+                                Vec::new(),
+                            )
+                            .log_err()
+                            {
+                                let ranges = query.search(&snapshot, None).await;
+                                if let Some(range) = ranges.first() {
+                                    let edit_start = snapshot.anchor_after(range.start);
+                                    let edit_end = snapshot.anchor_before(range.end);
+                                    if let Err(ix) = edits.binary_search_by(|(range, _)| {
+                                        range.start.cmp(&edit_start, &snapshot)
+                                    }) {
+                                        edits.insert(
+                                            ix,
+                                            (edit_start..edit_end, suggestion.new_text.clone()),
+                                        );
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    result
                 })
-                .detach_and_log_err(cx);
-            }
-        });
+                .await;
+
+            let mut project_transaction = ProjectTransaction::default();
+            let (editor, workspace, title) = this.update(&mut cx, |this, cx| {
+                for (buffer_handle, edits) in edits_by_buffer {
+                    buffer_handle.update(cx, |buffer, cx| {
+                        buffer.start_transaction();
+                        buffer.edit(edits, None, cx);
+                        buffer.end_transaction(cx);
+                        if let Some(transaction) = buffer.finalize_last_transaction() {
+                            project_transaction
+                                .0
+                                .insert(buffer_handle.clone(), transaction.clone());
+                        }
+                    });
+                }
+
+                (
+                    this.editor.downgrade(),
+                    this.workspace.clone(),
+                    this.title(cx),
+                )
+            })?;
+
+            Editor::open_project_transaction(
+                &editor,
+                workspace,
+                project_transaction,
+                format!("Edits from {}", title),
+                cx,
+            )
+            .await
+        })
+        .detach_and_log_err(cx);
     }
 
     fn save(&mut self, _: &Save, cx: &mut ViewContext<Self>) {
