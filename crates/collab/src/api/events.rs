@@ -26,6 +26,7 @@ pub fn router() -> Router {
     Router::new()
         .route("/telemetry/events", post(post_events))
         .route("/telemetry/crashes", post(post_crash))
+        .route("/telemetry/panics", post(post_panic))
         .route("/telemetry/hangs", post(post_hang))
 }
 
@@ -280,30 +281,77 @@ pub async fn post_hang(
         backtrace = %backtrace,
         "hang report");
 
+    Ok(())
+}
+
+pub async fn post_panic(
+    Extension(app): Extension<Arc<AppState>>,
+    TypedHeader(ZedChecksumHeader(checksum)): TypedHeader<ZedChecksumHeader>,
+    body: Bytes,
+) -> Result<()> {
+    let Some(expected) = calculate_json_checksum(app.clone(), &body) else {
+        return Err(Error::Http(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "events not enabled".into(),
+        ))?;
+    };
+
+    if checksum != expected {
+        return Err(Error::Http(
+            StatusCode::BAD_REQUEST,
+            "invalid checksum".into(),
+        ))?;
+    }
+
+    let report: telemetry_events::PanicRequest = serde_json::from_slice(&body)
+        .map_err(|_| Error::Http(StatusCode::BAD_REQUEST, "invalid json".into()))?;
+    let panic = report.panic;
+
+    tracing::error!(
+        service = "client",
+        version = %panic.app_version,
+        os_name = %panic.os_name,
+        os_version = %panic.os_version.clone().unwrap_or_default(),
+        installation_id = %panic.installation_id.unwrap_or_default(),
+        description = %panic.payload,
+        backtrace = %panic.backtrace.join("\n"),
+        "panic report");
+
+    let backtrace = if panic.backtrace.len() > 25 {
+        let total = panic.backtrace.len();
+        format!(
+            "{}\n   and {} more",
+            panic
+                .backtrace
+                .iter()
+                .take(20)
+                .cloned()
+                .collect::<Vec<_>>()
+                .join("\n"),
+            total - 20
+        )
+    } else {
+        panic.backtrace.join("\n")
+    };
+    let backtrace_with_summary = panic.payload + "\n" + &backtrace;
+
     if let Some(slack_panics_webhook) = app.config.slack_panics_webhook.clone() {
         let payload = slack::WebhookBody::new(|w| {
-            w.add_section(|s| s.text(slack::Text::markdown("Possible Hang".to_string())))
+            w.add_section(|s| s.text(slack::Text::markdown("Panic request".to_string())))
                 .add_section(|s| {
                     s.add_field(slack::Text::markdown(format!(
                         "*Version:*\n {} ",
-                        report.app_version.unwrap_or_default()
+                        panic.app_version
                     )))
                     .add_field({
-                        let hostname = app.config.blob_store_url.clone().unwrap_or_default();
-                        let hostname = hostname.strip_prefix("https://").unwrap_or_else(|| {
-                            hostname.strip_prefix("http://").unwrap_or_default()
-                        });
-
                         slack::Text::markdown(format!(
-                            "*Incident:*\n<https://{}.{}/{}.hang.json|{}…>",
-                            CRASH_REPORTS_BUCKET,
-                            hostname,
-                            incident_id,
-                            incident_id.chars().take(8).collect::<String>(),
+                            "*OS:*\n{} {}",
+                            panic.os_name,
+                            panic.os_version.unwrap_or_default()
                         ))
                     })
                 })
-                .add_rich_text(|r| r.add_preformatted(|p| p.add_text(backtrace)))
+                .add_rich_text(|r| r.add_preformatted(|p| p.add_text(backtrace_with_summary)))
         });
         let payload_json = serde_json::to_string(&payload).map_err(|err| {
             log::error!("Failed to serialize payload to JSON: {err}");

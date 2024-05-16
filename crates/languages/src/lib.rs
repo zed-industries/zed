@@ -1,5 +1,5 @@
 use anyhow::Context;
-use gpui::{AppContext, BorrowAppContext};
+use gpui::{AppContext, UpdateGlobal};
 pub use language::*;
 use node_runtime::NodeRuntime;
 use rust_embed::RustEmbed;
@@ -223,7 +223,7 @@ pub fn init(
             let language_settings = languages.language_settings();
             if language_settings != prev_language_settings {
                 cx.update(|cx| {
-                    cx.update_global(|settings: &mut SettingsStore, cx| {
+                    SettingsStore::update_global(cx, |settings, cx| {
                         settings
                             .set_extension_settings(language_settings.clone(), cx)
                             .log_err();

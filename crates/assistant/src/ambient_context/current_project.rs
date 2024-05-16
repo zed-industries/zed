@@ -8,6 +8,7 @@ use gpui::{AsyncAppContext, ModelContext, Task, WeakModel};
 use project::{Project, ProjectPath};
 use util::ResultExt;
 
+use crate::ambient_context::ContextUpdated;
 use crate::assistant_panel::Conversation;
 use crate::{LanguageModelRequestMessage, Role};
 
@@ -44,12 +45,12 @@ impl CurrentProjectContext {
         fs: Arc<dyn Fs>,
         project: WeakModel<Project>,
         cx: &mut ModelContext<Conversation>,
-    ) {
+    ) -> ContextUpdated {
         if !self.enabled {
             self.message.clear();
             self.pending_message = None;
             cx.notify();
-            return;
+            return ContextUpdated::Disabled;
         }
 
         self.pending_message = Some(cx.spawn(|conversation, mut cx| async move {
@@ -74,12 +75,16 @@ impl CurrentProjectContext {
 
             if let Some(message) = message_task.await.log_err() {
                 conversation
-                    .update(&mut cx, |conversation, _cx| {
+                    .update(&mut cx, |conversation, cx| {
                         conversation.ambient_context.current_project.message = message;
+                        conversation.count_remaining_tokens(cx);
+                        cx.notify();
                     })
                     .log_err();
             }
         }));
+
+        ContextUpdated::Updating
     }
 
     async fn build_message(fs: Arc<dyn Fs>, path_to_cargo_toml: &Path) -> Result<String> {

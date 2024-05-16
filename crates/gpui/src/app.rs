@@ -115,7 +115,7 @@ impl App {
         Self(AppContext::new(
             current_platform(),
             Arc::new(()),
-            http::client(),
+            http::client(None),
         ))
     }
 
@@ -649,6 +649,11 @@ impl AppContext {
     /// Returns the local timezone at the platform level.
     pub fn local_timezone(&self) -> UtcOffset {
         self.platform.local_timezone()
+    }
+
+    /// Updates the http client assigned to GPUI
+    pub fn update_http_client(&mut self, new_client: Arc<dyn HttpClient>) {
+        self.http_client = new_client;
     }
 
     /// Returns the http client assigned to GPUI

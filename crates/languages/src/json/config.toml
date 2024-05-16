@@ -8,5 +8,4 @@ brackets = [
     { start = "[", end = "]", close = true, newline = true },
     { start = "\"", end = "\"", close = true, newline = false, not_in = ["string"] },
 ]
-prettier_parser_name = "json"
 tab_size = 2

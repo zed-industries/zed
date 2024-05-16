@@ -479,6 +479,7 @@ pub struct Chunk<'a> {
 }
 
 /// A set of edits to a given version of a buffer, computed asynchronously.
+#[derive(Debug)]
 pub struct Diff {
     pub(crate) base_version: clock::Global,
     line_ending: LineEnding,
