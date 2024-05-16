@@ -277,6 +277,7 @@ impl Render for PromptManager {
                             .id("prompt-preview")
                             .overflow_y_scroll()
                             .h_full()
+                            .min_w_64()
                             .max_w_1_2()
                             .child(
                                 v_flex()
