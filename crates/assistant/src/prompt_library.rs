@@ -73,7 +73,7 @@ impl PromptLibrary {
             .collect::<Vec<_>>();
         // -- debug --
         for (id, prompt) in &prompts_with_ids {
-            log::info!("Loaded prompt: {} - {}", id, prompt.content);
+            log::info!("Loaded prompt: {} - {}", id, prompt.prompt);
         }
         // -- /debug --
         let mut state = self.state.write();
@@ -118,7 +118,7 @@ impl PromptLibrary {
 
         active_prompt_ids
             .iter()
-            .filter_map(|id| state.prompts.get(id).map(|p| p.content.clone()))
+            .filter_map(|id| state.prompts.get(id).map(|p| p.prompt.clone()))
             .collect::<Vec<_>>()
             .join("\n\n---\n\n")
     }
@@ -153,13 +153,25 @@ impl PromptLibrary {
     }
 }
 
+/// A custom prompt that can be loaded into the prompt library
+///
+/// Example:
+///
+/// ```json
+/// {
+///   "title": "Foo",
+///   "version": "1.0",
+///   "author": "Jane Kim <jane@kim.com>",
+///   "languages": ["*"], // or ["rust", "python", "javascript"] etc...
+///   "prompt": "bar"
+/// }
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub struct UserPrompt {
     version: String,
     title: String,
     author: String,
     languages: Vec<String>,
-    content: String,
+    prompt: String,
 }
 
 impl UserPrompt {
@@ -426,7 +438,7 @@ impl Render for PromptManager {
                                                         .w_full()
                                                         .max_w(rems(30.))
                                                         .text_ui(cx)
-                                                        .child(active_prompt.content.clone()),
+                                                        .child(active_prompt.prompt.clone()),
                                                 )
                                         },
                                         |without_prompt| {
