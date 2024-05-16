@@ -16,7 +16,7 @@ use std::{
 };
 pub use url::Url;
 
-pub fn get_proxy(proxy: Option<String>) -> Option<isahc::http::Uri> {
+fn get_proxy(proxy: Option<String>) -> Option<isahc::http::Uri> {
     macro_rules! try_env {
         ($($env:literal),+) => {
             $(
@@ -114,8 +114,8 @@ impl HttpClient for Arc<HttpClientWithUrl> {
         self.client.send(req)
     }
 
-    fn proxy_settings(&self) -> Option<String> {
-        self.proxy_settings.clone()
+    fn proxy_settings(&self) -> &Option<String> {
+        &self.proxy_settings
     }
 }
 
@@ -127,8 +127,8 @@ impl HttpClient for HttpClientWithUrl {
         self.client.send(req)
     }
 
-    fn proxy_settings(&self) -> Option<String> {
-        self.proxy_settings.clone()
+    fn proxy_settings(&self) -> &Option<String> {
+        &self.proxy_settings
     }
 }
 
@@ -175,7 +175,7 @@ pub trait HttpClient: Send + Sync {
         }
     }
 
-    fn proxy_settings(&self) -> Option<String>;
+    fn proxy_settings(&self) -> &Option<String>;
 }
 
 pub fn client(proxy: Option<isahc::http::Uri>) -> Arc<dyn HttpClient> {
@@ -198,9 +198,9 @@ impl HttpClient for isahc::HttpClient {
         Box::pin(async move { client.send_async(req).await })
     }
 
-    fn proxy_settings(&self) -> Option<String> {
+    fn proxy_settings(&self) -> &Option<String> {
         // TODO:
-        None
+        &None
     }
 }
 
@@ -269,7 +269,7 @@ impl HttpClient for FakeHttpClient {
         Box::pin(async move { future.await.map(Into::into) })
     }
 
-    fn proxy_settings(&self) -> Option<String> {
-        None
+    fn proxy_settings(&self) -> &Option<String> {
+        &None
     }
 }
