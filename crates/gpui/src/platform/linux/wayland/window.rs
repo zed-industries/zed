@@ -2,6 +2,7 @@ use std::any::Any;
 use std::cell::{Ref, RefCell, RefMut};
 use std::ffi::c_void;
 use std::num::NonZeroU32;
+use std::ops::Range;
 use std::ptr::NonNull;
 use std::rc::{Rc, Weak};
 use std::sync::Arc;
@@ -162,6 +163,11 @@ impl WaylandWindowState {
 }
 
 pub(crate) struct WaylandWindow(pub WaylandWindowStatePtr);
+pub enum ImeInput {
+    InsertText(String),
+    SetMarkedText(String),
+    DeleteText,
+}
 
 impl Drop for WaylandWindow {
     fn drop(&mut self) {
@@ -423,6 +429,40 @@ impl WaylandWindowStatePtr {
             }
             _ => {}
         }
+    }
+
+    pub fn handle_ime(&self, ime: ImeInput) {
+        let mut state = self.state.borrow_mut();
+        if let Some(mut input_handler) = state.input_handler.take() {
+            drop(state);
+            match ime {
+                ImeInput::InsertText(text) => {
+                    input_handler.replace_text_in_range(None, &text);
+                }
+                ImeInput::SetMarkedText(text) => {
+                    input_handler.replace_and_mark_text_in_range(None, &text, None);
+                }
+                ImeInput::DeleteText => {
+                    if let Some(marked) = input_handler.marked_text_range() {
+                        input_handler.replace_text_in_range(Some(marked), "");
+                    }
+                }
+            }
+            self.state.borrow_mut().input_handler = Some(input_handler);
+        }
+    }
+
+    pub fn get_ime_area(&self) -> Option<Bounds<Pixels>> {
+        let mut state = self.state.borrow_mut();
+        let mut bounds: Option<Bounds<Pixels>> = None;
+        if let Some(mut input_handler) = state.input_handler.take() {
+            drop(state);
+            if let Some(range) = input_handler.selected_text_range() {
+                bounds = input_handler.bounds_for_range(range);
+            }
+            self.state.borrow_mut().input_handler = Some(input_handler);
+        }
+        bounds
     }
 
     pub fn set_size_and_scale(
