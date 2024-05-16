@@ -1,59 +1,81 @@
-use multi_buffer::{Anchor, MultiBufferSnapshot};
-use std::{cmp::Ordering, iter, ops::Range};
+use gpui::AnyElement;
+use multi_buffer::{Anchor, MultiBufferRow, MultiBufferSnapshot, ToPoint};
+use std::{cmp::Ordering, ops::Range, sync::Arc};
 use sum_tree::{Bias, SeekTarget, SumTree};
 use text::Point;
+use ui::{IntoElement, WindowContext};
 
-#[derive(Default)]
+use crate::{DisplayMap, FoldStatus, RenderFoldToggle};
+
+#[derive(Default, Clone)]
 pub struct FoldableRanges {
-    ranges: SumTree<FoldableRange>,
+    foldables: SumTree<Foldable>,
 }
 
 impl FoldableRanges {
     pub fn insert(
         &mut self,
-        ranges: impl IntoIterator<Item = Range<Anchor>>,
+        foldables: impl IntoIterator<Item = Foldable>,
         snapshot: &MultiBufferSnapshot,
     ) {
-        let mut cursor = self.ranges.cursor::<FoldableRangeSummary>();
-        let mut new_ranges = SumTree::new();
-        for range in ranges {
+        let mut cursor = self.foldables.cursor::<FoldableRangeSummary>();
+        let mut new_foldables = SumTree::new();
+        for foldable in foldables {
             let target = FoldableRangeSummary {
-                range: range.clone(),
+                range: foldable.range.clone(),
             };
-            new_ranges.append(cursor.slice(&target, Bias::Left, snapshot), snapshot);
-            new_ranges.push(FoldableRange { range }, snapshot);
+            new_foldables.append(cursor.slice(&target, Bias::Left, snapshot), snapshot);
+            new_foldables.push(foldable, snapshot);
         }
-        new_ranges.append(cursor.suffix(snapshot), snapshot);
+        new_foldables.append(cursor.suffix(snapshot), snapshot);
     }
 
+    /// Returns the first FoldableRange starting on the specified buffer row.
     pub fn query<'a>(
         &'a self,
-        visible_range: Range<Point>,
+        row: MultiBufferRow,
         snapshot: &'a MultiBufferSnapshot,
-    ) -> impl 'a + Iterator<Item = &FoldableRange> {
-        let start = snapshot.anchor_before(visible_range.start);
-        let end = snapshot.anchor_after(visible_range.end);
-        let mut cursor = self.ranges.cursor::<FoldableRangeSummary>();
-        cursor.seek(
-            &FoldableRangeSummary {
-                range: start..Anchor::max(),
-            },
-            Bias::Left,
-            snapshot,
-        );
-
-        iter::from_fn(move || {
-            let item = cursor.item();
-            cursor.next(snapshot);
-            item
-        })
-        .take_while(move |item| item.range.start.cmp(&end, snapshot).is_le())
+    ) -> Option<&'a Foldable> {
+        let start = snapshot.anchor_before(Point::new(row.0, 0));
+        let mut cursor = self.foldables.cursor::<FoldableRangeSummary>();
+        cursor.seek(&start, Bias::Left, snapshot);
+        if let Some(item) = cursor.item() {
+            if item.range.start.to_point(snapshot).row == row.0 {
+                return Some(item);
+            }
+        }
+        return None;
     }
 }
 
+pub struct FoldableId(usize);
+
 #[derive(Clone)]
-pub struct FoldableRange {
-    range: Range<Anchor>,
+pub struct Foldable {
+    pub range: Range<Anchor>,
+    pub id: FoldableId,
+}
+
+impl Foldable {
+    pub fn new<F, E>(range: Range<Anchor>, toggle: F) -> Foldable
+    where
+        F: 'static + Fn(FoldStatus, &mut WindowContext) -> E,
+        E: IntoElement,
+    {
+        Foldable {
+            range,
+            toggle: Some(Arc::new(move |fs, cx| toggle(fs, cx).into_any_element())),
+        }
+    }
+
+    pub fn render(
+        &self,
+        fold_status: FoldStatus,
+        map: &DisplayMap,
+        cx: &mut WindowContext,
+    ) -> AnyElement {
+        map.foldables.render_fold_toggle(self.id, fold_status, cx)
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -82,11 +104,17 @@ impl sum_tree::Summary for FoldableRangeSummary {
     }
 }
 
-impl sum_tree::Item for FoldableRange {
+impl sum_tree::Item for Foldable {
     type Summary = FoldableRangeSummary;
 
     fn summary(&self) -> Self::Summary {
         todo!()
+    }
+}
+
+impl SeekTarget<'_, FoldableRangeSummary, FoldableRangeSummary> for Anchor {
+    fn cmp(&self, other: &FoldableRangeSummary, snapshot: &MultiBufferSnapshot) -> Ordering {
+        other.range.start.cmp(&self, snapshot)
     }
 }
 

@@ -30,7 +30,8 @@ pub use block_map::{BlockMap, BlockPoint};
 use collections::{HashMap, HashSet};
 use fold_map::FoldMap;
 use gpui::{
-    AnyView, Font, HighlightStyle, Hsla, LineLayout, Model, ModelContext, Pixels, UnderlineStyle,
+    AnyElement, AnyView, Font, HighlightStyle, Hsla, LineLayout, Model, ModelContext, Pixels,
+    UnderlineStyle,
 };
 use inlay_map::InlayMap;
 use language::{
@@ -45,6 +46,7 @@ use serde::Deserialize;
 use std::{any::TypeId, borrow::Cow, fmt::Debug, num::NonZeroU32, ops::Range, sync::Arc};
 use sum_tree::{Bias, TreeMap};
 use tab_map::TabMap;
+use ui::WindowContext;
 
 use wrap_map::WrapMap;
 
@@ -66,9 +68,11 @@ pub enum FoldStatus {
     Foldable,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+pub type RenderFoldToggle = Arc<dyn Send + Sync + Fn(FoldStatus, &mut WindowContext) -> AnyElement>;
+
+#[derive(Clone)]
 pub struct FoldIndicator {
-    toggle: Option<AnyView>,
+    toggle: Option<RenderFoldToggle>,
     folded: bool,
 }
 
@@ -104,7 +108,7 @@ pub struct DisplayMap {
     /// Regions of inlays that should be highlighted.
     inlay_highlights: InlayHighlights,
     /// A container for explicitly foldable ranges, which supersede indentation based fold range suggestions.
-    foldable_ranges: FoldableRanges,
+    foldables: FoldableRanges,
     pub clip_at_line_ends: bool,
 }
 
@@ -137,7 +141,7 @@ impl DisplayMap {
             block_map,
             text_highlights: Default::default(),
             inlay_highlights: Default::default(),
-            foldable_ranges: Default::default(),
+            foldables: Default::default(),
             clip_at_line_ends: false,
         }
     }
@@ -161,6 +165,7 @@ impl DisplayMap {
             tab_snapshot,
             wrap_snapshot,
             block_snapshot,
+            foldable_ranges: self.foldables.clone(),
             text_highlights: self.text_highlights.clone(),
             inlay_highlights: self.inlay_highlights.clone(),
             clip_at_line_ends: self.clip_at_line_ends,
@@ -221,6 +226,12 @@ impl DisplayMap {
             .wrap_map
             .update(cx, |map, cx| map.sync(snapshot, edits, cx));
         self.block_map.read(snapshot, edits);
+    }
+
+    pub fn insert_foldables(
+        &mut self,
+        foldables: impl IntoIterator<Item = (Range<Anchor>, RenderFoldToggle)>,
+    ) {
     }
 
     pub fn insert_blocks(
@@ -386,6 +397,7 @@ pub struct DisplaySnapshot {
     tab_snapshot: tab_map::TabSnapshot,
     wrap_snapshot: wrap_map::WrapSnapshot,
     block_snapshot: block_map::BlockSnapshot,
+    foldable_ranges: FoldableRanges,
     text_highlights: TextHighlights,
     inlay_highlights: InlayHighlights,
     clip_at_line_ends: bool,
@@ -847,7 +859,29 @@ impl DisplaySnapshot {
         DisplayRow(self.block_snapshot.longest_row())
     }
 
-    pub fn fold_indicator_for_row(&self, buffer_row: MultiBufferRow) -> Option<FoldIndicator> {}
+    pub fn fold_indicator_for_row(&self, buffer_row: MultiBufferRow) -> Option<FoldIndicator> {
+        if let Some(foldable_range) = self
+            .foldable_ranges
+            .query(buffer_row, &self.buffer_snapshot)
+        {
+            Some(FoldIndicator {
+                toggle: foldable_range.toggle.clone(),
+                folded: self.is_line_folded(buffer_row),
+            })
+        } else if self.is_line_folded(buffer_row) {
+            Some(FoldIndicator {
+                toggle: None,
+                folded: true,
+            })
+        } else if self.is_foldable(buffer_row) {
+            Some(FoldIndicator {
+                toggle: None,
+                folded: false,
+            })
+        } else {
+            None
+        }
+    }
 
     pub fn fold_for_line(&self, buffer_row: MultiBufferRow) -> Option<FoldStatus> {
         if self.is_line_folded(buffer_row) {
@@ -1768,6 +1802,31 @@ pub mod tests {
         assert("ˇaˇ", cx);
         assert("aˇbˇ", cx);
         assert("aˇαˇ", cx);
+    }
+
+    #[gpui::test]
+    fn test_foldable_ranges(cx: &mut gpui::AppContext) {
+        init_test(cx, |_| {});
+
+        let text = "aaa\nbbb\nccc\nddd\neee\nfff\nggg\nhhh\niii\njjj\nkkk\nlll";
+        let buffer = MultiBuffer::build_simple(text, cx);
+        let font_size = px(14.0);
+        let map = cx.new_model(|cx| {
+            let mut map =
+                DisplayMap::new(buffer.clone(), font("Helvetica"), font_size, None, 1, 1, cx);
+            let snapshot = map.buffer.read(cx).snapshot(cx);
+            let range =
+                snapshot.anchor_before(Point::new(2, 0))..snapshot.anchor_after(Point::new(3, 3));
+
+            map.foldables.insert(
+                Some(Foldable::new(range, |status, cx| div())),
+                &map.buffer.read(cx).snapshot(cx),
+            );
+
+            map
+        });
+
+        let snapshot = map.update(cx, |map, cx| map.snapshot(cx));
     }
 
     #[gpui::test]
