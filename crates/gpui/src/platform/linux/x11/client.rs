@@ -606,6 +606,7 @@ impl LinuxClient for X11Client {
             x_window,
             &state.atoms,
             state.scale_factor,
+            state.common.appearance.clone(),
         );
 
         let screen_resources = state

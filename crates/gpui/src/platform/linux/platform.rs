@@ -40,6 +40,7 @@ use crate::{
     WindowOptions, WindowParams,
 };
 
+use super::window_appearance::spawn_window_appearance_monitor;
 use super::x11::X11Client;
 
 pub(crate) const SCROLL_LINES: f64 = 3.0;
@@ -83,6 +84,7 @@ pub(crate) struct LinuxCommon {
     pub(crate) background_executor: BackgroundExecutor,
     pub(crate) foreground_executor: ForegroundExecutor,
     pub(crate) text_system: Arc<CosmicTextSystem>,
+    pub(crate) appearance: Arc<Mutex<WindowAppearance>>,
     pub(crate) callbacks: PlatformHandlers,
     pub(crate) signal: LoopSignal,
 }
@@ -94,11 +96,15 @@ impl LinuxCommon {
         let callbacks = PlatformHandlers::default();
 
         let dispatcher = Arc::new(LinuxDispatcher::new(main_sender));
+        let background_executor = BackgroundExecutor::new(dispatcher.clone());
+
+        let appearance = spawn_window_appearance_monitor(&background_executor);
 
         let common = LinuxCommon {
-            background_executor: BackgroundExecutor::new(dispatcher.clone()),
+            background_executor,
             foreground_executor: ForegroundExecutor::new(dispatcher.clone()),
             text_system,
+            appearance,
             callbacks,
             signal,
         };
@@ -455,7 +461,7 @@ impl<P: LinuxClient + 'static> Platform for P {
     }
 
     fn window_appearance(&self) -> crate::WindowAppearance {
-        crate::WindowAppearance::Light
+        self.with_common(|common| common.appearance.lock().clone())
     }
 
     fn register_url_scheme(&self, _: &str) -> Task<anyhow::Result<()>> {

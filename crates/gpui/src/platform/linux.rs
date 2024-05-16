@@ -5,6 +5,7 @@ mod dispatcher;
 mod headless;
 mod platform;
 mod wayland;
+mod window_appearance;
 mod x11;
 
 pub(crate) use dispatcher::*;
