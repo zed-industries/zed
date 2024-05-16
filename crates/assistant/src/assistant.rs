@@ -5,6 +5,7 @@ mod codegen;
 mod completion_provider;
 mod prompts;
 mod saved_conversation;
+mod search;
 mod streaming_diff;
 
 use ambient_context::AmbientContextSnapshot;

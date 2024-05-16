@@ -3,6 +3,7 @@ use crate::{
     assistant_settings::{AssistantDockPosition, AssistantSettings, ZedDotDevModel},
     codegen::{self, Codegen, CodegenKind},
     prompts::generate_content_prompt,
+    search::search_buffer_ignoring_indentation,
     ApplyEdit, Assist, CompletionProvider, CycleMessageRole, InlineAssist, LanguageModel,
     LanguageModelRequest, LanguageModelRequestMessage, MessageId, MessageMetadata, MessageStatus,
     QuoteSelection, ResetKey, Role, SavedConversation, SavedConversationMetadata, SavedMessage,
@@ -37,7 +38,7 @@ use language::{
 };
 use multi_buffer::MultiBufferRow;
 use parking_lot::Mutex;
-use project::{search::SearchQuery, Project, ProjectTransaction};
+use project::{Project, ProjectTransaction};
 use search::{buffer_search::DivRegistrar, BufferSearchBar};
 use settings::Settings;
 use std::{
@@ -2945,28 +2946,19 @@ impl ConversationEditor {
                                 .entry(buffer)
                                 .or_insert(Vec::<(Range<language::Anchor>, _)>::new());
                         for suggestion in suggestions {
-                            if let Some(query) = SearchQuery::text(
-                                suggestion.old_text.clone(),
-                                false,
-                                true,
-                                false,
-                                Vec::new(),
-                                Vec::new(),
-                            )
-                            .log_err()
-                            {
-                                let ranges = query.search(&snapshot, None).await;
-                                if let Some(range) = ranges.first() {
-                                    let edit_start = snapshot.anchor_after(range.start);
-                                    let edit_end = snapshot.anchor_before(range.end);
-                                    if let Err(ix) = edits.binary_search_by(|(range, _)| {
-                                        range.start.cmp(&edit_start, &snapshot)
-                                    }) {
-                                        edits.insert(
-                                            ix,
-                                            (edit_start..edit_end, suggestion.new_text.clone()),
-                                        );
-                                    }
+                            let ranges =
+                                search_buffer_ignoring_indentation(&snapshot, &suggestion.old_text)
+                                    .await;
+                            if let Some(range) = ranges.first() {
+                                let edit_start = snapshot.anchor_after(range.start);
+                                let edit_end = snapshot.anchor_before(range.end);
+                                if let Err(ix) = edits.binary_search_by(|(range, _)| {
+                                    range.start.cmp(&edit_start, &snapshot)
+                                }) {
+                                    edits.insert(
+                                        ix,
+                                        (edit_start..edit_end, suggestion.new_text.clone()),
+                                    );
                                 }
                             }
                         }

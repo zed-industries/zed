@@ -753,6 +753,16 @@ impl<'a> Lines<'a> {
         self.done = true;
         Some(&self.current_line)
     }
+
+    pub fn seek(&mut self, offset: usize) {
+        self.chunks.seek(offset);
+        self.current_line.clear();
+        self.done = false;
+    }
+
+    pub fn offset(&self) -> usize {
+        self.chunks.offset()
+    }
 }
 
 #[derive(Clone, Debug, Default)]
