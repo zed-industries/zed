@@ -1,13 +1,15 @@
 use fs::Fs;
 use futures::StreamExt;
-use gpui::{AppContext, DismissEvent, EventEmitter, FocusHandle, FocusableView, Render};
+use gpui::{actions, AppContext, DismissEvent, EventEmitter, FocusHandle, FocusableView, Render};
 use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
-use ui::{prelude::*, Checkbox, Divider, IconButtonShape};
+use ui::{prelude::*, Checkbox, ModalHeader};
 use util::{paths::PROMPTS_DIR, ResultExt};
 use workspace::ModalView;
+
+actions!(prompt_library, [RevealPrompt]);
 
 pub struct PromptLibraryState {
     /// The default prompt all assistant contexts will start with
@@ -49,16 +51,10 @@ impl PromptLibrary {
     }
 
     pub async fn init(fs: Arc<dyn Fs>) -> anyhow::Result<Self> {
-        // -- debug --
-        println!("Initializing prompt library");
-        // -- /debug --
         let prompt_library = PromptLibrary::new();
         prompt_library.load_prompts(fs)?;
         // -- debug --
-        println!(
-            "Loaded {:?} prompts",
-            prompt_library.state.read().prompts.len()
-        );
+        // TODO: Don't load all prompts into the default prompt
         let prompts = prompt_library.state.read().prompts.clone();
         prompt_library.state.write().default_prompts = prompts.keys().cloned().collect();
         // -- /debug --
@@ -91,14 +87,8 @@ impl PromptLibrary {
         let state = self.state.read();
 
         if state.default_prompts.is_empty() {
-            // -- debug --
-            println!("No default prompts set");
-            // -- /debug --
             None
         } else {
-            // -- debug --
-            println!("Default prompts: {:?}", state.default_prompts);
-            // -- /debug --
             Some(self.join_default_prompts())
         }
     }
@@ -229,6 +219,7 @@ impl UserPrompt {
 pub struct PromptManager {
     focus_handle: FocusHandle,
     prompt_library: Arc<PromptLibrary>,
+    active_prompt: Option<String>,
 }
 
 impl PromptManager {
@@ -237,7 +228,16 @@ impl PromptManager {
         Self {
             focus_handle,
             prompt_library,
+            active_prompt: None,
         }
+    }
+
+    pub fn set_active_prompt(&mut self, prompt_id: Option<String>) {
+        self.active_prompt = prompt_id;
+    }
+
+    fn dismiss(&mut self, _: &menu::Cancel, cx: &mut ViewContext<Self>) {
+        cx.emit(DismissEvent);
     }
 }
 
@@ -251,93 +251,211 @@ impl Render for PromptManager {
             .into_iter()
             .collect::<Vec<_>>();
 
+        let active_prompt = self.active_prompt.as_ref().and_then(|id| {
+            prompt_library
+                .prompts_with_ids()
+                .iter()
+                .find(|(prompt_id, _)| prompt_id == id)
+                .map(|(_, prompt)| prompt.clone())
+        });
+
         v_flex()
+            .key_context("PromptManager")
+            .on_action(cx.listener(Self::dismiss))
             .elevation_3(cx)
             .size_full()
             .flex_none()
-            .w(rems(32.))
-            .min_h(rems(1.))
+            .w(rems(54.))
+            .h(rems(40.))
+            .overflow_hidden()
             .child(
-                h_flex()
-                    .justify_between()
-                    .py(Spacing::Medium.rems(cx))
-                    .px(Spacing::Large.rems(cx))
+                ModalHeader::new("prompt-manager-header")
                     .child(Headline::new("Prompt Manager").size(HeadlineSize::Small))
-                    .child(
-                        IconButton::new("dismiss", IconName::Close)
-                            .shape(IconButtonShape::Square)
-                            .on_click(cx.listener(|_, _event, cx| cx.emit(DismissEvent))),
-                    ),
+                    .show_dismiss_button(true),
             )
             .child(
-                v_flex()
-                    .py(Spacing::Medium.rems(cx))
-                    .px(Spacing::Large.rems(cx))
+                h_flex()
+                    .flex_grow()
+                    .overflow_hidden()
+                    .border_t_1()
+                    .border_color(cx.theme().colors().border)
                     .child(
-                        Label::new("Add, remove and discover new contexts for the assistant.")
-                            .color(Color::Muted),
+                        div()
+                            .id("prompt-preview")
+                            .overflow_y_scroll()
+                            .h_full()
+                            .max_w_1_2()
+                            .child(
+                                v_flex()
+                                    .justify_start()
+                                    .py(Spacing::Medium.rems(cx))
+                                    .px(Spacing::Large.rems(cx))
+                                    .bg(cx.theme().colors().surface_background)
+                                    .when_else(
+                                        !prompts.is_empty(),
+                                        |with_items| {
+                                            with_items.children(prompts.into_iter().map(
+                                                |(id, prompt)| {
+                                                    let prompt_library = prompt_library.clone();
+                                                    let prompt = prompt.clone();
+                                                    let prompt_id = id.clone();
+                                                    let shared_string_id: SharedString =
+                                                        id.clone().into();
+
+                                                    let default_prompt_ids =
+                                                        prompt_library.clone().default_prompt_ids();
+                                                    let is_default =
+                                                        default_prompt_ids.contains(&id);
+                                                    // We'll use this for conditionally enabled prompts
+                                                    // like those loaded only for certain languages
+                                                    let is_conditional = false;
+                                                    let selection =
+                                                        match (is_default, is_conditional) {
+                                                            (_, true) => Selection::Indeterminate,
+                                                            (true, _) => Selection::Selected,
+                                                            (false, _) => Selection::Unselected,
+                                                        };
+
+                                                    v_flex()
+                                                    .id(ElementId::Name(
+                                                        format!("prompt-{}", shared_string_id)
+                                                            .into(),
+                                                    ))
+                                                    .p(Spacing::Small.rems(cx))
+
+                                                    .on_click(cx.listener({
+                                                        let prompt_id = prompt_id.clone();
+                                                        move |this, _event, _cx| {
+                                                            this.set_active_prompt(Some(
+                                                                prompt_id.clone(),
+                                                            ));
+                                                        }
+                                                    }))
+                                                    .child(
+                                                        h_flex()
+                                                            .justify_between()
+                                                            .child(
+                                                                h_flex()
+                                                                    .gap(Spacing::Large.rems(cx))
+                                                                    .child(
+                                                                        Checkbox::new(
+                                                                            shared_string_id,
+                                                                            selection,
+                                                                        )
+                                                                        .on_click(move |_, _cx| {
+                                                                            if is_default {
+                                                                                prompt_library
+                                                                        .clone()
+                                                                        .remove_prompt_from_default(
+                                                                            prompt_id.clone(),
+                                                                        )
+                                                                        .log_err();
+                                                                            } else {
+                                                                                prompt_library
+                                                                            .clone()
+                                                                            .add_prompt_to_default(
+                                                                                prompt_id.clone(),
+                                                                            )
+                                                                            .log_err();
+                                                                            }
+                                                                        }),
+                                                                    )
+                                                                    .child(Label::new(
+                                                                        prompt.metadata.title,
+                                                                    )),
+                                                            )
+                                                            .child(div()),
+                                                    )
+                                                },
+                                            ))
+                                        },
+                                        |no_items| {
+                                            no_items.child(
+                                                Label::new("No prompts").color(Color::Placeholder),
+                                            )
+                                        },
+                                    ),
+                            ),
                     )
                     .child(
                         div()
-                            .py(Spacing::Large.rems(cx))
-                            .child(Divider::horizontal()),
-                    )
-                    .when_else(
-                        !prompts.is_empty(),
-                        |with_items| {
-                            with_items.children(prompts.into_iter().map(|(id, prompt)| {
-                                let prompt_library = prompt_library.clone();
-                                let prompt = prompt.clone();
-                                let prompt_id = id.clone();
-                                let shared_string_id: SharedString = id.clone().into();
-
-                                let default_prompt_ids =
-                                    prompt_library.clone().default_prompt_ids();
-                                let is_default = default_prompt_ids.contains(&id);
-                                // We'll use this for conditionally enabled prompts
-                                // like those loaded only for certain languages
-                                let is_conditional = false;
-                                let selection = match (is_default, is_conditional) {
-                                    (_, true) => Selection::Indeterminate,
-                                    (true, _) => Selection::Selected,
-                                    (false, _) => Selection::Unselected,
-                                };
-
-                                v_flex().p(Spacing::Small.rems(cx)).child(
-                                    h_flex()
-                                        .justify_between()
-                                        .child(
-                                            h_flex()
-                                                .gap(Spacing::Large.rems(cx))
+                            .id("prompt-preview")
+                            .overflow_y_scroll()
+                            .border_l_1()
+                            .border_color(cx.theme().colors().border)
+                            .size_full()
+                            .flex_none()
+                            .child(
+                                v_flex()
+                                    .justify_start()
+                                    .py(Spacing::Medium.rems(cx))
+                                    .px(Spacing::Large.rems(cx))
+                                    .gap(Spacing::Large.rems(cx))
+                                    .when_else(
+                                        active_prompt.is_some(),
+                                        |with_prompt| {
+                                            let active_prompt = active_prompt.as_ref().unwrap();
+                                            let meta = &active_prompt.metadata;
+                                            with_prompt
                                                 .child(
-                                                    Checkbox::new(shared_string_id, selection)
-                                                        .on_click(move |_, _cx| {
-                                                            if is_default {
-                                                                prompt_library
-                                                                    .clone()
-                                                                    .remove_prompt_from_default(
-                                                                        prompt_id.clone(),
-                                                                    )
-                                                                    .log_err();
-                                                            } else {
-                                                                prompt_library
-                                                                    .clone()
-                                                                    .add_prompt_to_default(
-                                                                        prompt_id.clone(),
-                                                                    )
-                                                                    .log_err();
-                                                            }
-                                                        }),
+                                                    v_flex()
+                                                        .gap_0p5()
+                                                        .child(
+                                                            Headline::new(meta.title.clone())
+                                                                .size(HeadlineSize::XSmall),
+                                                        )
+                                                        .child(
+                                                            h_flex()
+                                                                .child(
+                                                                    Label::new(meta.author.clone())
+                                                                        .size(LabelSize::XSmall)
+                                                                        .color(Color::Muted),
+                                                                )
+                                                                .when_some(
+                                                                    meta.languages.clone(),
+                                                                    |this, languages| {
+                                                                        this.child(
+                                                                            Label::new(
+                                                                                if languages
+                                                                                    .is_empty()
+                                                                                    || languages[0]
+                                                                                        == "*"
+                                                                                {
+                                                                                    " · Global"
+                                                                                        .to_string()
+                                                                                } else {
+                                                                                    format!(
+                                                                                        " · {}",
+                                                                                        languages
+                                                                                            .join(
+                                                                                            ", "
+                                                                                        )
+                                                                                    )
+                                                                                },
+                                                                            )
+                                                                            .size(LabelSize::XSmall)
+                                                                            .color(Color::Muted),
+                                                                        )
+                                                                    },
+                                                                ),
+                                                        ),
                                                 )
-                                                .child(Label::new(prompt.metadata.title)),
-                                        )
-                                        .child(div()),
-                                )
-                            }))
-                        },
-                        |no_items| {
-                            no_items.child(Label::new("No prompts").color(Color::Placeholder))
-                        },
+                                                .child(
+                                                    div()
+                                                        .w_full()
+                                                        .max_w(rems(30.))
+                                                        .text_ui(cx)
+                                                        .child(active_prompt.content.clone()),
+                                                )
+                                        },
+                                        |without_prompt| {
+                                            without_prompt.justify_center().items_center().child(
+                                                Label::new("Select a prompt to view details.")
+                                                    .color(Color::Placeholder),
+                                            )
+                                        },
+                                    ),
+                            ),
                     ),
             )
     }
