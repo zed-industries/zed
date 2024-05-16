@@ -1,4 +1,4 @@
-use crate::AppContext;
+use crate::{AppContext, BorrowAppContext};
 
 /// A marker trait for types that can be stored in GPUI's global state.
 ///
@@ -10,6 +10,9 @@ use crate::AppContext;
 /// Implement this on types you want to store in the context as a global.
 pub trait Global: 'static {
     // This trait is intentionally left empty, by virtue of being a marker trait.
+    //
+    // Use additional traits with blanket implementations to attach functionality
+    // to types that implement `Global`.
 }
 
 /// A trait for reading a global value from the context.
@@ -23,5 +26,26 @@ pub trait ReadGlobal<'a, Output = &'a Self> {
 impl<'a, T: Global> ReadGlobal<'a> for T {
     fn global(cx: &'a AppContext) -> &'a Self {
         cx.global::<T>()
+    }
+}
+
+/// A trait for updating a global value in the context.
+pub trait UpdateGlobal {
+    /// Updates the global instance of the implementing type using the provided closure.
+    ///
+    /// This method provides the closure with mutable access to the context and the global simultaneously.
+    fn update_global<C, F, R>(cx: &mut C, update: F) -> R
+    where
+        C: BorrowAppContext,
+        F: FnOnce(&mut Self, &mut C) -> R;
+}
+
+impl<T: Global> UpdateGlobal for T {
+    fn update_global<C, F, R>(cx: &mut C, update: F) -> R
+    where
+        C: BorrowAppContext,
+        F: FnOnce(&mut Self, &mut C) -> R,
+    {
+        cx.update_global(update)
     }
 }
