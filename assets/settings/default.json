@@ -842,14 +842,9 @@
   "line_indicator_format": "long",
   // Set a proxy to use. The proxy protocol is specified by the URI scheme.
   //
-  // - `http`: Proxy. Default when no scheme is specified.
-  // - `https`: HTTPS Proxy. (Added in 7.52.0 for OpenSSL, GnuTLS and
-  //   NSS)
-  // - `socks4`: SOCKS4 Proxy.
-  // - `socks4a`: SOCKS4a Proxy. Proxy resolves URL hostname.
-  // - `socks5`: SOCKS5 Proxy.
-  // - `socks5h`: SOCKS5 Proxy. Proxy resolves URL hostname.
-  //
+  // Supported URI scheme: `http`, `https`, `socks4`, `socks4a`, `socks5`,
+  // `socks5h`. `http` will be used when no scheme is specified.
+  // 
   // By default no proxy will be used, or Zed will try get proxy settings from
   // environment variables.
   //
