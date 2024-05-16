@@ -273,7 +273,7 @@ mod tests {
     };
     use fs::FakeFs;
     use futures::StreamExt;
-    use gpui::{BackgroundExecutor, BorrowAppContext, Context, TestAppContext};
+    use gpui::{BackgroundExecutor, Context, TestAppContext, UpdateGlobal};
     use indoc::indoc;
     use language::{
         language_settings::{AllLanguageSettings, AllLanguageSettingsContent},
@@ -1138,7 +1138,7 @@ mod tests {
             editor::init_settings(cx);
             Project::init_settings(cx);
             workspace::init_settings(cx);
-            cx.update_global(|store: &mut SettingsStore, cx| {
+            SettingsStore::update_global(cx, |store: &mut SettingsStore, cx| {
                 store.update_user_settings::<AllLanguageSettings>(cx, f);
             });
         });

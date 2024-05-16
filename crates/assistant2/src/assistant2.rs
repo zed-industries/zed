@@ -24,7 +24,8 @@ use fs::Fs;
 use futures::{future::join_all, StreamExt};
 use gpui::{
     list, AnyElement, AppContext, AsyncWindowContext, ClickEvent, EventEmitter, FocusHandle,
-    FocusableView, ListAlignment, ListState, Model, ReadGlobal, Render, Task, View, WeakView,
+    FocusableView, ListAlignment, ListState, Model, ReadGlobal, Render, Task, UpdateGlobal, View,
+    WeakView,
 };
 use language::{language_settings::SoftWrap, LanguageRegistry};
 use markdown::{Markdown, MarkdownStyle};
@@ -124,7 +125,7 @@ impl AssistantPanel {
             })?;
 
             cx.new_view(|cx| {
-                let project_index = cx.update_global(|semantic_index: &mut SemanticIndex, cx| {
+                let project_index = SemanticIndex::update_global(cx, |semantic_index, cx| {
                     semantic_index.project_index(project.clone(), cx)
                 });
 

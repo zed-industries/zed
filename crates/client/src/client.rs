@@ -17,8 +17,7 @@ use futures::{
     TryFutureExt as _, TryStreamExt,
 };
 use gpui::{
-    actions, AnyModel, AnyWeakModel, AppContext, AsyncAppContext, BorrowAppContext, Global, Model,
-    Task, WeakModel,
+    actions, AnyModel, AnyWeakModel, AppContext, AsyncAppContext, Global, Model, Task, WeakModel,
 };
 use http::{HttpClient, HttpClientWithUrl};
 use lazy_static::lazy_static;
@@ -29,7 +28,7 @@ use release_channel::{AppVersion, ReleaseChannel};
 use rpc::proto::{AnyTypedEnvelope, EntityMessage, EnvelopedMessage, PeerId, RequestMessage};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use settings::{Settings, SettingsSources, SettingsStore};
+use settings::{Settings, SettingsSources};
 use std::fmt;
 use std::pin::Pin;
 use std::{
@@ -141,10 +140,8 @@ impl Settings for ProxySettings {
 
 pub fn init_settings(cx: &mut AppContext) {
     TelemetrySettings::register(cx);
-    cx.update_global(|store: &mut SettingsStore, cx| {
-        store.register_setting::<ClientSettings>(cx);
-        store.register_setting::<ProxySettings>(cx);
-    });
+    ClientSettings::register(cx);
+    ProxySettings::register(cx);
 }
 
 pub fn init(client: &Arc<Client>, cx: &mut AppContext) {

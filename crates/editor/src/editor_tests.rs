@@ -9,7 +9,7 @@ use crate::{
     JoinLines,
 };
 use futures::StreamExt;
-use gpui::{div, TestAppContext, VisualTestContext, WindowBounds, WindowOptions};
+use gpui::{div, TestAppContext, UpdateGlobal, VisualTestContext, WindowBounds, WindowOptions};
 use indoc::indoc;
 use language::{
     language_settings::{
@@ -11436,7 +11436,7 @@ pub(crate) fn update_test_language_settings(
     f: impl Fn(&mut AllLanguageSettingsContent),
 ) {
     _ = cx.update(|cx| {
-        cx.update_global(|store: &mut SettingsStore, cx| {
+        SettingsStore::update_global(cx, |store, cx| {
             store.update_user_settings::<AllLanguageSettings>(cx, f);
         });
     });
@@ -11447,7 +11447,7 @@ pub(crate) fn update_test_project_settings(
     f: impl Fn(&mut ProjectSettings),
 ) {
     _ = cx.update(|cx| {
-        cx.update_global(|store: &mut SettingsStore, cx| {
+        SettingsStore::update_global(cx, |store, cx| {
             store.update_user_settings::<ProjectSettings>(cx, f);
         });
     });
