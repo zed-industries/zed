@@ -491,11 +491,7 @@ impl X11WindowStatePtr {
         let mut state = self.state.borrow_mut();
         if let Some(mut input_handler) = state.input_handler.take() {
             drop(state);
-            input_handler.replace_and_mark_text_in_range(
-                None,
-                &text,
-                None,
-            );
+            input_handler.replace_and_mark_text_in_range(None, &text, None);
             let mut state = self.state.borrow_mut();
             state.input_handler = Some(input_handler);
         }
