@@ -24,7 +24,7 @@ use fs::Fs;
 use futures::{future::join_all, StreamExt};
 use gpui::{
     list, AnyElement, AppContext, AsyncWindowContext, ClickEvent, EventEmitter, FocusHandle,
-    FocusableView, ListAlignment, ListState, Model, Render, Task, View, WeakView,
+    FocusableView, ListAlignment, ListState, Model, ReadGlobal, Render, Task, View, WeakView,
 };
 use language::{language_settings::SoftWrap, LanguageRegistry};
 use markdown::{Markdown, MarkdownStyle};
@@ -288,7 +288,7 @@ impl AssistantChat {
         workspace: WeakView<Workspace>,
         cx: &mut ViewContext<Self>,
     ) -> Self {
-        let model = CompletionProvider::get(cx).default_model();
+        let model = CompletionProvider::global(cx).default_model();
         let view = cx.view().downgrade();
         let list_state = ListState::new(
             0,
@@ -550,7 +550,7 @@ impl AssistantChat {
                 let messages = messages.await?;
 
                 let completion = cx.update(|cx| {
-                    CompletionProvider::get(cx).complete(
+                    CompletionProvider::global(cx).complete(
                         model_name,
                         messages,
                         Vec::new(),

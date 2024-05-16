@@ -12,7 +12,7 @@ use assistant_settings::{AnthropicModel, AssistantSettings, OpenAiModel, ZedDotD
 use client::{proto, Client};
 use command_palette_hooks::CommandPaletteFilter;
 pub(crate) use completion_provider::*;
-use gpui::{actions, AppContext, BorrowAppContext, Global, SharedString};
+use gpui::{actions, AppContext, Global, SharedString, UpdateGlobal};
 pub(crate) use saved_conversation::*;
 use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsStore};
@@ -233,13 +233,13 @@ pub fn init(client: Arc<Client>, cx: &mut AppContext) {
     CommandPaletteFilter::update_global(cx, |filter, _cx| {
         filter.hide_namespace(Assistant::NAMESPACE);
     });
-    cx.update_global(|assistant: &mut Assistant, cx: &mut AppContext| {
+    Assistant::update_global(cx, |assistant, cx| {
         let settings = AssistantSettings::get_global(cx);
 
         assistant.set_enabled(settings.enabled, cx);
     });
     cx.observe_global::<SettingsStore>(|cx| {
-        cx.update_global(|assistant: &mut Assistant, cx: &mut AppContext| {
+        Assistant::update_global(cx, |assistant, cx| {
             let settings = AssistantSettings::get_global(cx);
 
             assistant.set_enabled(settings.enabled, cx);

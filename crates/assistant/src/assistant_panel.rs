@@ -28,8 +28,8 @@ use gpui::{
     AsyncWindowContext, AvailableSpace, ClipboardItem, Context, Entity, EventEmitter, FocusHandle,
     FocusableView, FontStyle, FontWeight, HighlightStyle, InteractiveElement, IntoElement, Model,
     ModelContext, ParentElement, Pixels, Render, SharedString, StatefulInteractiveElement, Styled,
-    Subscription, Task, TextStyle, UniformListScrollHandle, View, ViewContext, VisualContext,
-    WeakModel, WeakView, WhiteSpace, WindowContext,
+    Subscription, Task, TextStyle, UniformListScrollHandle, UpdateGlobal, View, ViewContext,
+    VisualContext, WeakModel, WeakView, WhiteSpace, WindowContext,
 };
 use language::{language_settings::SoftWrap, Buffer, LanguageRegistry, Point, ToOffset as _};
 use multi_buffer::MultiBufferRow;
@@ -240,7 +240,7 @@ impl AssistantPanel {
             || prev_settings_version != CompletionProvider::global(cx).settings_version()
         {
             self.authentication_prompt =
-                Some(cx.update_global::<CompletionProvider, _>(|provider, cx| {
+                Some(CompletionProvider::update_global(cx, |provider, cx| {
                     provider.authentication_prompt(cx)
                 }));
         }
@@ -1088,7 +1088,7 @@ impl AssistantPanel {
     }
 
     fn authenticate(&mut self, cx: &mut ViewContext<Self>) -> Task<Result<()>> {
-        cx.update_global::<CompletionProvider, _>(|provider, cx| provider.authenticate(cx))
+        CompletionProvider::update_global(cx, |provider, cx| provider.authenticate(cx))
     }
 
     fn render_signed_in(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {

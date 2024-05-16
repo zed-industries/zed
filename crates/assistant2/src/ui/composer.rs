@@ -3,7 +3,7 @@ use crate::{
     AssistantChat, CompletionProvider,
 };
 use editor::{Editor, EditorElement, EditorStyle};
-use gpui::{AnyElement, FontStyle, FontWeight, TextStyle, View, WeakView, WhiteSpace};
+use gpui::{AnyElement, FontStyle, FontWeight, ReadGlobal, TextStyle, View, WeakView, WhiteSpace};
 use settings::Settings;
 use theme::ThemeSettings;
 use ui::{popover_menu, prelude::*, ButtonLike, ContextMenu, Divider, TextSize, Tooltip};
@@ -139,7 +139,7 @@ impl RenderOnce for ModelSelector {
         popover_menu("model-switcher")
             .menu(move |cx| {
                 ContextMenu::build(cx, |mut menu, cx| {
-                    for model in CompletionProvider::get(cx).available_models() {
+                    for model in CompletionProvider::global(cx).available_models() {
                         menu = menu.custom_entry(
                             {
                                 let model = model.clone();
