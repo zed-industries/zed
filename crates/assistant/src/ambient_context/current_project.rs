@@ -1,3 +1,4 @@
+use std::fmt::Write;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
@@ -92,32 +93,54 @@ impl CurrentProjectContext {
         let cargo_toml: cargo_toml::Manifest = toml::from_str(&buffer)?;
 
         let mut message = String::new();
+        writeln!(message, "You are in a Rust project.")?;
 
-        let name = cargo_toml
-            .package
-            .as_ref()
-            .map(|package| package.name.as_str());
-        if let Some(name) = name {
-            message.push_str(&format!(" named \"{name}\""));
-        }
-        message.push_str(". ");
+        if let Some(workspace) = cargo_toml.workspace {
+            writeln!(
+                message,
+                "The project is a Cargo workspace with the following members:"
+            )?;
+            for member in workspace.members {
+                writeln!(message, "- {member}")?;
+            }
 
-        let description = cargo_toml
-            .package
-            .as_ref()
-            .and_then(|package| package.description.as_ref())
-            .and_then(|description| description.get().ok().cloned());
-        if let Some(description) = description.as_ref() {
-            message.push_str("It describes itself as ");
-            message.push_str(&format!("\"{description}\""));
-            message.push_str(". ");
-        }
+            if !workspace.default_members.is_empty() {
+                writeln!(message, "The default members are:")?;
+                for member in workspace.default_members {
+                    writeln!(message, "- {member}")?;
+                }
+            }
 
-        let dependencies = cargo_toml.dependencies.keys().cloned().collect::<Vec<_>>();
-        if !dependencies.is_empty() {
-            message.push_str("The following dependencies are installed: ");
-            message.push_str(&dependencies.join(", "));
-            message.push_str(". ");
+            if !workspace.dependencies.is_empty() {
+                writeln!(
+                    message,
+                    "The following workspace dependencies are installed:"
+                )?;
+                for dependency in workspace.dependencies.keys() {
+                    writeln!(message, "- {dependency}")?;
+                }
+            }
+        } else if let Some(package) = cargo_toml.package {
+            writeln!(
+                message,
+                "The project name is \"{name}\".",
+                name = package.name
+            )?;
+
+            let description = package
+                .description
+                .as_ref()
+                .and_then(|description| description.get().ok().cloned());
+            if let Some(description) = description.as_ref() {
+                writeln!(message, "It describes itself as \"{description}\".")?;
+            }
+
+            if !cargo_toml.dependencies.is_empty() {
+                writeln!(message, "The following dependencies are installed:")?;
+                for dependency in cargo_toml.dependencies.keys() {
+                    writeln!(message, "- {dependency}")?;
+                }
+            }
         }
 
         Ok(message)
