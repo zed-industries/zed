@@ -135,19 +135,11 @@ impl schemars::JsonSchema for FontFeatures {
         )));
         {
             let mut property = SchemaObject::default();
-            property.instance_type = Some(schemars::schema::SingleOrVec::Single(Box::new(
+            property.instance_type = Some(schemars::schema::SingleOrVec::Vec(vec![
                 InstanceType::Boolean,
-            )));
-            schema
-                .object()
-                .pattern_properties
-                .insert("[0-9a-zA-Z]{4}$".into(), property.into());
-        }
-        {
-            let mut property = SchemaObject::default();
-            property.instance_type = Some(schemars::schema::SingleOrVec::Single(Box::new(
                 InstanceType::Integer,
-            )));
+            ]));
+            property.number().multiple_of = Some(1.0);
             property.number().minimum = Some(0.0);
             schema
                 .object()
