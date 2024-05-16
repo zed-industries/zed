@@ -266,14 +266,17 @@ impl NodeRuntime for RealNodeRuntime {
                 command.args(["--prefix".into(), directory.to_path_buf()]);
             }
 
-            if let Some(proxy) = http::http_proxy_from_env() {
-                command.args(["--proxy".into(), proxy.to_string()]);
+            if let Some(proxy) = self.http.proxy_settings() {
+                command.args(["--proxy", proxy]);
             }
 
             #[cfg(windows)]
             {
                 // SYSTEMROOT is a critical environment variables for Windows.
-                if let Some(val) = std::env::var("SYSTEMROOT") {
+                if let Some(val) = std::env::var("SYSTEMROOT")
+                    .context("Missing environment variable: SYSTEMROOT!")
+                    .log_err()
+                {
                     command.env("SYSTEMROOT", val);
                 }
                 command.creation_flags(windows::Win32::System::Threading::CREATE_NO_WINDOW.0);
