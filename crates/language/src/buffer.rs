@@ -13,7 +13,8 @@ use crate::{
         SyntaxLayer, SyntaxMap, SyntaxMapCapture, SyntaxMapCaptures, SyntaxMapMatches,
         SyntaxSnapshot, ToTreeSitterPoint,
     },
-    LanguageScope, Outline,
+    task_context::RunnableRange,
+    LanguageScope, Outline, RunnableTag,
 };
 use anyhow::{anyhow, Context, Result};
 pub use clock::ReplicaId;
@@ -74,11 +75,13 @@ pub enum Capability {
     ReadOnly,
 }
 
+pub type BufferRow = u32;
+
 /// An in-memory representation of a source code file, including its text,
 /// syntax trees, git status, and diagnostics.
 pub struct Buffer {
     text: TextBuffer,
-    diff_base: Option<String>,
+    diff_base: Option<Rope>,
     git_diff: git::diff::BufferDiff,
     file: Option<Arc<dyn File>>,
     /// The mtime of the file when this buffer was last loaded from
@@ -109,6 +112,7 @@ pub struct Buffer {
     deferred_ops: OperationQueue<Operation>,
     capability: Capability,
     has_conflict: bool,
+    diff_base_version: usize,
 }
 
 /// An immutable, cheaply cloneable representation of a fixed
@@ -304,6 +308,8 @@ pub enum Event {
     Reloaded,
     /// The buffer's diff_base changed.
     DiffBaseChanged,
+    /// Buffer's excerpts for a certain diff base were recalculated.
+    DiffUpdated,
     /// The buffer's language was changed.
     LanguageChanged,
     /// The buffer's syntax trees were updated.
@@ -473,6 +479,7 @@ pub struct Chunk<'a> {
 }
 
 /// A set of edits to a given version of a buffer, computed asynchronously.
+#[derive(Debug)]
 pub struct Diff {
     pub(crate) base_version: clock::Global,
     line_ending: LineEnding,
@@ -498,11 +505,37 @@ pub enum CharKind {
     Word,
 }
 
+/// A runnable is a set of data about a region that could be resolved into a task
+pub struct Runnable {
+    pub tags: SmallVec<[RunnableTag; 1]>,
+    pub language: Arc<Language>,
+    pub buffer: BufferId,
+}
+
 impl Buffer {
     /// Create a new buffer with the given base text.
     pub fn local<T: Into<String>>(base_text: T, cx: &mut ModelContext<Self>) -> Self {
         Self::build(
             TextBuffer::new(0, cx.entity_id().as_non_zero_u64().into(), base_text.into()),
+            None,
+            None,
+            Capability::ReadWrite,
+        )
+    }
+
+    /// Create a new buffer with the given base text that has proper line endings and other normalization applied.
+    pub fn local_normalized(
+        base_text_normalized: Rope,
+        line_ending: LineEnding,
+        cx: &mut ModelContext<Self>,
+    ) -> Self {
+        Self::build(
+            TextBuffer::new_normalized(
+                0,
+                cx.entity_id().as_non_zero_u64().into(),
+                line_ending,
+                base_text_normalized,
+            ),
             None,
             None,
             Capability::ReadWrite,
@@ -535,12 +568,7 @@ impl Buffer {
         let buffer_id = BufferId::new(message.id)
             .with_context(|| anyhow!("Could not deserialize buffer_id"))?;
         let buffer = TextBuffer::new(replica_id, buffer_id, message.base_text);
-        let mut this = Self::build(
-            buffer,
-            message.diff_base.map(|text| text.into_boxed_str().into()),
-            file,
-            capability,
-        );
+        let mut this = Self::build(buffer, message.diff_base, file, capability);
         this.text.set_line_ending(proto::deserialize_line_ending(
             rpc::proto::LineEnding::from_i32(message.line_ending)
                 .ok_or_else(|| anyhow!("missing line_ending"))?,
@@ -642,7 +670,13 @@ impl Buffer {
             transaction_depth: 0,
             was_dirty_before_starting_transaction: None,
             text: buffer,
-            diff_base,
+            diff_base: diff_base
+                .map(|mut raw_diff_base| {
+                    LineEnding::normalize(&mut raw_diff_base);
+                    raw_diff_base
+                })
+                .map(Rope::from),
+            diff_base_version: 0,
             git_diff: git::diff::BufferDiff::new(),
             file,
             capability,
@@ -864,14 +898,20 @@ impl Buffer {
     }
 
     /// Returns the current diff base, see [Buffer::set_diff_base].
-    pub fn diff_base(&self) -> Option<&str> {
-        self.diff_base.as_deref()
+    pub fn diff_base(&self) -> Option<&Rope> {
+        self.diff_base.as_ref()
     }
 
     /// Sets the text that will be used to compute a Git diff
     /// against the buffer text.
     pub fn set_diff_base(&mut self, diff_base: Option<String>, cx: &mut ModelContext<Self>) {
-        self.diff_base = diff_base;
+        self.diff_base = diff_base
+            .map(|mut raw_diff_base| {
+                LineEnding::normalize(&mut raw_diff_base);
+                raw_diff_base
+            })
+            .map(Rope::from);
+        self.diff_base_version += 1;
         if let Some(recalc_task) = self.git_diff_recalc(cx) {
             cx.spawn(|buffer, mut cx| async move {
                 recalc_task.await;
@@ -885,9 +925,14 @@ impl Buffer {
         }
     }
 
+    /// Returns a number, unique per diff base set to the buffer.
+    pub fn diff_base_version(&self) -> usize {
+        self.diff_base_version
+    }
+
     /// Recomputes the Git diff status.
     pub fn git_diff_recalc(&mut self, cx: &mut ModelContext<Self>) -> Option<Task<()>> {
-        let diff_base = self.diff_base.clone()?; // TODO: Make this an Arc
+        let diff_base = self.diff_base.clone()?;
         let snapshot = self.snapshot();
 
         let mut diff = self.git_diff.clone();
@@ -898,9 +943,10 @@ impl Buffer {
 
         Some(cx.spawn(|this, mut cx| async move {
             let buffer_diff = diff.await;
-            this.update(&mut cx, |this, _| {
+            this.update(&mut cx, |this, cx| {
                 this.git_diff = buffer_diff;
                 this.git_diff_update_count += 1;
+                cx.emit(Event::DiffUpdated);
             })
             .ok();
         }))
@@ -2042,7 +2088,7 @@ impl Buffer {
 
     /// Override current completion triggers with the user-provided completion triggers.
     pub fn set_completion_triggers(&mut self, triggers: Vec<String>, cx: &mut ModelContext<Self>) {
-        self.completion_triggers = triggers.clone();
+        self.completion_triggers.clone_from(&triggers);
         self.completion_triggers_timestamp = self.text.lamport_clock.tick();
         self.send_operation(
             Operation::UpdateCompletionTriggers {
@@ -2948,6 +2994,71 @@ impl BufferSnapshot {
         })
     }
 
+    pub fn runnable_ranges(
+        &self,
+        range: Range<Anchor>,
+    ) -> impl Iterator<Item = RunnableRange> + '_ {
+        let offset_range = range.start.to_offset(self)..range.end.to_offset(self);
+
+        let mut syntax_matches = self.syntax.matches(offset_range, self, |grammar| {
+            grammar.runnable_config.as_ref().map(|config| &config.query)
+        });
+
+        let test_configs = syntax_matches
+            .grammars()
+            .iter()
+            .map(|grammar| grammar.runnable_config.as_ref())
+            .collect::<Vec<_>>();
+
+        iter::from_fn(move || {
+            let test_range = syntax_matches.peek().and_then(|mat| {
+                test_configs[mat.grammar_index].and_then(|test_configs| {
+                    let mut tags: SmallVec<[(Range<usize>, RunnableTag); 1]> =
+                        SmallVec::from_iter(mat.captures.iter().filter_map(|capture| {
+                            test_configs
+                                .runnable_tags
+                                .get(&capture.index)
+                                .cloned()
+                                .map(|tag_name| (capture.node.byte_range(), tag_name))
+                        }));
+                    let maximum_range = tags
+                        .iter()
+                        .max_by_key(|(byte_range, _)| byte_range.len())
+                        .map(|(range, _)| range)?
+                        .clone();
+                    tags.sort_by_key(|(range, _)| range == &maximum_range);
+                    let split_point = tags.partition_point(|(range, _)| range != &maximum_range);
+                    let (extra_captures, tags) = tags.split_at(split_point);
+                    let extra_captures = extra_captures
+                        .into_iter()
+                        .map(|(range, name)| {
+                            (
+                                name.0.to_string(),
+                                self.text_for_range(range.clone()).collect::<String>(),
+                            )
+                        })
+                        .collect();
+                    Some(RunnableRange {
+                        run_range: mat
+                            .captures
+                            .iter()
+                            .find(|capture| capture.index == test_configs.run_capture_ix)
+                            .map(|mat| mat.node.byte_range())?,
+                        runnable: Runnable {
+                            tags: tags.into_iter().cloned().map(|(_, tag)| tag).collect(),
+                            language: mat.language,
+                            buffer: self.remote_id(),
+                        },
+                        extra_captures,
+                        buffer_id: self.remote_id(),
+                    })
+                })
+            });
+            syntax_matches.advance();
+            test_range
+        })
+    }
+
     /// Returns selections for remote peers intersecting the given range.
     #[allow(clippy::type_complexity)]
     pub fn remote_selections_in_range(
@@ -2996,7 +3107,7 @@ impl BufferSnapshot {
     /// row range.
     pub fn git_diff_hunks_in_row_range(
         &self,
-        range: Range<u32>,
+        range: Range<BufferRow>,
     ) -> impl '_ + Iterator<Item = git::diff::DiffHunk<u32>> {
         self.git_diff.hunks_in_row_range(range, self)
     }
@@ -3049,7 +3160,21 @@ impl BufferSnapshot {
                 .iter_mut()
                 .enumerate()
                 .flat_map(|(ix, iter)| Some((ix, iter.peek()?)))
-                .min_by(|(_, a), (_, b)| a.range.start.cmp(&b.range.start))?;
+                .min_by(|(_, a), (_, b)| {
+                    let cmp = a
+                        .range
+                        .start
+                        .cmp(&b.range.start)
+                        // when range is equal, sort by diagnostic severity
+                        .then(a.diagnostic.severity.cmp(&b.diagnostic.severity))
+                        // and stabilize order with group_id
+                        .then(a.diagnostic.group_id.cmp(&b.diagnostic.group_id));
+                    if reversed {
+                        cmp.reverse()
+                    } else {
+                        cmp
+                    }
+                })?;
             iterators[next_ix].next()
         })
     }

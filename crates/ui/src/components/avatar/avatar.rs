@@ -115,7 +115,7 @@ impl RenderOnce for Avatar {
                 div
             })
             .when_some(self.border_color, |this, color| {
-                this.border_width(border_width).border_color(color)
+                this.border(border_width).border_color(color)
             })
             .child(
                 self.image

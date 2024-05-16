@@ -12,6 +12,8 @@ use ui::prelude::*;
 #[derive(Debug, PartialEq, Eq, Clone, Copy, strum::Display, EnumString, EnumIter)]
 #[strum(serialize_all = "snake_case")]
 pub enum ComponentStory {
+    AssistantChatMessage,
+    AssistantChatNotice,
     AutoHeightEditor,
     Avatar,
     Button,
@@ -36,12 +38,17 @@ pub enum ComponentStory {
     Text,
     TitleBar,
     ToggleButton,
+    ToolStrip,
     ViewportUnits,
 }
 
 impl ComponentStory {
     pub fn story(&self, cx: &mut WindowContext) -> AnyView {
         match self {
+            Self::AssistantChatMessage => {
+                cx.new_view(|_cx| assistant2::ui::ChatMessageStory).into()
+            }
+            Self::AssistantChatNotice => cx.new_view(|_cx| assistant2::ui::ChatNoticeStory).into(),
             Self::AutoHeightEditor => AutoHeightEditorStory::new(cx).into(),
             Self::Avatar => cx.new_view(|_| ui::AvatarStory).into(),
             Self::Button => cx.new_view(|_| ui::ButtonStory).into(),
@@ -67,6 +74,7 @@ impl ComponentStory {
             Self::TabBar => cx.new_view(|_| ui::TabBarStory).into(),
             Self::TitleBar => cx.new_view(|_| ui::TitleBarStory).into(),
             Self::ToggleButton => cx.new_view(|_| ui::ToggleButtonStory).into(),
+            Self::ToolStrip => cx.new_view(|_| ui::ToolStripStory).into(),
             Self::ViewportUnits => cx.new_view(|_| crate::stories::ViewportUnitsStory).into(),
             Self::Picker => PickerStory::new(cx).into(),
         }

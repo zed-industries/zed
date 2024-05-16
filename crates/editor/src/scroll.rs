@@ -6,8 +6,8 @@ use crate::{
     display_map::{DisplaySnapshot, ToDisplayPoint},
     hover_popover::hide_hover,
     persistence::DB,
-    Anchor, DisplayPoint, Editor, EditorEvent, EditorMode, EditorSettings, InlayHintRefreshReason,
-    MultiBufferSnapshot, ToPoint,
+    Anchor, DisplayPoint, DisplayRow, Editor, EditorEvent, EditorMode, EditorSettings,
+    InlayHintRefreshReason, MultiBufferSnapshot, RowExt, ToPoint,
 };
 pub use autoscroll::{Autoscroll, AutoscrollStrategy};
 use gpui::{point, px, AppContext, Entity, Global, Pixels, Task, ViewContext, WindowContext};
@@ -48,7 +48,7 @@ impl ScrollAnchor {
         if self.anchor == Anchor::min() {
             scroll_position.y = 0.;
         } else {
-            let scroll_top = self.anchor.to_display_point(snapshot).row() as f32;
+            let scroll_top = self.anchor.to_display_point(snapshot).row().as_f32();
             scroll_position.y = scroll_top + scroll_position.y;
         }
         scroll_position
@@ -137,6 +137,7 @@ pub struct ScrollManager {
     hide_scrollbar_task: Option<Task<()>>,
     dragging_scrollbar: bool,
     visible_line_count: Option<f32>,
+    forbid_vertical_scroll: bool,
 }
 
 impl ScrollManager {
@@ -151,6 +152,7 @@ impl ScrollManager {
             dragging_scrollbar: false,
             last_autoscroll: None,
             visible_line_count: None,
+            forbid_vertical_scroll: false,
         }
     }
 
@@ -185,6 +187,9 @@ impl ScrollManager {
         workspace_id: Option<WorkspaceId>,
         cx: &mut ViewContext<Editor>,
     ) {
+        if self.forbid_vertical_scroll {
+            return;
+        }
         let (new_anchor, top_row) = if scroll_position.y <= 0. {
             (
                 ScrollAnchor {
@@ -195,7 +200,7 @@ impl ScrollManager {
             )
         } else {
             let scroll_top_buffer_point =
-                DisplayPoint::new(scroll_position.y as u32, 0).to_point(&map);
+                DisplayPoint::new(DisplayRow(scroll_position.y as u32), 0).to_point(&map);
             let top_anchor = map
                 .buffer_snapshot
                 .anchor_at(scroll_top_buffer_point, Bias::Right);
@@ -205,7 +210,7 @@ impl ScrollManager {
                     anchor: top_anchor,
                     offset: point(
                         scroll_position.x.max(0.),
-                        scroll_position.y - top_anchor.to_display_point(&map).row() as f32,
+                        scroll_position.y - top_anchor.to_display_point(&map).row().as_f32(),
                     ),
                 },
                 scroll_top_buffer_point.row,
@@ -224,6 +229,9 @@ impl ScrollManager {
         workspace_id: Option<WorkspaceId>,
         cx: &mut ViewContext<Editor>,
     ) {
+        if self.forbid_vertical_scroll {
+            return;
+        }
         self.anchor = anchor;
         cx.emit(EditorEvent::ScrollPositionChanged { local, autoscroll });
         self.show_scrollbar(cx);
@@ -298,6 +306,14 @@ impl ScrollManager {
             false
         }
     }
+
+    pub fn set_forbid_vertical_scroll(&mut self, forbid: bool) {
+        self.forbid_vertical_scroll = forbid;
+    }
+
+    pub fn forbid_vertical_scroll(&self) -> bool {
+        self.forbid_vertical_scroll
+    }
 }
 
 impl Editor {
@@ -334,6 +350,9 @@ impl Editor {
         scroll_delta: gpui::Point<f32>,
         cx: &mut ViewContext<Self>,
     ) {
+        if self.scroll_manager.forbid_vertical_scroll {
+            return;
+        }
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
         let position = self.scroll_manager.anchor.scroll_position(&display_map) + scroll_delta;
         self.set_scroll_position_taking_display_map(position, true, false, display_map, cx);
@@ -344,6 +363,9 @@ impl Editor {
         scroll_position: gpui::Point<f32>,
         cx: &mut ViewContext<Self>,
     ) {
+        if self.scroll_manager.forbid_vertical_scroll {
+            return;
+        }
         self.set_scroll_position_internal(scroll_position, true, false, cx);
     }
 
@@ -450,7 +472,7 @@ impl Editor {
         }
 
         if let Some(visible_lines) = self.visible_line_count() {
-            if newest_head.row() < screen_top.row() + visible_lines as u32 {
+            if newest_head.row() < DisplayRow(screen_top.row().0 + visible_lines as u32) {
                 return Ordering::Equal;
             }
         }

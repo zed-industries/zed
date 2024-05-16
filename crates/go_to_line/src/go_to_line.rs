@@ -120,7 +120,7 @@ impl GoToLine {
                 let anchor = snapshot.buffer_snapshot.anchor_before(point);
                 active_editor.clear_row_highlights::<GoToLineRowHighlights>();
                 active_editor.highlight_rows::<GoToLineRowHighlights>(
-                    anchor..anchor,
+                    anchor..=anchor,
                     Some(cx.theme().colors().editor_highlighted_line_background),
                     cx,
                 );
@@ -221,6 +221,7 @@ impl Render for GoToLine {
 mod tests {
     use std::sync::Arc;
 
+    use collections::HashSet;
     use gpui::{TestAppContext, VisualTestContext};
     use indoc::indoc;
     use project::{FakeFs, Project};
@@ -348,7 +349,11 @@ mod tests {
 
     fn highlighted_display_rows(editor: &View<Editor>, cx: &mut VisualTestContext) -> Vec<u32> {
         editor.update(cx, |editor, cx| {
-            editor.highlighted_display_rows(cx).into_keys().collect()
+            editor
+                .highlighted_display_rows(HashSet::default(), cx)
+                .into_keys()
+                .map(|r| r.0)
+                .collect()
         })
     }
 

@@ -3,8 +3,8 @@ use crate::{
         all_language_settings, AllLanguageSettingsContent, LanguageSettingsContent,
     },
     task_context::ContextProvider,
-    CachedLspAdapter, File, Language, LanguageConfig, LanguageId, LanguageMatcher,
-    LanguageServerName, LspAdapter, LspAdapterDelegate, PARSER, PLAIN_TEXT,
+    with_parser, CachedLspAdapter, File, Language, LanguageConfig, LanguageId, LanguageMatcher,
+    LanguageServerName, LspAdapter, LspAdapterDelegate, PLAIN_TEXT,
 };
 use anyhow::{anyhow, Context as _, Result};
 use collections::{hash_map, HashMap};
@@ -46,6 +46,8 @@ struct LanguageRegistryState {
     available_languages: Vec<AvailableLanguage>,
     grammars: HashMap<Arc<str>, AvailableGrammar>,
     lsp_adapters: HashMap<Arc<str>, Vec<Arc<CachedLspAdapter>>>,
+    available_lsp_adapters:
+        HashMap<LanguageServerName, Arc<dyn Fn() -> Arc<CachedLspAdapter> + 'static + Send + Sync>>,
     loading_languages: HashMap<LanguageId, Vec<oneshot::Sender<Result<Arc<Language>>>>>,
     subscription: (watch::Sender<()>, watch::Receiver<()>),
     theme: Option<Arc<Theme>>,
@@ -122,6 +124,7 @@ pub const QUERY_FILENAME_PREFIXES: &[(
     ("injections", |q| &mut q.injections),
     ("overrides", |q| &mut q.overrides),
     ("redactions", |q| &mut q.redactions),
+    ("runnables", |q| &mut q.runnables),
 ];
 
 /// Tree-sitter language queries for a given language.
@@ -135,6 +138,7 @@ pub struct LanguageQueries {
     pub injections: Option<Cow<'static, str>>,
     pub overrides: Option<Cow<'static, str>>,
     pub redactions: Option<Cow<'static, str>>,
+    pub runnables: Option<Cow<'static, str>>,
 }
 
 #[derive(Clone, Default)]
@@ -153,6 +157,7 @@ impl LanguageRegistry {
                 language_settings: Default::default(),
                 loading_languages: Default::default(),
                 lsp_adapters: Default::default(),
+                available_lsp_adapters: HashMap::default(),
                 subscription: watch::channel(),
                 theme: Default::default(),
                 version: 0,
@@ -211,6 +216,38 @@ impl LanguageRegistry {
             config.matcher.clone(),
             move || Ok((config.clone(), Default::default(), None)),
         )
+    }
+
+    /// Registers an available language server adapter.
+    ///
+    /// The language server is registered under the language server name, but
+    /// not bound to a particular language.
+    ///
+    /// When a language wants to load this particular language server, it will
+    /// invoke the `load` function.
+    pub fn register_available_lsp_adapter(
+        &self,
+        name: LanguageServerName,
+        load: impl Fn() -> Arc<dyn LspAdapter> + 'static + Send + Sync,
+    ) {
+        self.state.write().available_lsp_adapters.insert(
+            name,
+            Arc::new(move || {
+                let lsp_adapter = load();
+                CachedLspAdapter::new(lsp_adapter, true)
+            }),
+        );
+    }
+
+    /// Loads the language server adapter for the language server with the given name.
+    pub fn load_available_lsp_adapter(
+        &self,
+        name: &LanguageServerName,
+    ) -> Option<Arc<CachedLspAdapter>> {
+        let state = self.state.read();
+        let load_lsp_adapter = state.available_lsp_adapters.get(name)?;
+
+        Some(load_lsp_adapter())
     }
 
     pub fn register_lsp_adapter(&self, language_name: Arc<str>, adapter: Arc<dyn LspAdapter>) {
@@ -633,8 +670,7 @@ impl LanguageRegistry {
                                     .file_stem()
                                     .and_then(OsStr::to_str)
                                     .ok_or_else(|| anyhow!("invalid grammar filename"))?;
-                                anyhow::Ok(PARSER.with(|parser| {
-                                    let mut parser = parser.borrow_mut();
+                                anyhow::Ok(with_parser(|parser| {
                                     let mut store = parser.take_wasm_store().unwrap();
                                     let grammar = store.load_language(&grammar_name, &wasm_bytes);
                                     parser.set_wasm_store(store).unwrap();
@@ -677,15 +713,6 @@ impl LanguageRegistry {
             .get(&language.config.name)
             .cloned()
             .unwrap_or_default()
-    }
-
-    pub fn all_prettier_plugins(&self) -> Vec<Arc<str>> {
-        let state = self.state.read();
-        state
-            .languages
-            .iter()
-            .flat_map(|language| language.config.prettier_plugins.iter().cloned())
-            .collect()
     }
 
     pub fn update_lsp_status(

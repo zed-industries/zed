@@ -1,5 +1,7 @@
 mod app_menus;
-mod only_instance;
+pub mod inline_completion_registry;
+#[cfg(not(target_os = "linux"))]
+pub(crate) mod only_instance;
 mod open_listener;
 
 pub use app_menus::*;
@@ -11,7 +13,6 @@ use gpui::{
     actions, point, px, AppContext, AsyncAppContext, Context, FocusableView, PromptLevel,
     TitlebarOptions, View, ViewContext, VisualContext, WindowKind, WindowOptions,
 };
-pub use only_instance::*;
 pub use open_listener::*;
 
 use anyhow::Context as _;
@@ -87,6 +88,7 @@ pub fn build_window_options(display_uuid: Option<Uuid>, cx: &mut AppContext) -> 
             .into_iter()
             .find(|display| display.uuid().ok() == Some(uuid))
     });
+    let app_id = ReleaseChannel::global(cx).app_id();
 
     WindowOptions {
         titlebar: Some(TitlebarOptions {
@@ -94,14 +96,14 @@ pub fn build_window_options(display_uuid: Option<Uuid>, cx: &mut AppContext) -> 
             appears_transparent: true,
             traffic_light_position: Some(point(px(9.0), px(9.0))),
         }),
-        bounds: None,
+        window_bounds: None,
         focus: false,
         show: false,
         kind: WindowKind::Normal,
         is_movable: true,
         display_id: display.map(|display| display.id()),
-        fullscreen: false,
         window_background: cx.theme().window_background_appearance(),
+        app_id: Some(app_id.to_owned()),
     }
 }
 
@@ -125,7 +127,10 @@ pub fn initialize_workspace(app_state: Arc<AppState>, cx: &mut AppContext) {
         })
         .detach();
 
-        let copilot = cx.new_view(|cx| copilot_ui::CopilotButton::new(app_state.fs.clone(), cx));
+        let inline_completion_button = cx.new_view(|cx| {
+            inline_completion_button::InlineCompletionButton::new(app_state.fs.clone(), cx)
+        });
+
         let diagnostic_summary =
             cx.new_view(|cx| diagnostics::items::DiagnosticIndicator::new(workspace, cx));
         let activity_indicator =
@@ -138,7 +143,7 @@ pub fn initialize_workspace(app_state: Arc<AppState>, cx: &mut AppContext) {
         workspace.status_bar().update(cx, |status_bar, cx| {
             status_bar.add_left_item(diagnostic_summary, cx);
             status_bar.add_left_item(activity_indicator, cx);
-            status_bar.add_right_item(copilot, cx);
+            status_bar.add_right_item(inline_completion_button, cx);
             status_bar.add_right_item(active_buffer_language, cx);
             status_bar.add_right_item(vim_mode_indicator, cx);
             status_bar.add_right_item(cursor_position, cx);
@@ -162,19 +167,14 @@ pub fn initialize_workspace(app_state: Arc<AppState>, cx: &mut AppContext) {
             project.update(cx, |project, cx| {
                 let fs = app_state.fs.clone();
                 project.task_inventory().update(cx, |inventory, cx| {
+                    let tasks_file_rx =
+                        watch_config_file(&cx.background_executor(), fs, paths::TASKS.clone());
                     inventory.add_source(
                         TaskSourceKind::AbsPath {
                             id_base: "global_tasks",
                             abs_path: paths::TASKS.clone(),
                         },
-                        |cx| {
-                            let tasks_file_rx = watch_config_file(
-                                &cx.background_executor(),
-                                fs,
-                                paths::TASKS.clone(),
-                            );
-                            StaticSource::new(TrackedFile::new(tasks_file_rx, cx), cx)
-                        },
+                        |tx, cx| StaticSource::new(TrackedFile::new(tasks_file_rx, tx, cx)),
                         cx,
                     );
                 })
@@ -214,7 +214,9 @@ pub fn initialize_workspace(app_state: Arc<AppState>, cx: &mut AppContext) {
             workspace_handle.update(&mut cx, |workspace, cx| {
                 workspace.add_panel(assistant_panel, cx);
                 workspace.add_panel(project_panel, cx);
-                workspace.add_panel(terminal_panel, cx);
+                if !workspace.project().read(cx).is_remote() {
+                    workspace.add_panel(terminal_panel, cx);
+                }
                 workspace.add_panel(channels_panel, cx);
                 workspace.add_panel(chat_panel, cx);
                 workspace.add_panel(notification_panel, cx);
@@ -598,9 +600,9 @@ fn open_log_file(workspace: &mut Workspace, cx: &mut ViewContext<Workspace>) {
                             return;
                         };
                         let project = workspace.project().clone();
-                        let buffer = project
-                            .update(cx, |project, cx| project.create_buffer(&log, None, cx))
-                            .expect("creating buffers on a local workspace always succeeds");
+                        let buffer = project.update(cx, |project, cx| {
+                            project.create_local_buffer(&log, None, cx)
+                        });
 
                         let buffer = cx.new_model(|cx| {
                             MultiBuffer::singleton(buffer, cx).with_title("Log".into())
@@ -617,7 +619,7 @@ fn open_log_file(workspace: &mut Workspace, cx: &mut ViewContext<Workspace>) {
                             })
                         });
 
-                        workspace.add_item_to_active_pane(Box::new(editor), cx);
+                        workspace.add_item_to_active_pane(Box::new(editor), None, cx);
                     })
                     .log_err();
             })
@@ -811,8 +813,7 @@ fn open_telemetry_log_file(workspace: &mut Workspace, cx: &mut ViewContext<Works
             workspace.update(&mut cx, |workspace, cx| {
                 let project = workspace.project().clone();
                 let buffer = project
-                    .update(cx, |project, cx| project.create_buffer("", None, cx))
-                    .expect("creating buffers on a local workspace always succeeds");
+                    .update(cx, |project, cx| project.create_local_buffer("", None, cx));
                 buffer.update(cx, |buffer, cx| {
                     buffer.set_language(json, cx);
                     buffer.edit(
@@ -836,7 +837,7 @@ fn open_telemetry_log_file(workspace: &mut Workspace, cx: &mut ViewContext<Works
                 });
                 workspace.add_item_to_active_pane(
                     Box::new(cx.new_view(|cx| Editor::for_multibuffer(buffer, Some(project), cx))),
-                    cx,
+                    None,cx,
                 );
             }).log_err()?;
 
@@ -861,9 +862,7 @@ fn open_bundled_file(
                 workspace.with_local_workspace(cx, |workspace, cx| {
                     let project = workspace.project();
                     let buffer = project.update(cx, move |project, cx| {
-                        project
-                            .create_buffer(text.as_ref(), language, cx)
-                            .expect("creating buffers on a local workspace always succeeds")
+                        project.create_local_buffer(text.as_ref(), language, cx)
                     });
                     let buffer = cx.new_model(|cx| {
                         MultiBuffer::singleton(buffer, cx).with_title(title.into())
@@ -872,6 +871,7 @@ fn open_bundled_file(
                         Box::new(cx.new_view(|cx| {
                             Editor::for_multibuffer(buffer, Some(project.clone()), cx)
                         })),
+                        None,
                         cx,
                     );
                 })
@@ -910,7 +910,7 @@ mod tests {
     use super::*;
     use assets::Assets;
     use collections::HashSet;
-    use editor::{scroll::Autoscroll, DisplayPoint, Editor};
+    use editor::{display_map::DisplayRow, scroll::Autoscroll, DisplayPoint, Editor};
     use gpui::{
         actions, Action, AnyWindowHandle, AppContext, AssetSource, BorrowAppContext, Entity,
         TestAppContext, VisualTestContext, WindowHandle,
@@ -1333,6 +1333,7 @@ mod tests {
             })
         })
         .await;
+        cx.run_until_parked();
 
         let workspace = cx
             .update(|cx| cx.windows().first().unwrap().downcast::<Workspace>())
@@ -2228,9 +2229,8 @@ mod tests {
             .update(cx, |_, cx| {
                 editor1.update(cx, |editor, cx| {
                     editor.change_selections(Some(Autoscroll::fit()), cx, |s| {
-                        s.select_display_ranges(
-                            [DisplayPoint::new(10, 0)..DisplayPoint::new(10, 0)],
-                        )
+                        s.select_display_ranges([DisplayPoint::new(DisplayRow(10), 0)
+                            ..DisplayPoint::new(DisplayRow(10), 0)])
                     });
                 });
             })
@@ -2255,9 +2255,8 @@ mod tests {
             .update(cx, |_, cx| {
                 editor3.update(cx, |editor, cx| {
                     editor.change_selections(Some(Autoscroll::fit()), cx, |s| {
-                        s.select_display_ranges(
-                            [DisplayPoint::new(12, 0)..DisplayPoint::new(12, 0)],
-                        )
+                        s.select_display_ranges([DisplayPoint::new(DisplayRow(12), 0)
+                            ..DisplayPoint::new(DisplayRow(12), 0)])
                     });
                     editor.newline(&Default::default(), cx);
                     editor.newline(&Default::default(), cx);
@@ -2278,7 +2277,7 @@ mod tests {
             .unwrap();
         assert_eq!(
             active_location(&workspace, cx),
-            (file3.clone(), DisplayPoint::new(16, 0), 12.5)
+            (file3.clone(), DisplayPoint::new(DisplayRow(16), 0), 12.5)
         );
 
         workspace
@@ -2288,7 +2287,7 @@ mod tests {
             .unwrap();
         assert_eq!(
             active_location(&workspace, cx),
-            (file3.clone(), DisplayPoint::new(0, 0), 0.)
+            (file3.clone(), DisplayPoint::new(DisplayRow(0), 0), 0.)
         );
 
         workspace
@@ -2298,7 +2297,7 @@ mod tests {
             .unwrap();
         assert_eq!(
             active_location(&workspace, cx),
-            (file2.clone(), DisplayPoint::new(0, 0), 0.)
+            (file2.clone(), DisplayPoint::new(DisplayRow(0), 0), 0.)
         );
 
         workspace
@@ -2308,7 +2307,7 @@ mod tests {
             .unwrap();
         assert_eq!(
             active_location(&workspace, cx),
-            (file1.clone(), DisplayPoint::new(10, 0), 0.)
+            (file1.clone(), DisplayPoint::new(DisplayRow(10), 0), 0.)
         );
 
         workspace
@@ -2318,7 +2317,7 @@ mod tests {
             .unwrap();
         assert_eq!(
             active_location(&workspace, cx),
-            (file1.clone(), DisplayPoint::new(0, 0), 0.)
+            (file1.clone(), DisplayPoint::new(DisplayRow(0), 0), 0.)
         );
 
         // Go back one more time and ensure we don't navigate past the first item in the history.
@@ -2329,7 +2328,7 @@ mod tests {
             .unwrap();
         assert_eq!(
             active_location(&workspace, cx),
-            (file1.clone(), DisplayPoint::new(0, 0), 0.)
+            (file1.clone(), DisplayPoint::new(DisplayRow(0), 0), 0.)
         );
 
         workspace
@@ -2339,7 +2338,7 @@ mod tests {
             .unwrap();
         assert_eq!(
             active_location(&workspace, cx),
-            (file1.clone(), DisplayPoint::new(10, 0), 0.)
+            (file1.clone(), DisplayPoint::new(DisplayRow(10), 0), 0.)
         );
 
         workspace
@@ -2349,7 +2348,7 @@ mod tests {
             .unwrap();
         assert_eq!(
             active_location(&workspace, cx),
-            (file2.clone(), DisplayPoint::new(0, 0), 0.)
+            (file2.clone(), DisplayPoint::new(DisplayRow(0), 0), 0.)
         );
 
         // Go forward to an item that has been closed, ensuring it gets re-opened at the same
@@ -2372,7 +2371,7 @@ mod tests {
             .unwrap();
         assert_eq!(
             active_location(&workspace, cx),
-            (file3.clone(), DisplayPoint::new(0, 0), 0.)
+            (file3.clone(), DisplayPoint::new(DisplayRow(0), 0), 0.)
         );
 
         workspace
@@ -2382,7 +2381,7 @@ mod tests {
             .unwrap();
         assert_eq!(
             active_location(&workspace, cx),
-            (file3.clone(), DisplayPoint::new(16, 0), 12.5)
+            (file3.clone(), DisplayPoint::new(DisplayRow(16), 0), 12.5)
         );
 
         workspace
@@ -2392,7 +2391,7 @@ mod tests {
             .unwrap();
         assert_eq!(
             active_location(&workspace, cx),
-            (file3.clone(), DisplayPoint::new(0, 0), 0.)
+            (file3.clone(), DisplayPoint::new(DisplayRow(0), 0), 0.)
         );
 
         // Go back to an item that has been closed and removed from disk
@@ -2421,7 +2420,7 @@ mod tests {
             .unwrap();
         assert_eq!(
             active_location(&workspace, cx),
-            (file2.clone(), DisplayPoint::new(0, 0), 0.)
+            (file2.clone(), DisplayPoint::new(DisplayRow(0), 0), 0.)
         );
         workspace
             .update(cx, |w, cx| w.go_forward(w.active_pane().downgrade(), cx))
@@ -2430,7 +2429,7 @@ mod tests {
             .unwrap();
         assert_eq!(
             active_location(&workspace, cx),
-            (file3.clone(), DisplayPoint::new(0, 0), 0.)
+            (file3.clone(), DisplayPoint::new(DisplayRow(0), 0), 0.)
         );
 
         // Modify file to collapse multiple nav history entries into the same location.
@@ -2439,9 +2438,8 @@ mod tests {
             .update(cx, |_, cx| {
                 editor1.update(cx, |editor, cx| {
                     editor.change_selections(None, cx, |s| {
-                        s.select_display_ranges(
-                            [DisplayPoint::new(15, 0)..DisplayPoint::new(15, 0)],
-                        )
+                        s.select_display_ranges([DisplayPoint::new(DisplayRow(15), 0)
+                            ..DisplayPoint::new(DisplayRow(15), 0)])
                     })
                 });
             })
@@ -2451,9 +2449,8 @@ mod tests {
                 .update(cx, |_, cx| {
                     editor1.update(cx, |editor, cx| {
                         editor.change_selections(None, cx, |s| {
-                            s.select_display_ranges([
-                                DisplayPoint::new(3, 0)..DisplayPoint::new(3, 0)
-                            ])
+                            s.select_display_ranges([DisplayPoint::new(DisplayRow(3), 0)
+                                ..DisplayPoint::new(DisplayRow(3), 0)])
                         });
                     });
                 })
@@ -2463,9 +2460,8 @@ mod tests {
                 .update(cx, |_, cx| {
                     editor1.update(cx, |editor, cx| {
                         editor.change_selections(None, cx, |s| {
-                            s.select_display_ranges([
-                                DisplayPoint::new(13, 0)..DisplayPoint::new(13, 0)
-                            ])
+                            s.select_display_ranges([DisplayPoint::new(DisplayRow(13), 0)
+                                ..DisplayPoint::new(DisplayRow(13), 0)])
                         })
                     });
                 })
@@ -2476,9 +2472,8 @@ mod tests {
                 editor1.update(cx, |editor, cx| {
                     editor.transact(cx, |editor, cx| {
                         editor.change_selections(None, cx, |s| {
-                            s.select_display_ranges([
-                                DisplayPoint::new(2, 0)..DisplayPoint::new(14, 0)
-                            ])
+                            s.select_display_ranges([DisplayPoint::new(DisplayRow(2), 0)
+                                ..DisplayPoint::new(DisplayRow(14), 0)])
                         });
                         editor.insert("", cx);
                     })
@@ -2490,7 +2485,8 @@ mod tests {
             .update(cx, |_, cx| {
                 editor1.update(cx, |editor, cx| {
                     editor.change_selections(None, cx, |s| {
-                        s.select_display_ranges([DisplayPoint::new(1, 0)..DisplayPoint::new(1, 0)])
+                        s.select_display_ranges([DisplayPoint::new(DisplayRow(1), 0)
+                            ..DisplayPoint::new(DisplayRow(1), 0)])
                     })
                 });
             })
@@ -2502,7 +2498,7 @@ mod tests {
             .unwrap();
         assert_eq!(
             active_location(&workspace, cx),
-            (file1.clone(), DisplayPoint::new(2, 0), 0.)
+            (file1.clone(), DisplayPoint::new(DisplayRow(2), 0), 0.)
         );
         workspace
             .update(cx, |w, cx| w.go_back(w.active_pane().downgrade(), cx))
@@ -2511,7 +2507,7 @@ mod tests {
             .unwrap();
         assert_eq!(
             active_location(&workspace, cx),
-            (file1.clone(), DisplayPoint::new(3, 0), 0.)
+            (file1.clone(), DisplayPoint::new(DisplayRow(3), 0), 0.)
         );
 
         fn active_location(
@@ -2840,11 +2836,12 @@ mod tests {
             handle_keymap_file_changes(keymap_rx, cx);
         });
         workspace
-            .update(cx, |workspace, _| {
+            .update(cx, |workspace, cx| {
                 workspace.register_action(|_, _: &A, _cx| {});
                 workspace.register_action(|_, _: &B, _cx| {});
                 workspace.register_action(|_, _: &ActivatePreviousPane, _cx| {});
                 workspace.register_action(|_, _: &ActivatePrevItem, _cx| {});
+                cx.notify();
             })
             .unwrap();
         executor.run_until_parked();
@@ -3103,6 +3100,7 @@ mod tests {
             notifications::init(app_state.client.clone(), app_state.user_store.clone(), cx);
             workspace::init(app_state.clone(), cx);
             Project::init_settings(cx);
+            release_channel::init("0.0.0", cx);
             command_palette::init(cx);
             language::init(cx);
             editor::init(cx);

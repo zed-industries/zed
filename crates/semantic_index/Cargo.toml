@@ -29,14 +29,21 @@ gpui.workspace = true
 language.workspace = true
 log.workspace = true
 heed.workspace = true
+http.workspace = true
 open_ai.workspace = true
+parking_lot.workspace = true
 project.workspace = true
 settings.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 sha2.workspace = true
 smol.workspace = true
+theme.workspace = true
+tree-sitter.workspace = true
+ui. workspace = true
 util. workspace = true
+unindent.workspace = true
+workspace.workspace = true
 worktree.workspace = true
 
 [dev-dependencies]
@@ -51,3 +58,5 @@ project = { workspace = true, features = ["test-support"] }
 tempfile.workspace = true
 util = { workspace = true, features = ["test-support"] }
 worktree = { workspace = true, features = ["test-support"] }
+workspace = { workspace = true, features = ["test-support"] }
+http = { workspace = true, features = ["test-support"] }

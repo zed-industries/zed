@@ -2,7 +2,7 @@ use crate::{
     AnyWindowHandle, AtlasKey, AtlasTextureId, AtlasTile, Bounds, DevicePixels,
     DispatchEventResult, Pixels, PlatformAtlas, PlatformDisplay, PlatformInput,
     PlatformInputHandler, PlatformWindow, Point, Size, TestPlatform, TileId, WindowAppearance,
-    WindowBackgroundAppearance, WindowParams,
+    WindowBackgroundAppearance, WindowBounds, WindowParams,
 };
 use collections::HashMap;
 use parking_lot::Mutex;
@@ -112,11 +112,11 @@ impl PlatformWindow for TestWindow {
         self.0.lock().bounds
     }
 
-    fn is_maximized(&self) -> bool {
-        false
+    fn window_bounds(&self) -> WindowBounds {
+        WindowBounds::Windowed(self.bounds())
     }
 
-    fn is_minimized(&self) -> bool {
+    fn is_maximized(&self) -> bool {
         false
     }
 
@@ -142,10 +142,6 @@ impl PlatformWindow for TestWindow {
 
     fn modifiers(&self) -> crate::Modifiers {
         crate::Modifiers::default()
-    }
-
-    fn as_any_mut(&mut self) -> &mut dyn std::any::Any {
-        self
     }
 
     fn set_input_handler(&mut self, input_handler: PlatformInputHandler) {
@@ -190,6 +186,8 @@ impl PlatformWindow for TestWindow {
         self.0.lock().title = Some(title.to_owned());
     }
 
+    fn set_app_id(&mut self, _app_id: &str) {}
+
     fn set_background_appearance(&mut self, _background: WindowBackgroundAppearance) {
         unimplemented!()
     }
@@ -233,10 +231,6 @@ impl PlatformWindow for TestWindow {
         self.0.lock().resize_callback = Some(callback)
     }
 
-    fn on_fullscreen(&self, _callback: Box<dyn FnMut(bool)>) {
-        unimplemented!()
-    }
-
     fn on_moved(&self, callback: Box<dyn FnMut()>) {
         self.0.lock().moved_callback = Some(callback)
     }
@@ -248,10 +242,6 @@ impl PlatformWindow for TestWindow {
     fn on_close(&self, _callback: Box<dyn FnOnce()>) {}
 
     fn on_appearance_changed(&self, _callback: Box<dyn FnMut()>) {}
-
-    fn is_topmost_for_position(&self, _position: crate::Point<Pixels>) -> bool {
-        unimplemented!()
-    }
 
     fn draw(&self, _scene: &crate::Scene) {}
 
@@ -266,6 +256,18 @@ impl PlatformWindow for TestWindow {
     #[cfg(target_os = "windows")]
     fn get_raw_handle(&self) -> windows::Win32::Foundation::HWND {
         unimplemented!()
+    }
+
+    fn show_window_menu(&self, _position: Point<Pixels>) {
+        unimplemented!()
+    }
+
+    fn start_system_move(&self) {
+        unimplemented!()
+    }
+
+    fn should_render_window_controls(&self) -> bool {
+        false
     }
 }
 

@@ -45,7 +45,7 @@ pub fn init(cx: &mut AppContext) {
                     workspace.activate_item(&existing, cx);
                 } else {
                     let extensions_page = ExtensionsPage::new(workspace, cx);
-                    workspace.add_item_to_active_pane(Box::new(extensions_page), cx)
+                    workspace.add_item_to_active_pane(Box::new(extensions_page), None, cx)
                 }
             })
             .register_action(move |_, _: &InstallDevExtension, cx| {
@@ -739,7 +739,7 @@ impl ExtensionsPage {
                 cx.theme().colors().text
             },
             font_family: settings.ui_font.family.clone(),
-            font_features: settings.ui_font.features,
+            font_features: settings.ui_font.features.clone(),
             font_size: rems(0.875).into(),
             font_weight: FontWeight::NORMAL,
             font_style: FontStyle::Normal,
@@ -852,7 +852,7 @@ impl Render for ExtensionsPage {
                 v_flex()
                     .gap_4()
                     .p_4()
-                    .border_b()
+                    .border_b_1()
                     .border_color(cx.theme().colors().border)
                     .bg(cx.theme().colors().editor_background)
                     .child(

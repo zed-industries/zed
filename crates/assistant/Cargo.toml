@@ -11,6 +11,8 @@ doctest = false
 
 [dependencies]
 anyhow.workspace = true
+anthropic = { workspace = true, features = ["schemars"] }
+cargo_toml.workspace = true
 chrono.workspace = true
 client.workspace = true
 collections.workspace = true
@@ -20,6 +22,7 @@ file_icons.workspace = true
 fs.workspace = true
 futures.workspace = true
 gpui.workspace = true
+http.workspace = true
 indoc.workspace = true
 language.workspace = true
 log.workspace = true
@@ -39,6 +42,7 @@ smol.workspace = true
 telemetry_events.workspace = true
 theme.workspace = true
 tiktoken-rs.workspace = true
+toml.workspace = true
 ui.workspace = true
 util.workspace = true
 uuid.workspace = true

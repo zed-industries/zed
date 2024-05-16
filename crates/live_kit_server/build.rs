@@ -1,5 +1,9 @@
 fn main() {
     prost_build::Config::new()
-        .compile_protos(&["protocol/livekit_room.proto"], &["protocol"])
+        .type_attribute("SendDataResponse", "#[allow(clippy::empty_docs)]")
+        .compile_protos(
+            &["vendored/protocol/livekit_room.proto"],
+            &["vendored/protocol"],
+        )
         .unwrap();
 }

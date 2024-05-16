@@ -9,11 +9,11 @@ license = "GPL-3.0-or-later"
 workspace = true
 
 [dependencies]
-anyhow.workspace = true
 editor.workspace = true
 file_icons.workspace = true
 fuzzy.workspace = true
 gpui.workspace = true
+menu.workspace = true
 picker.workspace = true
 project.workspace = true
 task.workspace = true

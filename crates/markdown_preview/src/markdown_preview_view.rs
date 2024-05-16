@@ -15,6 +15,7 @@ use ui::prelude::*;
 use workspace::item::{Item, ItemHandle, TabContentParams};
 use workspace::{Pane, Workspace};
 
+use crate::markdown_elements::ParsedMarkdownElement;
 use crate::OpenPreviewToTheSide;
 use crate::{
     markdown_elements::ParsedMarkdown,
@@ -180,9 +181,14 @@ impl MarkdownPreviewView {
                             let block = contents.children.get(ix).unwrap();
                             let rendered_block = render_markdown_block(block, &mut render_cx);
 
+                            let should_apply_padding = Self::should_apply_padding_between(
+                                block,
+                                contents.children.get(ix + 1),
+                            );
+
                             div()
                                 .id(ix)
-                                .pb_3()
+                                .when(should_apply_padding, |this| this.pb_3())
                                 .group("markdown-block")
                                 .on_click(cx.listener(move |this, event: &ClickEvent, cx| {
                                     if event.down.click_count == 2 {
@@ -404,7 +410,7 @@ impl MarkdownPreviewView {
                 let Range { start, end } = block.source_range();
 
                 // Check if the cursor is between the last block and the current block
-                if last_end > cursor && cursor < start {
+                if last_end <= cursor && cursor < start {
                     block_index = Some(i.saturating_sub(1));
                     break;
                 }
@@ -422,6 +428,13 @@ impl MarkdownPreviewView {
         }
 
         block_index.unwrap_or_default()
+    }
+
+    fn should_apply_padding_between(
+        current_block: &ParsedMarkdownElement,
+        next_block: Option<&ParsedMarkdownElement>,
+    ) -> bool {
+        !(current_block.is_list_item() && next_block.map(|b| b.is_list_item()).unwrap_or(false))
     }
 }
 

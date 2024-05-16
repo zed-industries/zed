@@ -1,8 +1,8 @@
 use anyhow::{Context as _, Result};
 use futures::{future::BoxFuture, AsyncReadExt, FutureExt};
+use http::HttpClient;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
-use util::http::HttpClient;
 
 use crate::{Embedding, EmbeddingProvider, TextToEmbed};
 

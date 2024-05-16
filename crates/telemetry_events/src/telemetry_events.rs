@@ -1,6 +1,6 @@
 use semantic_version::SemanticVersion;
 use serde::{Deserialize, Serialize};
-use std::{fmt::Display, sync::Arc};
+use std::{fmt::Display, sync::Arc, time::Duration};
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct EventRequestBody {
@@ -93,6 +93,8 @@ pub struct AssistantEvent {
     pub conversation_id: Option<String>,
     pub kind: AssistantKind,
     pub model: String,
+    pub response_latency: Option<Duration>,
+    pub error_message: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -134,4 +136,22 @@ pub struct ExtensionEvent {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct AppEvent {
     pub operation: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct BacktraceFrame {
+    pub ip: usize,
+    pub symbol_addr: usize,
+    pub base: Option<usize>,
+    pub symbols: Vec<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct HangReport {
+    pub backtrace: Vec<BacktraceFrame>,
+    pub app_version: Option<SemanticVersion>,
+    pub os_name: String,
+    pub os_version: Option<SemanticVersion>,
+    pub architecture: String,
+    pub installation_id: Option<String>,
 }

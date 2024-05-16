@@ -3,6 +3,7 @@
 #[cfg(test)]
 mod test;
 
+mod change_list;
 mod command;
 mod editor_events;
 mod insert;
@@ -17,20 +18,24 @@ mod utils;
 mod visual;
 
 use anyhow::Result;
+use change_list::push_to_change_list;
 use collections::HashMap;
 use command_palette_hooks::{CommandPaletteFilter, CommandPaletteInterceptor};
 use editor::{
     movement::{self, FindRange},
-    Anchor, Editor, EditorEvent, EditorMode,
+    Anchor, Bias, Editor, EditorEvent, EditorMode, ToPoint,
 };
 use gpui::{
     actions, impl_actions, Action, AppContext, EntityId, FocusableView, Global, KeystrokeEvent,
     Subscription, View, ViewContext, WeakView, WindowContext,
 };
-use language::{CursorShape, Point, Selection, SelectionGoal, TransactionId};
+use language::{CursorShape, Point, SelectionGoal, TransactionId};
 pub use mode_indicator::ModeIndicator;
 use motion::Motion;
-use normal::normal_replace;
+use normal::{
+    mark::{create_mark, create_mark_after, create_mark_before},
+    normal_replace,
+};
 use replace::multi_replace;
 use schemars::JsonSchema;
 use serde::Deserialize;
@@ -156,6 +161,7 @@ fn register(workspace: &mut Workspace, cx: &mut ViewContext<Workspace>) {
     replace::register(workspace, cx);
     object::register(workspace, cx);
     visual::register(workspace, cx);
+    change_list::register(workspace, cx);
 }
 
 /// Called whenever an keystroke is typed so vim can observe all actions
@@ -194,7 +200,9 @@ fn observe_keystrokes(keystroke_event: &KeystrokeEvent, cx: &mut WindowContext) 
             | Operator::Replace
             | Operator::AddSurrounds { .. }
             | Operator::ChangeSurrounds { .. }
-            | Operator::DeleteSurrounds,
+            | Operator::DeleteSurrounds
+            | Operator::Mark
+            | Operator::Jump { .. },
         ) => {}
         Some(_) => {
             vim.clear_operator(cx);
@@ -239,12 +247,9 @@ impl Vim {
         self.active_editor = Some(editor.clone().downgrade());
         self.editor_subscription = Some(cx.subscribe(&editor, |editor, event, cx| match event {
             EditorEvent::SelectionsChanged { local: true } => {
-                let editor = editor.read(cx);
-                if editor.leader_peer_id().is_none() {
-                    let newest = editor.selections.newest_anchor().clone();
-                    let is_multicursor = editor.selections.count() > 1;
+                if editor.read(cx).leader_peer_id().is_none() {
                     Vim::update(cx, |vim, cx| {
-                        vim.local_selections_changed(newest, is_multicursor, cx);
+                        vim.local_selections_changed(editor, cx);
                     })
                 }
             }
@@ -262,6 +267,7 @@ impl Vim {
             EditorEvent::TransactionUndone { transaction_id } => Vim::update(cx, |vim, cx| {
                 vim.transaction_undone(transaction_id, cx);
             }),
+            EditorEvent::Edited => Vim::update(cx, |vim, cx| vim.transaction_ended(editor, cx)),
             _ => {}
         }));
 
@@ -421,6 +427,10 @@ impl Vim {
         // Sync editor settings like clip mode
         self.sync_vim_settings(cx);
 
+        if mode != Mode::Insert && last_mode == Mode::Insert {
+            create_mark_after(self, "^".into(), cx)
+        }
+
         if leave_selections {
             return;
         }
@@ -453,6 +463,17 @@ impl Vim {
                 {
                     let pos = s.first_anchor().head();
                     s.select_anchor_ranges(vec![pos..pos])
+                }
+
+                let snapshot = s.display_map();
+                if let Some(pending) = s.pending.as_mut() {
+                    if pending.selection.reversed && mode.is_visual() && !last_mode.is_visual() {
+                        let mut end = pending.selection.end.to_point(&snapshot.buffer_snapshot);
+                        end = snapshot
+                            .buffer_snapshot
+                            .clip_point(end + Point::new(0, 1), Bias::Right);
+                        pending.selection.end = snapshot.buffer_snapshot.anchor_before(end);
+                    }
                 }
 
                 s.move_with(|map, selection| {
@@ -526,7 +547,7 @@ impl Vim {
                 | Operator::ChangeSurrounds { .. }
                 | Operator::DeleteSurrounds
         ) {
-            self.clear_operator(cx);
+            self.update_state(|state| state.operator_stack.clear());
         };
         self.update_state(|state| state.operator_stack.push(operator));
         self.sync_vim_settings(cx);
@@ -601,13 +622,16 @@ impl Vim {
         self.switch_mode(Mode::Normal, true, cx)
     }
 
-    fn local_selections_changed(
-        &mut self,
-        newest: Selection<editor::Anchor>,
-        is_multicursor: bool,
-        cx: &mut WindowContext,
-    ) {
+    fn transaction_ended(&mut self, editor: View<Editor>, cx: &mut WindowContext) {
+        push_to_change_list(self, editor, cx)
+    }
+
+    fn local_selections_changed(&mut self, editor: View<Editor>, cx: &mut WindowContext) {
+        let newest = editor.read(cx).selections.newest_anchor().clone();
+        let is_multicursor = editor.read(cx).selections.count() > 1;
+
         let state = self.state();
+        let mut is_visual = state.mode.is_visual();
         if state.mode == Mode::Insert && state.current_tx.is_some() {
             if state.current_anchor.is_none() {
                 self.update_state(|state| state.current_anchor = Some(newest));
@@ -624,11 +648,18 @@ impl Vim {
             } else {
                 self.switch_mode(Mode::Visual, false, cx)
             }
+            is_visual = true;
         } else if newest.start == newest.end
             && !is_multicursor
             && [Mode::Visual, Mode::VisualLine, Mode::VisualBlock].contains(&state.mode)
         {
-            self.switch_mode(Mode::Normal, true, cx)
+            self.switch_mode(Mode::Normal, true, cx);
+            is_visual = false;
+        }
+
+        if is_visual {
+            create_mark_before(self, ">".into(), cx);
+            create_mark(self, "<".into(), true, cx)
         }
     }
 
@@ -700,6 +731,10 @@ impl Vim {
                 }
                 _ => Vim::update(cx, |vim, cx| vim.clear_operator(cx)),
             },
+            Some(Operator::Mark) => Vim::update(cx, |vim, cx| {
+                normal::mark::create_mark(vim, text, false, cx)
+            }),
+            Some(Operator::Jump { line }) => normal::mark::jump(text, line, cx),
             _ => match Vim::read(cx).state().mode {
                 Mode::Replace => multi_replace(text, cx),
                 _ => {}
@@ -778,12 +813,11 @@ impl Vim {
             editor.set_input_enabled(!state.vim_controlled());
             editor.set_autoindent(state.should_autoindent());
             editor.selections.line_mode = matches!(state.mode, Mode::VisualLine);
-            if editor.is_focused(cx) {
+            if editor.is_focused(cx) || editor.mouse_menu_is_focused(cx) {
                 editor.set_keymap_context_layer::<Self>(state.keymap_context_layer(), cx);
-            // disables vim if the rename editor is focused,
-            // but not if the command palette is open.
+                // disable vim mode if a sub-editor (inline assist, rename, etc.) is focused
             } else if editor.focus_handle(cx).contains_focused(cx) {
-                editor.remove_keymap_context_layer::<Self>(cx)
+                editor.remove_keymap_context_layer::<Self>(cx);
             }
         });
     }

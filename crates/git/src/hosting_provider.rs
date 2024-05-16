@@ -1,107 +1,177 @@
-use core::fmt;
 use std::{ops::Range, sync::Arc};
 
 use anyhow::Result;
+use async_trait::async_trait;
+use collections::BTreeMap;
+use derive_more::{Deref, DerefMut};
+use gpui::{AppContext, Global};
+use http::HttpClient;
+use parking_lot::RwLock;
 use url::Url;
-use util::{github, http::HttpClient};
 
 use crate::Oid;
 
-#[derive(Clone, Debug, Hash)]
-pub enum HostingProvider {
-    Github,
-    Gitlab,
-    Gitee,
-    Bitbucket,
-    Sourcehut,
-    Codeberg,
+#[derive(Debug, PartialEq, Eq, Clone)]
+pub struct PullRequest {
+    pub number: u32,
+    pub url: Url,
 }
 
-impl HostingProvider {
-    pub(crate) fn base_url(&self) -> Url {
-        let base_url = match self {
-            Self::Github => "https://github.com",
-            Self::Gitlab => "https://gitlab.com",
-            Self::Gitee => "https://gitee.com",
-            Self::Bitbucket => "https://bitbucket.org",
-            Self::Sourcehut => "https://git.sr.ht",
-            Self::Codeberg => "https://codeberg.org",
-        };
+pub struct BuildCommitPermalinkParams<'a> {
+    pub sha: &'a str,
+}
 
-        Url::parse(&base_url).unwrap()
-    }
+pub struct BuildPermalinkParams<'a> {
+    pub sha: &'a str,
+    pub path: &'a str,
+    pub selection: Option<Range<u32>>,
+}
 
-    /// Returns the fragment portion of the URL for the selected lines in
-    /// the representation the [`GitHostingProvider`] expects.
-    pub(crate) fn line_fragment(&self, selection: &Range<u32>) -> String {
+/// A Git hosting provider.
+#[async_trait]
+pub trait GitHostingProvider {
+    /// Returns the name of the provider.
+    fn name(&self) -> String;
+
+    /// Returns the base URL of the provider.
+    fn base_url(&self) -> Url;
+
+    /// Returns a permalink to a Git commit on this hosting provider.
+    fn build_commit_permalink(
+        &self,
+        remote: &ParsedGitRemote,
+        params: BuildCommitPermalinkParams,
+    ) -> Url;
+
+    /// Returns a permalink to a file and/or selection on this hosting provider.
+    fn build_permalink(&self, remote: ParsedGitRemote, params: BuildPermalinkParams) -> Url;
+
+    /// Returns whether this provider supports avatars.
+    fn supports_avatars(&self) -> bool;
+
+    /// Returns a URL fragment to the given line selection.
+    fn line_fragment(&self, selection: &Range<u32>) -> String {
         if selection.start == selection.end {
             let line = selection.start + 1;
 
-            match self {
-                Self::Github | Self::Gitlab | Self::Gitee | Self::Sourcehut | Self::Codeberg => {
-                    format!("L{}", line)
-                }
-                Self::Bitbucket => format!("lines-{}", line),
-            }
+            self.format_line_number(line)
         } else {
             let start_line = selection.start + 1;
             let end_line = selection.end + 1;
 
-            match self {
-                Self::Github | Self::Codeberg => format!("L{}-L{}", start_line, end_line),
-                Self::Gitlab | Self::Gitee | Self::Sourcehut => {
-                    format!("L{}-{}", start_line, end_line)
-                }
-                Self::Bitbucket => format!("lines-{}:{}", start_line, end_line),
-            }
+            self.format_line_numbers(start_line, end_line)
         }
     }
 
-    pub fn supports_avatars(&self) -> bool {
-        match self {
-            HostingProvider::Github => true,
-            _ => false,
-        }
-    }
+    /// Returns a formatted line number to be placed in a permalink URL.
+    fn format_line_number(&self, line: u32) -> String;
 
-    pub async fn commit_author_avatar_url(
+    /// Returns a formatted range of line numbers to be placed in a permalink URL.
+    fn format_line_numbers(&self, start_line: u32, end_line: u32) -> String;
+
+    fn parse_remote_url<'a>(&self, url: &'a str) -> Option<ParsedGitRemote<'a>>;
+
+    fn extract_pull_request(
         &self,
-        repo_owner: &str,
-        repo: &str,
-        commit: Oid,
-        client: Arc<dyn HttpClient>,
+        _remote: &ParsedGitRemote,
+        _message: &str,
+    ) -> Option<PullRequest> {
+        None
+    }
+
+    async fn commit_author_avatar_url(
+        &self,
+        _repo_owner: &str,
+        _repo: &str,
+        _commit: Oid,
+        _http_client: Arc<dyn HttpClient>,
     ) -> Result<Option<Url>> {
-        match self {
-            HostingProvider::Github => {
-                let commit = commit.to_string();
-
-                let author =
-                    github::fetch_github_commit_author(repo_owner, repo, &commit, &client).await?;
-
-                let url = if let Some(author) = author {
-                    let mut url = Url::parse(&author.avatar_url)?;
-                    url.set_query(Some("size=128"));
-                    Some(url)
-                } else {
-                    None
-                };
-                Ok(url)
-            }
-            _ => Ok(None),
-        }
+        Ok(None)
     }
 }
 
-impl fmt::Display for HostingProvider {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let name = match self {
-            HostingProvider::Github => "GitHub",
-            HostingProvider::Gitlab => "GitLab",
-            HostingProvider::Gitee => "Gitee",
-            HostingProvider::Bitbucket => "Bitbucket",
-            HostingProvider::Sourcehut => "Sourcehut",
-            HostingProvider::Codeberg => "Codeberg",
-        };
-        write!(f, "{}", name)
+#[derive(Default, Deref, DerefMut)]
+struct GlobalGitHostingProviderRegistry(Arc<GitHostingProviderRegistry>);
+
+impl Global for GlobalGitHostingProviderRegistry {}
+
+#[derive(Default)]
+struct GitHostingProviderRegistryState {
+    providers: BTreeMap<String, Arc<dyn GitHostingProvider + Send + Sync + 'static>>,
+}
+
+#[derive(Default)]
+pub struct GitHostingProviderRegistry {
+    state: RwLock<GitHostingProviderRegistryState>,
+}
+
+impl GitHostingProviderRegistry {
+    /// Returns the global [`GitHostingProviderRegistry`].
+    pub fn global(cx: &AppContext) -> Arc<Self> {
+        cx.global::<GlobalGitHostingProviderRegistry>().0.clone()
     }
+
+    /// Returns the global [`GitHostingProviderRegistry`].
+    ///
+    /// Inserts a default [`GitHostingProviderRegistry`] if one does not yet exist.
+    pub fn default_global(cx: &mut AppContext) -> Arc<Self> {
+        cx.default_global::<GlobalGitHostingProviderRegistry>()
+            .0
+            .clone()
+    }
+
+    /// Sets the global [`GitHostingProviderRegistry`].
+    pub fn set_global(registry: Arc<GitHostingProviderRegistry>, cx: &mut AppContext) {
+        cx.set_global(GlobalGitHostingProviderRegistry(registry));
+    }
+
+    /// Returns a new [`GitHostingProviderRegistry`].
+    pub fn new() -> Self {
+        Self {
+            state: RwLock::new(GitHostingProviderRegistryState {
+                providers: BTreeMap::default(),
+            }),
+        }
+    }
+
+    /// Returns the list of all [`GitHostingProvider`]s in the registry.
+    pub fn list_hosting_providers(
+        &self,
+    ) -> Vec<Arc<dyn GitHostingProvider + Send + Sync + 'static>> {
+        self.state.read().providers.values().cloned().collect()
+    }
+
+    /// Adds the provided [`GitHostingProvider`] to the registry.
+    pub fn register_hosting_provider(
+        &self,
+        provider: Arc<dyn GitHostingProvider + Send + Sync + 'static>,
+    ) {
+        self.state
+            .write()
+            .providers
+            .insert(provider.name(), provider);
+    }
+}
+
+#[derive(Debug)]
+pub struct ParsedGitRemote<'a> {
+    pub owner: &'a str,
+    pub repo: &'a str,
+}
+
+pub fn parse_git_remote_url(
+    provider_registry: Arc<GitHostingProviderRegistry>,
+    url: &str,
+) -> Option<(
+    Arc<dyn GitHostingProvider + Send + Sync + 'static>,
+    ParsedGitRemote,
+)> {
+    provider_registry
+        .list_hosting_providers()
+        .into_iter()
+        .find_map(|provider| {
+            provider
+                .parse_remote_url(&url)
+                .map(|parsed_remote| (provider, parsed_remote))
+        })
 }

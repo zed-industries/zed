@@ -50,38 +50,49 @@ impl LabelCommon for HighlightedLabel {
     }
 }
 
+pub fn highlight_ranges(
+    text: &str,
+    indices: &Vec<usize>,
+    style: HighlightStyle,
+) -> Vec<(Range<usize>, HighlightStyle)> {
+    let mut highlight_indices = indices.iter().copied().peekable();
+    let mut highlights: Vec<(Range<usize>, HighlightStyle)> = Vec::new();
+
+    while let Some(start_ix) = highlight_indices.next() {
+        let mut end_ix = start_ix;
+
+        loop {
+            end_ix = end_ix + text[end_ix..].chars().next().unwrap().len_utf8();
+            if let Some(&next_ix) = highlight_indices.peek() {
+                if next_ix == end_ix {
+                    end_ix = next_ix;
+                    highlight_indices.next();
+                    continue;
+                }
+            }
+            break;
+        }
+
+        highlights.push((start_ix..end_ix, style));
+    }
+
+    highlights
+}
+
 impl RenderOnce for HighlightedLabel {
     fn render(self, cx: &mut WindowContext) -> impl IntoElement {
         let highlight_color = cx.theme().colors().text_accent;
 
-        let mut highlight_indices = self.highlight_indices.iter().copied().peekable();
-        let mut highlights: Vec<(Range<usize>, HighlightStyle)> = Vec::new();
+        let highlights = highlight_ranges(
+            &self.label,
+            &self.highlight_indices,
+            HighlightStyle {
+                color: Some(highlight_color),
+                ..Default::default()
+            },
+        );
 
-        while let Some(start_ix) = highlight_indices.next() {
-            let mut end_ix = start_ix;
-
-            loop {
-                end_ix = end_ix + self.label[end_ix..].chars().next().unwrap().len_utf8();
-                if let Some(&next_ix) = highlight_indices.peek() {
-                    if next_ix == end_ix {
-                        end_ix = next_ix;
-                        highlight_indices.next();
-                        continue;
-                    }
-                }
-                break;
-            }
-
-            highlights.push((
-                start_ix..end_ix,
-                HighlightStyle {
-                    color: Some(highlight_color),
-                    ..Default::default()
-                },
-            ));
-        }
-
-        let mut text_style = cx.text_style().clone();
+        let mut text_style = cx.text_style();
         text_style.color = self.base.color.color(cx);
 
         self.base

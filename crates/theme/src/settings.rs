@@ -21,6 +21,65 @@ use util::ResultExt as _;
 const MIN_FONT_SIZE: Pixels = px(6.0);
 const MIN_LINE_HEIGHT: f32 = 1.0;
 
+#[derive(
+    Debug,
+    Default,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    Hash,
+    Clone,
+    Copy,
+    Serialize,
+    Deserialize,
+    JsonSchema,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum UiDensity {
+    /// A denser UI with tighter spacing and smaller elements.
+    #[serde(alias = "compact")]
+    Compact,
+    #[default]
+    #[serde(alias = "default")]
+    /// The default UI density.
+    Default,
+    #[serde(alias = "comfortable")]
+    /// A looser UI with more spacing and larger elements.
+    Comfortable,
+}
+
+impl UiDensity {
+    pub fn spacing_ratio(self) -> f32 {
+        match self {
+            UiDensity::Compact => 0.75,
+            UiDensity::Default => 1.0,
+            UiDensity::Comfortable => 1.25,
+        }
+    }
+}
+
+impl From<String> for UiDensity {
+    fn from(s: String) -> Self {
+        match s.as_str() {
+            "compact" => Self::Compact,
+            "default" => Self::Default,
+            "comfortable" => Self::Comfortable,
+            _ => Self::default(),
+        }
+    }
+}
+
+impl Into<String> for UiDensity {
+    fn into(self) -> String {
+        match self {
+            UiDensity::Compact => "compact".to_string(),
+            UiDensity::Default => "default".to_string(),
+            UiDensity::Comfortable => "comfortable".to_string(),
+        }
+    }
+}
+
 #[derive(Clone)]
 pub struct ThemeSettings {
     pub ui_font_size: Pixels,
@@ -31,6 +90,7 @@ pub struct ThemeSettings {
     pub theme_selection: Option<ThemeSelection>,
     pub active_theme: Arc<Theme>,
     pub theme_overrides: Option<ThemeStyleContent>,
+    pub ui_density: UiDensity,
 }
 
 impl ThemeSettings {
@@ -183,6 +243,12 @@ pub struct ThemeSettingsContent {
     #[serde(default)]
     pub theme: Option<ThemeSelection>,
 
+    /// UNSTABLE: Expect many elements to be broken.
+    ///
+    // Controls the density of the UI.
+    #[serde(rename = "unstable.ui_density", default)]
+    pub ui_density: Option<UiDensity>,
+
     /// EXPERIMENTAL: Overrides for the current theme.
     ///
     /// These values will override the ones on the current theme specified in `theme`.
@@ -325,13 +391,13 @@ impl settings::Settings for ThemeSettings {
             ui_font_size: defaults.ui_font_size.unwrap().into(),
             ui_font: Font {
                 family: defaults.ui_font_family.clone().unwrap().into(),
-                features: defaults.ui_font_features.unwrap(),
+                features: defaults.ui_font_features.clone().unwrap(),
                 weight: Default::default(),
                 style: Default::default(),
             },
             buffer_font: Font {
                 family: defaults.buffer_font_family.clone().unwrap().into(),
-                features: defaults.buffer_font_features.unwrap(),
+                features: defaults.buffer_font_features.clone().unwrap(),
                 weight: FontWeight::default(),
                 style: FontStyle::default(),
             },
@@ -343,20 +409,25 @@ impl settings::Settings for ThemeSettings {
                 .or(themes.get(&one_dark().name))
                 .unwrap(),
             theme_overrides: None,
+            ui_density: defaults.ui_density.unwrap_or(UiDensity::Default),
         };
 
         for value in sources.user.into_iter().chain(sources.release_channel) {
+            if let Some(value) = value.ui_density {
+                this.ui_density = value;
+            }
+
             if let Some(value) = value.buffer_font_family.clone() {
                 this.buffer_font.family = value.into();
             }
-            if let Some(value) = value.buffer_font_features {
+            if let Some(value) = value.buffer_font_features.clone() {
                 this.buffer_font.features = value;
             }
 
             if let Some(value) = value.ui_font_family.clone() {
                 this.ui_font.family = value.into();
             }
-            if let Some(value) = value.ui_font_features {
+            if let Some(value) = value.ui_font_features.clone() {
                 this.ui_font.features = value;
             }
 
@@ -370,7 +441,7 @@ impl settings::Settings for ThemeSettings {
                 }
             }
 
-            this.theme_overrides = value.theme_overrides.clone();
+            this.theme_overrides.clone_from(&value.theme_overrides);
             this.apply_theme_overrides();
 
             merge(&mut this.ui_font_size, value.ui_font_size.map(Into::into));

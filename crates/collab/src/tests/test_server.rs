@@ -17,7 +17,9 @@ use collab_ui::channel_view::ChannelView;
 use collections::{HashMap, HashSet};
 use fs::FakeFs;
 use futures::{channel::oneshot, StreamExt as _};
+use git::GitHostingProviderRegistry;
 use gpui::{BackgroundExecutor, Context, Model, Task, TestAppContext, View, VisualTestContext};
+use http::FakeHttpClient;
 use language::LanguageRegistry;
 use node_runtime::FakeNodeRuntime;
 use notifications::NotificationStore;
@@ -40,7 +42,6 @@ use std::{
         Arc,
     },
 };
-use util::http::FakeHttpClient;
 use workspace::{Workspace, WorkspaceId, WorkspaceStore};
 
 pub struct TestServer {
@@ -64,7 +65,7 @@ pub struct TestClient {
 #[derive(Default)]
 struct TestClientState {
     local_projects: Vec<Model<Project>>,
-    remote_projects: Vec<Model<Project>>,
+    dev_server_projects: Vec<Model<Project>>,
     buffers: HashMap<Model<Project>, HashSet<Model<language::Buffer>>>,
     channel_buffers: HashSet<Model<ChannelBuffer>>,
 }
@@ -257,6 +258,11 @@ impl TestServer {
                 })
             });
 
+        let git_hosting_provider_registry =
+            cx.update(|cx| GitHostingProviderRegistry::default_global(cx));
+        git_hosting_provider_registry
+            .register_hosting_provider(Arc::new(git_hosting_providers::Github));
+
         let fs = FakeFs::new(cx.executor());
         let user_store = cx.new_model(|cx| UserStore::new(client.clone(), cx));
         let workspace_store = cx.new_model(|cx| WorkspaceStore::new(client.clone(), cx));
@@ -271,6 +277,12 @@ impl TestServer {
             node_runtime: FakeNodeRuntime::new(),
         });
 
+        let os_keymap = if cfg!(target_os = "linux") {
+            "keymaps/default-linux.json"
+        } else {
+            "keymaps/default-macos.json"
+        };
+
         cx.update(|cx| {
             theme::init(theme::LoadThemes::JustBase, cx);
             Project::init(&client, cx);
@@ -284,8 +296,8 @@ impl TestServer {
             collab_ui::init(&app_state, cx);
             file_finder::init(cx);
             menu::init();
-            remote_projects::init(client.clone(), cx);
-            settings::KeymapFile::load_asset("keymaps/default-macos.json", cx).unwrap();
+            dev_server_projects::init(client.clone(), cx);
+            settings::KeymapFile::load_asset(os_keymap, cx).unwrap();
         });
 
         client
@@ -416,8 +428,10 @@ impl TestServer {
                     node_runtime: app_state.node_runtime.clone(),
                 },
                 cx,
-            );
-        });
+            )
+        })
+        .await
+        .unwrap();
 
         TestClient {
             app_state,
@@ -649,6 +663,7 @@ impl TestServer {
                 auto_join_channel_id: None,
                 migrations_path: None,
                 seed_path: None,
+                supermaven_admin_api_key: None,
             },
         })
     }
@@ -729,16 +744,18 @@ impl TestClient {
         Ref::map(self.state.borrow(), |state| &state.local_projects)
     }
 
-    pub fn remote_projects(&self) -> impl Deref<Target = Vec<Model<Project>>> + '_ {
-        Ref::map(self.state.borrow(), |state| &state.remote_projects)
+    pub fn dev_server_projects(&self) -> impl Deref<Target = Vec<Model<Project>>> + '_ {
+        Ref::map(self.state.borrow(), |state| &state.dev_server_projects)
     }
 
     pub fn local_projects_mut(&self) -> impl DerefMut<Target = Vec<Model<Project>>> + '_ {
         RefMut::map(self.state.borrow_mut(), |state| &mut state.local_projects)
     }
 
-    pub fn remote_projects_mut(&self) -> impl DerefMut<Target = Vec<Model<Project>>> + '_ {
-        RefMut::map(self.state.borrow_mut(), |state| &mut state.remote_projects)
+    pub fn dev_server_projects_mut(&self) -> impl DerefMut<Target = Vec<Model<Project>>> + '_ {
+        RefMut::map(self.state.borrow_mut(), |state| {
+            &mut state.dev_server_projects
+        })
     }
 
     pub fn buffers_for_project<'a>(
@@ -863,7 +880,7 @@ impl TestClient {
         })
     }
 
-    pub async fn build_remote_project(
+    pub async fn build_dev_server_project(
         &self,
         host_project_id: u64,
         guest_cx: &mut TestAppContext,

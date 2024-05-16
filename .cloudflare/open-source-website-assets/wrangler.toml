@@ -1,0 +1,8 @@
+name = "open-source-website-assets"
+main = "src/worker.js"
+compatibility_date = "2024-05-15"
+workers_dev = true
+
+[[r2_buckets]]
+binding = 'OPEN_SOURCE_WEBSITE_ASSETS_BUCKET'
+bucket_name = 'zed-open-source-website-assets'

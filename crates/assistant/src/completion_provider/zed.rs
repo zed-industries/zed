@@ -78,9 +78,9 @@ impl ZedDotDevCompletionProvider {
         cx: &AppContext,
     ) -> BoxFuture<'static, Result<usize>> {
         match request.model {
-            LanguageModel::OpenAi(_) => future::ready(Err(anyhow!("invalid model"))).boxed(),
             LanguageModel::ZedDotDev(ZedDotDevModel::Gpt4)
             | LanguageModel::ZedDotDev(ZedDotDevModel::Gpt4Turbo)
+            | LanguageModel::ZedDotDev(ZedDotDevModel::Gpt4Omni)
             | LanguageModel::ZedDotDev(ZedDotDevModel::Gpt3Point5Turbo) => {
                 count_open_ai_tokens(request, cx.background_executor())
             }
@@ -107,6 +107,7 @@ impl ZedDotDevCompletionProvider {
                 }
                 .boxed()
             }
+            _ => future::ready(Err(anyhow!("invalid model"))).boxed(),
         }
     }
 

@@ -12,8 +12,8 @@
   "base_keymap": "VSCode",
   // Features that can be globally enabled or disabled
   "features": {
-    // Show Copilot icon in status bar
-    "copilot": true
+    // Which inline completion provider to use.
+    "inline_completion_provider": "copilot"
   },
   // The name of a font to use for rendering text in the editor
   "buffer_font_family": "Zed Mono",
@@ -73,6 +73,17 @@
   "drop_target_size": 0.2,
   // Whether the cursor blinks in the editor.
   "cursor_blink": true,
+  // How to highlight the current line in the editor.
+  //
+  // 1. Don't highlight the current line:
+  //    "none"
+  // 2. Highlight the gutter area:
+  //    "gutter"
+  // 3. Highlight the editor area:
+  //    "line"
+  // 4. Highlight the full line (default):
+  //    "all"
+  "current_line_highlight": "all",
   // Whether to pop the completions menu while typing in an editor without
   // explicitly requesting it.
   "show_completions_on_input": true,
@@ -92,14 +103,7 @@
   // Hide the values of in variables from visual display in private files
   "redact_private_values": false,
   // Globs to match against file paths to determine if a file is private.
-  "private_files": [
-    "**/.env*",
-    "**/*.pem",
-    "**/*.key",
-    "**/*.cert",
-    "**/*.crt",
-    "**/secrets.yml"
-  ],
+  "private_files": ["**/.env*", "**/*.pem", "**/*.key", "**/*.cert", "**/*.crt", "**/secrets.yml"],
   // Whether to use additional LSP queries to format (and amend) the code after
   // every "trigger" symbol input, defined by LSP server capabilities.
   "use_on_type_format": true,
@@ -155,6 +159,8 @@
     // 4. Never show the scrollbar:
     //    "never"
     "show": "auto",
+    // Whether to show cursor positions in the scrollbar.
+    "cursors": true,
     // Whether to show git diff indicators in the scrollbar.
     "git_diff": true,
     // Whether to show buffer search results in the scrollbar.
@@ -287,7 +293,8 @@
       // 1. "gpt-3.5-turbo"
       // 2. "gpt-4"
       // 3. "gpt-4-turbo-preview"
-      "default_model": "gpt-4-turbo-preview"
+      // 4. "gpt-4o"
+      "default_model": "gpt-4o"
     }
   },
   // Whether the screen sharing icon is shown in the os status bar.
@@ -312,6 +319,8 @@
   "autosave": "off",
   // Settings related to the editor's tab bar.
   "tab_bar": {
+    // Whether or not to show the tab bar in the editor
+    "show": true,
     // Whether or not to show the navigation history buttons.
     "show_nav_history_buttons": true
   },
@@ -329,8 +338,10 @@
     // when you switch to another file unless you explicitly pin them.
     // This is useful for quickly viewing files without cluttering your workspace.
     "enabled": true,
-    // Whether to open files in preview mode when selected from the file finder.
-    "enable_preview_from_file_finder": false
+    // Whether to open tabs in preview mode when selected from the file finder.
+    "enable_preview_from_file_finder": false,
+    // Whether a preview tab gets replaced when code navigation is used to navigate away from the tab.
+    "enable_preview_from_code_navigation": false
   },
   // Whether or not to remove any trailing whitespace from lines of a buffer
   // before saving it.
@@ -341,6 +352,8 @@
   // when saving it.
   "ensure_final_newline_on_save": true,
   // Whether or not to perform a buffer format before saving
+  //
+  // Keep in mind, if the autosave with delay is enabled, format_on_save will be ignored
   "format_on_save": "on",
   // How to perform a buffer format. This setting can take 4 values:
   //
@@ -364,11 +377,13 @@
   //
   // 1. Do not soft wrap.
   //      "soft_wrap": "none",
-  // 2. Soft wrap lines that overflow the editor:
+  // 2. Prefer a single line generally, unless an overly long line is encountered.
+  //      "soft_wrap": "prefer_line",
+  // 3. Soft wrap lines that overflow the editor:
   //      "soft_wrap": "editor_width",
-  // 3. Soft wrap lines at the preferred line length
+  // 4. Soft wrap lines at the preferred line length
   //      "soft_wrap": "preferred_line_length",
-  "soft_wrap": "none",
+  "soft_wrap": "prefer_line",
   // The column at which to soft-wrap lines, for buffers where soft-wrap
   // is enabled.
   "preferred_line_length": 80,
@@ -578,11 +593,30 @@
   },
   // Different settings for specific languages.
   "languages": {
-    "C++": {
-      "format_on_save": "off"
+    "Astro": {
+      "prettier": {
+        "allowed": true,
+        "plugins": ["prettier-plugin-astro"]
+      }
+    },
+    "Blade": {
+      "prettier": {
+        "allowed": true
+      }
     },
     "C": {
       "format_on_save": "off"
+    },
+    "C++": {
+      "format_on_save": "off"
+    },
+    "CSS": {
+      "prettier": {
+        "allowed": true
+      }
+    },
+    "Elixir": {
+      "language_servers": ["elixir-ls", "!next-ls", "!lexical", "..."]
     },
     "Gleam": {
       "tab_size": 2
@@ -592,18 +626,120 @@
         "source.organizeImports": true
       }
     },
+    "GraphQL": {
+      "prettier": {
+        "allowed": true
+      }
+    },
+    "HEEX": {
+      "language_servers": ["elixir-ls", "!next-ls", "!lexical", "..."]
+    },
+    "HTML": {
+      "prettier": {
+        "allowed": true
+      }
+    },
+    "Java": {
+      "prettier": {
+        "allowed": true,
+        "plugins": ["prettier-plugin-java"]
+      }
+    },
+    "JavaScript": {
+      "prettier": {
+        "allowed": true
+      }
+    },
+    "JSON": {
+      "prettier": {
+        "allowed": true
+      }
+    },
     "Make": {
       "hard_tabs": true
     },
+    "Markdown": {
+      "format_on_save": "off",
+      "prettier": {
+        "allowed": true
+      }
+    },
+    "PHP": {
+      "prettier": {
+        "allowed": true,
+        "plugins": ["@prettier/plugin-php"]
+      }
+    },
     "Prisma": {
       "tab_size": 2
+    },
+    "Ruby": {
+      "language_servers": ["solargraph", "!ruby-lsp", "..."]
+    },
+    "SCSS": {
+      "prettier": {
+        "allowed": true
+      }
+    },
+    "SQL": {
+      "prettier": {
+        "allowed": true,
+        "plugins": ["prettier-plugin-sql"]
+      }
+    },
+    "Svelte": {
+      "prettier": {
+        "allowed": true,
+        "plugins": ["prettier-plugin-svelte"]
+      }
+    },
+    "TSX": {
+      "prettier": {
+        "allowed": true
+      }
+    },
+    "Twig": {
+      "prettier": {
+        "allowed": true
+      }
+    },
+    "TypeScript": {
+      "prettier": {
+        "allowed": true
+      }
+    },
+    "Vue.js": {
+      "prettier": {
+        "allowed": true
+      }
+    },
+    "XML": {
+      "prettier": {
+        "allowed": true,
+        "plugins": ["@prettier/plugin-xml"]
+      }
+    },
+    "YAML": {
+      "prettier": {
+        "allowed": true
+      }
     }
   },
   // Zed's Prettier integration settings.
-  // If Prettier is enabled, Zed will use this for its Prettier instance for any applicable file, if
-  // project has no other Prettier installed.
+  // Allows to enable/disable formatting with Prettier
+  // and configure default Prettier, used when no project-level Prettier installation is found.
   "prettier": {
-    // Use regular Prettier json configuration:
+    // // Whether to consider prettier formatter or not when attempting to format a file.
+    // "allowed": false,
+    //
+    // // Use regular Prettier json configuration.
+    // // If Prettier is allowed, Zed will use this for its Prettier instance for any applicable file, if
+    // // the project has no other Prettier installed.
+    // "plugins": [],
+    //
+    // // Use regular Prettier json configuration.
+    // // If Prettier is allowed, Zed will use this for its Prettier instance for any applicable file, if
+    // // the project has no other Prettier installed.
     // "trailingComma": "es5",
     // "tabWidth": 4,
     // "semi": false,

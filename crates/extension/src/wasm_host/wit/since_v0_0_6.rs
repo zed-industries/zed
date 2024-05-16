@@ -155,7 +155,7 @@ impl github::Host for WasmState {
         options: github::GithubReleaseOptions,
     ) -> wasmtime::Result<Result<github::GithubRelease, String>> {
         maybe!(async {
-            let release = util::github::latest_github_release(
+            let release = http::github::latest_github_release(
                 &repo,
                 options.require_assets,
                 options.pre_release,

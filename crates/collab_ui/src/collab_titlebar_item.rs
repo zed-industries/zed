@@ -9,12 +9,12 @@ use gpui::{
 };
 use project::{Project, RepositoryEntry};
 use recent_projects::RecentProjects;
-use rpc::proto;
+use rpc::proto::{self, DevServerStatus};
 use std::sync::Arc;
 use theme::ActiveTheme;
 use ui::{
     h_flex, popover_menu, prelude::*, Avatar, AvatarAudioStatusIndicator, Button, ButtonLike,
-    ButtonStyle, ContextMenu, Icon, IconButton, IconName, TintColor, TitleBar, Tooltip,
+    ButtonStyle, ContextMenu, Icon, IconButton, IconName, Indicator, TintColor, TitleBar, Tooltip,
 };
 use util::ResultExt;
 use vcs_menu::{build_branch_list, BranchList, OpenRecent as ToggleVcsMenu};
@@ -58,7 +58,7 @@ impl Render for CollabTitlebarItem {
         let project_id = self.project.read(cx).remote_id();
         let workspace = self.workspace.upgrade();
 
-        TitleBar::new("collab-titlebar")
+        TitleBar::new("collab-titlebar", Box::new(workspace::CloseWindow))
             // note: on windows titlebar behaviour is handled by the platform implementation
             .when(cfg!(not(windows)), |this| {
                 this.on_click(|event, cx| {
@@ -73,7 +73,8 @@ impl Render for CollabTitlebarItem {
                     .gap_1()
                     .children(self.render_project_host(cx))
                     .child(self.render_project_name(cx))
-                    .children(self.render_project_branch(cx)),
+                    .children(self.render_project_branch(cx))
+                    .on_mouse_move(|_, cx| cx.stop_propagation()),
             )
             .child(
                 h_flex()
@@ -105,6 +106,7 @@ impl Render for CollabTitlebarItem {
 
                             this.children(current_user_face_pile.map(|face_pile| {
                                 v_flex()
+                                    .on_mouse_move(|_, cx| cx.stop_propagation())
                                     .child(face_pile)
                                     .child(render_color_ribbon(player_colors.local().cursor))
                             }))
@@ -167,12 +169,13 @@ impl Render for CollabTitlebarItem {
                 h_flex()
                     .gap_1()
                     .pr_1()
+                    .on_mouse_move(|_, cx| cx.stop_propagation())
                     .when_some(room, |this, room| {
                         let room = room.read(cx);
                         let project = self.project.read(cx);
                         let is_local = project.is_local();
-                        let is_remote_project = project.remote_project_id().is_some();
-                        let is_shared = (is_local || is_remote_project) && project.is_shared();
+                        let is_dev_server_project = project.dev_server_project_id().is_some();
+                        let is_shared = (is_local || is_dev_server_project) && project.is_shared();
                         let is_muted = room.is_muted();
                         let is_deafened = room.is_deafened().unwrap_or(false);
                         let is_screen_sharing = room.is_screen_sharing();
@@ -180,7 +183,7 @@ impl Render for CollabTitlebarItem {
                         let can_share_projects = room.can_share_projects();
 
                         this.when(
-                            (is_local || is_remote_project) && can_share_projects,
+                            (is_local || is_dev_server_project) && can_share_projects,
                             |this| {
                                 this.child(
                                     Button::new(
@@ -375,7 +378,41 @@ impl CollabTitlebarItem {
     // resolve if you are in a room -> render_project_owner
     // render_project_owner -> resolve if you are in a room -> Option<foo>
 
-    pub fn render_project_host(&self, cx: &mut ViewContext<Self>) -> Option<impl IntoElement> {
+    pub fn render_project_host(&self, cx: &mut ViewContext<Self>) -> Option<AnyElement> {
+        if let Some(dev_server) =
+            self.project
+                .read(cx)
+                .dev_server_project_id()
+                .and_then(|dev_server_project_id| {
+                    dev_server_projects::Store::global(cx)
+                        .read(cx)
+                        .dev_server_for_project(dev_server_project_id)
+                })
+        {
+            return Some(
+                ButtonLike::new("dev_server_trigger")
+                    .child(Indicator::dot().color(
+                        if dev_server.status == DevServerStatus::Online {
+                            Color::Created
+                        } else {
+                            Color::Disabled
+                        },
+                    ))
+                    .child(
+                        Label::new(dev_server.name.clone())
+                            .size(LabelSize::Small)
+                            .line_height_style(LineHeightStyle::UiLabel),
+                    )
+                    .tooltip(move |cx| Tooltip::text("Project is hosted on a dev server", cx))
+                    .on_click(cx.listener(|this, _, cx| {
+                        if let Some(workspace) = this.workspace.upgrade() {
+                            recent_projects::DevServerProjects::open(workspace, cx)
+                        }
+                    }))
+                    .into_any_element(),
+            );
+        }
+
         let host = self.project.read(cx).host()?;
         let host_user = self.user_store.read(cx).get_cached_user(host.user_id)?;
         let participant_index = self
@@ -406,7 +443,8 @@ impl CollabTitlebarItem {
                             })
                             .log_err();
                     })
-                }),
+                })
+                .into_any_element(),
         )
     }
 
@@ -642,7 +680,7 @@ impl CollabTitlebarItem {
             client::Status::UpgradeRequired => {
                 let auto_updater = auto_update::AutoUpdater::get(cx);
                 let label = match auto_updater.map(|auto_update| auto_update.read(cx).status()) {
-                    Some(AutoUpdateStatus::Updated) => "Please restart Zed to Collaborate",
+                    Some(AutoUpdateStatus::Updated { .. }) => "Please restart Zed to Collaborate",
                     Some(AutoUpdateStatus::Installing)
                     | Some(AutoUpdateStatus::Downloading)
                     | Some(AutoUpdateStatus::Checking) => "Updating...",
@@ -656,7 +694,7 @@ impl CollabTitlebarItem {
                         .label_size(LabelSize::Small)
                         .on_click(|_, cx| {
                             if let Some(auto_updater) = auto_update::AutoUpdater::get(cx) {
-                                if auto_updater.read(cx).status() == AutoUpdateStatus::Updated {
+                                if auto_updater.read(cx).status().is_updated() {
                                     workspace::restart(&Default::default(), cx);
                                     return;
                                 }

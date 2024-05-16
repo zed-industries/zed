@@ -1,5 +1,6 @@
 use crate::{
     display_map::ToDisplayPoint, AnchorRangeExt, Autoscroll, DisplayPoint, Editor, MultiBuffer,
+    RowExt,
 };
 use collections::BTreeMap;
 use futures::Future;
@@ -192,32 +193,11 @@ impl EditorTestContext {
         self.assertion_cx.context()
     }
 
-    pub fn simulate_keystroke(&mut self, keystroke_text: &str) -> ContextHandle {
-        let keystroke_under_test_handle =
-            self.add_assertion_context(format!("Simulated Keystroke: {:?}", keystroke_text));
+    // unlike cx.simulate_keystrokes(), this does not run_until_parked
+    // so you can use it to test detailed timing
+    pub fn simulate_keystroke(&mut self, keystroke_text: &str) {
         let keystroke = Keystroke::parse(keystroke_text).unwrap();
-
         self.cx.dispatch_keystroke(self.window, keystroke);
-
-        keystroke_under_test_handle
-    }
-
-    pub fn simulate_keystrokes<const COUNT: usize>(
-        &mut self,
-        keystroke_texts: [&str; COUNT],
-    ) -> ContextHandle {
-        let keystrokes_under_test_handle =
-            self.add_assertion_context(format!("Simulated Keystrokes: {:?}", keystroke_texts));
-        for keystroke_text in keystroke_texts.into_iter() {
-            self.simulate_keystroke(keystroke_text);
-        }
-        // it is common for keyboard shortcuts to kick off async actions, so this ensures that they are complete
-        // before returning.
-        // NOTE: we don't do this in simulate_keystroke() because a possible cause of bugs is that typing too
-        // quickly races with async actions.
-        self.cx.background_executor.run_until_parked();
-
-        keystrokes_under_test_handle
     }
 
     pub fn run_until_parked(&mut self) {
@@ -256,7 +236,7 @@ impl EditorTestContext {
             let details = editor.text_layout_details(cx);
 
             let y = pixel_position.y
-                + line_height * (display_point.row() as f32 - newest_point.row() as f32);
+                + line_height * (display_point.row().as_f32() - newest_point.row().as_f32());
             let x = pixel_position.x + snapshot.x_for_display_point(display_point, &details)
                 - snapshot.x_for_display_point(newest_point, &details);
             Point::new(x, y)
@@ -271,8 +251,7 @@ impl EditorTestContext {
     }
 
     pub fn set_diff_base(&mut self, diff_base: Option<&str>) {
-        let diff_base = diff_base.map(String::from);
-        self.update_buffer(|buffer, cx| buffer.set_diff_base(diff_base, cx));
+        self.update_buffer(|buffer, cx| buffer.set_diff_base(diff_base.map(ToOwned::to_owned), cx));
     }
 
     /// Change the editor's text and selections using a string containing

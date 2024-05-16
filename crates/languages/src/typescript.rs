@@ -4,6 +4,7 @@ use async_tar::Archive;
 use async_trait::async_trait;
 use collections::HashMap;
 use gpui::AsyncAppContext;
+use http::github::{build_tarball_url, GitHubLspBinaryVersion};
 use language::{LanguageServerName, LspAdapter, LspAdapterDelegate};
 use lsp::{CodeActionKind, LanguageServerBinary};
 use node_runtime::NodeRuntime;
@@ -17,11 +18,7 @@ use std::{
     path::{Path, PathBuf},
     sync::Arc,
 };
-use util::{
-    fs::remove_matching,
-    github::{build_tarball_url, GitHubLspBinaryVersion},
-    maybe, ResultExt,
-};
+use util::{fs::remove_matching, maybe, ResultExt};
 
 fn typescript_server_binary_arguments(server_path: &Path) -> Vec<OsString> {
     vec![server_path.into(), "--stdio".into()]
@@ -186,6 +183,18 @@ impl LspAdapter for TypeScriptLspAdapter {
         })))
     }
 
+    async fn workspace_configuration(
+        self: Arc<Self>,
+        _: &Arc<dyn LspAdapterDelegate>,
+        _cx: &mut AsyncAppContext,
+    ) -> Result<Value> {
+        Ok(json!({
+            "completions": {
+              "completeFunctionCalls": true
+            }
+        }))
+    }
+
     fn language_ids(&self) -> HashMap<String, String> {
         HashMap::from_iter([
             ("TypeScript".into(), "typescript".into()),
@@ -286,6 +295,11 @@ impl LspAdapter for EsLintLspAdapter {
             .cloned()
             .unwrap_or_else(|| json!({}));
 
+        let rules_customizations = eslint_user_settings
+            .get("rulesCustomizations")
+            .cloned()
+            .unwrap_or_else(|| json!([]));
+
         let node_path = eslint_user_settings.get("nodePath").unwrap_or(&Value::Null);
         let use_flat_config = Self::FLAT_CONFIG_FILE_NAMES
             .iter()
@@ -294,7 +308,7 @@ impl LspAdapter for EsLintLspAdapter {
         Ok(json!({
             "": {
                 "validate": "on",
-                "rulesCustomizations": [],
+                "rulesCustomizations": rules_customizations,
                 "run": "onType",
                 "nodePath": node_path,
                 "workingDirectory": {"mode": "auto"},

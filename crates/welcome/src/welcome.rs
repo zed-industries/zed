@@ -2,7 +2,6 @@ mod base_keymap_picker;
 mod base_keymap_setting;
 
 use client::{telemetry::Telemetry, TelemetrySettings};
-use copilot_ui;
 use db::kvp::KEY_VALUE_STORE;
 use gpui::{
     svg, AnyElement, AppContext, EventEmitter, FocusHandle, FocusableView, InteractiveElement,
@@ -29,7 +28,7 @@ pub fn init(cx: &mut AppContext) {
     cx.observe_new_views(|workspace: &mut Workspace, _cx| {
         workspace.register_action(|workspace, _: &Welcome, cx| {
             let welcome_page = WelcomePage::new(workspace, cx);
-            workspace.add_item_to_active_pane(Box::new(welcome_page), cx)
+            workspace.add_item_to_active_pane(Box::new(welcome_page), None, cx)
         });
     })
     .detach();
@@ -143,7 +142,17 @@ impl Render for WelcomePage {
                                         this.telemetry.report_app_event(
                                             "welcome page: sign in to copilot".to_string(),
                                         );
-                                        copilot_ui::initiate_sign_in(cx);
+                                        inline_completion_button::initiate_sign_in(cx);
+                                    })),
+                            )
+                            .child(
+                                Button::new("explore extensions", "Explore extensions")
+                                    .full_width()
+                                    .on_click(cx.listener(|this, _, cx| {
+                                        this.telemetry.report_app_event(
+                                            "welcome page: open extensions".to_string(),
+                                        );
+                                        cx.dispatch_action(Box::new(extensions_ui::Extensions));
                                     })),
                             ),
                     )

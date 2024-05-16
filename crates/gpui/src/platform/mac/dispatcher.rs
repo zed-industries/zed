@@ -76,7 +76,7 @@ impl PlatformDispatcher for MacDispatcher {
     fn dispatch_after(&self, duration: Duration, runnable: Runnable) {
         unsafe {
             let queue =
-                dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT.try_into().unwrap(), 0);
+                dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_HIGH.try_into().unwrap(), 0);
             let when = dispatch_time(DISPATCH_TIME_NOW as u64, duration.as_nanos() as i64);
             dispatch_after_f(
                 when,
@@ -87,12 +87,13 @@ impl PlatformDispatcher for MacDispatcher {
         }
     }
 
-    fn tick(&self, _background_only: bool) -> bool {
-        false
-    }
-
-    fn park(&self) {
-        self.parker.lock().park()
+    fn park(&self, timeout: Option<Duration>) -> bool {
+        if let Some(timeout) = timeout {
+            self.parker.lock().park_timeout(timeout)
+        } else {
+            self.parker.lock().park();
+            true
+        }
     }
 
     fn unparker(&self) -> Unparker {

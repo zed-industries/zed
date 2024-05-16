@@ -1,6 +1,7 @@
 use client::Client;
 use futures::channel::oneshot;
-use gpui::{App, Global};
+use gpui::App;
+use http::HttpClientWithUrl;
 use language::language_settings::AllLanguageSettings;
 use project::Project;
 use semantic_index::{OpenAiEmbeddingModel, OpenAiEmbeddingProvider, SemanticIndex};
@@ -9,7 +10,6 @@ use std::{
     path::{Path, PathBuf},
     sync::Arc,
 };
-use util::http::HttpClientWithUrl;
 
 fn main() {
     env_logger::init();
@@ -92,10 +92,11 @@ fn main() {
                 .update(|cx| {
                     let project_index = project_index.read(cx);
                     let query = "converting an anchor to a point";
-                    project_index.search(query, 4, cx)
+                    project_index.search(query.into(), 4, cx)
                 })
                 .unwrap()
-                .await;
+                .await
+                .unwrap();
 
             for search_result in results {
                 let path = search_result.path.clone();

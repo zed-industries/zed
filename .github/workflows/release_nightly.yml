@@ -25,7 +25,6 @@ jobs:
         uses: actions/checkout@v4
         with:
           clean: false
-          submodules: "recursive"
           fetch-depth: 0
 
       - name: Run style checks
@@ -45,7 +44,6 @@ jobs:
         uses: actions/checkout@v4
         with:
           clean: false
-          submodules: "recursive"
 
       - name: Run tests
         uses: ./.github/actions/run_tests
@@ -75,7 +73,6 @@ jobs:
         uses: actions/checkout@v4
         with:
           clean: false
-          submodules: "recursive"
 
       - name: Set release channel to nightly
         run: |
@@ -94,9 +91,11 @@ jobs:
         run: script/upload-nightly macos
 
   bundle-deb:
-    name: Create a *.deb Linux bundle
+    name: Create a Linux *.tar.gz bundle
     if: github.repository_owner == 'zed-industries'
-    runs-on: ubuntu-22.04 # keep the version fixed to avoid libc and dynamic linked library issues
+    runs-on:
+      - self-hosted
+      - deploy
     needs: tests
     env:
       DIGITALOCEAN_SPACES_ACCESS_KEY: ${{ secrets.DIGITALOCEAN_SPACES_ACCESS_KEY }}
@@ -107,16 +106,9 @@ jobs:
         uses: actions/checkout@v4
         with:
           clean: false
-          submodules: "recursive"
 
-      - name: Cache dependencies
-        uses: swatinem/rust-cache@v2
-        with:
-          save-if: ${{ github.ref == 'refs/heads/main' }}
-
-      - name: Configure linux
-        shell: bash -euxo pipefail {0}
-        run: script/linux
+      - name: Add Rust to the PATH
+        run: echo "$HOME/.cargo/bin" >> $GITHUB_PATH
 
       - name: Set release channel to nightly
         run: |
@@ -125,12 +117,11 @@ jobs:
           echo "Publishing version: ${version} on release channel nightly"
           echo "nightly" > crates/zed/RELEASE_CHANNEL
 
-      # TODO linux : find a way to add licenses to the final bundle
-      # - name: Generate license file
-      #   run: script/generate-licenses
+      - name: Generate license file
+        run: script/generate-licenses
 
-      - name: Create Linux *.deb bundle
+      - name: Create Linux .tar.gz bundle
         run: script/bundle-linux
 
       - name: Upload Zed Nightly
-        run: script/upload-nightly linux-deb
+        run: script/upload-nightly linux-targz

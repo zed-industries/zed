@@ -1,4 +1,5 @@
 use anyhow::{anyhow, Result};
+use git::GitHostingProviderRegistry;
 
 #[cfg(unix)]
 use std::os::unix::fs::MetadataExt;
@@ -49,7 +50,13 @@ pub trait Fs: Send + Sync {
     async fn copy_file(&self, source: &Path, target: &Path, options: CopyOptions) -> Result<()>;
     async fn rename(&self, source: &Path, target: &Path, options: RenameOptions) -> Result<()>;
     async fn remove_dir(&self, path: &Path, options: RemoveOptions) -> Result<()>;
+    async fn trash_dir(&self, path: &Path, options: RemoveOptions) -> Result<()> {
+        self.remove_dir(path, options).await
+    }
     async fn remove_file(&self, path: &Path, options: RemoveOptions) -> Result<()>;
+    async fn trash_file(&self, path: &Path, options: RemoveOptions) -> Result<()> {
+        self.remove_file(path, options).await
+    }
     async fn open_sync(&self, path: &Path) -> Result<Box<dyn io::Read>>;
     async fn load(&self, path: &Path) -> Result<String>;
     async fn atomic_write(&self, path: PathBuf, text: String) -> Result<()>;
@@ -111,12 +118,19 @@ pub struct Metadata {
 
 #[derive(Default)]
 pub struct RealFs {
+    git_hosting_provider_registry: Arc<GitHostingProviderRegistry>,
     git_binary_path: Option<PathBuf>,
 }
 
 impl RealFs {
-    pub fn new(git_binary_path: Option<PathBuf>) -> Self {
-        Self { git_binary_path }
+    pub fn new(
+        git_hosting_provider_registry: Arc<GitHostingProviderRegistry>,
+        git_binary_path: Option<PathBuf>,
+    ) -> Self {
+        Self {
+            git_hosting_provider_registry,
+            git_binary_path,
+        }
     }
 }
 
@@ -235,6 +249,33 @@ impl Fs for RealFs {
             }
             Err(err) => Err(err)?,
         }
+    }
+
+    #[cfg(target_os = "macos")]
+    async fn trash_file(&self, path: &Path, _options: RemoveOptions) -> Result<()> {
+        use cocoa::{
+            base::{id, nil},
+            foundation::{NSAutoreleasePool, NSString},
+        };
+        use objc::{class, msg_send, sel, sel_impl};
+
+        unsafe {
+            unsafe fn ns_string(string: &str) -> id {
+                NSString::alloc(nil).init_str(string).autorelease()
+            }
+
+            let url: id = msg_send![class!(NSURL), fileURLWithPath: ns_string(path.to_string_lossy().as_ref())];
+            let array: id = msg_send![class!(NSArray), arrayWithObject: url];
+            let workspace: id = msg_send![class!(NSWorkspace), sharedWorkspace];
+
+            let _: id = msg_send![workspace, recycleURLs: array completionHandler: nil];
+        }
+        Ok(())
+    }
+
+    #[cfg(target_os = "macos")]
+    async fn trash_dir(&self, path: &Path, options: RemoveOptions) -> Result<()> {
+        self.trash_file(path, options).await
     }
 
     async fn open_sync(&self, path: &Path) -> Result<Box<dyn io::Read>> {
@@ -374,7 +415,7 @@ impl Fs for RealFs {
         path: &Path,
         _latency: Duration,
     ) -> Pin<Box<dyn Send + Stream<Item = Vec<PathBuf>>>> {
-        use notify::{event::EventKind, Watcher};
+        use notify::{event::EventKind, event::ModifyKind, Watcher};
         // todo(linux): This spawns two threads, while the macOS impl
         // only spawns one. Can we use a OnceLock or some such to make
         // this better
@@ -402,6 +443,17 @@ impl Fs for RealFs {
                 if let Some(event) = event.ok() {
                     if event.paths.into_iter().any(|path| *path == watched_path) {
                         match event.kind {
+                            EventKind::Modify(ev) => {
+                                if matches!(ev, ModifyKind::Name(_)) {
+                                    file_watcher
+                                        .watch(
+                                            watched_path.as_path(),
+                                            notify::RecursiveMode::Recursive,
+                                        )
+                                        .log_err();
+                                    let _ = tx.try_send(vec![watched_path.clone()]).ok();
+                                }
+                            }
                             EventKind::Create(_) => {
                                 file_watcher
                                     .watch(watched_path.as_path(), notify::RecursiveMode::Recursive)
@@ -441,6 +493,7 @@ impl Fs for RealFs {
                 Arc::new(Mutex::new(RealGitRepository::new(
                     libgit_repository,
                     self.git_binary_path.clone(),
+                    self.git_hosting_provider_registry.clone(),
                 )))
             })
     }
@@ -712,6 +765,15 @@ impl FakeFs {
         })?;
         state.emit_event([path]);
         Ok(())
+    }
+
+    pub fn read_file_sync(&self, path: impl AsRef<Path>) -> Result<Vec<u8>> {
+        let path = path.as_ref();
+        let path = normalize_path(path);
+        let state = self.state.lock();
+        let entry = state.read_path(&path)?;
+        let entry = entry.lock();
+        entry.file_content(&path).cloned()
     }
 
     async fn load_internal(&self, path: impl AsRef<Path>) -> Result<Vec<u8>> {

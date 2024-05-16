@@ -90,7 +90,7 @@ impl PlatformTextSystem for CosmicTextSystem {
         let candidates = if let Some(font_ids) = state.font_ids_by_family_cache.get(&font.family) {
             font_ids.as_slice()
         } else {
-            let font_ids = state.load_family(&font.family, font.features)?;
+            let font_ids = state.load_family(&font.family, &font.features)?;
             state
                 .font_ids_by_family_cache
                 .insert(font.family.clone(), font_ids);
@@ -176,17 +176,6 @@ impl PlatformTextSystem for CosmicTextSystem {
     fn layout_line(&self, text: &str, font_size: Pixels, runs: &[FontRun]) -> LineLayout {
         self.0.write().layout_line(text, font_size, runs)
     }
-
-    // todo(linux) Confirm that this has been superseded by the LineWrapper
-    fn wrap_line(
-        &self,
-        _text: &str,
-        _font_id: FontId,
-        _font_size: Pixels,
-        _width: Pixels,
-    ) -> Vec<usize> {
-        unimplemented!()
-    }
 }
 
 impl CosmicTextSystemState {
@@ -211,7 +200,7 @@ impl CosmicTextSystemState {
     fn load_family(
         &mut self,
         name: &str,
-        _features: FontFeatures,
+        _features: &FontFeatures,
     ) -> Result<SmallVec<[FontId; 4]>> {
         // TODO: Determine the proper system UI font.
         let name = if name == ".SystemUIFont" {

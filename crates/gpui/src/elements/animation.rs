@@ -1,6 +1,6 @@
 use std::time::{Duration, Instant};
 
-use crate::{AnyElement, Element, ElementId, IntoElement};
+use crate::{AnyElement, Element, ElementId, GlobalElementId, IntoElement};
 
 pub use easing::*;
 
@@ -72,6 +72,15 @@ pub struct AnimationElement<E> {
     animator: Box<dyn Fn(E, f32) -> E + 'static>,
 }
 
+impl<E> AnimationElement<E> {
+    /// Returns a new [`AnimationElement<E>`] after applying the given function
+    /// to the element being animated.
+    pub fn map_element(mut self, f: impl FnOnce(E) -> E) -> AnimationElement<E> {
+        self.element = self.element.map(f);
+        self
+    }
+}
+
 impl<E: IntoElement + 'static> IntoElement for AnimationElement<E> {
     type Element = AnimationElement<E>;
 
@@ -86,15 +95,19 @@ struct AnimationState {
 
 impl<E: IntoElement + 'static> Element for AnimationElement<E> {
     type RequestLayoutState = AnyElement;
-
     type PrepaintState = ();
+
+    fn id(&self) -> Option<ElementId> {
+        Some(self.id.clone())
+    }
 
     fn request_layout(
         &mut self,
+        global_id: Option<&GlobalElementId>,
         cx: &mut crate::WindowContext,
     ) -> (crate::LayoutId, Self::RequestLayoutState) {
-        cx.with_element_state(Some(self.id.clone()), |state, cx| {
-            let state = state.unwrap().unwrap_or_else(|| AnimationState {
+        cx.with_element_state(global_id.unwrap(), |state, cx| {
+            let state = state.unwrap_or_else(|| AnimationState {
                 start: Instant::now(),
             });
             let mut delta =
@@ -130,12 +143,13 @@ impl<E: IntoElement + 'static> Element for AnimationElement<E> {
                 })
             }
 
-            ((element.request_layout(cx), element), Some(state))
+            ((element.request_layout(cx), element), state)
         })
     }
 
     fn prepaint(
         &mut self,
+        _id: Option<&GlobalElementId>,
         _bounds: crate::Bounds<crate::Pixels>,
         element: &mut Self::RequestLayoutState,
         cx: &mut crate::WindowContext,
@@ -145,6 +159,7 @@ impl<E: IntoElement + 'static> Element for AnimationElement<E> {
 
     fn paint(
         &mut self,
+        _id: Option<&GlobalElementId>,
         _bounds: crate::Bounds<crate::Pixels>,
         element: &mut Self::RequestLayoutState,
         _: &mut Self::PrepaintState,

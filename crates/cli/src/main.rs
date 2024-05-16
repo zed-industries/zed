@@ -1,16 +1,23 @@
 #![cfg_attr(any(target_os = "linux", target_os = "windows"), allow(dead_code))]
 
-use anyhow::{anyhow, Context, Result};
+use anyhow::{Context, Result};
 use clap::Parser;
-use cli::{CliRequest, CliResponse};
-use serde::Deserialize;
+use cli::{ipc::IpcOneShotServer, CliRequest, CliResponse, IpcHandshake};
 use std::{
-    env,
-    ffi::OsStr,
-    fs,
+    env, fs, io,
     path::{Path, PathBuf},
+    process::ExitStatus,
+    thread::{self, JoinHandle},
 };
 use util::paths::PathLikeWithPosition;
+
+struct Detect;
+
+trait InstalledApp {
+    fn zed_version_string(&self) -> String;
+    fn launch(&self, ipc_url: String) -> anyhow::Result<()>;
+    fn run_foreground(&self, ipc_url: String) -> io::Result<ExitStatus>;
+}
 
 #[derive(Parser, Debug)]
 #[command(name = "zed", disable_version_flag = true)]
@@ -33,9 +40,12 @@ struct Args {
     /// Print Zed's version and the app path.
     #[arg(short, long)]
     version: bool,
-    /// Custom Zed.app path
-    #[arg(short, long)]
-    bundle_path: Option<PathBuf>,
+    /// Run zed in the foreground (useful for debugging)
+    #[arg(long)]
+    foreground: bool,
+    /// Custom path to Zed.app or the zed binary
+    #[arg(long)]
+    zed: Option<PathBuf>,
     /// Run zed in dev-server mode
     #[arg(long)]
     dev_server_token: Option<String>,
@@ -47,12 +57,6 @@ fn parse_path_with_position(
     PathLikeWithPosition::parse_str(argument_str, |path_str| {
         Ok(Path::new(path_str).to_path_buf())
     })
-}
-
-#[derive(Debug, Deserialize)]
-struct InfoPlist {
-    #[serde(rename = "CFBundleShortVersionString")]
-    bundle_short_version_string: String,
 }
 
 fn main() -> Result<()> {
@@ -68,14 +72,10 @@ fn main() -> Result<()> {
     }
     let args = Args::parse();
 
-    let bundle = Bundle::detect(args.bundle_path.as_deref()).context("Bundle detection")?;
-
-    if let Some(dev_server_token) = args.dev_server_token {
-        return bundle.spawn(vec!["--dev-server-token".into(), dev_server_token]);
-    }
+    let app = Detect::detect(args.zed.as_deref()).context("Bundle detection")?;
 
     if args.version {
-        println!("{}", bundle.zed_version_string());
+        println!("{}", app.zed_version_string());
         return Ok(());
     }
 
@@ -101,7 +101,10 @@ fn main() -> Result<()> {
         paths.push(canonicalized.to_string(|path| path.display().to_string()))
     }
 
-    let (tx, rx) = bundle.launch()?;
+    let (server, server_name) =
+        IpcOneShotServer::<IpcHandshake>::new().context("Handshake before Zed spawn")?;
+    let url = format!("zed-cli://{server_name}");
+
     let open_new_workspace = if args.new {
         Some(true)
     } else if args.add {
@@ -110,78 +113,164 @@ fn main() -> Result<()> {
         None
     };
 
-    tx.send(CliRequest::Open {
-        paths,
-        wait: args.wait,
-        open_new_workspace,
-    })?;
+    let sender: JoinHandle<anyhow::Result<()>> = thread::spawn(move || {
+        let (_, handshake) = server.accept().context("Handshake after Zed spawn")?;
+        let (tx, rx) = (handshake.requests, handshake.responses);
+        tx.send(CliRequest::Open {
+            paths,
+            wait: args.wait,
+            open_new_workspace,
+            dev_server_token: args.dev_server_token,
+        })?;
 
-    while let Ok(response) = rx.recv() {
-        match response {
-            CliResponse::Ping => {}
-            CliResponse::Stdout { message } => println!("{message}"),
-            CliResponse::Stderr { message } => eprintln!("{message}"),
-            CliResponse::Exit { status } => std::process::exit(status),
+        while let Ok(response) = rx.recv() {
+            match response {
+                CliResponse::Ping => {}
+                CliResponse::Stdout { message } => println!("{message}"),
+                CliResponse::Stderr { message } => eprintln!("{message}"),
+                CliResponse::Exit { status } => std::process::exit(status),
+            }
         }
+
+        Ok(())
+    });
+
+    if args.foreground {
+        app.run_foreground(url)?;
+    } else {
+        app.launch(url)?;
+        sender.join().unwrap()?;
     }
 
     Ok(())
 }
 
-enum Bundle {
-    App {
-        app_bundle: PathBuf,
-        plist: InfoPlist,
-    },
-    LocalPath {
-        executable: PathBuf,
-        plist: InfoPlist,
-    },
-}
-
-fn locate_bundle() -> Result<PathBuf> {
-    let cli_path = std::env::current_exe()?.canonicalize()?;
-    let mut app_path = cli_path.clone();
-    while app_path.extension() != Some(OsStr::new("app")) {
-        if !app_path.pop() {
-            return Err(anyhow!("cannot find app bundle containing {:?}", cli_path));
-        }
-    }
-    Ok(app_path)
-}
-
 #[cfg(target_os = "linux")]
 mod linux {
-    use std::path::Path;
+    use std::{
+        env,
+        ffi::OsString,
+        io,
+        os::{
+            linux::net::SocketAddrExt,
+            unix::net::{SocketAddr, UnixDatagram},
+        },
+        path::{Path, PathBuf},
+        process::{self, ExitStatus},
+        thread,
+        time::Duration,
+    };
 
-    use cli::{CliRequest, CliResponse};
-    use ipc_channel::ipc::{IpcReceiver, IpcSender};
+    use anyhow::anyhow;
+    use cli::FORCE_CLI_MODE_ENV_VAR_NAME;
+    use fork::Fork;
+    use once_cell::sync::Lazy;
 
-    use crate::{Bundle, InfoPlist};
+    use crate::{Detect, InstalledApp};
 
-    impl Bundle {
-        pub fn detect(_args_bundle_path: Option<&Path>) -> anyhow::Result<Self> {
-            unimplemented!()
+    static RELEASE_CHANNEL: Lazy<String> =
+        Lazy::new(|| include_str!("../../zed/RELEASE_CHANNEL").trim().to_string());
+
+    struct App(PathBuf);
+
+    impl Detect {
+        pub fn detect(path: Option<&Path>) -> anyhow::Result<impl InstalledApp> {
+            let path = if let Some(path) = path {
+                path.to_path_buf().canonicalize()
+            } else {
+                let cli = env::current_exe()?;
+                let dir = cli
+                    .parent()
+                    .ok_or_else(|| anyhow!("no parent path for cli"))?;
+
+                match dir.join("zed").canonicalize() {
+                    Ok(path) => Ok(path),
+                    // development builds have Zed capitalized
+                    Err(e) => match dir.join("Zed").canonicalize() {
+                        Ok(path) => Ok(path),
+                        Err(_) => Err(e),
+                    },
+                }
+            }?;
+
+            Ok(App(path))
+        }
+    }
+
+    impl InstalledApp for App {
+        fn zed_version_string(&self) -> String {
+            format!(
+                "Zed {}{} – {}",
+                if *RELEASE_CHANNEL == "stable" {
+                    "".to_string()
+                } else {
+                    format!(" {} ", *RELEASE_CHANNEL)
+                },
+                option_env!("RELEASE_VERSION").unwrap_or_default(),
+                self.0.display(),
+            )
         }
 
-        pub fn plist(&self) -> &InfoPlist {
-            unimplemented!()
+        fn launch(&self, ipc_url: String) -> anyhow::Result<()> {
+            let uid: u32 = unsafe { libc::getuid() };
+            let sock_addr =
+                SocketAddr::from_abstract_name(format!("zed-{}-{}", *RELEASE_CHANNEL, uid))?;
+
+            let sock = UnixDatagram::unbound()?;
+            if sock.connect_addr(&sock_addr).is_err() {
+                self.boot_background(ipc_url)?;
+            } else {
+                sock.send(ipc_url.as_bytes())?;
+            }
+            Ok(())
         }
 
-        pub fn path(&self) -> &Path {
-            unimplemented!()
+        fn run_foreground(&self, ipc_url: String) -> io::Result<ExitStatus> {
+            std::process::Command::new(self.0.clone())
+                .arg(ipc_url)
+                .status()
+        }
+    }
+
+    impl App {
+        fn boot_background(&self, ipc_url: String) -> anyhow::Result<()> {
+            let path = &self.0;
+
+            match fork::fork() {
+                Ok(Fork::Parent(_)) => Ok(()),
+                Ok(Fork::Child) => {
+                    std::env::set_var(FORCE_CLI_MODE_ENV_VAR_NAME, "");
+                    if let Err(_) = fork::setsid() {
+                        eprintln!("failed to setsid: {}", std::io::Error::last_os_error());
+                        process::exit(1);
+                    }
+                    if std::env::var("ZED_KEEP_FD").is_err() {
+                        if let Err(_) = fork::close_fd() {
+                            eprintln!("failed to close_fd: {}", std::io::Error::last_os_error());
+                        }
+                    }
+                    let error =
+                        exec::execvp(path.clone(), &[path.as_os_str(), &OsString::from(ipc_url)]);
+                    // if exec succeeded, we never get here.
+                    eprintln!("failed to exec {:?}: {}", path, error);
+                    process::exit(1)
+                }
+                Err(_) => Err(anyhow!(io::Error::last_os_error())),
+            }
         }
 
-        pub fn launch(&self) -> anyhow::Result<(IpcSender<CliRequest>, IpcReceiver<CliResponse>)> {
-            unimplemented!()
-        }
-
-        pub fn spawn(&self, _args: Vec<String>) -> anyhow::Result<()> {
-            unimplemented!()
-        }
-
-        pub fn zed_version_string(&self) -> String {
-            unimplemented!()
+        fn wait_for_socket(
+            &self,
+            sock_addr: &SocketAddr,
+            sock: &mut UnixDatagram,
+        ) -> Result<(), std::io::Error> {
+            for _ in 0..100 {
+                thread::sleep(Duration::from_millis(10));
+                if sock.connect_addr(&sock_addr).is_ok() {
+                    return Ok(());
+                }
+            }
+            sock.connect_addr(&sock_addr)
         }
     }
 }
@@ -189,59 +278,84 @@ mod linux {
 // todo("windows")
 #[cfg(target_os = "windows")]
 mod windows {
+    use crate::{Detect, InstalledApp};
+    use std::io;
     use std::path::Path;
+    use std::process::ExitStatus;
 
-    use cli::{CliRequest, CliResponse};
-    use ipc_channel::ipc::{IpcReceiver, IpcSender};
-
-    use crate::{Bundle, InfoPlist};
-
-    impl Bundle {
-        pub fn detect(_args_bundle_path: Option<&Path>) -> anyhow::Result<Self> {
+    struct App;
+    impl InstalledApp for App {
+        fn zed_version_string(&self) -> String {
             unimplemented!()
         }
-
-        pub fn plist(&self) -> &InfoPlist {
+        fn launch(&self, _ipc_url: String) -> anyhow::Result<()> {
             unimplemented!()
         }
-
-        pub fn path(&self) -> &Path {
+        fn run_foreground(&self, _ipc_url: String) -> io::Result<ExitStatus> {
             unimplemented!()
         }
+    }
 
-        pub fn launch(&self) -> anyhow::Result<(IpcSender<CliRequest>, IpcReceiver<CliResponse>)> {
-            unimplemented!()
-        }
-
-        pub fn spawn(&self, _args: Vec<String>) -> anyhow::Result<()> {
-            unimplemented!()
-        }
-
-        pub fn zed_version_string(&self) -> String {
-            unimplemented!()
+    impl Detect {
+        pub fn detect(_path: Option<&Path>) -> anyhow::Result<impl InstalledApp> {
+            Ok(App)
         }
     }
 }
 
 #[cfg(target_os = "macos")]
 mod mac_os {
-    use anyhow::{Context, Result};
+    use anyhow::{anyhow, Context, Result};
     use core_foundation::{
         array::{CFArray, CFIndex},
         string::kCFStringEncodingUTF8,
         url::{CFURLCreateWithBytes, CFURL},
     };
     use core_services::{kLSLaunchDefaults, LSLaunchURLSpec, LSOpenFromURLSpec, TCFType};
-    use std::{fs, path::Path, process::Command, ptr};
+    use serde::Deserialize;
+    use std::{
+        ffi::OsStr,
+        fs, io,
+        path::{Path, PathBuf},
+        process::{Command, ExitStatus},
+        ptr,
+    };
 
-    use cli::{CliRequest, CliResponse, IpcHandshake, FORCE_CLI_MODE_ENV_VAR_NAME};
-    use ipc_channel::ipc::{IpcOneShotServer, IpcReceiver, IpcSender};
+    use cli::FORCE_CLI_MODE_ENV_VAR_NAME;
 
-    use crate::{locate_bundle, Bundle, InfoPlist};
+    use crate::{Detect, InstalledApp};
 
-    impl Bundle {
-        pub fn detect(args_bundle_path: Option<&Path>) -> anyhow::Result<Self> {
-            let bundle_path = if let Some(bundle_path) = args_bundle_path {
+    #[derive(Debug, Deserialize)]
+    struct InfoPlist {
+        #[serde(rename = "CFBundleShortVersionString")]
+        bundle_short_version_string: String,
+    }
+
+    enum Bundle {
+        App {
+            app_bundle: PathBuf,
+            plist: InfoPlist,
+        },
+        LocalPath {
+            executable: PathBuf,
+            plist: InfoPlist,
+        },
+    }
+
+    fn locate_bundle() -> Result<PathBuf> {
+        let cli_path = std::env::current_exe()?.canonicalize()?;
+        let mut app_path = cli_path.clone();
+        while app_path.extension() != Some(OsStr::new("app")) {
+            if !app_path.pop() {
+                return Err(anyhow!("cannot find app bundle containing {:?}", cli_path));
+            }
+        }
+        Ok(app_path)
+    }
+
+    impl Detect {
+        pub fn detect(path: Option<&Path>) -> anyhow::Result<impl InstalledApp> {
+            let bundle_path = if let Some(bundle_path) = path {
                 bundle_path
                     .canonicalize()
                     .with_context(|| format!("Args bundle path {bundle_path:?} canonicalization"))?
@@ -256,7 +370,7 @@ mod mac_os {
                         plist::from_file::<_, InfoPlist>(&plist_path).with_context(|| {
                             format!("Reading *.app bundle plist file at {plist_path:?}")
                         })?;
-                    Ok(Self::App {
+                    Ok(Bundle::App {
                         app_bundle: bundle_path,
                         plist,
                     })
@@ -271,42 +385,27 @@ mod mac_os {
                         plist::from_file::<_, InfoPlist>(&plist_path).with_context(|| {
                             format!("Reading dev bundle plist file at {plist_path:?}")
                         })?;
-                    Ok(Self::LocalPath {
+                    Ok(Bundle::LocalPath {
                         executable: bundle_path,
                         plist,
                     })
                 }
             }
         }
+    }
 
-        fn plist(&self) -> &InfoPlist {
-            match self {
-                Self::App { plist, .. } => plist,
-                Self::LocalPath { plist, .. } => plist,
-            }
+    impl InstalledApp for Bundle {
+        fn zed_version_string(&self) -> String {
+            let is_dev = matches!(self, Self::LocalPath { .. });
+            format!(
+                "Zed {}{} – {}",
+                self.plist().bundle_short_version_string,
+                if is_dev { " (dev)" } else { "" },
+                self.path().display(),
+            )
         }
 
-        fn path(&self) -> &Path {
-            match self {
-                Self::App { app_bundle, .. } => app_bundle,
-                Self::LocalPath { executable, .. } => executable,
-            }
-        }
-
-        pub fn spawn(&self, args: Vec<String>) -> Result<()> {
-            let path = match self {
-                Self::App { app_bundle, .. } => app_bundle.join("Contents/MacOS/zed"),
-                Self::LocalPath { executable, .. } => executable.clone(),
-            };
-            Command::new(path).args(args).status()?;
-            Ok(())
-        }
-
-        pub fn launch(&self) -> anyhow::Result<(IpcSender<CliRequest>, IpcReceiver<CliResponse>)> {
-            let (server, server_name) =
-                IpcOneShotServer::<IpcHandshake>::new().context("Handshake before Zed spawn")?;
-            let url = format!("zed-cli://{server_name}");
-
+        fn launch(&self, url: String) -> anyhow::Result<()> {
             match self {
                 Self::App { app_bundle, .. } => {
                     let app_path = app_bundle;
@@ -368,18 +467,32 @@ mod mac_os {
                 }
             }
 
-            let (_, handshake) = server.accept().context("Handshake after Zed spawn")?;
-            Ok((handshake.requests, handshake.responses))
+            Ok(())
         }
 
-        pub fn zed_version_string(&self) -> String {
-            let is_dev = matches!(self, Self::LocalPath { .. });
-            format!(
-                "Zed {}{} – {}",
-                self.plist().bundle_short_version_string,
-                if is_dev { " (dev)" } else { "" },
-                self.path().display(),
-            )
+        fn run_foreground(&self, ipc_url: String) -> io::Result<ExitStatus> {
+            let path = match self {
+                Bundle::App { app_bundle, .. } => app_bundle.join("Contents/MacOS/zed"),
+                Bundle::LocalPath { executable, .. } => executable.clone(),
+            };
+
+            std::process::Command::new(path).arg(ipc_url).status()
+        }
+    }
+
+    impl Bundle {
+        fn plist(&self) -> &InfoPlist {
+            match self {
+                Self::App { plist, .. } => plist,
+                Self::LocalPath { plist, .. } => plist,
+            }
+        }
+
+        fn path(&self) -> &Path {
+            match self {
+                Self::App { app_bundle, .. } => app_bundle,
+                Self::LocalPath { executable, .. } => executable,
+            }
         }
     }
 

@@ -79,11 +79,18 @@ pub trait PickerDelegate: Sized + 'static {
         false
     }
 
+    fn confirm_update_query(&mut self, _cx: &mut ViewContext<Picker<Self>>) -> Option<String> {
+        None
+    }
+
     fn confirm(&mut self, secondary: bool, cx: &mut ViewContext<Picker<Self>>);
     /// Instead of interacting with currently selected entry, treats editor input literally,
     /// performing some kind of action on it.
     fn confirm_input(&mut self, _secondary: bool, _: &mut ViewContext<Picker<Self>>) {}
     fn dismissed(&mut self, cx: &mut ViewContext<Picker<Self>>);
+    fn should_dismiss(&self) -> bool {
+        true
+    }
     fn selected_as_query(&self) -> Option<String> {
         None
     }
@@ -267,8 +274,10 @@ impl<D: PickerDelegate> Picker<D> {
     }
 
     pub fn cancel(&mut self, _: &menu::Cancel, cx: &mut ViewContext<Self>) {
-        self.delegate.dismissed(cx);
-        cx.emit(DismissEvent);
+        if self.delegate.should_dismiss() {
+            self.delegate.dismissed(cx);
+            cx.emit(DismissEvent);
+        }
     }
 
     fn confirm(&mut self, _: &menu::Confirm, cx: &mut ViewContext<Self>) {
@@ -280,7 +289,7 @@ impl<D: PickerDelegate> Picker<D> {
             self.confirm_on_update = Some(false)
         } else {
             self.pending_update_matches.take();
-            self.delegate.confirm(false, cx);
+            self.do_confirm(false, cx);
         }
     }
 
@@ -292,7 +301,7 @@ impl<D: PickerDelegate> Picker<D> {
         {
             self.confirm_on_update = Some(true)
         } else {
-            self.delegate.confirm(true, cx);
+            self.do_confirm(true, cx);
         }
     }
 
@@ -311,7 +320,16 @@ impl<D: PickerDelegate> Picker<D> {
         cx.stop_propagation();
         cx.prevent_default();
         self.delegate.set_selected_index(ix, cx);
-        self.delegate.confirm(secondary, cx);
+        self.do_confirm(secondary, cx)
+    }
+
+    fn do_confirm(&mut self, secondary: bool, cx: &mut ViewContext<Self>) {
+        if let Some(update_query) = self.delegate.confirm_update_query(cx) {
+            self.set_query(update_query, cx);
+            self.delegate.set_selected_index(0, cx);
+        } else {
+            self.delegate.confirm(secondary, cx)
+        }
     }
 
     fn on_input_editor_event(
@@ -385,7 +403,7 @@ impl<D: PickerDelegate> Picker<D> {
         self.scroll_to_item_index(index);
         self.pending_update_matches = None;
         if let Some(secondary) = self.confirm_on_update.take() {
-            self.delegate.confirm(secondary, cx);
+            self.do_confirm(secondary, cx);
         }
         cx.notify();
     }

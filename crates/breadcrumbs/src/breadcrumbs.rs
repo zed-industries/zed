@@ -33,7 +33,7 @@ impl EventEmitter<ToolbarItemEvent> for Breadcrumbs {}
 impl Render for Breadcrumbs {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         const MAX_SEGMENTS: usize = 12;
-        let element = h_flex().text_ui();
+        let element = h_flex().text_ui(cx);
         let Some(active_item) = self.active_item.as_ref() else {
             return element;
         };

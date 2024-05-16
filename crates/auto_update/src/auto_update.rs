@@ -15,23 +15,22 @@ use markdown_preview::markdown_preview_view::{MarkdownPreviewMode, MarkdownPrevi
 use schemars::JsonSchema;
 use serde::Deserialize;
 use serde_derive::Serialize;
-use smol::io::AsyncReadExt;
+use smol::{fs, io::AsyncReadExt};
 
 use settings::{Settings, SettingsSources, SettingsStore};
 use smol::{fs::File, process::Command};
 
+use http::{HttpClient, HttpClientWithUrl};
 use release_channel::{AppCommitSha, AppVersion, ReleaseChannel};
 use std::{
     env::consts::{ARCH, OS},
     ffi::OsString,
+    path::PathBuf,
     sync::Arc,
     time::Duration,
 };
 use update_notification::UpdateNotification;
-use util::{
-    http::{HttpClient, HttpClientWithUrl},
-    ResultExt,
-};
+use util::ResultExt;
 use workspace::notifications::NotificationId;
 use workspace::Workspace;
 
@@ -55,14 +54,20 @@ struct UpdateRequestBody {
     telemetry: bool,
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub enum AutoUpdateStatus {
     Idle,
     Checking,
     Downloading,
     Installing,
-    Updated,
+    Updated { binary_path: PathBuf },
     Errored,
+}
+
+impl AutoUpdateStatus {
+    pub fn is_updated(&self) -> bool {
+        matches!(self, Self::Updated { .. })
+    }
 }
 
 pub struct AutoUpdater {
@@ -221,9 +226,9 @@ fn view_release_notes_locally(workspace: &mut Workspace, cx: &mut ViewContext<Wo
                     workspace
                         .update(&mut cx, |workspace, cx| {
                             let project = workspace.project().clone();
-                            let buffer = project
-                                .update(cx, |project, cx| project.create_buffer("", markdown, cx))
-                                .expect("creating buffers on a local workspace always succeeds");
+                            let buffer = project.update(cx, |project, cx| {
+                                project.create_local_buffer("", markdown, cx)
+                            });
                             buffer.update(cx, |buffer, cx| {
                                 buffer.edit([(0..0, body.release_notes)], None, cx)
                             });
@@ -243,7 +248,7 @@ fn view_release_notes_locally(workspace: &mut Workspace, cx: &mut ViewContext<Wo
                                 Some(tab_description),
                                 cx,
                             );
-                            workspace.add_item_to_active_pane(Box::new(view.clone()), cx);
+                            workspace.add_item_to_active_pane(Box::new(view.clone()), None, cx);
                             cx.notify();
                         })
                         .log_err();
@@ -305,7 +310,7 @@ impl AutoUpdater {
     }
 
     pub fn poll(&mut self, cx: &mut ModelContext<Self>) {
-        if self.pending_poll.is_some() || self.status == AutoUpdateStatus::Updated {
+        if self.pending_poll.is_some() || self.status.is_updated() {
             return;
         }
 
@@ -327,7 +332,7 @@ impl AutoUpdater {
     }
 
     pub fn status(&self) -> AutoUpdateStatus {
-        self.status
+        self.status.clone()
     }
 
     pub fn dismiss_error(&mut self, cx: &mut ModelContext<Self>) {
@@ -340,9 +345,15 @@ impl AutoUpdater {
             (this.http_client.clone(), this.current_version)
         })?;
 
+        let asset = match OS {
+            "linux" => format!("zed-linux-{}.tar.gz", ARCH),
+            "macos" => "Zed.dmg".into(),
+            _ => return Err(anyhow!("auto-update not supported for OS {:?}", OS)),
+        };
+
         let mut url_string = client.build_url(&format!(
-            "/api/releases/latest?asset=Zed.dmg&os={}&arch={}",
-            OS, ARCH
+            "/api/releases/latest?asset={}&os={}&arch={}",
+            asset, OS, ARCH
         ));
         cx.update(|cx| {
             if let Some(param) = ReleaseChannel::try_global(cx)
@@ -361,6 +372,7 @@ impl AutoUpdater {
             .read_to_end(&mut body)
             .await
             .context("error reading release")?;
+
         let release: JsonRelease =
             serde_json::from_slice(body.as_slice()).context("error deserializing release")?;
 
@@ -389,88 +401,31 @@ impl AutoUpdater {
         let temp_dir = tempfile::Builder::new()
             .prefix("zed-auto-update")
             .tempdir()?;
-        let dmg_path = temp_dir.path().join("Zed.dmg");
-        let mount_path = temp_dir.path().join("Zed");
-        let running_app_path = ZED_APP_PATH
-            .clone()
-            .map_or_else(|| cx.update(|cx| cx.app_path())?, Ok)?;
-        let running_app_filename = running_app_path
-            .file_name()
-            .ok_or_else(|| anyhow!("invalid running app path"))?;
-        let mut mounted_app_path: OsString = mount_path.join(running_app_filename).into();
-        mounted_app_path.push("/");
-
-        let mut dmg_file = File::create(&dmg_path).await?;
-
-        let (installation_id, release_channel, telemetry) = cx.update(|cx| {
-            let installation_id = Client::global(cx).telemetry().installation_id();
-            let release_channel = ReleaseChannel::try_global(cx)
-                .map(|release_channel| release_channel.display_name());
-            let telemetry = TelemetrySettings::get_global(cx).metrics;
-
-            (installation_id, release_channel, telemetry)
-        })?;
-
-        let request_body = AsyncBody::from(serde_json::to_string(&UpdateRequestBody {
-            installation_id,
-            release_channel,
-            telemetry,
-        })?);
-
-        let mut response = client.get(&release.url, request_body, true).await?;
-        smol::io::copy(response.body_mut(), &mut dmg_file).await?;
-        log::info!("downloaded update. path:{:?}", dmg_path);
+        let downloaded_asset = download_release(&temp_dir, release, &asset, client, &cx).await?;
 
         this.update(&mut cx, |this, cx| {
             this.status = AutoUpdateStatus::Installing;
             cx.notify();
         })?;
 
-        let output = Command::new("hdiutil")
-            .args(&["attach", "-nobrowse"])
-            .arg(&dmg_path)
-            .arg("-mountroot")
-            .arg(&temp_dir.path())
-            .output()
-            .await?;
-        if !output.status.success() {
-            Err(anyhow!(
-                "failed to mount: {:?}",
-                String::from_utf8_lossy(&output.stderr)
-            ))?;
-        }
+        // We store the path of our current binary, before we install, since installation might
+        // delete it. Once deleted, it's hard to get the path to our binary on Linux.
+        // So we cache it here, which allows us to then restart later on.
+        let binary_path = cx.update(|cx| cx.app_path())??;
 
-        let output = Command::new("rsync")
-            .args(&["-av", "--delete"])
-            .arg(&mounted_app_path)
-            .arg(&running_app_path)
-            .output()
-            .await?;
-        if !output.status.success() {
-            Err(anyhow!(
-                "failed to copy app: {:?}",
-                String::from_utf8_lossy(&output.stderr)
-            ))?;
-        }
-
-        let output = Command::new("hdiutil")
-            .args(&["detach"])
-            .arg(&mount_path)
-            .output()
-            .await?;
-        if !output.status.success() {
-            Err(anyhow!(
-                "failed to unmount: {:?}",
-                String::from_utf8_lossy(&output.stderr)
-            ))?;
-        }
+        match OS {
+            "macos" => install_release_macos(&temp_dir, downloaded_asset, &cx).await,
+            "linux" => install_release_linux(&temp_dir, downloaded_asset, &cx).await,
+            _ => Err(anyhow!("not supported: {:?}", OS)),
+        }?;
 
         this.update(&mut cx, |this, cx| {
             this.set_should_show_update_notification(true, cx)
                 .detach_and_log_err(cx);
-            this.status = AutoUpdateStatus::Updated;
+            this.status = AutoUpdateStatus::Updated { binary_path };
             cx.notify();
         })?;
+
         Ok(())
     }
 
@@ -503,4 +458,151 @@ impl AutoUpdater {
                 .is_some())
         })
     }
+}
+
+async fn download_release(
+    temp_dir: &tempfile::TempDir,
+    release: JsonRelease,
+    target_filename: &str,
+    client: Arc<HttpClientWithUrl>,
+    cx: &AsyncAppContext,
+) -> Result<PathBuf> {
+    let target_path = temp_dir.path().join(target_filename);
+    let mut target_file = File::create(&target_path).await?;
+
+    let (installation_id, release_channel, telemetry) = cx.update(|cx| {
+        let installation_id = Client::global(cx).telemetry().installation_id();
+        let release_channel =
+            ReleaseChannel::try_global(cx).map(|release_channel| release_channel.display_name());
+        let telemetry = TelemetrySettings::get_global(cx).metrics;
+
+        (installation_id, release_channel, telemetry)
+    })?;
+
+    let request_body = AsyncBody::from(serde_json::to_string(&UpdateRequestBody {
+        installation_id,
+        release_channel,
+        telemetry,
+    })?);
+
+    let mut response = client.get(&release.url, request_body, true).await?;
+    smol::io::copy(response.body_mut(), &mut target_file).await?;
+    log::info!("downloaded update. path:{:?}", target_path);
+
+    Ok(target_path)
+}
+
+async fn install_release_linux(
+    temp_dir: &tempfile::TempDir,
+    downloaded_tar_gz: PathBuf,
+    cx: &AsyncAppContext,
+) -> Result<()> {
+    let channel = cx.update(|cx| ReleaseChannel::global(cx).dev_name())?;
+    let home_dir = PathBuf::from(std::env::var("HOME").context("no HOME env var set")?);
+
+    let extracted = temp_dir.path().join("zed");
+    fs::create_dir_all(&extracted)
+        .await
+        .context("failed to create directory into which to extract update")?;
+
+    let output = Command::new("tar")
+        .arg("-xzf")
+        .arg(&downloaded_tar_gz)
+        .arg("-C")
+        .arg(&extracted)
+        .output()
+        .await?;
+
+    anyhow::ensure!(
+        output.status.success(),
+        "failed to extract {:?} to {:?}: {:?}",
+        downloaded_tar_gz,
+        extracted,
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let suffix = if channel != "stable" {
+        format!("-{}", channel)
+    } else {
+        String::default()
+    };
+    let app_folder_name = format!("zed{}.app", suffix);
+
+    let from = extracted.join(&app_folder_name);
+    let to = home_dir.join(".local");
+
+    let output = Command::new("rsync")
+        .args(&["-av", "--delete"])
+        .arg(&from)
+        .arg(&to)
+        .output()
+        .await?;
+
+    anyhow::ensure!(
+        output.status.success(),
+        "failed to copy Zed update from {:?} to {:?}: {:?}",
+        from,
+        to,
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    Ok(())
+}
+
+async fn install_release_macos(
+    temp_dir: &tempfile::TempDir,
+    downloaded_dmg: PathBuf,
+    cx: &AsyncAppContext,
+) -> Result<()> {
+    let running_app_path = ZED_APP_PATH
+        .clone()
+        .map_or_else(|| cx.update(|cx| cx.app_path())?, Ok)?;
+    let running_app_filename = running_app_path
+        .file_name()
+        .ok_or_else(|| anyhow!("invalid running app path"))?;
+
+    let mount_path = temp_dir.path().join("Zed");
+    let mut mounted_app_path: OsString = mount_path.join(running_app_filename).into();
+
+    mounted_app_path.push("/");
+    let output = Command::new("hdiutil")
+        .args(&["attach", "-nobrowse"])
+        .arg(&downloaded_dmg)
+        .arg("-mountroot")
+        .arg(&temp_dir.path())
+        .output()
+        .await?;
+
+    anyhow::ensure!(
+        output.status.success(),
+        "failed to mount: {:?}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let output = Command::new("rsync")
+        .args(&["-av", "--delete"])
+        .arg(&mounted_app_path)
+        .arg(&running_app_path)
+        .output()
+        .await?;
+
+    anyhow::ensure!(
+        output.status.success(),
+        "failed to copy app: {:?}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let output = Command::new("hdiutil")
+        .args(&["detach"])
+        .arg(&mount_path)
+        .output()
+        .await?;
+
+    anyhow::ensure!(
+        output.status.success(),
+        "failed to unount: {:?}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    Ok(())
 }

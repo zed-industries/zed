@@ -55,7 +55,9 @@ fn blurred(editor: View<Editor>, cx: &mut WindowContext) {
             }
         }
         editor.update(cx, |editor, cx| {
-            editor.set_cursor_shape(language::CursorShape::Hollow, cx);
+            if editor.use_modal_editing() {
+                editor.set_cursor_shape(language::CursorShape::Hollow, cx);
+            }
         });
     });
 }

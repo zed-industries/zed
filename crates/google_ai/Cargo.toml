@@ -11,6 +11,6 @@ path = "src/google_ai.rs"
 [dependencies]
 anyhow.workspace = true
 futures.workspace = true
+http.workspace = true
 serde.workspace = true
 serde_json.workspace = true
-util.workspace = true

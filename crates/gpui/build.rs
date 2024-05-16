@@ -6,6 +6,15 @@
 fn main() {
     #[cfg(target_os = "macos")]
     macos::build();
+
+    #[cfg(target_os = "windows")]
+    {
+        let manifest = std::path::Path::new("resources/windows/gpui.manifest.xml");
+        let rc_file = std::path::Path::new("resources/windows/gpui.rc");
+        println!("cargo:rerun-if-changed={}", manifest.display());
+        println!("cargo:rerun-if-changed={}", rc_file.display());
+        embed_resource::compile(rc_file, embed_resource::NONE);
+    }
 }
 
 #[cfg(target_os = "macos")]
@@ -38,7 +47,6 @@ mod macos {
             .header("src/platform/mac/dispatch.h")
             .allowlist_var("_dispatch_main_q")
             .allowlist_var("_dispatch_source_type_data_add")
-            .allowlist_var("DISPATCH_QUEUE_PRIORITY_DEFAULT")
             .allowlist_var("DISPATCH_QUEUE_PRIORITY_HIGH")
             .allowlist_var("DISPATCH_TIME_NOW")
             .allowlist_function("dispatch_get_global_queue")

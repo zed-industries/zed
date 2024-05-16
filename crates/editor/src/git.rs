@@ -4,26 +4,29 @@ use std::ops::Range;
 
 use git::diff::{DiffHunk, DiffHunkStatus};
 use language::Point;
+use multi_buffer::{Anchor, MultiBufferRow};
 
 use crate::{
     display_map::{DisplaySnapshot, ToDisplayPoint},
-    AnchorRangeExt,
+    hunk_status, AnchorRangeExt, DisplayRow,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DisplayDiffHunk {
     Folded {
-        display_row: u32,
+        display_row: DisplayRow,
     },
 
     Unfolded {
-        display_row_range: Range<u32>,
+        diff_base_byte_range: Range<usize>,
+        display_row_range: Range<DisplayRow>,
+        multi_buffer_range: Range<Anchor>,
         status: DiffHunkStatus,
     },
 }
 
 impl DisplayDiffHunk {
-    pub fn start_display_row(&self) -> u32 {
+    pub fn start_display_row(&self) -> DisplayRow {
         match self {
             &DisplayDiffHunk::Folded { display_row } => display_row,
             DisplayDiffHunk::Unfolded {
@@ -32,7 +35,7 @@ impl DisplayDiffHunk {
         }
     }
 
-    pub fn contains_display_row(&self, display_row: u32) -> bool {
+    pub fn contains_display_row(&self, display_row: DisplayRow) -> bool {
         let range = match self {
             &DisplayDiffHunk::Folded { display_row } => display_row..=display_row,
 
@@ -45,21 +48,26 @@ impl DisplayDiffHunk {
     }
 }
 
-pub fn diff_hunk_to_display(hunk: DiffHunk<u32>, snapshot: &DisplaySnapshot) -> DisplayDiffHunk {
-    let hunk_start_point = Point::new(hunk.associated_range.start, 0);
-    let hunk_start_point_sub = Point::new(hunk.associated_range.start.saturating_sub(1), 0);
+pub fn diff_hunk_to_display(
+    hunk: &DiffHunk<MultiBufferRow>,
+    snapshot: &DisplaySnapshot,
+) -> DisplayDiffHunk {
+    let hunk_start_point = Point::new(hunk.associated_range.start.0, 0);
+    let hunk_start_point_sub = Point::new(hunk.associated_range.start.0.saturating_sub(1), 0);
     let hunk_end_point_sub = Point::new(
         hunk.associated_range
             .end
+            .0
             .saturating_sub(1)
-            .max(hunk.associated_range.start),
+            .max(hunk.associated_range.start.0),
         0,
     );
 
-    let is_removal = hunk.status() == DiffHunkStatus::Removed;
+    let status = hunk_status(hunk);
+    let is_removal = status == DiffHunkStatus::Removed;
 
-    let folds_start = Point::new(hunk.associated_range.start.saturating_sub(2), 0);
-    let folds_end = Point::new(hunk.associated_range.end + 2, 0);
+    let folds_start = Point::new(hunk.associated_range.start.0.saturating_sub(2), 0);
+    let folds_end = Point::new(hunk.associated_range.end.0 + 2, 0);
     let folds_range = folds_start..folds_end;
 
     let containing_fold = snapshot.folds_in_range(folds_range).find(|fold| {
@@ -80,23 +88,28 @@ pub fn diff_hunk_to_display(hunk: DiffHunk<u32>, snapshot: &DisplaySnapshot) -> 
         let start = hunk_start_point.to_display_point(snapshot).row();
 
         let hunk_end_row = hunk.associated_range.end.max(hunk.associated_range.start);
-        let hunk_end_point = Point::new(hunk_end_row, 0);
+        let hunk_end_point = Point::new(hunk_end_row.0, 0);
+
+        let multi_buffer_start = snapshot.buffer_snapshot.anchor_after(hunk_start_point);
+        let multi_buffer_end = snapshot.buffer_snapshot.anchor_before(hunk_end_point);
         let end = hunk_end_point.to_display_point(snapshot).row();
 
         DisplayDiffHunk::Unfolded {
             display_row_range: start..end,
-            status: hunk.status(),
+            multi_buffer_range: multi_buffer_start..multi_buffer_end,
+            status,
+            diff_base_byte_range: hunk.diff_base_byte_range.clone(),
         }
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::editor_tests::init_test;
     use crate::Point;
+    use crate::{editor_tests::init_test, hunk_status};
     use gpui::{Context, TestAppContext};
     use language::Capability::ReadWrite;
-    use multi_buffer::{ExcerptRange, MultiBuffer};
+    use multi_buffer::{ExcerptRange, MultiBuffer, MultiBufferRow};
     use project::{FakeFs, Project};
     use unindent::Unindent;
     #[gpui::test]
@@ -108,10 +121,9 @@ mod tests {
         let project = Project::test(fs, [], cx).await;
 
         // buffer has two modified hunks with two rows each
-        let buffer_1 = project
-            .update(cx, |project, cx| {
-                project.create_buffer(
-                    "
+        let buffer_1 = project.update(cx, |project, cx| {
+            project.create_local_buffer(
+                "
                         1.zero
                         1.ONE
                         1.TWO
@@ -120,13 +132,12 @@ mod tests {
                         1.FIVE
                         1.six
                     "
-                    .unindent()
-                    .as_str(),
-                    None,
-                    cx,
-                )
-            })
-            .unwrap();
+                .unindent()
+                .as_str(),
+                None,
+                cx,
+            )
+        });
         buffer_1.update(cx, |buffer, cx| {
             buffer.set_diff_base(
                 Some(
@@ -146,10 +157,9 @@ mod tests {
         });
 
         // buffer has a deletion hunk and an insertion hunk
-        let buffer_2 = project
-            .update(cx, |project, cx| {
-                project.create_buffer(
-                    "
+        let buffer_2 = project.update(cx, |project, cx| {
+            project.create_local_buffer(
+                "
                         2.zero
                         2.one
                         2.two
@@ -158,13 +168,12 @@ mod tests {
                         2.five
                         2.six
                     "
-                    .unindent()
-                    .as_str(),
-                    None,
-                    cx,
-                )
-            })
-            .unwrap();
+                .unindent()
+                .as_str(),
+                None,
+                cx,
+            )
+        });
         buffer_2.update(cx, |buffer, cx| {
             buffer.set_diff_base(
                 Some(
@@ -253,26 +262,41 @@ mod tests {
         );
 
         let expected = [
-            (DiffHunkStatus::Modified, 1..2),
-            (DiffHunkStatus::Modified, 2..3),
+            (
+                DiffHunkStatus::Modified,
+                MultiBufferRow(1)..MultiBufferRow(2),
+            ),
+            (
+                DiffHunkStatus::Modified,
+                MultiBufferRow(2)..MultiBufferRow(3),
+            ),
             //TODO: Define better when and where removed hunks show up at range extremities
-            (DiffHunkStatus::Removed, 6..6),
-            (DiffHunkStatus::Removed, 8..8),
-            (DiffHunkStatus::Added, 10..11),
+            (
+                DiffHunkStatus::Removed,
+                MultiBufferRow(6)..MultiBufferRow(6),
+            ),
+            (
+                DiffHunkStatus::Removed,
+                MultiBufferRow(8)..MultiBufferRow(8),
+            ),
+            (
+                DiffHunkStatus::Added,
+                MultiBufferRow(10)..MultiBufferRow(11),
+            ),
         ];
 
         assert_eq!(
             snapshot
-                .git_diff_hunks_in_range(0..12)
-                .map(|hunk| (hunk.status(), hunk.associated_range))
+                .git_diff_hunks_in_range(MultiBufferRow(0)..MultiBufferRow(12))
+                .map(|hunk| (hunk_status(&hunk), hunk.associated_range))
                 .collect::<Vec<_>>(),
             &expected,
         );
 
         assert_eq!(
             snapshot
-                .git_diff_hunks_in_range_rev(0..12)
-                .map(|hunk| (hunk.status(), hunk.associated_range))
+                .git_diff_hunks_in_range_rev(MultiBufferRow(0)..MultiBufferRow(12))
+                .map(|hunk| (hunk_status(&hunk), hunk.associated_range))
                 .collect::<Vec<_>>(),
             expected
                 .iter()

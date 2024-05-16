@@ -1,3 +1,4 @@
+use rope::Rope;
 use std::{iter, ops::Range};
 use sum_tree::SumTree;
 use text::{Anchor, BufferId, BufferSnapshot, OffsetRangeExt, Point};
@@ -5,7 +6,7 @@ use text::{Anchor, BufferId, BufferSnapshot, OffsetRangeExt, Point};
 pub use git2 as libgit;
 use libgit::{DiffLineType as GitDiffLineType, DiffOptions as GitOptions, Patch as GitPatch};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum DiffHunkStatus {
     Added,
     Modified,
@@ -27,18 +28,6 @@ pub struct DiffHunk<T> {
     pub buffer_range: Range<Anchor>,
     /// Original singleton buffer text before the change, that was instead of the `buffer_range`.
     pub diff_base_byte_range: Range<usize>,
-}
-
-impl DiffHunk<u32> {
-    pub fn status(&self) -> DiffHunkStatus {
-        if self.diff_base_byte_range.is_empty() {
-            DiffHunkStatus::Added
-        } else if self.associated_range.is_empty() {
-            DiffHunkStatus::Removed
-        } else {
-            DiffHunkStatus::Modified
-        }
-    }
 }
 
 impl sum_tree::Item for DiffHunk<Anchor> {
@@ -173,16 +162,18 @@ impl BufferDiff {
         })
     }
 
-    pub fn clear(&mut self, buffer: &text::BufferSnapshot) {
+    #[cfg(test)]
+    fn clear(&mut self, buffer: &text::BufferSnapshot) {
         self.last_buffer_version = Some(buffer.version().clone());
         self.tree = SumTree::new();
     }
 
-    pub async fn update(&mut self, diff_base: &str, buffer: &text::BufferSnapshot) {
+    pub async fn update(&mut self, diff_base: &Rope, buffer: &text::BufferSnapshot) {
         let mut tree = SumTree::new();
 
+        let diff_base_text = diff_base.to_string();
         let buffer_text = buffer.as_rope().to_string();
-        let patch = Self::diff(diff_base, &buffer_text);
+        let patch = Self::diff(&diff_base_text, &buffer_text);
 
         if let Some(patch) = patch {
             let mut divergence = 0;
@@ -344,6 +335,7 @@ mod tests {
             three
         "
         .unindent();
+        let diff_base_rope = Rope::from(diff_base.clone());
 
         let buffer_text = "
             one
@@ -354,7 +346,7 @@ mod tests {
 
         let mut buffer = Buffer::new(0, BufferId::new(1).unwrap(), buffer_text);
         let mut diff = BufferDiff::new();
-        smol::block_on(diff.update(&diff_base, &buffer));
+        smol::block_on(diff.update(&diff_base_rope, &buffer));
         assert_hunks(
             diff.hunks(&buffer),
             &buffer,
@@ -363,7 +355,7 @@ mod tests {
         );
 
         buffer.edit([(0..0, "point five\n")]);
-        smol::block_on(diff.update(&diff_base, &buffer));
+        smol::block_on(diff.update(&diff_base_rope, &buffer));
         assert_hunks(
             diff.hunks(&buffer),
             &buffer,
@@ -390,6 +382,7 @@ mod tests {
             ten
         "
         .unindent();
+        let diff_base_rope = Rope::from(diff_base.clone());
 
         let buffer_text = "
             A
@@ -414,7 +407,7 @@ mod tests {
 
         let buffer = Buffer::new(0, BufferId::new(1).unwrap(), buffer_text);
         let mut diff = BufferDiff::new();
-        smol::block_on(diff.update(&diff_base, &buffer));
+        smol::block_on(diff.update(&diff_base_rope, &buffer));
         assert_eq!(diff.hunks(&buffer).count(), 8);
 
         assert_hunks(

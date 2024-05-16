@@ -3,16 +3,16 @@ pub mod model;
 use std::path::Path;
 
 use anyhow::{anyhow, bail, Context, Result};
-use client::RemoteProjectId;
+use client::DevServerProjectId;
 use db::{define_connection, query, sqlez::connection::Connection, sqlez_macros::sql};
-use gpui::{point, size, Axis, Bounds};
+use gpui::{point, size, Axis, Bounds, WindowBounds};
 
 use sqlez::{
     bindable::{Bind, Column, StaticColumnCount},
     statement::Statement,
 };
 
-use util::{unzip_option, ResultExt};
+use util::ResultExt;
 use uuid::Uuid;
 
 use crate::WorkspaceId;
@@ -22,7 +22,7 @@ use model::{
     SerializedWorkspace,
 };
 
-use self::model::{DockStructure, SerializedRemoteProject, SerializedWorkspaceLocation};
+use self::model::{DockStructure, SerializedDevServerProject, SerializedWorkspaceLocation};
 
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub(crate) struct SerializedAxis(pub(crate) gpui::Axis);
@@ -59,50 +59,99 @@ impl sqlez::bindable::Column for SerializedAxis {
     }
 }
 
-#[derive(Clone, Debug, PartialEq)]
-pub(crate) struct SerializedWindowsBounds(pub(crate) Bounds<gpui::DevicePixels>);
+#[derive(Copy, Clone, Debug, PartialEq, Default)]
+pub(crate) struct SerializedWindowBounds(pub(crate) WindowBounds);
 
-impl StaticColumnCount for SerializedWindowsBounds {
+impl StaticColumnCount for SerializedWindowBounds {
     fn column_count() -> usize {
         5
     }
 }
 
-impl Bind for SerializedWindowsBounds {
+impl Bind for SerializedWindowBounds {
     fn bind(&self, statement: &Statement, start_index: i32) -> Result<i32> {
-        let next_index = statement.bind(&"Fixed", start_index)?;
-
-        statement.bind(
-            &(
-                SerializedDevicePixels(self.0.origin.x),
-                SerializedDevicePixels(self.0.origin.y),
-                SerializedDevicePixels(self.0.size.width),
-                SerializedDevicePixels(self.0.size.height),
-            ),
-            next_index,
-        )
+        match self.0 {
+            WindowBounds::Windowed(bounds) => {
+                let next_index = statement.bind(&"Windowed", start_index)?;
+                statement.bind(
+                    &(
+                        SerializedDevicePixels(bounds.origin.x),
+                        SerializedDevicePixels(bounds.origin.y),
+                        SerializedDevicePixels(bounds.size.width),
+                        SerializedDevicePixels(bounds.size.height),
+                    ),
+                    next_index,
+                )
+            }
+            WindowBounds::Maximized(bounds) => {
+                let next_index = statement.bind(&"Maximized", start_index)?;
+                statement.bind(
+                    &(
+                        SerializedDevicePixels(bounds.origin.x),
+                        SerializedDevicePixels(bounds.origin.y),
+                        SerializedDevicePixels(bounds.size.width),
+                        SerializedDevicePixels(bounds.size.height),
+                    ),
+                    next_index,
+                )
+            }
+            WindowBounds::Fullscreen(bounds) => {
+                let next_index = statement.bind(&"FullScreen", start_index)?;
+                statement.bind(
+                    &(
+                        SerializedDevicePixels(bounds.origin.x),
+                        SerializedDevicePixels(bounds.origin.y),
+                        SerializedDevicePixels(bounds.size.width),
+                        SerializedDevicePixels(bounds.size.height),
+                    ),
+                    next_index,
+                )
+            }
+        }
     }
 }
 
-impl Column for SerializedWindowsBounds {
+impl Column for SerializedWindowBounds {
     fn column(statement: &mut Statement, start_index: i32) -> Result<(Self, i32)> {
         let (window_state, next_index) = String::column(statement, start_index)?;
-        let bounds = match window_state.as_str() {
-            "Fixed" => {
+        let status = match window_state.as_str() {
+            "Windowed" | "Fixed" => {
                 let ((x, y, width, height), _) = Column::column(statement, next_index)?;
                 let x: i32 = x;
                 let y: i32 = y;
                 let width: i32 = width;
                 let height: i32 = height;
-                SerializedWindowsBounds(Bounds {
+                SerializedWindowBounds(WindowBounds::Windowed(Bounds {
                     origin: point(x.into(), y.into()),
                     size: size(width.into(), height.into()),
-                })
+                }))
+            }
+            "Maximized" => {
+                let ((x, y, width, height), _) = Column::column(statement, next_index)?;
+                let x: i32 = x;
+                let y: i32 = y;
+                let width: i32 = width;
+                let height: i32 = height;
+                SerializedWindowBounds(WindowBounds::Maximized(Bounds {
+                    origin: point(x.into(), y.into()),
+                    size: size(width.into(), height.into()),
+                }))
+            }
+            "FullScreen" => {
+                let ((x, y, width, height), _) = Column::column(statement, next_index)?;
+                let x: i32 = x;
+                let y: i32 = y;
+                let width: i32 = width;
+                let height: i32 = height;
+                SerializedWindowBounds(WindowBounds::Fullscreen(Bounds {
+                    origin: point(x.into(), y.into()),
+                    size: size(width.into(), height.into()),
+                }))
             }
             _ => bail!("Window State did not have a valid string"),
         };
 
-        Ok((bounds, next_index + 4))
+        Ok((status, next_index + 4))
     }
 }
 
@@ -279,6 +328,8 @@ define_connection! {
         ALTER TABLE pane_groups ADD COLUMN flexes TEXT;
     ),
     // Add fullscreen field to workspace
+    // Deprecated, `WindowBounds` holds the fullscreen state now.
+    // Preserving so users can downgrade Zed.
     sql!(
         ALTER TABLE workspaces ADD COLUMN fullscreen INTEGER; //bool
     ),
@@ -299,6 +350,16 @@ define_connection! {
         ALTER TABLE workspaces ADD COLUMN remote_project_id INTEGER;
         ALTER TABLE workspaces RENAME COLUMN workspace_location TO local_paths;
     ),
+    sql!(
+        DROP TABLE remote_projects;
+        CREATE TABLE dev_server_projects (
+            id INTEGER NOT NULL UNIQUE,
+            path TEXT,
+            dev_server_name TEXT
+        );
+        ALTER TABLE workspaces DROP COLUMN remote_project_id;
+        ALTER TABLE workspaces ADD COLUMN dev_server_project_id INTEGER;
+    ),
     ];
 }
 
@@ -317,19 +378,17 @@ impl WorkspaceDb {
         let (
             workspace_id,
             local_paths,
-            remote_project_id,
-            bounds,
+            dev_server_project_id,
+            window_bounds,
             display,
-            fullscreen,
             centered_layout,
             docks,
         ): (
             WorkspaceId,
             Option<LocalPaths>,
             Option<u64>,
-            Option<SerializedWindowsBounds>,
+            Option<SerializedWindowBounds>,
             Option<Uuid>,
-            Option<bool>,
             Option<bool>,
             DockStructure,
         ) = self
@@ -337,14 +396,13 @@ impl WorkspaceDb {
                 SELECT
                     workspace_id,
                     local_paths,
-                    remote_project_id,
+                    dev_server_project_id,
                     window_state,
                     window_x,
                     window_y,
                     window_width,
                     window_height,
                     display,
-                    fullscreen,
                     centered_layout,
                     left_dock_visible,
                     left_dock_active_panel,
@@ -363,18 +421,18 @@ impl WorkspaceDb {
             .warn_on_err()
             .flatten()?;
 
-        let location = if let Some(remote_project_id) = remote_project_id {
-            let remote_project: SerializedRemoteProject = self
+        let location = if let Some(dev_server_project_id) = dev_server_project_id {
+            let dev_server_project: SerializedDevServerProject = self
                 .select_row_bound(sql! {
-                    SELECT remote_project_id, path, dev_server_name
-                    FROM remote_projects
-                    WHERE remote_project_id = ?
+                    SELECT id, path, dev_server_name
+                    FROM dev_server_projects
+                    WHERE id = ?
                 })
-                .and_then(|mut prepared_statement| (prepared_statement)(remote_project_id))
+                .and_then(|mut prepared_statement| (prepared_statement)(dev_server_project_id))
                 .context("No remote project found")
                 .warn_on_err()
                 .flatten()?;
-            SerializedWorkspaceLocation::Remote(remote_project)
+            SerializedWorkspaceLocation::DevServer(dev_server_project)
         } else if let Some(local_paths) = local_paths {
             SerializedWorkspaceLocation::Local(local_paths)
         } else {
@@ -388,8 +446,7 @@ impl WorkspaceDb {
                 .get_center_pane_group(workspace_id)
                 .context("Getting center group")
                 .log_err()?,
-            bounds: bounds.map(|bounds| bounds.0),
-            fullscreen: fullscreen.unwrap_or(false),
+            window_bounds,
             centered_layout: centered_layout.unwrap_or(false),
             display,
             docks,
@@ -447,15 +504,15 @@ impl WorkspaceDb {
                         ))?((workspace.id, &local_paths, workspace.docks))
                         .context("Updating workspace")?;
                     }
-                    SerializedWorkspaceLocation::Remote(remote_project) => {
+                    SerializedWorkspaceLocation::DevServer(dev_server_project) => {
                         conn.exec_bound(sql!(
-                            DELETE FROM workspaces WHERE remote_project_id = ? AND workspace_id != ?
-                        ))?((remote_project.id.0, workspace.id))
+                            DELETE FROM workspaces WHERE dev_server_project_id = ? AND workspace_id != ?
+                        ))?((dev_server_project.id.0, workspace.id))
                         .context("clearing out old locations")?;
 
                         conn.exec_bound(sql!(
-                            INSERT INTO remote_projects(
-                                remote_project_id,
+                            INSERT INTO dev_server_projects(
+                                id,
                                 path,
                                 dev_server_name
                             ) VALUES (?1, ?2, ?3)
@@ -463,13 +520,13 @@ impl WorkspaceDb {
                             UPDATE SET
                                 path = ?2,
                                 dev_server_name = ?3
-                        ))?(&remote_project)?;
+                        ))?(&dev_server_project)?;
 
                         // Upsert
                         conn.exec_bound(sql!(
                             INSERT INTO workspaces(
                                 workspace_id,
-                                remote_project_id,
+                                dev_server_project_id,
                                 left_dock_visible,
                                 left_dock_active_panel,
                                 left_dock_zoom,
@@ -484,7 +541,7 @@ impl WorkspaceDb {
                             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, CURRENT_TIMESTAMP)
                             ON CONFLICT DO
                             UPDATE SET
-                                remote_project_id = ?2,
+                                dev_server_project_id = ?2,
                                 left_dock_visible = ?3,
                                 left_dock_active_panel = ?4,
                                 left_dock_zoom = ?5,
@@ -497,7 +554,7 @@ impl WorkspaceDb {
                                 timestamp = CURRENT_TIMESTAMP
                         ))?((
                             workspace.id,
-                            remote_project.id.0,
+                            dev_server_project.id.0,
                             workspace.docks,
                         ))
                         .context("Updating workspace")?;
@@ -523,29 +580,28 @@ impl WorkspaceDb {
 
     query! {
         fn recent_workspaces() -> Result<Vec<(WorkspaceId, LocalPaths, Option<u64>)>> {
-            SELECT workspace_id, local_paths, remote_project_id
+            SELECT workspace_id, local_paths, dev_server_project_id
             FROM workspaces
-            WHERE local_paths IS NOT NULL OR remote_project_id IS NOT NULL
+            WHERE local_paths IS NOT NULL OR dev_server_project_id IS NOT NULL
             ORDER BY timestamp DESC
         }
     }
 
     query! {
-        fn remote_projects() -> Result<Vec<SerializedRemoteProject>> {
-            SELECT remote_project_id, path, dev_server_name
-            FROM remote_projects
+        fn dev_server_projects() -> Result<Vec<SerializedDevServerProject>> {
+            SELECT id, path, dev_server_name
+            FROM dev_server_projects
         }
     }
 
     pub(crate) fn last_window(
         &self,
-    ) -> anyhow::Result<(Option<Uuid>, Option<SerializedWindowsBounds>, Option<bool>)> {
+    ) -> anyhow::Result<(Option<Uuid>, Option<SerializedWindowBounds>)> {
         let mut prepared_query =
-            self.select::<(Option<Uuid>, Option<SerializedWindowsBounds>, Option<bool>)>(sql!(
+            self.select::<(Option<Uuid>, Option<SerializedWindowBounds>)>(sql!(
                 SELECT
                 display,
-                window_state, window_x, window_y, window_width, window_height,
-                fullscreen
+                window_state, window_x, window_y, window_width, window_height
                 FROM workspaces
                 WHERE local_paths
                 IS NOT NULL
@@ -553,10 +609,7 @@ impl WorkspaceDb {
                 LIMIT 1
             ))?;
         let result = prepared_query()?;
-        Ok(result
-            .into_iter()
-            .next()
-            .unwrap_or_else(|| (None, None, None)))
+        Ok(result.into_iter().next().unwrap_or_else(|| (None, None)))
     }
 
     query! {
@@ -566,6 +619,22 @@ impl WorkspaceDb {
         }
     }
 
+    pub async fn delete_workspace_by_dev_server_project_id(
+        &self,
+        id: DevServerProjectId,
+    ) -> Result<()> {
+        self.write(move |conn| {
+            conn.exec_bound(sql!(
+                DELETE FROM dev_server_projects WHERE id = ?
+            ))?(id.0)?;
+            conn.exec_bound(sql!(
+                DELETE FROM workspaces
+                WHERE dev_server_project_id IS ?
+            ))?(id.0)
+        })
+        .await
+    }
+
     // Returns the recent locations which are still valid on disk and deletes ones which no longer
     // exist.
     pub async fn recent_workspaces_on_disk(
@@ -573,14 +642,15 @@ impl WorkspaceDb {
     ) -> Result<Vec<(WorkspaceId, SerializedWorkspaceLocation)>> {
         let mut result = Vec::new();
         let mut delete_tasks = Vec::new();
-        let remote_projects = self.remote_projects()?;
+        let dev_server_projects = self.dev_server_projects()?;
 
-        for (id, location, remote_project_id) in self.recent_workspaces()? {
-            if let Some(remote_project_id) = remote_project_id.map(RemoteProjectId) {
-                if let Some(remote_project) =
-                    remote_projects.iter().find(|rp| rp.id == remote_project_id)
+        for (id, location, dev_server_project_id) in self.recent_workspaces()? {
+            if let Some(dev_server_project_id) = dev_server_project_id.map(DevServerProjectId) {
+                if let Some(dev_server_project) = dev_server_projects
+                    .iter()
+                    .find(|rp| rp.id == dev_server_project_id)
                 {
-                    result.push((id, remote_project.clone().into()));
+                    result.push((id, dev_server_project.clone().into()));
                 } else {
                     delete_tasks.push(self.delete_workspace_by_id(id));
                 }
@@ -607,7 +677,7 @@ impl WorkspaceDb {
             .into_iter()
             .filter_map(|(_, location)| match location {
                 SerializedWorkspaceLocation::Local(local_paths) => Some(local_paths),
-                SerializedWorkspaceLocation::Remote(_) => None,
+                SerializedWorkspaceLocation::DevServer(_) => None,
             })
             .next())
     }
@@ -707,7 +777,7 @@ impl WorkspaceDb {
                 children,
                 flexes,
             } => {
-                let (parent_id, position) = unzip_option(parent);
+                let (parent_id, position) = parent.unzip();
 
                 let flex_string = flexes
                     .as_ref()
@@ -758,7 +828,7 @@ impl WorkspaceDb {
         ))?((workspace_id, pane.active))?
         .ok_or_else(|| anyhow!("Could not retrieve inserted pane_id"))?;
 
-        let (parent_id, order) = unzip_option(parent);
+        let (parent_id, order) = parent.unzip();
         conn.exec_bound(sql!(
             INSERT INTO center_panes(pane_id, parent_group_id, position)
             VALUES (?, ?, ?)
@@ -802,7 +872,7 @@ impl WorkspaceDb {
     }
 
     query! {
-        pub(crate) async fn set_window_bounds(workspace_id: WorkspaceId, bounds: SerializedWindowsBounds, display: Uuid) -> Result<()> {
+        pub(crate) async fn set_window_open_status(workspace_id: WorkspaceId, bounds: SerializedWindowBounds, display: Uuid) -> Result<()> {
             UPDATE workspaces
             SET window_state = ?2,
                 window_x = ?3,
@@ -810,14 +880,6 @@ impl WorkspaceDb {
                 window_width = ?5,
                 window_height = ?6,
                 display = ?7
-            WHERE workspace_id = ?1
-        }
-    }
-
-    query! {
-        pub(crate) async fn set_fullscreen(workspace_id: WorkspaceId, fullscreen: bool) -> Result<()> {
-            UPDATE workspaces
-            SET fullscreen = ?2
             WHERE workspace_id = ?1
         }
     }
@@ -911,10 +973,9 @@ mod tests {
             id: WorkspaceId(1),
             location: LocalPaths::new(["/tmp", "/tmp2"]).into(),
             center_group: Default::default(),
-            bounds: Default::default(),
+            window_bounds: Default::default(),
             display: Default::default(),
             docks: Default::default(),
-            fullscreen: false,
             centered_layout: false,
         };
 
@@ -922,10 +983,9 @@ mod tests {
             id: WorkspaceId(2),
             location: LocalPaths::new(["/tmp"]).into(),
             center_group: Default::default(),
-            bounds: Default::default(),
+            window_bounds: Default::default(),
             display: Default::default(),
             docks: Default::default(),
-            fullscreen: false,
             centered_layout: false,
         };
 
@@ -1022,10 +1082,9 @@ mod tests {
             id: WorkspaceId(5),
             location: LocalPaths::new(["/tmp", "/tmp2"]).into(),
             center_group,
-            bounds: Default::default(),
+            window_bounds: Default::default(),
             display: Default::default(),
             docks: Default::default(),
-            fullscreen: false,
             centered_layout: false,
         };
 
@@ -1052,10 +1111,9 @@ mod tests {
             id: WorkspaceId(1),
             location: LocalPaths::new(["/tmp", "/tmp2"]).into(),
             center_group: Default::default(),
-            bounds: Default::default(),
+            window_bounds: Default::default(),
             display: Default::default(),
             docks: Default::default(),
-            fullscreen: false,
             centered_layout: false,
         };
 
@@ -1063,10 +1121,9 @@ mod tests {
             id: WorkspaceId(2),
             location: LocalPaths::new(["/tmp"]).into(),
             center_group: Default::default(),
-            bounds: Default::default(),
+            window_bounds: Default::default(),
             display: Default::default(),
             docks: Default::default(),
-            fullscreen: false,
             centered_layout: false,
         };
 
@@ -1101,10 +1158,9 @@ mod tests {
             id: WorkspaceId(3),
             location: LocalPaths::new(&["/tmp", "/tmp2"]).into(),
             center_group: Default::default(),
-            bounds: Default::default(),
+            window_bounds: Default::default(),
             display: Default::default(),
             docks: Default::default(),
-            fullscreen: false,
             centered_layout: false,
         };
 
@@ -1136,10 +1192,9 @@ mod tests {
             id: WorkspaceId(4),
             location: LocalPaths::new(workspace_id).into(),
             center_group: center_group.clone(),
-            bounds: Default::default(),
+            window_bounds: Default::default(),
             display: Default::default(),
             docks: Default::default(),
-            fullscreen: false,
             centered_layout: false,
         }
     }

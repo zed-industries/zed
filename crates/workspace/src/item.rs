@@ -26,7 +26,6 @@ use std::{
     any::{Any, TypeId},
     cell::RefCell,
     ops::Range,
-    path::PathBuf,
     rc::Rc,
     sync::Arc,
     time::Duration,
@@ -46,6 +45,7 @@ pub struct ItemSettings {
 pub struct PreviewTabsSettings {
     pub enabled: bool,
     pub enable_preview_from_file_finder: bool,
+    pub enable_preview_from_code_navigation: bool,
 }
 
 #[derive(Clone, Default, Serialize, Deserialize, JsonSchema)]
@@ -69,7 +69,7 @@ impl ClosePosition {
 pub struct ItemSettingsContent {
     /// Whether to show the Git file status on a tab item.
     ///
-    /// Default: true
+    /// Default: false
     git_status: Option<bool>,
     /// Position of the close button in a tab.
     ///
@@ -79,15 +79,19 @@ pub struct ItemSettingsContent {
 
 #[derive(Clone, Default, Serialize, Deserialize, JsonSchema)]
 pub struct PreviewTabsSettingsContent {
-    /// Whether to show opened editors as preview editors.
-    /// Preview editors do not stay open, are reused until explicitly set to be kept open opened (via double-click or editing) and show file names in italic.
+    /// Whether to show opened editors as preview tabs.
+    /// Preview tabs do not stay open, are reused until explicitly set to be kept open opened (via double-click or editing) and show file names in italic.
     ///
     /// Default: true
     enabled: Option<bool>,
-    /// Whether to open a preview editor when opening a file using the file finder.
+    /// Whether to open tabs in preview mode when selected from the file finder.
     ///
     /// Default: false
     enable_preview_from_file_finder: Option<bool>,
+    /// Whether a preview tab gets replaced when code navigation is used to navigate away from the tab.
+    ///
+    /// Default: false
+    enable_preview_from_code_navigation: Option<bool>,
 }
 
 impl Settings for ItemSettings {
@@ -196,7 +200,7 @@ pub trait Item: FocusableView + EventEmitter<Self::Event> {
     fn save_as(
         &mut self,
         _project: Model<Project>,
-        _abs_path: PathBuf,
+        _path: ProjectPath,
         _cx: &mut ViewContext<Self>,
     ) -> Task<Result<()>> {
         unimplemented!("save_as() must be implemented if can_save() returns true")
@@ -309,7 +313,7 @@ pub trait ItemHandle: 'static + Send {
     fn save_as(
         &self,
         project: Model<Project>,
-        abs_path: PathBuf,
+        path: ProjectPath,
         cx: &mut WindowContext,
     ) -> Task<Result<()>>;
     fn reload(&self, project: Model<Project>, cx: &mut WindowContext) -> Task<Result<()>>;
@@ -326,6 +330,7 @@ pub trait ItemHandle: 'static + Send {
     fn serialized_item_kind(&self) -> Option<&'static str>;
     fn show_toolbar(&self, cx: &AppContext) -> bool;
     fn pixel_position_of_cursor(&self, cx: &AppContext) -> Option<Point<Pixels>>;
+    fn downgrade_item(&self) -> Box<dyn WeakItemHandle>;
 }
 
 pub trait WeakItemHandle: Send + Sync {
@@ -599,7 +604,7 @@ impl<T: Item> ItemHandle for View<T> {
         }
 
         cx.defer(|workspace, cx| {
-            workspace.serialize_workspace(cx).detach();
+            workspace.serialize_workspace(cx);
         });
     }
 
@@ -647,10 +652,10 @@ impl<T: Item> ItemHandle for View<T> {
     fn save_as(
         &self,
         project: Model<Project>,
-        abs_path: PathBuf,
+        path: ProjectPath,
         cx: &mut WindowContext,
     ) -> Task<anyhow::Result<()>> {
-        self.update(cx, |item, cx| item.save_as(project, abs_path, cx))
+        self.update(cx, |item, cx| item.save_as(project, path, cx))
     }
 
     fn reload(&self, project: Model<Project>, cx: &mut WindowContext) -> Task<Result<()>> {
@@ -697,6 +702,10 @@ impl<T: Item> ItemHandle for View<T> {
 
     fn pixel_position_of_cursor(&self, cx: &AppContext) -> Option<Point<Pixels>> {
         self.read(cx).pixel_position_of_cursor(cx)
+    }
+
+    fn downgrade_item(&self) -> Box<dyn WeakItemHandle> {
+        Box::new(self.downgrade())
     }
 }
 
@@ -1126,7 +1135,7 @@ pub mod test {
         fn save_as(
             &mut self,
             _: Model<Project>,
-            _: std::path::PathBuf,
+            _: ProjectPath,
             _: &mut ViewContext<Self>,
         ) -> Task<anyhow::Result<()>> {
             self.save_as_count += 1;

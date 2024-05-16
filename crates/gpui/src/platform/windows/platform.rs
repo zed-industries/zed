@@ -3,22 +3,19 @@
 
 use std::{
     cell::{Cell, RefCell},
-    ffi::{c_uint, c_void, OsString},
-    iter::once,
-    mem::transmute,
+    ffi::{c_void, OsString},
     os::windows::ffi::{OsStrExt, OsStringExt},
     path::{Path, PathBuf},
     rc::Rc,
-    sync::{Arc, OnceLock},
+    sync::Arc,
 };
 
 use ::util::ResultExt;
 use anyhow::{anyhow, Context, Result};
-use async_task::Runnable;
 use copypasta::{ClipboardContext, ClipboardProvider};
 use futures::channel::oneshot::{self, Receiver};
 use itertools::Itertools;
-use parking_lot::{Mutex, RwLock};
+use parking_lot::RwLock;
 use semantic_version::SemanticVersion;
 use smallvec::SmallVec;
 use time::UtcOffset;
@@ -28,7 +25,6 @@ use windows::{
     Win32::{
         Foundation::*,
         Graphics::Gdi::*,
-        Media::*,
         Security::Credentials::*,
         Storage::FileSystem::*,
         System::{Com::*, LibraryLoader::*, Ole::*, SystemInformation::*, Threading::*, Time::*},
@@ -39,114 +35,39 @@ use windows::{
 use crate::*;
 
 pub(crate) struct WindowsPlatform {
-    inner: Rc<WindowsPlatformInner>,
-}
-
-/// Windows settings pulled from SystemParametersInfo
-/// https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-systemparametersinfow
-#[derive(Default, Debug)]
-pub(crate) struct WindowsPlatformSystemSettings {
-    /// SEE: SPI_GETWHEELSCROLLCHARS
-    pub(crate) wheel_scroll_chars: u32,
-
-    /// SEE: SPI_GETWHEELSCROLLLINES
-    pub(crate) wheel_scroll_lines: u32,
-}
-
-pub(crate) struct WindowsPlatformInner {
+    state: RefCell<WindowsPlatformState>,
+    raw_window_handles: RwLock<SmallVec<[HWND; 4]>>,
+    // The below members will never change throughout the entire lifecycle of the app.
+    icon: HICON,
     background_executor: BackgroundExecutor,
-    pub(crate) foreground_executor: ForegroundExecutor,
-    main_receiver: flume::Receiver<Runnable>,
+    foreground_executor: ForegroundExecutor,
     text_system: Arc<dyn PlatformTextSystem>,
-    callbacks: Mutex<Callbacks>,
-    pub raw_window_handles: RwLock<SmallVec<[HWND; 4]>>,
-    pub(crate) dispatch_event: OwnedHandle,
-    pub(crate) settings: RefCell<WindowsPlatformSystemSettings>,
-    pub icon: HICON,
-    // NOTE: standard cursor handles don't need to close.
-    pub(crate) current_cursor: Cell<HCURSOR>,
 }
 
-impl WindowsPlatformInner {
-    pub(crate) fn try_get_windows_inner_from_hwnd(
-        &self,
-        hwnd: HWND,
-    ) -> Option<Rc<WindowsWindowInner>> {
-        self.raw_window_handles
-            .read()
-            .iter()
-            .find(|entry| *entry == &hwnd)
-            .and_then(|hwnd| try_get_window_inner(*hwnd))
-    }
-
-    #[inline]
-    pub fn run_foreground_tasks(&self) {
-        for runnable in self.main_receiver.drain() {
-            runnable.run();
-        }
-    }
+pub(crate) struct WindowsPlatformState {
+    callbacks: PlatformCallbacks,
+    // NOTE: standard cursor handles don't need to close.
+    pub(crate) current_cursor: HCURSOR,
 }
 
 #[derive(Default)]
-struct Callbacks {
+struct PlatformCallbacks {
     open_urls: Option<Box<dyn FnMut(Vec<String>)>>,
-    become_active: Option<Box<dyn FnMut()>>,
-    resign_active: Option<Box<dyn FnMut()>>,
     quit: Option<Box<dyn FnMut()>>,
     reopen: Option<Box<dyn FnMut()>>,
-    event: Option<Box<dyn FnMut(PlatformInput) -> bool>>,
     app_menu_action: Option<Box<dyn FnMut(&dyn Action)>>,
     will_open_app_menu: Option<Box<dyn FnMut()>>,
     validate_app_menu_command: Option<Box<dyn FnMut(&dyn Action) -> bool>>,
 }
 
-enum WindowsMessageWaitResult {
-    ForegroundExecution,
-    WindowsMessage(MSG),
-    Error,
-}
-
-impl WindowsPlatformSystemSettings {
+impl WindowsPlatformState {
     fn new() -> Self {
-        let mut settings = Self::default();
-        settings.update_all();
-        settings
-    }
+        let callbacks = PlatformCallbacks::default();
+        let current_cursor = load_cursor(CursorStyle::Arrow);
 
-    pub(crate) fn update_all(&mut self) {
-        self.update_wheel_scroll_lines();
-        self.update_wheel_scroll_chars();
-    }
-
-    pub(crate) fn update_wheel_scroll_lines(&mut self) {
-        let mut value = c_uint::default();
-        let result = unsafe {
-            SystemParametersInfoW(
-                SPI_GETWHEELSCROLLLINES,
-                0,
-                Some((&mut value) as *mut c_uint as *mut c_void),
-                SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS::default(),
-            )
-        };
-
-        if result.log_err() != None {
-            self.wheel_scroll_lines = value;
-        }
-    }
-
-    pub(crate) fn update_wheel_scroll_chars(&mut self) {
-        let mut value = c_uint::default();
-        let result = unsafe {
-            SystemParametersInfoW(
-                SPI_GETWHEELSCROLLCHARS,
-                0,
-                Some((&mut value) as *mut c_uint as *mut c_void),
-                SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS::default(),
-            )
-        };
-
-        if result.log_err() != None {
-            self.wheel_scroll_chars = value;
+        Self {
+            callbacks,
+            current_cursor,
         }
     }
 }
@@ -156,10 +77,7 @@ impl WindowsPlatform {
         unsafe {
             OleInitialize(None).expect("unable to initialize Windows OLE");
         }
-        let (main_sender, main_receiver) = flume::unbounded::<Runnable>();
-        let dispatch_event =
-            OwnedHandle::new(unsafe { CreateEventW(None, false, false, None) }.unwrap());
-        let dispatcher = Arc::new(WindowsDispatcher::new(main_sender, dispatch_event.to_raw()));
+        let dispatcher = Arc::new(WindowsDispatcher::new());
         let background_executor = BackgroundExecutor::new(dispatcher.clone());
         let foreground_executor = ForegroundExecutor::new(dispatcher);
         let text_system = if let Some(direct_write) = DirectWriteTextSystem::new().log_err() {
@@ -169,69 +87,86 @@ impl WindowsPlatform {
             log::info!("Using cosmic text system.");
             Arc::new(CosmicTextSystem::new()) as Arc<dyn PlatformTextSystem>
         };
-        let callbacks = Mutex::new(Callbacks::default());
-        let raw_window_handles = RwLock::new(SmallVec::new());
-        let settings = RefCell::new(WindowsPlatformSystemSettings::new());
         let icon = load_icon().unwrap_or_default();
-        let current_cursor = Cell::new(load_cursor(CursorStyle::Arrow));
-        let inner = Rc::new(WindowsPlatformInner {
+        let state = RefCell::new(WindowsPlatformState::new());
+        let raw_window_handles = RwLock::new(SmallVec::new());
+
+        Self {
+            state,
+            raw_window_handles,
+            icon,
             background_executor,
             foreground_executor,
-            main_receiver,
             text_system,
-            callbacks,
-            raw_window_handles,
-            dispatch_event,
-            settings,
-            icon,
-            current_cursor,
-        });
-        Self { inner }
-    }
-
-    #[inline]
-    fn run_foreground_tasks(&self) {
-        self.inner.run_foreground_tasks();
+        }
     }
 
     fn redraw_all(&self) {
-        for handle in self.inner.raw_window_handles.read().iter() {
+        for handle in self.raw_window_handles.read().iter() {
             unsafe {
                 RedrawWindow(
                     *handle,
                     None,
                     HRGN::default(),
                     RDW_INVALIDATE | RDW_UPDATENOW,
-                );
+                )
+                .ok()
+                .log_err();
             }
         }
+    }
+
+    pub fn try_get_windows_inner_from_hwnd(&self, hwnd: HWND) -> Option<Rc<WindowsWindowStatePtr>> {
+        self.raw_window_handles
+            .read()
+            .iter()
+            .find(|entry| *entry == &hwnd)
+            .and_then(|hwnd| try_get_window_inner(*hwnd))
+    }
+
+    #[inline]
+    fn post_message(&self, message: u32, wparam: WPARAM, lparam: LPARAM) {
+        self.raw_window_handles
+            .read()
+            .iter()
+            .for_each(|handle| unsafe {
+                PostMessageW(*handle, message, wparam, lparam).log_err();
+            });
+    }
+
+    fn close_one_window(&self, target_window: HWND) -> bool {
+        let mut lock = self.raw_window_handles.write();
+        let index = lock
+            .iter()
+            .position(|handle| *handle == target_window)
+            .unwrap();
+        lock.remove(index);
+
+        lock.is_empty()
     }
 }
 
 impl Platform for WindowsPlatform {
     fn background_executor(&self) -> BackgroundExecutor {
-        self.inner.background_executor.clone()
+        self.background_executor.clone()
     }
 
     fn foreground_executor(&self) -> ForegroundExecutor {
-        self.inner.foreground_executor.clone()
+        self.foreground_executor.clone()
     }
 
     fn text_system(&self) -> Arc<dyn PlatformTextSystem> {
-        self.inner.text_system.clone()
+        self.text_system.clone()
     }
 
     fn run(&self, on_finish_launching: Box<dyn 'static + FnOnce()>) {
         on_finish_launching();
-        let dispatch_event = self.inner.dispatch_event.to_raw();
         let vsync_event = create_event().unwrap();
-        let timer_stop_event = create_event().unwrap();
-        let raw_timer_stop_event = timer_stop_event.to_raw();
-        begin_vsync_timer(vsync_event.to_raw(), timer_stop_event);
+        begin_vsync(vsync_event.to_raw());
         'a: loop {
             let wait_result = unsafe {
                 MsgWaitForMultipleObjects(
-                    Some(&[vsync_event.to_raw(), dispatch_event]),
+                    Some(&[vsync_event.to_raw()]),
                     false,
                     INFINITE,
                     QS_ALLINPUT,
@@ -243,29 +178,27 @@ impl Platform for WindowsPlatform {
                 WAIT_EVENT(0) => {
                     self.redraw_all();
                 }
-                // foreground tasks are dispatched
-                WAIT_EVENT(1) => {
-                    self.run_foreground_tasks();
-                }
                 // Windows thread messages are posted
-                WAIT_EVENT(2) => {
+                WAIT_EVENT(1) => {
                     let mut msg = MSG::default();
                     unsafe {
-                        while PeekMessageW(&mut msg, HWND::default(), 0, 0, PM_REMOVE).as_bool() {
-                            if msg.message == WM_QUIT {
-                                break 'a;
+                        while PeekMessageW(&mut msg, None, 0, 0, PM_REMOVE).as_bool() {
+                            match msg.message {
+                                WM_QUIT => break 'a,
+                                CLOSE_ONE_WINDOW => {
+                                    if self.close_one_window(HWND(msg.lParam.0)) {
+                                        break 'a;
+                                    }
+                                }
+                                _ => {
+                                    // todo(windows)
+                                    // crate `windows 0.56` reports true as Err
+                                    TranslateMessage(&msg).as_bool();
+                                    DispatchMessageW(&msg);
+                                }
                             }
-                            if msg.message == WM_SETTINGCHANGE {
-                                self.inner.settings.borrow_mut().update_all();
-                                continue;
-                            }
-                            TranslateMessage(&msg);
-                            DispatchMessageW(&msg);
                         }
                     }
-
-                    // foreground tasks may have been queued in the message handlers
-                    self.run_foreground_tasks();
                 }
                 _ => {
                     log::error!("Something went wrong while waiting {:?}", wait_result);
@@ -273,11 +206,9 @@ impl Platform for WindowsPlatform {
                 }
             }
         }
-        end_vsync_timer(raw_timer_stop_event);
 
-        let mut callbacks = self.inner.callbacks.lock();
-        if let Some(callback) = callbacks.quit.as_mut() {
-            callback()
+        if let Some(ref mut callback) = self.state.borrow_mut().callbacks.quit {
+            callback();
         }
     }
 
@@ -287,7 +218,7 @@ impl Platform for WindowsPlatform {
             .detach();
     }
 
-    fn restart(&self) {
+    fn restart(&self, _: Option<PathBuf>) {
         let pid = std::process::id();
         let Some(app_path) = self.app_path().log_err() else {
             return;
@@ -342,26 +273,13 @@ impl Platform for WindowsPlatform {
         WindowsDisplay::displays()
     }
 
-    fn display(&self, id: crate::DisplayId) -> Option<Rc<dyn PlatformDisplay>> {
-        if let Some(display) = WindowsDisplay::new(id) {
-            Some(Rc::new(display) as Rc<dyn PlatformDisplay>)
-        } else {
-            None
-        }
-    }
-
     fn primary_display(&self) -> Option<Rc<dyn PlatformDisplay>> {
-        if let Some(display) = WindowsDisplay::primary_monitor() {
-            Some(Rc::new(display) as Rc<dyn PlatformDisplay>)
-        } else {
-            None
-        }
+        WindowsDisplay::primary_monitor().map(|display| Rc::new(display) as Rc<dyn PlatformDisplay>)
     }
 
     fn active_window(&self) -> Option<AnyWindowHandle> {
         let active_window_hwnd = unsafe { GetActiveWindow() };
-        self.inner
-            .try_get_windows_inner_from_hwnd(active_window_hwnd)
+        self.try_get_windows_inner_from_hwnd(active_window_hwnd)
             .map(|inner| inner.handle)
     }
 
@@ -370,7 +288,19 @@ impl Platform for WindowsPlatform {
         handle: AnyWindowHandle,
         options: WindowParams,
     ) -> Box<dyn PlatformWindow> {
-        Box::new(WindowsWindow::new(self.inner.clone(), handle, options))
+        let lock = self.state.borrow();
+        let window = WindowsWindow::new(
+            handle,
+            options,
+            self.icon,
+            self.foreground_executor.clone(),
+            lock.current_cursor,
+        );
+        drop(lock);
+        let handle = window.get_raw_handle();
+        self.raw_window_handles.write().push(handle);
+
+        Box::new(window)
     }
 
     // todo(windows)
@@ -390,9 +320,8 @@ impl Platform for WindowsPlatform {
             .detach();
     }
 
-    // todo(windows)
     fn on_open_urls(&self, callback: Box<dyn FnMut(Vec<String>)>) {
-        self.inner.callbacks.lock().open_urls = Some(callback);
+        self.state.borrow_mut().callbacks.open_urls = Some(callback);
     }
 
     fn prompt_for_paths(&self, options: PathPromptOptions) -> Receiver<Option<Vec<PathBuf>>> {
@@ -511,39 +440,27 @@ impl Platform for WindowsPlatform {
             .detach();
     }
 
-    fn on_become_active(&self, callback: Box<dyn FnMut()>) {
-        self.inner.callbacks.lock().become_active = Some(callback);
-    }
-
-    fn on_resign_active(&self, callback: Box<dyn FnMut()>) {
-        self.inner.callbacks.lock().resign_active = Some(callback);
-    }
-
     fn on_quit(&self, callback: Box<dyn FnMut()>) {
-        self.inner.callbacks.lock().quit = Some(callback);
+        self.state.borrow_mut().callbacks.quit = Some(callback);
     }
 
     fn on_reopen(&self, callback: Box<dyn FnMut()>) {
-        self.inner.callbacks.lock().reopen = Some(callback);
-    }
-
-    fn on_event(&self, callback: Box<dyn FnMut(PlatformInput) -> bool>) {
-        self.inner.callbacks.lock().event = Some(callback);
+        self.state.borrow_mut().callbacks.reopen = Some(callback);
     }
 
     // todo(windows)
     fn set_menus(&self, menus: Vec<Menu>, keymap: &Keymap) {}
 
     fn on_app_menu_action(&self, callback: Box<dyn FnMut(&dyn Action)>) {
-        self.inner.callbacks.lock().app_menu_action = Some(callback);
+        self.state.borrow_mut().callbacks.app_menu_action = Some(callback);
     }
 
     fn on_will_open_app_menu(&self, callback: Box<dyn FnMut()>) {
-        self.inner.callbacks.lock().will_open_app_menu = Some(callback);
+        self.state.borrow_mut().callbacks.will_open_app_menu = Some(callback);
     }
 
     fn on_validate_app_menu_command(&self, callback: Box<dyn FnMut(&dyn Action) -> bool>) {
-        self.inner.callbacks.lock().validate_app_menu_command = Some(callback);
+        self.state.borrow_mut().callbacks.validate_app_menu_command = Some(callback);
     }
 
     fn os_name(&self) -> &'static str {
@@ -690,15 +607,18 @@ impl Platform for WindowsPlatform {
     }
 
     fn set_cursor_style(&self, style: CursorStyle) {
-        self.inner.current_cursor.set(load_cursor(style));
+        let hcursor = load_cursor(style);
+        let mut lock = self.state.borrow_mut();
+        if lock.current_cursor.0 != hcursor.0 {
+            self.post_message(CURSOR_STYLE_CHANGED, WPARAM(0), LPARAM(hcursor.0));
+            lock.current_cursor = hcursor;
+        }
     }
 
     // todo(windows)
     fn should_auto_hide_scrollbars(&self) -> bool {
         false
     }
-
-    fn write_to_primary(&self, _item: ClipboardItem) {}
 
     fn write_to_clipboard(&self, item: ClipboardItem) {
         if item.text.len() > 0 {
@@ -707,13 +627,9 @@ impl Platform for WindowsPlatform {
         }
     }
 
-    fn read_from_primary(&self) -> Option<ClipboardItem> {
-        None
-    }
-
     fn read_from_clipboard(&self) -> Option<ClipboardItem> {
         let mut ctx = ClipboardContext::new().unwrap();
-        let content = ctx.get_contents().unwrap();
+        let content = ctx.get_contents().ok()?;
         Some(ClipboardItem {
             text: content,
             metadata: None,
@@ -722,10 +638,10 @@ impl Platform for WindowsPlatform {
 
     fn write_credentials(&self, url: &str, username: &str, password: &[u8]) -> Task<Result<()>> {
         let mut password = password.to_vec();
-        let mut username = username.encode_utf16().chain(once(0)).collect_vec();
+        let mut username = username.encode_utf16().chain(Some(0)).collect_vec();
         let mut target_name = windows_credentials_target_name(url)
             .encode_utf16()
-            .chain(once(0))
+            .chain(Some(0))
             .collect_vec();
         self.foreground_executor().spawn(async move {
             let credentials = CREDENTIALW {
@@ -747,7 +663,7 @@ impl Platform for WindowsPlatform {
     fn read_credentials(&self, url: &str) -> Task<Result<Option<(String, Vec<u8>)>>> {
         let mut target_name = windows_credentials_target_name(url)
             .encode_utf16()
-            .chain(once(0))
+            .chain(Some(0))
             .collect_vec();
         self.foreground_executor().spawn(async move {
             let mut credentials: *mut CREDENTIALW = std::ptr::null_mut();
@@ -780,7 +696,7 @@ impl Platform for WindowsPlatform {
     fn delete_credentials(&self, url: &str) -> Task<Result<()>> {
         let mut target_name = windows_credentials_target_name(url)
             .encode_utf16()
-            .chain(once(0))
+            .chain(Some(0))
             .collect_vec();
         self.foreground_executor().spawn(async move {
             unsafe { CredDeleteW(PCWSTR::from_raw(target_name.as_ptr()), CRED_TYPE_GENERIC, 0)? };
@@ -840,72 +756,13 @@ unsafe fn show_savefile_dialog(directory: PathBuf) -> Result<IFileSaveDialog> {
     Ok(dialog)
 }
 
-fn begin_vsync_timer(vsync_event: HANDLE, timer_stop_event: OwnedHandle) {
-    let vsync_fn = select_vsync_fn();
-    std::thread::spawn(move || {
-        while vsync_fn(timer_stop_event.to_raw()) {
-            if unsafe { SetEvent(vsync_event) }.log_err().is_none() {
-                break;
-            }
+fn begin_vsync(vsync_evnet: HANDLE) {
+    std::thread::spawn(move || unsafe {
+        loop {
+            windows::Win32::Graphics::Dwm::DwmFlush().log_err();
+            SetEvent(vsync_evnet).log_err();
         }
     });
-}
-
-fn end_vsync_timer(timer_stop_event: HANDLE) {
-    unsafe { SetEvent(timer_stop_event) }.log_err();
-}
-
-fn select_vsync_fn() -> Box<dyn Fn(HANDLE) -> bool + Send> {
-    if let Some(dcomp_fn) = load_dcomp_vsync_fn() {
-        log::info!("use DCompositionWaitForCompositorClock for vsync");
-        return Box::new(move |timer_stop_event| {
-            // will be 0 if woken up by timer_stop_event or 1 if the compositor clock ticked
-            // SEE: https://learn.microsoft.com/en-us/windows/win32/directcomp/compositor-clock/compositor-clock
-            (unsafe { dcomp_fn(1, &timer_stop_event, INFINITE) }) == 1
-        });
-    }
-    log::info!("use fallback vsync function");
-    Box::new(fallback_vsync_fn())
-}
-
-fn load_dcomp_vsync_fn() -> Option<unsafe extern "system" fn(u32, *const HANDLE, u32) -> u32> {
-    static FN: OnceLock<Option<unsafe extern "system" fn(u32, *const HANDLE, u32) -> u32>> =
-        OnceLock::new();
-    *FN.get_or_init(|| {
-        let hmodule = unsafe { LoadLibraryW(windows::core::w!("dcomp.dll")) }.ok()?;
-        let address = unsafe {
-            GetProcAddress(
-                hmodule,
-                windows::core::s!("DCompositionWaitForCompositorClock"),
-            )
-        }?;
-        Some(unsafe { transmute(address) })
-    })
-}
-
-fn fallback_vsync_fn() -> impl Fn(HANDLE) -> bool + Send {
-    let freq = WindowsDisplay::primary_monitor()
-        .and_then(|monitor| monitor.frequency())
-        .unwrap_or(60);
-    log::info!("primaly refresh rate is {freq}Hz");
-
-    let interval = (1000 / freq).max(1);
-    log::info!("expected interval is {interval}ms");
-
-    unsafe { timeBeginPeriod(1) };
-
-    struct TimePeriod;
-    impl Drop for TimePeriod {
-        fn drop(&mut self) {
-            unsafe { timeEndPeriod(1) };
-        }
-    }
-    let period = TimePeriod;
-
-    move |timer_stop_event| {
-        let _ = (&period,);
-        (unsafe { WaitForSingleObject(timer_stop_event, interval) }) == WAIT_TIMEOUT
-    }
 }
 
 fn load_icon() -> Result<HICON> {

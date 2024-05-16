@@ -14,7 +14,7 @@ use serde_json::json;
 #[cfg(not(windows))]
 use std::os;
 use std::task::Poll;
-use task::{TaskContext, TaskSource, TaskTemplate, TaskTemplates};
+use task::{TaskContext, TaskTemplate, TaskTemplates};
 use unindent::Unindent as _;
 use util::{assert_set_eq, paths::PathMatcher, test::temp_tree};
 use worktree::WorktreeModelHandle as _;
@@ -168,12 +168,11 @@ async fn test_managing_project_specific_settings(cx: &mut gpui::TestAppContext) 
 
         let all_tasks = project
             .update(cx, |project, cx| {
-                project.task_inventory().update(cx, |inventory, cx| {
+                project.task_inventory().update(cx, |inventory, _| {
                     let (mut old, new) = inventory.used_and_current_resolved_tasks(
                         None,
                         Some(workree_id),
                         &task_context,
-                        cx,
                     );
                     old.extend(new);
                     old
@@ -194,6 +193,12 @@ async fn test_managing_project_specific_settings(cx: &mut gpui::TestAppContext) 
             all_tasks,
             vec![
                 (
+                    global_task_source_kind.clone(),
+                    "cargo check".to_string(),
+                    vec!["check".to_string(), "--all".to_string()],
+                    HashMap::default(),
+                ),
+                (
                     TaskSourceKind::Worktree {
                         id: workree_id,
                         abs_path: PathBuf::from("/the-root/b/.zed/tasks.json"),
@@ -203,25 +208,15 @@ async fn test_managing_project_specific_settings(cx: &mut gpui::TestAppContext) 
                     vec!["check".to_string()],
                     HashMap::default(),
                 ),
-                (
-                    global_task_source_kind.clone(),
-                    "cargo check".to_string(),
-                    vec!["check".to_string(), "--all".to_string()],
-                    HashMap::default(),
-                ),
             ]
         );
     });
 
     project.update(cx, |project, cx| {
         let inventory = project.task_inventory();
-        inventory.update(cx, |inventory, cx| {
-            let (mut old, new) = inventory.used_and_current_resolved_tasks(
-                None,
-                Some(workree_id),
-                &task_context,
-                cx,
-            );
+        inventory.update(cx, |inventory, _| {
+            let (mut old, new) =
+                inventory.used_and_current_resolved_tasks(None, Some(workree_id), &task_context);
             old.extend(new);
             let (_, resolved_task) = old
                 .into_iter()
@@ -231,41 +226,45 @@ async fn test_managing_project_specific_settings(cx: &mut gpui::TestAppContext) 
         })
     });
 
+    let tasks = serde_json::to_string(&TaskTemplates(vec![TaskTemplate {
+        label: "cargo check".to_string(),
+        command: "cargo".to_string(),
+        args: vec![
+            "check".to_string(),
+            "--all".to_string(),
+            "--all-targets".to_string(),
+        ],
+        env: HashMap::from_iter(Some((
+            "RUSTFLAGS".to_string(),
+            "-Zunstable-options".to_string(),
+        ))),
+        ..TaskTemplate::default()
+    }]))
+    .unwrap();
+    let (tx, rx) = futures::channel::mpsc::unbounded();
+    cx.update(|cx| {
+        project.update(cx, |project, cx| {
+            project.task_inventory().update(cx, |inventory, cx| {
+                inventory.remove_local_static_source(Path::new("/the-root/.zed/tasks.json"));
+                inventory.add_source(
+                    global_task_source_kind.clone(),
+                    |tx, cx| StaticSource::new(TrackedFile::new(rx, tx, cx)),
+                    cx,
+                );
+            });
+        })
+    });
+    tx.unbounded_send(tasks).unwrap();
+
+    cx.run_until_parked();
     cx.update(|cx| {
         let all_tasks = project
             .update(cx, |project, cx| {
-                project.task_inventory().update(cx, |inventory, cx| {
-                    inventory.remove_local_static_source(Path::new("/the-root/.zed/tasks.json"));
-                    inventory.add_source(
-                        global_task_source_kind.clone(),
-                        |cx| {
-                            cx.new_model(|_| {
-                                let source = TestTaskSource {
-                                    tasks: TaskTemplates(vec![TaskTemplate {
-                                        label: "cargo check".to_string(),
-                                        command: "cargo".to_string(),
-                                        args: vec![
-                                            "check".to_string(),
-                                            "--all".to_string(),
-                                            "--all-targets".to_string(),
-                                        ],
-                                        env: HashMap::from_iter(Some((
-                                            "RUSTFLAGS".to_string(),
-                                            "-Zunstable-options".to_string(),
-                                        ))),
-                                        ..TaskTemplate::default()
-                                    }]),
-                                };
-                                Box::new(source) as Box<_>
-                            })
-                        },
-                        cx,
-                    );
+                project.task_inventory().update(cx, |inventory, _| {
                     let (mut old, new) = inventory.used_and_current_resolved_tasks(
                         None,
                         Some(workree_id),
                         &task_context,
-                        cx,
                     );
                     old.extend(new);
                     old
@@ -285,16 +284,6 @@ async fn test_managing_project_specific_settings(cx: &mut gpui::TestAppContext) 
         assert_eq!(
             all_tasks,
             vec![
-                (
-                    TaskSourceKind::Worktree {
-                        id: workree_id,
-                        abs_path: PathBuf::from("/the-root/b/.zed/tasks.json"),
-                        id_base: "local_tasks_for_worktree",
-                    },
-                    "cargo check".to_string(),
-                    vec!["check".to_string()],
-                    HashMap::default(),
-                ),
                 (
                     TaskSourceKind::Worktree {
                         id: workree_id,
@@ -312,23 +301,19 @@ async fn test_managing_project_specific_settings(cx: &mut gpui::TestAppContext) 
                         "-Zunstable-options".to_string()
                     ))),
                 ),
+                (
+                    TaskSourceKind::Worktree {
+                        id: workree_id,
+                        abs_path: PathBuf::from("/the-root/b/.zed/tasks.json"),
+                        id_base: "local_tasks_for_worktree",
+                    },
+                    "cargo check".to_string(),
+                    vec!["check".to_string()],
+                    HashMap::default(),
+                ),
             ]
         );
     });
-}
-
-struct TestTaskSource {
-    tasks: TaskTemplates,
-}
-
-impl TaskSource for TestTaskSource {
-    fn as_any(&mut self) -> &mut dyn std::any::Any {
-        self
-    }
-
-    fn tasks_to_schedule(&mut self, _: &mut ModelContext<Box<dyn TaskSource>>) -> TaskTemplates {
-        self.tasks.clone()
-    }
 }
 
 #[gpui::test]
@@ -418,7 +403,7 @@ async fn test_managing_language_servers(cx: &mut gpui::TestAppContext) {
             uri: lsp::Url::from_file_path("/the-root/test.rs").unwrap(),
             version: 0,
             text: "const A: i32 = 1;".to_string(),
-            language_id: Default::default()
+            language_id: "rust".to_string(),
         }
     );
 
@@ -465,7 +450,7 @@ async fn test_managing_language_servers(cx: &mut gpui::TestAppContext) {
             uri: lsp::Url::from_file_path("/the-root/package.json").unwrap(),
             version: 0,
             text: "{\"a\": 1}".to_string(),
-            language_id: Default::default()
+            language_id: "json".to_string(),
         }
     );
 
@@ -550,7 +535,7 @@ async fn test_managing_language_servers(cx: &mut gpui::TestAppContext) {
             uri: lsp::Url::from_file_path("/the-root/test3.rs").unwrap(),
             version: 0,
             text: rust_buffer2.update(cx, |buffer, _| buffer.text()),
-            language_id: Default::default()
+            language_id: "rust".to_string(),
         },
     );
 
@@ -600,7 +585,7 @@ async fn test_managing_language_servers(cx: &mut gpui::TestAppContext) {
             uri: lsp::Url::from_file_path("/the-root/test3.json").unwrap(),
             version: 0,
             text: rust_buffer2.update(cx, |buffer, _| buffer.text()),
-            language_id: Default::default()
+            language_id: "json".to_string(),
         },
     );
 
@@ -655,7 +640,7 @@ async fn test_managing_language_servers(cx: &mut gpui::TestAppContext) {
             uri: lsp::Url::from_file_path("/the-root/test.rs").unwrap(),
             version: 0,
             text: rust_buffer.update(cx, |buffer, _| buffer.text()),
-            language_id: Default::default()
+            language_id: "rust".to_string(),
         }
     );
 
@@ -676,13 +661,13 @@ async fn test_managing_language_servers(cx: &mut gpui::TestAppContext) {
                 uri: lsp::Url::from_file_path("/the-root/package.json").unwrap(),
                 version: 0,
                 text: json_buffer.update(cx, |buffer, _| buffer.text()),
-                language_id: Default::default()
+                language_id: "json".to_string(),
             },
             lsp::TextDocumentItem {
                 uri: lsp::Url::from_file_path("/the-root/test3.json").unwrap(),
                 version: 0,
                 text: rust_buffer2.update(cx, |buffer, _| buffer.text()),
-                language_id: Default::default()
+                language_id: "json".to_string(),
             }
         ]
     );
@@ -2931,9 +2916,7 @@ async fn test_save_as(cx: &mut gpui::TestAppContext) {
     let languages = project.update(cx, |project, _| project.languages().clone());
     languages.add(rust_lang());
 
-    let buffer = project.update(cx, |project, cx| {
-        project.create_buffer("", None, cx).unwrap()
-    });
+    let buffer = project.update(cx, |project, cx| project.create_local_buffer("", None, cx));
     buffer.update(cx, |buffer, cx| {
         buffer.edit([(0..0, "abc")], None, cx);
         assert!(buffer.is_dirty());
@@ -2942,7 +2925,12 @@ async fn test_save_as(cx: &mut gpui::TestAppContext) {
     });
     project
         .update(cx, |project, cx| {
-            project.save_buffer_as(buffer.clone(), "/dir/file1.rs".into(), cx)
+            let worktree_id = project.worktrees().next().unwrap().read(cx).id();
+            let path = ProjectPath {
+                worktree_id,
+                path: Arc::from(Path::new("file1.rs")),
+            };
+            project.save_buffer_as(buffer.clone(), path, cx)
         })
         .await
         .unwrap();

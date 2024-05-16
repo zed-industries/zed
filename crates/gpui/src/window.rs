@@ -12,8 +12,8 @@ use crate::{
     RenderSvgParams, ScaledPixels, Scene, Shadow, SharedString, Size, StrikethroughStyle, Style,
     SubscriberSet, Subscription, TaffyLayoutEngine, Task, TextStyle, TextStyleRefinement,
     TransformationMatrix, Underline, UnderlineStyle, View, VisualContext, WeakView,
-    WindowAppearance, WindowBackgroundAppearance, WindowOptions, WindowParams, WindowTextSystem,
-    SUBPIXEL_VARIANTS,
+    WindowAppearance, WindowBackgroundAppearance, WindowBounds, WindowOptions, WindowParams,
+    WindowTextSystem, SUBPIXEL_VARIANTS,
 };
 use anyhow::{anyhow, Context as _, Result};
 use collections::{FxHashMap, FxHashSet};
@@ -50,6 +50,9 @@ use util::{measure, ResultExt};
 mod prompts;
 
 pub use prompts::*;
+
+pub(crate) const DEFAULT_WINDOW_SIZE: Size<DevicePixels> =
+    size(DevicePixels(1024), DevicePixels(700));
 
 /// Represents the two different phases when dispatching events.
 #[derive(Default, Copy, Clone, Debug, Eq, PartialEq)]
@@ -95,7 +98,8 @@ slotmap::new_key_type! {
 }
 
 thread_local! {
-    pub(crate) static ELEMENT_ARENA: RefCell<Arena> = RefCell::new(Arena::new(8 * 1024 * 1024));
+    /// 8MB wasn't quite enough...
+    pub(crate) static ELEMENT_ARENA: RefCell<Arena> = RefCell::new(Arena::new(32 * 1024 * 1024));
 }
 
 impl FocusId {
@@ -198,6 +202,18 @@ impl FocusHandle {
     /// Obtains whether this handle contains the given handle in the most recently rendered frame.
     pub fn contains(&self, other: &Self, cx: &WindowContext) -> bool {
         self.id.contains(other.id, cx)
+    }
+
+    /// Dispatch an action on the element that rendered this focus handle
+    pub fn dispatch_action(&self, action: &dyn Action, cx: &mut WindowContext) {
+        if let Some(node_id) = cx
+            .window
+            .rendered_frame
+            .dispatch_tree
+            .focusable_node_id(self.id)
+        {
+            cx.dispatch_action_on_node(node_id, action)
+        }
     }
 }
 
@@ -353,7 +369,7 @@ pub(crate) struct TooltipRequest {
 pub(crate) struct DeferredDraw {
     priority: usize,
     parent_node: DispatchNodeId,
-    element_id_stack: GlobalElementId,
+    element_id_stack: SmallVec<[ElementId; 32]>,
     text_style_stack: Vec<TextStyleRefinement>,
     element: Option<AnyElement>,
     absolute_offset: Point<Pixels>,
@@ -454,9 +470,10 @@ impl Frame {
 
     pub(crate) fn finish(&mut self, prev_frame: &mut Self) {
         for element_state_key in &self.accessed_element_states {
-            if let Some(element_state) = prev_frame.element_states.remove(element_state_key) {
-                self.element_states
-                    .insert(element_state_key.clone(), element_state);
+            if let Some((element_state_key, element_state)) =
+                prev_frame.element_states.remove_entry(element_state_key)
+            {
+                self.element_states.insert(element_state_key, element_state);
             }
         }
 
@@ -473,11 +490,19 @@ pub struct Window {
     display_id: DisplayId,
     sprite_atlas: Arc<dyn PlatformAtlas>,
     text_system: Arc<WindowTextSystem>,
-    pub(crate) rem_size: Pixels,
+    rem_size: Pixels,
+    /// An override value for the window's rem size.
+    ///
+    /// This is used by `with_rem_size` to allow rendering an element tree with
+    /// a given rem size.
+    ///
+    /// Note: Right now we only allow for a single override value at a time, but
+    /// this could likely be changed to be a stack of rem sizes.
+    rem_size_override: Option<Pixels>,
     pub(crate) viewport_size: Size<Pixels>,
     layout_engine: Option<TaffyLayoutEngine>,
     pub(crate) root_view: Option<AnyView>,
-    pub(crate) element_id_stack: GlobalElementId,
+    pub(crate) element_id_stack: SmallVec<[ElementId; 32]>,
     pub(crate) text_style_stack: Vec<TextStyleRefinement>,
     pub(crate) element_offset_stack: Vec<Point<Pixels>>,
     pub(crate) content_mask_stack: Vec<ContentMask<Pixels>>,
@@ -559,11 +584,10 @@ pub(crate) struct ElementStateBox {
 }
 
 fn default_bounds(display_id: Option<DisplayId>, cx: &mut AppContext) -> Bounds<DevicePixels> {
-    const DEFAULT_WINDOW_SIZE: Size<DevicePixels> = size(DevicePixels(1024), DevicePixels(700));
     const DEFAULT_WINDOW_OFFSET: Point<DevicePixels> = point(DevicePixels(0), DevicePixels(35));
 
     cx.active_window()
-        .and_then(|w| w.update(cx, |_, cx| cx.window_bounds()).ok())
+        .and_then(|w| w.update(cx, |_, cx| cx.bounds()).ok())
         .map(|bounds| bounds.map_origin(|origin| origin + DEFAULT_WINDOW_OFFSET))
         .unwrap_or_else(|| {
             let display = display_id
@@ -571,12 +595,7 @@ fn default_bounds(display_id: Option<DisplayId>, cx: &mut AppContext) -> Bounds<
                 .unwrap_or_else(|| cx.primary_display());
 
             display
-                .map(|display| {
-                    let center = display.bounds().center();
-                    let offset = DEFAULT_WINDOW_SIZE / 2;
-                    let origin = point(center.x - offset.width, center.y - offset.height);
-                    Bounds::new(origin, DEFAULT_WINDOW_SIZE)
-                })
+                .map(|display| display.default_bounds())
                 .unwrap_or_else(|| {
                     Bounds::new(point(DevicePixels(0), DevicePixels(0)), DEFAULT_WINDOW_SIZE)
                 })
@@ -590,19 +609,21 @@ impl Window {
         cx: &mut AppContext,
     ) -> Self {
         let WindowOptions {
-            bounds,
+            window_bounds,
             titlebar,
             focus,
             show,
             kind,
             is_movable,
             display_id,
-            fullscreen,
             window_background,
+            app_id,
         } = options;
 
-        let bounds = bounds.unwrap_or_else(|| default_bounds(display_id, cx));
-        let platform_window = cx.platform.open_window(
+        let bounds = window_bounds
+            .map(|bounds| bounds.get_bounds())
+            .unwrap_or_else(|| default_bounds(display_id, cx));
+        let mut platform_window = cx.platform.open_window(
             handle,
             WindowParams {
                 bounds,
@@ -629,8 +650,12 @@ impl Window {
         let next_frame_callbacks: Rc<RefCell<Vec<FrameCallback>>> = Default::default();
         let last_input_timestamp = Rc::new(Cell::new(Instant::now()));
 
-        if fullscreen {
-            platform_window.toggle_fullscreen();
+        if let Some(ref window_open_state) = window_bounds {
+            match window_open_state {
+                WindowBounds::Fullscreen(_) => platform_window.toggle_fullscreen(),
+                WindowBounds::Maximized(_) => platform_window.zoom(),
+                WindowBounds::Windowed(_) => {}
+            }
         }
 
         platform_window.on_close(Box::new({
@@ -688,7 +713,7 @@ impl Window {
             let mut cx = cx.to_async();
             move |_, _| {
                 handle
-                    .update(&mut cx, |_, cx| cx.window_bounds_changed())
+                    .update(&mut cx, |_, cx| cx.bounds_changed())
                     .log_err();
             }
         }));
@@ -696,7 +721,7 @@ impl Window {
             let mut cx = cx.to_async();
             move || {
                 handle
-                    .update(&mut cx, |_, cx| cx.window_bounds_changed())
+                    .update(&mut cx, |_, cx| cx.bounds_changed())
                     .log_err();
             }
         }));
@@ -734,6 +759,10 @@ impl Window {
             })
         });
 
+        if let Some(app_id) = app_id {
+            platform_window.set_app_id(&app_id);
+        }
+
         Window {
             handle,
             removed: false,
@@ -742,10 +771,11 @@ impl Window {
             sprite_atlas,
             text_system,
             rem_size: px(16.),
+            rem_size_override: None,
             viewport_size: content_size,
             layout_engine: Some(TaffyLayoutEngine::new()),
             root_view: None,
-            element_id_stack: GlobalElementId::default(),
+            element_id_stack: SmallVec::default(),
             text_style_stack: Vec::new(),
             element_offset_stack: Vec::new(),
             content_mask_stack: Vec::new(),
@@ -936,10 +966,10 @@ impl<'a> WindowContext<'a> {
         self.window.platform_window.is_maximized()
     }
 
-    /// Check if the platform window is minimized
-    /// On some platforms (namely Windows) the position is incorrect when minimized
-    pub fn is_minimized(&self) -> bool {
-        self.window.platform_window.is_minimized()
+    /// Return the `WindowBounds` to indicate that how a window should be opened
+    /// after it has been closed
+    pub fn window_bounds(&self) -> WindowBounds {
+        self.window.platform_window.window_bounds()
     }
 
     /// Dispatch the given action on the currently focused element.
@@ -1068,7 +1098,7 @@ impl<'a> WindowContext<'a> {
             .spawn(|app| f(AsyncWindowContext::new(app, self.window.handle)))
     }
 
-    fn window_bounds_changed(&mut self) {
+    fn bounds_changed(&mut self) {
         self.window.scale_factor = self.window.platform_window.scale_factor();
         self.window.viewport_size = self.window.platform_window.content_size();
         self.window.display_id = self.window.platform_window.display().id();
@@ -1081,7 +1111,7 @@ impl<'a> WindowContext<'a> {
     }
 
     /// Returns the bounds of the current window in the global coordinate space, which could span across multiple displays.
-    pub fn window_bounds(&self) -> Bounds<DevicePixels> {
+    pub fn bounds(&self) -> Bounds<DevicePixels> {
         self.window.platform_window.bounds()
     }
 
@@ -1119,9 +1149,31 @@ impl<'a> WindowContext<'a> {
         self.window.platform_window.zoom();
     }
 
+    /// Opens the native title bar context menu, useful when implementing client side decorations (Wayland only)
+    pub fn show_window_menu(&self, position: Point<Pixels>) {
+        self.window.platform_window.show_window_menu(position)
+    }
+
+    /// Tells the compositor to take control of window movement (Wayland only)
+    ///
+    /// Events may not be received during a move operation.
+    pub fn start_system_move(&self) {
+        self.window.platform_window.start_system_move()
+    }
+
+    /// Returns whether the title bar window controls need to be rendered by the application (Wayland and X11)
+    pub fn should_render_window_controls(&self) -> bool {
+        self.window.platform_window.should_render_window_controls()
+    }
+
     /// Updates the window's title at the platform level.
     pub fn set_window_title(&mut self, title: &str) {
         self.window.platform_window.set_title(title);
+    }
+
+    /// Sets the application identifier.
+    pub fn set_app_id(&mut self, app_id: &str) {
+        self.window.platform_window.set_app_id(app_id);
     }
 
     /// Sets the window background appearance.
@@ -1159,13 +1211,40 @@ impl<'a> WindowContext<'a> {
     /// The size of an em for the base font of the application. Adjusting this value allows the
     /// UI to scale, just like zooming a web page.
     pub fn rem_size(&self) -> Pixels {
-        self.window.rem_size
+        self.window
+            .rem_size_override
+            .unwrap_or(self.window.rem_size)
     }
 
     /// Sets the size of an em for the base font of the application. Adjusting this value allows the
     /// UI to scale, just like zooming a web page.
     pub fn set_rem_size(&mut self, rem_size: impl Into<Pixels>) {
         self.window.rem_size = rem_size.into();
+    }
+
+    /// Executes the provided function with the specified rem size.
+    ///
+    /// This method must only be called as part of element drawing.
+    pub fn with_rem_size<F, R>(&mut self, rem_size: Option<impl Into<Pixels>>, f: F) -> R
+    where
+        F: FnOnce(&mut Self) -> R,
+    {
+        debug_assert!(
+            matches!(
+                self.window.draw_phase,
+                DrawPhase::Prepaint | DrawPhase::Paint
+            ),
+            "this method can only be called during request_layout, prepaint, or paint"
+        );
+
+        if let Some(rem_size) = rem_size {
+            self.window.rem_size_override = Some(rem_size.into());
+            let result = f(self);
+            self.window.rem_size_override.take();
+            result
+        } else {
+            f(self)
+        }
     }
 
     /// The line height associated with the current text style.
@@ -1418,8 +1497,12 @@ impl<'a> WindowContext<'a> {
         let mut deferred_draws = mem::take(&mut self.window.next_frame.deferred_draws);
         for deferred_draw_ix in deferred_draw_indices {
             let deferred_draw = &mut deferred_draws[*deferred_draw_ix];
-            self.window.element_id_stack = deferred_draw.element_id_stack.clone();
-            self.window.text_style_stack = deferred_draw.text_style_stack.clone();
+            self.window
+                .element_id_stack
+                .clone_from(&deferred_draw.element_id_stack);
+            self.window
+                .text_style_stack
+                .clone_from(&deferred_draw.text_style_stack);
             self.window
                 .next_frame
                 .dispatch_tree
@@ -1452,7 +1535,9 @@ impl<'a> WindowContext<'a> {
         let mut deferred_draws = mem::take(&mut self.window.next_frame.deferred_draws);
         for deferred_draw_ix in deferred_draw_indices {
             let mut deferred_draw = &mut deferred_draws[*deferred_draw_ix];
-            self.window.element_id_stack = deferred_draw.element_id_stack.clone();
+            self.window
+                .element_id_stack
+                .clone_from(&deferred_draw.element_id_stack);
             self.window
                 .next_frame
                 .dispatch_tree
@@ -1499,7 +1584,7 @@ impl<'a> WindowContext<'a> {
             window.rendered_frame.accessed_element_states[range.start.accessed_element_states_index
                 ..range.end.accessed_element_states_index]
                 .iter()
-                .cloned(),
+                .map(|(id, type_id)| (GlobalElementId(id.0.clone()), *type_id)),
         );
         window
             .text_system
@@ -1562,7 +1647,7 @@ impl<'a> WindowContext<'a> {
             window.rendered_frame.accessed_element_states[range.start.accessed_element_states_index
                 ..range.end.accessed_element_states_index]
                 .iter()
-                .cloned(),
+                .map(|(id, type_id)| (GlobalElementId(id.0.clone()), *type_id)),
         );
         window
             .text_system
@@ -1628,35 +1713,6 @@ impl<'a> WindowContext<'a> {
             .tooltip_requests
             .push(Some(TooltipRequest { id, tooltip }));
         id
-    }
-
-    /// Pushes the given element id onto the global stack and invokes the given closure
-    /// with a `GlobalElementId`, which disambiguates the given id in the context of its ancestor
-    /// ids. Because elements are discarded and recreated on each frame, the `GlobalElementId` is
-    /// used to associate state with identified elements across separate frames. This method should
-    /// only be called as part of element drawing.
-    pub fn with_element_id<R>(
-        &mut self,
-        id: Option<impl Into<ElementId>>,
-        f: impl FnOnce(&mut Self) -> R,
-    ) -> R {
-        debug_assert!(
-            matches!(
-                self.window.draw_phase,
-                DrawPhase::Prepaint | DrawPhase::Paint
-            ),
-            "this method can only be called during request_layout, prepaint, or paint"
-        );
-        if let Some(id) = id.map(Into::into) {
-            let window = self.window_mut();
-            window.element_id_stack.push(id);
-            let result = f(self);
-            let window: &mut Window = self.borrow_mut();
-            window.element_id_stack.pop();
-            result
-        } else {
-            f(self)
-        }
     }
 
     /// Invoke the given function with the given content mask after intersecting it
@@ -1903,13 +1959,114 @@ impl<'a> WindowContext<'a> {
             })
     }
 
+    /// Provide elements in the called function with a new namespace in which their identiers must be unique.
+    /// This can be used within a custom element to distinguish multiple sets of child elements.
+    pub fn with_element_namespace<R>(
+        &mut self,
+        element_id: impl Into<ElementId>,
+        f: impl FnOnce(&mut Self) -> R,
+    ) -> R {
+        self.window.element_id_stack.push(element_id.into());
+        let result = f(self);
+        self.window.element_id_stack.pop();
+        result
+    }
+
     /// Updates or initializes state for an element with the given id that lives across multiple
     /// frames. If an element with this ID existed in the rendered frame, its state will be passed
     /// to the given closure. The state returned by the closure will be stored so it can be referenced
     /// when drawing the next frame. This method should only be called as part of element drawing.
     pub fn with_element_state<S, R>(
         &mut self,
-        element_id: Option<ElementId>,
+        global_id: &GlobalElementId,
+        f: impl FnOnce(Option<S>, &mut Self) -> (R, S),
+    ) -> R
+    where
+        S: 'static,
+    {
+        debug_assert!(
+            matches!(
+                self.window.draw_phase,
+                DrawPhase::Prepaint | DrawPhase::Paint
+            ),
+            "this method can only be called during request_layout, prepaint, or paint"
+        );
+
+        let key = (GlobalElementId(global_id.0.clone()), TypeId::of::<S>());
+        self.window
+            .next_frame
+            .accessed_element_states
+            .push((GlobalElementId(key.0.clone()), TypeId::of::<S>()));
+
+        if let Some(any) = self
+            .window
+            .next_frame
+            .element_states
+            .remove(&key)
+            .or_else(|| self.window.rendered_frame.element_states.remove(&key))
+        {
+            let ElementStateBox {
+                inner,
+                #[cfg(debug_assertions)]
+                type_name,
+            } = any;
+            // Using the extra inner option to avoid needing to reallocate a new box.
+            let mut state_box = inner
+                .downcast::<Option<S>>()
+                .map_err(|_| {
+                    #[cfg(debug_assertions)]
+                    {
+                        anyhow::anyhow!(
+                            "invalid element state type for id, requested {:?}, actual: {:?}",
+                            std::any::type_name::<S>(),
+                            type_name
+                        )
+                    }
+
+                    #[cfg(not(debug_assertions))]
+                    {
+                        anyhow::anyhow!(
+                            "invalid element state type for id, requested {:?}",
+                            std::any::type_name::<S>(),
+                        )
+                    }
+                })
+                .unwrap();
+
+            let state = state_box.take().expect(
+                "reentrant call to with_element_state for the same state type and element id",
+            );
+            let (result, state) = f(Some(state), self);
+            state_box.replace(state);
+            self.window.next_frame.element_states.insert(
+                key,
+                ElementStateBox {
+                    inner: state_box,
+                    #[cfg(debug_assertions)]
+                    type_name,
+                },
+            );
+            result
+        } else {
+            let (result, state) = f(None, self);
+            self.window.next_frame.element_states.insert(
+                key,
+                ElementStateBox {
+                    inner: Box::new(Some(state)),
+                    #[cfg(debug_assertions)]
+                    type_name: std::any::type_name::<S>(),
+                },
+            );
+            result
+        }
+    }
+
+    /// A variant of `with_element_state` that allows the element's id to be optional. This is a convenience
+    /// method for elements where the element id may or may not be assigned. Prefer using `with_element_state`
+    /// when the element is guaranteed to have an id.
+    pub fn with_optional_element_state<S, R>(
+        &mut self,
+        global_id: Option<&GlobalElementId>,
         f: impl FnOnce(Option<Option<S>>, &mut Self) -> (R, Option<S>),
     ) -> R
     where
@@ -1922,90 +2079,22 @@ impl<'a> WindowContext<'a> {
             ),
             "this method can only be called during request_layout, prepaint, or paint"
         );
-        let id_is_none = element_id.is_none();
-        self.with_element_id(element_id, |cx| {
-                if id_is_none {
-                    let (result, state) = f(None, cx);
-                    debug_assert!(state.is_none(), "you must not return an element state when passing None for the element id");
-                    result
-                } else {
-                    let global_id = cx.window().element_id_stack.clone();
-                    let key = (global_id, TypeId::of::<S>());
-                    cx.window.next_frame.accessed_element_states.push(key.clone());
 
-                    if let Some(any) = cx
-                        .window_mut()
-                        .next_frame
-                        .element_states
-                        .remove(&key)
-                        .or_else(|| {
-                            cx.window_mut()
-                                .rendered_frame
-                                .element_states
-                                .remove(&key)
-                        })
-                    {
-                        let ElementStateBox {
-                            inner,
-                            #[cfg(debug_assertions)]
-                            type_name
-                        } = any;
-                        // Using the extra inner option to avoid needing to reallocate a new box.
-                        let mut state_box = inner
-                            .downcast::<Option<S>>()
-                            .map_err(|_| {
-                                #[cfg(debug_assertions)]
-                                {
-                                    anyhow::anyhow!(
-                                        "invalid element state type for id, requested_type {:?}, actual type: {:?}",
-                                        std::any::type_name::<S>(),
-                                        type_name
-                                    )
-                                }
-
-                                #[cfg(not(debug_assertions))]
-                                {
-                                    anyhow::anyhow!(
-                                        "invalid element state type for id, requested_type {:?}",
-                                        std::any::type_name::<S>(),
-                                    )
-                                }
-                            })
-                            .unwrap();
-
-                        // Actual: Option<AnyElement> <- View
-                        // Requested: () <- AnyElement
-                        let state = state_box
-                            .take()
-                            .expect("reentrant call to with_element_state for the same state type and element id");
-                        let (result, state) = f(Some(Some(state)), cx);
-                        state_box.replace(state.expect("you must return "));
-                        cx.window_mut()
-                            .next_frame
-                            .element_states
-                            .insert(key, ElementStateBox {
-                                inner: state_box,
-                                #[cfg(debug_assertions)]
-                                type_name
-                            });
-                        result
-                    } else {
-                        let (result, state) = f(Some(None), cx);
-                        cx.window_mut()
-                            .next_frame
-                            .element_states
-                            .insert(key,
-                                ElementStateBox {
-                                    inner: Box::new(Some(state.expect("you must return Some<State> when you pass some element id"))),
-                                    #[cfg(debug_assertions)]
-                                    type_name: std::any::type_name::<S>()
-                                }
-
-                            );
-                        result
-                    }
-                }
+        if let Some(global_id) = global_id {
+            self.with_element_state(global_id, |state, cx| {
+                let (result, state) = f(Some(state), cx);
+                let state =
+                    state.expect("you must return some state when you pass some element id");
+                (result, state)
             })
+        } else {
+            let (result, state) = f(None, self);
+            debug_assert!(
+                state.is_none(),
+                "you must not return an element state when passing None for the global id"
+            );
+            result
+        }
     }
 
     /// Defers the drawing of the given element, scheduling it to be painted on top of the currently-drawn tree
@@ -2476,7 +2565,7 @@ impl<'a> WindowContext<'a> {
     /// This method should only be called as part of the request_layout or prepaint phase of element drawing.
     pub fn request_layout(
         &mut self,
-        style: &Style,
+        style: Style,
         children: impl IntoIterator<Item = LayoutId>,
     ) -> LayoutId {
         debug_assert_eq!(

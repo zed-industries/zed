@@ -83,7 +83,7 @@ impl TabBar {
 }
 
 impl ParentElement for TabBar {
-    fn extend(&mut self, elements: impl Iterator<Item = AnyElement>) {
+    fn extend(&mut self, elements: impl IntoIterator<Item = AnyElement>) {
         self.children.extend(elements)
     }
 }
@@ -96,16 +96,20 @@ impl RenderOnce for TabBar {
             .flex()
             .flex_none()
             .w_full()
-            .h(rems_from_px(29.))
+            .h(
+                // TODO: This should scale with [UiDensity], however tabs,
+                // and other tab bar tools need to scale dynamically first.
+                rems_from_px(29.),
+            )
             .bg(cx.theme().colors().tab_bar_background)
             .when(!self.start_children.is_empty(), |this| {
                 this.child(
                     h_flex()
                         .flex_none()
-                        .gap_1()
-                        .px_1()
-                        .border_b()
-                        .border_r()
+                        .gap(Spacing::Small.rems(cx))
+                        .px(Spacing::Medium.rems(cx))
+                        .border_b_1()
+                        .border_r_1()
                         .border_color(cx.theme().colors().border)
                         .children(self.start_children),
                 )
@@ -122,7 +126,7 @@ impl RenderOnce for TabBar {
                             .top_0()
                             .left_0()
                             .size_full()
-                            .border_b()
+                            .border_b_1()
                             .border_color(cx.theme().colors().border),
                     )
                     .child(
@@ -140,10 +144,10 @@ impl RenderOnce for TabBar {
                 this.child(
                     h_flex()
                         .flex_none()
-                        .gap_1()
-                        .px_1()
-                        .border_b()
-                        .border_l()
+                        .gap(Spacing::Small.rems(cx))
+                        .px(Spacing::Medium.rems(cx))
+                        .border_b_1()
+                        .border_l_1()
                         .border_color(cx.theme().colors().border)
                         .children(self.end_children),
                 )

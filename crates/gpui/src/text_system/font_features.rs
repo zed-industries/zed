@@ -1,3 +1,5 @@
+use crate::SharedString;
+use itertools::Itertools;
 use schemars::{
     schema::{InstanceType, Schema, SchemaObject, SingleOrVec},
     JsonSchema,
@@ -7,10 +9,12 @@ macro_rules! create_definitions {
     ($($(#[$meta:meta])* ($name:ident, $idx:expr)),* $(,)?) => {
 
         /// The OpenType features that can be configured for a given font.
-        #[derive(Default, Copy, Clone, Eq, PartialEq, Hash)]
+        #[derive(Default, Clone, Eq, PartialEq, Hash)]
         pub struct FontFeatures {
             enabled: u64,
             disabled: u64,
+            other_enabled: SharedString,
+            other_disabled: SharedString,
         }
 
         impl FontFeatures {
@@ -29,7 +33,6 @@ macro_rules! create_definitions {
 
             /// Get the tag name list of the font OpenType features
             /// only enabled or disabled features are returned
-            #[cfg(target_os = "windows")]
             pub fn tag_value_list(&self) -> Vec<(String, bool)> {
                 let mut result = Vec::new();
                 $(
@@ -47,6 +50,14 @@ macro_rules! create_definitions {
                         }
                     }
                 )*
+                {
+                    for name in self.other_enabled.as_ref().chars().chunks(4).into_iter() {
+                        result.push((name.collect::<String>(), true));
+                    }
+                    for name in self.other_disabled.as_ref().chars().chunks(4).into_iter() {
+                        result.push((name.collect::<String>(), false));
+                    }
+                }
                 result
             }
         }
@@ -59,6 +70,15 @@ macro_rules! create_definitions {
                         debug.field(stringify!($name), &value);
                     };
                 )*
+                #[cfg(target_os = "windows")]
+                {
+                    for name in self.other_enabled.as_ref().chars().chunks(4).into_iter() {
+                        debug.field(name.collect::<String>().as_str(), &true);
+                    }
+                    for name in self.other_disabled.as_ref().chars().chunks(4).into_iter() {
+                        debug.field(name.collect::<String>().as_str(), &false);
+                    }
+                }
                 debug.finish()
             }
         }
@@ -86,19 +106,45 @@ macro_rules! create_definitions {
                     {
                         let mut enabled: u64 = 0;
                         let mut disabled: u64 = 0;
+                        let mut other_enabled = "".to_owned();
+                        let mut other_disabled = "".to_owned();
 
                         while let Some((key, value)) = access.next_entry::<String, Option<bool>>()? {
                             let idx = match key.as_str() {
-                                $(stringify!($name) => $idx,)*
-                                _ => continue,
+                                $(stringify!($name) => Some($idx),)*
+                                other_feature => {
+                                    if other_feature.len() != 4 || !other_feature.is_ascii() {
+                                        log::error!("Incorrect feature name: {}", other_feature);
+                                        continue;
+                                    }
+                                    None
+                                },
                             };
-                            match value {
-                                Some(true) => enabled |= 1 << idx,
-                                Some(false) => disabled |= 1 << idx,
-                                None => {}
-                            };
+                            if let Some(idx) = idx {
+                                match value {
+                                    Some(true) => enabled |= 1 << idx,
+                                    Some(false) => disabled |= 1 << idx,
+                                    None => {}
+                                };
+                            } else {
+                                match value {
+                                    Some(true) => other_enabled.push_str(key.as_str()),
+                                    Some(false) => other_disabled.push_str(key.as_str()),
+                                    None => {}
+                                };
+                            }
                         }
-                        Ok(FontFeatures { enabled, disabled })
+                        let other_enabled = if other_enabled.is_empty() {
+                            "".into()
+                        } else {
+                            other_enabled.into()
+                        };
+                        let other_disabled = if other_disabled.is_empty() {
+                            "".into()
+                        } else {
+                            other_disabled.into()
+                        };
+                        Ok(FontFeatures { enabled, disabled, other_enabled, other_disabled })
                     }
                 }
 
@@ -124,6 +170,16 @@ macro_rules! create_definitions {
                         }
                     }
                 )*
+
+                #[cfg(target_os = "windows")]
+                {
+                    for name in self.other_enabled.as_ref().chars().chunks(4).into_iter() {
+                        map.serialize_entry(name.collect::<String>().as_str(), &true)?;
+                    }
+                    for name in self.other_disabled.as_ref().chars().chunks(4).into_iter() {
+                        map.serialize_entry(name.collect::<String>().as_str(), &false)?;
+                    }
+                }
 
                 map.end()
             }

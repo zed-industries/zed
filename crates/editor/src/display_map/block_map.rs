@@ -6,7 +6,7 @@ use crate::{EditorStyle, GutterDimensions};
 use collections::{Bound, HashMap, HashSet};
 use gpui::{AnyElement, Pixels, WindowContext};
 use language::{BufferSnapshot, Chunk, Patch, Point};
-use multi_buffer::{Anchor, ExcerptId, ExcerptRange, ToPoint as _};
+use multi_buffer::{Anchor, ExcerptId, ExcerptRange, MultiBufferRow, ToPoint as _};
 use parking_lot::Mutex;
 use std::{
     cell::RefCell,
@@ -50,7 +50,7 @@ pub struct BlockId(usize);
 pub struct BlockPoint(pub Point);
 
 #[derive(Copy, Clone, Debug, Default, Eq, Ord, PartialOrd, PartialEq)]
-struct BlockRow(u32);
+pub struct BlockRow(pub(super) u32);
 
 #[derive(Copy, Clone, Debug, Default, Eq, Ord, PartialOrd, PartialEq)]
 struct WrapRow(u32);
@@ -163,7 +163,7 @@ pub struct BlockChunks<'a> {
 pub struct BlockBufferRows<'a> {
     transforms: sum_tree::Cursor<'a, Transform, (BlockRow, WrapRow)>,
     input_buffer_rows: wrap_map::WrapBufferRows<'a>,
-    output_row: u32,
+    output_row: BlockRow,
     started: bool,
 }
 
@@ -357,35 +357,40 @@ impl BlockMap {
                         match block.disposition {
                             BlockDisposition::Above => position.column = 0,
                             BlockDisposition::Below => {
-                                position.column = buffer.line_len(position.row)
+                                position.column = buffer.line_len(MultiBufferRow(position.row))
                             }
                         }
                         let position = wrap_snapshot.make_wrap_point(position, Bias::Left);
                         (position.row(), TransformBlock::Custom(block.clone()))
                     }),
             );
-            blocks_in_edit.extend(
-                buffer
-                    .excerpt_boundaries_in_range((start_bound, end_bound))
-                    .map(|excerpt_boundary| {
-                        (
-                            wrap_snapshot
-                                .make_wrap_point(Point::new(excerpt_boundary.row, 0), Bias::Left)
-                                .row(),
-                            TransformBlock::ExcerptHeader {
-                                id: excerpt_boundary.id,
-                                buffer: excerpt_boundary.buffer,
-                                range: excerpt_boundary.range,
-                                height: if excerpt_boundary.starts_new_buffer {
-                                    self.buffer_header_height
-                                } else {
-                                    self.excerpt_header_height
+            if buffer.show_headers() {
+                blocks_in_edit.extend(
+                    buffer
+                        .excerpt_boundaries_in_range((start_bound, end_bound))
+                        .map(|excerpt_boundary| {
+                            (
+                                wrap_snapshot
+                                    .make_wrap_point(
+                                        Point::new(excerpt_boundary.row.0, 0),
+                                        Bias::Left,
+                                    )
+                                    .row(),
+                                TransformBlock::ExcerptHeader {
+                                    id: excerpt_boundary.id,
+                                    buffer: excerpt_boundary.buffer,
+                                    range: excerpt_boundary.range,
+                                    height: if excerpt_boundary.starts_new_buffer {
+                                        self.buffer_header_height
+                                    } else {
+                                        self.excerpt_header_height
+                                    },
+                                    starts_new_buffer: excerpt_boundary.starts_new_buffer,
                                 },
-                                starts_new_buffer: excerpt_boundary.starts_new_buffer,
-                            },
-                        )
-                    }),
-            );
+                            )
+                        }),
+                );
+            }
 
             // Place excerpt headers above custom blocks on the same row.
             blocks_in_edit.sort_unstable_by(|(row_a, block_a), (row_b, block_b)| {
@@ -628,12 +633,12 @@ impl BlockSnapshot {
         }
     }
 
-    pub fn buffer_rows(&self, start_row: u32) -> BlockBufferRows {
+    pub(super) fn buffer_rows(&self, start_row: BlockRow) -> BlockBufferRows {
         let mut cursor = self.transforms.cursor::<(BlockRow, WrapRow)>();
-        cursor.seek(&BlockRow(start_row), Bias::Right, &());
+        cursor.seek(&start_row, Bias::Right, &());
         let (output_start, input_start) = cursor.start();
         let overshoot = if cursor.item().map_or(false, |t| t.is_isomorphic()) {
-            start_row - output_start.0
+            start_row.0 - output_start.0
         } else {
             0
         };
@@ -671,7 +676,7 @@ impl BlockSnapshot {
 
     pub fn max_point(&self) -> BlockPoint {
         let row = self.transforms.summary().output_rows - 1;
-        BlockPoint::new(row, self.line_len(row))
+        BlockPoint::new(row, self.line_len(BlockRow(row)))
     }
 
     pub fn longest_row(&self) -> u32 {
@@ -679,12 +684,12 @@ impl BlockSnapshot {
         self.to_block_point(WrapPoint::new(input_row, 0)).row
     }
 
-    pub fn line_len(&self, row: u32) -> u32 {
+    pub(super) fn line_len(&self, row: BlockRow) -> u32 {
         let mut cursor = self.transforms.cursor::<(BlockRow, WrapRow)>();
-        cursor.seek(&BlockRow(row), Bias::Right, &());
+        cursor.seek(&BlockRow(row.0), Bias::Right, &());
         if let Some(transform) = cursor.item() {
             let (output_start, input_start) = cursor.start();
-            let overshoot = row - output_start.0;
+            let overshoot = row.0 - output_start.0;
             if transform.block.is_some() {
                 0
             } else {
@@ -695,9 +700,9 @@ impl BlockSnapshot {
         }
     }
 
-    pub fn is_block_line(&self, row: u32) -> bool {
+    pub(super) fn is_block_line(&self, row: BlockRow) -> bool {
         let mut cursor = self.transforms.cursor::<(BlockRow, WrapRow)>();
-        cursor.seek(&BlockRow(row), Bias::Right, &());
+        cursor.seek(&row, Bias::Right, &());
         cursor.item().map_or(false, |t| t.block.is_some())
     }
 
@@ -876,16 +881,16 @@ impl<'a> Iterator for BlockChunks<'a> {
 }
 
 impl<'a> Iterator for BlockBufferRows<'a> {
-    type Item = Option<u32>;
+    type Item = Option<BlockRow>;
 
     fn next(&mut self) -> Option<Self::Item> {
         if self.started {
-            self.output_row += 1;
+            self.output_row.0 += 1;
         } else {
             self.started = true;
         }
 
-        if self.output_row >= self.transforms.end(&()).0 .0 {
+        if self.output_row.0 >= self.transforms.end(&()).0 .0 {
             self.transforms.next(&());
         }
 
@@ -893,7 +898,7 @@ impl<'a> Iterator for BlockBufferRows<'a> {
         if transform.block.is_some() {
             Some(None)
         } else {
-            Some(self.input_buffer_rows.next().unwrap())
+            Some(self.input_buffer_rows.next().unwrap().map(BlockRow))
         }
     }
 }
@@ -1149,7 +1154,10 @@ mod tests {
         );
 
         assert_eq!(
-            snapshot.buffer_rows(0).collect::<Vec<_>>(),
+            snapshot
+                .buffer_rows(BlockRow(0))
+                .map(|row| row.map(|r| r.0))
+                .collect::<Vec<_>>(),
             &[
                 Some(0),
                 None,
@@ -1389,7 +1397,7 @@ mod tests {
                         position.column = 0;
                     }
                     BlockDisposition::Below => {
-                        position.column = buffer_snapshot.line_len(position.row);
+                        position.column = buffer_snapshot.line_len(MultiBufferRow(position.row));
                     }
                 };
                 let row = wraps_snapshot.make_wrap_point(position, Bias::Left).row();
@@ -1405,7 +1413,7 @@ mod tests {
             expected_blocks.extend(buffer_snapshot.excerpt_boundaries_in_range(0..).map(
                 |boundary| {
                     let position =
-                        wraps_snapshot.make_wrap_point(Point::new(boundary.row, 0), Bias::Left);
+                        wraps_snapshot.make_wrap_point(Point::new(boundary.row.0, 0), Bias::Left);
                     (
                         position.row(),
                         ExpectedBlock::ExcerptHeader {
@@ -1422,7 +1430,9 @@ mod tests {
             expected_blocks.sort_unstable();
             let mut sorted_blocks_iter = expected_blocks.into_iter().peekable();
 
-            let input_buffer_rows = buffer_snapshot.buffer_rows(0).collect::<Vec<_>>();
+            let input_buffer_rows = buffer_snapshot
+                .buffer_rows(MultiBufferRow(0))
+                .collect::<Vec<_>>();
             let mut expected_buffer_rows = Vec::new();
             let mut expected_text = String::new();
             let mut expected_block_positions = Vec::new();
@@ -1493,7 +1503,8 @@ mod tests {
                 );
                 assert_eq!(
                     blocks_snapshot
-                        .buffer_rows(start_row as u32)
+                        .buffer_rows(BlockRow(start_row as u32))
+                        .map(|row| row.map(|r| r.0))
                         .collect::<Vec<_>>(),
                     &expected_buffer_rows[start_row..]
                 );
@@ -1513,7 +1524,7 @@ mod tests {
                 let row = row as u32;
 
                 assert_eq!(
-                    blocks_snapshot.line_len(row),
+                    blocks_snapshot.line_len(BlockRow(row)),
                     line.len() as u32,
                     "invalid line len for row {}",
                     row

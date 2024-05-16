@@ -19,7 +19,6 @@ jobs:
         uses: actions/checkout@v4
         with:
           clean: false
-          submodules: "recursive"
 
       - name: Cache dependencies
         uses: swatinem/rust-cache@v2

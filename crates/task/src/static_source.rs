@@ -1,134 +1,126 @@
 //! A source of tasks, based on a static configuration, deserialized from the tasks config file, and related infrastructure for tracking changes to the file.
 
-use futures::StreamExt;
-use gpui::{AppContext, Context, Model, ModelContext, Subscription};
+use std::sync::Arc;
+
+use futures::{channel::mpsc::UnboundedSender, StreamExt};
+use gpui::AppContext;
+use parking_lot::RwLock;
 use serde::Deserialize;
 use util::ResultExt;
 
-use crate::{TaskSource, TaskTemplates};
+use crate::TaskTemplates;
 use futures::channel::mpsc::UnboundedReceiver;
 
 /// The source of tasks defined in a tasks config file.
 pub struct StaticSource {
-    tasks: TaskTemplates,
-    _templates: Model<TrackedFile<TaskTemplates>>,
-    _subscription: Subscription,
+    tasks: TrackedFile<TaskTemplates>,
 }
 
 /// A Wrapper around deserializable T that keeps track of its contents
-/// via a provided channel. Once T value changes, the observers of [`TrackedFile`] are
-/// notified.
+/// via a provided channel.
 pub struct TrackedFile<T> {
-    parsed_contents: T,
+    parsed_contents: Arc<RwLock<T>>,
 }
 
-impl<T: PartialEq + 'static> TrackedFile<T> {
+impl<T: PartialEq + 'static + Sync> TrackedFile<T> {
     /// Initializes new [`TrackedFile`] with a type that's deserializable.
-    pub fn new(mut tracker: UnboundedReceiver<String>, cx: &mut AppContext) -> Model<Self>
+    pub fn new(
+        mut tracker: UnboundedReceiver<String>,
+        notification_outlet: UnboundedSender<()>,
+        cx: &mut AppContext,
+    ) -> Self
     where
-        T: for<'a> Deserialize<'a> + Default,
+        T: for<'a> Deserialize<'a> + Default + Send,
     {
-        cx.new_model(move |cx| {
-            cx.spawn(|tracked_file, mut cx| async move {
-                while let Some(new_contents) = tracker.next().await {
-                    if !new_contents.trim().is_empty() {
-                        // String -> T (ZedTaskFormat)
-                        // String -> U (VsCodeFormat) -> Into::into T
-                        let Some(new_contents) =
-                            serde_json_lenient::from_str(&new_contents).log_err()
-                        else {
-                            continue;
-                        };
-                        tracked_file.update(&mut cx, |tracked_file: &mut TrackedFile<T>, cx| {
-                            if tracked_file.parsed_contents != new_contents {
-                                tracked_file.parsed_contents = new_contents;
-                                cx.notify();
+        let parsed_contents: Arc<RwLock<T>> = Arc::default();
+        cx.background_executor()
+            .spawn({
+                let parsed_contents = parsed_contents.clone();
+                async move {
+                    while let Some(new_contents) = tracker.next().await {
+                        if Arc::strong_count(&parsed_contents) == 1 {
+                            // We're no longer being observed. Stop polling.
+                            break;
+                        }
+                        if !new_contents.trim().is_empty() {
+                            let Some(new_contents) =
+                                serde_json_lenient::from_str::<T>(&new_contents).log_err()
+                            else {
+                                continue;
                             };
-                        })?;
+                            let mut contents = parsed_contents.write();
+                            if *contents != new_contents {
+                                *contents = new_contents;
+                                if notification_outlet.unbounded_send(()).is_err() {
+                                    // Whoever cared about contents is not around anymore.
+                                    break;
+                                }
+                            }
+                        }
                     }
+                    anyhow::Ok(())
                 }
-                anyhow::Ok(())
             })
             .detach_and_log_err(cx);
-            Self {
-                parsed_contents: Default::default(),
-            }
-        })
+        Self { parsed_contents }
     }
 
     /// Initializes new [`TrackedFile`] with a type that's convertible from another deserializable type.
     pub fn new_convertible<U: for<'a> Deserialize<'a> + TryInto<T, Error = anyhow::Error>>(
         mut tracker: UnboundedReceiver<String>,
+        notification_outlet: UnboundedSender<()>,
         cx: &mut AppContext,
-    ) -> Model<Self>
+    ) -> Self
     where
-        T: Default,
+        T: Default + Send,
     {
-        cx.new_model(move |cx| {
-            cx.spawn(|tracked_file, mut cx| async move {
-                while let Some(new_contents) = tracker.next().await {
-                    if !new_contents.trim().is_empty() {
-                        let Some(new_contents) =
-                            serde_json_lenient::from_str::<U>(&new_contents).log_err()
-                        else {
-                            continue;
-                        };
-                        let Some(new_contents) = new_contents.try_into().log_err() else {
-                            continue;
-                        };
-                        tracked_file.update(&mut cx, |tracked_file: &mut TrackedFile<T>, cx| {
-                            if tracked_file.parsed_contents != new_contents {
-                                tracked_file.parsed_contents = new_contents;
-                                cx.notify();
+        let parsed_contents: Arc<RwLock<T>> = Arc::default();
+        cx.background_executor()
+            .spawn({
+                let parsed_contents = parsed_contents.clone();
+                async move {
+                    while let Some(new_contents) = tracker.next().await {
+                        if Arc::strong_count(&parsed_contents) == 1 {
+                            // We're no longer being observed. Stop polling.
+                            break;
+                        }
+
+                        if !new_contents.trim().is_empty() {
+                            let Some(new_contents) =
+                                serde_json_lenient::from_str::<U>(&new_contents).log_err()
+                            else {
+                                continue;
                             };
-                        })?;
+                            let Some(new_contents) = new_contents.try_into().log_err() else {
+                                continue;
+                            };
+                            let mut contents = parsed_contents.write();
+                            if *contents != new_contents {
+                                *contents = new_contents;
+                                if notification_outlet.unbounded_send(()).is_err() {
+                                    // Whoever cared about contents is not around anymore.
+                                    break;
+                                }
+                            }
+                        }
                     }
+                    anyhow::Ok(())
                 }
-                anyhow::Ok(())
             })
             .detach_and_log_err(cx);
-            Self {
-                parsed_contents: Default::default(),
-            }
-        })
-    }
-
-    fn get(&self) -> &T {
-        &self.parsed_contents
+        Self {
+            parsed_contents: Default::default(),
+        }
     }
 }
 
 impl StaticSource {
     /// Initializes the static source, reacting on tasks config changes.
-    pub fn new(
-        templates: Model<TrackedFile<TaskTemplates>>,
-        cx: &mut AppContext,
-    ) -> Model<Box<dyn TaskSource>> {
-        cx.new_model(|cx| {
-            let _subscription = cx.observe(
-                &templates,
-                move |source: &mut Box<(dyn TaskSource + 'static)>, new_templates, cx| {
-                    if let Some(static_source) = source.as_any().downcast_mut::<Self>() {
-                        static_source.tasks = new_templates.read(cx).get().clone();
-                        cx.notify();
-                    }
-                },
-            );
-            Box::new(Self {
-                tasks: TaskTemplates::default(),
-                _templates: templates,
-                _subscription,
-            })
-        })
+    pub fn new(tasks: TrackedFile<TaskTemplates>) -> Self {
+        Self { tasks }
     }
-}
-
-impl TaskSource for StaticSource {
-    fn tasks_to_schedule(&mut self, _: &mut ModelContext<Box<dyn TaskSource>>) -> TaskTemplates {
-        self.tasks.clone()
-    }
-
-    fn as_any(&mut self) -> &mut dyn std::any::Any {
-        self
+    /// Returns current list of tasks
+    pub fn tasks_to_schedule(&self) -> TaskTemplates {
+        self.tasks.parsed_contents.read().clone()
     }
 }

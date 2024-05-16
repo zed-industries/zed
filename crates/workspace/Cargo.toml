@@ -16,6 +16,7 @@ doctest = false
 test-support = [
     "call/test-support",
     "client/test-support",
+    "http/test-support",
     "db/test-support",
     "project/test-support",
     "settings/test-support",
@@ -37,6 +38,7 @@ derive_more.workspace = true
 fs.workspace = true
 futures.workspace = true
 gpui.workspace = true
+http.workspace = true
 itertools.workspace = true
 language.workspace = true
 lazy_static.workspace = true
@@ -45,7 +47,7 @@ node_runtime.workspace = true
 parking_lot.workspace = true
 postage.workspace = true
 project.workspace = true
-remote_projects.workspace = true
+dev_server_projects.workspace = true
 task.workspace = true
 schemars.workspace = true
 serde.workspace = true
@@ -67,3 +69,4 @@ fs = { workspace = true, features = ["test-support"] }
 gpui = { workspace = true, features = ["test-support"] }
 project = { workspace = true, features = ["test-support"] }
 settings = { workspace = true, features = ["test-support"] }
+http =  { workspace = true, features = ["test-support"] }

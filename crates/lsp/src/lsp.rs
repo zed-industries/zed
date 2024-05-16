@@ -259,14 +259,19 @@ impl LanguageServer {
         let mut command = process::Process::new(&binary.path);
         command
             .current_dir(working_dir)
-            .args(binary.arguments)
+            .args(&binary.arguments)
             .envs(binary.env.unwrap_or_default())
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
         #[cfg(windows)]
         command.windows_creation_flags(windows::Win32::System::Threading::CREATE_NO_WINDOW.0);
-        let mut server = command.spawn_async(true)?;
+        let mut server = command.spawn_async(true).with_context(|| {
+            format!(
+                "failed to spawn command. path: {:?}, working directory: {:?}, args: {:?}",
+                binary.path, working_dir, &binary.arguments
+            )
+        })?;
 
         let stdin = server.stdin.take().unwrap();
         let stdout = server.stdout.take().unwrap();

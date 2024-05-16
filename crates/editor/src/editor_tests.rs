@@ -2,16 +2,19 @@ use super::*;
 use crate::{
     scroll::scroll_amount::ScrollAmount,
     test::{
-        assert_text_with_selections, build_editor, editor_lsp_test_context::EditorLspTestContext,
-        editor_test_context::EditorTestContext, select_ranges,
+        assert_text_with_selections, build_editor, editor_hunks,
+        editor_lsp_test_context::EditorLspTestContext, editor_test_context::EditorTestContext,
+        expanded_hunks, expanded_hunks_background_highlights, select_ranges,
     },
     JoinLines,
 };
 use futures::StreamExt;
-use gpui::{div, TestAppContext, VisualTestContext, WindowOptions};
+use gpui::{div, TestAppContext, VisualTestContext, WindowBounds, WindowOptions};
 use indoc::indoc;
 use language::{
-    language_settings::{AllLanguageSettings, AllLanguageSettingsContent, LanguageSettingsContent},
+    language_settings::{
+        AllLanguageSettings, AllLanguageSettingsContent, LanguageSettingsContent, PrettierSettings,
+    },
     BracketPairConfig,
     Capability::ReadWrite,
     FakeLspAdapter, LanguageConfig, LanguageConfigOverride, LanguageMatcher, Override, Point,
@@ -332,18 +335,18 @@ fn test_selection_with_mouse(cx: &mut TestAppContext) {
     });
 
     _ = editor.update(cx, |view, cx| {
-        view.begin_selection(DisplayPoint::new(2, 2), false, 1, cx);
+        view.begin_selection(DisplayPoint::new(DisplayRow(2), 2), false, 1, cx);
     });
     assert_eq!(
         editor
             .update(cx, |view, cx| view.selections.display_ranges(cx))
             .unwrap(),
-        [DisplayPoint::new(2, 2)..DisplayPoint::new(2, 2)]
+        [DisplayPoint::new(DisplayRow(2), 2)..DisplayPoint::new(DisplayRow(2), 2)]
     );
 
     _ = editor.update(cx, |view, cx| {
         view.update_selection(
-            DisplayPoint::new(3, 3),
+            DisplayPoint::new(DisplayRow(3), 3),
             0,
             gpui::Point::<f32>::default(),
             cx,
@@ -354,12 +357,12 @@ fn test_selection_with_mouse(cx: &mut TestAppContext) {
         editor
             .update(cx, |view, cx| view.selections.display_ranges(cx))
             .unwrap(),
-        [DisplayPoint::new(2, 2)..DisplayPoint::new(3, 3)]
+        [DisplayPoint::new(DisplayRow(2), 2)..DisplayPoint::new(DisplayRow(3), 3)]
     );
 
     _ = editor.update(cx, |view, cx| {
         view.update_selection(
-            DisplayPoint::new(1, 1),
+            DisplayPoint::new(DisplayRow(1), 1),
             0,
             gpui::Point::<f32>::default(),
             cx,
@@ -370,13 +373,13 @@ fn test_selection_with_mouse(cx: &mut TestAppContext) {
         editor
             .update(cx, |view, cx| view.selections.display_ranges(cx))
             .unwrap(),
-        [DisplayPoint::new(2, 2)..DisplayPoint::new(1, 1)]
+        [DisplayPoint::new(DisplayRow(2), 2)..DisplayPoint::new(DisplayRow(1), 1)]
     );
 
     _ = editor.update(cx, |view, cx| {
         view.end_selection(cx);
         view.update_selection(
-            DisplayPoint::new(3, 3),
+            DisplayPoint::new(DisplayRow(3), 3),
             0,
             gpui::Point::<f32>::default(),
             cx,
@@ -387,13 +390,13 @@ fn test_selection_with_mouse(cx: &mut TestAppContext) {
         editor
             .update(cx, |view, cx| view.selections.display_ranges(cx))
             .unwrap(),
-        [DisplayPoint::new(2, 2)..DisplayPoint::new(1, 1)]
+        [DisplayPoint::new(DisplayRow(2), 2)..DisplayPoint::new(DisplayRow(1), 1)]
     );
 
     _ = editor.update(cx, |view, cx| {
-        view.begin_selection(DisplayPoint::new(3, 3), true, 1, cx);
+        view.begin_selection(DisplayPoint::new(DisplayRow(3), 3), true, 1, cx);
         view.update_selection(
-            DisplayPoint::new(0, 0),
+            DisplayPoint::new(DisplayRow(0), 0),
             0,
             gpui::Point::<f32>::default(),
             cx,
@@ -405,8 +408,8 @@ fn test_selection_with_mouse(cx: &mut TestAppContext) {
             .update(cx, |view, cx| view.selections.display_ranges(cx))
             .unwrap(),
         [
-            DisplayPoint::new(2, 2)..DisplayPoint::new(1, 1),
-            DisplayPoint::new(3, 3)..DisplayPoint::new(0, 0)
+            DisplayPoint::new(DisplayRow(2), 2)..DisplayPoint::new(DisplayRow(1), 1),
+            DisplayPoint::new(DisplayRow(3), 3)..DisplayPoint::new(DisplayRow(0), 0)
         ]
     );
 
@@ -418,7 +421,7 @@ fn test_selection_with_mouse(cx: &mut TestAppContext) {
         editor
             .update(cx, |view, cx| view.selections.display_ranges(cx))
             .unwrap(),
-        [DisplayPoint::new(3, 3)..DisplayPoint::new(0, 0)]
+        [DisplayPoint::new(DisplayRow(3), 3)..DisplayPoint::new(DisplayRow(0), 0)]
     );
 }
 
@@ -432,37 +435,37 @@ fn test_canceling_pending_selection(cx: &mut TestAppContext) {
     });
 
     _ = view.update(cx, |view, cx| {
-        view.begin_selection(DisplayPoint::new(2, 2), false, 1, cx);
+        view.begin_selection(DisplayPoint::new(DisplayRow(2), 2), false, 1, cx);
         assert_eq!(
             view.selections.display_ranges(cx),
-            [DisplayPoint::new(2, 2)..DisplayPoint::new(2, 2)]
+            [DisplayPoint::new(DisplayRow(2), 2)..DisplayPoint::new(DisplayRow(2), 2)]
         );
     });
 
     _ = view.update(cx, |view, cx| {
         view.update_selection(
-            DisplayPoint::new(3, 3),
+            DisplayPoint::new(DisplayRow(3), 3),
             0,
             gpui::Point::<f32>::default(),
             cx,
         );
         assert_eq!(
             view.selections.display_ranges(cx),
-            [DisplayPoint::new(2, 2)..DisplayPoint::new(3, 3)]
+            [DisplayPoint::new(DisplayRow(2), 2)..DisplayPoint::new(DisplayRow(3), 3)]
         );
     });
 
     _ = view.update(cx, |view, cx| {
         view.cancel(&Cancel, cx);
         view.update_selection(
-            DisplayPoint::new(1, 1),
+            DisplayPoint::new(DisplayRow(1), 1),
             0,
             gpui::Point::<f32>::default(),
             cx,
         );
         assert_eq!(
             view.selections.display_ranges(cx),
-            [DisplayPoint::new(2, 2)..DisplayPoint::new(3, 3)]
+            [DisplayPoint::new(DisplayRow(2), 2)..DisplayPoint::new(DisplayRow(3), 3)]
         );
     });
 }
@@ -565,51 +568,57 @@ async fn test_navigation_history(cx: &mut TestAppContext) {
             // Move the cursor a small distance.
             // Nothing is added to the navigation history.
             editor.change_selections(None, cx, |s| {
-                s.select_display_ranges([DisplayPoint::new(1, 0)..DisplayPoint::new(1, 0)])
+                s.select_display_ranges([
+                    DisplayPoint::new(DisplayRow(1), 0)..DisplayPoint::new(DisplayRow(1), 0)
+                ])
             });
             editor.change_selections(None, cx, |s| {
-                s.select_display_ranges([DisplayPoint::new(3, 0)..DisplayPoint::new(3, 0)])
+                s.select_display_ranges([
+                    DisplayPoint::new(DisplayRow(3), 0)..DisplayPoint::new(DisplayRow(3), 0)
+                ])
             });
             assert!(pop_history(&mut editor, cx).is_none());
 
             // Move the cursor a large distance.
             // The history can jump back to the previous position.
             editor.change_selections(None, cx, |s| {
-                s.select_display_ranges([DisplayPoint::new(13, 0)..DisplayPoint::new(13, 3)])
+                s.select_display_ranges([
+                    DisplayPoint::new(DisplayRow(13), 0)..DisplayPoint::new(DisplayRow(13), 3)
+                ])
             });
             let nav_entry = pop_history(&mut editor, cx).unwrap();
             editor.navigate(nav_entry.data.unwrap(), cx);
             assert_eq!(nav_entry.item.id(), cx.entity_id());
             assert_eq!(
                 editor.selections.display_ranges(cx),
-                &[DisplayPoint::new(3, 0)..DisplayPoint::new(3, 0)]
+                &[DisplayPoint::new(DisplayRow(3), 0)..DisplayPoint::new(DisplayRow(3), 0)]
             );
             assert!(pop_history(&mut editor, cx).is_none());
 
             // Move the cursor a small distance via the mouse.
             // Nothing is added to the navigation history.
-            editor.begin_selection(DisplayPoint::new(5, 0), false, 1, cx);
+            editor.begin_selection(DisplayPoint::new(DisplayRow(5), 0), false, 1, cx);
             editor.end_selection(cx);
             assert_eq!(
                 editor.selections.display_ranges(cx),
-                &[DisplayPoint::new(5, 0)..DisplayPoint::new(5, 0)]
+                &[DisplayPoint::new(DisplayRow(5), 0)..DisplayPoint::new(DisplayRow(5), 0)]
             );
             assert!(pop_history(&mut editor, cx).is_none());
 
             // Move the cursor a large distance via the mouse.
             // The history can jump back to the previous position.
-            editor.begin_selection(DisplayPoint::new(15, 0), false, 1, cx);
+            editor.begin_selection(DisplayPoint::new(DisplayRow(15), 0), false, 1, cx);
             editor.end_selection(cx);
             assert_eq!(
                 editor.selections.display_ranges(cx),
-                &[DisplayPoint::new(15, 0)..DisplayPoint::new(15, 0)]
+                &[DisplayPoint::new(DisplayRow(15), 0)..DisplayPoint::new(DisplayRow(15), 0)]
             );
             let nav_entry = pop_history(&mut editor, cx).unwrap();
             editor.navigate(nav_entry.data.unwrap(), cx);
             assert_eq!(nav_entry.item.id(), cx.entity_id());
             assert_eq!(
                 editor.selections.display_ranges(cx),
-                &[DisplayPoint::new(5, 0)..DisplayPoint::new(5, 0)]
+                &[DisplayPoint::new(DisplayRow(5), 0)..DisplayPoint::new(DisplayRow(5), 0)]
             );
             assert!(pop_history(&mut editor, cx).is_none());
 
@@ -648,7 +657,7 @@ async fn test_navigation_history(cx: &mut TestAppContext) {
             );
             assert_eq!(
                 editor.scroll_position(cx),
-                gpui::Point::new(0., editor.max_point(cx).row() as f32)
+                gpui::Point::new(0., editor.max_point(cx).row().as_f32())
             );
 
             editor
@@ -666,18 +675,18 @@ fn test_cancel(cx: &mut TestAppContext) {
     });
 
     _ = view.update(cx, |view, cx| {
-        view.begin_selection(DisplayPoint::new(3, 4), false, 1, cx);
+        view.begin_selection(DisplayPoint::new(DisplayRow(3), 4), false, 1, cx);
         view.update_selection(
-            DisplayPoint::new(1, 1),
+            DisplayPoint::new(DisplayRow(1), 1),
             0,
             gpui::Point::<f32>::default(),
             cx,
         );
         view.end_selection(cx);
 
-        view.begin_selection(DisplayPoint::new(0, 1), true, 1, cx);
+        view.begin_selection(DisplayPoint::new(DisplayRow(0), 1), true, 1, cx);
         view.update_selection(
-            DisplayPoint::new(0, 3),
+            DisplayPoint::new(DisplayRow(0), 3),
             0,
             gpui::Point::<f32>::default(),
             cx,
@@ -686,8 +695,8 @@ fn test_cancel(cx: &mut TestAppContext) {
         assert_eq!(
             view.selections.display_ranges(cx),
             [
-                DisplayPoint::new(0, 1)..DisplayPoint::new(0, 3),
-                DisplayPoint::new(3, 4)..DisplayPoint::new(1, 1),
+                DisplayPoint::new(DisplayRow(0), 1)..DisplayPoint::new(DisplayRow(0), 3),
+                DisplayPoint::new(DisplayRow(3), 4)..DisplayPoint::new(DisplayRow(1), 1),
             ]
         );
     });
@@ -696,7 +705,7 @@ fn test_cancel(cx: &mut TestAppContext) {
         view.cancel(&Cancel, cx);
         assert_eq!(
             view.selections.display_ranges(cx),
-            [DisplayPoint::new(3, 4)..DisplayPoint::new(1, 1)]
+            [DisplayPoint::new(DisplayRow(3), 4)..DisplayPoint::new(DisplayRow(1), 1)]
         );
     });
 
@@ -704,7 +713,7 @@ fn test_cancel(cx: &mut TestAppContext) {
         view.cancel(&Cancel, cx);
         assert_eq!(
             view.selections.display_ranges(cx),
-            [DisplayPoint::new(1, 1)..DisplayPoint::new(1, 1)]
+            [DisplayPoint::new(DisplayRow(1), 1)..DisplayPoint::new(DisplayRow(1), 1)]
         );
     });
 }
@@ -740,7 +749,9 @@ fn test_fold_action(cx: &mut TestAppContext) {
 
     _ = view.update(cx, |view, cx| {
         view.change_selections(None, cx, |s| {
-            s.select_display_ranges([DisplayPoint::new(8, 0)..DisplayPoint::new(12, 0)]);
+            s.select_display_ranges([
+                DisplayPoint::new(DisplayRow(8), 0)..DisplayPoint::new(DisplayRow(12), 0)
+            ]);
         });
         view.fold(&Fold, cx);
         assert_eq!(
@@ -819,58 +830,60 @@ fn test_move_cursor(cx: &mut TestAppContext) {
     _ = view.update(cx, |view, cx| {
         assert_eq!(
             view.selections.display_ranges(cx),
-            &[DisplayPoint::new(0, 0)..DisplayPoint::new(0, 0)]
+            &[DisplayPoint::new(DisplayRow(0), 0)..DisplayPoint::new(DisplayRow(0), 0)]
         );
 
         view.move_down(&MoveDown, cx);
         assert_eq!(
             view.selections.display_ranges(cx),
-            &[DisplayPoint::new(1, 0)..DisplayPoint::new(1, 0)]
+            &[DisplayPoint::new(DisplayRow(1), 0)..DisplayPoint::new(DisplayRow(1), 0)]
         );
 
         view.move_right(&MoveRight, cx);
         assert_eq!(
             view.selections.display_ranges(cx),
-            &[DisplayPoint::new(1, 4)..DisplayPoint::new(1, 4)]
+            &[DisplayPoint::new(DisplayRow(1), 4)..DisplayPoint::new(DisplayRow(1), 4)]
         );
 
         view.move_left(&MoveLeft, cx);
         assert_eq!(
             view.selections.display_ranges(cx),
-            &[DisplayPoint::new(1, 0)..DisplayPoint::new(1, 0)]
+            &[DisplayPoint::new(DisplayRow(1), 0)..DisplayPoint::new(DisplayRow(1), 0)]
         );
 
         view.move_up(&MoveUp, cx);
         assert_eq!(
             view.selections.display_ranges(cx),
-            &[DisplayPoint::new(0, 0)..DisplayPoint::new(0, 0)]
+            &[DisplayPoint::new(DisplayRow(0), 0)..DisplayPoint::new(DisplayRow(0), 0)]
         );
 
         view.move_to_end(&MoveToEnd, cx);
         assert_eq!(
             view.selections.display_ranges(cx),
-            &[DisplayPoint::new(5, 6)..DisplayPoint::new(5, 6)]
+            &[DisplayPoint::new(DisplayRow(5), 6)..DisplayPoint::new(DisplayRow(5), 6)]
         );
 
         view.move_to_beginning(&MoveToBeginning, cx);
         assert_eq!(
             view.selections.display_ranges(cx),
-            &[DisplayPoint::new(0, 0)..DisplayPoint::new(0, 0)]
+            &[DisplayPoint::new(DisplayRow(0), 0)..DisplayPoint::new(DisplayRow(0), 0)]
         );
 
         view.change_selections(None, cx, |s| {
-            s.select_display_ranges([DisplayPoint::new(0, 1)..DisplayPoint::new(0, 2)]);
+            s.select_display_ranges([
+                DisplayPoint::new(DisplayRow(0), 1)..DisplayPoint::new(DisplayRow(0), 2)
+            ]);
         });
         view.select_to_beginning(&SelectToBeginning, cx);
         assert_eq!(
             view.selections.display_ranges(cx),
-            &[DisplayPoint::new(0, 1)..DisplayPoint::new(0, 0)]
+            &[DisplayPoint::new(DisplayRow(0), 1)..DisplayPoint::new(DisplayRow(0), 0)]
         );
 
         view.select_to_end(&SelectToEnd, cx);
         assert_eq!(
             view.selections.display_ranges(cx),
-            &[DisplayPoint::new(0, 1)..DisplayPoint::new(5, 6)]
+            &[DisplayPoint::new(DisplayRow(0), 1)..DisplayPoint::new(DisplayRow(5), 6)]
         );
     });
 }
@@ -1044,6 +1057,13 @@ fn test_move_cursor_different_line_lengths(cx: &mut TestAppContext) {
 #[gpui::test]
 fn test_beginning_end_of_line(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
+    let move_to_beg = MoveToBeginningOfLine {
+        stop_at_soft_wraps: true,
+    };
+
+    let move_to_end = MoveToEndOfLine {
+        stop_at_soft_wraps: true,
+    };
 
     let view = cx.add_window(|cx| {
         let buffer = MultiBuffer::build_simple("abc\n  def", cx);
@@ -1052,64 +1072,64 @@ fn test_beginning_end_of_line(cx: &mut TestAppContext) {
     _ = view.update(cx, |view, cx| {
         view.change_selections(None, cx, |s| {
             s.select_display_ranges([
-                DisplayPoint::new(0, 1)..DisplayPoint::new(0, 1),
-                DisplayPoint::new(1, 4)..DisplayPoint::new(1, 4),
+                DisplayPoint::new(DisplayRow(0), 1)..DisplayPoint::new(DisplayRow(0), 1),
+                DisplayPoint::new(DisplayRow(1), 4)..DisplayPoint::new(DisplayRow(1), 4),
             ]);
         });
     });
 
     _ = view.update(cx, |view, cx| {
-        view.move_to_beginning_of_line(&MoveToBeginningOfLine, cx);
+        view.move_to_beginning_of_line(&move_to_beg, cx);
         assert_eq!(
             view.selections.display_ranges(cx),
             &[
-                DisplayPoint::new(0, 0)..DisplayPoint::new(0, 0),
-                DisplayPoint::new(1, 2)..DisplayPoint::new(1, 2),
+                DisplayPoint::new(DisplayRow(0), 0)..DisplayPoint::new(DisplayRow(0), 0),
+                DisplayPoint::new(DisplayRow(1), 2)..DisplayPoint::new(DisplayRow(1), 2),
             ]
         );
     });
 
     _ = view.update(cx, |view, cx| {
-        view.move_to_beginning_of_line(&MoveToBeginningOfLine, cx);
+        view.move_to_beginning_of_line(&move_to_beg, cx);
         assert_eq!(
             view.selections.display_ranges(cx),
             &[
-                DisplayPoint::new(0, 0)..DisplayPoint::new(0, 0),
-                DisplayPoint::new(1, 0)..DisplayPoint::new(1, 0),
+                DisplayPoint::new(DisplayRow(0), 0)..DisplayPoint::new(DisplayRow(0), 0),
+                DisplayPoint::new(DisplayRow(1), 0)..DisplayPoint::new(DisplayRow(1), 0),
             ]
         );
     });
 
     _ = view.update(cx, |view, cx| {
-        view.move_to_beginning_of_line(&MoveToBeginningOfLine, cx);
+        view.move_to_beginning_of_line(&move_to_beg, cx);
         assert_eq!(
             view.selections.display_ranges(cx),
             &[
-                DisplayPoint::new(0, 0)..DisplayPoint::new(0, 0),
-                DisplayPoint::new(1, 2)..DisplayPoint::new(1, 2),
+                DisplayPoint::new(DisplayRow(0), 0)..DisplayPoint::new(DisplayRow(0), 0),
+                DisplayPoint::new(DisplayRow(1), 2)..DisplayPoint::new(DisplayRow(1), 2),
             ]
         );
     });
 
     _ = view.update(cx, |view, cx| {
-        view.move_to_end_of_line(&MoveToEndOfLine, cx);
+        view.move_to_end_of_line(&move_to_end, cx);
         assert_eq!(
             view.selections.display_ranges(cx),
             &[
-                DisplayPoint::new(0, 3)..DisplayPoint::new(0, 3),
-                DisplayPoint::new(1, 5)..DisplayPoint::new(1, 5),
+                DisplayPoint::new(DisplayRow(0), 3)..DisplayPoint::new(DisplayRow(0), 3),
+                DisplayPoint::new(DisplayRow(1), 5)..DisplayPoint::new(DisplayRow(1), 5),
             ]
         );
     });
 
     // Moving to the end of line again is a no-op.
     _ = view.update(cx, |view, cx| {
-        view.move_to_end_of_line(&MoveToEndOfLine, cx);
+        view.move_to_end_of_line(&move_to_end, cx);
         assert_eq!(
             view.selections.display_ranges(cx),
             &[
-                DisplayPoint::new(0, 3)..DisplayPoint::new(0, 3),
-                DisplayPoint::new(1, 5)..DisplayPoint::new(1, 5),
+                DisplayPoint::new(DisplayRow(0), 3)..DisplayPoint::new(DisplayRow(0), 3),
+                DisplayPoint::new(DisplayRow(1), 5)..DisplayPoint::new(DisplayRow(1), 5),
             ]
         );
     });
@@ -1125,8 +1145,8 @@ fn test_beginning_end_of_line(cx: &mut TestAppContext) {
         assert_eq!(
             view.selections.display_ranges(cx),
             &[
-                DisplayPoint::new(0, 2)..DisplayPoint::new(0, 0),
-                DisplayPoint::new(1, 4)..DisplayPoint::new(1, 2),
+                DisplayPoint::new(DisplayRow(0), 2)..DisplayPoint::new(DisplayRow(0), 0),
+                DisplayPoint::new(DisplayRow(1), 4)..DisplayPoint::new(DisplayRow(1), 2),
             ]
         );
     });
@@ -1141,8 +1161,8 @@ fn test_beginning_end_of_line(cx: &mut TestAppContext) {
         assert_eq!(
             view.selections.display_ranges(cx),
             &[
-                DisplayPoint::new(0, 2)..DisplayPoint::new(0, 0),
-                DisplayPoint::new(1, 4)..DisplayPoint::new(1, 0),
+                DisplayPoint::new(DisplayRow(0), 2)..DisplayPoint::new(DisplayRow(0), 0),
+                DisplayPoint::new(DisplayRow(1), 4)..DisplayPoint::new(DisplayRow(1), 0),
             ]
         );
     });
@@ -1157,8 +1177,8 @@ fn test_beginning_end_of_line(cx: &mut TestAppContext) {
         assert_eq!(
             view.selections.display_ranges(cx),
             &[
-                DisplayPoint::new(0, 2)..DisplayPoint::new(0, 0),
-                DisplayPoint::new(1, 4)..DisplayPoint::new(1, 2),
+                DisplayPoint::new(DisplayRow(0), 2)..DisplayPoint::new(DisplayRow(0), 0),
+                DisplayPoint::new(DisplayRow(1), 4)..DisplayPoint::new(DisplayRow(1), 2),
             ]
         );
     });
@@ -1173,8 +1193,8 @@ fn test_beginning_end_of_line(cx: &mut TestAppContext) {
         assert_eq!(
             view.selections.display_ranges(cx),
             &[
-                DisplayPoint::new(0, 2)..DisplayPoint::new(0, 3),
-                DisplayPoint::new(1, 4)..DisplayPoint::new(1, 5),
+                DisplayPoint::new(DisplayRow(0), 2)..DisplayPoint::new(DisplayRow(0), 3),
+                DisplayPoint::new(DisplayRow(1), 4)..DisplayPoint::new(DisplayRow(1), 5),
             ]
         );
     });
@@ -1185,8 +1205,8 @@ fn test_beginning_end_of_line(cx: &mut TestAppContext) {
         assert_eq!(
             view.selections.display_ranges(cx),
             &[
-                DisplayPoint::new(0, 2)..DisplayPoint::new(0, 2),
-                DisplayPoint::new(1, 4)..DisplayPoint::new(1, 4),
+                DisplayPoint::new(DisplayRow(0), 2)..DisplayPoint::new(DisplayRow(0), 2),
+                DisplayPoint::new(DisplayRow(1), 4)..DisplayPoint::new(DisplayRow(1), 4),
             ]
         );
     });
@@ -1197,9 +1217,102 @@ fn test_beginning_end_of_line(cx: &mut TestAppContext) {
         assert_eq!(
             view.selections.display_ranges(cx),
             &[
-                DisplayPoint::new(0, 0)..DisplayPoint::new(0, 0),
-                DisplayPoint::new(1, 0)..DisplayPoint::new(1, 0),
+                DisplayPoint::new(DisplayRow(0), 0)..DisplayPoint::new(DisplayRow(0), 0),
+                DisplayPoint::new(DisplayRow(1), 0)..DisplayPoint::new(DisplayRow(1), 0),
             ]
+        );
+    });
+}
+
+#[gpui::test]
+fn test_beginning_end_of_line_ignore_soft_wrap(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+    let move_to_beg = MoveToBeginningOfLine {
+        stop_at_soft_wraps: false,
+    };
+
+    let move_to_end = MoveToEndOfLine {
+        stop_at_soft_wraps: false,
+    };
+
+    let view = cx.add_window(|cx| {
+        let buffer = MultiBuffer::build_simple("thequickbrownfox\njumpedoverthelazydogs", cx);
+        build_editor(buffer, cx)
+    });
+
+    _ = view.update(cx, |view, cx| {
+        view.set_wrap_width(Some(140.0.into()), cx);
+
+        // We expect the following lines after wrapping
+        // ```
+        // thequickbrownfox
+        // jumpedoverthelazydo
+        // gs
+        // ```
+        // The final `gs` was soft-wrapped onto a new line.
+        assert_eq!(
+            "thequickbrownfox\njumpedoverthelaz\nydogs",
+            view.display_text(cx),
+        );
+
+        // First, let's assert behavior on the first line, that was not soft-wrapped.
+        // Start the cursor at the `k` on the first line
+        view.change_selections(None, cx, |s| {
+            s.select_display_ranges([
+                DisplayPoint::new(DisplayRow(0), 7)..DisplayPoint::new(DisplayRow(0), 7)
+            ]);
+        });
+
+        // Moving to the beginning of the line should put us at the beginning of the line.
+        view.move_to_beginning_of_line(&move_to_beg, cx);
+        assert_eq!(
+            vec![DisplayPoint::new(DisplayRow(0), 0)..DisplayPoint::new(DisplayRow(0), 0),],
+            view.selections.display_ranges(cx)
+        );
+
+        // Moving to the end of the line should put us at the end of the line.
+        view.move_to_end_of_line(&move_to_end, cx);
+        assert_eq!(
+            vec![DisplayPoint::new(DisplayRow(0), 16)..DisplayPoint::new(DisplayRow(0), 16),],
+            view.selections.display_ranges(cx)
+        );
+
+        // Now, let's assert behavior on the second line, that ended up being soft-wrapped.
+        // Start the cursor at the last line (`y` that was wrapped to a new line)
+        view.change_selections(None, cx, |s| {
+            s.select_display_ranges([
+                DisplayPoint::new(DisplayRow(2), 0)..DisplayPoint::new(DisplayRow(2), 0)
+            ]);
+        });
+
+        // Moving to the beginning of the line should put us at the start of the second line of
+        // display text, i.e., the `j`.
+        view.move_to_beginning_of_line(&move_to_beg, cx);
+        assert_eq!(
+            vec![DisplayPoint::new(DisplayRow(1), 0)..DisplayPoint::new(DisplayRow(1), 0),],
+            view.selections.display_ranges(cx)
+        );
+
+        // Moving to the beginning of the line again should be a no-op.
+        view.move_to_beginning_of_line(&move_to_beg, cx);
+        assert_eq!(
+            vec![DisplayPoint::new(DisplayRow(1), 0)..DisplayPoint::new(DisplayRow(1), 0),],
+            view.selections.display_ranges(cx)
+        );
+
+        // Moving to the end of the line should put us right after the `s` that was soft-wrapped to the
+        // next display line.
+        view.move_to_end_of_line(&move_to_end, cx);
+        assert_eq!(
+            vec![DisplayPoint::new(DisplayRow(2), 5)..DisplayPoint::new(DisplayRow(2), 5),],
+            view.selections.display_ranges(cx)
+        );
+
+        // Moving to the end of the line again should be a no-op.
+        view.move_to_end_of_line(&move_to_end, cx);
+        assert_eq!(
+            vec![DisplayPoint::new(DisplayRow(2), 5)..DisplayPoint::new(DisplayRow(2), 5),],
+            view.selections.display_ranges(cx)
         );
     });
 }
@@ -1215,8 +1328,8 @@ fn test_prev_next_word_boundary(cx: &mut TestAppContext) {
     _ = view.update(cx, |view, cx| {
         view.change_selections(None, cx, |s| {
             s.select_display_ranges([
-                DisplayPoint::new(0, 11)..DisplayPoint::new(0, 11),
-                DisplayPoint::new(2, 4)..DisplayPoint::new(2, 4),
+                DisplayPoint::new(DisplayRow(0), 11)..DisplayPoint::new(DisplayRow(0), 11),
+                DisplayPoint::new(DisplayRow(2), 4)..DisplayPoint::new(DisplayRow(2), 4),
             ])
         });
 
@@ -1273,43 +1386,45 @@ fn test_prev_next_word_bounds_with_soft_wrap(cx: &mut TestAppContext) {
         );
 
         view.change_selections(None, cx, |s| {
-            s.select_display_ranges([DisplayPoint::new(1, 7)..DisplayPoint::new(1, 7)]);
+            s.select_display_ranges([
+                DisplayPoint::new(DisplayRow(1), 7)..DisplayPoint::new(DisplayRow(1), 7)
+            ]);
         });
 
         view.move_to_next_word_end(&MoveToNextWordEnd, cx);
         assert_eq!(
             view.selections.display_ranges(cx),
-            &[DisplayPoint::new(1, 9)..DisplayPoint::new(1, 9)]
+            &[DisplayPoint::new(DisplayRow(1), 9)..DisplayPoint::new(DisplayRow(1), 9)]
         );
 
         view.move_to_next_word_end(&MoveToNextWordEnd, cx);
         assert_eq!(
             view.selections.display_ranges(cx),
-            &[DisplayPoint::new(1, 14)..DisplayPoint::new(1, 14)]
+            &[DisplayPoint::new(DisplayRow(1), 14)..DisplayPoint::new(DisplayRow(1), 14)]
         );
 
         view.move_to_next_word_end(&MoveToNextWordEnd, cx);
         assert_eq!(
             view.selections.display_ranges(cx),
-            &[DisplayPoint::new(2, 4)..DisplayPoint::new(2, 4)]
+            &[DisplayPoint::new(DisplayRow(2), 4)..DisplayPoint::new(DisplayRow(2), 4)]
         );
 
         view.move_to_next_word_end(&MoveToNextWordEnd, cx);
         assert_eq!(
             view.selections.display_ranges(cx),
-            &[DisplayPoint::new(2, 8)..DisplayPoint::new(2, 8)]
+            &[DisplayPoint::new(DisplayRow(2), 8)..DisplayPoint::new(DisplayRow(2), 8)]
         );
 
         view.move_to_previous_word_start(&MoveToPreviousWordStart, cx);
         assert_eq!(
             view.selections.display_ranges(cx),
-            &[DisplayPoint::new(2, 4)..DisplayPoint::new(2, 4)]
+            &[DisplayPoint::new(DisplayRow(2), 4)..DisplayPoint::new(DisplayRow(2), 4)]
         );
 
         view.move_to_previous_word_start(&MoveToPreviousWordStart, cx);
         assert_eq!(
             view.selections.display_ranges(cx),
-            &[DisplayPoint::new(1, 14)..DisplayPoint::new(1, 14)]
+            &[DisplayPoint::new(DisplayRow(1), 14)..DisplayPoint::new(DisplayRow(1), 14)]
         );
     });
 }
@@ -1709,9 +1824,9 @@ fn test_delete_to_word_boundary(cx: &mut TestAppContext) {
         view.change_selections(None, cx, |s| {
             s.select_display_ranges([
                 // an empty selection - the preceding word fragment is deleted
-                DisplayPoint::new(0, 2)..DisplayPoint::new(0, 2),
+                DisplayPoint::new(DisplayRow(0), 2)..DisplayPoint::new(DisplayRow(0), 2),
                 // characters selected - they are deleted
-                DisplayPoint::new(0, 9)..DisplayPoint::new(0, 12),
+                DisplayPoint::new(DisplayRow(0), 9)..DisplayPoint::new(DisplayRow(0), 12),
             ])
         });
         view.delete_to_previous_word_start(&DeleteToPreviousWordStart, cx);
@@ -1722,9 +1837,9 @@ fn test_delete_to_word_boundary(cx: &mut TestAppContext) {
         view.change_selections(None, cx, |s| {
             s.select_display_ranges([
                 // an empty selection - the following word fragment is deleted
-                DisplayPoint::new(0, 3)..DisplayPoint::new(0, 3),
+                DisplayPoint::new(DisplayRow(0), 3)..DisplayPoint::new(DisplayRow(0), 3),
                 // characters selected - they are deleted
-                DisplayPoint::new(0, 9)..DisplayPoint::new(0, 10),
+                DisplayPoint::new(DisplayRow(0), 9)..DisplayPoint::new(DisplayRow(0), 10),
             ])
         });
         view.delete_to_next_word_end(&DeleteToNextWordEnd, cx);
@@ -1744,9 +1859,9 @@ fn test_newline(cx: &mut TestAppContext) {
     _ = view.update(cx, |view, cx| {
         view.change_selections(None, cx, |s| {
             s.select_display_ranges([
-                DisplayPoint::new(0, 2)..DisplayPoint::new(0, 2),
-                DisplayPoint::new(1, 2)..DisplayPoint::new(1, 2),
-                DisplayPoint::new(1, 6)..DisplayPoint::new(1, 6),
+                DisplayPoint::new(DisplayRow(0), 2)..DisplayPoint::new(DisplayRow(0), 2),
+                DisplayPoint::new(DisplayRow(1), 2)..DisplayPoint::new(DisplayRow(1), 2),
+                DisplayPoint::new(DisplayRow(1), 6)..DisplayPoint::new(DisplayRow(1), 6),
             ])
         });
 
@@ -2506,9 +2621,9 @@ fn test_delete_line(cx: &mut TestAppContext) {
     _ = view.update(cx, |view, cx| {
         view.change_selections(None, cx, |s| {
             s.select_display_ranges([
-                DisplayPoint::new(0, 1)..DisplayPoint::new(0, 1),
-                DisplayPoint::new(1, 0)..DisplayPoint::new(1, 1),
-                DisplayPoint::new(3, 0)..DisplayPoint::new(3, 0),
+                DisplayPoint::new(DisplayRow(0), 1)..DisplayPoint::new(DisplayRow(0), 1),
+                DisplayPoint::new(DisplayRow(1), 0)..DisplayPoint::new(DisplayRow(1), 1),
+                DisplayPoint::new(DisplayRow(3), 0)..DisplayPoint::new(DisplayRow(3), 0),
             ])
         });
         view.delete_line(&DeleteLine, cx);
@@ -2516,8 +2631,8 @@ fn test_delete_line(cx: &mut TestAppContext) {
         assert_eq!(
             view.selections.display_ranges(cx),
             vec![
-                DisplayPoint::new(0, 0)..DisplayPoint::new(0, 0),
-                DisplayPoint::new(0, 1)..DisplayPoint::new(0, 1)
+                DisplayPoint::new(DisplayRow(0), 0)..DisplayPoint::new(DisplayRow(0), 0),
+                DisplayPoint::new(DisplayRow(0), 1)..DisplayPoint::new(DisplayRow(0), 1)
             ]
         );
     });
@@ -2528,13 +2643,15 @@ fn test_delete_line(cx: &mut TestAppContext) {
     });
     _ = view.update(cx, |view, cx| {
         view.change_selections(None, cx, |s| {
-            s.select_display_ranges([DisplayPoint::new(2, 0)..DisplayPoint::new(0, 1)])
+            s.select_display_ranges([
+                DisplayPoint::new(DisplayRow(2), 0)..DisplayPoint::new(DisplayRow(0), 1)
+            ])
         });
         view.delete_line(&DeleteLine, cx);
         assert_eq!(view.display_text(cx), "ghi\n");
         assert_eq!(
             view.selections.display_ranges(cx),
-            vec![DisplayPoint::new(0, 1)..DisplayPoint::new(0, 1)]
+            vec![DisplayPoint::new(DisplayRow(0), 1)..DisplayPoint::new(DisplayRow(0), 1)]
         );
     });
 }
@@ -2727,6 +2844,31 @@ async fn test_join_lines_with_git_diff_base(
         "#
         .unindent(),
     );
+}
+
+#[gpui::test]
+async fn test_custom_newlines_cause_no_false_positive_diffs(
+    executor: BackgroundExecutor,
+    cx: &mut gpui::TestAppContext,
+) {
+    init_test(cx, |_| {});
+    let mut cx = EditorTestContext::new(cx).await;
+    cx.set_state("Line 0\r\nLine 1\rˇ\nLine 2\r\nLine 3");
+    cx.set_diff_base(Some("Line 0\r\nLine 1\r\nLine 2\r\nLine 3"));
+    executor.run_until_parked();
+
+    cx.update_editor(|editor, cx| {
+        assert_eq!(
+            editor
+                .buffer()
+                .read(cx)
+                .snapshot(cx)
+                .git_diff_hunks_in_range(MultiBufferRow::MIN..MultiBufferRow::MAX)
+                .collect::<Vec<_>>(),
+            Vec::new(),
+            "Should not have any diffs for files with custom newlines"
+        );
+    });
 }
 
 #[gpui::test]
@@ -3141,6 +3283,14 @@ async fn test_manipulate_text(cx: &mut TestAppContext) {
     cx.assert_editor_state(indoc! {"
         «aaaBbbˇ» «bbbCccˇ» «cccDddˇ»
     "});
+
+    cx.set_state(indoc! {"
+        «hElLo, WoRld!ˇ»
+    "});
+    cx.update_editor(|e, cx| e.convert_to_opposite_case(&ConvertToOppositeCase, cx));
+    cx.assert_editor_state(indoc! {"
+        «HeLlO, wOrLD!ˇ»
+    "});
 }
 
 #[gpui::test]
@@ -3154,10 +3304,10 @@ fn test_duplicate_line(cx: &mut TestAppContext) {
     _ = view.update(cx, |view, cx| {
         view.change_selections(None, cx, |s| {
             s.select_display_ranges([
-                DisplayPoint::new(0, 0)..DisplayPoint::new(0, 1),
-                DisplayPoint::new(0, 2)..DisplayPoint::new(0, 2),
-                DisplayPoint::new(1, 0)..DisplayPoint::new(1, 0),
-                DisplayPoint::new(3, 0)..DisplayPoint::new(3, 0),
+                DisplayPoint::new(DisplayRow(0), 0)..DisplayPoint::new(DisplayRow(0), 1),
+                DisplayPoint::new(DisplayRow(0), 2)..DisplayPoint::new(DisplayRow(0), 2),
+                DisplayPoint::new(DisplayRow(1), 0)..DisplayPoint::new(DisplayRow(1), 0),
+                DisplayPoint::new(DisplayRow(3), 0)..DisplayPoint::new(DisplayRow(3), 0),
             ])
         });
         view.duplicate_line_down(&DuplicateLineDown, cx);
@@ -3165,10 +3315,10 @@ fn test_duplicate_line(cx: &mut TestAppContext) {
         assert_eq!(
             view.selections.display_ranges(cx),
             vec![
-                DisplayPoint::new(1, 0)..DisplayPoint::new(1, 1),
-                DisplayPoint::new(1, 2)..DisplayPoint::new(1, 2),
-                DisplayPoint::new(3, 0)..DisplayPoint::new(3, 0),
-                DisplayPoint::new(6, 0)..DisplayPoint::new(6, 0),
+                DisplayPoint::new(DisplayRow(1), 0)..DisplayPoint::new(DisplayRow(1), 1),
+                DisplayPoint::new(DisplayRow(1), 2)..DisplayPoint::new(DisplayRow(1), 2),
+                DisplayPoint::new(DisplayRow(3), 0)..DisplayPoint::new(DisplayRow(3), 0),
+                DisplayPoint::new(DisplayRow(6), 0)..DisplayPoint::new(DisplayRow(6), 0),
             ]
         );
     });
@@ -3180,8 +3330,8 @@ fn test_duplicate_line(cx: &mut TestAppContext) {
     _ = view.update(cx, |view, cx| {
         view.change_selections(None, cx, |s| {
             s.select_display_ranges([
-                DisplayPoint::new(0, 1)..DisplayPoint::new(1, 1),
-                DisplayPoint::new(1, 2)..DisplayPoint::new(2, 1),
+                DisplayPoint::new(DisplayRow(0), 1)..DisplayPoint::new(DisplayRow(1), 1),
+                DisplayPoint::new(DisplayRow(1), 2)..DisplayPoint::new(DisplayRow(2), 1),
             ])
         });
         view.duplicate_line_down(&DuplicateLineDown, cx);
@@ -3189,8 +3339,8 @@ fn test_duplicate_line(cx: &mut TestAppContext) {
         assert_eq!(
             view.selections.display_ranges(cx),
             vec![
-                DisplayPoint::new(3, 1)..DisplayPoint::new(4, 1),
-                DisplayPoint::new(4, 2)..DisplayPoint::new(5, 1),
+                DisplayPoint::new(DisplayRow(3), 1)..DisplayPoint::new(DisplayRow(4), 1),
+                DisplayPoint::new(DisplayRow(4), 2)..DisplayPoint::new(DisplayRow(5), 1),
             ]
         );
     });
@@ -3204,10 +3354,10 @@ fn test_duplicate_line(cx: &mut TestAppContext) {
     _ = view.update(cx, |view, cx| {
         view.change_selections(None, cx, |s| {
             s.select_display_ranges([
-                DisplayPoint::new(0, 0)..DisplayPoint::new(0, 1),
-                DisplayPoint::new(0, 2)..DisplayPoint::new(0, 2),
-                DisplayPoint::new(1, 0)..DisplayPoint::new(1, 0),
-                DisplayPoint::new(3, 0)..DisplayPoint::new(3, 0),
+                DisplayPoint::new(DisplayRow(0), 0)..DisplayPoint::new(DisplayRow(0), 1),
+                DisplayPoint::new(DisplayRow(0), 2)..DisplayPoint::new(DisplayRow(0), 2),
+                DisplayPoint::new(DisplayRow(1), 0)..DisplayPoint::new(DisplayRow(1), 0),
+                DisplayPoint::new(DisplayRow(3), 0)..DisplayPoint::new(DisplayRow(3), 0),
             ])
         });
         view.duplicate_line_up(&DuplicateLineUp, cx);
@@ -3215,10 +3365,10 @@ fn test_duplicate_line(cx: &mut TestAppContext) {
         assert_eq!(
             view.selections.display_ranges(cx),
             vec![
-                DisplayPoint::new(0, 0)..DisplayPoint::new(0, 1),
-                DisplayPoint::new(0, 2)..DisplayPoint::new(0, 2),
-                DisplayPoint::new(2, 0)..DisplayPoint::new(2, 0),
-                DisplayPoint::new(6, 0)..DisplayPoint::new(6, 0),
+                DisplayPoint::new(DisplayRow(0), 0)..DisplayPoint::new(DisplayRow(0), 1),
+                DisplayPoint::new(DisplayRow(0), 2)..DisplayPoint::new(DisplayRow(0), 2),
+                DisplayPoint::new(DisplayRow(2), 0)..DisplayPoint::new(DisplayRow(2), 0),
+                DisplayPoint::new(DisplayRow(6), 0)..DisplayPoint::new(DisplayRow(6), 0),
             ]
         );
     });
@@ -3230,8 +3380,8 @@ fn test_duplicate_line(cx: &mut TestAppContext) {
     _ = view.update(cx, |view, cx| {
         view.change_selections(None, cx, |s| {
             s.select_display_ranges([
-                DisplayPoint::new(0, 1)..DisplayPoint::new(1, 1),
-                DisplayPoint::new(1, 2)..DisplayPoint::new(2, 1),
+                DisplayPoint::new(DisplayRow(0), 1)..DisplayPoint::new(DisplayRow(1), 1),
+                DisplayPoint::new(DisplayRow(1), 2)..DisplayPoint::new(DisplayRow(2), 1),
             ])
         });
         view.duplicate_line_up(&DuplicateLineUp, cx);
@@ -3239,8 +3389,8 @@ fn test_duplicate_line(cx: &mut TestAppContext) {
         assert_eq!(
             view.selections.display_ranges(cx),
             vec![
-                DisplayPoint::new(0, 1)..DisplayPoint::new(1, 1),
-                DisplayPoint::new(1, 2)..DisplayPoint::new(2, 1),
+                DisplayPoint::new(DisplayRow(0), 1)..DisplayPoint::new(DisplayRow(1), 1),
+                DisplayPoint::new(DisplayRow(1), 2)..DisplayPoint::new(DisplayRow(2), 1),
             ]
         );
     });
@@ -3266,10 +3416,10 @@ fn test_move_line_up_down(cx: &mut TestAppContext) {
         );
         view.change_selections(None, cx, |s| {
             s.select_display_ranges([
-                DisplayPoint::new(0, 1)..DisplayPoint::new(0, 1),
-                DisplayPoint::new(3, 1)..DisplayPoint::new(3, 1),
-                DisplayPoint::new(3, 2)..DisplayPoint::new(4, 3),
-                DisplayPoint::new(5, 0)..DisplayPoint::new(5, 2),
+                DisplayPoint::new(DisplayRow(0), 1)..DisplayPoint::new(DisplayRow(0), 1),
+                DisplayPoint::new(DisplayRow(3), 1)..DisplayPoint::new(DisplayRow(3), 1),
+                DisplayPoint::new(DisplayRow(3), 2)..DisplayPoint::new(DisplayRow(4), 3),
+                DisplayPoint::new(DisplayRow(5), 0)..DisplayPoint::new(DisplayRow(5), 2),
             ])
         });
         assert_eq!(
@@ -3285,10 +3435,10 @@ fn test_move_line_up_down(cx: &mut TestAppContext) {
         assert_eq!(
             view.selections.display_ranges(cx),
             vec![
-                DisplayPoint::new(0, 1)..DisplayPoint::new(0, 1),
-                DisplayPoint::new(2, 1)..DisplayPoint::new(2, 1),
-                DisplayPoint::new(2, 2)..DisplayPoint::new(3, 3),
-                DisplayPoint::new(4, 0)..DisplayPoint::new(4, 2)
+                DisplayPoint::new(DisplayRow(0), 1)..DisplayPoint::new(DisplayRow(0), 1),
+                DisplayPoint::new(DisplayRow(2), 1)..DisplayPoint::new(DisplayRow(2), 1),
+                DisplayPoint::new(DisplayRow(2), 2)..DisplayPoint::new(DisplayRow(3), 3),
+                DisplayPoint::new(DisplayRow(4), 0)..DisplayPoint::new(DisplayRow(4), 2)
             ]
         );
     });
@@ -3302,10 +3452,10 @@ fn test_move_line_up_down(cx: &mut TestAppContext) {
         assert_eq!(
             view.selections.display_ranges(cx),
             vec![
-                DisplayPoint::new(1, 1)..DisplayPoint::new(1, 1),
-                DisplayPoint::new(3, 1)..DisplayPoint::new(3, 1),
-                DisplayPoint::new(3, 2)..DisplayPoint::new(4, 3),
-                DisplayPoint::new(5, 0)..DisplayPoint::new(5, 2)
+                DisplayPoint::new(DisplayRow(1), 1)..DisplayPoint::new(DisplayRow(1), 1),
+                DisplayPoint::new(DisplayRow(3), 1)..DisplayPoint::new(DisplayRow(3), 1),
+                DisplayPoint::new(DisplayRow(3), 2)..DisplayPoint::new(DisplayRow(4), 3),
+                DisplayPoint::new(DisplayRow(5), 0)..DisplayPoint::new(DisplayRow(5), 2)
             ]
         );
     });
@@ -3319,10 +3469,10 @@ fn test_move_line_up_down(cx: &mut TestAppContext) {
         assert_eq!(
             view.selections.display_ranges(cx),
             vec![
-                DisplayPoint::new(2, 1)..DisplayPoint::new(2, 1),
-                DisplayPoint::new(3, 1)..DisplayPoint::new(3, 1),
-                DisplayPoint::new(3, 2)..DisplayPoint::new(4, 3),
-                DisplayPoint::new(5, 0)..DisplayPoint::new(5, 2)
+                DisplayPoint::new(DisplayRow(2), 1)..DisplayPoint::new(DisplayRow(2), 1),
+                DisplayPoint::new(DisplayRow(3), 1)..DisplayPoint::new(DisplayRow(3), 1),
+                DisplayPoint::new(DisplayRow(3), 2)..DisplayPoint::new(DisplayRow(4), 3),
+                DisplayPoint::new(DisplayRow(5), 0)..DisplayPoint::new(DisplayRow(5), 2)
             ]
         );
     });
@@ -3336,10 +3486,10 @@ fn test_move_line_up_down(cx: &mut TestAppContext) {
         assert_eq!(
             view.selections.display_ranges(cx),
             vec![
-                DisplayPoint::new(1, 1)..DisplayPoint::new(1, 1),
-                DisplayPoint::new(2, 1)..DisplayPoint::new(2, 1),
-                DisplayPoint::new(2, 2)..DisplayPoint::new(3, 3),
-                DisplayPoint::new(4, 0)..DisplayPoint::new(4, 2)
+                DisplayPoint::new(DisplayRow(1), 1)..DisplayPoint::new(DisplayRow(1), 1),
+                DisplayPoint::new(DisplayRow(2), 1)..DisplayPoint::new(DisplayRow(2), 1),
+                DisplayPoint::new(DisplayRow(2), 2)..DisplayPoint::new(DisplayRow(3), 3),
+                DisplayPoint::new(DisplayRow(4), 0)..DisplayPoint::new(DisplayRow(4), 2)
             ]
         );
     });
@@ -3678,7 +3828,7 @@ fn test_select_all(cx: &mut TestAppContext) {
         view.select_all(&SelectAll, cx);
         assert_eq!(
             view.selections.display_ranges(cx),
-            &[DisplayPoint::new(0, 0)..DisplayPoint::new(2, 3)]
+            &[DisplayPoint::new(DisplayRow(0), 0)..DisplayPoint::new(DisplayRow(2), 3)]
         );
     });
 }
@@ -3694,18 +3844,18 @@ fn test_select_line(cx: &mut TestAppContext) {
     _ = view.update(cx, |view, cx| {
         view.change_selections(None, cx, |s| {
             s.select_display_ranges([
-                DisplayPoint::new(0, 0)..DisplayPoint::new(0, 1),
-                DisplayPoint::new(0, 2)..DisplayPoint::new(0, 2),
-                DisplayPoint::new(1, 0)..DisplayPoint::new(1, 0),
-                DisplayPoint::new(4, 2)..DisplayPoint::new(4, 2),
+                DisplayPoint::new(DisplayRow(0), 0)..DisplayPoint::new(DisplayRow(0), 1),
+                DisplayPoint::new(DisplayRow(0), 2)..DisplayPoint::new(DisplayRow(0), 2),
+                DisplayPoint::new(DisplayRow(1), 0)..DisplayPoint::new(DisplayRow(1), 0),
+                DisplayPoint::new(DisplayRow(4), 2)..DisplayPoint::new(DisplayRow(4), 2),
             ])
         });
         view.select_line(&SelectLine, cx);
         assert_eq!(
             view.selections.display_ranges(cx),
             vec![
-                DisplayPoint::new(0, 0)..DisplayPoint::new(2, 0),
-                DisplayPoint::new(4, 0)..DisplayPoint::new(5, 0),
+                DisplayPoint::new(DisplayRow(0), 0)..DisplayPoint::new(DisplayRow(2), 0),
+                DisplayPoint::new(DisplayRow(4), 0)..DisplayPoint::new(DisplayRow(5), 0),
             ]
         );
     });
@@ -3715,8 +3865,8 @@ fn test_select_line(cx: &mut TestAppContext) {
         assert_eq!(
             view.selections.display_ranges(cx),
             vec![
-                DisplayPoint::new(0, 0)..DisplayPoint::new(3, 0),
-                DisplayPoint::new(4, 0)..DisplayPoint::new(5, 5),
+                DisplayPoint::new(DisplayRow(0), 0)..DisplayPoint::new(DisplayRow(3), 0),
+                DisplayPoint::new(DisplayRow(4), 0)..DisplayPoint::new(DisplayRow(5), 5),
             ]
         );
     });
@@ -3725,7 +3875,7 @@ fn test_select_line(cx: &mut TestAppContext) {
         view.select_line(&SelectLine, cx);
         assert_eq!(
             view.selections.display_ranges(cx),
-            vec![DisplayPoint::new(0, 0)..DisplayPoint::new(5, 5)]
+            vec![DisplayPoint::new(DisplayRow(0), 0)..DisplayPoint::new(DisplayRow(5), 5)]
         );
     });
 }
@@ -3750,10 +3900,10 @@ fn test_split_selection_into_lines(cx: &mut TestAppContext) {
         );
         view.change_selections(None, cx, |s| {
             s.select_display_ranges([
-                DisplayPoint::new(0, 0)..DisplayPoint::new(0, 1),
-                DisplayPoint::new(0, 2)..DisplayPoint::new(0, 2),
-                DisplayPoint::new(1, 0)..DisplayPoint::new(1, 0),
-                DisplayPoint::new(4, 4)..DisplayPoint::new(4, 4),
+                DisplayPoint::new(DisplayRow(0), 0)..DisplayPoint::new(DisplayRow(0), 1),
+                DisplayPoint::new(DisplayRow(0), 2)..DisplayPoint::new(DisplayRow(0), 2),
+                DisplayPoint::new(DisplayRow(1), 0)..DisplayPoint::new(DisplayRow(1), 0),
+                DisplayPoint::new(DisplayRow(4), 4)..DisplayPoint::new(DisplayRow(4), 4),
             ])
         });
         assert_eq!(view.display_text(cx), "aa⋯bbb\nccc⋯eeee\nfffff\nggggg\n⋯i");
@@ -3768,17 +3918,19 @@ fn test_split_selection_into_lines(cx: &mut TestAppContext) {
         assert_eq!(
             view.selections.display_ranges(cx),
             [
-                DisplayPoint::new(0, 1)..DisplayPoint::new(0, 1),
-                DisplayPoint::new(0, 2)..DisplayPoint::new(0, 2),
-                DisplayPoint::new(2, 0)..DisplayPoint::new(2, 0),
-                DisplayPoint::new(5, 4)..DisplayPoint::new(5, 4)
+                DisplayPoint::new(DisplayRow(0), 1)..DisplayPoint::new(DisplayRow(0), 1),
+                DisplayPoint::new(DisplayRow(0), 2)..DisplayPoint::new(DisplayRow(0), 2),
+                DisplayPoint::new(DisplayRow(2), 0)..DisplayPoint::new(DisplayRow(2), 0),
+                DisplayPoint::new(DisplayRow(5), 4)..DisplayPoint::new(DisplayRow(5), 4)
             ]
         );
     });
 
     _ = view.update(cx, |view, cx| {
         view.change_selections(None, cx, |s| {
-            s.select_display_ranges([DisplayPoint::new(5, 0)..DisplayPoint::new(0, 1)])
+            s.select_display_ranges([
+                DisplayPoint::new(DisplayRow(5), 0)..DisplayPoint::new(DisplayRow(0), 1)
+            ])
         });
         view.split_selection_into_lines(&SplitSelectionIntoLines, cx);
         assert_eq!(
@@ -3788,14 +3940,14 @@ fn test_split_selection_into_lines(cx: &mut TestAppContext) {
         assert_eq!(
             view.selections.display_ranges(cx),
             [
-                DisplayPoint::new(0, 5)..DisplayPoint::new(0, 5),
-                DisplayPoint::new(1, 5)..DisplayPoint::new(1, 5),
-                DisplayPoint::new(2, 5)..DisplayPoint::new(2, 5),
-                DisplayPoint::new(3, 5)..DisplayPoint::new(3, 5),
-                DisplayPoint::new(4, 5)..DisplayPoint::new(4, 5),
-                DisplayPoint::new(5, 5)..DisplayPoint::new(5, 5),
-                DisplayPoint::new(6, 5)..DisplayPoint::new(6, 5),
-                DisplayPoint::new(7, 0)..DisplayPoint::new(7, 0)
+                DisplayPoint::new(DisplayRow(0), 5)..DisplayPoint::new(DisplayRow(0), 5),
+                DisplayPoint::new(DisplayRow(1), 5)..DisplayPoint::new(DisplayRow(1), 5),
+                DisplayPoint::new(DisplayRow(2), 5)..DisplayPoint::new(DisplayRow(2), 5),
+                DisplayPoint::new(DisplayRow(3), 5)..DisplayPoint::new(DisplayRow(3), 5),
+                DisplayPoint::new(DisplayRow(4), 5)..DisplayPoint::new(DisplayRow(4), 5),
+                DisplayPoint::new(DisplayRow(5), 5)..DisplayPoint::new(DisplayRow(5), 5),
+                DisplayPoint::new(DisplayRow(6), 5)..DisplayPoint::new(DisplayRow(6), 5),
+                DisplayPoint::new(DisplayRow(7), 0)..DisplayPoint::new(DisplayRow(7), 0)
             ]
         );
     });
@@ -4299,9 +4451,9 @@ async fn test_select_larger_smaller_syntax_node(cx: &mut gpui::TestAppContext) {
     _ = view.update(cx, |view, cx| {
         view.change_selections(None, cx, |s| {
             s.select_display_ranges([
-                DisplayPoint::new(0, 25)..DisplayPoint::new(0, 25),
-                DisplayPoint::new(2, 24)..DisplayPoint::new(2, 12),
-                DisplayPoint::new(3, 18)..DisplayPoint::new(3, 18),
+                DisplayPoint::new(DisplayRow(0), 25)..DisplayPoint::new(DisplayRow(0), 25),
+                DisplayPoint::new(DisplayRow(2), 24)..DisplayPoint::new(DisplayRow(2), 12),
+                DisplayPoint::new(DisplayRow(3), 18)..DisplayPoint::new(DisplayRow(3), 18),
             ]);
         });
         view.select_larger_syntax_node(&SelectLargerSyntaxNode, cx);
@@ -4309,9 +4461,9 @@ async fn test_select_larger_smaller_syntax_node(cx: &mut gpui::TestAppContext) {
     assert_eq!(
         view.update(cx, |view, cx| { view.selections.display_ranges(cx) }),
         &[
-            DisplayPoint::new(0, 23)..DisplayPoint::new(0, 27),
-            DisplayPoint::new(2, 35)..DisplayPoint::new(2, 7),
-            DisplayPoint::new(3, 15)..DisplayPoint::new(3, 21),
+            DisplayPoint::new(DisplayRow(0), 23)..DisplayPoint::new(DisplayRow(0), 27),
+            DisplayPoint::new(DisplayRow(2), 35)..DisplayPoint::new(DisplayRow(2), 7),
+            DisplayPoint::new(DisplayRow(3), 15)..DisplayPoint::new(DisplayRow(3), 21),
         ]
     );
 
@@ -4321,8 +4473,8 @@ async fn test_select_larger_smaller_syntax_node(cx: &mut gpui::TestAppContext) {
     assert_eq!(
         view.update(cx, |view, cx| view.selections.display_ranges(cx)),
         &[
-            DisplayPoint::new(0, 16)..DisplayPoint::new(0, 28),
-            DisplayPoint::new(4, 1)..DisplayPoint::new(2, 0),
+            DisplayPoint::new(DisplayRow(0), 16)..DisplayPoint::new(DisplayRow(0), 28),
+            DisplayPoint::new(DisplayRow(4), 1)..DisplayPoint::new(DisplayRow(2), 0),
         ]
     );
 
@@ -4331,7 +4483,7 @@ async fn test_select_larger_smaller_syntax_node(cx: &mut gpui::TestAppContext) {
     });
     assert_eq!(
         view.update(cx, |view, cx| view.selections.display_ranges(cx)),
-        &[DisplayPoint::new(5, 0)..DisplayPoint::new(0, 0)]
+        &[DisplayPoint::new(DisplayRow(5), 0)..DisplayPoint::new(DisplayRow(0), 0)]
     );
 
     // Trying to expand the selected syntax node one more time has no effect.
@@ -4340,7 +4492,7 @@ async fn test_select_larger_smaller_syntax_node(cx: &mut gpui::TestAppContext) {
     });
     assert_eq!(
         view.update(cx, |view, cx| view.selections.display_ranges(cx)),
-        &[DisplayPoint::new(5, 0)..DisplayPoint::new(0, 0)]
+        &[DisplayPoint::new(DisplayRow(5), 0)..DisplayPoint::new(DisplayRow(0), 0)]
     );
 
     _ = view.update(cx, |view, cx| {
@@ -4349,8 +4501,8 @@ async fn test_select_larger_smaller_syntax_node(cx: &mut gpui::TestAppContext) {
     assert_eq!(
         view.update(cx, |view, cx| view.selections.display_ranges(cx)),
         &[
-            DisplayPoint::new(0, 16)..DisplayPoint::new(0, 28),
-            DisplayPoint::new(4, 1)..DisplayPoint::new(2, 0),
+            DisplayPoint::new(DisplayRow(0), 16)..DisplayPoint::new(DisplayRow(0), 28),
+            DisplayPoint::new(DisplayRow(4), 1)..DisplayPoint::new(DisplayRow(2), 0),
         ]
     );
 
@@ -4360,9 +4512,9 @@ async fn test_select_larger_smaller_syntax_node(cx: &mut gpui::TestAppContext) {
     assert_eq!(
         view.update(cx, |view, cx| view.selections.display_ranges(cx)),
         &[
-            DisplayPoint::new(0, 23)..DisplayPoint::new(0, 27),
-            DisplayPoint::new(2, 35)..DisplayPoint::new(2, 7),
-            DisplayPoint::new(3, 15)..DisplayPoint::new(3, 21),
+            DisplayPoint::new(DisplayRow(0), 23)..DisplayPoint::new(DisplayRow(0), 27),
+            DisplayPoint::new(DisplayRow(2), 35)..DisplayPoint::new(DisplayRow(2), 7),
+            DisplayPoint::new(DisplayRow(3), 15)..DisplayPoint::new(DisplayRow(3), 21),
         ]
     );
 
@@ -4372,9 +4524,9 @@ async fn test_select_larger_smaller_syntax_node(cx: &mut gpui::TestAppContext) {
     assert_eq!(
         view.update(cx, |view, cx| view.selections.display_ranges(cx)),
         &[
-            DisplayPoint::new(0, 25)..DisplayPoint::new(0, 25),
-            DisplayPoint::new(2, 24)..DisplayPoint::new(2, 12),
-            DisplayPoint::new(3, 18)..DisplayPoint::new(3, 18),
+            DisplayPoint::new(DisplayRow(0), 25)..DisplayPoint::new(DisplayRow(0), 25),
+            DisplayPoint::new(DisplayRow(2), 24)..DisplayPoint::new(DisplayRow(2), 12),
+            DisplayPoint::new(DisplayRow(3), 18)..DisplayPoint::new(DisplayRow(3), 18),
         ]
     );
 
@@ -4385,9 +4537,9 @@ async fn test_select_larger_smaller_syntax_node(cx: &mut gpui::TestAppContext) {
     assert_eq!(
         view.update(cx, |view, cx| view.selections.display_ranges(cx)),
         &[
-            DisplayPoint::new(0, 25)..DisplayPoint::new(0, 25),
-            DisplayPoint::new(2, 24)..DisplayPoint::new(2, 12),
-            DisplayPoint::new(3, 18)..DisplayPoint::new(3, 18),
+            DisplayPoint::new(DisplayRow(0), 25)..DisplayPoint::new(DisplayRow(0), 25),
+            DisplayPoint::new(DisplayRow(2), 24)..DisplayPoint::new(DisplayRow(2), 12),
+            DisplayPoint::new(DisplayRow(3), 18)..DisplayPoint::new(DisplayRow(3), 18),
         ]
     );
 
@@ -4407,9 +4559,9 @@ async fn test_select_larger_smaller_syntax_node(cx: &mut gpui::TestAppContext) {
     assert_eq!(
         view.update(cx, |view, cx| view.selections.display_ranges(cx)),
         &[
-            DisplayPoint::new(0, 16)..DisplayPoint::new(0, 28),
-            DisplayPoint::new(2, 35)..DisplayPoint::new(2, 7),
-            DisplayPoint::new(3, 4)..DisplayPoint::new(3, 23),
+            DisplayPoint::new(DisplayRow(0), 16)..DisplayPoint::new(DisplayRow(0), 28),
+            DisplayPoint::new(DisplayRow(2), 35)..DisplayPoint::new(DisplayRow(2), 7),
+            DisplayPoint::new(DisplayRow(3), 4)..DisplayPoint::new(DisplayRow(3), 23),
         ]
     );
 }
@@ -5117,9 +5269,9 @@ async fn test_surround_with_pair(cx: &mut gpui::TestAppContext) {
     _ = view.update(cx, |view, cx| {
         view.change_selections(None, cx, |s| {
             s.select_display_ranges([
-                DisplayPoint::new(0, 0)..DisplayPoint::new(0, 1),
-                DisplayPoint::new(1, 0)..DisplayPoint::new(1, 1),
-                DisplayPoint::new(2, 0)..DisplayPoint::new(2, 1),
+                DisplayPoint::new(DisplayRow(0), 0)..DisplayPoint::new(DisplayRow(0), 1),
+                DisplayPoint::new(DisplayRow(1), 0)..DisplayPoint::new(DisplayRow(1), 1),
+                DisplayPoint::new(DisplayRow(2), 0)..DisplayPoint::new(DisplayRow(2), 1),
             ])
         });
 
@@ -5138,9 +5290,9 @@ async fn test_surround_with_pair(cx: &mut gpui::TestAppContext) {
         assert_eq!(
             view.selections.display_ranges(cx),
             [
-                DisplayPoint::new(0, 3)..DisplayPoint::new(0, 4),
-                DisplayPoint::new(1, 3)..DisplayPoint::new(1, 4),
-                DisplayPoint::new(2, 3)..DisplayPoint::new(2, 4)
+                DisplayPoint::new(DisplayRow(0), 3)..DisplayPoint::new(DisplayRow(0), 4),
+                DisplayPoint::new(DisplayRow(1), 3)..DisplayPoint::new(DisplayRow(1), 4),
+                DisplayPoint::new(DisplayRow(2), 3)..DisplayPoint::new(DisplayRow(2), 4)
             ]
         );
 
@@ -5159,9 +5311,9 @@ async fn test_surround_with_pair(cx: &mut gpui::TestAppContext) {
         assert_eq!(
             view.selections.display_ranges(cx),
             [
-                DisplayPoint::new(0, 0)..DisplayPoint::new(0, 1),
-                DisplayPoint::new(1, 0)..DisplayPoint::new(1, 1),
-                DisplayPoint::new(2, 0)..DisplayPoint::new(2, 1)
+                DisplayPoint::new(DisplayRow(0), 0)..DisplayPoint::new(DisplayRow(0), 1),
+                DisplayPoint::new(DisplayRow(1), 0)..DisplayPoint::new(DisplayRow(1), 1),
+                DisplayPoint::new(DisplayRow(2), 0)..DisplayPoint::new(DisplayRow(2), 1)
             ]
         );
 
@@ -5180,9 +5332,9 @@ async fn test_surround_with_pair(cx: &mut gpui::TestAppContext) {
         assert_eq!(
             view.selections.display_ranges(cx),
             [
-                DisplayPoint::new(0, 1)..DisplayPoint::new(0, 1),
-                DisplayPoint::new(1, 1)..DisplayPoint::new(1, 1),
-                DisplayPoint::new(2, 1)..DisplayPoint::new(2, 1)
+                DisplayPoint::new(DisplayRow(0), 1)..DisplayPoint::new(DisplayRow(0), 1),
+                DisplayPoint::new(DisplayRow(1), 1)..DisplayPoint::new(DisplayRow(1), 1),
+                DisplayPoint::new(DisplayRow(2), 1)..DisplayPoint::new(DisplayRow(2), 1)
             ]
         );
 
@@ -5199,9 +5351,9 @@ async fn test_surround_with_pair(cx: &mut gpui::TestAppContext) {
         assert_eq!(
             view.selections.display_ranges(cx),
             [
-                DisplayPoint::new(0, 0)..DisplayPoint::new(0, 1),
-                DisplayPoint::new(1, 0)..DisplayPoint::new(1, 1),
-                DisplayPoint::new(2, 0)..DisplayPoint::new(2, 1)
+                DisplayPoint::new(DisplayRow(0), 0)..DisplayPoint::new(DisplayRow(0), 1),
+                DisplayPoint::new(DisplayRow(1), 0)..DisplayPoint::new(DisplayRow(1), 1),
+                DisplayPoint::new(DisplayRow(2), 0)..DisplayPoint::new(DisplayRow(2), 1)
             ]
         );
 
@@ -5220,9 +5372,9 @@ async fn test_surround_with_pair(cx: &mut gpui::TestAppContext) {
         assert_eq!(
             view.selections.display_ranges(cx),
             [
-                DisplayPoint::new(0, 1)..DisplayPoint::new(0, 1),
-                DisplayPoint::new(1, 1)..DisplayPoint::new(1, 1),
-                DisplayPoint::new(2, 1)..DisplayPoint::new(2, 1)
+                DisplayPoint::new(DisplayRow(0), 1)..DisplayPoint::new(DisplayRow(0), 1),
+                DisplayPoint::new(DisplayRow(1), 1)..DisplayPoint::new(DisplayRow(1), 1),
+                DisplayPoint::new(DisplayRow(2), 1)..DisplayPoint::new(DisplayRow(2), 1)
             ]
         );
     });
@@ -6104,13 +6256,18 @@ async fn test_document_format_manual_trigger(cx: &mut gpui::TestAppContext) {
                 path_suffixes: vec!["rs".to_string()],
                 ..Default::default()
             },
-            // Enable Prettier formatting for the same buffer, and ensure
-            // LSP is called instead of Prettier.
-            prettier_parser_name: Some("test_parser".to_string()),
-            ..Default::default()
+            ..LanguageConfig::default()
         },
         Some(tree_sitter_rust::language()),
     )));
+    update_test_language_settings(cx, |settings| {
+        // Enable Prettier formatting for the same buffer, and ensure
+        // LSP is called instead of Prettier.
+        settings.defaults.prettier = Some(PrettierSettings {
+            allowed: true,
+            ..PrettierSettings::default()
+        });
+    });
     let mut fake_servers = language_registry.register_fake_lsp_adapter(
         "Rust",
         FakeLspAdapter {
@@ -7240,9 +7397,9 @@ async fn test_extra_newline_insertion(cx: &mut gpui::TestAppContext) {
     _ = view.update(cx, |view, cx| {
         view.change_selections(None, cx, |s| {
             s.select_display_ranges([
-                DisplayPoint::new(0, 2)..DisplayPoint::new(0, 3),
-                DisplayPoint::new(2, 5)..DisplayPoint::new(2, 5),
-                DisplayPoint::new(4, 4)..DisplayPoint::new(4, 4),
+                DisplayPoint::new(DisplayRow(0), 2)..DisplayPoint::new(DisplayRow(0), 3),
+                DisplayPoint::new(DisplayRow(2), 5)..DisplayPoint::new(DisplayRow(2), 5),
+                DisplayPoint::new(DisplayRow(4), 4)..DisplayPoint::new(DisplayRow(4), 4),
             ])
         });
         view.newline(&Newline, cx);
@@ -7317,19 +7474,19 @@ fn test_highlighted_ranges(cx: &mut TestAppContext) {
             highlighted_ranges,
             &[
                 (
-                    DisplayPoint::new(4, 2)..DisplayPoint::new(4, 4),
+                    DisplayPoint::new(DisplayRow(4), 2)..DisplayPoint::new(DisplayRow(4), 4),
                     Hsla::red(),
                 ),
                 (
-                    DisplayPoint::new(6, 3)..DisplayPoint::new(6, 5),
+                    DisplayPoint::new(DisplayRow(6), 3)..DisplayPoint::new(DisplayRow(6), 5),
                     Hsla::red(),
                 ),
                 (
-                    DisplayPoint::new(3, 2)..DisplayPoint::new(3, 5),
+                    DisplayPoint::new(DisplayRow(3), 2)..DisplayPoint::new(DisplayRow(3), 5),
                     Hsla::green(),
                 ),
                 (
-                    DisplayPoint::new(5, 3)..DisplayPoint::new(5, 6),
+                    DisplayPoint::new(DisplayRow(5), 3)..DisplayPoint::new(DisplayRow(5), 6),
                     Hsla::green(),
                 ),
             ]
@@ -7341,7 +7498,7 @@ fn test_highlighted_ranges(cx: &mut TestAppContext) {
                 cx.theme().colors(),
             ),
             &[(
-                DisplayPoint::new(6, 3)..DisplayPoint::new(6, 5),
+                DisplayPoint::new(DisplayRow(6), 3)..DisplayPoint::new(DisplayRow(6), 5),
                 Hsla::red(),
             )]
         );
@@ -7356,19 +7513,17 @@ async fn test_following(cx: &mut gpui::TestAppContext) {
     let project = Project::test(fs, ["/file.rs".as_ref()], cx).await;
 
     let buffer = project.update(cx, |project, cx| {
-        let buffer = project
-            .create_buffer(&sample_text(16, 8, 'a'), None, cx)
-            .unwrap();
+        let buffer = project.create_local_buffer(&sample_text(16, 8, 'a'), None, cx);
         cx.new_model(|cx| MultiBuffer::singleton(buffer, cx))
     });
     let leader = cx.add_window(|cx| build_editor(buffer.clone(), cx));
     let follower = cx.update(|cx| {
         cx.open_window(
             WindowOptions {
-                bounds: Some(Bounds::from_corners(
+                window_bounds: Some(WindowBounds::Windowed(Bounds::from_corners(
                     gpui::Point::new(0.into(), 0.into()),
                     gpui::Point::new(10.into(), 80.into()),
-                )),
+                ))),
                 ..Default::default()
             },
             |cx| cx.new_view(|cx| build_editor(buffer.clone(), cx)),
@@ -7469,7 +7624,7 @@ async fn test_following(cx: &mut gpui::TestAppContext) {
     // Creating a pending selection that precedes another selection
     _ = leader.update(cx, |leader, cx| {
         leader.change_selections(None, cx, |s| s.select_ranges([1..1]));
-        leader.begin_selection(DisplayPoint::new(0, 0), true, 1, cx);
+        leader.begin_selection(DisplayPoint::new(DisplayRow(0), 0), true, 1, cx);
     });
     follower
         .update(cx, |follower, cx| {
@@ -7485,7 +7640,7 @@ async fn test_following(cx: &mut gpui::TestAppContext) {
 
     // Extend the pending selection so that it surrounds another selection
     _ = leader.update(cx, |leader, cx| {
-        leader.extend_selection(DisplayPoint::new(0, 2), 1, cx);
+        leader.extend_selection(DisplayPoint::new(DisplayRow(0), 2), 1, cx);
     });
     follower
         .update(cx, |follower, cx| {
@@ -7565,12 +7720,8 @@ async fn test_following_with_multiple_excerpts(cx: &mut gpui::TestAppContext) {
 
     let (buffer_1, buffer_2) = project.update(cx, |project, cx| {
         (
-            project
-                .create_buffer("abc\ndef\nghi\njkl\n", None, cx)
-                .unwrap(),
-            project
-                .create_buffer("mno\npqr\nstu\nvwx\n", None, cx)
-                .unwrap(),
+            project.create_local_buffer("abc\ndef\nghi\njkl\n", None, cx),
+            project.create_local_buffer("mno\npqr\nstu\nvwx\n", None, cx),
         )
     });
 
@@ -8455,27 +8606,32 @@ async fn test_document_format_with_prettier(cx: &mut gpui::TestAppContext) {
     });
 
     let fs = FakeFs::new(cx.executor());
-    fs.insert_file("/file.rs", Default::default()).await;
+    fs.insert_file("/file.ts", Default::default()).await;
 
-    let project = Project::test(fs, ["/file.rs".as_ref()], cx).await;
+    let project = Project::test(fs, ["/file.ts".as_ref()], cx).await;
     let language_registry = project.read_with(cx, |project, _| project.languages().clone());
 
     language_registry.add(Arc::new(Language::new(
         LanguageConfig {
-            name: "Rust".into(),
+            name: "TypeScript".into(),
             matcher: LanguageMatcher {
-                path_suffixes: vec!["rs".to_string()],
+                path_suffixes: vec!["ts".to_string()],
                 ..Default::default()
             },
-            prettier_parser_name: Some("test_parser".to_string()),
             ..Default::default()
         },
         Some(tree_sitter_rust::language()),
     )));
+    update_test_language_settings(cx, |settings| {
+        settings.defaults.prettier = Some(PrettierSettings {
+            allowed: true,
+            ..PrettierSettings::default()
+        });
+    });
 
     let test_plugin = "test_plugin";
     let _ = language_registry.register_fake_lsp_adapter(
-        "Rust",
+        "TypeScript",
         FakeLspAdapter {
             prettier_plugins: vec![test_plugin],
             ..Default::default()
@@ -8484,7 +8640,7 @@ async fn test_document_format_with_prettier(cx: &mut gpui::TestAppContext) {
 
     let prettier_format_suffix = project::TEST_PRETTIER_FORMAT_SUFFIX;
     let buffer = project
-        .update(cx, |project, cx| project.open_local_buffer("/file.rs", cx))
+        .update(cx, |project, cx| project.open_local_buffer("/file.ts", cx))
         .await
         .unwrap();
 
@@ -9161,7 +9317,7 @@ async fn test_mutlibuffer_in_navigation_history(cx: &mut gpui::TestAppContext) {
                 workspace.active_item(cx).is_none(),
                 "active item should be None before the first item is added"
             );
-            workspace.add_item_to_active_pane(Box::new(multi_buffer_editor.clone()), cx);
+            workspace.add_item_to_active_pane(Box::new(multi_buffer_editor.clone()), None, cx);
             let active_item = workspace
                 .active_item(cx)
                 .expect("should have an active item after adding the multi buffer");
@@ -9333,8 +9489,1854 @@ async fn test_mutlibuffer_in_navigation_history(cx: &mut gpui::TestAppContext) {
         .unwrap();
 }
 
+#[gpui::test]
+async fn test_toggle_hunk_diff(executor: BackgroundExecutor, cx: &mut gpui::TestAppContext) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorTestContext::new(cx).await;
+
+    let diff_base = r#"
+        use some::mod;
+
+        const A: u32 = 42;
+
+        fn main() {
+            println!("hello");
+
+            println!("world");
+        }
+        "#
+    .unindent();
+
+    cx.set_state(
+        &r#"
+        use some::modified;
+
+        ˇ
+        fn main() {
+            println!("hello there");
+
+            println!("around the");
+            println!("world");
+        }
+        "#
+        .unindent(),
+    );
+
+    cx.set_diff_base(Some(&diff_base));
+    executor.run_until_parked();
+    let unexpanded_hunks = vec![
+        (
+            "use some::mod;\n".to_string(),
+            DiffHunkStatus::Modified,
+            DisplayRow(0)..DisplayRow(1),
+        ),
+        (
+            "const A: u32 = 42;\n".to_string(),
+            DiffHunkStatus::Removed,
+            DisplayRow(2)..DisplayRow(2),
+        ),
+        (
+            "    println!(\"hello\");\n".to_string(),
+            DiffHunkStatus::Modified,
+            DisplayRow(4)..DisplayRow(5),
+        ),
+        (
+            "".to_string(),
+            DiffHunkStatus::Added,
+            DisplayRow(6)..DisplayRow(7),
+        ),
+    ];
+    cx.update_editor(|editor, cx| {
+        let snapshot = editor.snapshot(cx);
+        let all_hunks = editor_hunks(editor, &snapshot, cx);
+        assert_eq!(all_hunks, unexpanded_hunks);
+    });
+
+    cx.update_editor(|editor, cx| {
+        for _ in 0..4 {
+            editor.go_to_hunk(&GoToHunk, cx);
+            editor.toggle_hunk_diff(&ToggleHunkDiff, cx);
+        }
+    });
+    executor.run_until_parked();
+    cx.assert_editor_state(
+        &r#"
+        use some::modified;
+
+        ˇ
+        fn main() {
+            println!("hello there");
+
+            println!("around the");
+            println!("world");
+        }
+        "#
+        .unindent(),
+    );
+    cx.update_editor(|editor, cx| {
+        let snapshot = editor.snapshot(cx);
+        let all_hunks = editor_hunks(editor, &snapshot, cx);
+        let all_expanded_hunks = expanded_hunks(&editor, &snapshot, cx);
+        assert_eq!(
+            expanded_hunks_background_highlights(editor, cx),
+            vec![DisplayRow(1)..=DisplayRow(1), DisplayRow(7)..=DisplayRow(7), DisplayRow(9)..=DisplayRow(9)],
+            "After expanding, all git additions should be highlighted for Modified (split into added and removed) and Added hunks"
+        );
+        assert_eq!(
+            all_hunks,
+            vec![
+                ("use some::mod;\n".to_string(), DiffHunkStatus::Modified, DisplayRow(1)..DisplayRow(2)),
+                ("const A: u32 = 42;\n".to_string(), DiffHunkStatus::Removed, DisplayRow(4)..DisplayRow(4)),
+                ("    println!(\"hello\");\n".to_string(), DiffHunkStatus::Modified, DisplayRow(7)..DisplayRow(8)),
+                ("".to_string(), DiffHunkStatus::Added, DisplayRow(9)..DisplayRow(10)),
+            ],
+            "After expanding, all hunks' display rows should have shifted by the amount of deleted lines added \
+            (from modified and removed hunks)"
+        );
+        assert_eq!(
+            all_hunks, all_expanded_hunks,
+            "Editor hunks should not change and all be expanded"
+        );
+    });
+
+    cx.update_editor(|editor, cx| {
+        editor.cancel(&Cancel, cx);
+
+        let snapshot = editor.snapshot(cx);
+        let all_hunks = editor_hunks(editor, &snapshot, cx);
+        let all_expanded_hunks = expanded_hunks(editor, &snapshot, cx);
+        assert_eq!(
+            expanded_hunks_background_highlights(editor, cx),
+            Vec::new(),
+            "After cancelling in editor, no git highlights should be left"
+        );
+        assert_eq!(
+            all_expanded_hunks,
+            Vec::new(),
+            "After cancelling in editor, no hunks should be expanded"
+        );
+        assert_eq!(
+            all_hunks, unexpanded_hunks,
+            "After cancelling in editor, regular hunks' coordinates should get back to normal"
+        );
+    });
+}
+
+#[gpui::test]
+async fn test_toggled_diff_base_change(
+    executor: BackgroundExecutor,
+    cx: &mut gpui::TestAppContext,
+) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorTestContext::new(cx).await;
+
+    let diff_base = r#"
+        use some::mod1;
+        use some::mod2;
+
+        const A: u32 = 42;
+        const B: u32 = 42;
+        const C: u32 = 42;
+
+        fn main(ˇ) {
+            println!("hello");
+
+            println!("world");
+        }
+        "#
+    .unindent();
+
+    cx.set_state(
+        &r#"
+        use some::mod2;
+
+        const A: u32 = 42;
+        const C: u32 = 42;
+
+        fn main(ˇ) {
+            //println!("hello");
+
+            println!("world");
+            //
+            //
+        }
+        "#
+        .unindent(),
+    );
+
+    cx.set_diff_base(Some(&diff_base));
+    executor.run_until_parked();
+    cx.update_editor(|editor, cx| {
+        let snapshot = editor.snapshot(cx);
+        let all_hunks = editor_hunks(editor, &snapshot, cx);
+        assert_eq!(
+            all_hunks,
+            vec![
+                (
+                    "use some::mod1;\n".to_string(),
+                    DiffHunkStatus::Removed,
+                    DisplayRow(0)..DisplayRow(0)
+                ),
+                (
+                    "const B: u32 = 42;\n".to_string(),
+                    DiffHunkStatus::Removed,
+                    DisplayRow(3)..DisplayRow(3)
+                ),
+                (
+                    "fn main(ˇ) {\n    println!(\"hello\");\n".to_string(),
+                    DiffHunkStatus::Modified,
+                    DisplayRow(5)..DisplayRow(7)
+                ),
+                (
+                    "".to_string(),
+                    DiffHunkStatus::Added,
+                    DisplayRow(9)..DisplayRow(11)
+                ),
+            ]
+        );
+    });
+
+    cx.update_editor(|editor, cx| {
+        editor.expand_all_hunk_diffs(&ExpandAllHunkDiffs, cx);
+    });
+    executor.run_until_parked();
+    cx.assert_editor_state(
+        &r#"
+        use some::mod2;
+
+        const A: u32 = 42;
+        const C: u32 = 42;
+
+        fn main(ˇ) {
+            //println!("hello");
+
+            println!("world");
+            //
+            //
+        }
+        "#
+        .unindent(),
+    );
+    cx.update_editor(|editor, cx| {
+        let snapshot = editor.snapshot(cx);
+        let all_hunks = editor_hunks(editor, &snapshot, cx);
+        let all_expanded_hunks = expanded_hunks(&editor, &snapshot, cx);
+        assert_eq!(
+            expanded_hunks_background_highlights(editor, cx),
+            vec![DisplayRow(9)..=DisplayRow(10), DisplayRow(13)..=DisplayRow(14)],
+            "After expanding, all git additions should be highlighted for Modified (split into added and removed) and Added hunks"
+        );
+        assert_eq!(
+            all_hunks,
+            vec![
+                ("use some::mod1;\n".to_string(), DiffHunkStatus::Removed, DisplayRow(1)..DisplayRow(1)),
+                ("const B: u32 = 42;\n".to_string(), DiffHunkStatus::Removed, DisplayRow(5)..DisplayRow(5)),
+                ("fn main(ˇ) {\n    println!(\"hello\");\n".to_string(), DiffHunkStatus::Modified, DisplayRow(9)..DisplayRow(11)),
+                ("".to_string(), DiffHunkStatus::Added, DisplayRow(13)..DisplayRow(15)),
+            ],
+            "After expanding, all hunks' display rows should have shifted by the amount of deleted lines added \
+            (from modified and removed hunks)"
+        );
+        assert_eq!(
+            all_hunks, all_expanded_hunks,
+            "Editor hunks should not change and all be expanded"
+        );
+    });
+
+    cx.set_diff_base(Some("new diff base!"));
+    executor.run_until_parked();
+
+    cx.update_editor(|editor, cx| {
+        let snapshot = editor.snapshot(cx);
+        let all_hunks = editor_hunks(editor, &snapshot, cx);
+        let all_expanded_hunks = expanded_hunks(editor, &snapshot, cx);
+        assert_eq!(
+            expanded_hunks_background_highlights(editor, cx),
+            Vec::new(),
+            "After diff base is changed, old git highlights should be removed"
+        );
+        assert_eq!(
+            all_expanded_hunks,
+            Vec::new(),
+            "After diff base is changed, old git hunk expansions should be removed"
+        );
+        assert_eq!(
+            all_hunks,
+            vec![(
+                "new diff base!".to_string(),
+                DiffHunkStatus::Modified,
+                DisplayRow(0)..snapshot.display_snapshot.max_point().row()
+            )],
+            "After diff base is changed, hunks should update"
+        );
+    });
+}
+
+#[gpui::test]
+async fn test_fold_unfold_diff(executor: BackgroundExecutor, cx: &mut gpui::TestAppContext) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorTestContext::new(cx).await;
+
+    let diff_base = r#"
+        use some::mod1;
+        use some::mod2;
+
+        const A: u32 = 42;
+        const B: u32 = 42;
+        const C: u32 = 42;
+
+        fn main(ˇ) {
+            println!("hello");
+
+            println!("world");
+        }
+
+        fn another() {
+            println!("another");
+        }
+
+        fn another2() {
+            println!("another2");
+        }
+        "#
+    .unindent();
+
+    cx.set_state(
+        &r#"
+        «use some::mod2;
+
+        const A: u32 = 42;
+        const C: u32 = 42;
+
+        fn main() {
+            //println!("hello");
+
+            println!("world");
+            //
+            //ˇ»
+        }
+
+        fn another() {
+            println!("another");
+            println!("another");
+        }
+
+            println!("another2");
+        }
+        "#
+        .unindent(),
+    );
+
+    cx.set_diff_base(Some(&diff_base));
+    executor.run_until_parked();
+    cx.update_editor(|editor, cx| {
+        let snapshot = editor.snapshot(cx);
+        let all_hunks = editor_hunks(editor, &snapshot, cx);
+        assert_eq!(
+            all_hunks,
+            vec![
+                (
+                    "use some::mod1;\n".to_string(),
+                    DiffHunkStatus::Removed,
+                    DisplayRow(0)..DisplayRow(0)
+                ),
+                (
+                    "const B: u32 = 42;\n".to_string(),
+                    DiffHunkStatus::Removed,
+                    DisplayRow(3)..DisplayRow(3)
+                ),
+                (
+                    "fn main(ˇ) {\n    println!(\"hello\");\n".to_string(),
+                    DiffHunkStatus::Modified,
+                    DisplayRow(5)..DisplayRow(7)
+                ),
+                (
+                    "".to_string(),
+                    DiffHunkStatus::Added,
+                    DisplayRow(9)..DisplayRow(11)
+                ),
+                (
+                    "".to_string(),
+                    DiffHunkStatus::Added,
+                    DisplayRow(15)..DisplayRow(16)
+                ),
+                (
+                    "fn another2() {\n".to_string(),
+                    DiffHunkStatus::Removed,
+                    DisplayRow(18)..DisplayRow(18)
+                ),
+            ]
+        );
+    });
+
+    cx.update_editor(|editor, cx| {
+        editor.expand_all_hunk_diffs(&ExpandAllHunkDiffs, cx);
+    });
+    executor.run_until_parked();
+    cx.assert_editor_state(
+        &r#"
+        «use some::mod2;
+
+        const A: u32 = 42;
+        const C: u32 = 42;
+
+        fn main() {
+            //println!("hello");
+
+            println!("world");
+            //
+            //ˇ»
+        }
+
+        fn another() {
+            println!("another");
+            println!("another");
+        }
+
+            println!("another2");
+        }
+        "#
+        .unindent(),
+    );
+    cx.update_editor(|editor, cx| {
+        let snapshot = editor.snapshot(cx);
+        let all_hunks = editor_hunks(editor, &snapshot, cx);
+        let all_expanded_hunks = expanded_hunks(&editor, &snapshot, cx);
+        assert_eq!(
+            expanded_hunks_background_highlights(editor, cx),
+            vec![
+                DisplayRow(9)..=DisplayRow(10),
+                DisplayRow(13)..=DisplayRow(14),
+                DisplayRow(19)..=DisplayRow(19)
+            ]
+        );
+        assert_eq!(
+            all_hunks,
+            vec![
+                (
+                    "use some::mod1;\n".to_string(),
+                    DiffHunkStatus::Removed,
+                    DisplayRow(1)..DisplayRow(1)
+                ),
+                (
+                    "const B: u32 = 42;\n".to_string(),
+                    DiffHunkStatus::Removed,
+                    DisplayRow(5)..DisplayRow(5)
+                ),
+                (
+                    "fn main(ˇ) {\n    println!(\"hello\");\n".to_string(),
+                    DiffHunkStatus::Modified,
+                    DisplayRow(9)..DisplayRow(11)
+                ),
+                (
+                    "".to_string(),
+                    DiffHunkStatus::Added,
+                    DisplayRow(13)..DisplayRow(15)
+                ),
+                (
+                    "".to_string(),
+                    DiffHunkStatus::Added,
+                    DisplayRow(19)..DisplayRow(20)
+                ),
+                (
+                    "fn another2() {\n".to_string(),
+                    DiffHunkStatus::Removed,
+                    DisplayRow(23)..DisplayRow(23)
+                ),
+            ],
+        );
+        assert_eq!(all_hunks, all_expanded_hunks);
+    });
+
+    cx.update_editor(|editor, cx| editor.fold_selected_ranges(&FoldSelectedRanges, cx));
+    cx.executor().run_until_parked();
+    cx.assert_editor_state(
+        &r#"
+        «use some::mod2;
+
+        const A: u32 = 42;
+        const C: u32 = 42;
+
+        fn main() {
+            //println!("hello");
+
+            println!("world");
+            //
+            //ˇ»
+        }
+
+        fn another() {
+            println!("another");
+            println!("another");
+        }
+
+            println!("another2");
+        }
+        "#
+        .unindent(),
+    );
+    cx.update_editor(|editor, cx| {
+        let snapshot = editor.snapshot(cx);
+        let all_hunks = editor_hunks(editor, &snapshot, cx);
+        let all_expanded_hunks = expanded_hunks(&editor, &snapshot, cx);
+        assert_eq!(
+            expanded_hunks_background_highlights(editor, cx),
+            vec![DisplayRow(0)..=DisplayRow(0), DisplayRow(5)..=DisplayRow(5)],
+            "Only one hunk is left not folded, its highlight should be visible"
+        );
+        assert_eq!(
+            all_hunks,
+            vec![
+                (
+                    "use some::mod1;\n".to_string(),
+                    DiffHunkStatus::Removed,
+                    DisplayRow(0)..DisplayRow(0)
+                ),
+                (
+                    "const B: u32 = 42;\n".to_string(),
+                    DiffHunkStatus::Removed,
+                    DisplayRow(0)..DisplayRow(0)
+                ),
+                (
+                    "fn main(ˇ) {\n    println!(\"hello\");\n".to_string(),
+                    DiffHunkStatus::Modified,
+                    DisplayRow(0)..DisplayRow(0)
+                ),
+                (
+                    "".to_string(),
+                    DiffHunkStatus::Added,
+                    DisplayRow(0)..DisplayRow(1)
+                ),
+                (
+                    "".to_string(),
+                    DiffHunkStatus::Added,
+                    DisplayRow(5)..DisplayRow(6)
+                ),
+                (
+                    "fn another2() {\n".to_string(),
+                    DiffHunkStatus::Removed,
+                    DisplayRow(9)..DisplayRow(9)
+                ),
+            ],
+            "Hunk list should still return shifted folded hunks"
+        );
+        assert_eq!(
+            all_expanded_hunks,
+            vec![
+                (
+                    "".to_string(),
+                    DiffHunkStatus::Added,
+                    DisplayRow(5)..DisplayRow(6)
+                ),
+                (
+                    "fn another2() {\n".to_string(),
+                    DiffHunkStatus::Removed,
+                    DisplayRow(9)..DisplayRow(9)
+                ),
+            ],
+            "Only non-folded hunks should be left expanded"
+        );
+    });
+
+    cx.update_editor(|editor, cx| {
+        editor.select_all(&SelectAll, cx);
+        editor.unfold_lines(&UnfoldLines, cx);
+    });
+    cx.executor().run_until_parked();
+    cx.assert_editor_state(
+        &r#"
+        «use some::mod2;
+
+        const A: u32 = 42;
+        const C: u32 = 42;
+
+        fn main() {
+            //println!("hello");
+
+            println!("world");
+            //
+            //
+        }
+
+        fn another() {
+            println!("another");
+            println!("another");
+        }
+
+            println!("another2");
+        }
+        ˇ»"#
+        .unindent(),
+    );
+    cx.update_editor(|editor, cx| {
+        let snapshot = editor.snapshot(cx);
+        let all_hunks = editor_hunks(editor, &snapshot, cx);
+        let all_expanded_hunks = expanded_hunks(&editor, &snapshot, cx);
+        assert_eq!(
+            expanded_hunks_background_highlights(editor, cx),
+            vec![
+                DisplayRow(9)..=DisplayRow(10),
+                DisplayRow(13)..=DisplayRow(14),
+                DisplayRow(19)..=DisplayRow(19)
+            ],
+            "After unfolding, all hunk diffs should be visible again"
+        );
+        assert_eq!(
+            all_hunks,
+            vec![
+                (
+                    "use some::mod1;\n".to_string(),
+                    DiffHunkStatus::Removed,
+                    DisplayRow(1)..DisplayRow(1)
+                ),
+                (
+                    "const B: u32 = 42;\n".to_string(),
+                    DiffHunkStatus::Removed,
+                    DisplayRow(5)..DisplayRow(5)
+                ),
+                (
+                    "fn main(ˇ) {\n    println!(\"hello\");\n".to_string(),
+                    DiffHunkStatus::Modified,
+                    DisplayRow(9)..DisplayRow(11)
+                ),
+                (
+                    "".to_string(),
+                    DiffHunkStatus::Added,
+                    DisplayRow(13)..DisplayRow(15)
+                ),
+                (
+                    "".to_string(),
+                    DiffHunkStatus::Added,
+                    DisplayRow(19)..DisplayRow(20)
+                ),
+                (
+                    "fn another2() {\n".to_string(),
+                    DiffHunkStatus::Removed,
+                    DisplayRow(23)..DisplayRow(23)
+                ),
+            ],
+        );
+        assert_eq!(all_hunks, all_expanded_hunks);
+    });
+}
+
+#[gpui::test]
+async fn test_toggle_diff_expand_in_multi_buffer(cx: &mut gpui::TestAppContext) {
+    init_test(cx, |_| {});
+
+    let cols = 4;
+    let rows = 10;
+    let sample_text_1 = sample_text(rows, cols, 'a');
+    assert_eq!(
+        sample_text_1,
+        "aaaa\nbbbb\ncccc\ndddd\neeee\nffff\ngggg\nhhhh\niiii\njjjj"
+    );
+    let modified_sample_text_1 = "aaaa\ncccc\ndddd\neeee\nffff\ngggg\nhhhh\niiii\njjjj";
+    let sample_text_2 = sample_text(rows, cols, 'l');
+    assert_eq!(
+        sample_text_2,
+        "llll\nmmmm\nnnnn\noooo\npppp\nqqqq\nrrrr\nssss\ntttt\nuuuu"
+    );
+    let modified_sample_text_2 = "llll\nmmmm\n1n1n1n1n1\noooo\npppp\nqqqq\nrrrr\nssss\ntttt\nuuuu";
+    let sample_text_3 = sample_text(rows, cols, 'v');
+    assert_eq!(
+        sample_text_3,
+        "vvvv\nwwww\nxxxx\nyyyy\nzzzz\n{{{{\n||||\n}}}}\n~~~~\n\u{7f}\u{7f}\u{7f}\u{7f}"
+    );
+    let modified_sample_text_3 =
+        "vvvv\nwwww\nxxxx\nyyyy\nzzzz\n@@@@\n{{{{\n||||\n}}}}\n~~~~\n\u{7f}\u{7f}\u{7f}\u{7f}";
+    let buffer_1 = cx.new_model(|cx| {
+        let mut buffer = Buffer::local(modified_sample_text_1.to_string(), cx);
+        buffer.set_diff_base(Some(sample_text_1.clone()), cx);
+        buffer
+    });
+    let buffer_2 = cx.new_model(|cx| {
+        let mut buffer = Buffer::local(modified_sample_text_2.to_string(), cx);
+        buffer.set_diff_base(Some(sample_text_2.clone()), cx);
+        buffer
+    });
+    let buffer_3 = cx.new_model(|cx| {
+        let mut buffer = Buffer::local(modified_sample_text_3.to_string(), cx);
+        buffer.set_diff_base(Some(sample_text_3.clone()), cx);
+        buffer
+    });
+
+    let multi_buffer = cx.new_model(|cx| {
+        let mut multibuffer = MultiBuffer::new(0, ReadWrite);
+        multibuffer.push_excerpts(
+            buffer_1.clone(),
+            [
+                ExcerptRange {
+                    context: Point::new(0, 0)..Point::new(3, 0),
+                    primary: None,
+                },
+                ExcerptRange {
+                    context: Point::new(5, 0)..Point::new(7, 0),
+                    primary: None,
+                },
+                ExcerptRange {
+                    context: Point::new(9, 0)..Point::new(10, 4),
+                    primary: None,
+                },
+            ],
+            cx,
+        );
+        multibuffer.push_excerpts(
+            buffer_2.clone(),
+            [
+                ExcerptRange {
+                    context: Point::new(0, 0)..Point::new(3, 0),
+                    primary: None,
+                },
+                ExcerptRange {
+                    context: Point::new(5, 0)..Point::new(7, 0),
+                    primary: None,
+                },
+                ExcerptRange {
+                    context: Point::new(9, 0)..Point::new(10, 4),
+                    primary: None,
+                },
+            ],
+            cx,
+        );
+        multibuffer.push_excerpts(
+            buffer_3.clone(),
+            [
+                ExcerptRange {
+                    context: Point::new(0, 0)..Point::new(3, 0),
+                    primary: None,
+                },
+                ExcerptRange {
+                    context: Point::new(5, 0)..Point::new(7, 0),
+                    primary: None,
+                },
+                ExcerptRange {
+                    context: Point::new(9, 0)..Point::new(10, 4),
+                    primary: None,
+                },
+            ],
+            cx,
+        );
+        multibuffer
+    });
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        "/a",
+        json!({
+            "main.rs": modified_sample_text_1,
+            "other.rs": modified_sample_text_2,
+            "lib.rs": modified_sample_text_3,
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs, ["/a".as_ref()], cx).await;
+    let workspace = cx.add_window(|cx| Workspace::test_new(project.clone(), cx));
+    let cx = &mut VisualTestContext::from_window(*workspace.deref(), cx);
+    let multi_buffer_editor =
+        cx.new_view(|cx| Editor::new(EditorMode::Full, multi_buffer, Some(project.clone()), cx));
+    cx.executor().run_until_parked();
+
+    let expected_all_hunks = vec![
+        (
+            "bbbb\n".to_string(),
+            DiffHunkStatus::Removed,
+            DisplayRow(3)..DisplayRow(3),
+        ),
+        (
+            "nnnn\n".to_string(),
+            DiffHunkStatus::Modified,
+            DisplayRow(16)..DisplayRow(17),
+        ),
+        (
+            "".to_string(),
+            DiffHunkStatus::Added,
+            DisplayRow(31)..DisplayRow(32),
+        ),
+    ];
+    let expected_all_hunks_shifted = vec![
+        (
+            "bbbb\n".to_string(),
+            DiffHunkStatus::Removed,
+            DisplayRow(4)..DisplayRow(4),
+        ),
+        (
+            "nnnn\n".to_string(),
+            DiffHunkStatus::Modified,
+            DisplayRow(18)..DisplayRow(19),
+        ),
+        (
+            "".to_string(),
+            DiffHunkStatus::Added,
+            DisplayRow(33)..DisplayRow(34),
+        ),
+    ];
+
+    multi_buffer_editor.update(cx, |editor, cx| {
+        let snapshot = editor.snapshot(cx);
+        let all_hunks = editor_hunks(editor, &snapshot, cx);
+        let all_expanded_hunks = expanded_hunks(&editor, &snapshot, cx);
+        assert_eq!(expanded_hunks_background_highlights(editor, cx), Vec::new());
+        assert_eq!(all_hunks, expected_all_hunks);
+        assert_eq!(all_expanded_hunks, Vec::new());
+    });
+
+    multi_buffer_editor.update(cx, |editor, cx| {
+        editor.select_all(&SelectAll, cx);
+        editor.toggle_hunk_diff(&ToggleHunkDiff, cx);
+    });
+    cx.executor().run_until_parked();
+    multi_buffer_editor.update(cx, |editor, cx| {
+        let snapshot = editor.snapshot(cx);
+        let all_hunks = editor_hunks(editor, &snapshot, cx);
+        let all_expanded_hunks = expanded_hunks(&editor, &snapshot, cx);
+        assert_eq!(
+            expanded_hunks_background_highlights(editor, cx),
+            vec![
+                DisplayRow(18)..=DisplayRow(18),
+                DisplayRow(33)..=DisplayRow(33)
+            ],
+        );
+        assert_eq!(all_hunks, expected_all_hunks_shifted);
+        assert_eq!(all_hunks, all_expanded_hunks);
+    });
+
+    multi_buffer_editor.update(cx, |editor, cx| {
+        editor.toggle_hunk_diff(&ToggleHunkDiff, cx);
+    });
+    cx.executor().run_until_parked();
+    multi_buffer_editor.update(cx, |editor, cx| {
+        let snapshot = editor.snapshot(cx);
+        let all_hunks = editor_hunks(editor, &snapshot, cx);
+        let all_expanded_hunks = expanded_hunks(&editor, &snapshot, cx);
+        assert_eq!(expanded_hunks_background_highlights(editor, cx), Vec::new());
+        assert_eq!(all_hunks, expected_all_hunks);
+        assert_eq!(all_expanded_hunks, Vec::new());
+    });
+
+    multi_buffer_editor.update(cx, |editor, cx| {
+        editor.toggle_hunk_diff(&ToggleHunkDiff, cx);
+    });
+    cx.executor().run_until_parked();
+    multi_buffer_editor.update(cx, |editor, cx| {
+        let snapshot = editor.snapshot(cx);
+        let all_hunks = editor_hunks(editor, &snapshot, cx);
+        let all_expanded_hunks = expanded_hunks(&editor, &snapshot, cx);
+        assert_eq!(
+            expanded_hunks_background_highlights(editor, cx),
+            vec![
+                DisplayRow(18)..=DisplayRow(18),
+                DisplayRow(33)..=DisplayRow(33)
+            ],
+        );
+        assert_eq!(all_hunks, expected_all_hunks_shifted);
+        assert_eq!(all_hunks, all_expanded_hunks);
+    });
+
+    multi_buffer_editor.update(cx, |editor, cx| {
+        editor.toggle_hunk_diff(&ToggleHunkDiff, cx);
+    });
+    cx.executor().run_until_parked();
+    multi_buffer_editor.update(cx, |editor, cx| {
+        let snapshot = editor.snapshot(cx);
+        let all_hunks = editor_hunks(editor, &snapshot, cx);
+        let all_expanded_hunks = expanded_hunks(&editor, &snapshot, cx);
+        assert_eq!(expanded_hunks_background_highlights(editor, cx), Vec::new());
+        assert_eq!(all_hunks, expected_all_hunks);
+        assert_eq!(all_expanded_hunks, Vec::new());
+    });
+}
+
+#[gpui::test]
+async fn test_edits_around_toggled_additions(
+    executor: BackgroundExecutor,
+    cx: &mut gpui::TestAppContext,
+) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorTestContext::new(cx).await;
+
+    let diff_base = r#"
+        use some::mod1;
+        use some::mod2;
+
+        const A: u32 = 42;
+
+        fn main() {
+            println!("hello");
+
+            println!("world");
+        }
+        "#
+    .unindent();
+    executor.run_until_parked();
+    cx.set_state(
+        &r#"
+        use some::mod1;
+        use some::mod2;
+
+        const A: u32 = 42;
+        const B: u32 = 42;
+        const C: u32 = 42;
+        ˇ
+
+        fn main() {
+            println!("hello");
+
+            println!("world");
+        }
+        "#
+        .unindent(),
+    );
+
+    cx.set_diff_base(Some(&diff_base));
+    executor.run_until_parked();
+    cx.update_editor(|editor, cx| {
+        let snapshot = editor.snapshot(cx);
+        let all_hunks = editor_hunks(editor, &snapshot, cx);
+        assert_eq!(
+            all_hunks,
+            vec![(
+                "".to_string(),
+                DiffHunkStatus::Added,
+                DisplayRow(4)..DisplayRow(7)
+            )]
+        );
+    });
+    cx.update_editor(|editor, cx| {
+        editor.expand_all_hunk_diffs(&ExpandAllHunkDiffs, cx);
+    });
+    executor.run_until_parked();
+    cx.assert_editor_state(
+        &r#"
+        use some::mod1;
+        use some::mod2;
+
+        const A: u32 = 42;
+        const B: u32 = 42;
+        const C: u32 = 42;
+        ˇ
+
+        fn main() {
+            println!("hello");
+
+            println!("world");
+        }
+        "#
+        .unindent(),
+    );
+    cx.update_editor(|editor, cx| {
+        let snapshot = editor.snapshot(cx);
+        let all_hunks = editor_hunks(editor, &snapshot, cx);
+        let all_expanded_hunks = expanded_hunks(&editor, &snapshot, cx);
+        assert_eq!(
+            all_hunks,
+            vec![(
+                "".to_string(),
+                DiffHunkStatus::Added,
+                DisplayRow(4)..DisplayRow(7)
+            )]
+        );
+        assert_eq!(
+            expanded_hunks_background_highlights(editor, cx),
+            vec![DisplayRow(4)..=DisplayRow(6)]
+        );
+        assert_eq!(all_hunks, all_expanded_hunks);
+    });
+
+    cx.update_editor(|editor, cx| editor.handle_input("const D: u32 = 42;\n", cx));
+    executor.run_until_parked();
+    cx.assert_editor_state(
+        &r#"
+        use some::mod1;
+        use some::mod2;
+
+        const A: u32 = 42;
+        const B: u32 = 42;
+        const C: u32 = 42;
+        const D: u32 = 42;
+        ˇ
+
+        fn main() {
+            println!("hello");
+
+            println!("world");
+        }
+        "#
+        .unindent(),
+    );
+    cx.update_editor(|editor, cx| {
+        let snapshot = editor.snapshot(cx);
+        let all_hunks = editor_hunks(editor, &snapshot, cx);
+        let all_expanded_hunks = expanded_hunks(&editor, &snapshot, cx);
+        assert_eq!(
+            all_hunks,
+            vec![(
+                "".to_string(),
+                DiffHunkStatus::Added,
+                DisplayRow(4)..DisplayRow(8)
+            )]
+        );
+        assert_eq!(
+            expanded_hunks_background_highlights(editor, cx),
+            vec![DisplayRow(4)..=DisplayRow(6)],
+            "Edited hunk should have one more line added"
+        );
+        assert_eq!(
+            all_hunks, all_expanded_hunks,
+            "Expanded hunk should also grow with the addition"
+        );
+    });
+
+    cx.update_editor(|editor, cx| editor.handle_input("const E: u32 = 42;\n", cx));
+    executor.run_until_parked();
+    cx.assert_editor_state(
+        &r#"
+        use some::mod1;
+        use some::mod2;
+
+        const A: u32 = 42;
+        const B: u32 = 42;
+        const C: u32 = 42;
+        const D: u32 = 42;
+        const E: u32 = 42;
+        ˇ
+
+        fn main() {
+            println!("hello");
+
+            println!("world");
+        }
+        "#
+        .unindent(),
+    );
+    cx.update_editor(|editor, cx| {
+        let snapshot = editor.snapshot(cx);
+        let all_hunks = editor_hunks(editor, &snapshot, cx);
+        let all_expanded_hunks = expanded_hunks(&editor, &snapshot, cx);
+        assert_eq!(
+            all_hunks,
+            vec![(
+                "".to_string(),
+                DiffHunkStatus::Added,
+                DisplayRow(4)..DisplayRow(9)
+            )]
+        );
+        assert_eq!(
+            expanded_hunks_background_highlights(editor, cx),
+            vec![DisplayRow(4)..=DisplayRow(6)],
+            "Edited hunk should have one more line added"
+        );
+        assert_eq!(all_hunks, all_expanded_hunks);
+    });
+
+    cx.update_editor(|editor, cx| {
+        editor.move_up(&MoveUp, cx);
+        editor.delete_line(&DeleteLine, cx);
+    });
+    executor.run_until_parked();
+    cx.assert_editor_state(
+        &r#"
+        use some::mod1;
+        use some::mod2;
+
+        const A: u32 = 42;
+        const B: u32 = 42;
+        const C: u32 = 42;
+        const D: u32 = 42;
+        ˇ
+
+        fn main() {
+            println!("hello");
+
+            println!("world");
+        }
+        "#
+        .unindent(),
+    );
+    cx.update_editor(|editor, cx| {
+        let snapshot = editor.snapshot(cx);
+        let all_hunks = editor_hunks(editor, &snapshot, cx);
+        let all_expanded_hunks = expanded_hunks(&editor, &snapshot, cx);
+        assert_eq!(
+            all_hunks,
+            vec![(
+                "".to_string(),
+                DiffHunkStatus::Added,
+                DisplayRow(4)..DisplayRow(8)
+            )]
+        );
+        assert_eq!(
+            expanded_hunks_background_highlights(editor, cx),
+            vec![DisplayRow(4)..=DisplayRow(6)],
+            "Deleting a line should shrint the hunk"
+        );
+        assert_eq!(
+            all_hunks, all_expanded_hunks,
+            "Expanded hunk should also shrink with the addition"
+        );
+    });
+
+    cx.update_editor(|editor, cx| {
+        editor.move_up(&MoveUp, cx);
+        editor.delete_line(&DeleteLine, cx);
+        editor.move_up(&MoveUp, cx);
+        editor.delete_line(&DeleteLine, cx);
+        editor.move_up(&MoveUp, cx);
+        editor.delete_line(&DeleteLine, cx);
+    });
+    executor.run_until_parked();
+    cx.assert_editor_state(
+        &r#"
+        use some::mod1;
+        use some::mod2;
+
+        const A: u32 = 42;
+        ˇ
+
+        fn main() {
+            println!("hello");
+
+            println!("world");
+        }
+        "#
+        .unindent(),
+    );
+    cx.update_editor(|editor, cx| {
+        let snapshot = editor.snapshot(cx);
+        let all_hunks = editor_hunks(editor, &snapshot, cx);
+        let all_expanded_hunks = expanded_hunks(&editor, &snapshot, cx);
+        assert_eq!(
+            all_hunks,
+            vec![(
+                "".to_string(),
+                DiffHunkStatus::Added,
+                DisplayRow(5)..DisplayRow(6)
+            )]
+        );
+        assert_eq!(
+            expanded_hunks_background_highlights(editor, cx),
+            vec![DisplayRow(5)..=DisplayRow(5)]
+        );
+        assert_eq!(all_hunks, all_expanded_hunks);
+    });
+
+    cx.update_editor(|editor, cx| {
+        editor.select_up_by_lines(&SelectUpByLines { lines: 5 }, cx);
+        editor.delete_line(&DeleteLine, cx);
+    });
+    executor.run_until_parked();
+    cx.assert_editor_state(
+        &r#"
+        ˇ
+
+        fn main() {
+            println!("hello");
+
+            println!("world");
+        }
+        "#
+        .unindent(),
+    );
+    cx.update_editor(|editor, cx| {
+        let snapshot = editor.snapshot(cx);
+        let all_hunks = editor_hunks(editor, &snapshot, cx);
+        let all_expanded_hunks = expanded_hunks(&editor, &snapshot, cx);
+        assert_eq!(
+            all_hunks,
+            vec![
+                (
+                    "use some::mod1;\nuse some::mod2;\n".to_string(),
+                    DiffHunkStatus::Removed,
+                    DisplayRow(0)..DisplayRow(0)
+                ),
+                (
+                    "const A: u32 = 42;\n".to_string(),
+                    DiffHunkStatus::Removed,
+                    DisplayRow(2)..DisplayRow(2)
+                )
+            ]
+        );
+        assert_eq!(
+            expanded_hunks_background_highlights(editor, cx),
+            Vec::new(),
+            "Should close all stale expanded addition hunks"
+        );
+        assert_eq!(
+            all_expanded_hunks,
+            vec![(
+                "const A: u32 = 42;\n".to_string(),
+                DiffHunkStatus::Removed,
+                DisplayRow(2)..DisplayRow(2)
+            )],
+            "Should open hunks that were adjacent to the stale addition one"
+        );
+    });
+}
+
+#[gpui::test]
+async fn test_edits_around_toggled_deletions(
+    executor: BackgroundExecutor,
+    cx: &mut gpui::TestAppContext,
+) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorTestContext::new(cx).await;
+
+    let diff_base = r#"
+        use some::mod1;
+        use some::mod2;
+
+        const A: u32 = 42;
+        const B: u32 = 42;
+        const C: u32 = 42;
+
+
+        fn main() {
+            println!("hello");
+
+            println!("world");
+        }
+        "#
+    .unindent();
+    executor.run_until_parked();
+    cx.set_state(
+        &r#"
+        use some::mod1;
+        use some::mod2;
+
+        ˇconst B: u32 = 42;
+        const C: u32 = 42;
+
+
+        fn main() {
+            println!("hello");
+
+            println!("world");
+        }
+        "#
+        .unindent(),
+    );
+
+    cx.set_diff_base(Some(&diff_base));
+    executor.run_until_parked();
+    cx.update_editor(|editor, cx| {
+        let snapshot = editor.snapshot(cx);
+        let all_hunks = editor_hunks(editor, &snapshot, cx);
+        assert_eq!(
+            all_hunks,
+            vec![(
+                "const A: u32 = 42;\n".to_string(),
+                DiffHunkStatus::Removed,
+                DisplayRow(3)..DisplayRow(3)
+            )]
+        );
+    });
+    cx.update_editor(|editor, cx| {
+        editor.expand_all_hunk_diffs(&ExpandAllHunkDiffs, cx);
+    });
+    executor.run_until_parked();
+    cx.assert_editor_state(
+        &r#"
+        use some::mod1;
+        use some::mod2;
+
+        ˇconst B: u32 = 42;
+        const C: u32 = 42;
+
+
+        fn main() {
+            println!("hello");
+
+            println!("world");
+        }
+        "#
+        .unindent(),
+    );
+    cx.update_editor(|editor, cx| {
+        let snapshot = editor.snapshot(cx);
+        let all_hunks = editor_hunks(editor, &snapshot, cx);
+        let all_expanded_hunks = expanded_hunks(&editor, &snapshot, cx);
+        assert_eq!(expanded_hunks_background_highlights(editor, cx), Vec::new());
+        assert_eq!(
+            all_hunks,
+            vec![(
+                "const A: u32 = 42;\n".to_string(),
+                DiffHunkStatus::Removed,
+                DisplayRow(4)..DisplayRow(4)
+            )]
+        );
+        assert_eq!(all_hunks, all_expanded_hunks);
+    });
+
+    cx.update_editor(|editor, cx| {
+        editor.delete_line(&DeleteLine, cx);
+    });
+    executor.run_until_parked();
+    cx.assert_editor_state(
+        &r#"
+        use some::mod1;
+        use some::mod2;
+
+        ˇconst C: u32 = 42;
+
+
+        fn main() {
+            println!("hello");
+
+            println!("world");
+        }
+        "#
+        .unindent(),
+    );
+    cx.update_editor(|editor, cx| {
+        let snapshot = editor.snapshot(cx);
+        let all_hunks = editor_hunks(editor, &snapshot, cx);
+        let all_expanded_hunks = expanded_hunks(&editor, &snapshot, cx);
+        assert_eq!(
+            expanded_hunks_background_highlights(editor, cx),
+            Vec::new(),
+            "Deleted hunks do not highlight current editor's background"
+        );
+        assert_eq!(
+            all_hunks,
+            vec![(
+                "const A: u32 = 42;\nconst B: u32 = 42;\n".to_string(),
+                DiffHunkStatus::Removed,
+                DisplayRow(5)..DisplayRow(5)
+            )]
+        );
+        assert_eq!(all_hunks, all_expanded_hunks);
+    });
+
+    cx.update_editor(|editor, cx| {
+        editor.delete_line(&DeleteLine, cx);
+    });
+    executor.run_until_parked();
+    cx.assert_editor_state(
+        &r#"
+        use some::mod1;
+        use some::mod2;
+
+        ˇ
+
+        fn main() {
+            println!("hello");
+
+            println!("world");
+        }
+        "#
+        .unindent(),
+    );
+    cx.update_editor(|editor, cx| {
+        let snapshot = editor.snapshot(cx);
+        let all_hunks = editor_hunks(editor, &snapshot, cx);
+        let all_expanded_hunks = expanded_hunks(&editor, &snapshot, cx);
+        assert_eq!(expanded_hunks_background_highlights(editor, cx), Vec::new());
+        assert_eq!(
+            all_hunks,
+            vec![(
+                "const A: u32 = 42;\nconst B: u32 = 42;\nconst C: u32 = 42;\n".to_string(),
+                DiffHunkStatus::Removed,
+                DisplayRow(6)..DisplayRow(6)
+            )]
+        );
+        assert_eq!(all_hunks, all_expanded_hunks);
+    });
+
+    cx.update_editor(|editor, cx| {
+        editor.handle_input("replacement", cx);
+    });
+    executor.run_until_parked();
+    cx.assert_editor_state(
+        &r#"
+        use some::mod1;
+        use some::mod2;
+
+        replacementˇ
+
+        fn main() {
+            println!("hello");
+
+            println!("world");
+        }
+        "#
+        .unindent(),
+    );
+    cx.update_editor(|editor, cx| {
+        let snapshot = editor.snapshot(cx);
+        let all_hunks = editor_hunks(editor, &snapshot, cx);
+        let all_expanded_hunks = expanded_hunks(&editor, &snapshot, cx);
+        assert_eq!(
+            all_hunks,
+            vec![(
+                "const A: u32 = 42;\nconst B: u32 = 42;\nconst C: u32 = 42;\n\n".to_string(),
+                DiffHunkStatus::Modified,
+                DisplayRow(7)..DisplayRow(8)
+            )]
+        );
+        assert_eq!(
+            expanded_hunks_background_highlights(editor, cx),
+            vec![DisplayRow(7)..=DisplayRow(7)],
+            "Modified expanded hunks should display additions and highlight their background"
+        );
+        assert_eq!(all_hunks, all_expanded_hunks);
+    });
+}
+
+#[gpui::test]
+async fn test_edits_around_toggled_modifications(
+    executor: BackgroundExecutor,
+    cx: &mut gpui::TestAppContext,
+) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorTestContext::new(cx).await;
+
+    let diff_base = r#"
+        use some::mod1;
+        use some::mod2;
+
+        const A: u32 = 42;
+        const B: u32 = 42;
+        const C: u32 = 42;
+        const D: u32 = 42;
+
+
+        fn main() {
+            println!("hello");
+
+            println!("world");
+        }"#
+    .unindent();
+    executor.run_until_parked();
+    cx.set_state(
+        &r#"
+        use some::mod1;
+        use some::mod2;
+
+        const A: u32 = 42;
+        const B: u32 = 42;
+        const C: u32 = 43ˇ
+        const D: u32 = 42;
+
+
+        fn main() {
+            println!("hello");
+
+            println!("world");
+        }"#
+        .unindent(),
+    );
+
+    cx.set_diff_base(Some(&diff_base));
+    executor.run_until_parked();
+    cx.update_editor(|editor, cx| {
+        let snapshot = editor.snapshot(cx);
+        let all_hunks = editor_hunks(editor, &snapshot, cx);
+        assert_eq!(
+            all_hunks,
+            vec![(
+                "const C: u32 = 42;\n".to_string(),
+                DiffHunkStatus::Modified,
+                DisplayRow(5)..DisplayRow(6)
+            )]
+        );
+    });
+    cx.update_editor(|editor, cx| {
+        editor.expand_all_hunk_diffs(&ExpandAllHunkDiffs, cx);
+    });
+    executor.run_until_parked();
+    cx.assert_editor_state(
+        &r#"
+        use some::mod1;
+        use some::mod2;
+
+        const A: u32 = 42;
+        const B: u32 = 42;
+        const C: u32 = 43ˇ
+        const D: u32 = 42;
+
+
+        fn main() {
+            println!("hello");
+
+            println!("world");
+        }"#
+        .unindent(),
+    );
+    cx.update_editor(|editor, cx| {
+        let snapshot = editor.snapshot(cx);
+        let all_hunks = editor_hunks(editor, &snapshot, cx);
+        let all_expanded_hunks = expanded_hunks(&editor, &snapshot, cx);
+        assert_eq!(
+            expanded_hunks_background_highlights(editor, cx),
+            vec![DisplayRow(6)..=DisplayRow(6)],
+        );
+        assert_eq!(
+            all_hunks,
+            vec![(
+                "const C: u32 = 42;\n".to_string(),
+                DiffHunkStatus::Modified,
+                DisplayRow(6)..DisplayRow(7)
+            )]
+        );
+        assert_eq!(all_hunks, all_expanded_hunks);
+    });
+
+    cx.update_editor(|editor, cx| {
+        editor.handle_input("\nnew_line\n", cx);
+    });
+    executor.run_until_parked();
+    cx.assert_editor_state(
+        &r#"
+            use some::mod1;
+            use some::mod2;
+
+            const A: u32 = 42;
+            const B: u32 = 42;
+            const C: u32 = 43
+            new_line
+            ˇ
+            const D: u32 = 42;
+
+
+            fn main() {
+                println!("hello");
+
+                println!("world");
+            }"#
+        .unindent(),
+    );
+    cx.update_editor(|editor, cx| {
+        let snapshot = editor.snapshot(cx);
+        let all_hunks = editor_hunks(editor, &snapshot, cx);
+        let all_expanded_hunks = expanded_hunks(&editor, &snapshot, cx);
+        assert_eq!(
+            expanded_hunks_background_highlights(editor, cx),
+            vec![DisplayRow(6)..=DisplayRow(6)],
+            "Modified hunk should grow highlighted lines on more text additions"
+        );
+        assert_eq!(
+            all_hunks,
+            vec![(
+                "const C: u32 = 42;\n".to_string(),
+                DiffHunkStatus::Modified,
+                DisplayRow(6)..DisplayRow(9)
+            )]
+        );
+        assert_eq!(all_hunks, all_expanded_hunks);
+    });
+
+    cx.update_editor(|editor, cx| {
+        editor.move_up(&MoveUp, cx);
+        editor.move_up(&MoveUp, cx);
+        editor.move_up(&MoveUp, cx);
+        editor.delete_line(&DeleteLine, cx);
+    });
+    executor.run_until_parked();
+    cx.assert_editor_state(
+        &r#"
+            use some::mod1;
+            use some::mod2;
+
+            const A: u32 = 42;
+            ˇconst C: u32 = 43
+            new_line
+
+            const D: u32 = 42;
+
+
+            fn main() {
+                println!("hello");
+
+                println!("world");
+            }"#
+        .unindent(),
+    );
+    cx.update_editor(|editor, cx| {
+        let snapshot = editor.snapshot(cx);
+        let all_hunks = editor_hunks(editor, &snapshot, cx);
+        let all_expanded_hunks = expanded_hunks(&editor, &snapshot, cx);
+        assert_eq!(
+            expanded_hunks_background_highlights(editor, cx),
+            vec![DisplayRow(6)..=DisplayRow(8)],
+        );
+        assert_eq!(
+            all_hunks,
+            vec![(
+                "const B: u32 = 42;\nconst C: u32 = 42;\n".to_string(),
+                DiffHunkStatus::Modified,
+                DisplayRow(6)..DisplayRow(9)
+            )],
+            "Modified hunk should grow deleted lines on text deletions above"
+        );
+        assert_eq!(all_hunks, all_expanded_hunks);
+    });
+
+    cx.update_editor(|editor, cx| {
+        editor.move_up(&MoveUp, cx);
+        editor.handle_input("v", cx);
+    });
+    executor.run_until_parked();
+    cx.assert_editor_state(
+        &r#"
+            use some::mod1;
+            use some::mod2;
+
+            vˇconst A: u32 = 42;
+            const C: u32 = 43
+            new_line
+
+            const D: u32 = 42;
+
+
+            fn main() {
+                println!("hello");
+
+                println!("world");
+            }"#
+        .unindent(),
+    );
+    cx.update_editor(|editor, cx| {
+        let snapshot = editor.snapshot(cx);
+        let all_hunks = editor_hunks(editor, &snapshot, cx);
+        let all_expanded_hunks = expanded_hunks(&editor, &snapshot, cx);
+        assert_eq!(
+            expanded_hunks_background_highlights(editor, cx),
+            vec![DisplayRow(6)..=DisplayRow(9)],
+            "Modified hunk should grow deleted lines on text modifications above"
+        );
+        assert_eq!(
+            all_hunks,
+            vec![(
+                "const A: u32 = 42;\nconst B: u32 = 42;\nconst C: u32 = 42;\n".to_string(),
+                DiffHunkStatus::Modified,
+                DisplayRow(6)..DisplayRow(10)
+            )]
+        );
+        assert_eq!(all_hunks, all_expanded_hunks);
+    });
+
+    cx.update_editor(|editor, cx| {
+        editor.move_down(&MoveDown, cx);
+        editor.move_down(&MoveDown, cx);
+        editor.delete_line(&DeleteLine, cx)
+    });
+    executor.run_until_parked();
+    cx.assert_editor_state(
+        &r#"
+            use some::mod1;
+            use some::mod2;
+
+            vconst A: u32 = 42;
+            const C: u32 = 43
+            ˇ
+            const D: u32 = 42;
+
+
+            fn main() {
+                println!("hello");
+
+                println!("world");
+            }"#
+        .unindent(),
+    );
+    cx.update_editor(|editor, cx| {
+        let snapshot = editor.snapshot(cx);
+        let all_hunks = editor_hunks(editor, &snapshot, cx);
+        let all_expanded_hunks = expanded_hunks(&editor, &snapshot, cx);
+        assert_eq!(
+            expanded_hunks_background_highlights(editor, cx),
+            vec![DisplayRow(6)..=DisplayRow(8)],
+            "Modified hunk should grow shrink lines on modification lines removal"
+        );
+        assert_eq!(
+            all_hunks,
+            vec![(
+                "const A: u32 = 42;\nconst B: u32 = 42;\nconst C: u32 = 42;\n".to_string(),
+                DiffHunkStatus::Modified,
+                DisplayRow(6)..DisplayRow(9)
+            )]
+        );
+        assert_eq!(all_hunks, all_expanded_hunks);
+    });
+
+    cx.update_editor(|editor, cx| {
+        editor.move_up(&MoveUp, cx);
+        editor.move_up(&MoveUp, cx);
+        editor.select_down_by_lines(&SelectDownByLines { lines: 4 }, cx);
+        editor.delete_line(&DeleteLine, cx)
+    });
+    executor.run_until_parked();
+    cx.assert_editor_state(
+        &r#"
+            use some::mod1;
+            use some::mod2;
+
+            ˇ
+
+            fn main() {
+                println!("hello");
+
+                println!("world");
+            }"#
+        .unindent(),
+    );
+    cx.update_editor(|editor, cx| {
+        let snapshot = editor.snapshot(cx);
+        let all_hunks = editor_hunks(editor, &snapshot, cx);
+        let all_expanded_hunks = expanded_hunks(&editor, &snapshot, cx);
+        assert_eq!(
+            expanded_hunks_background_highlights(editor, cx),
+            Vec::new(),
+            "Modified hunk should turn into a removed one on all modified lines removal"
+        );
+        assert_eq!(
+            all_hunks,
+            vec![(
+                "const A: u32 = 42;\nconst B: u32 = 42;\nconst C: u32 = 42;\nconst D: u32 = 42;\n"
+                    .to_string(),
+                DiffHunkStatus::Removed,
+                DisplayRow(7)..DisplayRow(7)
+            )]
+        );
+        assert_eq!(all_hunks, all_expanded_hunks);
+    });
+}
+
+#[gpui::test]
+async fn test_multiple_expanded_hunks_merge(
+    executor: BackgroundExecutor,
+    cx: &mut gpui::TestAppContext,
+) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorTestContext::new(cx).await;
+
+    let diff_base = r#"
+        use some::mod1;
+        use some::mod2;
+
+        const A: u32 = 42;
+        const B: u32 = 42;
+        const C: u32 = 42;
+        const D: u32 = 42;
+
+
+        fn main() {
+            println!("hello");
+
+            println!("world");
+        }"#
+    .unindent();
+    executor.run_until_parked();
+    cx.set_state(
+        &r#"
+        use some::mod1;
+        use some::mod2;
+
+        const A: u32 = 42;
+        const B: u32 = 42;
+        const C: u32 = 43ˇ
+        const D: u32 = 42;
+
+
+        fn main() {
+            println!("hello");
+
+            println!("world");
+        }"#
+        .unindent(),
+    );
+
+    cx.set_diff_base(Some(&diff_base));
+    executor.run_until_parked();
+    cx.update_editor(|editor, cx| {
+        let snapshot = editor.snapshot(cx);
+        let all_hunks = editor_hunks(editor, &snapshot, cx);
+        assert_eq!(
+            all_hunks,
+            vec![(
+                "const C: u32 = 42;\n".to_string(),
+                DiffHunkStatus::Modified,
+                DisplayRow(5)..DisplayRow(6)
+            )]
+        );
+    });
+    cx.update_editor(|editor, cx| {
+        editor.expand_all_hunk_diffs(&ExpandAllHunkDiffs, cx);
+    });
+    executor.run_until_parked();
+    cx.assert_editor_state(
+        &r#"
+        use some::mod1;
+        use some::mod2;
+
+        const A: u32 = 42;
+        const B: u32 = 42;
+        const C: u32 = 43ˇ
+        const D: u32 = 42;
+
+
+        fn main() {
+            println!("hello");
+
+            println!("world");
+        }"#
+        .unindent(),
+    );
+    cx.update_editor(|editor, cx| {
+        let snapshot = editor.snapshot(cx);
+        let all_hunks = editor_hunks(editor, &snapshot, cx);
+        let all_expanded_hunks = expanded_hunks(&editor, &snapshot, cx);
+        assert_eq!(
+            expanded_hunks_background_highlights(editor, cx),
+            vec![DisplayRow(6)..=DisplayRow(6)],
+        );
+        assert_eq!(
+            all_hunks,
+            vec![(
+                "const C: u32 = 42;\n".to_string(),
+                DiffHunkStatus::Modified,
+                DisplayRow(6)..DisplayRow(7)
+            )]
+        );
+        assert_eq!(all_hunks, all_expanded_hunks);
+    });
+
+    cx.update_editor(|editor, cx| {
+        editor.handle_input("\nnew_line\n", cx);
+    });
+    executor.run_until_parked();
+    cx.assert_editor_state(
+        &r#"
+            use some::mod1;
+            use some::mod2;
+
+            const A: u32 = 42;
+            const B: u32 = 42;
+            const C: u32 = 43
+            new_line
+            ˇ
+            const D: u32 = 42;
+
+
+            fn main() {
+                println!("hello");
+
+                println!("world");
+            }"#
+        .unindent(),
+    );
+}
+
 fn empty_range(row: usize, column: usize) -> Range<DisplayPoint> {
-    let point = DisplayPoint::new(row as u32, column as u32);
+    let point = DisplayPoint::new(DisplayRow(row as u32), column as u32);
     point..point
 }
 
@@ -9497,22 +11499,16 @@ fn assert_hunk_revert(
             .as_singleton()
             .unwrap()
             .update(cx, |buffer, cx| {
-                buffer.set_diff_base(Some(base_text.to_string()), cx);
+                buffer.set_diff_base(Some(base_text.into()), cx);
             });
     });
     cx.executor().run_until_parked();
 
     let reverted_hunk_statuses = cx.update_editor(|editor, cx| {
-        let snapshot = editor
-            .buffer()
-            .read(cx)
-            .as_singleton()
-            .unwrap()
-            .read(cx)
-            .snapshot();
+        let snapshot = editor.buffer().read(cx).snapshot(cx);
         let reverted_hunk_statuses = snapshot
-            .git_diff_hunks_in_row_range(0..u32::MAX)
-            .map(|hunk| hunk.status())
+            .git_diff_hunks_in_range(MultiBufferRow::MIN..MultiBufferRow::MAX)
+            .map(|hunk| hunk_status(&hunk))
             .collect::<Vec<_>>();
 
         editor.revert_selected_hunks(&RevertSelectedHunks, cx);

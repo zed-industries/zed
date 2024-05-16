@@ -39,6 +39,7 @@ futures.workspace = true
 fuzzy.workspace = true
 git.workspace = true
 gpui.workspace = true
+http.workspace = true
 indoc.workspace = true
 itertools.workspace = true
 language.workspace = true
@@ -60,6 +61,7 @@ smallvec.workspace = true
 smol.workspace = true
 snippet.workspace = true
 sum_tree.workspace = true
+task.workspace = true
 text.workspace = true
 time.workspace = true
 time_format.workspace = true
@@ -90,3 +92,4 @@ tree-sitter-typescript.workspace = true
 unindent.workspace = true
 util = { workspace = true, features = ["test-support"] }
 workspace = { workspace = true, features = ["test-support"] }
+http = { workspace = true, features = ["test-support"] }

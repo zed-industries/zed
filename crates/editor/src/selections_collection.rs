@@ -14,7 +14,8 @@ use util::post_inc;
 use crate::{
     display_map::{DisplayMap, DisplaySnapshot, ToDisplayPoint},
     movement::TextLayoutDetails,
-    Anchor, DisplayPoint, ExcerptId, MultiBuffer, MultiBufferSnapshot, SelectMode, ToOffset,
+    Anchor, DisplayPoint, DisplayRow, ExcerptId, MultiBuffer, MultiBufferSnapshot, SelectMode,
+    ToOffset,
 };
 
 #[derive(Debug, Clone)]
@@ -69,7 +70,7 @@ impl SelectionsCollection {
         self.next_selection_id = other.next_selection_id;
         self.line_mode = other.line_mode;
         self.disjoint = other.disjoint.clone();
-        self.pending = other.pending.clone();
+        self.pending.clone_from(&other.pending);
     }
 
     pub fn count(&self) -> usize {
@@ -308,7 +309,7 @@ impl SelectionsCollection {
     pub fn build_columnar_selection(
         &mut self,
         display_map: &DisplaySnapshot,
-        row: u32,
+        row: DisplayRow,
         positions: &Range<Pixels>,
         reversed: bool,
         text_layout_details: &TextLayoutDetails,
