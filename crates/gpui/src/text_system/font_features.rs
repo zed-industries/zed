@@ -60,42 +60,35 @@ impl<'de> serde::Deserialize<'de> for FontFeatures {
             {
                 let mut feature_list = Vec::new();
 
-                loop {
-                    match access.next_entry::<String, Option<FeatureValue>>() {
-                        Ok(Some((key, value))) => {
-                            if key.len() != 4 && !key.is_ascii() {
-                                log::error!("Incorrect feature name: {}", key);
-                                continue;
+                while let Some((key, value)) =
+                    access.next_entry::<String, Option<FeatureValue>>()?
+                {
+                    if key.len() != 4 && !key.is_ascii() {
+                        log::error!("Incorrect font feature tag: {}", key);
+                        continue;
+                    }
+                    if let Some(value) = value {
+                        match value {
+                            FeatureValue::Bool(enable) => {
+                                if enable {
+                                    feature_list.push((key, 1));
+                                } else {
+                                    feature_list.push((key, 0));
+                                }
                             }
-                            if let Some(value) = value {
-                                match value {
-                                    FeatureValue::Bool(enable) => {
-                                        if enable {
-                                            feature_list.push((key, 1));
-                                        } else {
-                                            feature_list.push((key, 0));
-                                        }
-                                    }
-                                    FeatureValue::Number(value) => {
-                                        if value.is_u64() {
-                                            feature_list
-                                                .push((key, value.as_u64().unwrap() as u32));
-                                        } else {
-                                            log::error!(
-                                                "Incorrect feature value {}: {}",
-                                                key,
-                                                value
-                                            );
-                                            continue;
-                                        }
-                                    }
+                            FeatureValue::Number(value) => {
+                                if value.is_u64() {
+                                    feature_list.push((key, value.as_u64().unwrap() as u32));
+                                } else {
+                                    log::error!(
+                                        "Incorrect font feature value {} for feature tag {}",
+                                        value,
+                                        key
+                                    );
+                                    continue;
                                 }
                             }
                         }
-                        Err(e) => {
-                            println!("Font err: {:?}", e);
-                        }
-                        _ => break,
                     }
                 }
                 if feature_list.is_empty() {
