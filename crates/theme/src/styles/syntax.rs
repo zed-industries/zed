@@ -7,7 +7,7 @@ use crate::{
     tomato, yellow,
 };
 
-#[derive(Clone, Default)]
+#[derive(Debug, PartialEq, Eq, Clone, Default)]
 pub struct SyntaxTheme {
     pub highlights: Vec<(String, HighlightStyle)>,
 }
@@ -131,18 +131,25 @@ impl SyntaxTheme {
 
     #[cfg(any(test, feature = "test-support"))]
     pub fn new_test(colors: impl IntoIterator<Item = (&'static str, Hsla)>) -> Self {
-        SyntaxTheme {
+        Self::new_test_styles(colors.into_iter().map(|(key, color)| {
+            (
+                key,
+                HighlightStyle {
+                    color: Some(color),
+                    ..Default::default()
+                },
+            )
+        }))
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn new_test_styles(
+        colors: impl IntoIterator<Item = (&'static str, HighlightStyle)>,
+    ) -> Self {
+        Self {
             highlights: colors
                 .into_iter()
-                .map(|(key, color)| {
-                    (
-                        key.to_owned(),
-                        HighlightStyle {
-                            color: Some(color),
-                            ..Default::default()
-                        },
-                    )
-                })
+                .map(|(key, style)| (key.to_owned(), style))
                 .collect(),
         }
     }
@@ -158,11 +165,15 @@ impl SyntaxTheme {
         self.get(name).color.unwrap_or_default()
     }
 
-    /// Returns a new [`Arc<SyntaxTheme>`] with the given syntax overrides merged in.
-    pub fn merge(base: Arc<Self>, syntax_overrides: Vec<(String, HighlightStyle)>) -> Arc<Self> {
+    /// Returns a new [`Arc<SyntaxTheme>`] with the given syntax styles merged in.
+    pub fn merge(base: Arc<Self>, user_syntax_styles: Vec<(String, HighlightStyle)>) -> Arc<Self> {
+        if user_syntax_styles.is_empty() {
+            return base;
+        }
+
         let mut merged_highlights = base.highlights.clone();
 
-        for (name, highlight) in syntax_overrides {
+        for (name, highlight) in user_syntax_styles {
             if let Some((_, existing_highlight)) = merged_highlights
                 .iter_mut()
                 .find(|(existing_name, _)| existing_name == &name)
@@ -187,5 +198,114 @@ impl SyntaxTheme {
         Arc::new(Self {
             highlights: merged_highlights,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use gpui::FontStyle;
+
+    use super::*;
+
+    #[test]
+    fn test_syntax_theme_merge() {
+        // Merging into an empty `SyntaxTheme` keeps all the user-defined styles.
+        let syntax_theme = SyntaxTheme::merge(
+            Arc::new(SyntaxTheme::new_test([])),
+            vec![
+                (
+                    "foo".to_string(),
+                    HighlightStyle {
+                        color: Some(gpui::red()),
+                        ..Default::default()
+                    },
+                ),
+                (
+                    "foo.bar".to_string(),
+                    HighlightStyle {
+                        color: Some(gpui::green()),
+                        ..Default::default()
+                    },
+                ),
+            ],
+        );
+        assert_eq!(
+            syntax_theme,
+            Arc::new(SyntaxTheme::new_test([
+                ("foo", gpui::red()),
+                ("foo.bar", gpui::green())
+            ]))
+        );
+
+        // Merging empty user-defined styles keeps all the base styles.
+        let syntax_theme = SyntaxTheme::merge(
+            Arc::new(SyntaxTheme::new_test([
+                ("foo", gpui::blue()),
+                ("foo.bar", gpui::red()),
+            ])),
+            Vec::new(),
+        );
+        assert_eq!(
+            syntax_theme,
+            Arc::new(SyntaxTheme::new_test([
+                ("foo", gpui::blue()),
+                ("foo.bar", gpui::red())
+            ]))
+        );
+
+        let syntax_theme = SyntaxTheme::merge(
+            Arc::new(SyntaxTheme::new_test([
+                ("foo", gpui::red()),
+                ("foo.bar", gpui::green()),
+            ])),
+            vec![(
+                "foo.bar".to_string(),
+                HighlightStyle {
+                    color: Some(gpui::yellow()),
+                    ..Default::default()
+                },
+            )],
+        );
+        assert_eq!(
+            syntax_theme,
+            Arc::new(SyntaxTheme::new_test([
+                ("foo", gpui::red()),
+                ("foo.bar", gpui::yellow())
+            ]))
+        );
+
+        let syntax_theme = SyntaxTheme::merge(
+            Arc::new(SyntaxTheme::new_test([
+                ("foo", gpui::red()),
+                ("foo.bar", gpui::green()),
+            ])),
+            vec![(
+                "foo.bar".to_string(),
+                HighlightStyle {
+                    font_style: Some(FontStyle::Italic),
+                    ..Default::default()
+                },
+            )],
+        );
+        assert_eq!(
+            syntax_theme,
+            Arc::new(SyntaxTheme::new_test_styles([
+                (
+                    "foo",
+                    HighlightStyle {
+                        color: Some(gpui::red()),
+                        ..Default::default()
+                    }
+                ),
+                (
+                    "foo.bar",
+                    HighlightStyle {
+                        color: Some(gpui::green()),
+                        font_style: Some(FontStyle::Italic),
+                        ..Default::default()
+                    }
+                )
+            ]))
+        );
     }
 }
