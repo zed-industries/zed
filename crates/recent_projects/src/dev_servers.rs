@@ -16,11 +16,10 @@ use rpc::{
 };
 use settings::Settings;
 use theme::ThemeSettings;
+use ui::CheckboxWithLabel;
 use ui::{prelude::*, Indicator, List, ListHeader, ListItem, ModalContent, ModalHeader, Tooltip};
 use ui_text_field::{FieldLabelLayout, TextField};
 use util::ResultExt;
-use workspace::item::ItemEvent;
-use workspace::item::ItemHandle;
 use workspace::{notifications::DetachAndPromptErr, AppState, ModalView, Workspace, WORKSPACE_DB};
 
 use crate::OpenRemote;
@@ -32,10 +31,9 @@ pub struct DevServerProjects {
     dev_server_store: Model<dev_server_projects::Store>,
     project_path_input: View<Editor>,
     dev_server_name_input: View<TextField>,
-    ssh_connection_string_input: View<TextField>,
+    use_server_name_in_ssh: Selection,
     rename_dev_server_input: View<TextField>,
     _dev_server_subscription: Subscription,
-    _ssh_connection_input_subscription: Option<Subscription>,
 }
 
 #[derive(Default, Clone)]
@@ -103,10 +101,6 @@ impl DevServerProjects {
             editor.set_placeholder_text("Project path (~/work/zed, /workspace/zed, …)", cx);
             editor
         });
-        let ssh_connection_string_input = cx.new_view(|cx| {
-            TextField::new(cx, "SSH connection string", "user@host")
-                .with_label(FieldLabelLayout::Stacked)
-        });
         let dev_server_name_input =
             cx.new_view(|cx| TextField::new(cx, "Name", "").with_label(FieldLabelLayout::Stacked));
         let rename_dev_server_input =
@@ -125,11 +119,10 @@ impl DevServerProjects {
             scroll_handle: ScrollHandle::new(),
             dev_server_store,
             project_path_input,
-            ssh_connection_string_input,
             dev_server_name_input,
             rename_dev_server_input,
+            use_server_name_in_ssh: Selection::Unselected,
             _dev_server_subscription: subscription,
-            _ssh_connection_input_subscription: None,
         }
     }
 
@@ -248,15 +241,14 @@ impl DevServerProjects {
             return;
         }
 
-        let ssh_connection_string = get_text(&self.ssh_connection_string_input, cx);
-        let ssh_connection_string = if ssh_connection_string.is_empty() {
-            None
+        let ssh_connection_string = if self.use_server_name_in_ssh == Selection::Selected {
+            Some(name.clone())
         } else {
-            Some(ssh_connection_string)
+            None
         };
 
         let dev_server = self.dev_server_store.update(cx, |store, cx| {
-            store.create_dev_server(name.clone(), ssh_connection_string, cx)
+            store.create_dev_server(name, ssh_connection_string, cx)
         });
 
         cx.spawn(|this, mut cx| async move {
@@ -664,9 +656,6 @@ impl DevServerProjects {
             dev_server,
         } = state;
 
-        self.ssh_connection_string_input.update(cx, |input, cx| {
-            input.set_disabled(creating || dev_server.is_some(), cx);
-        });
         self.dev_server_name_input.update(cx, |input, cx| {
             input.set_disabled(creating || dev_server.is_some(), cx);
         });
@@ -697,7 +686,7 @@ impl DevServerProjects {
                                     div()
                                         .pl_2()
                                         .max_w(rems(16.))
-                                        .child(self.ssh_connection_string_input.clone()),
+                                        .child(self.dev_server_name_input.clone()),
                                 )
                         )
                         .child(
@@ -710,32 +699,57 @@ impl DevServerProjects {
                                 .border_color(cx.theme().colors().border)
                                 .child(
                                     div()
-                                        .pl_2()
-                                        .max_w(rems(16.))
-                                        .child(self.dev_server_name_input.clone()),
-                                )
-                                .child(
-                                    div()
                                         .pl_1()
                                         .pb(px(3.))
                                         .when(!creating && dev_server.is_none(), |div| {
-                                            div.child(Button::new("create-dev-server", "Create").on_click(
-                                                cx.listener(move |this, _, cx| {
-                                                    this.create_dev_server(cx);
-                                                }),
-                                            ))
+                                            div
+                                                .child(
+                                                    CheckboxWithLabel::new(
+                                                        "use-server-name-in-ssh",
+                                                        Label::new("Use name as ssh connection string"),
+                                                        self.use_server_name_in_ssh,
+                                                        cx.listener(move |this, &new_selection, _| {
+                                                            this.use_server_name_in_ssh = new_selection;
+                                                        })
+                                                    )
+                                                )
+                                                .child(
+                                                    Button::new("create-dev-server", "Create").on_click(
+                                                        cx.listener(move |this, _, cx| {
+                                                            this.create_dev_server(cx);
+                                                        })
+                                                    )
+                                                )
                                         })
                                         .when(creating && dev_server.is_none(), |div| {
-                                            div.child(
-                                                Button::new("create-dev-server", "Creating...")
-                                                    .disabled(true),
-                                            )
+                                            div
+                                                .child(
+                                                    CheckboxWithLabel::new(
+                                                        "use-server-name-in-ssh",
+                                                        Label::new("Use name as ssh connection string"),
+                                                        self.use_server_name_in_ssh,
+                                                        |&_, _| {}
+                                                    )
+                                                )
+                                                .child(
+                                                    Button::new("create-dev-server", "Creating...")
+                                                        .disabled(true),
+                                                )
                                         }),
                                 )
                         )
                         .when(dev_server.is_none(), |div| {
-                            div.px_2().child(Label::new("Once you have created a dev server, you will be given a command to run on the server to register it.\n\n\
-                                Ssh connection string enables remote terminals, which will run `ssh connection_string` on creation.").color(Color::Muted))
+                            let server_name = get_text(&self.dev_server_name_input, cx);
+                            let server_name_trimmed = server_name.trim();
+                            let ssh_host_name = if server_name_trimmed.is_empty() {
+                                "user@host"
+                            } else {
+                                server_name_trimmed
+                            };
+                            div.px_2().child(Label::new(format!(
+                                "Once you have created a dev server, you will be given a command to run on the server to register it.\n\n\
+                                Ssh connection string enables remote terminals, which runs `ssh {ssh_host_name}` when creating terminal tabs."
+                            )))
                         })
                         .when_some(dev_server.clone(), |div, dev_server| {
                             let status = self
@@ -994,49 +1008,12 @@ impl DevServerProjects {
                                     .on_click(cx.listener(|this, _, cx| {
                                         this.mode =
                                             Mode::CreateDevServer(CreateDevServer::default());
-
-                                        set_text(&this.ssh_connection_string_input, "", cx);
-                                        set_text(&this.dev_server_name_input, "", cx);
-                                        let new_subscription = this
-                                            .ssh_connection_string_input
-                                            .update(cx, |input, cx| {
-                                                let dev_server_name_input =
-                                                    this.dev_server_name_input.clone();
-                                                let ssh_connection_string_input =
-                                                    this.ssh_connection_string_input.clone();
-                                                let new_subscription =
-                                                input.editor().subscribe_to_item_events(
-                                                    cx,
-                                                    Box::new(move |e, cx| {
-                                                        if let ItemEvent::Edit = e {
-                                                            let ssh_connection_string = get_text(
-                                                                &ssh_connection_string_input,
-                                                                cx,
-                                                            );
-                                                            let dev_server_name = get_text(
-                                                                &dev_server_name_input,
-                                                                cx,
-                                                            );
-
-                                                            if dev_server_name.is_empty()
-                                                                || ssh_connection_string
-                                                                    .starts_with(&dev_server_name)
-                                                            {
-                                                                set_text(
-                                                                    &dev_server_name_input,
-                                                                    &ssh_connection_string,
-                                                                    cx,
-                                                                );
-                                                            }
-                                                        }
-                                                    }),
-                                                );
-                                                input.focus_handle(cx).focus(cx);
-                                                new_subscription
+                                        this.dev_server_name_input.update(cx, |text_field, cx| {
+                                            text_field.editor().update(cx, |editor, cx| {
+                                                editor.set_text("", cx);
                                             });
-                                        this._ssh_connection_input_subscription =
-                                            Some(new_subscription);
-
+                                        });
+                                        this.use_server_name_in_ssh = Selection::Unselected;
                                         cx.notify();
                                     })),
                             ),
@@ -1063,14 +1040,6 @@ fn get_text(element: &View<TextField>, cx: &mut WindowContext) -> String {
         .text(cx)
         .trim()
         .to_string()
-}
-
-fn set_text(element: &View<TextField>, new_text: &str, cx: &mut WindowContext) {
-    element.update(cx, |text_field, cx| {
-        text_field.editor().update(cx, |editor, cx| {
-            editor.set_text(new_text, cx);
-        });
-    });
 }
 
 impl ModalView for DevServerProjects {}
