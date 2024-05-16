@@ -9734,7 +9734,6 @@ name = "storybook"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "assistant2",
  "clap 4.4.4",
  "collab_ui",
  "ctrlc",
@@ -12994,7 +12993,6 @@ dependencies = [
  "anyhow",
  "assets",
  "assistant",
- "assistant2",
  "audio",
  "auto_update",
  "backtrace",
