@@ -373,6 +373,7 @@ impl Dock {
                     this.remove_panel(&panel, cx);
 
                     new_dock.update(cx, |new_dock, cx| {
+                        new_dock.remove_panel(&panel, cx);
                         new_dock.add_panel(panel.clone(), workspace.clone(), cx);
                         if was_visible {
                             new_dock.set_open(true, cx);

@@ -52,9 +52,6 @@ pub fn watch_config_file(
                 }
 
                 if let Ok(contents) = fs.load(&path).await {
-                    if contents.len() == 0 {
-                        continue;
-                    }
                     if tx.unbounded_send(contents).is_err() {
                         break;
                     }
