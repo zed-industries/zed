@@ -7,8 +7,8 @@ mod story_selector;
 use clap::Parser;
 use dialoguer::FuzzySelect;
 use gpui::{
-    div, px, size, AnyView, AppContext, Bounds, Render, ViewContext, VisualContext, WindowBounds,
-    WindowOptions,
+    div, px, size, AnyView, AppContext, Bounds, ReadGlobal, Render, ViewContext, VisualContext,
+    WindowBounds, WindowOptions,
 };
 use log::LevelFilter;
 use project::Project;

@@ -28,7 +28,8 @@ pub use settings::*;
 pub use styles::*;
 
 use gpui::{
-    AppContext, AssetSource, Hsla, SharedString, WindowAppearance, WindowBackgroundAppearance,
+    AppContext, AssetSource, Hsla, ReadGlobal, SharedString, WindowAppearance,
+    WindowBackgroundAppearance,
 };
 use serde::Deserialize;
 

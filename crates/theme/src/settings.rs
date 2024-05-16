@@ -3,8 +3,8 @@ use crate::{Appearance, SyntaxTheme, Theme, ThemeRegistry, ThemeStyleContent};
 use anyhow::Result;
 use derive_more::{Deref, DerefMut};
 use gpui::{
-    px, AppContext, Font, FontFeatures, FontStyle, FontWeight, Global, Pixels, Subscription,
-    ViewContext,
+    px, AppContext, Font, FontFeatures, FontStyle, FontWeight, Global, Pixels, ReadGlobal,
+    Subscription, ViewContext,
 };
 use refineable::Refineable;
 use schemars::{
