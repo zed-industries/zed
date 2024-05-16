@@ -266,7 +266,7 @@ impl NodeRuntime for RealNodeRuntime {
                 command.args(["--prefix".into(), directory.to_path_buf()]);
             }
 
-            if let Some(proxy) = self.http.proxy_settings() {
+            if let Some(proxy) = self.http.proxy() {
                 command.args(["--proxy", proxy]);
             }
 

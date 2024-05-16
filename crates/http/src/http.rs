@@ -51,18 +51,18 @@ fn get_proxy(proxy: Option<String>) -> Option<isahc::http::Uri> {
 pub struct HttpClientWithUrl {
     base_url: Mutex<String>,
     client: Arc<dyn HttpClient>,
-    proxy_settings: Option<String>,
+    proxy: Option<String>,
 }
 
 impl HttpClientWithUrl {
     /// Returns a new [`HttpClientWithUrl`] with the given base URL.
     pub fn new(base_url: impl Into<String>, unparsed_proxy: Option<String>) -> Self {
-        let proxy = get_proxy(unparsed_proxy);
-        let proxy_settings = proxy.as_ref().map(|p| p.to_string());
+        let parsed_proxy = get_proxy(unparsed_proxy);
+        let proxy_string = parsed_proxy.as_ref().map(|p| p.to_string());
         Self {
             base_url: Mutex::new(base_url.into()),
-            client: client(proxy),
-            proxy_settings,
+            client: client(parsed_proxy),
+            proxy: proxy_string,
         }
     }
 
@@ -114,8 +114,8 @@ impl HttpClient for Arc<HttpClientWithUrl> {
         self.client.send(req)
     }
 
-    fn proxy_settings(&self) -> &Option<String> {
-        &self.proxy_settings
+    fn proxy(&self) -> &Option<String> {
+        &self.proxy
     }
 }
 
@@ -127,8 +127,8 @@ impl HttpClient for HttpClientWithUrl {
         self.client.send(req)
     }
 
-    fn proxy_settings(&self) -> &Option<String> {
-        &self.proxy_settings
+    fn proxy(&self) -> &Option<String> {
+        &self.proxy
     }
 }
 
@@ -175,7 +175,7 @@ pub trait HttpClient: Send + Sync {
         }
     }
 
-    fn proxy_settings(&self) -> &Option<String>;
+    fn proxy(&self) -> &Option<String>;
 }
 
 pub fn client(proxy: Option<isahc::http::Uri>) -> Arc<dyn HttpClient> {
@@ -198,7 +198,7 @@ impl HttpClient for isahc::HttpClient {
         Box::pin(async move { client.send_async(req).await })
     }
 
-    fn proxy_settings(&self) -> &Option<String> {
+    fn proxy(&self) -> &Option<String> {
         // TODO:
         &None
     }
@@ -229,7 +229,7 @@ impl FakeHttpClient {
             client: Arc::new(Self {
                 handler: Box::new(move |req| Box::pin(handler(req))),
             }),
-            proxy_settings: None,
+            proxy: None,
         })
     }
 
@@ -269,7 +269,7 @@ impl HttpClient for FakeHttpClient {
         Box::pin(async move { future.await.map(Into::into) })
     }
 
-    fn proxy_settings(&self) -> &Option<String> {
+    fn proxy(&self) -> &Option<String> {
         &None
     }
 }
