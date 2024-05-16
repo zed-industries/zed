@@ -154,35 +154,15 @@ impl PromptLibrary {
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
-pub struct PromptMetadata {
+pub struct UserPrompt {
+    version: String,
     title: String,
     author: String,
-    #[serde(default)]
-    languages: Option<Vec<String>>,
-}
-
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
-pub struct UserPrompt {
-    metadata: PromptMetadata,
+    languages: Vec<String>,
     content: String,
 }
 
 impl UserPrompt {
-    fn parse_metadata(content: &str) -> anyhow::Result<(PromptMetadata, String)> {
-        let parts: Vec<&str> = content.splitn(3, "---").collect();
-        if parts.len() >= 3 {
-            let frontmatter_str = parts[1].trim();
-            let metadata: PromptMetadata = serde_yml::from_str(frontmatter_str)
-                .map_err(|e| anyhow::anyhow!("Failed to parse front matter: {}", e))?;
-
-            let content_body = parts.get(2).map_or("", |s| *s).trim();
-
-            Ok((metadata, content_body.to_string()))
-        } else {
-            Err(anyhow::anyhow!("Invalid or missing front matter"))
-        }
-    }
-
     async fn list(fs: Arc<dyn Fs>) -> anyhow::Result<Vec<Self>> {
         fs.create_dir(&PROMPTS_DIR).await?;
 
@@ -198,15 +178,16 @@ impl UserPrompt {
                 }
             };
 
-            if path.extension() == Some(std::ffi::OsStr::new("md")) {
+            if path.extension() == Some(std::ffi::OsStr::new("json")) {
                 match fs.load(&path).await {
-                    Ok(content) => match Self::parse_metadata(&content) {
-                        Ok((metadata, content_body)) => prompts.push(UserPrompt {
-                            metadata,
-                            content: content_body,
-                        }),
-                        Err(e) => eprintln!("{}", e),
-                    },
+                    Ok(content) => {
+                        let user_prompt: UserPrompt =
+                            serde_json::from_str(&content).map_err(|e| {
+                                anyhow::anyhow!("Failed to deserialize UserPrompt: {}", e)
+                            })?;
+
+                        prompts.push(user_prompt);
+                    }
                     Err(e) => eprintln!("Failed to load file {}: {}", path.display(), e),
                 }
             }
@@ -361,7 +342,7 @@ impl Render for PromptManager {
                                                                         }),
                                                                     )
                                                                     .child(Label::new(
-                                                                        prompt.metadata.title,
+                                                                        prompt.title,
                                                                     )),
                                                             )
                                                             .child(div()),
@@ -395,48 +376,48 @@ impl Render for PromptManager {
                                         active_prompt.is_some(),
                                         |with_prompt| {
                                             let active_prompt = active_prompt.as_ref().unwrap();
-                                            let meta = &active_prompt.metadata;
                                             with_prompt
                                                 .child(
                                                     v_flex()
                                                         .gap_0p5()
                                                         .child(
-                                                            Headline::new(meta.title.clone())
-                                                                .size(HeadlineSize::XSmall),
+                                                            Headline::new(
+                                                                active_prompt.title.clone(),
+                                                            )
+                                                            .size(HeadlineSize::XSmall),
                                                         )
                                                         .child(
                                                             h_flex()
                                                                 .child(
-                                                                    Label::new(meta.author.clone())
-                                                                        .size(LabelSize::XSmall)
-                                                                        .color(Color::Muted),
+                                                                    Label::new(
+                                                                        active_prompt
+                                                                            .author
+                                                                            .clone(),
+                                                                    )
+                                                                    .size(LabelSize::XSmall)
+                                                                    .color(Color::Muted),
                                                                 )
-                                                                .when_some(
-                                                                    meta.languages.clone(),
-                                                                    |this, languages| {
-                                                                        this.child(
-                                                                            Label::new(
-                                                                                if languages
-                                                                                    .is_empty()
-                                                                                    || languages[0]
-                                                                                        == "*"
-                                                                                {
-                                                                                    " · Global"
-                                                                                        .to_string()
-                                                                                } else {
-                                                                                    format!(
-                                                                                        " · {}",
-                                                                                        languages
-                                                                                            .join(
-                                                                                            ", "
-                                                                                        )
-                                                                                    )
-                                                                                },
+                                                                .child(
+                                                                    Label::new(
+                                                                        if active_prompt
+                                                                            .languages
+                                                                            .is_empty()
+                                                                            || active_prompt
+                                                                                .languages[0]
+                                                                                == "*"
+                                                                        {
+                                                                            " · Global".to_string()
+                                                                        } else {
+                                                                            format!(
+                                                                                " · {}",
+                                                                                active_prompt
+                                                                                    .languages
+                                                                                    .join(", ")
                                                                             )
-                                                                            .size(LabelSize::XSmall)
-                                                                            .color(Color::Muted),
-                                                                        )
-                                                                    },
+                                                                        },
+                                                                    )
+                                                                    .size(LabelSize::XSmall)
+                                                                    .color(Color::Muted),
                                                                 ),
                                                         ),
                                                 )
