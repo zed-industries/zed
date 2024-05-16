@@ -37,6 +37,13 @@ impl std::fmt::Debug for FontFeatures {
     }
 }
 
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
+#[serde(untagged)]
+enum FeatureValue {
+    Bool(bool),
+    Number(serde_json::Number),
+}
+
 impl<'de> serde::Deserialize<'de> for FontFeatures {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
@@ -61,35 +68,39 @@ impl<'de> serde::Deserialize<'de> for FontFeatures {
                 let mut feature_list = Vec::new();
 
                 loop {
-                    match access.next_entry::<String, Option<bool>>() {
+                    match access.next_entry::<String, Option<FeatureValue>>() {
                         Ok(Some((key, value))) => {
                             if key.len() != 4 && !key.is_ascii() {
                                 log::error!("Incorrect feature name: {}", key);
                                 continue;
                             }
                             if let Some(value) = value {
-                                if value {
-                                    feature_list.push((key, 1));
-                                } else {
-                                    feature_list.push((key, 0));
+                                match value {
+                                    FeatureValue::Bool(enable) => {
+                                        if enable {
+                                            feature_list.push((key, 1));
+                                        } else {
+                                            feature_list.push((key, 0));
+                                        }
+                                    }
+                                    FeatureValue::Number(value) => {
+                                        if value.is_u64() {
+                                            feature_list
+                                                .push((key, value.as_u64().unwrap() as u32));
+                                        } else {
+                                            log::error!(
+                                                "Incorrect feature value {}: {}",
+                                                key,
+                                                value
+                                            );
+                                            continue;
+                                        }
+                                    }
                                 }
                             }
                         }
                         Err(e) => {
                             println!("Font err: {:?}", e);
-                            match access.next_entry::<String, Option<u32>>() {
-                                Ok(Some((key, value))) => {
-                                    if key.len() != 4 && !key.is_ascii() {
-                                        log::error!("Incorrect feature name: {}", key);
-                                        continue;
-                                    }
-                                    if let Some(value) = value {
-                                        feature_list.push((key, value));
-                                    }
-                                }
-                                Err(e) => println!("Font err 2 with: {:?}", e),
-                                _ => break,
-                            }
                         }
                         _ => break,
                     }
