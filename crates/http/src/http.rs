@@ -114,8 +114,8 @@ impl HttpClient for Arc<HttpClientWithUrl> {
         self.client.send(req)
     }
 
-    fn proxy(&self) -> &Option<String> {
-        &self.proxy
+    fn proxy(&self) -> Option<&str> {
+        self.proxy.as_ref().map(|x| x.as_str())
     }
 }
 
@@ -127,8 +127,8 @@ impl HttpClient for HttpClientWithUrl {
         self.client.send(req)
     }
 
-    fn proxy(&self) -> &Option<String> {
-        &self.proxy
+    fn proxy(&self) -> Option<&str> {
+        self.proxy.as_ref().map(|x| x.as_str())
     }
 }
 
@@ -175,7 +175,7 @@ pub trait HttpClient: Send + Sync {
         }
     }
 
-    fn proxy(&self) -> &Option<String>;
+    fn proxy(&self) -> Option<&str>;
 }
 
 pub fn client(proxy: Option<isahc::http::Uri>) -> Arc<dyn HttpClient> {
@@ -198,8 +198,8 @@ impl HttpClient for isahc::HttpClient {
         Box::pin(async move { client.send_async(req).await })
     }
 
-    fn proxy(&self) -> &Option<String> {
-        &None
+    fn proxy(&self) -> Option<&str> {
+        None
     }
 }
 
@@ -268,7 +268,7 @@ impl HttpClient for FakeHttpClient {
         Box::pin(async move { future.await.map(Into::into) })
     }
 
-    fn proxy(&self) -> &Option<String> {
-        &None
+    fn proxy(&self) -> Option<&str> {
+        None
     }
 }
