@@ -103,14 +103,7 @@
   // Hide the values of in variables from visual display in private files
   "redact_private_values": false,
   // Globs to match against file paths to determine if a file is private.
-  "private_files": [
-    "**/.env*",
-    "**/*.pem",
-    "**/*.key",
-    "**/*.cert",
-    "**/*.crt",
-    "**/secrets.yml"
-  ],
+  "private_files": ["**/.env*", "**/*.pem", "**/*.key", "**/*.cert", "**/*.crt", "**/secrets.yml"],
   // Whether to use additional LSP queries to format (and amend) the code after
   // every "trigger" symbol input, defined by LSP server capabilities.
   "use_on_type_format": true,
@@ -311,9 +304,7 @@
   // The list of language servers to use (or disable) for all languages.
   //
   // This is typically customized on a per-language basis.
-  "language_servers": [
-    "..."
-  ],
+  "language_servers": ["..."],
   // When to automatically save edited buffers. This setting can
   // take four values.
   //
@@ -448,9 +439,7 @@
   "copilot": {
     // The set of glob patterns for which copilot should be disabled
     // in any matching file.
-    "disabled_globs": [
-      ".env"
-    ]
+    "disabled_globs": [".env"]
   },
   // Settings specific to journaling
   "journal": {
@@ -561,12 +550,7 @@
         // Default directories to search for virtual environments, relative
         // to the current working directory. We recommend overriding this
         // in your project's settings, rather than globally.
-        "directories": [
-          ".env",
-          "env",
-          ".venv",
-          "venv"
-        ],
+        "directories": [".env", "env", ".venv", "venv"],
         // Can also be `csh`, `fish`, and `nushell`
         "activate_script": "default"
       }
@@ -612,9 +596,7 @@
     "Astro": {
       "prettier": {
         "allowed": true,
-        "plugins": [
-          "prettier-plugin-astro"
-        ]
+        "plugins": ["prettier-plugin-astro"]
       }
     },
     "Blade": {
@@ -634,12 +616,7 @@
       }
     },
     "Elixir": {
-      "language_servers": [
-        "elixir-ls",
-        "!next-ls",
-        "!lexical",
-        "..."
-      ]
+      "language_servers": ["elixir-ls", "!next-ls", "!lexical", "..."]
     },
     "Gleam": {
       "tab_size": 2
@@ -655,12 +632,7 @@
       }
     },
     "HEEX": {
-      "language_servers": [
-        "elixir-ls",
-        "!next-ls",
-        "!lexical",
-        "..."
-      ]
+      "language_servers": ["elixir-ls", "!next-ls", "!lexical", "..."]
     },
     "HTML": {
       "prettier": {
@@ -670,9 +642,7 @@
     "Java": {
       "prettier": {
         "allowed": true,
-        "plugins": [
-          "prettier-plugin-java"
-        ]
+        "plugins": ["prettier-plugin-java"]
       }
     },
     "JavaScript": {
@@ -697,20 +667,14 @@
     "PHP": {
       "prettier": {
         "allowed": true,
-        "plugins": [
-          "@prettier/plugin-php"
-        ]
+        "plugins": ["@prettier/plugin-php"]
       }
     },
     "Prisma": {
       "tab_size": 2
     },
     "Ruby": {
-      "language_servers": [
-        "solargraph",
-        "!ruby-lsp",
-        "..."
-      ]
+      "language_servers": ["solargraph", "!ruby-lsp", "..."]
     },
     "SCSS": {
       "prettier": {
@@ -720,17 +684,13 @@
     "SQL": {
       "prettier": {
         "allowed": true,
-        "plugins": [
-          "prettier-plugin-sql"
-        ]
+        "plugins": ["prettier-plugin-sql"]
       }
     },
     "Svelte": {
       "prettier": {
         "allowed": true,
-        "plugins": [
-          "prettier-plugin-svelte"
-        ]
+        "plugins": ["prettier-plugin-svelte"]
       }
     },
     "TSX": {
@@ -756,9 +716,7 @@
     "XML": {
       "prettier": {
         "allowed": true,
-        "plugins": [
-          "@prettier/plugin-xml"
-        ]
+        "plugins": ["@prettier/plugin-xml"]
       }
     },
     "YAML": {
