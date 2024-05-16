@@ -242,6 +242,7 @@ impl Render for PromptManager {
 
         v_flex()
             .key_context("PromptManager")
+            .track_focus(&self.focus_handle)
             .on_action(cx.listener(Self::dismiss))
             .elevation_3(cx)
             .size_full()
