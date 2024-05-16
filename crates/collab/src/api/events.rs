@@ -377,6 +377,23 @@ pub async fn post_events(
                 first_event_at,
                 country_code.clone(),
             )),
+            // Needed for migration: Copilot -> InlineCompletion
+            Event::Copilot(event) => {
+                let inline_completion_event = InlineCompletionEvent {
+                    provider: "copilot".to_string(),
+                    suggestion_accepted: event.suggestion_accepted,
+                    file_extension: event.file_extension.clone(),
+                };
+                to_upload
+                    .inline_completion_events
+                    .push(InlineCompletionEventRow::from_event(
+                        inline_completion_event,
+                        &wrapper,
+                        &request_body,
+                        first_event_at,
+                        country_code.clone(),
+                    ))
+            }
             Event::InlineCompletion(event) => {
                 to_upload
                     .inline_completion_events
