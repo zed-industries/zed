@@ -67,7 +67,7 @@ impl ExtensionBuilder {
     pub fn new(cache_dir: PathBuf) -> Self {
         Self {
             cache_dir,
-            http: http::client(),
+            http: http::client(None),
         }
     }
 
