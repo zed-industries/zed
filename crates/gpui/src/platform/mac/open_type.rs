@@ -34,7 +34,7 @@ pub fn apply_features(font: &mut Font, features: &FontFeatures) {
             let keys = [kCTFontOpenTypeFeatureTag, kCTFontOpenTypeFeatureValue];
             let values = [
                 CFString::new(&tag).as_CFTypeRef(),
-                CFNumber::from(value as i32).as_CFTypeRef(),
+                CFNumber::from(*value as i32).as_CFTypeRef(),
             ];
             let dict = CFDictionaryCreate(
                 kCFAllocatorDefault,

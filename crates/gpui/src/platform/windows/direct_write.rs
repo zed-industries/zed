@@ -1206,21 +1206,21 @@ fn apply_font_features(
     let mut feature_calt = make_direct_write_feature("calt", 1);
 
     for (tag, value) in tag_values {
-        if tag == *"liga" && value == 0 {
+        if tag.as_str() == "liga" && *value == 0 {
             feature_liga.parameter = 0;
             continue;
         }
-        if tag == *"clig" && value == 0 {
+        if tag.as_str() == "clig" && *value == 0 {
             feature_clig.parameter = 0;
             continue;
         }
-        if tag == *"calt" && value == 0 {
+        if tag.as_str() == "calt" && *value == 0 {
             feature_calt.parameter = 0;
             continue;
         }
 
         unsafe {
-            direct_write_features.AddFontFeature(make_direct_write_feature(&tag, value))?;
+            direct_write_features.AddFontFeature(make_direct_write_feature(&tag, *value))?;
         }
     }
     unsafe {

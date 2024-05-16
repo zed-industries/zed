@@ -4,30 +4,23 @@ use schemars::schema::{InstanceType, SchemaObject};
 
 /// The OpenType features that can be configured for a given font.
 #[derive(Default, Clone, Eq, PartialEq, Hash)]
-pub struct FontFeatures(pub Option<Arc<Vec<(String, u32)>>>);
+pub struct FontFeatures(pub Arc<Vec<(String, u32)>>);
 
 impl FontFeatures {
     /// Get the tag name list of the font OpenType features
     /// only enabled or disabled features are returned
-    pub fn tag_value_list(&self) -> Vec<(String, u32)> {
-        let mut result = Vec::new();
-        if let Some(ref feature_list) = self.0 {
-            for (tag, value) in feature_list.iter() {
-                result.push((tag.clone(), *value));
-            }
-        }
-        result
+    pub fn tag_value_list(&self) -> &[(String, u32)] {
+        &self.0.as_slice()
     }
 }
 
 impl std::fmt::Debug for FontFeatures {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let mut debug = f.debug_struct("FontFeatures");
-        if let Some(ref feature_list) = self.0 {
-            for (tag, value) in feature_list.iter() {
-                debug.field(tag, value);
-            }
+        for (tag, value) in self.tag_value_list() {
+            debug.field(tag, value);
         }
+
         debug.finish()
     }
 }
@@ -93,11 +86,8 @@ impl<'de> serde::Deserialize<'de> for FontFeatures {
                         }
                     }
                 }
-                if feature_list.is_empty() {
-                    Ok(FontFeatures(None))
-                } else {
-                    Ok(FontFeatures(Some(Arc::new(feature_list))))
-                }
+
+                Ok(FontFeatures(Arc::new(feature_list)))
             }
         }
 
@@ -114,11 +104,11 @@ impl serde::Serialize for FontFeatures {
         use serde::ser::SerializeMap;
 
         let mut map = serializer.serialize_map(None)?;
-        if let Some(ref feature_list) = self.0 {
-            for (tag, value) in feature_list.iter() {
-                map.serialize_entry(tag, value)?;
-            }
+
+        for (tag, value) in self.tag_value_list() {
+            map.serialize_entry(tag, value)?;
         }
+
         map.end()
     }
 }
