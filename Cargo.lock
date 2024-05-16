@@ -70,6 +70,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "42cd52102d3df161c77a887b608d7a4897d7cc112886a9537b738a887a03aaff"
 dependencies = [
  "cfg-if",
+ "const-random",
  "getrandom 0.2.10",
  "once_cell",
  "version_check",
@@ -2561,6 +2562,26 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "28c122c3980598d243d63d9a704629a2d748d101f278052ff068be5a4423ab6f"
 
 [[package]]
+name = "const-random"
+version = "0.1.18"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "87e00182fe74b066627d63b85fd550ac2998d4b0bd86bfed477a0ae4c7c71359"
+dependencies = [
+ "const-random-macro",
+]
+
+[[package]]
+name = "const-random-macro"
+version = "0.1.16"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f9d839f2a20b0aee515dc581a6172f2321f96cab76c1a38a4c584a194955390e"
+dependencies = [
+ "getrandom 0.2.10",
+ "once_cell",
+ "tiny-keccak",
+]
+
+[[package]]
 name = "convert_case"
 version = "0.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4752,6 +4773,7 @@ dependencies = [
  "windows 0.56.0",
  "windows-core 0.56.0",
  "x11rb",
+ "xim",
  "xkbcommon",
 ]
 
@@ -10397,6 +10419,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "tiny-keccak"
+version = "2.0.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2c9d3793400a45f954c52e73d068316d76b6f4e36977e3fcebb13a2721e80237"
+dependencies = [
+ "crunchy",
+]
+
+[[package]]
 name = "tiny-skia"
 version = "0.11.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -12796,6 +12827,35 @@ checksum = "21e5a325c3cb8398ad6cf859c1135b25dd29e186679cf2da7581d9679f63b38e"
 dependencies = [
  "libc",
  "winapi",
+]
+
+[[package]]
+name = "xim"
+version = "0.4.0"
+source = "git+https://github.com/npmania/xim-rs?rev=27132caffc5b9bc9c432ca4afad184ab6e7c16af#27132caffc5b9bc9c432ca4afad184ab6e7c16af"
+dependencies = [
+ "ahash 0.8.8",
+ "hashbrown 0.14.0",
+ "log",
+ "x11rb",
+ "xim-ctext",
+ "xim-parser",
+]
+
+[[package]]
+name = "xim-ctext"
+version = "0.3.0"
+source = "git+https://github.com/npmania/xim-rs?rev=27132caffc5b9bc9c432ca4afad184ab6e7c16af#27132caffc5b9bc9c432ca4afad184ab6e7c16af"
+dependencies = [
+ "encoding_rs",
+]
+
+[[package]]
+name = "xim-parser"
+version = "0.2.1"
+source = "git+https://github.com/npmania/xim-rs?rev=27132caffc5b9bc9c432ca4afad184ab6e7c16af#27132caffc5b9bc9c432ca4afad184ab6e7c16af"
+dependencies = [
+ "bitflags 2.4.2",
 ]
 
 [[package]]
