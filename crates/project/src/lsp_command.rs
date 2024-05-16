@@ -1495,6 +1495,17 @@ impl LspCommand for GetCompletions {
             })?
             .ok_or_else(|| anyhow!("no such language server"))?;
 
+        let default_data = response_list
+            .as_ref()
+            .and_then(|list| list.item_defaults.as_ref())
+            .and_then(|defaults| defaults.data.as_ref());
+
+        if let Some(default_data) = default_data {
+            for item in completions.iter_mut() {
+                item.data = Some(default_data.clone())
+            }
+        }
+
         let mut completion_edits = Vec::new();
         buffer.update(&mut cx, |buffer, _cx| {
             let snapshot = buffer.snapshot();
