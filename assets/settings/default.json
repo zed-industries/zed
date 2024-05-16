@@ -1,7 +1,7 @@
 {
-  // The name of the Zed theme to use for the UI
-  "theme": "One Dark",
+  // The name of the Zed theme to use for the UI.
   // The theme can also be set to follow system preferences.
+  "theme": "One Dark",
   // Set the optional field "mode" to indicate this:
   // "system": Use the theme that corresponds to the system's appearance
   // "light": Required, use the theme indicated by the "light" field
