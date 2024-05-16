@@ -128,11 +128,32 @@ impl schemars::JsonSchema for FontFeatures {
         "FontFeatures".into()
     }
 
-    fn json_schema(gen: &mut schemars::gen::SchemaGenerator) -> schemars::schema::Schema {
+    fn json_schema(_: &mut schemars::gen::SchemaGenerator) -> schemars::schema::Schema {
         let mut schema = SchemaObject::default();
         schema.instance_type = Some(schemars::schema::SingleOrVec::Single(Box::new(
             InstanceType::Object,
         )));
+        {
+            let mut property = SchemaObject::default();
+            property.instance_type = Some(schemars::schema::SingleOrVec::Single(Box::new(
+                InstanceType::Boolean,
+            )));
+            schema
+                .object()
+                .pattern_properties
+                .insert("[0-9a-zA-Z]{4}$".into(), property.into());
+        }
+        {
+            let mut property = SchemaObject::default();
+            property.instance_type = Some(schemars::schema::SingleOrVec::Single(Box::new(
+                InstanceType::Integer,
+            )));
+            property.number().minimum = Some(0.0);
+            schema
+                .object()
+                .pattern_properties
+                .insert("[0-9a-zA-Z]{4}$".into(), property.into());
+        }
         schema.into()
     }
 }
