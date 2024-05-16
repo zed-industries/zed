@@ -139,8 +139,11 @@ impl schemars::JsonSchema for FontFeatures {
                 InstanceType::Boolean,
                 InstanceType::Integer,
             ]));
-            property.number().multiple_of = Some(1.0);
-            property.number().minimum = Some(0.0);
+            {
+                let mut number_constraints = property.number();
+                number_constraints.multiple_of = Some(1.0);
+                number_constraints.minimum = Some(0.0);
+            }
             schema
                 .object()
                 .pattern_properties
