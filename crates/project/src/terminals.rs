@@ -108,12 +108,11 @@ impl Project {
                     program: "ssh".to_string(),
                     args: vec![
                         remote_connection_data.ssh_connection_string.to_string(),
-                        // TODO kb do `ssh user@host -t "cd /path/to/specific/directory && exec \$SHELL"`
-                        // "-t".to_string(),
-                        // format!(
-                        //     "cd \"{}\" && exec $SHELL",
-                        //     remote_connection_data.project_path
-                        // ),
+                        "-t".to_string(),
+                        format!(
+                            "cd \"{}\" && exec $SHELL -l",
+                            remote_connection_data.project_path
+                        ),
                     ],
                 },
             )
