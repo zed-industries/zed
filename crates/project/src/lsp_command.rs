@@ -1516,7 +1516,7 @@ impl LspCommand for GetCompletions {
                         item.commit_characters = Some(characters.clone())
                     }
                     if let Some(text_mode) = default_insert_text_mode {
-                        item.insert_text_mode = Some(text_mode.clone())
+                        item.insert_text_mode = Some(*text_mode)
                     }
                 }
             }
