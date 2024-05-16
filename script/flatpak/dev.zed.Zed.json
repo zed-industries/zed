@@ -37,8 +37,11 @@
                 "mkdir -p /app/share/metainfo",
                 "mkdir -p /app/share/applications",
                 "mkdir -p /app/share/icons/hicolor/512x512/apps",
-                "cp ./assets/packaging/dev.zed.Zed.metainfo.xml /app/share/metainfo",
-                "cp ./assets/packaging/dev.zed.Zed.desktop /app/share/applications",
+                "cp ./crates/zed/resources/flatpak/dev.zed.Zed.metainfo.xml /app/share/metainfo",
+                "cp ./crates/zed/resources/zed.desktop /app/share/applications/dev.zed.Zed.desktop",
+                "sed -i 's|Exec=zed|Exec=Zed|g' /app/share/applications/dev.zed.Zed.desktop",
+                "sed -i 's|TryExec=zed|TryExec=Zed|g' /app/share/applications/dev.zed.Zed.desktop",
+                "sed -i 's|Icon=zed|Icon=dev.zed.Zed|g' /app/share/applications/dev.zed.Zed.desktop",
                 "cp ./crates/zed/resources/app-icon.png /app/share/icons/hicolor/512x512/apps/dev.zed.Zed.png"
             ],
             "sources": [
