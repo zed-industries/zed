@@ -4,7 +4,7 @@ use client::{user::UserStore, Client, ClientSettings};
 use fs::Fs;
 use futures::Future;
 use gpui::{
-    AppContext, AsyncAppContext, BorrowAppContext, Context, Global, Model, ModelContext, Task,
+    AppContext, AsyncAppContext, Context, Global, Model, ModelContext, Task, UpdateGlobal,
     WeakModel,
 };
 use language::LanguageRegistry;
@@ -41,7 +41,7 @@ pub fn init(client: Arc<Client>, app_state: AppState, cx: &mut AppContext) -> Ta
     cx.set_global(GlobalDevServer(dev_server.clone()));
 
     // Dev server cannot have any private files for now
-    cx.update_global(|store: &mut SettingsStore, _| {
+    SettingsStore::update_global(cx, |store, _cx| {
         let old_settings = store.get::<WorktreeSettings>(None);
         store.override_global(WorktreeSettings {
             private_files: Some(vec![]),
