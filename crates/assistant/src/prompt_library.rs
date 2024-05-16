@@ -1,30 +1,26 @@
-#![allow(unused, dead_code)]
 use fs::Fs;
 use futures::StreamExt;
-use gpui::{AppContext, DismissEvent, EventEmitter, FocusHandle, FocusableView, Model, Render};
-use parking_lot::{Mutex, RwLock};
+use gpui::{AppContext, DismissEvent, EventEmitter, FocusHandle, FocusableView, Render};
+use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
-use ui::{prelude::*, Checkbox, Divider, IconButtonShape, ModalHeader};
-use util::paths::PROMPTS_DIR;
+use ui::{prelude::*, Checkbox, Divider, IconButtonShape};
+use util::{paths::PROMPTS_DIR, ResultExt};
 use workspace::ModalView;
 
 pub struct PromptLibraryState {
     /// The default prompt all assistant contexts will start with
-    system_prompt: String,
+    _system_prompt: String,
     /// All [UserPrompt]s loaded into the library
     prompts: HashMap<String, UserPrompt>,
     /// Prompts included in the default prompt
     default_prompts: Vec<String>,
-    /// Prompts that are currently enabled. This is different from
-    /// the default prompt in that it may change during a conversation
-    enabled_prompts: Vec<String>,
     /// Prompts that have a pending update that hasn't been applied yet
-    updateable_prompts: Vec<String>,
+    _updateable_prompts: Vec<String>,
     /// Prompts that have been changed since they were loaded
     /// and can be reverted to their original state
-    revertable_prompts: Vec<String>,
+    _revertable_prompts: Vec<String>,
     version: usize,
 }
 
@@ -42,12 +38,11 @@ impl PromptLibrary {
     fn new() -> Self {
         Self {
             state: RwLock::new(PromptLibraryState {
-                system_prompt: String::new(),
+                _system_prompt: String::new(),
                 prompts: HashMap::new(),
                 default_prompts: Vec::new(),
-                enabled_prompts: Vec::new(),
-                updateable_prompts: Vec::new(),
-                revertable_prompts: Vec::new(),
+                _updateable_prompts: Vec::new(),
+                _revertable_prompts: Vec::new(),
                 version: 0,
             }),
         }
@@ -93,7 +88,7 @@ impl PromptLibrary {
     }
 
     pub fn default_prompt(&self) -> Option<String> {
-        let mut state = self.state.read();
+        let state = self.state.read();
 
         if state.default_prompts.is_empty() {
             // -- debug --
@@ -106,20 +101,6 @@ impl PromptLibrary {
             // -- /debug --
             Some(self.join_default_prompts())
         }
-    }
-
-    pub fn add_prompts_to_default(&self, prompt_ids: Vec<String>) -> anyhow::Result<()> {
-        let mut state = self.state.write();
-
-        let ids_to_add: Vec<String> = prompt_ids
-            .into_iter()
-            .filter(|id| !state.default_prompts.contains(id) && state.prompts.contains_key(id))
-            .collect();
-
-        state.default_prompts.extend(ids_to_add);
-        state.version += 1;
-
-        Ok(())
     }
 
     pub fn add_prompt_to_default(&self, prompt_id: String) -> anyhow::Result<()> {
@@ -143,7 +124,7 @@ impl PromptLibrary {
 
     fn join_default_prompts(&self) -> String {
         let state = self.state.read();
-        let active_prompt_ids = state.default_prompts.iter().cloned().collect::<Vec<_>>();
+        let active_prompt_ids = state.default_prompts.to_vec();
 
         active_prompt_ids
             .iter()
@@ -152,6 +133,7 @@ impl PromptLibrary {
             .join("\n\n---\n\n")
     }
 
+    #[allow(unused)]
     pub fn prompts(&self) -> Vec<UserPrompt> {
         let state = self.state.read();
         state.prompts.values().cloned().collect()
@@ -166,12 +148,12 @@ impl PromptLibrary {
             .collect()
     }
 
-    pub fn default_prompts(&self) -> Vec<UserPrompt> {
+    pub fn _default_prompts(&self) -> Vec<UserPrompt> {
         let state = self.state.read();
         state
             .default_prompts
             .iter()
-            .filter_map(|id| state.prompts.get(id).map(|p| p.clone()))
+            .filter_map(|id| state.prompts.get(id).cloned())
             .collect()
     }
 
@@ -257,10 +239,6 @@ impl PromptManager {
             prompt_library,
         }
     }
-
-    fn dismiss(&mut self, _: &menu::Cancel, cx: &mut ViewContext<Self>) {
-        cx.emit(DismissEvent);
-    }
 }
 
 impl Render for PromptManager {
@@ -272,8 +250,6 @@ impl Render for PromptManager {
             .clone()
             .into_iter()
             .collect::<Vec<_>>();
-
-        let default_prompts = prompt_library.clone().default_prompts();
 
         v_flex()
             .elevation_3(cx)
@@ -290,7 +266,7 @@ impl Render for PromptManager {
                     .child(
                         IconButton::new("dismiss", IconName::Close)
                             .shape(IconButtonShape::Square)
-                            .on_click(cx.listener(|this, _event, cx| cx.emit(DismissEvent))),
+                            .on_click(cx.listener(|_, _event, cx| cx.emit(DismissEvent))),
                     ),
             )
             .child(
@@ -307,7 +283,7 @@ impl Render for PromptManager {
                             .child(Divider::horizontal()),
                     )
                     .when_else(
-                        prompts.len() > 0,
+                        !prompts.is_empty(),
                         |with_items| {
                             with_items.children(prompts.into_iter().map(|(id, prompt)| {
                                 let prompt_library = prompt_library.clone();
@@ -335,19 +311,21 @@ impl Render for PromptManager {
                                                 .gap(Spacing::Large.rems(cx))
                                                 .child(
                                                     Checkbox::new(shared_string_id, selection)
-                                                        .on_click(move |_, cx| {
+                                                        .on_click(move |_, _cx| {
                                                             if is_default {
                                                                 prompt_library
                                                                     .clone()
                                                                     .remove_prompt_from_default(
                                                                         prompt_id.clone(),
-                                                                    );
+                                                                    )
+                                                                    .log_err();
                                                             } else {
                                                                 prompt_library
                                                                     .clone()
                                                                     .add_prompt_to_default(
                                                                         prompt_id.clone(),
-                                                                    );
+                                                                    )
+                                                                    .log_err();
                                                             }
                                                         }),
                                                 )
