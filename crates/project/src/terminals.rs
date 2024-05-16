@@ -101,6 +101,12 @@ impl Project {
 
         let (spawn_task, shell) = if let Some(remote_connection_data) = remote_connection_data {
             log::debug!("Connecting to a remote server: {remote_connection_data:?}");
+            // Alacritty sets its terminfo to `alacritty`, this requiring hosts to have it installed
+            // to properly display colors.
+            // We do not have the luxury of assuming the host has it installed,
+            // so we set it to a default that does not break the highlighting via ssh.
+            env.entry("TERM".to_string())
+                .or_insert_with(|| "xterm-256color".to_string());
 
             (
                 None,
