@@ -53,7 +53,7 @@ impl Display for AssistantKind {
 #[serde(tag = "type")]
 pub enum Event {
     Editor(EditorEvent),
-    Copilot(CopilotEvent), // Needed for migration: Copilot -> InlineCompletion
+    Copilot(CopilotEvent), // Needed for clients sending old copilot_event types
     InlineCompletion(InlineCompletionEvent),
     Call(CallEvent),
     Assistant(AssistantEvent),
@@ -75,7 +75,7 @@ pub struct EditorEvent {
     pub copilot_enabled_for_language: bool,
 }
 
-// Needed for migration: Copilot -> InlineCompletion
+// Needed for clients sending old copilot_event types
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct CopilotEvent {
     pub suggestion_id: Option<String>,
