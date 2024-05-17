@@ -1,5 +1,18 @@
 {
-  // The name of the Zed theme to use for the UI
+  // The name of the Zed theme to use for the UI.
+  //
+  // The theme can also be set to follow system preferences:
+  //
+  // "theme": {
+  //   "mode": "system",
+  //   "light": "One Light",
+  //   "dark": "One Dark"
+  // }
+  //
+  // Where `mode` is one of:
+  // - "system": Use the theme that corresponds to the system's appearance
+  // - "light": Use the theme indicated by the "light" field
+  // - "dark": Use the theme indicated by the "dark" field
   "theme": "One Dark",
   // The name of a base set of key bindings to use.
   // This setting can take four values, each named after another
@@ -311,9 +324,7 @@
   // The list of language servers to use (or disable) for all languages.
   //
   // This is typically customized on a per-language basis.
-  "language_servers": [
-    "..."
-  ],
+  "language_servers": ["..."],
   // When to automatically save edited buffers. This setting can
   // take four values.
   //
@@ -448,9 +459,7 @@
   "copilot": {
     // The set of glob patterns for which copilot should be disabled
     // in any matching file.
-    "disabled_globs": [
-      ".env"
-    ]
+    "disabled_globs": [".env"]
   },
   // Settings specific to journaling
   "journal": {
@@ -479,7 +488,7 @@
     //         }
     //     }
     "shell": "system",
-    // Where to dock terminals panel. Can be 'left', 'right', 'bottom'.
+    // Where to dock terminals panel. Can be `left`, `right`, `bottom`.
     "dock": "bottom",
     // Default width when the terminal is docked to the left or right.
     "default_width": 640,
@@ -561,13 +570,8 @@
         // Default directories to search for virtual environments, relative
         // to the current working directory. We recommend overriding this
         // in your project's settings, rather than globally.
-        "directories": [
-          ".env",
-          "env",
-          ".venv",
-          "venv"
-        ],
-        // Can also be 'csh', 'fish', and `nushell`
+        "directories": [".env", "env", ".venv", "venv"],
+        // Can also be `csh`, `fish`, and `nushell`
         "activate_script": "default"
       }
     },
@@ -592,7 +596,7 @@
   // use those languages.
   //
   // For example, to treat files like `foo.notjs` as JavaScript,
-  // and 'Embargo.lock' as TOML:
+  // and `Embargo.lock` as TOML:
   //
   // {
   //   "JavaScript": ["notjs"],
@@ -609,19 +613,30 @@
   },
   // Different settings for specific languages.
   "languages": {
-    "C++": {
-      "format_on_save": "off"
+    "Astro": {
+      "prettier": {
+        "allowed": true,
+        "plugins": ["prettier-plugin-astro"]
+      }
+    },
+    "Blade": {
+      "prettier": {
+        "allowed": true
+      }
     },
     "C": {
       "format_on_save": "off"
     },
+    "C++": {
+      "format_on_save": "off"
+    },
+    "CSS": {
+      "prettier": {
+        "allowed": true
+      }
+    },
     "Elixir": {
-      "language_servers": [
-        "elixir-ls",
-        "!next-ls",
-        "!lexical",
-        "..."
-      ]
+      "language_servers": ["elixir-ls", "!next-ls", "!lexical", "..."]
     },
     "Gleam": {
       "tab_size": 2
@@ -631,32 +646,120 @@
         "source.organizeImports": true
       }
     },
+    "GraphQL": {
+      "prettier": {
+        "allowed": true
+      }
+    },
     "HEEX": {
-      "language_servers": [
-        "elixir-ls",
-        "!next-ls",
-        "!lexical",
-        "..."
-      ]
+      "language_servers": ["elixir-ls", "!next-ls", "!lexical", "..."]
+    },
+    "HTML": {
+      "prettier": {
+        "allowed": true
+      }
+    },
+    "Java": {
+      "prettier": {
+        "allowed": true,
+        "plugins": ["prettier-plugin-java"]
+      }
+    },
+    "JavaScript": {
+      "prettier": {
+        "allowed": true
+      }
+    },
+    "JSON": {
+      "prettier": {
+        "allowed": true
+      }
     },
     "Make": {
       "hard_tabs": true
     },
     "Markdown": {
-      "format_on_save": "off"
+      "format_on_save": "off",
+      "prettier": {
+        "allowed": true
+      }
+    },
+    "PHP": {
+      "prettier": {
+        "allowed": true,
+        "plugins": ["@prettier/plugin-php"]
+      }
     },
     "Prisma": {
       "tab_size": 2
     },
     "Ruby": {
       "language_servers": ["solargraph", "!ruby-lsp", "..."]
+    },
+    "SCSS": {
+      "prettier": {
+        "allowed": true
+      }
+    },
+    "SQL": {
+      "prettier": {
+        "allowed": true,
+        "plugins": ["prettier-plugin-sql"]
+      }
+    },
+    "Svelte": {
+      "prettier": {
+        "allowed": true,
+        "plugins": ["prettier-plugin-svelte"]
+      }
+    },
+    "TSX": {
+      "prettier": {
+        "allowed": true
+      }
+    },
+    "Twig": {
+      "prettier": {
+        "allowed": true
+      }
+    },
+    "TypeScript": {
+      "prettier": {
+        "allowed": true
+      }
+    },
+    "Vue.js": {
+      "prettier": {
+        "allowed": true
+      }
+    },
+    "XML": {
+      "prettier": {
+        "allowed": true,
+        "plugins": ["@prettier/plugin-xml"]
+      }
+    },
+    "YAML": {
+      "prettier": {
+        "allowed": true
+      }
     }
   },
   // Zed's Prettier integration settings.
-  // If Prettier is enabled, Zed will use this for its Prettier instance for any applicable file, if
-  // project has no other Prettier installed.
+  // Allows to enable/disable formatting with Prettier
+  // and configure default Prettier, used when no project-level Prettier installation is found.
   "prettier": {
-    // Use regular Prettier json configuration:
+    // // Whether to consider prettier formatter or not when attempting to format a file.
+    // "allowed": false,
+    //
+    // // Use regular Prettier json configuration.
+    // // If Prettier is allowed, Zed will use this for its Prettier instance for any applicable file, if
+    // // the project has no other Prettier installed.
+    // "plugins": [],
+    //
+    // // Use regular Prettier json configuration.
+    // // If Prettier is allowed, Zed will use this for its Prettier instance for any applicable file, if
+    // // the project has no other Prettier installed.
     // "trailingComma": "es5",
     // "tabWidth": 4,
     // "semi": false,
@@ -714,5 +817,17 @@
   //   - `short`: "2 s, 15 l, 32 c"
   //   - `long`: "2 selections, 15 lines, 32 characters"
   // Default: long
-  "line_indicator_format": "long"
+  "line_indicator_format": "long",
+  // Set a proxy to use. The proxy protocol is specified by the URI scheme.
+  //
+  // Supported URI scheme: `http`, `https`, `socks4`, `socks4a`, `socks5`,
+  // `socks5h`. `http` will be used when no scheme is specified.
+  //
+  // By default no proxy will be used, or Zed will try get proxy settings from
+  // environment variables.
+  //
+  // Examples:
+  //   - "proxy" = "socks5://localhost:10808"
+  //   - "proxy" = "http://127.0.0.1:10809"
+  "proxy": null
 }

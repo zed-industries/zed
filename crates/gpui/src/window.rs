@@ -491,14 +491,11 @@ pub struct Window {
     sprite_atlas: Arc<dyn PlatformAtlas>,
     text_system: Arc<WindowTextSystem>,
     rem_size: Pixels,
-    /// An override value for the window's rem size.
+    /// The stack of override values for the window's rem size.
     ///
     /// This is used by `with_rem_size` to allow rendering an element tree with
     /// a given rem size.
-    ///
-    /// Note: Right now we only allow for a single override value at a time, but
-    /// this could likely be changed to be a stack of rem sizes.
-    rem_size_override: Option<Pixels>,
+    rem_size_override_stack: SmallVec<[Pixels; 8]>,
     pub(crate) viewport_size: Size<Pixels>,
     layout_engine: Option<TaffyLayoutEngine>,
     pub(crate) root_view: Option<AnyView>,
@@ -771,7 +768,7 @@ impl Window {
             sprite_atlas,
             text_system,
             rem_size: px(16.),
-            rem_size_override: None,
+            rem_size_override_stack: SmallVec::new(),
             viewport_size: content_size,
             layout_engine: Some(TaffyLayoutEngine::new()),
             root_view: None,
@@ -1212,7 +1209,9 @@ impl<'a> WindowContext<'a> {
     /// UI to scale, just like zooming a web page.
     pub fn rem_size(&self) -> Pixels {
         self.window
-            .rem_size_override
+            .rem_size_override_stack
+            .last()
+            .copied()
             .unwrap_or(self.window.rem_size)
     }
 
@@ -1238,9 +1237,9 @@ impl<'a> WindowContext<'a> {
         );
 
         if let Some(rem_size) = rem_size {
-            self.window.rem_size_override = Some(rem_size.into());
+            self.window.rem_size_override_stack.push(rem_size.into());
             let result = f(self);
-            self.window.rem_size_override.take();
+            self.window.rem_size_override_stack.pop();
             result
         } else {
             f(self)

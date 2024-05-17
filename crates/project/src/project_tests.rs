@@ -1,7 +1,7 @@
 use crate::{Event, *};
 use fs::FakeFs;
 use futures::{future, StreamExt};
-use gpui::AppContext;
+use gpui::{AppContext, UpdateGlobal};
 use language::{
     language_settings::{AllLanguageSettings, LanguageSettingsContent},
     tree_sitter_rust, tree_sitter_typescript, Diagnostic, FakeLspAdapter, LanguageConfig,
@@ -1501,7 +1501,7 @@ async fn test_toggling_enable_language_server(cx: &mut gpui::TestAppContext) {
 
     // Disable Rust language server, ensuring only that server gets stopped.
     cx.update(|cx| {
-        cx.update_global(|settings: &mut SettingsStore, cx| {
+        SettingsStore::update_global(cx, |settings, cx| {
             settings.update_user_settings::<AllLanguageSettings>(cx, |settings| {
                 settings.languages.insert(
                     Arc::from("Rust"),
@@ -1520,7 +1520,7 @@ async fn test_toggling_enable_language_server(cx: &mut gpui::TestAppContext) {
     // Enable Rust and disable JavaScript language servers, ensuring that the
     // former gets started again and that the latter stops.
     cx.update(|cx| {
-        cx.update_global(|settings: &mut SettingsStore, cx| {
+        SettingsStore::update_global(cx, |settings, cx| {
             settings.update_user_settings::<AllLanguageSettings>(cx, |settings| {
                 settings.languages.insert(
                     Arc::from("Rust"),

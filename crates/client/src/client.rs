@@ -17,8 +17,7 @@ use futures::{
     TryFutureExt as _, TryStreamExt,
 };
 use gpui::{
-    actions, AnyModel, AnyWeakModel, AppContext, AsyncAppContext, BorrowAppContext, Global, Model,
-    Task, WeakModel,
+    actions, AnyModel, AnyWeakModel, AppContext, AsyncAppContext, Global, Model, Task, WeakModel,
 };
 use http::{HttpClient, HttpClientWithUrl};
 use lazy_static::lazy_static;
@@ -29,7 +28,7 @@ use release_channel::{AppVersion, ReleaseChannel};
 use rpc::proto::{AnyTypedEnvelope, EntityMessage, EnvelopedMessage, PeerId, RequestMessage};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use settings::{Settings, SettingsSources, SettingsStore};
+use settings::{Settings, SettingsSources};
 use std::fmt;
 use std::pin::Pin;
 use std::{
@@ -86,7 +85,7 @@ lazy_static! {
 }
 
 pub const INITIAL_RECONNECTION_DELAY: Duration = Duration::from_millis(100);
-pub const CONNECTION_TIMEOUT: Duration = Duration::from_secs(5);
+pub const CONNECTION_TIMEOUT: Duration = Duration::from_secs(20);
 
 actions!(client, [SignIn, SignOut, Reconnect]);
 
@@ -114,11 +113,35 @@ impl Settings for ClientSettings {
     }
 }
 
+#[derive(Default, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct ProxySettingsContent {
+    proxy: Option<String>,
+}
+
+#[derive(Deserialize, Default)]
+pub struct ProxySettings {
+    pub proxy: Option<String>,
+}
+
+impl Settings for ProxySettings {
+    const KEY: Option<&'static str> = None;
+
+    type FileContent = ProxySettingsContent;
+
+    fn load(sources: SettingsSources<Self::FileContent>, _: &mut AppContext) -> Result<Self> {
+        Ok(Self {
+            proxy: sources
+                .user
+                .and_then(|value| value.proxy.clone())
+                .or(sources.default.proxy.clone()),
+        })
+    }
+}
+
 pub fn init_settings(cx: &mut AppContext) {
     TelemetrySettings::register(cx);
-    cx.update_global(|store: &mut SettingsStore, cx| {
-        store.register_setting::<ClientSettings>(cx);
-    });
+    ClientSettings::register(cx);
+    ProxySettings::register(cx);
 }
 
 pub fn init(client: &Arc<Client>, cx: &mut AppContext) {
@@ -512,6 +535,7 @@ impl Client {
         let clock = Arc::new(clock::RealSystemClock);
         let http = Arc::new(HttpClientWithUrl::new(
             &ClientSettings::get_global(cx).server_url,
+            ProxySettings::get_global(cx).proxy.clone(),
         ));
         Self::new(clock, http.clone(), cx)
     }

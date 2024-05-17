@@ -20,7 +20,7 @@ async fn test_dev_server(cx: &mut gpui::TestAppContext, cx2: &mut gpui::TestAppC
 
     let resp = store
         .update(cx, |store, cx| {
-            store.create_dev_server("server-1".to_string(), cx)
+            store.create_dev_server("server-1".to_string(), None, cx)
         })
         .await
         .unwrap();
@@ -167,7 +167,7 @@ async fn create_dev_server_project(
 
     let resp = store
         .update(cx, |store, cx| {
-            store.create_dev_server("server-1".to_string(), cx)
+            store.create_dev_server("server-1".to_string(), None, cx)
         })
         .await
         .unwrap();
@@ -521,7 +521,7 @@ async fn test_create_dev_server_project_path_validation(
 
     let resp = store
         .update(cx1, |store, cx| {
-            store.create_dev_server("server-2".to_string(), cx)
+            store.create_dev_server("server-2".to_string(), None, cx)
         })
         .await
         .unwrap();

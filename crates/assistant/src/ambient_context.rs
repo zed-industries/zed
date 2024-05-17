@@ -22,3 +22,9 @@ impl AmbientContext {
 pub struct AmbientContextSnapshot {
     pub recent_buffers: RecentBuffersSnapshot,
 }
+
+#[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Clone, Copy)]
+pub enum ContextUpdated {
+    Updating,
+    Disabled,
+}

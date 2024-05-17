@@ -2,12 +2,13 @@ use crate::{
     ambient_context::*,
     assistant_settings::{AssistantDockPosition, AssistantSettings, ZedDotDevModel},
     codegen::{self, Codegen, CodegenKind},
+    prompt_library::{PromptLibrary, PromptManager},
     prompts::generate_content_prompt,
     search::*,
-    ApplyEdit, Assist, CompletionProvider, CycleMessageRole, InlineAssist, LanguageModel,
-    LanguageModelRequest, LanguageModelRequestMessage, MessageId, MessageMetadata, MessageStatus,
-    QuoteSelection, ResetKey, Role, SavedConversation, SavedConversationMetadata, SavedMessage,
-    Split, ToggleFocus, ToggleHistory, ToggleIncludeConversation,
+    ApplyEdit, Assist, CompletionProvider, CycleMessageRole, InlineAssist, InsertActivePrompt,
+    LanguageModel, LanguageModelRequest, LanguageModelRequestMessage, MessageId, MessageMetadata,
+    MessageStatus, QuoteSelection, ResetKey, Role, SavedConversation, SavedConversationMetadata,
+    SavedMessage, Split, ToggleFocus, ToggleHistory, ToggleIncludeConversation,
 };
 use anyhow::{anyhow, Result};
 use client::telemetry::Telemetry;
@@ -78,6 +79,7 @@ pub fn init(cx: &mut AppContext) {
                 })
                 .register_action(AssistantPanel::inline_assist)
                 .register_action(AssistantPanel::cancel_last_inline_assist)
+                .register_action(ConversationEditor::insert_active_prompt)
                 .register_action(ConversationEditor::quote_selection);
         },
     )
@@ -96,6 +98,7 @@ pub struct AssistantPanel {
     focus_handle: FocusHandle,
     toolbar: View<Toolbar>,
     languages: Arc<LanguageRegistry>,
+    prompt_library: Arc<PromptLibrary>,
     fs: Arc<dyn Fs>,
     telemetry: Arc<Telemetry>,
     _subscriptions: Vec<Subscription>,
@@ -127,6 +130,13 @@ impl AssistantPanel {
                 .await
                 .log_err()
                 .unwrap_or_default();
+
+            let prompt_library = Arc::new(
+                PromptLibrary::init(fs.clone())
+                    .await
+                    .log_err()
+                    .unwrap_or_default(),
+            );
 
             // TODO: deserialize state.
             let workspace_handle = workspace.clone();
@@ -190,6 +200,7 @@ impl AssistantPanel {
                         focus_handle,
                         toolbar,
                         languages: workspace.app_state().languages.clone(),
+                        prompt_library,
                         fs: workspace.app_state().fs.clone(),
                         telemetry: workspace.client().telemetry().clone(),
                         width: None,
@@ -1009,6 +1020,20 @@ impl AssistantPanel {
                                 .ok();
                         }
                     })
+                    .entry("Insert Active Prompt", None, {
+                        let workspace = workspace.clone();
+                        move |cx| {
+                            workspace
+                                .update(cx, |workspace, cx| {
+                                    ConversationEditor::insert_active_prompt(
+                                        workspace,
+                                        &Default::default(),
+                                        cx,
+                                    )
+                                })
+                                .ok();
+                        }
+                    })
                 })
                 .into()
             })
@@ -1087,6 +1112,14 @@ impl AssistantPanel {
         })
     }
 
+    fn show_prompt_manager(&mut self, cx: &mut ViewContext<Self>) {
+        if let Some(workspace) = self.workspace.upgrade() {
+            workspace.update(cx, |workspace, cx| {
+                workspace.toggle_modal(cx, |cx| PromptManager::new(self.prompt_library.clone(), cx))
+            })
+        }
+    }
+
     fn is_authenticated(&mut self, cx: &mut ViewContext<Self>) -> bool {
         CompletionProvider::global(cx).is_authenticated()
     }
@@ -1096,39 +1129,48 @@ impl AssistantPanel {
     }
 
     fn render_signed_in(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
-        let header = TabBar::new("assistant_header")
-            .start_child(h_flex().gap_1().child(self.render_popover_button(cx)))
-            .children(self.active_conversation_editor().map(|editor| {
-                h_flex()
-                    .h(rems(Tab::CONTAINER_HEIGHT_IN_REMS))
-                    .flex_1()
-                    .px_2()
-                    .child(Label::new(editor.read(cx).title(cx)).into_element())
-            }))
-            .end_child(
-                h_flex()
-                    .gap_2()
-                    .when_some(self.active_conversation_editor(), |this, editor| {
-                        let conversation = editor.read(cx).conversation.clone();
-                        this.child(
+        let header =
+            TabBar::new("assistant_header")
+                .start_child(h_flex().gap_1().child(self.render_popover_button(cx)))
+                .children(self.active_conversation_editor().map(|editor| {
+                    h_flex()
+                        .h(rems(Tab::CONTAINER_HEIGHT_IN_REMS))
+                        .flex_1()
+                        .px_2()
+                        .child(Label::new(editor.read(cx).title(cx)).into_element())
+                }))
+                .end_child(
+                    h_flex()
+                        .gap_2()
+                        .when_some(self.active_conversation_editor(), |this, editor| {
+                            let conversation = editor.read(cx).conversation.clone();
+                            this.child(
+                                h_flex()
+                                    .gap_1()
+                                    .child(self.render_model(&conversation, cx))
+                                    .children(self.render_remaining_tokens(&conversation, cx)),
+                            )
+                            .child(
+                                ui::Divider::vertical()
+                                    .inset()
+                                    .color(ui::DividerColor::Border),
+                            )
+                        })
+                        .child(
                             h_flex()
                                 .gap_1()
-                                .child(self.render_model(&conversation, cx))
-                                .children(self.render_remaining_tokens(&conversation, cx)),
-                        )
-                        .child(
-                            ui::Divider::vertical()
-                                .inset()
-                                .color(ui::DividerColor::Border),
-                        )
-                    })
-                    .child(
-                        h_flex()
-                            .gap_1()
-                            .child(self.render_inject_context_menu(cx))
-                            .child(Self::render_assist_button(cx)),
-                    ),
-            );
+                                .child(self.render_inject_context_menu(cx))
+                                .child(
+                                    IconButton::new("show_prompt_manager", IconName::Library)
+                                        .icon_size(IconSize::Small)
+                                        .on_click(cx.listener(|this, _event, cx| {
+                                            this.show_prompt_manager(cx)
+                                        }))
+                                        .tooltip(|cx| Tooltip::text("Prompt Library…", cx)),
+                                )
+                                .child(Self::render_assist_button(cx)),
+                        ),
+                );
 
         let contents = if self.active_conversation_editor().is_some() {
             let mut registrar = DivRegistrar::new(
@@ -1533,6 +1575,16 @@ impl Conversation {
         .detach_and_log_err(cx);
     }
 
+    fn toggle_recent_buffers(&mut self, cx: &mut ModelContext<Self>) {
+        self.ambient_context.recent_buffers.enabled = !self.ambient_context.recent_buffers.enabled;
+        match self.ambient_context.recent_buffers.update(cx) {
+            ContextUpdated::Updating => {}
+            ContextUpdated::Disabled => {
+                self.count_remaining_tokens(cx);
+            }
+        }
+    }
+
     fn toggle_current_project_context(
         &mut self,
         fs: Arc<dyn Fs>,
@@ -1541,7 +1593,40 @@ impl Conversation {
     ) {
         self.ambient_context.current_project.enabled =
             !self.ambient_context.current_project.enabled;
-        self.ambient_context.current_project.update(fs, project, cx);
+        match self.ambient_context.current_project.update(fs, project, cx) {
+            ContextUpdated::Updating => {}
+            ContextUpdated::Disabled => {
+                self.count_remaining_tokens(cx);
+            }
+        }
+    }
+
+    fn set_recent_buffers(
+        &mut self,
+        buffers: impl IntoIterator<Item = Model<Buffer>>,
+        cx: &mut ModelContext<Self>,
+    ) {
+        self.ambient_context.recent_buffers.buffers.clear();
+        self.ambient_context
+            .recent_buffers
+            .buffers
+            .extend(buffers.into_iter().map(|buffer| RecentBuffer {
+                buffer: buffer.downgrade(),
+                _subscription: cx.observe(&buffer, |this, _, cx| {
+                    match this.ambient_context.recent_buffers.update(cx) {
+                        ContextUpdated::Updating => {}
+                        ContextUpdated::Disabled => {
+                            this.count_remaining_tokens(cx);
+                        }
+                    }
+                }),
+            }));
+        match self.ambient_context.recent_buffers.update(cx) {
+            ContextUpdated::Updating => {}
+            ContextUpdated::Disabled => {
+                self.count_remaining_tokens(cx);
+            }
+        }
     }
 
     fn handle_buffer_event(
@@ -2483,6 +2568,7 @@ impl ConversationEditor {
                                     .colors()
                                     .editor_document_highlight_read_background,
                             ),
+                            false,
                             cx,
                         );
                     }
@@ -2585,9 +2671,7 @@ impl ConversationEditor {
 
         self.conversation.update(cx, |conversation, cx| {
             conversation
-                .ambient_context
-                .recent_buffers
-                .reset(recent_buffers.into_iter().map(|(buffer, _)| buffer), cx);
+                .set_recent_buffers(recent_buffers.into_iter().map(|(buffer, _)| buffer), cx);
         });
     }
 
@@ -2712,9 +2796,7 @@ impl ConversationEditor {
                                                         conversation
                                                             .update(cx, |conversation, cx| {
                                                                 conversation
-                                                                    .ambient_context
-                                                                    .recent_buffers
-                                                                    .toggle(cx);
+                                                                    .toggle_recent_buffers(cx);
                                                             })
                                                             .ok();
                                                     }
@@ -2834,6 +2916,36 @@ impl ConversationEditor {
                 };
             });
         }
+    }
+
+    fn insert_active_prompt(
+        workspace: &mut Workspace,
+        _: &InsertActivePrompt,
+        cx: &mut ViewContext<Workspace>,
+    ) {
+        let Some(panel) = workspace.panel::<AssistantPanel>(cx) else {
+            return;
+        };
+
+        if !panel.focus_handle(cx).contains_focused(cx) {
+            workspace.toggle_panel_focus::<AssistantPanel>(cx);
+        }
+
+        if let Some(default_prompt) = panel.read(cx).prompt_library.clone().default_prompt() {
+            panel.update(cx, |panel, cx| {
+                if let Some(conversation) = panel
+                    .active_conversation_editor()
+                    .cloned()
+                    .or_else(|| panel.new_conversation(cx))
+                {
+                    conversation.update(cx, |conversation, cx| {
+                        conversation
+                            .editor
+                            .update(cx, |editor, cx| editor.insert(&default_prompt, cx))
+                    });
+                };
+            });
+        };
     }
 
     fn copy(&mut self, _: &editor::actions::Copy, cx: &mut ViewContext<Self>) {
@@ -3019,7 +3131,7 @@ impl ConversationEditor {
 impl EventEmitter<ConversationEditorEvent> for ConversationEditor {}
 
 impl Render for ConversationEditor {
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl Element {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         div()
             .key_context("ConversationEditor")
             .capture_action(cx.listener(ConversationEditor::cancel_last_assist))
@@ -3105,7 +3217,7 @@ struct InlineAssistant {
 impl EventEmitter<InlineAssistantEvent> for InlineAssistant {}
 
 impl Render for InlineAssistant {
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl Element {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         let measurements = *self.measurements.lock();
         h_flex()
             .w_full()

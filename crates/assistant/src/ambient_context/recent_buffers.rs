@@ -1,8 +1,9 @@
-use gpui::{Model, ModelContext, Subscription, Task, WeakModel};
+use crate::{assistant_panel::Conversation, LanguageModelRequestMessage, Role};
+use gpui::{ModelContext, Subscription, Task, WeakModel};
 use language::{Buffer, BufferSnapshot, Rope};
 use std::{fmt::Write, path::PathBuf, time::Duration};
 
-use crate::{assistant_panel::Conversation, LanguageModelRequestMessage, Role};
+use super::ContextUpdated;
 
 pub struct RecentBuffersContext {
     pub enabled: bool,
@@ -28,28 +29,7 @@ impl Default for RecentBuffersContext {
 }
 
 impl RecentBuffersContext {
-    pub fn toggle(&mut self, cx: &mut ModelContext<Conversation>) {
-        self.enabled = !self.enabled;
-        self.update(cx);
-    }
-
-    pub fn reset(
-        &mut self,
-        buffers: impl IntoIterator<Item = Model<Buffer>>,
-        cx: &mut ModelContext<Conversation>,
-    ) {
-        self.buffers.clear();
-        self.buffers
-            .extend(buffers.into_iter().map(|buffer| RecentBuffer {
-                buffer: buffer.downgrade(),
-                _subscription: cx.observe(&buffer, |this, _, cx| {
-                    this.ambient_context.recent_buffers.update(cx);
-                }),
-            }));
-        self.update(cx);
-    }
-
-    fn update(&mut self, cx: &mut ModelContext<Conversation>) {
+    pub fn update(&mut self, cx: &mut ModelContext<Conversation>) -> ContextUpdated {
         let source_buffers = self
             .buffers
             .iter()
@@ -71,28 +51,38 @@ impl RecentBuffersContext {
             })
             .collect::<Vec<_>>();
 
-        self.pending_message = Some(cx.spawn(|this, mut cx| async move {
-            const DEBOUNCE_TIMEOUT: Duration = Duration::from_millis(100);
-            cx.background_executor().timer(DEBOUNCE_TIMEOUT).await;
+        if !self.enabled || source_buffers.is_empty() {
+            self.snapshot.message = Default::default();
+            self.snapshot.source_buffers.clear();
+            self.pending_message = None;
+            cx.notify();
+            ContextUpdated::Disabled
+        } else {
+            self.pending_message = Some(cx.spawn(|this, mut cx| async move {
+                const DEBOUNCE_TIMEOUT: Duration = Duration::from_millis(100);
+                cx.background_executor().timer(DEBOUNCE_TIMEOUT).await;
 
-            let message = if source_buffers.is_empty() {
-                Rope::new()
-            } else {
-                cx.background_executor()
-                    .spawn({
-                        let source_buffers = source_buffers.clone();
-                        async move { message_for_recent_buffers(source_buffers) }
-                    })
-                    .await
-            };
-            this.update(&mut cx, |this, cx| {
-                this.ambient_context.recent_buffers.snapshot.source_buffers = source_buffers;
-                this.ambient_context.recent_buffers.snapshot.message = message;
-                this.count_remaining_tokens(cx);
-                cx.notify();
-            })
-            .ok();
-        }));
+                let message = if source_buffers.is_empty() {
+                    Rope::new()
+                } else {
+                    cx.background_executor()
+                        .spawn({
+                            let source_buffers = source_buffers.clone();
+                            async move { message_for_recent_buffers(source_buffers) }
+                        })
+                        .await
+                };
+                this.update(&mut cx, |this, cx| {
+                    this.ambient_context.recent_buffers.snapshot.source_buffers = source_buffers;
+                    this.ambient_context.recent_buffers.snapshot.message = message;
+                    this.count_remaining_tokens(cx);
+                    cx.notify();
+                })
+                .ok();
+            }));
+
+            ContextUpdated::Updating
+        }
     }
 
     /// Returns the [`RecentBuffersContext`] as a message to the language model.

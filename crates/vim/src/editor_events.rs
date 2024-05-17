@@ -1,8 +1,6 @@
 use crate::{insert::NormalBefore, Vim, VimModeSetting};
 use editor::{Editor, EditorEvent};
-use gpui::{
-    Action, AppContext, BorrowAppContext, Entity, EntityId, View, ViewContext, WindowContext,
-};
+use gpui::{Action, AppContext, Entity, EntityId, UpdateGlobal, View, ViewContext, WindowContext};
 use settings::{Settings, SettingsStore};
 
 pub fn init(cx: &mut AppContext) {
@@ -63,7 +61,7 @@ fn blurred(editor: View<Editor>, cx: &mut WindowContext) {
 }
 
 fn released(entity_id: EntityId, cx: &mut AppContext) {
-    cx.update_global(|vim: &mut Vim, _| {
+    Vim::update_global(cx, |vim, _cx| {
         if vim
             .active_editor
             .as_ref()

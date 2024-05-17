@@ -1201,26 +1201,26 @@ fn apply_font_features(
 
     // All of these features are enabled by default by DirectWrite.
     // If you want to (and can) peek into the source of DirectWrite
-    let mut feature_liga = make_direct_write_feature("liga", true);
-    let mut feature_clig = make_direct_write_feature("clig", true);
-    let mut feature_calt = make_direct_write_feature("calt", true);
+    let mut feature_liga = make_direct_write_feature("liga", 1);
+    let mut feature_clig = make_direct_write_feature("clig", 1);
+    let mut feature_calt = make_direct_write_feature("calt", 1);
 
-    for (tag, enable) in tag_values {
-        if tag == *"liga" && !enable {
+    for (tag, value) in tag_values {
+        if tag.as_str() == "liga" && *value == 0 {
             feature_liga.parameter = 0;
             continue;
         }
-        if tag == *"clig" && !enable {
+        if tag.as_str() == "clig" && *value == 0 {
             feature_clig.parameter = 0;
             continue;
         }
-        if tag == *"calt" && !enable {
+        if tag.as_str() == "calt" && *value == 0 {
             feature_calt.parameter = 0;
             continue;
         }
 
         unsafe {
-            direct_write_features.AddFontFeature(make_direct_write_feature(&tag, enable))?;
+            direct_write_features.AddFontFeature(make_direct_write_feature(&tag, *value))?;
         }
     }
     unsafe {
@@ -1233,18 +1233,11 @@ fn apply_font_features(
 }
 
 #[inline]
-fn make_direct_write_feature(feature_name: &str, enable: bool) -> DWRITE_FONT_FEATURE {
+fn make_direct_write_feature(feature_name: &str, parameter: u32) -> DWRITE_FONT_FEATURE {
     let tag = make_direct_write_tag(feature_name);
-    if enable {
-        DWRITE_FONT_FEATURE {
-            nameTag: tag,
-            parameter: 1,
-        }
-    } else {
-        DWRITE_FONT_FEATURE {
-            nameTag: tag,
-            parameter: 0,
-        }
+    DWRITE_FONT_FEATURE {
+        nameTag: tag,
+        parameter,
     }
 }
 

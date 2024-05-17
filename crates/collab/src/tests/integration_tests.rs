@@ -13,11 +13,11 @@ use fs::{FakeFs, Fs as _, RemoveOptions};
 use futures::{channel::mpsc, StreamExt as _};
 use git::repository::GitFileStatus;
 use gpui::{
-    px, size, AppContext, BackgroundExecutor, BorrowAppContext, Model, Modifiers, MouseButton,
-    MouseDownEvent, TestAppContext,
+    px, size, AppContext, BackgroundExecutor, Model, Modifiers, MouseButton, MouseDownEvent,
+    TestAppContext, UpdateGlobal,
 };
 use language::{
-    language_settings::{AllLanguageSettings, Formatter},
+    language_settings::{AllLanguageSettings, Formatter, PrettierSettings},
     tree_sitter_rust, Diagnostic, DiagnosticEntry, FakeLspAdapter, Language, LanguageConfig,
     LanguageMatcher, LineEnding, OffsetRangeExt, Point, Rope,
 };
@@ -4401,7 +4401,7 @@ async fn test_formatting_buffer(
     // Ensure buffer can be formatted using an external command. Notice how the
     // host's configuration is honored as opposed to using the guest's settings.
     cx_a.update(|cx| {
-        cx.update_global(|store: &mut SettingsStore, cx| {
+        SettingsStore::update_global(cx, |store, cx| {
             store.update_user_settings::<AllLanguageSettings>(cx, |file| {
                 file.defaults.formatter = Some(Formatter::External {
                     command: "awk".into(),
@@ -4445,18 +4445,17 @@ async fn test_prettier_formatting_buffer(
 
     client_a.language_registry().add(Arc::new(Language::new(
         LanguageConfig {
-            name: "Rust".into(),
+            name: "TypeScript".into(),
             matcher: LanguageMatcher {
-                path_suffixes: vec!["rs".to_string()],
+                path_suffixes: vec!["ts".to_string()],
                 ..Default::default()
             },
-            prettier_parser_name: Some("test_parser".to_string()),
             ..Default::default()
         },
         Some(tree_sitter_rust::language()),
     )));
     let mut fake_language_servers = client_a.language_registry().register_fake_lsp_adapter(
-        "Rust",
+        "TypeScript",
         FakeLspAdapter {
             prettier_plugins: vec![test_plugin],
             ..Default::default()
@@ -4470,11 +4469,11 @@ async fn test_prettier_formatting_buffer(
     let buffer_text = "let one = \"two\"";
     client_a
         .fs()
-        .insert_tree(&directory, json!({ "a.rs": buffer_text }))
+        .insert_tree(&directory, json!({ "a.ts": buffer_text }))
         .await;
     let (project_a, worktree_id) = client_a.build_local_project(&directory, cx_a).await;
     let prettier_format_suffix = project::TEST_PRETTIER_FORMAT_SUFFIX;
-    let open_buffer = project_a.update(cx_a, |p, cx| p.open_buffer((worktree_id, "a.rs"), cx));
+    let open_buffer = project_a.update(cx_a, |p, cx| p.open_buffer((worktree_id, "a.ts"), cx));
     let buffer_a = cx_a.executor().spawn(open_buffer).await.unwrap();
 
     let project_id = active_call_a
@@ -4482,20 +4481,28 @@ async fn test_prettier_formatting_buffer(
         .await
         .unwrap();
     let project_b = client_b.build_dev_server_project(project_id, cx_b).await;
-    let open_buffer = project_b.update(cx_b, |p, cx| p.open_buffer((worktree_id, "a.rs"), cx));
+    let open_buffer = project_b.update(cx_b, |p, cx| p.open_buffer((worktree_id, "a.ts"), cx));
     let buffer_b = cx_b.executor().spawn(open_buffer).await.unwrap();
 
     cx_a.update(|cx| {
-        cx.update_global(|store: &mut SettingsStore, cx| {
+        SettingsStore::update_global(cx, |store, cx| {
             store.update_user_settings::<AllLanguageSettings>(cx, |file| {
                 file.defaults.formatter = Some(Formatter::Auto);
+                file.defaults.prettier = Some(PrettierSettings {
+                    allowed: true,
+                    ..PrettierSettings::default()
+                });
             });
         });
     });
     cx_b.update(|cx| {
-        cx.update_global(|store: &mut SettingsStore, cx| {
+        SettingsStore::update_global(cx, |store, cx| {
             store.update_user_settings::<AllLanguageSettings>(cx, |file| {
                 file.defaults.formatter = Some(Formatter::LanguageServer);
+                file.defaults.prettier = Some(PrettierSettings {
+                    allowed: true,
+                    ..PrettierSettings::default()
+                });
             });
         });
     });

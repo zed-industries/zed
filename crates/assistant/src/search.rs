@@ -1,7 +1,5 @@
-use language::{BufferSnapshot, Rope};
-use project::search::SearchQuery;
+use language::Rope;
 use std::ops::Range;
-use util::ResultExt as _;
 
 /// Search the given buffer for the given substring, ignoring any differences
 /// in line indentation between the query and the buffer.
@@ -51,7 +49,7 @@ pub fn fuzzy_search_lines(haystack: &Rope, needle: &str) -> Vec<Range<usize>> {
 #[cfg(test)]
 mod test {
     use super::*;
-    use gpui::{AppContext, Context as _, TestAppContext};
+    use gpui::{AppContext, Context as _};
     use language::{Buffer, OffsetRangeExt};
     use unindent::Unindent as _;
     use util::test::marked_text_ranges;
