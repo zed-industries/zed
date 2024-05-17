@@ -410,25 +410,10 @@ async def generate_sources(
 
 
 def main():
-    parser = argparse.ArgumentParser()
-    parser.add_argument('cargo_lock', help='Path to the Cargo.lock file')
-    parser.add_argument('-o', '--output', required=False, help='Where to write generated sources')
-    parser.add_argument('-t', '--git-tarballs', action='store_true', help='Download git repos as tarballs')
-    parser.add_argument('-d', '--debug', action='store_true')
-    args = parser.parse_args()
-    if args.output is not None:
-        outfile = args.output
-    else:
-        outfile = 'generated-sources.json'
-    if args.debug:
-        loglevel = logging.DEBUG
-    else:
-        loglevel = logging.INFO
-    logging.basicConfig(level=loglevel)
-
-    generated_sources = asyncio.run(generate_sources(load_toml(args.cargo_lock),
-                                    git_tarballs=args.git_tarballs))
-    with open(outfile, 'w') as out:
+    logging.basicConfig(level=logging.DEBUG)
+    generated_sources = asyncio.run(generate_sources(load_toml("Cargo.lock"),
+                                    git_tarballs=True))
+    with open("flatpak-cargo-sources.json", 'w') as out:
         json.dump(generated_sources, out, indent=4, sort_keys=False)
 
 

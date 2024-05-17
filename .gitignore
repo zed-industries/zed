@@ -25,3 +25,4 @@ DerivedData/
 .blob_store
 .vscode
 .wrangler
+flatpak-cargo-sources.json
