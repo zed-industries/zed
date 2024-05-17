@@ -5921,18 +5921,18 @@ mod tests {
         let expected_invisibles = vec![
             Invisible::Tab {
                 line_start_offset: 0,
-                line_end_offset: 4,
+                line_end_offset: TAB_SIZE as usize,
             },
             Invisible::Whitespace {
                 line_offset: TAB_SIZE as usize,
             },
             Invisible::Tab {
                 line_start_offset: TAB_SIZE as usize + 1,
-                line_end_offset: TAB_SIZE as usize + 4,
+                line_end_offset: TAB_SIZE as usize * 2 + 1,
             },
             Invisible::Tab {
                 line_start_offset: TAB_SIZE as usize * 2 + 1,
-                line_end_offset: TAB_SIZE as usize * 2 + 4,
+                line_end_offset: TAB_SIZE as usize * 3 + 1,
             },
             Invisible::Whitespace {
                 line_offset: TAB_SIZE as usize * 3 + 1,
@@ -5990,7 +5990,7 @@ mod tests {
         let repeated_invisibles = [
             Invisible::Tab {
                 line_start_offset: 1,
-                line_end_offset: 4,
+                line_end_offset: tab_size as usize + 3,
             },
             Invisible::Whitespace {
                 line_offset: tab_size as usize + 3,
