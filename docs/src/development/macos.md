@@ -83,3 +83,31 @@ Try `sudo xcode-select --switch /Applications/Xcode.app/Contents/Developer`
 ### Cargo errors claiming that a dependency is using unstable features
 
 Try `cargo clean` and `cargo build`.
+
+### Error: 'dispatch/dispatch.h' file not found
+
+If you encounter an error similar to:
+
+```bash
+src/platform/mac/dispatch.h:1:10: fatal error: 'dispatch/dispatch.h' file not found
+```
+
+This file is part of Xcode. Ensure you have installed the Xcode command line tools and set the correct path:
+
+```bash
+xcode-select --install
+sudo xcode-select --switch /Applications/Xcode.app/Contents/Developer
+```
+
+Additionally, set the `BINDGEN_EXTRA_CLANG_ARGS` environment variable:
+
+```bash
+export BINDGEN_EXTRA_CLANG_ARGS="--sysroot=$(xcrun --show-sdk-path)"
+```
+
+Then clean and rebuild the project:
+
+```bash
+cargo clean
+cargo run
+```
