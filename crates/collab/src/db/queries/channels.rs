@@ -769,22 +769,6 @@ impl Database {
         Ok((members, users))
     }
 
-    /// Returns the participants in the given channel.
-    pub async fn get_channel_participants(
-        &self,
-        channel: &channel::Model,
-        tx: &DatabaseTransaction,
-    ) -> Result<Vec<UserId>> {
-        let participants = channel_member::Entity::find()
-            .filter(channel_member::Column::ChannelId.eq(channel.root_id()))
-            .all(tx)
-            .await?;
-        Ok(participants
-            .into_iter()
-            .map(|member| member.user_id)
-            .collect())
-    }
-
     /// Returns whether the given user is an admin in the specified channel.
     pub async fn check_user_is_channel_admin(
         &self,
