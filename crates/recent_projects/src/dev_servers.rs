@@ -10,6 +10,8 @@ use gpui::{
     DismissEvent, EventEmitter, FocusHandle, FocusableView, Model, ScrollHandle, Transformation,
     View, ViewContext,
 };
+use markdown::Markdown;
+use markdown::MarkdownStyle;
 use rpc::{
     proto::{CreateDevServerResponse, DevServerStatus, RegenerateDevServerTokenResponse},
     ErrorCode, ErrorExt,
@@ -33,6 +35,7 @@ pub struct DevServerProjects {
     dev_server_name_input: View<TextField>,
     use_server_name_in_ssh: Selection,
     rename_dev_server_input: View<TextField>,
+    markdown: View<Markdown>,
     _dev_server_subscription: Subscription,
 }
 
@@ -113,6 +116,23 @@ impl DevServerProjects {
             cx.notify();
         });
 
+        let markdown_style = MarkdownStyle {
+            code_block: gpui::TextStyleRefinement {
+                font_family: Some("Zed Mono".into()),
+                color: Some(cx.theme().colors().editor_foreground),
+                background_color: Some(cx.theme().colors().editor_background),
+                ..Default::default()
+            },
+            inline_code: Default::default(),
+            block_quote: Default::default(),
+            link: Default::default(),
+            rule_color: Default::default(),
+            block_quote_border_color: Default::default(),
+            syntax: cx.theme().syntax().clone(),
+            selection_background_color: cx.theme().players().local().selection,
+        };
+        let markdown = cx.new_view(|cx| Markdown::new("".to_string(), markdown_style, None, cx));
+
         Self {
             mode: Mode::Default(None),
             focus_handle,
@@ -121,6 +141,7 @@ impl DevServerProjects {
             project_path_input,
             dev_server_name_input,
             rename_dev_server_input,
+            markdown,
             use_server_name_in_ssh: Selection::Unselected,
             _dev_server_subscription: subscription,
         }
@@ -758,7 +779,7 @@ impl DevServerProjects {
                                 .dev_server_status(DevServerId(dev_server.dev_server_id));
 
                             div.child(
-                                 Self::render_dev_server_token_instructions(&dev_server.access_token, &dev_server.name, status, cx)
+                                 self.render_dev_server_token_instructions(&dev_server.access_token, &dev_server.name, status, cx)
                             )
                         }),
                 )
@@ -766,12 +787,18 @@ impl DevServerProjects {
     }
 
     fn render_dev_server_token_instructions(
+        &self,
         access_token: &str,
         dev_server_name: &str,
         status: DevServerStatus,
         cx: &mut ViewContext<Self>,
     ) -> Div {
         let instructions = SharedString::from(format!("zed --dev-server-token {}", access_token));
+        self.markdown.update(cx, |markdown, cx| {
+            if !markdown.source().contains(access_token) {
+                markdown.reset(format!("```\n{}\n```", instructions), cx);
+            }
+        });
 
         v_flex()
             .pl_2()
@@ -799,19 +826,7 @@ impl DevServerProjects {
                             }),
                     ),
             )
-            .child(
-                v_flex()
-                    .w_full()
-                    .bg(cx.theme().colors().title_bar_background) // todo: this should be distinct
-                    .border_1()
-                    .border_color(cx.theme().colors().border_variant)
-                    .rounded_md()
-                    .my_1()
-                    .py_0p5()
-                    .px_3()
-                    .font_family(ThemeSettings::get_global(cx).buffer_font.family.clone())
-                    .child(Label::new(instructions)),
-            )
+            .child(v_flex().w_full().child(self.markdown.clone()))
             .when(status == DevServerStatus::Offline, |this| {
                 this.child(Self::render_loading_spinner("Waiting for connection…"))
             })
@@ -926,14 +941,13 @@ impl DevServerProjects {
             EditDevServerState::RegeneratingToken => {
                 Self::render_loading_spinner("Generating token...")
             }
-            EditDevServerState::RegeneratedToken(response) => {
-                Self::render_dev_server_token_instructions(
+            EditDevServerState::RegeneratedToken(response) => self
+                .render_dev_server_token_instructions(
                     &response.access_token,
                     &dev_server_name,
                     dev_server_status,
                     cx,
-                )
-            }
+                ),
             _ => h_flex().items_end().w_full().child(
                 Button::new("regenerate-dev-server-token", "Generate new access token")
                     .icon(IconName::Update)

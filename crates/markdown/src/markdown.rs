@@ -37,14 +37,14 @@ pub struct Markdown {
     should_reparse: bool,
     pending_parse: Option<Task<Option<()>>>,
     focus_handle: FocusHandle,
-    language_registry: Arc<LanguageRegistry>,
+    language_registry: Option<Arc<LanguageRegistry>>,
 }
 
 impl Markdown {
     pub fn new(
         source: String,
         style: MarkdownStyle,
-        language_registry: Arc<LanguageRegistry>,
+        language_registry: Option<Arc<LanguageRegistry>>,
         cx: &mut ViewContext<Self>,
     ) -> Self {
         let focus_handle = cx.focus_handle();
@@ -191,14 +191,14 @@ impl Default for ParsedMarkdown {
 pub struct MarkdownElement {
     markdown: View<Markdown>,
     style: MarkdownStyle,
-    language_registry: Arc<LanguageRegistry>,
+    language_registry: Option<Arc<LanguageRegistry>>,
 }
 
 impl MarkdownElement {
     fn new(
         markdown: View<Markdown>,
         style: MarkdownStyle,
-        language_registry: Arc<LanguageRegistry>,
+        language_registry: Option<Arc<LanguageRegistry>>,
     ) -> Self {
         Self {
             markdown,
@@ -210,6 +210,7 @@ impl MarkdownElement {
     fn load_language(&self, name: &str, cx: &mut WindowContext) -> Option<Arc<Language>> {
         let language = self
             .language_registry
+            .as_ref()?
             .language_for_name(name)
             .map(|language| language.ok())
             .shared();

@@ -18,6 +18,7 @@ editor.workspace = true
 feature_flags.workspace = true
 fuzzy.workspace = true
 gpui.workspace = true
+markdown.workspace = true
 menu.workspace = true
 ordered-float.workspace = true
 picker.workspace = true
