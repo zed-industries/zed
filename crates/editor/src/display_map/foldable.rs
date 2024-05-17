@@ -1,41 +1,75 @@
 use gpui::AnyElement;
 use multi_buffer::{Anchor, MultiBufferRow, MultiBufferSnapshot, ToPoint};
-use std::{cmp::Ordering, ops::Range, sync::Arc};
+use std::{cmp::Ordering, ops::Range, rc::Rc};
 use sum_tree::{Bias, SeekTarget, SumTree};
 use text::Point;
-use ui::{IntoElement, WindowContext};
+use ui::WindowContext;
 
-use crate::{DisplayMap, FoldStatus, RenderFoldToggle};
+use crate::{DisplayMap, FoldStatus};
+
+pub struct FoldableRangeId(usize);
 
 #[derive(Default, Clone)]
 pub struct FoldableRanges {
-    foldables: SumTree<Foldable>,
+    foldables: SumTree<(FoldableRangeId, FoldableRange)>,
+    next_id: FoldableRangeId,
+}
+
+#[derive(Clone)]
+pub struct FoldableRange {
+    pub range: Range<Anchor>,
+    pub render_toggle: Rc<dyn Fn(bool, &mut WindowContext) -> AnyElement>,
 }
 
 impl FoldableRanges {
     pub fn insert(
         &mut self,
-        foldables: impl IntoIterator<Item = Foldable>,
+        ranges: impl IntoIterator<Item = FoldableRange>,
+        snapshot: &MultiBufferSnapshot,
+    ) -> Vec<FoldableRangeId> {
+        let mut new_ids = Vec::new();
+        self.foldables = {
+            let mut new_foldables = SumTree::new();
+            let mut cursor = self.foldables.cursor::<FoldableRangeSummary>();
+            for range in ranges {
+                let target = FoldableRangeSummary {
+                    range: range.clone(),
+                };
+                new_foldables.append(cursor.slice(&target, Bias::Left, snapshot), snapshot);
+
+                new_foldables.push(FoldableRange { range, id }, snapshot);
+                new_ids.push(id);
+            }
+            new_foldables.append(cursor.suffix(snapshot), snapshot);
+            new_foldables
+        };
+        new_ids
+    }
+
+    pub fn remove(
+        &mut self,
+        ids: &std::collections::HashSet<FoldableRangeId>,
         snapshot: &MultiBufferSnapshot,
     ) {
-        let mut cursor = self.foldables.cursor::<FoldableRangeSummary>();
-        let mut new_foldables = SumTree::new();
-        for foldable in foldables {
-            let target = FoldableRangeSummary {
-                range: foldable.range.clone(),
-            };
-            new_foldables.append(cursor.slice(&target, Bias::Left, snapshot), snapshot);
-            new_foldables.push(foldable, snapshot);
-        }
-        new_foldables.append(cursor.suffix(snapshot), snapshot);
+        self.foldables = {
+            let mut new_foldables = SumTree::new();
+            let mut cursor = self.foldables.cursor::<FoldableRangeSummary>();
+            while let Some(item) = cursor.item() {
+                if !ids.contains(&item.id) {
+                    new_foldables.push(item.clone(), snapshot);
+                }
+                cursor.next(snapshot);
+            }
+            new_foldables
+        };
     }
 
     /// Returns the first FoldableRange starting on the specified buffer row.
-    pub fn query<'a>(
+    pub fn query_row<'a>(
         &'a self,
         row: MultiBufferRow,
         snapshot: &'a MultiBufferSnapshot,
-    ) -> Option<&'a Foldable> {
+    ) -> Option<&'a FoldableRange> {
         let start = snapshot.anchor_before(Point::new(row.0, 0));
         let mut cursor = self.foldables.cursor::<FoldableRangeSummary>();
         cursor.seek(&start, Bias::Left, snapshot);
@@ -45,36 +79,6 @@ impl FoldableRanges {
             }
         }
         return None;
-    }
-}
-
-pub struct FoldableId(usize);
-
-#[derive(Clone)]
-pub struct Foldable {
-    pub range: Range<Anchor>,
-    pub id: FoldableId,
-}
-
-impl Foldable {
-    pub fn new<F, E>(range: Range<Anchor>, toggle: F) -> Foldable
-    where
-        F: 'static + Fn(FoldStatus, &mut WindowContext) -> E,
-        E: IntoElement,
-    {
-        Foldable {
-            range,
-            toggle: Some(Arc::new(move |fs, cx| toggle(fs, cx).into_any_element())),
-        }
-    }
-
-    pub fn render(
-        &self,
-        fold_status: FoldStatus,
-        map: &DisplayMap,
-        cx: &mut WindowContext,
-    ) -> AnyElement {
-        map.foldables.render_fold_toggle(self.id, fold_status, cx)
     }
 }
 
@@ -104,7 +108,7 @@ impl sum_tree::Summary for FoldableRangeSummary {
     }
 }
 
-impl sum_tree::Item for Foldable {
+impl sum_tree::Item for FoldableRange {
     type Summary = FoldableRangeSummary;
 
     fn summary(&self) -> Self::Summary {

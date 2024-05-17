@@ -42,6 +42,7 @@ use multi_buffer::{
     Anchor, AnchorRangeExt, MultiBuffer, MultiBufferPoint, MultiBufferRow, MultiBufferSnapshot,
     ToOffset, ToPoint,
 };
+use rpc::proto::create_buffer_for_peer;
 use serde::Deserialize;
 use std::{any::TypeId, borrow::Cow, fmt::Debug, num::NonZeroU32, ops::Range, sync::Arc};
 use sum_tree::{Bias, TreeMap};
@@ -68,7 +69,7 @@ pub enum FoldStatus {
     Foldable,
 }
 
-pub type RenderFoldToggle = Arc<dyn Send + Sync + Fn(FoldStatus, &mut WindowContext) -> AnyElement>;
+pub type RenderFoldToggle = Arc<dyn Fn(FoldStatus, &mut WindowContext) -> AnyElement>;
 
 #[derive(Clone)]
 pub struct FoldIndicator {
@@ -367,6 +368,27 @@ impl DisplayMap {
     #[cfg(test)]
     pub fn is_rewrapping(&self, cx: &gpui::AppContext) -> bool {
         self.wrap_map.read(cx).is_rewrapping()
+    }
+
+    pub fn fold_indicator(
+        &self,
+        row: MultiBufferRow,
+        cx: &gpui::WindowContext,
+    ) -> Option<FoldIndicator> {
+
+        // FoldIndicator {
+        //     toggle: todo!(),
+        //     folded: todo!(),
+        // }
+    }
+
+    pub fn render_fold_toggle(
+        &self,
+        row: MultiBufferRow,
+        cx: &mut WindowContext,
+    ) -> Option<AnyElement> {
+        todo!()
+        //map.foldables.render_fold_toggle(self.id, fold_status, cx)
     }
 }
 
@@ -862,7 +884,7 @@ impl DisplaySnapshot {
     pub fn fold_indicator_for_row(&self, buffer_row: MultiBufferRow) -> Option<FoldIndicator> {
         if let Some(foldable_range) = self
             .foldable_ranges
-            .query(buffer_row, &self.buffer_snapshot)
+            .query_row(buffer_row, &self.buffer_snapshot)
         {
             Some(FoldIndicator {
                 toggle: foldable_range.toggle.clone(),
@@ -1819,7 +1841,7 @@ pub mod tests {
                 snapshot.anchor_before(Point::new(2, 0))..snapshot.anchor_after(Point::new(3, 3));
 
             map.foldables.insert(
-                Some(Foldable::new(range, |status, cx| div())),
+                Some(FoldableRange::new(range, |status, cx| div())),
                 &map.buffer.read(cx).snapshot(cx),
             );
 

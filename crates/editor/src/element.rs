@@ -1628,6 +1628,8 @@ impl EditorElement {
                     shaped_line_numbers.push(Some(shaped_line));
                 }
                 if include_fold_statuses {
+                    editor.display_map.fold_indicator(multibuffer_row);
+
                     fold_statuses.push(
                         is_singleton
                             .then(|| {
