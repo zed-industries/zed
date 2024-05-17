@@ -2186,7 +2186,6 @@ impl Editor {
         cx: &mut ViewContext<Self>,
         change: impl FnOnce(&mut MutableSelectionsCollection<'_>) -> R,
     ) -> R {
-        // old body is moved into that inner function and adjusted a bit
         self.change_selections_inner(autoscroll, true, cx, change)
     }
 
