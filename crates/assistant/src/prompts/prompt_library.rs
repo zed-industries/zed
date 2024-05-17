@@ -182,10 +182,19 @@ impl PromptManager {
     fn dismiss(&mut self, _: &menu::Cancel, cx: &mut ViewContext<Self>) {
         cx.emit(DismissEvent);
     }
-}
 
-impl Render for PromptManager {
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+    fn render_no_prompts_state(&self, _cx: &mut ViewContext<Self>) -> impl IntoElement {
+        h_flex()
+            .size_full()
+            .child(Label::new("No prompts in library"))
+            .child(
+                Label::new("Add prompts to the prompts folder to get started.").color(Color::Muted),
+            )
+            // TODO: Add a button to open the prompts folder
+            .child(Button::new("open-prompts-folder", "Open Prompts Folder"))
+    }
+
+    fn render_prompt_list(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         let prompt_library = self.prompt_library.clone();
         let prompts = prompt_library
             .clone()
@@ -193,6 +202,124 @@ impl Render for PromptManager {
             .clone()
             .into_iter()
             .collect::<Vec<_>>();
+
+        let no_prompts_state = self.render_no_prompts_state(cx);
+
+        div()
+            .id("prompt-list")
+            .overflow_y_scroll()
+            .h_full()
+            .min_w_64()
+            .max_w_1_2()
+            .child(
+                v_flex()
+                    .justify_start()
+                    .py(Spacing::Medium.rems(cx))
+                    .px(Spacing::Large.rems(cx))
+                    .bg(cx.theme().colors().surface_background)
+                    .when_else(
+                        !prompts.is_empty(),
+                        |with_items| {
+                            with_items.children(
+                                prompts
+                                    .into_iter()
+                                    .map(|(id, prompt)| self.render_prompt_item(id, prompt, cx)),
+                            )
+                        },
+                        |no_items| no_items.child(no_prompts_state),
+                    ),
+            )
+    }
+
+    fn render_prompt_item(
+        &mut self,
+        id: PromptId,
+        prompt: CustomPrompt,
+        cx: &mut ViewContext<Self>,
+    ) -> impl IntoElement {
+        let prompt_library = self.prompt_library.clone();
+        let prompt = prompt.clone();
+        let prompt_id = id.clone();
+
+        let default_prompt_ids = prompt_library.clone().default_prompt_ids();
+        let is_default = default_prompt_ids.contains(&id);
+        // We'll use this for conditionally enabled prompts
+        // like those loaded only for certain languages
+        let is_conditional = false;
+        let selection = match (is_default, is_conditional) {
+            (_, true) => Selection::Indeterminate,
+            (true, _) => Selection::Selected,
+            (false, _) => Selection::Unselected,
+        };
+
+        v_flex()
+            .id(ElementId::Name(format!("prompt-{:?}", prompt_id,).into()))
+            .p(Spacing::Small.rems(cx))
+            .on_click(cx.listener({
+                let prompt_id = prompt_id.clone();
+                move |this, _event, cx| {
+                    this.set_active_prompt(Some(prompt_id), cx);
+                }
+            }))
+            .child(
+                h_flex()
+                    .justify_between()
+                    .child(
+                        h_flex()
+                            .gap(Spacing::Large.rems(cx))
+                            .child(
+                                Checkbox::new(ElementId::from(prompt_id.0), selection).on_click(
+                                    move |_, _cx| {
+                                        if is_default {
+                                            prompt_library
+                                                .clone()
+                                                .remove_prompt_from_default(prompt_id.clone())
+                                                .log_err();
+                                        } else {
+                                            prompt_library
+                                                .clone()
+                                                .add_prompt_to_default(prompt_id.clone())
+                                                .log_err();
+                                        }
+                                    },
+                                ),
+                            )
+                            .child(Label::new(prompt.title)),
+                    )
+                    .child(div()),
+            )
+    }
+
+    fn render_editor_for_prompt(
+        &mut self,
+        prompt_id: PromptId,
+        cx: &mut ViewContext<Self>,
+    ) -> impl IntoElement {
+        let prompt_library = self.prompt_library.clone();
+        let editor_for_prompt = self.prompt_editors.entry(prompt_id).or_insert_with(|| {
+            cx.new_view(|cx| {
+                let mut editor = Editor::multi_line(cx);
+                if let Some(prompt_text) = prompt_library.prompt_for_id(prompt_id) {
+                    editor.set_text(prompt_text, cx);
+                }
+                editor
+            })
+        });
+        div()
+            .id("prompt-editor")
+            .border_l_1()
+            .border_color(cx.theme().colors().border)
+            .size_full()
+            .flex_none()
+            .min_w_64()
+            .h_full()
+            .child(editor_for_prompt.clone())
+    }
+}
+
+impl Render for PromptManager {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+        let prompt_library = self.prompt_library.clone();
 
         v_flex()
             .key_context("PromptManager")
@@ -215,135 +342,10 @@ impl Render for PromptManager {
                     .overflow_hidden()
                     .border_t_1()
                     .border_color(cx.theme().colors().border)
-                    .child(
-                        div()
-                            .id("prompt-preview")
-                            .overflow_y_scroll()
-                            .h_full()
-                            .min_w_64()
-                            .max_w_1_2()
-                            .child(
-                                v_flex()
-                                    .justify_start()
-                                    .py(Spacing::Medium.rems(cx))
-                                    .px(Spacing::Large.rems(cx))
-                                    .bg(cx.theme().colors().surface_background)
-                                    .when_else(
-                                        !prompts.is_empty(),
-                                        |with_items| {
-                                            with_items.children(prompts.into_iter().map(
-                                                |(id, prompt)| {
-                                                    let prompt_library = prompt_library.clone();
-                                                    let prompt = prompt.clone();
-                                                    let prompt_id = id.clone();
-
-                                                    let default_prompt_ids =
-                                                        prompt_library.clone().default_prompt_ids();
-                                                    let is_default =
-                                                        default_prompt_ids.contains(&id);
-                                                    // We'll use this for conditionally enabled prompts
-                                                    // like those loaded only for certain languages
-                                                    let is_conditional = false;
-                                                    let selection =
-                                                        match (is_default, is_conditional) {
-                                                            (_, true) => Selection::Indeterminate,
-                                                            (true, _) => Selection::Selected,
-                                                            (false, _) => Selection::Unselected,
-                                                        };
-
-                                                    v_flex()
-                                                    .id(ElementId::Name(
-                                                        format!("prompt-{:?}", prompt_id,).into(),
-                                                    ))
-                                                    .p(Spacing::Small.rems(cx))
-                                                    .on_click(cx.listener({
-                                                        let prompt_id = prompt_id.clone();
-                                                        move |this, _event, cx| {
-                                                            this.set_active_prompt(
-                                                                Some(prompt_id),
-                                                                cx,
-                                                            );
-                                                        }
-                                                    }))
-                                                    .child(
-                                                        h_flex()
-                                                            .justify_between()
-                                                            .child(
-                                                                h_flex()
-                                                                    .gap(Spacing::Large.rems(cx))
-                                                                    .child(
-                                                                        Checkbox::new(
-                                                                            ElementId::from(
-                                                                                prompt_id.0,
-                                                                            ),
-                                                                            selection,
-                                                                        )
-                                                                        .on_click(move |_, _cx| {
-                                                                            if is_default {
-                                                                                prompt_library
-                                                                        .clone()
-                                                                        .remove_prompt_from_default(
-                                                                            prompt_id.clone(),
-                                                                        )
-                                                                        .log_err();
-                                                                            } else {
-                                                                                prompt_library
-                                                                            .clone()
-                                                                            .add_prompt_to_default(
-                                                                                prompt_id.clone(),
-                                                                            )
-                                                                            .log_err();
-                                                                            }
-                                                                        }),
-                                                                    )
-                                                                    .child(Label::new(
-                                                                        prompt.title,
-                                                                    )),
-                                                            )
-                                                            .child(div()),
-                                                    )
-                                                },
-                                            ))
-                                        },
-                                        |no_items| {
-                                            no_items.child(
-                                                Label::new("No prompts").color(Color::Placeholder),
-                                            )
-                                        },
-                                    ),
-                            ),
-                    )
-                    .child(
-                        div()
-                            .id("prompt-preview")
-                            .overflow_y_scroll()
-                            .border_l_1()
-                            .border_color(cx.theme().colors().border)
-                            .size_full()
-                            .flex_none()
-                            .min_w_64()
-                            .h_full()
-                            .debug_bg_green()
-                            .when_some(self.active_prompt_id, |this, active_prompt_id| {
-                                dbg!();
-
-                                let editor_for_prompt = self
-                                    .prompt_editors
-                                    .entry(active_prompt_id)
-                                    .or_insert_with(|| {
-                                        cx.new_view(|cx| {
-                                            let mut editor = Editor::multi_line(cx);
-                                            if let Some(prompt_text) =
-                                                prompt_library.prompt_for_id(active_prompt_id)
-                                            {
-                                                editor.set_text(prompt_text, cx);
-                                            }
-                                            editor
-                                        })
-                                    });
-                                this.child(editor_for_prompt.clone())
-                            }),
-                    ),
+                    .child(self.render_prompt_list(cx))
+                    .when_some(self.active_prompt_id, |this, active_prompt_id| {
+                        this.child(self.render_editor_for_prompt(active_prompt_id, cx))
+                    }),
             )
     }
 }
