@@ -78,6 +78,7 @@ recent_projects.workspace = true
 dev_server_projects.workspace = true
 release_channel.workspace = true
 rope.workspace = true
+runtimes.workspace = true
 search.workspace = true
 serde.workspace = true
 serde_json.workspace = true

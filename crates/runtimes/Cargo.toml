@@ -1,0 +1,48 @@
+[package]
+name = "runtimes"
+version = "0.1.0"
+edition = "2021"
+publish = false
+license = "GPL-3.0-or-later"
+
+[lints]
+workspace = true
+
+[lib]
+path = "src/runtimes.rs"
+doctest = false
+
+[dependencies]
+anyhow.workspace = true
+client.workspace = true
+clock.workspace = true
+collections.workspace = true
+editor.workspace = true
+gpui.workspace = true
+futures.workspace = true
+language.workspace = true
+languages.workspace = true
+log.workspace = true
+postage.workspace = true
+runtimelib = { path = "../../../../runtimed/runtimed/runtimelib"}
+# runtimelib = "0.9.0"
+serde.workspace = true
+serde_json.workspace = true
+settings.workspace = true
+smol.workspace = true
+tokio.workspace = true
+ui.workspace = true
+util.workspace = true
+uuid.workspace = true
+workspace.workspace = true
+
+[dev-dependencies]
+editor = { workspace = true, features = ["test-support"] }
+env_logger.workspace = true
+gpui = { workspace = true, features = ["test-support"] }
+language = { workspace = true, features = ["test-support"] }
+project = { workspace = true, features = ["test-support"] }
+settings = { workspace = true, features = ["test-support"] }
+theme = { workspace = true, features = ["test-support"] }
+util = { workspace = true, features = ["test-support"] }
+http = { workspace = true, features = ["test-support"] }
