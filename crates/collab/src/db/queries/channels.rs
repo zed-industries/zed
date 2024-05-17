@@ -3,7 +3,7 @@ use rpc::{
     proto::{channel_member::Kind, ChannelBufferVersion, VectorClockEntry},
     ErrorCode, ErrorCodeExt,
 };
-use sea_orm::TryGetableMany;
+use sea_orm::{DbBackend, TryGetableMany};
 
 impl Database {
     #[cfg(test)]
@@ -709,16 +709,24 @@ impl Database {
                 let channel = self.get_channel_internal(channel_id, &tx).await?;
                 self.check_user_is_channel_participant(&channel, user_id, &tx)
                     .await?;
-                let members = channel_member::Entity::find()
+                let mut query = channel_member::Entity::find()
                     .find_also_related(user::Entity)
-                    .filter(channel_member::Column::ChannelId.eq(channel.root_id()))
-                    .filter(Expr::cust_with_values(
+                    .filter(channel_member::Column::ChannelId.eq(channel.root_id()));
+
+                if cfg!(any(test, sqlite)) && self.pool.get_database_backend() == DbBackend::Sqlite {
+                    query = query.filter(Expr::cust_with_values(
+                        "UPPER(github_login) LIKE ?",
+                        [Self::fuzzy_like_string(&filter.to_uppercase())],
+                    ))
+                } else {
+                    query = query.filter(Expr::cust_with_values(
                         "github_login ILIKE $1",
                         [Self::fuzzy_like_string(filter)],
                     ))
-                    .order_by(
+                }
+                let members = query.order_by(
                         Expr::cust(
-                            "(role != 'admin', role != 'member', role != 'guest', !accepted, github_login)",
+                            "not role = 'admin', not role = 'member', not role = 'guest', not accepted, github_login",
                         ),
                         sea_orm::Order::Asc,
                     )

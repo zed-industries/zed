@@ -95,7 +95,7 @@ async fn test_core_channels(
         }],
     );
 
-    let (members, _) = client_a
+    let members = client_a
         .channel_store()
         .update(cx_a, |store, cx| {
             assert!(!store.has_pending_channel_invite(channel_a_id, client_b.user_id().unwrap()));
