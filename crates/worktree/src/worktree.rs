@@ -285,6 +285,7 @@ pub struct LocalSnapshot {
     git_repositories: TreeMap<ProjectEntryId, LocalRepositoryEntry>,
     file_scan_exclusions: Vec<PathMatcher>,
     private_files: Vec<PathMatcher>,
+    share_private_files: bool,
 }
 
 struct BackgroundScannerState {
@@ -459,6 +460,7 @@ impl Worktree {
                     }), cx).private_files.as_deref(),
                     "private_files",
                 ),
+                share_private_files: false,
                 ignores_by_parent_abs_path: Default::default(),
                 git_repositories: Default::default(),
                 snapshot: Snapshot {
@@ -951,12 +953,13 @@ impl LocalWorktree {
 
     fn set_snapshot(
         &mut self,
-        new_snapshot: LocalSnapshot,
+        mut new_snapshot: LocalSnapshot,
         entry_changes: UpdatedEntriesSet,
         cx: &mut ModelContext<Worktree>,
     ) {
         let repo_changes = self.changed_repos(&self.snapshot, &new_snapshot);
 
+        new_snapshot.share_private_files = self.snapshot.share_private_files;
         self.snapshot = new_snapshot;
 
         if let Some(share) = self.share.as_mut() {
@@ -1662,6 +1665,10 @@ impl LocalWorktree {
 
     pub fn is_shared(&self) -> bool {
         self.share.is_some()
+    }
+
+    pub fn share_private_files(&mut self) {
+        self.snapshot.share_private_files = true;
     }
 }
 
@@ -2517,6 +2524,9 @@ impl LocalSnapshot {
     }
 
     pub fn is_path_private(&self, path: &Path) -> bool {
+        if self.share_private_files {
+            return false;
+        }
         path.ancestors().any(|ancestor| {
             self.private_files
                 .iter()
