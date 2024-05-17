@@ -118,10 +118,6 @@ impl ThemeRegistry {
             };
             player_colors.merge(&user_theme.style.players);
 
-            let syntax_theme = match user_theme.appearance {
-                AppearanceContent::Light => SyntaxTheme::light(),
-                AppearanceContent::Dark => SyntaxTheme::dark(),
-            };
             let syntax_highlights = user_theme
                 .style
                 .syntax
@@ -141,7 +137,8 @@ impl ThemeRegistry {
                     )
                 })
                 .collect::<Vec<_>>();
-            let syntax_theme = SyntaxTheme::merge(Arc::new(syntax_theme), syntax_highlights);
+            let syntax_theme =
+                SyntaxTheme::merge(Arc::new(SyntaxTheme::default()), syntax_highlights);
 
             let window_background_appearance = user_theme
                 .style
