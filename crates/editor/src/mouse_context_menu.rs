@@ -1,6 +1,7 @@
 use crate::{
-    DisplayPoint, Editor, EditorMode, FindAllReferences, GoToDefinition, GoToImplementation,
-    GoToTypeDefinition, Rename, RevealInFinder, SelectMode, ToggleCodeActions,
+    Copy, Cut, DisplayPoint, Editor, EditorMode, FindAllReferences, GoToDefinition,
+    GoToImplementation, GoToTypeDefinition, Paste, Rename, RevealInFinder, SelectMode,
+    ToggleCodeActions,
 };
 use gpui::{DismissEvent, Pixels, Point, Subscription, View, ViewContext};
 use workspace::OpenInTerminal;
@@ -84,6 +85,10 @@ pub fn deploy_context_menu(
                         deployed_from_indicator: None,
                     }),
                 )
+                .separator()
+                .action("Cut", Box::new(Cut))
+                .action("Copy", Box::new(Copy))
+                .action("Paste", Box::new(Paste))
                 .separator()
                 .action("Reveal in Finder", Box::new(RevealInFinder))
                 .action("Open in Terminal", Box::new(OpenInTerminal));

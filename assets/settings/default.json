@@ -468,7 +468,7 @@
     //         }
     //     }
     "shell": "system",
-    // Where to dock terminals panel. Can be 'left', 'right', 'bottom'.
+    // Where to dock terminals panel. Can be `left`, `right`, `bottom`.
     "dock": "bottom",
     // Default width when the terminal is docked to the left or right.
     "default_width": 640,
@@ -551,7 +551,7 @@
         // to the current working directory. We recommend overriding this
         // in your project's settings, rather than globally.
         "directories": [".env", "env", ".venv", "venv"],
-        // Can also be 'csh', 'fish', and `nushell`
+        // Can also be `csh`, `fish`, and `nushell`
         "activate_script": "default"
       }
     },
@@ -576,7 +576,7 @@
   // use those languages.
   //
   // For example, to treat files like `foo.notjs` as JavaScript,
-  // and 'Embargo.lock' as TOML:
+  // and `Embargo.lock` as TOML:
   //
   // {
   //   "JavaScript": ["notjs"],
@@ -797,5 +797,17 @@
   //   - `short`: "2 s, 15 l, 32 c"
   //   - `long`: "2 selections, 15 lines, 32 characters"
   // Default: long
-  "line_indicator_format": "long"
+  "line_indicator_format": "long",
+  // Set a proxy to use. The proxy protocol is specified by the URI scheme.
+  //
+  // Supported URI scheme: `http`, `https`, `socks4`, `socks4a`, `socks5`,
+  // `socks5h`. `http` will be used when no scheme is specified.
+  // 
+  // By default no proxy will be used, or Zed will try get proxy settings from
+  // environment variables.
+  //
+  // Examples:
+  //   - "proxy" = "socks5://localhost:10808"
+  //   - "proxy" = "http://127.0.0.1:10809"
+  "proxy": null
 }

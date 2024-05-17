@@ -30,14 +30,11 @@ pub fn apply_features(font: &mut Font, features: &FontFeatures) {
         let native_font = font.native_font();
         let mut feature_array =
             CFArrayCreateMutable(kCFAllocatorDefault, 0, &kCFTypeArrayCallBacks);
-        for (tag, enable) in features.tag_value_list() {
-            if !enable {
-                continue;
-            }
+        for (tag, value) in features.tag_value_list() {
             let keys = [kCTFontOpenTypeFeatureTag, kCTFontOpenTypeFeatureValue];
             let values = [
                 CFString::new(&tag).as_CFTypeRef(),
-                CFNumber::from(1).as_CFTypeRef(),
+                CFNumber::from(*value as i32).as_CFTypeRef(),
             ];
             let dict = CFDictionaryCreate(
                 kCFAllocatorDefault,

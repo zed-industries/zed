@@ -204,9 +204,7 @@ pub fn count_open_ai_tokens(
                 .collect::<Vec<_>>();
 
             match request.model {
-                LanguageModel::OpenAi(OpenAiModel::FourOmni)
-                | LanguageModel::ZedDotDev(ZedDotDevModel::Gpt4Omni)
-                | LanguageModel::Anthropic(_)
+                LanguageModel::Anthropic(_)
                 | LanguageModel::ZedDotDev(ZedDotDevModel::Claude3Opus)
                 | LanguageModel::ZedDotDev(ZedDotDevModel::Claude3Sonnet)
                 | LanguageModel::ZedDotDev(ZedDotDevModel::Claude3Haiku) => {

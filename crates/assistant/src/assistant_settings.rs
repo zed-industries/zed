@@ -418,7 +418,7 @@ fn merge<T: Copy>(target: &mut T, value: Option<T>) {
 
 #[cfg(test)]
 mod tests {
-    use gpui::{AppContext, BorrowAppContext};
+    use gpui::{AppContext, UpdateGlobal};
     use settings::SettingsStore;
 
     use super::*;
@@ -440,7 +440,7 @@ mod tests {
         );
 
         // Ensure backward-compatibility.
-        cx.update_global::<SettingsStore, _>(|store, cx| {
+        SettingsStore::update_global(cx, |store, cx| {
             store
                 .set_user_settings(
                     r#"{
@@ -460,7 +460,7 @@ mod tests {
                 low_speed_timeout_in_seconds: None,
             }
         );
-        cx.update_global::<SettingsStore, _>(|store, cx| {
+        SettingsStore::update_global(cx, |store, cx| {
             store
                 .set_user_settings(
                     r#"{
@@ -482,7 +482,7 @@ mod tests {
         );
 
         // The new version supports setting a custom model when using zed.dev.
-        cx.update_global::<SettingsStore, _>(|store, cx| {
+        SettingsStore::update_global(cx, |store, cx| {
             store
                 .set_user_settings(
                     r#"{

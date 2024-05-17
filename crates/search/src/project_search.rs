@@ -15,8 +15,8 @@ use gpui::{
     actions, div, Action, AnyElement, AnyView, AppContext, Context as _, Element, EntityId,
     EventEmitter, FocusHandle, FocusableView, FontStyle, FontWeight, Global, Hsla,
     InteractiveElement, IntoElement, Model, ModelContext, ParentElement, Point, Render,
-    SharedString, Styled, Subscription, Task, TextStyle, View, ViewContext, VisualContext,
-    WeakModel, WeakView, WhiteSpace, WindowContext,
+    SharedString, Styled, Subscription, Task, TextStyle, UpdateGlobal, View, ViewContext,
+    VisualContext, WeakModel, WeakView, WhiteSpace, WindowContext,
 };
 use menu::Confirm;
 use project::{search::SearchQuery, search_history::SearchHistoryCursor, Project, ProjectPath};
@@ -526,8 +526,8 @@ impl Item for ProjectSearchView {
 impl ProjectSearchView {
     fn toggle_filters(&mut self, cx: &mut ViewContext<Self>) {
         self.filters_enabled = !self.filters_enabled;
-        cx.update_global(|state: &mut ActiveSettings, cx| {
-            state.0.insert(
+        ActiveSettings::update_global(cx, |settings, cx| {
+            settings.0.insert(
                 self.model.read(cx).project.downgrade(),
                 self.current_settings(),
             );
@@ -540,10 +540,11 @@ impl ProjectSearchView {
             filters_enabled: self.filters_enabled,
         }
     }
+
     fn toggle_search_option(&mut self, option: SearchOptions, cx: &mut ViewContext<Self>) {
         self.search_options.toggle(option);
-        cx.update_global(|state: &mut ActiveSettings, cx| {
-            state.0.insert(
+        ActiveSettings::update_global(cx, |settings, cx| {
+            settings.0.insert(
                 self.model.read(cx).project.downgrade(),
                 self.current_settings(),
             );
