@@ -113,7 +113,7 @@ def fetch_git_repo(git_url: str, commit: str) -> str:
     head = rev_parse_proc.stdout.decode().strip()
     if head[:COMMIT_LEN] != commit[:COMMIT_LEN]:
         subprocess.run(['git', 'fetch', 'origin', commit], cwd=clone_dir, check=True)
-        subprocess.run(['git', 'checkout', commit], cwd=clone_dir, check=True)
+        subprocess.run(['git', 'reset', '--hard', commit], cwd=clone_dir, check=True)
 
     # Get the submodules as they might contain dependencies. This is a noop if
     # there are no submodules in the repository
