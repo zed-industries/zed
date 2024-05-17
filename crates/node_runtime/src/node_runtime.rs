@@ -435,6 +435,7 @@ impl NodeRuntime for FakeNodeRuntime {
     }
 }
 
+/// Mapping proxy settings `http://localhost:10809` to `http://127.0.0.1:10809`
 #[inline]
 fn parse_local_host(input: &str) -> String {
     input.to_ascii_lowercase().replace("localhost", "127.0.0.1")
