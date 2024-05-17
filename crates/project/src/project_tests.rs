@@ -4909,6 +4909,120 @@ async fn test_multiple_language_server_actions(cx: &mut gpui::TestAppContext) {
     );
 }
 
+#[gpui::test]
+async fn test_reordering_worktrees(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        "/dir",
+        json!({
+            "a.rs": "let a = 1;",
+            "b.rs": "let b = 2;"
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs, ["/dir/a.rs".as_ref(), "/dir/b.rs".as_ref()], cx).await;
+
+    // check the initial state and get the worktrees
+    let worktrees = project.update(cx, |project, cx| {
+        let worktrees = project.visible_worktrees(cx).collect::<Vec<_>>();
+        assert_eq!(worktrees.len(), 2);
+
+        let worktree_a = worktrees[0].read(cx);
+        let worktree_b = worktrees[1].read(cx);
+
+        // check they start in the right order
+        assert_eq!(worktree_a.abs_path().to_str().unwrap(), "/dir/a.rs");
+        assert_eq!(worktree_b.abs_path().to_str().unwrap(), "/dir/b.rs");
+        assert_eq!(
+            project.worktree_order_index(cx).collect::<Vec<_>>(),
+            vec![0, 1]
+        );
+
+        worktrees
+    });
+
+    // move worktree a down after worktree b
+    project
+        .update(cx, |project, cx| {
+            let worktree_a = worktrees[0].read(cx);
+            let worktree_b = worktrees[1].read(cx);
+
+            project.move_worktree(worktree_a.id(), worktree_b.id(), cx)
+        })
+        .await
+        .expect("moving worktree a down failed");
+
+    // check the state after moving
+    project.update(cx, |project, cx| {
+        let worktrees = project.visible_worktrees(cx).collect::<Vec<_>>();
+        assert_eq!(worktrees.len(), 2);
+
+        let worktree_a = worktrees[1].read(cx);
+        let worktree_b = worktrees[0].read(cx);
+
+        // check they are now in the right order
+        assert_eq!(worktree_a.abs_path().to_str().unwrap(), "/dir/a.rs");
+        assert_eq!(worktree_b.abs_path().to_str().unwrap(), "/dir/b.rs");
+        assert_eq!(
+            project.worktree_order_index(cx).collect::<Vec<_>>(),
+            vec![1, 0],
+        );
+    });
+
+    // move the worktree a back up before worktree b
+    project
+        .update(cx, |project, cx| {
+            let worktree_a = worktrees[0].read(cx);
+            let worktree_b = worktrees[1].read(cx);
+
+            project.move_worktree(worktree_a.id(), worktree_b.id(), cx)
+        })
+        .await
+        .expect("moving worktree a up failed");
+
+    // check the state after moving
+    project.update(cx, |project, cx| {
+        let worktrees = project.visible_worktrees(cx).collect::<Vec<_>>();
+        assert_eq!(worktrees.len(), 2);
+
+        let worktree_a = worktrees[0].read(cx);
+        let worktree_b = worktrees[1].read(cx);
+
+        // check they are now in the right order
+        assert_eq!(worktree_a.abs_path().to_str().unwrap(), "/dir/a.rs");
+        assert_eq!(worktree_b.abs_path().to_str().unwrap(), "/dir/b.rs");
+        assert_eq!(
+            project.worktree_order_index(cx).collect::<Vec<_>>(),
+            vec![0, 1],
+        );
+    });
+
+    // now try setting it like on load from the db
+    project.update(cx, |project, cx| {
+        project.set_worktree_order_from_indexes(vec![1, 0], cx)
+    });
+
+    // check the state after moving
+    project.update(cx, |project, cx| {
+        let worktrees = project.visible_worktrees(cx).collect::<Vec<_>>();
+        assert_eq!(worktrees.len(), 2);
+
+        let worktree_a = worktrees[1].read(cx);
+        let worktree_b = worktrees[0].read(cx);
+
+        // check they are now in the right order
+        assert_eq!(worktree_a.abs_path().to_str().unwrap(), "/dir/a.rs");
+        assert_eq!(worktree_b.abs_path().to_str().unwrap(), "/dir/b.rs");
+        assert_eq!(
+            project.worktree_order_index(cx).collect::<Vec<_>>(),
+            vec![1, 0],
+        );
+    });
+}
+
 async fn search(
     project: &Model<Project>,
     query: SearchQuery,
