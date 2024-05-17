@@ -79,7 +79,7 @@ pub struct WorkspaceSettingsContent {
     ///
     /// Default: `0.2` (20% of the smaller dimension of the workspace)
     pub drop_target_size: Option<f32>,
-    /// Whether to close the window when using 'close active tab' on a workspace with no tabs
+    /// Whether to close the window when using 'close active item' on a workspace with no tabs
     ///
     /// Default: auto ("on" on macOS, "off" otherwise)
     pub close_window_when_no_tabs: Option<CloseWindowWhenNoItems>,

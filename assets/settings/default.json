@@ -84,7 +84,7 @@
   "restore_on_startup": "last_workspace",
   // Size of the drop target in the editor.
   "drop_target_size": 0.2,
-  // Whether the window should be closed when using 'close active item' on a window with no items.
+  // Whether the window should be closed when using 'close active item' on a window with no tabs.
   // May take 3 values:
   //  1. Use the current platform's convention
   //         "close_window_when_no_tabs": "auto"
