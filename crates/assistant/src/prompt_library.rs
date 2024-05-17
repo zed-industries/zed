@@ -13,7 +13,7 @@ pub struct PromptLibraryState {
     /// The default prompt all assistant contexts will start with
     _system_prompt: String,
     /// All [UserPrompt]s loaded into the library
-    prompts: HashMap<String, UserPrompt>,
+    prompts: HashMap<String, CustomPrompt>,
     /// Prompts included in the default prompt
     default_prompts: Vec<String>,
     /// Prompts that have a pending update that hasn't been applied yet
@@ -55,7 +55,7 @@ impl PromptLibrary {
     }
 
     fn load_prompts(&self, fs: Arc<dyn Fs>) -> anyhow::Result<()> {
-        let prompts = futures::executor::block_on(UserPrompt::list(fs))?;
+        let prompts = futures::executor::block_on(CustomPrompt::list(fs))?;
         let prompts_with_ids = prompts
             .clone()
             .into_iter()
@@ -112,12 +112,12 @@ impl PromptLibrary {
     }
 
     #[allow(unused)]
-    pub fn prompts(&self) -> Vec<UserPrompt> {
+    pub fn prompts(&self) -> Vec<CustomPrompt> {
         let state = self.state.read();
         state.prompts.values().cloned().collect()
     }
 
-    pub fn prompts_with_ids(&self) -> Vec<(String, UserPrompt)> {
+    pub fn prompts_with_ids(&self) -> Vec<(String, CustomPrompt)> {
         let state = self.state.read();
         state
             .prompts
@@ -126,7 +126,7 @@ impl PromptLibrary {
             .collect()
     }
 
-    pub fn _default_prompts(&self) -> Vec<UserPrompt> {
+    pub fn _default_prompts(&self) -> Vec<CustomPrompt> {
         let state = self.state.read();
         state
             .default_prompts
@@ -154,7 +154,7 @@ impl PromptLibrary {
 ///   "prompt": "bar"
 /// }
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
-pub struct UserPrompt {
+pub struct CustomPrompt {
     version: String,
     title: String,
     author: String,
@@ -162,7 +162,7 @@ pub struct UserPrompt {
     prompt: String,
 }
 
-impl UserPrompt {
+impl CustomPrompt {
     async fn list(fs: Arc<dyn Fs>) -> anyhow::Result<Vec<Self>> {
         fs.create_dir(&PROMPTS_DIR).await?;
 
@@ -181,7 +181,7 @@ impl UserPrompt {
             if path.extension() == Some(std::ffi::OsStr::new("json")) {
                 match fs.load(&path).await {
                     Ok(content) => {
-                        let user_prompt: UserPrompt =
+                        let user_prompt: CustomPrompt =
                             serde_json::from_str(&content).map_err(|e| {
                                 anyhow::anyhow!("Failed to deserialize UserPrompt: {}", e)
                             })?;
