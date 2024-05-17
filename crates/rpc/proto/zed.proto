@@ -490,6 +490,7 @@ message ValidateDevServerProjectRequest {
 message CreateDevServer {
     reserved 1;
     string name = 2;
+    optional string ssh_connection_string = 3;
 }
 
 message RegenerateDevServerToken {
@@ -1251,6 +1252,7 @@ message DevServer {
     uint64 dev_server_id = 2;
     string name = 3;
     DevServerStatus status = 4;
+    optional string ssh_connection_string = 5;
 }
 
 enum DevServerStatus {
@@ -1268,10 +1270,13 @@ message DeleteChannel {
 
 message GetChannelMembers {
     uint64 channel_id = 1;
+    string query = 2;
+    uint64 limit = 3;
 }
 
 message GetChannelMembersResponse {
     repeated ChannelMember members = 1;
+    repeated User users = 2;
 }
 
 message ChannelMember {

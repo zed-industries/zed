@@ -214,38 +214,30 @@ pub fn initialize_workspace(app_state: Arc<AppState>, cx: &mut AppContext) {
             workspace_handle.update(&mut cx, |workspace, cx| {
                 workspace.add_panel(assistant_panel, cx);
                 workspace.add_panel(project_panel, cx);
-                if !workspace.project().read(cx).is_remote() {
-                    workspace.add_panel(terminal_panel, cx);
+                {
+                    let project = workspace.project().read(cx);
+                    if project.is_local()
+                        || project
+                            .dev_server_project_id()
+                            .and_then(|dev_server_project_id| {
+                                Some(
+                                    dev_server_projects::Store::global(cx)
+                                        .read(cx)
+                                        .dev_server_for_project(dev_server_project_id)?
+                                        .ssh_connection_string
+                                        .is_some(),
+                                )
+                            })
+                            .unwrap_or(false)
+                    {
+                        workspace.add_panel(terminal_panel, cx);
+                    }
                 }
                 workspace.add_panel(channels_panel, cx);
                 workspace.add_panel(chat_panel, cx);
                 workspace.add_panel(notification_panel, cx);
                 cx.focus_self();
             })
-        })
-        .detach();
-
-        let mut current_user = app_state.user_store.read(cx).watch_current_user();
-
-        cx.spawn(|workspace_handle, mut cx| async move {
-            while let Some(user) = current_user.next().await {
-                if user.is_some() {
-                    // User known now, can check feature flags / staff
-                    // At this point, should have the user with staff status available
-                    let use_assistant2 = cx.update(|cx| assistant2::enabled(cx))?;
-                    if use_assistant2 {
-                        let panel =
-                            assistant2::AssistantPanel::load(workspace_handle.clone(), cx.clone())
-                                .await?;
-                        workspace_handle.update(&mut cx, |workspace, cx| {
-                            workspace.add_panel(panel, cx);
-                        })?;
-                    }
-
-                    break;
-                }
-            }
-            anyhow::Ok(())
         })
         .detach();
 

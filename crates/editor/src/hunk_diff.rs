@@ -194,6 +194,7 @@ impl Editor {
                         editor.highlight_rows::<DiffRowHighlight>(
                             to_inclusive_row_range(removed_rows, &snapshot),
                             None,
+                            false,
                             cx,
                         );
                     }
@@ -269,6 +270,7 @@ impl Editor {
                 self.highlight_rows::<DiffRowHighlight>(
                     to_inclusive_row_range(hunk_start..hunk_end, &snapshot),
                     Some(added_hunk_color(cx)),
+                    false,
                     cx,
                 );
                 None
@@ -277,6 +279,7 @@ impl Editor {
                 self.highlight_rows::<DiffRowHighlight>(
                     to_inclusive_row_range(hunk_start..hunk_end, &snapshot),
                     Some(added_hunk_color(cx)),
+                    false,
                     cx,
                 );
                 self.insert_deleted_text_block(diff_base_buffer, deleted_text_lines, &hunk, cx)
@@ -476,6 +479,7 @@ impl Editor {
                         editor.highlight_rows::<DiffRowHighlight>(
                             to_inclusive_row_range(removed_rows, &snapshot),
                             None,
+                            false,
                             cx,
                         );
                     }
@@ -581,7 +585,7 @@ fn editor_with_deleted_text(
             .buffer_snapshot
             .anchor_after(editor.buffer.read(cx).len(cx));
 
-        editor.highlight_rows::<DiffRowHighlight>(start..=end, Some(deleted_color), cx);
+        editor.highlight_rows::<DiffRowHighlight>(start..=end, Some(deleted_color), false, cx);
 
         let subscription_editor = parent_editor.clone();
         editor._subscriptions.extend([

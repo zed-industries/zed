@@ -97,7 +97,7 @@ world extension {
         code: string,
         /// The spans to display in the label.
         spans: list<code-label-span>,
-        /// The range of the code to include when filtering.
+        /// The range of the displayed label to include when filtering.
         filter-range: range,
     }
 

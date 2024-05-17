@@ -48,7 +48,7 @@ use anyhow::{anyhow, Context as _, Result};
 use blink_manager::BlinkManager;
 use client::{Collaborator, ParticipantIndex};
 use clock::ReplicaId;
-use collections::{hash_map, BTreeMap, Bound, HashMap, HashSet, VecDeque};
+use collections::{BTreeMap, Bound, HashMap, HashSet, VecDeque};
 use convert_case::{Case, Casing};
 use debounced_delay::DebouncedDelay;
 pub use display_map::DisplayPoint;
@@ -450,7 +450,7 @@ pub struct Editor {
     show_wrap_guides: Option<bool>,
     placeholder_text: Option<Arc<str>>,
     highlight_order: usize,
-    highlighted_rows: HashMap<TypeId, Vec<(usize, RangeInclusive<Anchor>, Option<Hsla>)>>,
+    highlighted_rows: HashMap<TypeId, Vec<RowHighlight>>,
     background_highlights: TreeMap<TypeId, BackgroundHighlight>,
     scrollbar_marker_state: ScrollbarMarkerState,
     nav_history: Option<ItemNavHistory>,
@@ -658,6 +658,13 @@ impl SelectionHistory {
             }
         }
     }
+}
+
+struct RowHighlight {
+    index: usize,
+    range: RangeInclusive<Anchor>,
+    color: Option<Hsla>,
+    should_autoscroll: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -9814,47 +9821,30 @@ impl Editor {
         &mut self,
         rows: RangeInclusive<Anchor>,
         color: Option<Hsla>,
+        should_autoscroll: bool,
         cx: &mut ViewContext<Self>,
     ) {
-        let multi_buffer_snapshot = self.buffer().read(cx).snapshot(cx);
-        match self.highlighted_rows.entry(TypeId::of::<T>()) {
-            hash_map::Entry::Occupied(o) => {
-                let row_highlights = o.into_mut();
-                let existing_highlight_index =
-                    row_highlights.binary_search_by(|(_, highlight_range, _)| {
-                        highlight_range
-                            .start()
-                            .cmp(&rows.start(), &multi_buffer_snapshot)
-                            .then(
-                                highlight_range
-                                    .end()
-                                    .cmp(&rows.end(), &multi_buffer_snapshot),
-                            )
-                    });
-                match color {
-                    Some(color) => {
-                        let insert_index = match existing_highlight_index {
-                            Ok(i) => i,
-                            Err(i) => i,
-                        };
-                        row_highlights.insert(
-                            insert_index,
-                            (post_inc(&mut self.highlight_order), rows, Some(color)),
-                        );
-                    }
-                    None => match existing_highlight_index {
-                        Ok(i) => {
-                            row_highlights.remove(i);
-                        }
-                        Err(i) => {
-                            row_highlights
-                                .insert(i, (post_inc(&mut self.highlight_order), rows, None));
-                        }
-                    },
-                }
-            }
-            hash_map::Entry::Vacant(v) => {
-                v.insert(vec![(post_inc(&mut self.highlight_order), rows, color)]);
+        let snapshot = self.buffer().read(cx).snapshot(cx);
+        let row_highlights = self.highlighted_rows.entry(TypeId::of::<T>()).or_default();
+        let existing_highlight_index = row_highlights.binary_search_by(|highlight| {
+            highlight
+                .range
+                .start()
+                .cmp(&rows.start(), &snapshot)
+                .then(highlight.range.end().cmp(&rows.end(), &snapshot))
+        });
+        match (color, existing_highlight_index) {
+            (Some(_), Ok(ix)) | (_, Err(ix)) => row_highlights.insert(
+                ix,
+                RowHighlight {
+                    index: post_inc(&mut self.highlight_order),
+                    range: rows,
+                    should_autoscroll,
+                    color,
+                },
+            ),
+            (None, Ok(i)) => {
+                row_highlights.remove(i);
             }
         }
     }
@@ -9872,7 +9862,7 @@ impl Editor {
             self.highlighted_rows
                 .get(&TypeId::of::<T>())?
                 .iter()
-                .map(|(_, range, color)| (range, color.as_ref())),
+                .map(|highlight| (&highlight.range, highlight.color.as_ref())),
         )
     }
 
@@ -9881,38 +9871,48 @@ impl Editor {
     /// Allows to ignore certain kinds of highlights.
     pub fn highlighted_display_rows(
         &mut self,
-        exclude_highlights: HashSet<TypeId>,
         cx: &mut WindowContext,
     ) -> BTreeMap<DisplayRow, Hsla> {
         let snapshot = self.snapshot(cx);
         let mut used_highlight_orders = HashMap::default();
         self.highlighted_rows
             .iter()
-            .filter(|(type_id, _)| !exclude_highlights.contains(type_id))
             .flat_map(|(_, highlighted_rows)| highlighted_rows.iter())
             .fold(
                 BTreeMap::<DisplayRow, Hsla>::new(),
-                |mut unique_rows, (highlight_order, anchor_range, hsla)| {
-                    let start_row = anchor_range.start().to_display_point(&snapshot).row();
-                    let end_row = anchor_range.end().to_display_point(&snapshot).row();
+                |mut unique_rows, highlight| {
+                    let start_row = highlight.range.start().to_display_point(&snapshot).row();
+                    let end_row = highlight.range.end().to_display_point(&snapshot).row();
                     for row in start_row.0..=end_row.0 {
                         let used_index =
-                            used_highlight_orders.entry(row).or_insert(*highlight_order);
-                        if highlight_order >= used_index {
-                            *used_index = *highlight_order;
-                            match hsla {
-                                Some(hsla) => {
-                                    unique_rows.insert(DisplayRow(row), *hsla);
-                                }
-                                None => {
-                                    unique_rows.remove(&DisplayRow(row));
-                                }
-                            }
+                            used_highlight_orders.entry(row).or_insert(highlight.index);
+                        if highlight.index >= *used_index {
+                            *used_index = highlight.index;
+                            match highlight.color {
+                                Some(hsla) => unique_rows.insert(DisplayRow(row), hsla),
+                                None => unique_rows.remove(&DisplayRow(row)),
+                            };
                         }
                     }
                     unique_rows
                 },
             )
+    }
+
+    pub fn highlighted_display_row_for_autoscroll(
+        &self,
+        snapshot: &DisplaySnapshot,
+    ) -> Option<DisplayRow> {
+        self.highlighted_rows
+            .values()
+            .flat_map(|highlighted_rows| highlighted_rows.iter())
+            .filter_map(|highlight| {
+                if highlight.color.is_none() || !highlight.should_autoscroll {
+                    return None;
+                }
+                Some(highlight.range.start().to_display_point(&snapshot).row())
+            })
+            .min()
     }
 
     pub fn set_search_within_ranges(
