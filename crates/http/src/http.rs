@@ -62,6 +62,7 @@ impl HttpClientWithUrl {
             // Map proxy settings from `http://localhost:10809` to `http://127.0.0.1:10809`
             // NodeRuntime without environment information can not parse `localhost`
             // correctly.
+            // TODO: map to `[::1]` if we are using ipv6
             p.to_string()
                 .to_ascii_lowercase()
                 .replace("localhost", "127.0.0.1")
