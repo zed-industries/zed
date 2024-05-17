@@ -33,6 +33,7 @@ ordered-float.workspace = true
 parking_lot.workspace = true
 project.workspace = true
 regex.workspace = true
+rope.workspace = true
 schemars.workspace = true
 search.workspace = true
 serde.workspace = true
@@ -55,3 +56,4 @@ env_logger.workspace = true
 log.workspace = true
 project = { workspace = true, features = ["test-support"] }
 rand.workspace = true
+unindent.workspace = true

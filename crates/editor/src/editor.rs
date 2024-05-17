@@ -4074,7 +4074,7 @@ impl Editor {
         }
     }
 
-    async fn open_project_transaction(
+    pub async fn open_project_transaction(
         this: &WeakView<Editor>,
         workspace: WeakView<Workspace>,
         transaction: ProjectTransaction,
