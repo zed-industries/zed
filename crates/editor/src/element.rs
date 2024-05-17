@@ -26,7 +26,7 @@ use crate::{
 };
 use anyhow::Result;
 use client::ParticipantIndex;
-use collections::{BTreeMap, HashMap, HashSet};
+use collections::{BTreeMap, HashMap};
 use git::{blame::BlameEntry, diff::DiffHunkStatus, Oid};
 use gpui::{
     anchored, deferred, div, fill, outline, point, px, quad, relative, size, svg,
@@ -3948,9 +3948,9 @@ impl Element for EditorElement {
                         )
                     };
 
-                    let highlighted_rows = self.editor.update(cx, |editor, cx| {
-                        editor.highlighted_display_rows(HashSet::default(), cx)
-                    });
+                    let highlighted_rows = self
+                        .editor
+                        .update(cx, |editor, cx| editor.highlighted_display_rows(cx));
                     let highlighted_ranges = self.editor.read(cx).background_highlights_in_range(
                         start_anchor..end_anchor,
                         &snapshot.display_snapshot,

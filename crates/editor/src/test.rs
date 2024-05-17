@@ -168,8 +168,7 @@ pub fn expanded_hunks_background_highlights(
 
     let mut range_start = 0;
     let mut previous_highlighted_row = None;
-    for (highlighted_row, _) in editor.highlighted_display_rows(collections::HashSet::default(), cx)
-    {
+    for (highlighted_row, _) in editor.highlighted_display_rows(cx) {
         match previous_highlighted_row {
             Some(previous_row) => {
                 if previous_row + 1 != highlighted_row.0 {

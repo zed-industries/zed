@@ -664,6 +664,7 @@ struct RowHighlight {
     index: usize,
     range: RangeInclusive<Anchor>,
     color: Option<Hsla>,
+    should_autoscroll: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -9820,6 +9821,7 @@ impl Editor {
         &mut self,
         rows: RangeInclusive<Anchor>,
         color: Option<Hsla>,
+        should_autoscroll: bool,
         cx: &mut ViewContext<Self>,
     ) {
         let snapshot = self.buffer().read(cx).snapshot(cx);
@@ -9837,6 +9839,7 @@ impl Editor {
                 RowHighlight {
                     index: post_inc(&mut self.highlight_order),
                     range: rows,
+                    should_autoscroll,
                     color,
                 },
             ),
@@ -9868,14 +9871,12 @@ impl Editor {
     /// Allows to ignore certain kinds of highlights.
     pub fn highlighted_display_rows(
         &mut self,
-        exclude_highlights: HashSet<TypeId>,
         cx: &mut WindowContext,
     ) -> BTreeMap<DisplayRow, Hsla> {
         let snapshot = self.snapshot(cx);
         let mut used_highlight_orders = HashMap::default();
         self.highlighted_rows
             .iter()
-            .filter(|(type_id, _)| !exclude_highlights.contains(type_id))
             .flat_map(|(_, highlighted_rows)| highlighted_rows.iter())
             .fold(
                 BTreeMap::<DisplayRow, Hsla>::new(),
@@ -9896,6 +9897,22 @@ impl Editor {
                     unique_rows
                 },
             )
+    }
+
+    pub fn highlighted_display_row_for_autoscroll(
+        &self,
+        snapshot: &DisplaySnapshot,
+    ) -> Option<DisplayRow> {
+        self.highlighted_rows
+            .values()
+            .flat_map(|highlighted_rows| highlighted_rows.iter())
+            .filter_map(|highlight| {
+                if highlight.color.is_none() || !highlight.should_autoscroll {
+                    return None;
+                }
+                Some(highlight.range.start().to_display_point(&snapshot).row())
+            })
+            .min()
     }
 
     pub fn set_search_within_ranges(
