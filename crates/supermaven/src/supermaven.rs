@@ -19,7 +19,7 @@ use serde::{Deserialize, Serialize};
 use settings::SettingsStore;
 use smol::{
     io::AsyncWriteExt,
-    process::{Child, ChildStdin, ChildStdout, Command},
+    process::{Child, ChildStdin, ChildStdout},
 };
 use std::{path::PathBuf, process::Stdio, sync::Arc};
 use ui::prelude::*;
@@ -237,13 +237,12 @@ impl SupermavenAgent {
         client: Arc<Client>,
         cx: &mut ModelContext<Supermaven>,
     ) -> Result<Self> {
-        let mut process = Command::new(&binary_path)
+        let mut process = process::Process::new(&binary_path)
             .arg("stdio")
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
-            .kill_on_drop(true)
-            .spawn()
+            .spawn_async(true)
             .context("failed to start the binary")?;
 
         let stdin = process

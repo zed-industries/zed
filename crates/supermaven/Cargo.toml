@@ -22,6 +22,7 @@ futures.workspace = true
 language.workspace = true
 log.workspace = true
 postage.workspace = true
+process.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 settings.workspace = true
