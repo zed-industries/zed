@@ -41,6 +41,8 @@ impl GoLspAdapter {
 
 lazy_static! {
     static ref GOPLS_VERSION_REGEX: Regex = Regex::new(r"\d+\.\d+\.\d+").unwrap();
+    static ref GO_EXTRACT_SUBTEST_NAME_REGEX: Regex = Regex::new(r#".*t\.Run\("([^"]*)".*"#).unwrap();
+    static ref GO_ESCAPE_SUBTEST_NAME_REGEX: Regex = Regex::new(r#"[.*+?^${}()|\[\]\\]"#).unwrap();
 }
 
 #[async_trait(?Send)]
@@ -448,7 +450,7 @@ impl ContextProvider for GoContextProvider {
     fn associated_tasks(&self) -> Option<TaskTemplates> {
         Some(TaskTemplates(vec![
             TaskTemplate {
-                label: "Go Test Test Function".into(),
+                label: "Go Run Test Function".into(),
                 command: "go".into(),
                 args: vec![
                     "test".into(),
@@ -464,7 +466,7 @@ impl ContextProvider for GoContextProvider {
                 ..TaskTemplate::default()
             },
             TaskTemplate {
-                label: "Go Test Subtest Function".into(),
+                label: "Go Run Subtest Function".into(),
                 command: "go".into(),
                 args: vec![
                     "test".into(),
@@ -481,7 +483,7 @@ impl ContextProvider for GoContextProvider {
                 ..TaskTemplate::default()
             },
             TaskTemplate {
-                label: "Go Test Benchmark Function".into(),
+                label: "Go Run Benchmark Function".into(),
                 command: "go".into(),
                 args: vec![
                     "test".into(),
@@ -512,11 +514,10 @@ impl ContextProvider for GoContextProvider {
 }
 
 fn extract_subtest_name(input: &str) -> Option<String> {
-    let re = Regex::new(r#".*t\.Run\("([^"]*)".*"#).unwrap();
-
-    re.captures(input).map(|captures| {
-        captures.get(1).map(|matched| matched.as_str().to_string())
-    }).flatten()
+    GO_EXTRACT_SUBTEST_NAME_REGEX.captures(input).map(|captures| {
+        let subtest_name = captures.get(1).map(|matched| matched.as_str().replace(" ", "_")).unwrap_or_default();
+        GO_ESCAPE_SUBTEST_NAME_REGEX.replace_all(&subtest_name, |caps: &regex::Captures| format!("\\{}", &caps[0])).to_string()
+    })
 }
 
 async fn get_cached_server_binary(container_dir: PathBuf) -> Option<LanguageServerBinary> {
