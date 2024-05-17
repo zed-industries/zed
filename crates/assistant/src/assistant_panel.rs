@@ -43,7 +43,7 @@ use project::{Project, ProjectTransaction};
 use search::{buffer_search::DivRegistrar, BufferSearchBar};
 use settings::Settings;
 use std::{
-    cmp,
+    cmp::{self, Ordering},
     fmt::Write,
     iter,
     ops::Range,
@@ -1383,6 +1383,7 @@ impl FocusableView for AssistantPanel {
 enum ConversationEvent {
     MessagesEdited,
     SummaryChanged,
+    EditSuggestionsChanged,
     StreamedCompletion,
 }
 
@@ -1407,6 +1408,7 @@ pub struct Conversation {
     model: LanguageModel,
     token_count: Option<usize>,
     pending_token_count: Task<Option<()>>,
+    pending_edit_suggestion_parse: Option<Task<()>>,
     pending_save: Task<Result<()>>,
     path: Option<PathBuf>,
     _subscriptions: Vec<Subscription>,
@@ -1442,6 +1444,7 @@ impl Conversation {
             pending_completions: Default::default(),
             token_count: None,
             pending_token_count: Task::ready(None),
+            pending_edit_suggestion_parse: None,
             model,
             _subscriptions: vec![cx.subscribe(&buffer, Self::handle_buffer_event)],
             pending_save: Task::ready(Ok(())),
@@ -1545,6 +1548,7 @@ impl Conversation {
                 completion_count: Default::default(),
                 pending_completions: Default::default(),
                 token_count: None,
+                pending_edit_suggestion_parse: None,
                 pending_token_count: Task::ready(None),
                 model,
                 _subscriptions: vec![cx.subscribe(&buffer, Self::handle_buffer_event)],
@@ -1555,8 +1559,7 @@ impl Conversation {
                 language_registry,
             };
             this.set_language(cx);
-            let buffer = this.buffer.read(cx);
-            parse_edit_suggestions(buffer, 0..buffer.len(), &mut this.edit_suggestions);
+            this.reparse_edit_suggestions(cx);
             this.count_remaining_tokens(cx);
             this
         })
@@ -1636,6 +1639,7 @@ impl Conversation {
     ) {
         if *event == language::Event::Edited {
             self.count_remaining_tokens(cx);
+            self.reparse_edit_suggestions(cx);
             cx.emit(ConversationEvent::MessagesEdited);
         }
     }
@@ -1660,6 +1664,65 @@ impl Conversation {
             }
             .log_err()
         });
+    }
+
+    fn reparse_edit_suggestions(&mut self, cx: &mut ModelContext<Self>) {
+        self.pending_edit_suggestion_parse = Some(cx.spawn(|this, mut cx| async move {
+            cx.background_executor()
+                .timer(Duration::from_millis(200))
+                .await;
+
+            this.update(&mut cx, |this, cx| {
+                this.reparse_edit_suggestions_in_range(0..this.buffer.read(cx).len(), cx);
+            })
+            .ok();
+        }));
+    }
+
+    fn reparse_edit_suggestions_in_range(
+        &mut self,
+        range: Range<usize>,
+        cx: &mut ModelContext<Self>,
+    ) {
+        self.buffer.update(cx, |buffer, _| {
+            let range_start = buffer.anchor_before(range.start);
+            let range_end = buffer.anchor_after(range.end);
+            let start_ix = self
+                .edit_suggestions
+                .binary_search_by(|probe| {
+                    probe
+                        .source_range
+                        .end
+                        .cmp(&range_start, buffer)
+                        .then(Ordering::Greater)
+                })
+                .unwrap_err();
+            let end_ix = self
+                .edit_suggestions
+                .binary_search_by(|probe| {
+                    probe
+                        .source_range
+                        .start
+                        .cmp(&range_end, buffer)
+                        .then(Ordering::Less)
+                })
+                .unwrap_err();
+
+            let mut new_edit_suggestions = Vec::new();
+            let mut message_lines = buffer.as_rope().chunks_in_range(range).lines();
+            while let Some(suggestion) = parse_next_edit_suggestion(&mut message_lines) {
+                let start_anchor = buffer.anchor_after(suggestion.outer_range.start);
+                let end_anchor = buffer.anchor_before(suggestion.outer_range.end);
+                new_edit_suggestions.push(EditSuggestion {
+                    source_range: start_anchor..end_anchor,
+                    full_path: suggestion.path,
+                });
+            }
+            self.edit_suggestions
+                .splice(start_ix..end_ix, new_edit_suggestions);
+        });
+        cx.emit(ConversationEvent::EditSuggestionsChanged);
+        cx.notify();
     }
 
     fn remaining_tokens(&self) -> Option<isize> {
@@ -1750,7 +1813,7 @@ impl Conversation {
                                     .message_anchors
                                     .iter()
                                     .position(|message| message.id == assistant_message_id)?;
-                                this.buffer.update(cx, |buffer, cx| {
+                                let message_range = this.buffer.update(cx, |buffer, cx| {
                                     let message_start_offset =
                                         this.message_anchors[message_ix].start.to_offset(buffer);
                                     let message_old_end_offset = this.message_anchors
@@ -1767,12 +1830,9 @@ impl Conversation {
                                         None,
                                         cx,
                                     );
-                                    parse_edit_suggestions(
-                                        buffer,
-                                        message_start_offset..message_new_end_offset,
-                                        &mut this.edit_suggestions,
-                                    );
+                                    message_start_offset..message_new_end_offset
                                 });
+                                this.reparse_edit_suggestions_in_range(message_range, cx);
                                 cx.emit(ConversationEvent::StreamedCompletion);
 
                                 Some(())
@@ -2290,7 +2350,7 @@ fn parse_next_edit_suggestion(lines: &mut rope::Lines) -> Option<ParsedEditSugge
                 if message_line == "```" {
                     return Some(ParsedEditSuggestion {
                         path,
-                        outer_range: start_offset..lines.offset(),
+                        outer_range: start_offset..offset + "```".len(),
                         old_text_range,
                         new_text_range: new_text_start_offset..offset,
                     });
@@ -2302,37 +2362,6 @@ fn parse_next_edit_suggestion(lines: &mut rope::Lines) -> Option<ParsedEditSugge
                         new_text_start_offset,
                     };
                 }
-            }
-        }
-    }
-}
-
-fn parse_edit_suggestions(
-    buffer: &Buffer,
-    buffer_range: Range<usize>,
-    output: &mut Vec<EditSuggestion>,
-) {
-    output.retain(|suggestion| {
-        let range = suggestion.source_range.to_offset(buffer);
-        range.end < buffer_range.start || range.start > buffer_range.end
-    });
-
-    let mut message_lines = buffer.text_for_range(buffer_range).lines();
-    while let Some(suggestion) = parse_next_edit_suggestion(&mut message_lines) {
-        let start_anchor = buffer.anchor_before(suggestion.outer_range.start);
-        let end_anchor = buffer.anchor_after(suggestion.outer_range.end);
-        match output
-            .binary_search_by(|suggestion| suggestion.source_range.start.cmp(&start_anchor, buffer))
-        {
-            Ok(_) => {}
-            Err(ix) => {
-                output.insert(
-                    ix,
-                    EditSuggestion {
-                        source_range: start_anchor..end_anchor,
-                        full_path: suggestion.path,
-                    },
-                );
             }
         }
     }
@@ -2486,7 +2515,8 @@ impl ConversationEditor {
                 self.conversation.update(cx, |conversation, cx| {
                     conversation.save(Some(Duration::from_millis(500)), self.fs.clone(), cx);
                 });
-
+            }
+            ConversationEvent::EditSuggestionsChanged => {
                 self.editor.update(cx, |editor, cx| {
                     let buffer = editor.buffer().read(cx).snapshot(cx);
                     let excerpt_id = *buffer.as_singleton().unwrap().0;
@@ -2518,7 +2548,7 @@ impl ConversationEditor {
                             cx,
                         );
                     }
-                })
+                });
             }
             ConversationEvent::SummaryChanged => {
                 cx.emit(ConversationEditorEvent::TabContentChanged);
@@ -3041,6 +3071,11 @@ impl ConversationEditor {
                                         (edit_start..edit_end, suggestion.new_text.clone()),
                                     );
                                 }
+                            } else {
+                                log::info!(
+                                    "assistant edit did not match any text in buffer {:?}",
+                                    &suggestion.old_text
+                                );
                             }
                         }
                     }
@@ -3786,7 +3821,7 @@ mod tests {
     }
 
     #[test]
-    fn test_parse_edit_suggestions() {
+    fn test_parse_next_edit_suggestion() {
         let text = "
             some output:
 
