@@ -84,6 +84,15 @@
   "restore_on_startup": "last_workspace",
   // Size of the drop target in the editor.
   "drop_target_size": 0.2,
+  // Whether the window should be closed when using 'close active item' on a window with no items.
+  // May take 3 values:
+  //  1. Use the current platform's convention
+  //         "close_window_when_no_tabs": "auto"
+  //  2. Always close the window:
+  //         "close_window_when_no_tabs": "on",
+  //  3. Never close the window
+  //         "close_window_when_no_tabs": "off",
+  "close_window_when_no_tabs": "auto",
   // Whether the cursor blinks in the editor.
   "cursor_blink": true,
   // How to highlight the current line in the editor.
