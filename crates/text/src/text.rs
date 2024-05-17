@@ -2165,6 +2165,24 @@ impl BufferSnapshot {
             buffer_id: self.remote_id,
         }
     }
+
+    pub fn has_edits_since(&self, since: &clock::Global) -> bool {
+        if *since != self.version {
+            let mut cursor = self
+                .fragments
+                .filter::<_, usize>(move |summary| !since.observed_all(&summary.max_version));
+            cursor.next(&None);
+            while let Some(fragment) = cursor.item() {
+                let was_visible = fragment.was_visible(since, &self.undo_map);
+                let is_visible = fragment.visible;
+                if was_visible != is_visible {
+                    return true;
+                }
+                cursor.next(&None);
+            }
+        }
+        false
+    }
 }
 
 struct RopeBuilder<'a> {
