@@ -22,9 +22,11 @@ use std::{
         atomic::{AtomicBool, Ordering::SeqCst},
         Arc,
     },
+    borrow::Cow,
 };
 use task::{TaskTemplate, TaskTemplates, TaskVariables, VariableName};
 use util::{fs::remove_matching, maybe, ResultExt};
+use task::{TaskTemplate, TaskTemplates, TaskVariables, VariableName};
 
 fn server_binary_arguments() -> Vec<OsString> {
     vec!["-mode=stdio".into()]
@@ -397,6 +399,124 @@ impl super::LspAdapter for GoLspAdapter {
             filter_range,
         })
     }
+}
+
+pub(crate) struct GoContextProvider;
+
+const GO_TEST_DIRECTORY_TASK_VARIABLE: VariableName =
+    VariableName::Custom(Cow::Borrowed("GO_TEST_DIRECTORY"));
+const GO_SUBTEST_NAME_TASK_VARIABLE: VariableName =
+    VariableName::Custom(Cow::Borrowed("GO_SUBTEST_NAME"));
+
+impl ContextProvider for GoContextProvider {
+    fn build_context(
+        &self,
+        _: Option<&Path>,
+        location: &Location,
+        cx: &mut gpui::AppContext,
+    ) -> Result<TaskVariables> {
+        let local_abs_path = location
+            .buffer
+            .read(cx)
+            .file()
+            .and_then(|file| Some(file.as_local()?.abs_path(cx)));
+
+        let test_folder = local_abs_path
+                .as_deref()
+                .and_then(|local_abs_path| local_abs_path.parent())
+                .and_then(|parent | parent.to_string_lossy().into());
+
+        let snapshot = location.buffer.read(cx).snapshot();
+        let point_range = location.range.to_point(&snapshot);
+        let end = Point::new(point_range.start.row+1,0);
+        let line = snapshot.text_for_range(point_range.start..end).peek();
+
+        let subtest_name = extract_subtest_name(line.unwrap_or(""));
+
+        Ok(
+            match (subtest_name, test_folder) {
+                (Some(subtest), Some(folder)) => TaskVariables::from_iter([
+                    (GO_TEST_DIRECTORY_TASK_VARIABLE.clone(), folder.to_string()),
+                    (GO_SUBTEST_NAME_TASK_VARIABLE.clone(), subtest),
+                ]),
+                (None, Some(folder)) => TaskVariables::from_iter(Some((GO_TEST_DIRECTORY_TASK_VARIABLE.clone(), folder.to_string()))),
+                _ => TaskVariables::default(),
+            }
+        )
+    }
+
+    fn associated_tasks(&self) -> Option<TaskTemplates> {
+        Some(TaskTemplates(vec![
+            TaskTemplate {
+                label: "Go Test Test Function".into(),
+                command: "go".into(),
+                args: vec![
+                    "test".into(),
+                    GO_TEST_DIRECTORY_TASK_VARIABLE.template_value(),
+                    "-v".into(),
+                    "-run".into(),
+                    format!(
+                        "^{}$",
+                        VariableName::Symbol.template_value(),
+                    ),
+                ],
+                tags: vec!["go-test".to_owned()],
+                ..TaskTemplate::default()
+            },
+            TaskTemplate {
+                label: "Go Test Subtest Function".into(),
+                command: "go".into(),
+                args: vec![
+                    "test".into(),
+                    GO_TEST_DIRECTORY_TASK_VARIABLE.template_value(),
+                    "-v".into(),
+                    "-run".into(),
+                    format!(
+                        "^{}$/^{}$",
+                        VariableName::Symbol.template_value(),
+                        GO_SUBTEST_NAME_TASK_VARIABLE.template_value(),
+                    ),
+                ],
+                tags: vec!["go-subtest".to_owned()],
+                ..TaskTemplate::default()
+            },
+            TaskTemplate {
+                label: "Go Test Benchmark Function".into(),
+                command: "go".into(),
+                args: vec![
+                    "test".into(),
+                    GO_TEST_DIRECTORY_TASK_VARIABLE.template_value(),
+                    "-benchmem".into(),
+                    "-run=^$".into(),
+                    "-bench".into(),
+                    format!(
+                        "^{}$",
+                        VariableName::Symbol.template_value(),
+                    ),
+                ],
+                tags: vec!["go-benchmark".to_owned()],
+                ..TaskTemplate::default()
+            },
+            TaskTemplate {
+                label: "Go Run Main Function".into(),
+                command: "go".into(),
+                args: vec![
+                    "run".into(),
+                    VariableName::File.template_value(),
+                ],
+                tags: vec!["go-run".to_owned()],
+                ..TaskTemplate::default()
+            },
+        ]))
+    }
+}
+
+fn extract_subtest_name(input: &str) -> Option<String> {
+    let re = Regex::new(r#".*t\.Run\("([^"]*)".*"#).unwrap();
+
+    re.captures(input).map(|captures| {
+        captures.get(1).map(|matched| matched.as_str().to_string())
+    }).flatten()
 }
 
 async fn get_cached_server_binary(container_dir: PathBuf) -> Option<LanguageServerBinary> {
