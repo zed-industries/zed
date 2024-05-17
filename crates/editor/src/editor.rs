@@ -2161,7 +2161,7 @@ impl Editor {
             self.refresh_code_actions(cx);
             self.refresh_document_highlights(cx);
             refresh_matching_bracket_highlights(self, cx);
-            self.discard_inline_completion(cx);
+            self.discard_inline_completion(false, cx);
             if self.git_blame_inline_enabled {
                 self.start_inline_blame_timer(cx);
             }
@@ -2566,7 +2566,7 @@ impl Editor {
 
     pub fn cancel(&mut self, _: &Cancel, cx: &mut ViewContext<Self>) {
         self.clear_expanded_diff_hunks(cx);
-        if self.dismiss_menus_and_popups(cx) {
+        if self.dismiss_menus_and_popups(true, cx) {
             return;
         }
 
@@ -2579,7 +2579,11 @@ impl Editor {
         cx.propagate();
     }
 
-    pub fn dismiss_menus_and_popups(&mut self, cx: &mut ViewContext<Self>) -> bool {
+    pub fn dismiss_menus_and_popups(
+        &mut self,
+        should_report_inline_completion_event: bool,
+        cx: &mut ViewContext<Self>,
+    ) -> bool {
         if self.take_rename(false, cx).is_some() {
             return true;
         }
@@ -2592,7 +2596,7 @@ impl Editor {
             return true;
         }
 
-        if self.discard_inline_completion(cx) {
+        if self.discard_inline_completion(should_report_inline_completion_event, cx) {
             return true;
         }
 
@@ -3704,7 +3708,7 @@ impl Editor {
                         let menu = menu.unwrap();
                         *context_menu = Some(ContextMenu::Completions(menu));
                         drop(context_menu);
-                        this.discard_inline_completion(cx);
+                        this.discard_inline_completion(false, cx);
                         cx.notify();
                     } else if this.completion_tasks.len() <= 1 {
                         // If there are no more completion tasks and the last menu was
@@ -3918,7 +3922,7 @@ impl Editor {
                     }
 
                     this.completion_tasks.clear();
-                    this.discard_inline_completion(cx);
+                    this.discard_inline_completion(false, cx);
                     let task_context = tasks.as_ref().zip(this.workspace.clone()).and_then(
                         |(tasks, (workspace, _))| {
                             let position = Point::new(buffer_row, tasks.1.column);
@@ -4313,7 +4317,7 @@ impl Editor {
         if !self.show_inline_completions
             || !provider.is_enabled(&buffer, cursor_buffer_position, cx)
         {
-            self.discard_inline_completion(cx);
+            self.discard_inline_completion(false, cx);
             return None;
         }
 
@@ -4448,9 +4452,13 @@ impl Editor {
         }
     }
 
-    fn discard_inline_completion(&mut self, cx: &mut ViewContext<Self>) -> bool {
+    fn discard_inline_completion(
+        &mut self,
+        should_report_inline_completion_event: bool,
+        cx: &mut ViewContext<Self>,
+    ) -> bool {
         if let Some(provider) = self.inline_completion_provider() {
-            provider.discard(cx);
+            provider.discard(should_report_inline_completion_event, cx);
         }
 
         self.take_active_inline_completion(cx).is_some()
@@ -4513,7 +4521,7 @@ impl Editor {
             }
         }
 
-        self.discard_inline_completion(cx);
+        self.discard_inline_completion(false, cx);
     }
 
     fn inline_completion_provider(&self) -> Option<Arc<dyn InlineCompletionProviderHandle>> {

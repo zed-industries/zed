@@ -195,6 +195,7 @@ impl InlineCompletionProvider for CopilotCompletionProvider {
                 .detach_and_log_err(cx);
             if let Some(telemetry) = self.telemetry.as_ref() {
                 if self.should_allow_event_to_send {
+                    dbg!("Accepted copilot event");
                     telemetry.report_inline_completion_event(
                         Self::name().to_string(),
                         true,
@@ -207,7 +208,11 @@ impl InlineCompletionProvider for CopilotCompletionProvider {
         self.should_allow_event_to_send = false;
     }
 
-    fn discard(&mut self, cx: &mut ModelContext<Self>) {
+    fn discard(
+        &mut self,
+        should_report_inline_completion_event: bool,
+        cx: &mut ModelContext<Self>,
+    ) {
         let settings = AllLanguageSettings::get_global(cx);
 
         let copilot_enabled = settings.inline_completions_enabled(None, None);
@@ -222,13 +227,17 @@ impl InlineCompletionProvider for CopilotCompletionProvider {
             })
             .detach_and_log_err(cx);
 
-        if let Some(telemetry) = self.telemetry.as_ref() {
+        if should_report_inline_completion_event {
+            // Rename: should_allow_event_to_send?
             if self.should_allow_event_to_send {
-                telemetry.report_inline_completion_event(
-                    Self::name().to_string(),
-                    false,
-                    self.file_extension.clone(),
-                );
+                if let Some(telemetry) = self.telemetry.as_ref() {
+                    dbg!("Discarded copilot event");
+                    telemetry.report_inline_completion_event(
+                        Self::name().to_string(),
+                        false,
+                        self.file_extension.clone(),
+                    );
+                }
             }
         }
 
