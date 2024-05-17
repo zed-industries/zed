@@ -13,8 +13,8 @@ use fs::{FakeFs, Fs as _, RemoveOptions};
 use futures::{channel::mpsc, StreamExt as _};
 use git::repository::GitFileStatus;
 use gpui::{
-    px, size, AppContext, BackgroundExecutor, BorrowAppContext, Model, Modifiers, MouseButton,
-    MouseDownEvent, TestAppContext,
+    px, size, AppContext, BackgroundExecutor, Model, Modifiers, MouseButton, MouseDownEvent,
+    TestAppContext, UpdateGlobal,
 };
 use language::{
     language_settings::{AllLanguageSettings, Formatter, PrettierSettings},
@@ -4401,7 +4401,7 @@ async fn test_formatting_buffer(
     // Ensure buffer can be formatted using an external command. Notice how the
     // host's configuration is honored as opposed to using the guest's settings.
     cx_a.update(|cx| {
-        cx.update_global(|store: &mut SettingsStore, cx| {
+        SettingsStore::update_global(cx, |store, cx| {
             store.update_user_settings::<AllLanguageSettings>(cx, |file| {
                 file.defaults.formatter = Some(Formatter::External {
                     command: "awk".into(),
@@ -4485,7 +4485,7 @@ async fn test_prettier_formatting_buffer(
     let buffer_b = cx_b.executor().spawn(open_buffer).await.unwrap();
 
     cx_a.update(|cx| {
-        cx.update_global(|store: &mut SettingsStore, cx| {
+        SettingsStore::update_global(cx, |store, cx| {
             store.update_user_settings::<AllLanguageSettings>(cx, |file| {
                 file.defaults.formatter = Some(Formatter::Auto);
                 file.defaults.prettier = Some(PrettierSettings {
@@ -4496,7 +4496,7 @@ async fn test_prettier_formatting_buffer(
         });
     });
     cx_b.update(|cx| {
-        cx.update_global(|store: &mut SettingsStore, cx| {
+        SettingsStore::update_global(cx, |store, cx| {
             store.update_user_settings::<AllLanguageSettings>(cx, |file| {
                 file.defaults.formatter = Some(Formatter::LanguageServer);
                 file.defaults.prettier = Some(PrettierSettings {

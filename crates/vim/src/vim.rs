@@ -27,7 +27,7 @@ use editor::{
 };
 use gpui::{
     actions, impl_actions, Action, AppContext, EntityId, FocusableView, Global, KeystrokeEvent,
-    Subscription, View, ViewContext, WeakView, WindowContext,
+    Subscription, UpdateGlobal, View, ViewContext, WeakView, WindowContext,
 };
 use language::{CursorShape, Point, SelectionGoal, TransactionId};
 pub use mode_indicator::ModeIndicator;
@@ -106,11 +106,11 @@ pub fn init(cx: &mut AppContext) {
     CommandPaletteFilter::update_global(cx, |filter, _| {
         filter.hide_namespace(Vim::NAMESPACE);
     });
-    cx.update_global(|vim: &mut Vim, cx: &mut AppContext| {
+    Vim::update_global(cx, |vim, cx| {
         vim.set_enabled(VimModeSetting::get_global(cx).0, cx)
     });
     cx.observe_global::<SettingsStore>(|cx| {
-        cx.update_global(|vim: &mut Vim, cx: &mut AppContext| {
+        Vim::update_global(cx, |vim, cx| {
             vim.set_enabled(VimModeSetting::get_global(cx).0, cx)
         });
     })
