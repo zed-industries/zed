@@ -22,7 +22,7 @@ pub struct CustomPrompt {
     pub title: String,
     pub author: String,
     pub languages: Vec<String>,
-    pub prompt: String,
+    pub body: String,
 }
 
 impl CustomPrompt {

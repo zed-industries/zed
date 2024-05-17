@@ -1,10 +1,13 @@
+use collections::HashMap;
+use editor::Editor;
 use fs::Fs;
-use gpui::{AppContext, DismissEvent, EventEmitter, FocusHandle, FocusableView, Render};
+use gpui::{AppContext, DismissEvent, EventEmitter, FocusHandle, FocusableView, Render, View};
 use parking_lot::RwLock;
-use std::collections::HashMap;
+use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use ui::{prelude::*, Checkbox, ModalHeader};
 use util::ResultExt;
+use uuid::Uuid;
 use workspace::ModalView;
 
 use super::custom_prompts::CustomPrompt;
@@ -13,14 +16,14 @@ pub struct PromptLibraryState {
     /// The default prompt all assistant contexts will start with
     _system_prompt: String,
     /// All [UserPrompt]s loaded into the library
-    prompts: HashMap<String, CustomPrompt>,
+    prompts: HashMap<PromptId, CustomPrompt>,
     /// Prompts included in the default prompt
-    default_prompts: Vec<String>,
+    default_prompts: Vec<PromptId>,
     /// Prompts that have a pending update that hasn't been applied yet
-    _updateable_prompts: Vec<String>,
+    _updateable_prompts: Vec<PromptId>,
     /// Prompts that have been changed since they were loaded
     /// and can be reverted to their original state
-    _revertable_prompts: Vec<String>,
+    _revertable_prompts: Vec<PromptId>,
     version: usize,
 }
 
@@ -39,7 +42,7 @@ impl PromptLibrary {
         Self {
             state: RwLock::new(PromptLibraryState {
                 _system_prompt: String::new(),
-                prompts: HashMap::new(),
+                prompts: HashMap::default(),
                 default_prompts: Vec::new(),
                 _updateable_prompts: Vec::new(),
                 _revertable_prompts: Vec::new(),
@@ -60,7 +63,7 @@ impl PromptLibrary {
             .clone()
             .into_iter()
             .map(|prompt| {
-                let id = uuid::Uuid::new_v4().to_string();
+                let id = PromptId(uuid::Uuid::new_v4());
                 (id, prompt)
             })
             .collect::<Vec<_>>();
@@ -81,7 +84,7 @@ impl PromptLibrary {
         }
     }
 
-    pub fn add_prompt_to_default(&self, prompt_id: String) -> anyhow::Result<()> {
+    pub fn add_prompt_to_default(&self, prompt_id: PromptId) -> anyhow::Result<()> {
         let mut state = self.state.write();
 
         if !state.default_prompts.contains(&prompt_id) && state.prompts.contains_key(&prompt_id) {
@@ -92,7 +95,7 @@ impl PromptLibrary {
         Ok(())
     }
 
-    pub fn remove_prompt_from_default(&self, prompt_id: String) -> anyhow::Result<()> {
+    pub fn remove_prompt_from_default(&self, prompt_id: PromptId) -> anyhow::Result<()> {
         let mut state = self.state.write();
 
         state.default_prompts.retain(|id| id != &prompt_id);
@@ -106,7 +109,7 @@ impl PromptLibrary {
 
         active_prompt_ids
             .iter()
-            .filter_map(|id| state.prompts.get(id).map(|p| p.prompt.clone()))
+            .filter_map(|id| state.prompts.get(id).map(|p| p.body.clone()))
             .collect::<Vec<_>>()
             .join("\n\n---\n\n")
     }
@@ -117,13 +120,21 @@ impl PromptLibrary {
         state.prompts.values().cloned().collect()
     }
 
-    pub fn prompts_with_ids(&self) -> Vec<(String, CustomPrompt)> {
+    pub fn prompts_with_ids(&self) -> Vec<(PromptId, CustomPrompt)> {
         let state = self.state.read();
         state
             .prompts
             .iter()
             .map(|(id, prompt)| (id.clone(), prompt.clone()))
             .collect()
+    }
+
+    pub fn prompt_for_id(&self, prompt_id: PromptId) -> Option<String> {
+        self.state
+            .read()
+            .prompts
+            .get(&prompt_id)
+            .and_then(|prompt| serde_json::to_string_pretty(prompt).log_err())
     }
 
     pub fn _default_prompts(&self) -> Vec<CustomPrompt> {
@@ -135,16 +146,20 @@ impl PromptLibrary {
             .collect()
     }
 
-    pub fn default_prompt_ids(&self) -> Vec<String> {
+    pub fn default_prompt_ids(&self) -> Vec<PromptId> {
         let state = self.state.read();
         state.default_prompts.clone()
     }
 }
 
+#[derive(Debug, Clone, Copy, Eq, PartialEq, Hash)]
+pub struct PromptId(Uuid);
+
 pub struct PromptManager {
     focus_handle: FocusHandle,
     prompt_library: Arc<PromptLibrary>,
-    active_prompt: Option<String>,
+    prompt_editors: HashMap<PromptId, View<Editor>>,
+    active_prompt_id: Option<PromptId>,
 }
 
 impl PromptManager {
@@ -153,12 +168,16 @@ impl PromptManager {
         Self {
             focus_handle,
             prompt_library,
-            active_prompt: None,
+            prompt_editors: HashMap::default(),
+            active_prompt_id: None,
         }
     }
 
-    pub fn set_active_prompt(&mut self, prompt_id: Option<String>) {
-        self.active_prompt = prompt_id;
+    pub fn set_active_prompt(&mut self, prompt_id: Option<PromptId>, cx: &mut ViewContext<Self>) {
+        dbg!();
+
+        self.active_prompt_id = prompt_id;
+        cx.notify();
     }
 
     fn dismiss(&mut self, _: &menu::Cancel, cx: &mut ViewContext<Self>) {
@@ -175,14 +194,6 @@ impl Render for PromptManager {
             .clone()
             .into_iter()
             .collect::<Vec<_>>();
-
-        let active_prompt = self.active_prompt.as_ref().and_then(|id| {
-            prompt_library
-                .prompts_with_ids()
-                .iter()
-                .find(|(prompt_id, _)| prompt_id == id)
-                .map(|(_, prompt)| prompt.clone())
-        });
 
         v_flex()
             .key_context("PromptManager")
@@ -226,8 +237,6 @@ impl Render for PromptManager {
                                                     let prompt_library = prompt_library.clone();
                                                     let prompt = prompt.clone();
                                                     let prompt_id = id.clone();
-                                                    let shared_string_id: SharedString =
-                                                        id.clone().into();
 
                                                     let default_prompt_ids =
                                                         prompt_library.clone().default_prompt_ids();
@@ -245,17 +254,16 @@ impl Render for PromptManager {
 
                                                     v_flex()
                                                     .id(ElementId::Name(
-                                                        format!("prompt-{}", shared_string_id)
-                                                            .into(),
+                                                        format!("prompt-{:?}", prompt_id,).into(),
                                                     ))
                                                     .p(Spacing::Small.rems(cx))
-
                                                     .on_click(cx.listener({
                                                         let prompt_id = prompt_id.clone();
-                                                        move |this, _event, _cx| {
-                                                            this.set_active_prompt(Some(
-                                                                prompt_id.clone(),
-                                                            ));
+                                                        move |this, _event, cx| {
+                                                            this.set_active_prompt(
+                                                                Some(prompt_id),
+                                                                cx,
+                                                            );
                                                         }
                                                     }))
                                                     .child(
@@ -266,7 +274,9 @@ impl Render for PromptManager {
                                                                     .gap(Spacing::Large.rems(cx))
                                                                     .child(
                                                                         Checkbox::new(
-                                                                            shared_string_id,
+                                                                            ElementId::from(
+                                                                                prompt_id.0,
+                                                                            ),
                                                                             selection,
                                                                         )
                                                                         .on_click(move |_, _cx| {
@@ -312,71 +322,43 @@ impl Render for PromptManager {
                             .border_color(cx.theme().colors().border)
                             .size_full()
                             .flex_none()
+                            .min_w_64()
+                            .h_full()
+                            .debug_bg_green()
                             .child(
                                 v_flex()
                                     .justify_start()
                                     .py(Spacing::Medium.rems(cx))
                                     .px(Spacing::Large.rems(cx))
                                     .gap(Spacing::Large.rems(cx))
-                                    .when_else(
-                                        active_prompt.is_some(),
-                                        |with_prompt| {
-                                            let active_prompt = active_prompt.as_ref().unwrap();
-                                            with_prompt
-                                                .child(
-                                                    v_flex()
-                                                        .gap_0p5()
-                                                        .child(
-                                                            Headline::new(
-                                                                active_prompt.title.clone(),
-                                                            )
-                                                            .size(HeadlineSize::XSmall),
-                                                        )
-                                                        .child(
-                                                            h_flex()
-                                                                .child(
-                                                                    Label::new(
-                                                                        active_prompt
-                                                                            .author
-                                                                            .clone(),
-                                                                    )
-                                                                    .size(LabelSize::XSmall)
-                                                                    .color(Color::Muted),
-                                                                )
-                                                                .child(
-                                                                    Label::new(
-                                                                        if active_prompt
-                                                                            .languages
-                                                                            .is_empty()
-                                                                            || active_prompt
-                                                                                .languages[0]
-                                                                                == "*"
-                                                                        {
-                                                                            " · Global".to_string()
-                                                                        } else {
-                                                                            format!(
-                                                                                " · {}",
-                                                                                active_prompt
-                                                                                    .languages
-                                                                                    .join(", ")
-                                                                            )
-                                                                        },
-                                                                    )
-                                                                    .size(LabelSize::XSmall)
-                                                                    .color(Color::Muted),
-                                                                ),
-                                                        ),
-                                                )
-                                                .child(
-                                                    div()
-                                                        .w_full()
-                                                        .max_w(rems(30.))
-                                                        .text_ui(cx)
-                                                        .child(active_prompt.prompt.clone()),
-                                                )
+                                    .when_some_else(
+                                        self.active_prompt_id,
+                                        |this, active_prompt_id| {
+                                            dbg!();
+
+                                            let editor_for_prompt = self
+                                                .prompt_editors
+                                                .entry(active_prompt_id)
+                                                .or_insert_with(|| {
+                                                    cx.new_view(|cx| {
+                                                        let mut editor = Editor::multi_line(cx);
+                                                        if let Some(prompt_text) = prompt_library
+                                                            .prompt_for_id(active_prompt_id)
+                                                        {
+                                                            editor.set_text(prompt_text, cx);
+                                                        }
+                                                        editor
+                                                    })
+                                                });
+                                            this.child("Edsdjaogijsda").child(
+                                                div()
+                                                    .size_full()
+                                                    .debug_bg_cyan()
+                                                    .child(editor_for_prompt.clone()),
+                                            )
                                         },
-                                        |without_prompt| {
-                                            without_prompt.justify_center().items_center().child(
+                                        |this| {
+                                            this.justify_center().items_center().child(
                                                 Label::new("Select a prompt to view details.")
                                                     .color(Color::Placeholder),
                                             )
