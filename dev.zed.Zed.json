@@ -19,7 +19,7 @@
         "--device=dri"
     ],
     "build-options": {
-        "append-path": "/usr/lib/sdk/rust-stable/bin:/usr/lib/sdk/golang/bin"
+        "append-path": "/usr/lib/sdk/rust-stable/bin"
     },
     "modules": [
         {
@@ -47,9 +47,9 @@
             "sources": [
                 {
                     "type": "dir",
-                    "path": "../../"
+                    "path": "./"
                 },
-                "generated-sources.json"
+                "flatpak-sources.json"
             ]
         }
     ]

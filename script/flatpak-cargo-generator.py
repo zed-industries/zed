@@ -412,8 +412,8 @@ async def generate_sources(
 
 
 def main():
-    cargo_lock = "../../Cargo.lock"
-    outfile = 'generated-sources.json'
+    cargo_lock = "./Cargo.lock"
+    outfile = 'flatpak-sources.json'
 
     loglevel = logging.INFO
     logging.basicConfig(level=loglevel)

@@ -5,8 +5,6 @@
 .DS_Store
 /plugins/bin
 /script/node_modules
-/script/flatpak/.flatpak-builder
-/script/flatpak/generated-sources.json
 /crates/theme/schemas/theme.json
 /crates/collab/seed.json
 /assets/*licenses.md
@@ -27,4 +25,5 @@ DerivedData/
 .blob_store
 .vscode
 .wrangler
-.flatpak
+.flatpak-builder
+flatpak-sources.json

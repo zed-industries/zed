@@ -1,33 +1,44 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <component type="desktop-application">
     <id>dev.zed.Zed</id>
-    <name>Zed</name>
-    <developer>dev.zed</developer>
-    <icon>dev.zed.Zed</icon>
-    <launchable type="desktop-id">dev.zed.Zed.desktop</launchable>
-
     <metadata_license>MIT</metadata_license>
     <project_license>AGPL-3.0-or-later and Apache-2.0 and GPL-3.0-or-later</project_license>
 
-    <summary>High-Performance, Multiplayer Code Editor</summary>
+    <name>Zed</name>
+    <summary>High-performance, multiplayer code editor</summary>
+    <developer id="dev.zed">
+        <name translate="no">Zed Industries, Inc.</name>
+    </developer>
     <description>
         <p>
-            Productive coding starts with a tool that stays out of your way. Zed combines the power of an IDE with the responsiveness of a lightweight editor for productivity you can feel under your fingertips.
+            Productive coding starts with a tool that stays out of your way. Zed blends the power of an IDE with the speed of a lightweight editor for productivity you can feel under your fingertips.
         </p>
         <p>Features:</p>
         <p>
-            Engineered for performance: Zed efficiently leverages every CPU core and your GPU to start instantly, load files in a blink, and respond to your keystrokes on the next display refresh. Unrelenting performance keeps you in flow and makes other tools feel slow.
+            Performance: Efficiently uses every CPU core and your GPU for instant startup, quick file loading, and responsive keystrokes.
         </p>
         <p>
-            Intelligence on tap: Save time and keystrokes by generating code with AI. Zed supports GitHub Copilot out of the box and integrates with GPT-4 for natural language code generation.
+            Language-aware: Maintains a syntax tree for precise highlighting, and auto-indent, with LSP support for autocompletion and refactoring.
         </p>
         <p>
-            Language-aware: Zed maintains a full syntax tree for every buffer as you type, enabling precise code highlighting, auto-indent, a searchable outline view, and structural selection. Zed also speaks the Language Server Protocol to provide autocompletion, code navigation, diagnostics, and refactorings.
+            Collaboration: Real-time editing and navigation for multiple developers in a shared workspace.
         </p>
         <p>
-            Real-time Collaboration: Multiple developers can navigate and edit within a shared workspace. This makes it easy to have nuanced, real-time conversations about any part of your codebase, whether the code in question was committed last year or hasn't yet been saved to disk.
+            AI Integration: Integrates GitHub Copilot and GPT-4 for natural language code generation.
         </p>
     </description>
+
+    <launchable type="desktop-id">dev.zed.Zed.desktop</launchable>
+
+    <branding>
+        <color type="primary" scheme_preference="light">#99c1f1</color>
+        <color type="primary" scheme_preference="dark">#3180df</color>
+    </branding>
+
+    <content_rating type="oars-1.1">
+        <content_attribute id="social-chat">intense</content_attribute>
+        <content_attribute id="social-audio">intense</content_attribute>
+    </content_rating>
 
     <url type="homepage">https://zed.dev</url>
     <url type="bugtracker">https://github.com/zed-industries/zed/issues</url>
@@ -37,33 +48,75 @@
     <url type="vcs-browser">https://github.com/zed-industries/zed</url>
     <url type="contribute">https://github.com/zed-industries/zed/blob/main/CONTRIBUTING.md</url>
 
-    <categories>
-        <category>Development</category>
-        <category>Utility</category>
-        <category>IDE</category>
-        <category>TextEditor</category>
-    </categories>
-
-    <keywords>
-        <keyword>development</keyword>
-        <keyword>programming</keyword>
-        <keyword>code</keyword>
-        <keyword>editor</keyword>
-    </keywords>
-
     <supports>
         <internet>offline-only</internet>
     </supports>
     <recommends>
         <control>pointing</control>
+        <control>keyboard</control>
         <display_length compare="ge">768</display_length>
     </recommends>
-    <requires>
-        <control>keyboard</control>
-    </requires>
 
-    <content_rating type="oars-1.1">
-        <content_attribute id="social-chat">intense</content_attribute>
-        <content_attribute id="social-audio">intense</content_attribute>
-    </content_rating>
+    <screenshots>
+        <screenshot type="default">
+            <caption>Zed with a large project open, showing language server and gitblame support</caption>
+            <image type="source" width="1122" height="859" xml:lang="en">https://raw.githubusercontent.com/someone13574/zed/flatpak/crates/zed/resources/flatpak/screenshots/screenshot-0.png</image>
+        </screenshot>
+        <screenshot>
+            <caption>Zed with a file open and a channel message thread in the right sidebar</caption>
+            <image type="source" width="1122" height="859" xml:lang="en">https://raw.githubusercontent.com/someone13574/zed/flatpak/crates/zed/resources/flatpak/screenshots/screenshot-1.png</image>
+        </screenshot>
+        <screenshot>
+            <caption>Example of a channel's shared document</caption>
+            <image type="source" width="1122" height="859" xml:lang="en">https://raw.githubusercontent.com/someone13574/zed/flatpak/crates/zed/resources/flatpak/screenshots/screenshot-2.png</image>
+        </screenshot>
+        <screenshot>
+            <caption>Zed's extension list</caption>
+            <image type="source" width="1122" height="859" xml:lang="en">https://raw.githubusercontent.com/someone13574/zed/flatpak/crates/zed/resources/flatpak/screenshots/screenshot-3.png</image>
+        </screenshot>
+        <screenshot>
+            <caption>Theme switcher UI and example theme</caption>
+            <image type="source" width="1122" height="859" xml:lang="en">https://raw.githubusercontent.com/someone13574/zed/flatpak/crates/zed/resources/flatpak/screenshots/screenshot-4.png</image>
+        </screenshot>
+    </screenshots>
+
+    <releases>
+        <release version="0.135.2" date="2024-05-15" type="stable">
+            <url>https://github.com/zed-industries/zed/releases/tag/v0.135.2</url>
+            <description>
+                <p>General:</p>
+                <ul>
+                    <li>Added `editor::ToggleHunkDiff` (`cmd-'`) and `editor::ExpandAllHunkDiffs` (`cmd-"`) actions to browse git hunk diffs in Zed.</li>
+                    <li>Added an `editor: convert to opposite case` command.</li>
+                    <li>Added a `stop_at_soft_wraps` setting for `Editor::move_to_{beginning|end}_of_line`. When `true`, it causes movement to the either end of the line (via, for example Home or End), to go to the logical end, as opposed to the nearest soft wrap point in the respective direction.</li>
+                    <li>Changed the branch picker to always show the current branch as the default selected entry.</li>
+                    <li>Changed inline git blame information to not show up on empty lines.</li>
+                </ul>
+                <p>Tasks:</p>
+                <ul>
+                    <li>Added buttons to the gutter to run tests in Rust files.</li>
+                </ul>
+                <p>Vim:</p>
+                <ul>
+                    <li>Added `shift-k` to show the hover tooltip.</li>
+                </ul>
+                <p>Languages:</p>
+                <ul>
+                    <li>Added syntax highlighting to regular expressions inside of Go.</li>
+                    <li>Added ESLint as a default language server for Svelte.</li>
+                    <li>Added brackets and missing operators to syntax highlighting in Python code.</li>
+                    <li>Added support for function call completion when using `typescript-language-server`. This will result in parameters being added, which can then be changed and navigated with `&lt;tab&gt;`. For this to work with `typescript-language-server`, the documentation for a given completion item needs to be resolved, meaning that if one types very quickly and accepts completion before `typescript-language-server` could respond with the documentation, no full function completion is used.</li>
+                </ul>
+                <issues>
+                    <issue url="https://github.com/zed-industries/zed/issues/7599" type="generic">#7599</issue>
+                    <issue url="https://github.com/zed-industries/zed/issues/11452" type="generic">#11452</issue>
+                    <issue url="https://github.com/zed-industries/zed/issues/11413" type="generic">#11413</issue>
+                    <issue url="https://github.com/zed-industries/zed/issues/8766" type="generic">#8766</issue>
+                    <issue url="https://github.com/zed-industries/zed/issues/10242" type="generic">#10242</issue>
+                    <issue url="https://github.com/zed-industries/zed/issues/7826" type="generic">#7826</issue>
+                    <issue url="https://github.com/zed-industries/zed/issues/8492" type="generic">#8492</issue>
+                </issues>
+            </description>
+        </release>
+    </releases>
 </component>
