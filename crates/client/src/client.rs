@@ -85,7 +85,7 @@ lazy_static! {
 }
 
 pub const INITIAL_RECONNECTION_DELAY: Duration = Duration::from_millis(100);
-pub const CONNECTION_TIMEOUT: Duration = Duration::from_secs(5);
+pub const CONNECTION_TIMEOUT: Duration = Duration::from_secs(20);
 
 actions!(client, [SignIn, SignOut, Reconnect]);
 

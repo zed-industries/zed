@@ -251,7 +251,7 @@ impl Database {
                 .await?;
 
             let mut is_participant = false;
-            let mut participant_connection_ids = Vec::new();
+            let mut participant_connection_ids = HashSet::default();
             let mut participant_user_ids = Vec::new();
             while let Some(row) = rows.next().await {
                 let row = row?;
@@ -259,7 +259,7 @@ impl Database {
                     is_participant = true;
                 }
                 participant_user_ids.push(row.user_id);
-                participant_connection_ids.push(row.connection());
+                participant_connection_ids.insert(row.connection());
             }
             drop(rows);
 
@@ -336,13 +336,9 @@ impl Database {
                 }
             }
 
-            let mut channel_members = self.get_channel_participants(&channel, &tx).await?;
-            channel_members.retain(|member| !participant_user_ids.contains(member));
-
             Ok(CreatedChannelMessage {
                 message_id,
                 participant_connection_ids,
-                channel_members,
                 notifications,
             })
         })

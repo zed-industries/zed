@@ -670,26 +670,29 @@ impl UserStore {
         cx.spawn(|this, mut cx| async move {
             if let Some(rpc) = client.upgrade() {
                 let response = rpc.request(request).await.context("error loading users")?;
-                let users = response
-                    .users
-                    .into_iter()
-                    .map(User::new)
-                    .collect::<Vec<_>>();
+                let users = response.users;
 
-                this.update(&mut cx, |this, _| {
-                    for user in &users {
-                        this.users.insert(user.id, user.clone());
-                        this.by_github_login
-                            .insert(user.github_login.clone(), user.id);
-                    }
-                })
-                .ok();
-
-                Ok(users)
+                this.update(&mut cx, |this, _| this.insert(users))
             } else {
                 Ok(Vec::new())
             }
         })
+    }
+
+    pub fn insert(&mut self, users: Vec<proto::User>) -> Vec<Arc<User>> {
+        let mut ret = Vec::with_capacity(users.len());
+        for user in users {
+            let user = User::new(user);
+            if let Some(old) = self.users.insert(user.id, user.clone()) {
+                if old.github_login != user.github_login {
+                    self.by_github_login.remove(&old.github_login);
+                }
+            }
+            self.by_github_login
+                .insert(user.github_login.clone(), user.id);
+            ret.push(user)
+        }
+        ret
     }
 
     pub fn set_participant_indices(
