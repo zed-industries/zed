@@ -18,9 +18,6 @@ use std::{
 };
 use util::ResultExt;
 
-#[cfg(windows)]
-use smol::process::windows::CommandExt;
-
 const VERSION: &str = "v18.15.0";
 
 #[cfg(not(windows))]
@@ -279,7 +276,8 @@ impl NodeRuntime for RealNodeRuntime {
                 {
                     command.env("SYSTEMROOT", val);
                 }
-                command.creation_flags(windows::Win32::System::Threading::CREATE_NO_WINDOW.0);
+                command
+                    .windows_creation_flags(windows::Win32::System::Threading::CREATE_NO_WINDOW.0);
             }
 
             command
