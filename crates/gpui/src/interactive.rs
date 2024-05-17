@@ -453,7 +453,7 @@ mod test {
     actions!(test, [TestAction]);
 
     impl Render for TestView {
-        fn render(&mut self, cx: &mut gpui::ViewContext<Self>) -> impl Element {
+        fn render(&mut self, cx: &mut gpui::ViewContext<Self>) -> impl IntoElement {
             div().id("testview").child(
                 div()
                     .key_context("parent")
