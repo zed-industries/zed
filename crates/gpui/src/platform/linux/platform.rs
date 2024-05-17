@@ -485,7 +485,7 @@ pub(super) fn open_uri_internal(uri: &str, activation_token: Option<&str>) {
         if let Some(token) = activation_token {
             command.env("XDG_ACTIVATION_TOKEN", token);
         }
-        match command.status() {
+        match command.spawn() {
             Ok(_) => return,
             Err(err) => last_err = Some(err),
         }
