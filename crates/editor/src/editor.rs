@@ -2041,6 +2041,7 @@ impl Editor {
         &mut self,
         local: bool,
         old_cursor_position: &Anchor,
+        show_completions: bool,
         cx: &mut ViewContext<Self>,
     ) {
         // Copy selections to primary selection buffer
@@ -2142,7 +2143,9 @@ impl Editor {
                     })
                     .detach();
 
-                    self.show_completions(&ShowCompletions, cx);
+                    if show_completions {
+                        self.show_completions(&ShowCompletions, cx);
+                    }
                 } else {
                     drop(context_menu);
                     self.hide_context_menu(cx);
@@ -2183,6 +2186,16 @@ impl Editor {
         cx: &mut ViewContext<Self>,
         change: impl FnOnce(&mut MutableSelectionsCollection<'_>) -> R,
     ) -> R {
+        self.change_selections_inner(autoscroll, true, cx, change)
+    }
+
+    pub fn change_selections_inner<R>(
+        &mut self,
+        autoscroll: Option<Autoscroll>,
+        request_completions: bool,
+        cx: &mut ViewContext<Self>,
+        change: impl FnOnce(&mut MutableSelectionsCollection<'_>) -> R,
+    ) -> R {
         let old_cursor_position = self.selections.newest_anchor().head();
         self.push_to_selection_history();
 
@@ -2192,7 +2205,7 @@ impl Editor {
             if let Some(autoscroll) = autoscroll {
                 self.request_autoscroll(autoscroll, cx);
             }
-            self.selections_did_change(true, &old_cursor_position, cx);
+            self.selections_did_change(true, &old_cursor_position, request_completions, cx);
         }
 
         result
@@ -2852,7 +2865,9 @@ impl Editor {
 
             drop(snapshot);
             let had_active_inline_completion = this.has_active_inline_completion(cx);
-            this.change_selections(Some(Autoscroll::fit()), cx, |s| s.select(new_selections));
+            this.change_selections_inner(Some(Autoscroll::fit()), false, cx, |s| {
+                s.select(new_selections)
+            });
 
             if brace_inserted {
                 // If we inserted a brace while composing text (i.e. typing `"` on a
@@ -9165,7 +9180,7 @@ impl Editor {
                 s.clear_pending();
             }
         });
-        self.selections_did_change(false, &old_cursor_position, cx);
+        self.selections_did_change(false, &old_cursor_position, true, cx);
     }
 
     fn push_to_selection_history(&mut self) {
