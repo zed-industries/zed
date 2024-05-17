@@ -1527,14 +1527,10 @@ impl Buffer {
         self.end_transaction(cx)
     }
 
-    fn changed_since_saved_version(&self) -> bool {
-        self.edits_since::<usize>(&self.saved_version)
-            .next()
-            .is_some()
-    }
     /// Checks if the buffer has unsaved changes.
     pub fn is_dirty(&self) -> bool {
-        (self.has_conflict || self.changed_since_saved_version())
+        self.has_conflict
+            || self.has_edits_since(&self.saved_version)
             || self
                 .file
                 .as_ref()
@@ -1544,11 +1540,10 @@ impl Buffer {
     /// Checks if the buffer and its file have both changed since the buffer
     /// was last saved or reloaded.
     pub fn has_conflict(&self) -> bool {
-        (self.has_conflict || self.changed_since_saved_version())
-            && self
-                .file
-                .as_ref()
-                .map_or(false, |file| file.mtime() > self.saved_mtime)
+        self.has_conflict
+            || self.file.as_ref().map_or(false, |file| {
+                file.mtime() > self.saved_mtime && self.has_edits_since(&self.saved_version)
+            })
     }
 
     /// Gets a [`Subscription`] that tracks all of the changes to the buffer's text.
