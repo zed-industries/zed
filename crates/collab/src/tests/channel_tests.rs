@@ -95,11 +95,11 @@ async fn test_core_channels(
         }],
     );
 
-    let members = client_a
+    let (members, _) = client_a
         .channel_store()
         .update(cx_a, |store, cx| {
             assert!(!store.has_pending_channel_invite(channel_a_id, client_b.user_id().unwrap()));
-            store.get_channel_member_details(channel_a_id, cx)
+            store.fuzzy_search_members(channel_a_id, "".to_string(), 10, cx)
         })
         .await
         .unwrap();

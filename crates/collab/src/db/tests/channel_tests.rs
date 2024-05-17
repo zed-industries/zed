@@ -195,8 +195,8 @@ async fn test_channel_invites(db: &Arc<Database>) {
 
     assert_eq!(user_3_invites, &[channel_1_1]);
 
-    let mut members = db
-        .get_channel_participant_details(channel_1_1, user_1)
+    let (mut members, _) = db
+        .get_channel_participant_details(channel_1_1, "", 100 user_1)
         .await
         .unwrap();
 
@@ -231,8 +231,8 @@ async fn test_channel_invites(db: &Arc<Database>) {
         .await
         .unwrap();
 
-    let members = db
-        .get_channel_participant_details(channel_1_3, user_1)
+    let (mut members, _) = db
+        .get_channel_participant_details(channel_1_3, "", 100 user_1)
         .await
         .unwrap();
     assert_eq!(
@@ -482,8 +482,8 @@ async fn test_user_is_channel_participant(db: &Arc<Database>) {
     .await
     .unwrap();
 
-    let mut members = db
-        .get_channel_participant_details(public_channel_id, admin)
+    let (mut members, _) = db
+        .get_channel_participant_details(public_channel_id, "", 100 admin)
         .await
         .unwrap();
 
@@ -557,8 +557,8 @@ async fn test_user_is_channel_participant(db: &Arc<Database>) {
         .await
         .is_err());
 
-    let mut members = db
-        .get_channel_participant_details(public_channel_id, admin)
+    let (mut members, _) = db
+        .get_channel_participant_details(public_channel_id, "", 100 admin)
         .await
         .unwrap();
 
@@ -594,8 +594,8 @@ async fn test_user_is_channel_participant(db: &Arc<Database>) {
         .unwrap();
 
     // currently people invited to parent channels are not shown here
-    let mut members = db
-        .get_channel_participant_details(public_channel_id, admin)
+    let (mut members, _) = db
+        .get_channel_participant_details(public_channel_id, "", 100 admin)
         .await
         .unwrap();
 
@@ -663,8 +663,8 @@ async fn test_user_is_channel_participant(db: &Arc<Database>) {
     .await
     .unwrap();
 
-    let mut members = db
-        .get_channel_participant_details(public_channel_id, admin)
+    let (mut members, _) = db
+        .get_channel_participant_details(public_channel_id, "", 100 admin)
         .await
         .unwrap();
 
