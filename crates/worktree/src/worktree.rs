@@ -284,7 +284,6 @@ pub struct LocalSnapshot {
     /// id of their parent directory.
     git_repositories: TreeMap<ProjectEntryId, LocalRepositoryEntry>,
     file_scan_exclusions: Vec<PathMatcher>,
-    share_private_files: bool,
     private_files: Vec<PathMatcher>,
 }
 
@@ -952,13 +951,12 @@ impl LocalWorktree {
 
     fn set_snapshot(
         &mut self,
-        mut new_snapshot: LocalSnapshot,
+        new_snapshot: LocalSnapshot,
         entry_changes: UpdatedEntriesSet,
         cx: &mut ModelContext<Worktree>,
     ) {
         let repo_changes = self.changed_repos(&self.snapshot, &new_snapshot);
 
-        new_snapshot.share_private_files = self.snapshot.share_private_files;
         self.snapshot = new_snapshot;
 
         if let Some(share) = self.share.as_mut() {
@@ -978,10 +976,6 @@ impl LocalWorktree {
         if !repo_changes.is_empty() {
             cx.emit(Event::UpdatedGitRepositories(repo_changes));
         }
-    }
-
-    fn allow_sharing_private_files(&mut self) {
-        self.snapshot.share_private_files = true;
     }
 
     fn changed_repos(
@@ -1229,7 +1223,7 @@ impl LocalWorktree {
             let abs_path = abs_path?;
             let this = this.upgrade().context("worktree dropped")?;
 
-            let (entry_id, mtime, path, is_private) = match entry {
+            let (entry_id, mtime, path, is_dotenv) = match entry {
                 Some(entry) => (Some(entry.id), entry.mtime, entry.path, entry.is_private),
                 None => {
                     let metadata = fs
@@ -1255,7 +1249,7 @@ impl LocalWorktree {
                     mtime,
                     is_local: true,
                     is_deleted: false,
-                    is_private,
+                    is_private: is_dotenv,
                 });
 
                 if let Some(project_id) = project_id {
@@ -2523,9 +2517,6 @@ impl LocalSnapshot {
     }
 
     pub fn is_path_private(&self, path: &Path) -> bool {
-        if self.share_private_files {
-            return false;
-        }
         path.ancestors().any(|ancestor| {
             self.private_files
                 .iter()

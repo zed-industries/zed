@@ -1,5 +1,5 @@
 use assets::Assets;
-use gpui::{prelude::*, App, Task, View, WindowOptions};
+use gpui::{prelude::*, App, KeyBinding, Task, View, WindowOptions};
 use language::{language_settings::AllLanguageSettings, LanguageRegistry};
 use markdown::{Markdown, MarkdownStyle};
 use node_runtime::FakeNodeRuntime;
@@ -91,6 +91,7 @@ pub fn main() {
         SettingsStore::update(cx, |store, cx| {
             store.update_user_settings::<AllLanguageSettings>(cx, |_| {});
         });
+        cx.bind_keys([KeyBinding::new("cmd-c", markdown::Copy, None)]);
 
         let node_runtime = FakeNodeRuntime::new();
         let language_registry = Arc::new(LanguageRegistry::new(

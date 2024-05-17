@@ -208,6 +208,12 @@
     }
   },
   {
+    "context": "Markdown",
+    "bindings": {
+      "cmd-c": "markdown::Copy"
+    }
+  },
+  {
     "context": "AssistantPanel", // Used in the assistant crate, which we're replacing
     "bindings": {
       "cmd-g": "search::SelectNextMatch",

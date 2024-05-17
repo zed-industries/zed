@@ -3,10 +3,11 @@ mod parser;
 use crate::parser::CodeBlockKind;
 use futures::FutureExt;
 use gpui::{
-    point, quad, AnyElement, AppContext, Bounds, CursorStyle, DispatchPhase, Edges, FocusHandle,
-    FocusableView, FontStyle, FontWeight, GlobalElementId, Hitbox, Hsla, KeyContext,
-    MouseDownEvent, MouseEvent, MouseMoveEvent, MouseUpEvent, Point, Render, StrikethroughStyle,
-    Style, StyledText, Task, TextLayout, TextRun, TextStyle, TextStyleRefinement, View,
+    actions, point, quad, AnyElement, AppContext, Bounds, ClipboardItem, CursorStyle,
+    DispatchPhase, Edges, FocusHandle, FocusableView, FontStyle, FontWeight, GlobalElementId,
+    Hitbox, Hsla, KeyContext, MouseDownEvent, MouseEvent, MouseMoveEvent, MouseUpEvent, Point,
+    Render, StrikethroughStyle, Style, StyledText, Task, TextLayout, TextRun, TextStyle,
+    TextStyleRefinement, View,
 };
 use language::{Language, LanguageRegistry, Rope};
 use parser::{parse_markdown, MarkdownEvent, MarkdownTag, MarkdownTagEnd};
@@ -39,6 +40,8 @@ pub struct Markdown {
     focus_handle: FocusHandle,
     language_registry: Option<Arc<LanguageRegistry>>,
 }
+
+actions!(markdown, [Copy]);
 
 impl Markdown {
     pub fn new(
@@ -81,6 +84,11 @@ impl Markdown {
 
     pub fn source(&self) -> &str {
         &self.source
+    }
+
+    fn copy(&self, text: &RenderedText, cx: &mut ViewContext<Self>) {
+        let text = text.text_for_range(self.selection.start..self.selection.end);
+        cx.write_to_clipboard(ClipboardItem::new(text));
     }
 
     fn parse(&mut self, cx: &mut ViewContext<Self>) {
@@ -330,6 +338,7 @@ impl MarkdownElement {
                                 pending: true,
                             };
                             cx.focus(&markdown.focus_handle);
+                            cx.prevent_default()
                         }
 
                         cx.notify();
@@ -379,6 +388,12 @@ impl MarkdownElement {
                 } else {
                     if markdown.selection.pending {
                         markdown.selection.pending = false;
+                        #[cfg(target_os = "linux")]
+                        {
+                            let text = rendered_text
+                                .text_for_range(markdown.selection.start..markdown.selection.end);
+                            cx.write_to_primary(ClipboardItem::new(text))
+                        }
                         cx.notify();
                     }
                 }
@@ -620,6 +635,16 @@ impl Element for MarkdownElement {
         let mut context = KeyContext::default();
         context.add("Markdown");
         cx.set_key_context(context);
+        let view = self.markdown.clone();
+        cx.on_action(std::any::TypeId::of::<crate::Copy>(), {
+            let text = rendered_markdown.text.clone();
+            move |_, phase, cx| {
+                let text = text.clone();
+                if phase == DispatchPhase::Bubble {
+                    view.update(cx, move |this, cx| this.copy(&text, cx))
+                }
+            }
+        });
 
         self.paint_mouse_listeners(hitbox, &rendered_markdown.text, cx);
         rendered_markdown.element.paint(cx);
@@ -919,6 +944,37 @@ impl RenderedText {
             }
         }
         None
+    }
+
+    fn text_for_range(&self, range: Range<usize>) -> String {
+        let mut ret = vec![];
+
+        for line in self.lines.iter() {
+            if range.start > line.source_end {
+                continue;
+            }
+            let line_source_start = line.source_mappings.first().unwrap().source_index;
+            if range.end < line_source_start {
+                break;
+            }
+
+            let text = line.layout.text();
+
+            let start = if range.start < line_source_start {
+                0
+            } else {
+                line.rendered_index_for_source_index(range.start)
+            };
+            let end = if range.end > line.source_end {
+                line.rendered_index_for_source_index(line.source_end)
+            } else {
+                line.rendered_index_for_source_index(range.end)
+            }
+            .min(text.len());
+
+            ret.push(text[start..end].to_string());
+        }
+        ret.join("\n")
     }
 
     fn link_for_position(&self, position: Point<Pixels>) -> Option<&RenderedLink> {
