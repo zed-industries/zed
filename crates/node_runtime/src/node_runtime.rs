@@ -267,7 +267,7 @@ impl NodeRuntime for RealNodeRuntime {
             }
 
             if let Some(proxy) = self.http.proxy() {
-                command.args(["--proxy", proxy]);
+                command.args(["--proxy".into(), parse_local_host(proxy)]);
             }
 
             #[cfg(windows)]
@@ -433,4 +433,9 @@ impl NodeRuntime for FakeNodeRuntime {
     ) -> anyhow::Result<()> {
         unreachable!("Should not install packages {packages:?}")
     }
+}
+
+#[inline]
+fn parse_local_host(input: &str) -> String {
+    input.to_ascii_lowercase().replace("localhost", "127.0.0.1")
 }
