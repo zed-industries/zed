@@ -2247,9 +2247,7 @@ fn parse_next_edit_suggestion(lines: &mut rope::Lines) -> Option<ParsedEditSugge
     let mut state = EditParsingState::None;
     loop {
         let offset = lines.offset();
-        let Some(message_line) = lines.next() else {
-            return None;
-        };
+        let message_line = lines.next()?;
         match state {
             EditParsingState::None => {
                 if let Some(rest) = message_line.strip_prefix("```edit ") {

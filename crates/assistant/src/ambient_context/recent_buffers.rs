@@ -135,7 +135,7 @@ fn message_for_recent_buffers(buffers: Vec<SourceBufferSnapshot>) -> Rope {
         for chunk in buffer.snapshot.chunks(0..buffer.snapshot.len(), false) {
             message.push_str(chunk.text);
         }
-        if !message.ends_with("\n") {
+        if !message.ends_with('\n') {
             message.push('\n');
         }
         message.push_str("```\n");
