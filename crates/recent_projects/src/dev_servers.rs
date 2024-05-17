@@ -16,8 +16,6 @@ use rpc::{
     proto::{CreateDevServerResponse, DevServerStatus, RegenerateDevServerTokenResponse},
     ErrorCode, ErrorExt,
 };
-use settings::Settings;
-use theme::ThemeSettings;
 use ui::CheckboxWithLabel;
 use ui::{prelude::*, Indicator, List, ListHeader, ListItem, ModalContent, ModalHeader, Tooltip};
 use ui_text_field::{FieldLabelLayout, TextField};
@@ -747,7 +745,7 @@ impl DevServerProjects {
                                                 .child(
                                                     CheckboxWithLabel::new(
                                                         "use-server-name-in-ssh",
-                                                        Label::new("Use name as ssh connection string"),
+                                                        Label::new("Use SSH for terminals"),
                                                         self.use_server_name_in_ssh,
                                                         |&_, _| {}
                                                     )
@@ -769,7 +767,7 @@ impl DevServerProjects {
                             };
                             div.px_2().child(Label::new(format!(
                                 "Once you have created a dev server, you will be given a command to run on the server to register it.\n\n\
-                                Ssh connection string enables remote terminals, which runs `ssh {ssh_host_name}` when creating terminal tabs."
+                                If you enable SSH, then the terminal will automatically `ssh {ssh_host_name}` on open."
                             )))
                         })
                         .when_some(dev_server.clone(), |div, dev_server| {
