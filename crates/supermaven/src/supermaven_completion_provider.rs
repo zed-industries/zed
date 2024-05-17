@@ -102,7 +102,6 @@ impl InlineCompletionProvider for SupermavenCompletionProvider {
     fn accept(&mut self, _cx: &mut ModelContext<Self>) {
         if let Some(telemetry) = self.telemetry.as_ref() {
             if let Some(_) = self.completion_id {
-                dbg!("Accepted supermaven event");
                 telemetry.report_inline_completion_event(
                     Self::name().to_string(),
                     true,
@@ -120,9 +119,8 @@ impl InlineCompletionProvider for SupermavenCompletionProvider {
         _cx: &mut ModelContext<Self>,
     ) {
         if should_report_inline_completion_event {
-            if let Some(_) = self.completion_id {
+            if self.completion_id.is_some() {
                 if let Some(telemetry) = self.telemetry.as_ref() {
-                    dbg!("Discarded supermaven event");
                     telemetry.report_inline_completion_event(
                         Self::name().to_string(),
                         false,

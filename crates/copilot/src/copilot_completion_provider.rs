@@ -22,7 +22,6 @@ pub struct CopilotCompletionProvider {
     pending_cycling_refresh: Task<Result<()>>,
     copilot: Model<Copilot>,
     telemetry: Option<Arc<Telemetry>>,
-    should_allow_event_to_send: bool,
 }
 
 impl CopilotCompletionProvider {
@@ -37,7 +36,6 @@ impl CopilotCompletionProvider {
             pending_cycling_refresh: Task::ready(Ok(())),
             copilot,
             telemetry: None,
-            should_allow_event_to_send: false,
         }
     }
 
@@ -105,7 +103,6 @@ impl InlineCompletionProvider for CopilotCompletionProvider {
 
             this.update(&mut cx, |this, cx| {
                 if !completions.is_empty() {
-                    this.should_allow_event_to_send = true;
                     this.cycled = false;
                     this.pending_cycling_refresh = Task::ready(Ok(()));
                     this.completions.clear();
@@ -194,8 +191,7 @@ impl InlineCompletionProvider for CopilotCompletionProvider {
                 .update(cx, |copilot, cx| copilot.accept_completion(completion, cx))
                 .detach_and_log_err(cx);
             if let Some(telemetry) = self.telemetry.as_ref() {
-                if self.should_allow_event_to_send {
-                    dbg!("Accepted copilot event");
+                if self.active_completion().is_some() {
                     telemetry.report_inline_completion_event(
                         Self::name().to_string(),
                         true,
@@ -204,8 +200,6 @@ impl InlineCompletionProvider for CopilotCompletionProvider {
                 }
             }
         }
-
-        self.should_allow_event_to_send = false;
     }
 
     fn discard(
@@ -228,10 +222,8 @@ impl InlineCompletionProvider for CopilotCompletionProvider {
             .detach_and_log_err(cx);
 
         if should_report_inline_completion_event {
-            // Rename: should_allow_event_to_send?
-            if self.should_allow_event_to_send {
+            if self.active_completion().is_some() {
                 if let Some(telemetry) = self.telemetry.as_ref() {
-                    dbg!("Discarded copilot event");
                     telemetry.report_inline_completion_event(
                         Self::name().to_string(),
                         false,
@@ -240,8 +232,6 @@ impl InlineCompletionProvider for CopilotCompletionProvider {
                 }
             }
         }
-
-        self.should_allow_event_to_send = false;
     }
 
     fn active_completion_text<'a>(
