@@ -116,8 +116,8 @@ impl Project {
                         remote_connection_data.ssh_connection_string.to_string(),
                         "-t".to_string(),
                         format!(
-                            "cd \"{}\" && exec $SHELL -l",
-                            remote_connection_data.project_path
+                            "cd {} && exec $SHELL -l",
+                            escape_path_for_shell(remote_connection_data.project_path.as_ref())
                         ),
                     ],
                 },
@@ -290,6 +290,40 @@ impl Project {
     pub fn local_terminal_handles(&self) -> &Vec<WeakModel<terminal::Terminal>> {
         &self.terminals.local_handles
     }
+}
+
+#[cfg(unix)]
+fn escape_path_for_shell(input: &str) -> String {
+    input
+        .chars()
+        .fold(String::with_capacity(input.len()), |mut s, c| {
+            match c {
+                ' ' | '"' | '\'' | '\\' | '(' | ')' | '{' | '}' | '[' | ']' | '|' | ';' | '&'
+                | '<' | '>' | '*' | '?' | '$' | '#' | '!' | '=' | '^' | '%' | ':' => {
+                    s.push('\\');
+                    s.push('\\');
+                    s.push(c);
+                }
+                _ => s.push(c),
+            }
+            s
+        })
+}
+
+#[cfg(windows)]
+fn escape_path_for_shell(input: &str) -> String {
+    input
+        .chars()
+        .fold(String::with_capacity(input.len()), |mut s, c| {
+            match c {
+                '^' | '&' | '|' | '<' | '>' | ' ' | '(' | ')' | '@' | '`' | '=' | ';' | '%' => {
+                    s.push('^');
+                    s.push(c);
+                }
+                _ => s.push(c),
+            }
+            s
+        })
 }
 
 // TODO: Add a few tests for adding and removing terminal tabs
