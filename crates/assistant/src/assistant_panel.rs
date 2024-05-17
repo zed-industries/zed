@@ -34,8 +34,8 @@ use gpui::{
     WeakModel, WeakView, WhiteSpace, WindowContext,
 };
 use language::{
-    language_settings::SoftWrap, Buffer, BufferSnapshot, LanguageRegistry, OffsetRangeExt as _,
-    Point, ToOffset as _,
+    language_settings::SoftWrap, AutoindentMode, Buffer, BufferSnapshot, LanguageRegistry,
+    OffsetRangeExt as _, Point, ToOffset as _,
 };
 use multi_buffer::MultiBufferRow;
 use parking_lot::Mutex;
@@ -3053,7 +3053,13 @@ impl ConversationEditor {
                 for (buffer_handle, edits) in edits_by_buffer {
                     buffer_handle.update(cx, |buffer, cx| {
                         buffer.start_transaction();
-                        buffer.edit(edits, None, cx);
+                        buffer.edit(
+                            edits,
+                            Some(AutoindentMode::Block {
+                                original_indent_columns: Vec::new(),
+                            }),
+                            cx,
+                        );
                         buffer.end_transaction(cx);
                         if let Some(transaction) = buffer.finalize_last_transaction() {
                             project_transaction
