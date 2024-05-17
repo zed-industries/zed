@@ -2409,7 +2409,14 @@ async fn test_definition(cx: &mut gpui::TestAppContext) {
         assert_eq!(definition.target.range.to_offset(target_buffer), 9..10);
         assert_eq!(
             list_worktrees(&project, cx),
-            [("/dir/b.rs".as_ref(), true), ("/dir/a.rs".as_ref(), false)]
+            [("/dir/a.rs".as_ref(), false), ("/dir/b.rs".as_ref(), true)],
+        );
+        assert_eq!(
+            project
+                .read(cx)
+                .worktree_order_index(cx)
+                .collect::<Vec<_>>(),
+            [1, 0],
         );
 
         drop(definition);

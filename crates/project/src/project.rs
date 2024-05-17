@@ -7343,6 +7343,11 @@ impl Project {
                 .push(WorktreeHandle::Weak(worktree.downgrade()));
         }
 
+        self.worktrees.sort_by(|a, b| {
+            a.upgrade()
+                .map(|a| a.read(cx).abs_path())
+                .cmp(&b.upgrade().map(|b| b.read(cx).abs_path()))
+        });
         self.worktree_order.push(worktree.read(cx).id());
 
         let handle_id = worktree.entity_id();
