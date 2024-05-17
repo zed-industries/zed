@@ -39,6 +39,7 @@ impl From<proto::DevServerProject> for DevServerProject {
 pub struct DevServer {
     pub id: DevServerId,
     pub name: SharedString,
+    pub ssh_connection_string: Option<SharedString>,
     pub status: DevServerStatus,
 }
 
@@ -48,6 +49,7 @@ impl From<proto::DevServer> for DevServer {
             id: DevServerId(dev_server.dev_server_id),
             status: dev_server.status(),
             name: dev_server.name.into(),
+            ssh_connection_string: dev_server.ssh_connection_string.map(|s| s.into()),
         }
     }
 }
@@ -164,11 +166,17 @@ impl Store {
     pub fn create_dev_server(
         &mut self,
         name: String,
+        ssh_connection_string: Option<String>,
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<proto::CreateDevServerResponse>> {
         let client = self.client.clone();
         cx.background_executor().spawn(async move {
-            let result = client.request(proto::CreateDevServer { name }).await?;
+            let result = client
+                .request(proto::CreateDevServer {
+                    name,
+                    ssh_connection_string,
+                })
+                .await?;
             Ok(result)
         })
     }

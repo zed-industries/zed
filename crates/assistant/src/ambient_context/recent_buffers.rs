@@ -3,8 +3,10 @@ use std::iter;
 use std::path::PathBuf;
 use std::time::Duration;
 
+use anyhow::Result;
 use gpui::{ModelContext, Subscription, Task, WeakModel};
 use language::{Buffer, BufferSnapshot, DiagnosticEntry, Point};
+use util::ResultExt;
 
 use crate::ambient_context::ContextUpdated;
 use crate::assistant_panel::Conversation;
@@ -69,61 +71,60 @@ impl RecentBuffersContext {
                 const DEBOUNCE_TIMEOUT: Duration = Duration::from_millis(100);
                 cx.background_executor().timer(DEBOUNCE_TIMEOUT).await;
 
-                let message = cx
+                let message_task = cx
                     .background_executor()
-                    .spawn(async move { Self::build_message(&buffers) })
-                    .await;
-                this.update(&mut cx, |conversation, cx| {
-                    conversation.ambient_context.recent_buffers.message = message;
-                    conversation.count_remaining_tokens(cx);
-                    cx.notify();
-                })
-                .ok();
+                    .spawn(async move { Self::build_message(&buffers) });
+
+                if let Some(message) = message_task.await.log_err() {
+                    this.update(&mut cx, |conversation, cx| {
+                        conversation.ambient_context.recent_buffers.message = message;
+                        conversation.count_remaining_tokens(cx);
+                        cx.notify();
+                    })
+                    .log_err();
+                }
             }));
 
             ContextUpdated::Updating
         }
     }
 
-    fn build_message(buffers: &[(Option<PathBuf>, BufferSnapshot)]) -> String {
+    fn build_message(buffers: &[(Option<PathBuf>, BufferSnapshot)]) -> Result<String> {
         let mut message = String::new();
         writeln!(
             message,
             "The following is a list of recent buffers that the user has opened."
-        )
-        .unwrap();
+        )?;
         writeln!(
             message,
             "For every line in the buffer, I will include a row number that line corresponds to."
-        )
-        .unwrap();
+        )?;
         writeln!(
             message,
             "Lines that don't have a number correspond to errors and warnings. For example:"
-        )
-        .unwrap();
-        writeln!(message, "path/to/file.md").unwrap();
-        writeln!(message, "```markdown").unwrap();
-        writeln!(message, "1 The quick brown fox").unwrap();
-        writeln!(message, "2 jumps over one active").unwrap();
-        writeln!(message, "             --- error: should be 'the'").unwrap();
-        writeln!(message, "                 ------ error: should be 'lazy'").unwrap();
-        writeln!(message, "3 dog").unwrap();
-        writeln!(message, "```").unwrap();
+        )?;
+        writeln!(message, "path/to/file.md")?;
+        writeln!(message, "```markdown")?;
+        writeln!(message, "1 The quick brown fox")?;
+        writeln!(message, "2 jumps over one active")?;
+        writeln!(message, "             --- error: should be 'the'")?;
+        writeln!(message, "                 ------ error: should be 'lazy'")?;
+        writeln!(message, "3 dog")?;
+        writeln!(message, "```")?;
 
         message.push('\n');
-        writeln!(message, "Here's the actual recent buffer list:").unwrap();
+        writeln!(message, "Here's the actual recent buffer list:")?;
         for (path, buffer) in buffers {
             if let Some(path) = path {
-                writeln!(message, "{}", path.display()).unwrap();
+                writeln!(message, "{}", path.display())?;
             } else {
-                writeln!(message, "untitled").unwrap();
+                writeln!(message, "untitled")?;
             }
 
             if let Some(language) = buffer.language() {
-                writeln!(message, "```{}", language.name().to_lowercase()).unwrap();
+                writeln!(message, "```{}", language.name().to_lowercase())?;
             } else {
-                writeln!(message, "```").unwrap();
+                writeln!(message, "```")?;
             }
 
             let mut diagnostics = buffer
@@ -149,7 +150,7 @@ impl RecentBuffersContext {
                 }
 
                 let row_width = (display_row as f32).log10() as usize + 1;
-                write!(message, "{}", display_row).unwrap();
+                write!(message, "{}", display_row)?;
                 if row_width < gutter_width {
                     message.extend(iter::repeat(' ').take(gutter_width - row_width));
                 }
@@ -178,7 +179,7 @@ impl RecentBuffersContext {
                     };
 
                     message.extend(iter::repeat('-').take((end_column - start_column) as usize));
-                    writeln!(message, " {}", diagnostic.diagnostic.message).unwrap();
+                    writeln!(message, " {}", diagnostic.diagnostic.message)?;
                 }
             }
 
@@ -188,14 +189,13 @@ impl RecentBuffersContext {
         writeln!(
             message,
             "When quoting the above code, mention which rows the code occurs at."
-        )
-        .unwrap();
+        )?;
         writeln!(
             message,
             "Never include rows in the quoted code itself and only report lines that didn't start with a row number."
         )
-        .unwrap();
+        ?;
 
-        message
+        Ok(message)
     }
 }

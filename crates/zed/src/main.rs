@@ -124,6 +124,10 @@ fn init_ui(app_state: Arc<AppState>, cx: &mut AppContext) -> Result<()> {
         }
     };
 
+    if let Err(err) = cx.can_open_windows() {
+        return Err(err);
+    }
+
     SystemAppearance::init(cx);
     load_embedded_fonts(cx);
 
@@ -175,7 +179,6 @@ fn init_ui(app_state: Arc<AppState>, cx: &mut AppContext) -> Result<()> {
     inline_completion_registry::init(app_state.client.telemetry().clone(), cx);
 
     assistant::init(app_state.client.clone(), cx);
-    assistant2::init(app_state.client.clone(), cx);
 
     cx.observe_global::<SettingsStore>({
         let languages = app_state.languages.clone();

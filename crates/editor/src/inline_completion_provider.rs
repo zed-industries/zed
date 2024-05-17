@@ -3,6 +3,7 @@ use gpui::{AppContext, Model, ModelContext};
 use language::Buffer;
 
 pub trait InlineCompletionProvider: 'static + Sized {
+    fn name() -> &'static str;
     fn is_enabled(
         &self,
         buffer: &Model<Buffer>,

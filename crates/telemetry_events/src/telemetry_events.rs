@@ -53,7 +53,8 @@ impl Display for AssistantKind {
 #[serde(tag = "type")]
 pub enum Event {
     Editor(EditorEvent),
-    Copilot(CopilotEvent),
+    Copilot(CopilotEvent), // Needed for clients sending old copilot_event types
+    InlineCompletion(InlineCompletionEvent),
     Call(CallEvent),
     Assistant(AssistantEvent),
     Cpu(CpuEvent),
@@ -74,9 +75,17 @@ pub struct EditorEvent {
     pub copilot_enabled_for_language: bool,
 }
 
+// Needed for clients sending old copilot_event types
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct CopilotEvent {
     pub suggestion_id: Option<String>,
+    pub suggestion_accepted: bool,
+    pub file_extension: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct InlineCompletionEvent {
+    pub provider: String,
     pub suggestion_accepted: bool,
     pub file_extension: Option<String>,
 }

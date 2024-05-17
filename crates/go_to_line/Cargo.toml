@@ -14,7 +14,6 @@ doctest = false
 
 [dependencies]
 anyhow.workspace = true
-collections.workspace = true
 editor.workspace = true
 gpui.workspace = true
 menu.workspace = true

@@ -407,6 +407,7 @@ CREATE TABLE dev_servers (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     user_id INTEGER NOT NULL REFERENCES users(id),
     name TEXT NOT NULL,
+    ssh_connection_string TEXT,
     hashed_token TEXT NOT NULL
 );
 
