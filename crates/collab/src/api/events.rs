@@ -645,7 +645,7 @@ where
 
     let country_code = country_code.as_bytes();
 
-    serializer.serialize_u16(((country_code[0] as u16) << 8) + country_code[1] as u16)
+    serializer.serialize_u16(((country_code[1] as u16) << 8) + country_code[0] as u16)
 }
 
 #[derive(Serialize, Debug, clickhouse::Row)]
