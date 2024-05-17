@@ -950,7 +950,7 @@ impl Pane {
         if self.items.is_empty() {
             // Close the window when there's no active items to close, if configured
             if WorkspaceSettings::get_global(cx)
-                .close_window_when_no_tabs
+                .when_closing_with_no_tabs
                 .should_close()
             {
                 cx.dispatch_action(Box::new(CloseWindow));

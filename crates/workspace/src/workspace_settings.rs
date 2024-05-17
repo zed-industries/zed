@@ -13,7 +13,7 @@ pub struct WorkspaceSettings {
     pub autosave: AutosaveSetting,
     pub restore_on_startup: RestoreOnStartupBehaviour,
     pub drop_target_size: f32,
-    pub close_window_when_no_tabs: CloseWindowWhenNoItems,
+    pub when_closing_with_no_tabs: CloseWindowWhenNoItems,
 }
 
 #[derive(Copy, Clone, Default, Serialize, Deserialize, JsonSchema)]
@@ -21,19 +21,19 @@ pub struct WorkspaceSettings {
 pub enum CloseWindowWhenNoItems {
     /// Match platform conventions by default, so "on" on macOS and "off" everywhere else
     #[default]
-    Auto,
+    PlatformDefault,
     /// Close the window when there are no tabs
-    On,
+    CloseWindow,
     /// Leave the window open when there are no tabs
-    Off,
+    KeepWindowOpen,
 }
 
 impl CloseWindowWhenNoItems {
     pub fn should_close(&self) -> bool {
         match self {
-            CloseWindowWhenNoItems::Auto => cfg!(target_os = "macos"),
-            CloseWindowWhenNoItems::On => true,
-            CloseWindowWhenNoItems::Off => false,
+            CloseWindowWhenNoItems::PlatformDefault => cfg!(target_os = "macos"),
+            CloseWindowWhenNoItems::CloseWindow => true,
+            CloseWindowWhenNoItems::KeepWindowOpen => false,
         }
     }
 }
@@ -82,7 +82,7 @@ pub struct WorkspaceSettingsContent {
     /// Whether to close the window when using 'close active item' on a workspace with no tabs
     ///
     /// Default: auto ("on" on macOS, "off" otherwise)
-    pub close_window_when_no_tabs: Option<CloseWindowWhenNoItems>,
+    pub when_closing_with_no_tabs: Option<CloseWindowWhenNoItems>,
 }
 
 #[derive(Deserialize)]
