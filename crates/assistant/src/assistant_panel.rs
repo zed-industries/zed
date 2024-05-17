@@ -34,8 +34,8 @@ use gpui::{
     WeakModel, WeakView, WhiteSpace, WindowContext,
 };
 use language::{
-    language_settings::SoftWrap, Buffer, LanguageRegistry, OffsetRangeExt as _, Point,
-    ToOffset as _,
+    language_settings::SoftWrap, Buffer, BufferSnapshot, LanguageRegistry, OffsetRangeExt as _,
+    Point, ToOffset as _,
 };
 use multi_buffer::MultiBufferRow;
 use parking_lot::Mutex;
@@ -2219,15 +2219,94 @@ enum EditParsingState {
     None,
     InOldText {
         path: PathBuf,
-        start_anchor: language::Anchor,
-        old_text: String,
+        start_offset: usize,
+        old_text_start_offset: usize,
     },
     InNewText {
         path: PathBuf,
-        start_anchor: language::Anchor,
-        old_text: String,
-        new_text: String,
+        start_offset: usize,
+        old_text_range: Range<usize>,
+        new_text_start_offset: usize,
     },
+}
+
+#[derive(Clone, Debug, PartialEq)]
+struct EditSuggestion {
+    source_range: Range<language::Anchor>,
+    full_path: PathBuf,
+}
+
+struct ParsedEditSuggestion {
+    path: PathBuf,
+    outer_range: Range<usize>,
+    old_text_range: Range<usize>,
+    new_text_range: Range<usize>,
+}
+
+fn parse_next_edit_suggestion(lines: &mut rope::Lines) -> Option<ParsedEditSuggestion> {
+    let mut state = EditParsingState::None;
+    loop {
+        let offset = lines.offset();
+        let Some(message_line) = lines.next() else {
+            return None;
+        };
+        match state {
+            EditParsingState::None => {
+                if let Some(rest) = message_line.strip_prefix("```edit ") {
+                    let path = rest.trim();
+                    if !path.is_empty() {
+                        state = EditParsingState::InOldText {
+                            path: PathBuf::from(path),
+                            start_offset: offset,
+                            old_text_start_offset: lines.offset(),
+                        };
+                    }
+                }
+            }
+            EditParsingState::InOldText {
+                path,
+                start_offset,
+                old_text_start_offset,
+            } => {
+                if message_line == "---" {
+                    state = EditParsingState::InNewText {
+                        path,
+                        start_offset,
+                        old_text_range: old_text_start_offset..offset,
+                        new_text_start_offset: lines.offset(),
+                    };
+                } else {
+                    state = EditParsingState::InOldText {
+                        path,
+                        start_offset,
+                        old_text_start_offset,
+                    };
+                }
+            }
+            EditParsingState::InNewText {
+                path,
+                start_offset,
+                old_text_range,
+                new_text_start_offset,
+            } => {
+                if message_line == "```" {
+                    return Some(ParsedEditSuggestion {
+                        path,
+                        outer_range: start_offset..lines.offset(),
+                        old_text_range,
+                        new_text_range: new_text_start_offset..offset,
+                    });
+                } else {
+                    state = EditParsingState::InNewText {
+                        path,
+                        start_offset,
+                        old_text_range,
+                        new_text_start_offset,
+                    };
+                }
+            }
+        }
+    }
 }
 
 fn parse_edit_suggestions(
@@ -2240,90 +2319,25 @@ fn parse_edit_suggestions(
         range.end < buffer_range.start || range.start > buffer_range.end
     });
 
-    let mut offset = buffer_range.start;
-    let mut state = EditParsingState::None;
     let mut message_lines = buffer.text_for_range(buffer_range).lines();
-    while let Some(message_line) = message_lines.next() {
-        match state {
-            EditParsingState::None => {
-                if let Some(rest) = message_line.strip_prefix("```edit ") {
-                    let path = PathBuf::from(rest.trim());
-                    state = EditParsingState::InOldText {
-                        path,
-                        start_anchor: buffer.anchor_before(offset),
-                        old_text: String::new(),
-                    };
-                }
-            }
-            EditParsingState::InOldText {
-                path,
-                start_anchor,
-                mut old_text,
-            } => {
-                if message_line == "---" {
-                    state = EditParsingState::InNewText {
-                        path,
-                        start_anchor,
-                        old_text,
-                        new_text: String::new(),
-                    };
-                } else {
-                    old_text.push_str(message_line);
-                    old_text.push('\n');
-                    state = EditParsingState::InOldText {
-                        path,
-                        start_anchor,
-                        old_text,
-                    };
-                }
-            }
-            EditParsingState::InNewText {
-                path,
-                start_anchor,
-                old_text,
-                mut new_text,
-            } => {
-                if message_line == "```" {
-                    let end_anchor = buffer.anchor_after(offset + message_line.len());
-                    match output.binary_search_by(|suggestion| {
-                        suggestion.source_range.start.cmp(&start_anchor, buffer)
-                    }) {
-                        Ok(_) => {}
-                        Err(ix) => {
-                            output.insert(
-                                ix,
-                                EditSuggestion {
-                                    source_range: start_anchor..end_anchor,
-                                    full_path: Some(path),
-                                    old_text,
-                                    new_text,
-                                },
-                            );
-                        }
-                    }
-                    state = EditParsingState::None;
-                } else {
-                    new_text.push_str(message_line);
-                    new_text.push('\n');
-                    state = EditParsingState::InNewText {
-                        path,
-                        start_anchor,
-                        old_text,
-                        new_text,
-                    };
-                }
+    while let Some(suggestion) = parse_next_edit_suggestion(&mut message_lines) {
+        let start_anchor = buffer.anchor_before(suggestion.outer_range.start);
+        let end_anchor = buffer.anchor_after(suggestion.outer_range.end);
+        match output
+            .binary_search_by(|suggestion| suggestion.source_range.start.cmp(&start_anchor, buffer))
+        {
+            Ok(_) => {}
+            Err(ix) => {
+                output.insert(
+                    ix,
+                    EditSuggestion {
+                        source_range: start_anchor..end_anchor,
+                        full_path: suggestion.path,
+                    },
+                );
             }
         }
-        offset += message_line.len() + 1;
     }
-}
-
-#[derive(Clone, Debug, PartialEq)]
-struct EditSuggestion {
-    source_range: Range<language::Anchor>,
-    full_path: Option<PathBuf>,
-    old_text: String,
-    new_text: String,
 }
 
 struct PendingCompletion {
@@ -2929,9 +2943,14 @@ impl ConversationEditor {
     }
 
     fn apply_edit(&mut self, _: &ApplyEdit, cx: &mut ViewContext<Self>) {
+        struct Edit {
+            old_text: String,
+            new_text: String,
+        }
+
         let conversation = self.conversation.read(cx);
-        let buffer_handle = conversation.buffer.clone();
-        let buffer = buffer_handle.read(cx);
+        let conversation_buffer = conversation.buffer.read(cx);
+        let conversation_buffer_snapshot = conversation_buffer.snapshot();
 
         let selections = self.editor.read(cx).selections.disjoint_anchors();
         let mut selections = selections.iter().peekable();
@@ -2940,7 +2959,7 @@ impl ConversationEditor {
                 if selection
                     .end
                     .text_anchor
-                    .cmp(&suggestion.source_range.start, buffer)
+                    .cmp(&suggestion.source_range.start, conversation_buffer)
                     .is_lt()
                 {
                     selections.next();
@@ -2949,7 +2968,7 @@ impl ConversationEditor {
                 if selection
                     .start
                     .text_anchor
-                    .cmp(&suggestion.source_range.end, buffer)
+                    .cmp(&suggestion.source_range.end, conversation_buffer)
                     .is_gt()
                 {
                     break;
@@ -2959,23 +2978,42 @@ impl ConversationEditor {
             false
         });
 
-        let mut suggestions_by_buffer = HashMap::default();
+        let mut suggestions_by_buffer =
+            HashMap::<Model<Buffer>, (BufferSnapshot, Vec<Edit>)>::default();
         for suggestion in selected_suggestions {
-            let offset = suggestion.source_range.start.to_offset(buffer);
+            let offset = suggestion.source_range.start.to_offset(conversation_buffer);
             if let Some(message) = conversation.message_for_offset(offset, cx) {
                 if let Some(buffer) = message
                     .ambient_context
                     .recent_buffers
                     .source_buffers
                     .iter()
-                    .find(|source_buffer| source_buffer.full_path == suggestion.full_path)
+                    .find(|source_buffer| {
+                        source_buffer.full_path.as_ref() == Some(&suggestion.full_path)
+                    })
                 {
                     if let Some(buffer) = buffer.model.upgrade() {
-                        suggestions_by_buffer
+                        let (_, edits) = suggestions_by_buffer
                             .entry(buffer.clone())
-                            .or_insert_with(|| (buffer.read(cx).snapshot(), Vec::new()))
-                            .1
-                            .push(suggestion.clone());
+                            .or_insert_with(|| (buffer.read(cx).snapshot(), Vec::new()));
+
+                        let mut lines = conversation_buffer_snapshot
+                            .as_rope()
+                            .chunks_in_range(
+                                suggestion
+                                    .source_range
+                                    .to_offset(&conversation_buffer_snapshot),
+                            )
+                            .lines();
+                        if let Some(suggestion) = parse_next_edit_suggestion(&mut lines) {
+                            let old_text = conversation_buffer_snapshot
+                                .text_for_range(suggestion.old_text_range)
+                                .collect();
+                            let new_text = conversation_buffer_snapshot
+                                .text_for_range(suggestion.new_text_range)
+                                .collect();
+                            edits.push(Edit { old_text, new_text });
+                        }
                     }
                 }
             }
@@ -3422,9 +3460,9 @@ mod tests {
     use super::*;
     use crate::{FakeCompletionProvider, MessageId};
     use gpui::{AppContext, TestAppContext};
+    use rope::Rope;
     use settings::SettingsStore;
     use unindent::Unindent;
-    use util::test::marked_text_ranges;
 
     #[gpui::test]
     fn test_inserting_and_removing_messages(cx: &mut AppContext) {
@@ -3743,79 +3781,74 @@ mod tests {
         }
     }
 
-    #[gpui::test]
-    fn test_parse_edit_suggestions(cx: &mut AppContext) {
-        cx.new_model(|cx| {
-            let (text, code_block_ranges) = marked_text_ranges(
-                &"
-                some output:
+    #[test]
+    fn test_parse_edit_suggestions() {
+        let text = "
+            some output:
 
-                «```edit src/foo.rs
-                    let a = 1;
-                    let b = 2;
-                ---
-                    let w = 1;
-                    let x = 2;
-                    let y = 3;
-                    let z = 4;
-                ```»
+            ```edit src/foo.rs
+                let a = 1;
+                let b = 2;
+            ---
+                let w = 1;
+                let x = 2;
+                let y = 3;
+                let z = 4;
+            ```
 
-                some more output:
+            some more output:
 
-                «```edit src/foo.rs
-                    let c = 1;
-                ---
-                ```»
+            ```edit src/foo.rs
+                let c = 1;
+            ---
+            ```
 
-                and the conclusion.
-                "
-                .unindent(),
-                false,
-            );
+            and the conclusion.
+        "
+        .unindent();
 
-            let buffer = Buffer::local(&text, cx);
+        let rope = Rope::from(text.as_str());
+        let mut lines = rope.chunks().lines();
+        let mut suggestions = vec![];
+        while let Some(suggestion) = parse_next_edit_suggestion(&mut lines) {
+            suggestions.push((
+                suggestion.path.clone(),
+                text[suggestion.old_text_range].to_string(),
+                text[suggestion.new_text_range].to_string(),
+            ));
+        }
 
-            let mut suggestions = vec![];
-            parse_edit_suggestions(&buffer, 0..buffer.len(), &mut suggestions);
-
-            assert_eq!(
-                suggestions,
-                vec![
-                    EditSuggestion {
-                        source_range: buffer.anchor_before(code_block_ranges[0].start)
-                            ..buffer.anchor_after(code_block_ranges[0].end),
-                        full_path: Some(Path::new("src/foo.rs").into()),
-                        old_text: [
-                            "    let a = 1;", //
-                            "    let b = 2;",
-                            "",
-                        ]
-                        .join("\n"),
-                        new_text: [
-                            "    let w = 1;",
-                            "    let x = 2;",
-                            "    let y = 3;",
-                            "    let z = 4;",
-                            "",
-                        ]
-                        .join("\n"),
-                    },
-                    EditSuggestion {
-                        source_range: buffer.anchor_before(code_block_ranges[1].start)
-                            ..buffer.anchor_after(code_block_ranges[1].end),
-                        full_path: Some(Path::new("src/foo.rs").into()),
-                        old_text: [
-                            "    let c = 1;", //
-                            "",
-                        ]
-                        .join("\n"),
-                        new_text: String::new(),
-                    }
-                ]
-            );
-
-            buffer
-        });
+        assert_eq!(
+            suggestions,
+            vec![
+                (
+                    Path::new("src/foo.rs").into(),
+                    [
+                        "    let a = 1;", //
+                        "    let b = 2;",
+                        "",
+                    ]
+                    .join("\n"),
+                    [
+                        "    let w = 1;",
+                        "    let x = 2;",
+                        "    let y = 3;",
+                        "    let z = 4;",
+                        "",
+                    ]
+                    .join("\n"),
+                ),
+                (
+                    Path::new("src/foo.rs").into(),
+                    [
+                        "    let c = 1;", //
+                        "",
+                    ]
+                    .join("\n"),
+                    String::new(),
+                )
+            ]
+        );
     }
 
     #[gpui::test]
