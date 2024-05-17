@@ -493,14 +493,6 @@ impl TerminalPanel {
         cx.spawn(|terminal_panel, mut cx| async move {
             let pane = terminal_panel.update(&mut cx, |this, _| this.pane.clone())?;
             workspace.update(&mut cx, |workspace, cx| {
-                if workspace.project().read(cx).is_remote() {
-                    workspace.show_error(
-                        &anyhow::anyhow!("Cannot open terminals on remote projects (yet!)"),
-                        cx,
-                    );
-                    return;
-                };
-
                 let working_directory = if let Some(working_directory) = working_directory {
                     Some(working_directory)
                 } else {

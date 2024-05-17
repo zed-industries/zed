@@ -7651,6 +7651,7 @@ dependencies = [
  "client",
  "clock",
  "collections",
+ "dev_server_projects",
  "env_logger",
  "fs",
  "futures 0.3.28",
