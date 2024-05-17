@@ -1,10 +1,10 @@
 use crate::ambient_context::{AmbientContext, ContextUpdated, RecentBuffer};
+use crate::prompts::prompt_library::{PromptLibrary, PromptManager};
+use crate::prompts::prompts::generate_content_prompt;
 use crate::InsertActivePrompt;
 use crate::{
     assistant_settings::{AssistantDockPosition, AssistantSettings, ZedDotDevModel},
     codegen::{self, Codegen, CodegenKind},
-    prompt_library::{PromptLibrary, PromptManager},
-    prompts::generate_content_prompt,
     Assist, CompletionProvider, CycleMessageRole, InlineAssist, LanguageModel,
     LanguageModelRequest, LanguageModelRequestMessage, MessageId, MessageMetadata, MessageStatus,
     QuoteSelection, ResetKey, Role, SavedConversation, SavedConversationMetadata, SavedMessage,

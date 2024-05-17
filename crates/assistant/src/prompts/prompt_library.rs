@@ -1,13 +1,13 @@
 use fs::Fs;
-use futures::StreamExt;
 use gpui::{AppContext, DismissEvent, EventEmitter, FocusHandle, FocusableView, Render};
 use parking_lot::RwLock;
-use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
 use ui::{prelude::*, Checkbox, ModalHeader};
-use util::{paths::PROMPTS_DIR, ResultExt};
+use util::ResultExt;
 use workspace::ModalView;
+
+use super::custom_prompts::CustomPrompt;
 
 pub struct PromptLibraryState {
     /// The default prompt all assistant contexts will start with
@@ -138,62 +138,6 @@ impl PromptLibrary {
     pub fn default_prompt_ids(&self) -> Vec<String> {
         let state = self.state.read();
         state.default_prompts.clone()
-    }
-}
-
-/// A custom prompt that can be loaded into the prompt library
-///
-/// Example:
-///
-/// ```json
-/// {
-///   "title": "Foo",
-///   "version": "1.0",
-///   "author": "Jane Kim <jane@kim.com>",
-///   "languages": ["*"], // or ["rust", "python", "javascript"] etc...
-///   "prompt": "bar"
-/// }
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
-pub struct CustomPrompt {
-    version: String,
-    title: String,
-    author: String,
-    languages: Vec<String>,
-    prompt: String,
-}
-
-impl CustomPrompt {
-    async fn list(fs: Arc<dyn Fs>) -> anyhow::Result<Vec<Self>> {
-        fs.create_dir(&PROMPTS_DIR).await?;
-
-        let mut paths = fs.read_dir(&PROMPTS_DIR).await?;
-        let mut prompts = Vec::new();
-
-        while let Some(path_result) = paths.next().await {
-            let path = match path_result {
-                Ok(p) => p,
-                Err(e) => {
-                    eprintln!("Error reading path: {:?}", e);
-                    continue;
-                }
-            };
-
-            if path.extension() == Some(std::ffi::OsStr::new("json")) {
-                match fs.load(&path).await {
-                    Ok(content) => {
-                        let user_prompt: CustomPrompt =
-                            serde_json::from_str(&content).map_err(|e| {
-                                anyhow::anyhow!("Failed to deserialize UserPrompt: {}", e)
-                            })?;
-
-                        prompts.push(user_prompt);
-                    }
-                    Err(e) => eprintln!("Failed to load file {}: {}", path.display(), e),
-                }
-            }
-        }
-
-        Ok(prompts)
     }
 }
 

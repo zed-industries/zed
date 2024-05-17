@@ -3,7 +3,6 @@ pub mod assistant_panel;
 pub mod assistant_settings;
 mod codegen;
 mod completion_provider;
-mod prompt_library;
 mod prompts;
 mod saved_conversation;
 mod streaming_diff;
