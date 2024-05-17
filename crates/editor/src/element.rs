@@ -4255,8 +4255,9 @@ impl LineWithInvisibles {
 
                         // Since we are scanning from the left, we will skip over the first available whitespace that is part
                         // of a boundary between non-whitespace segments, so we correct by manually redrawing it if needed.
-                        if let Some((should_render_last, _, paint_last)) = last_seen {
-                            if !should_render_last {
+                        if let Some((should_render_last, last_end, paint_last)) = last_seen {
+                            // Note that we need to make sure that the last one is actually adjacent
+                            if !should_render_last && last_end == start {
                                 paint_last(cx);
                             }
                         }
