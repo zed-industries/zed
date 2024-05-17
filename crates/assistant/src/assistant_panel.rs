@@ -3,7 +3,7 @@ use crate::{
     assistant_settings::{AssistantDockPosition, AssistantSettings, ZedDotDevModel},
     codegen::{self, Codegen, CodegenKind},
     prompts::generate_content_prompt,
-    search::search_buffer_ignoring_indentation,
+    search::*,
     ApplyEdit, Assist, CompletionProvider, CycleMessageRole, InlineAssist, LanguageModel,
     LanguageModelRequest, LanguageModelRequestMessage, MessageId, MessageMetadata, MessageStatus,
     QuoteSelection, ResetKey, Role, SavedConversation, SavedConversationMetadata, SavedMessage,
@@ -2947,8 +2947,7 @@ impl ConversationEditor {
                                 .or_insert(Vec::<(Range<language::Anchor>, _)>::new());
                         for suggestion in suggestions {
                             let ranges =
-                                search_buffer_ignoring_indentation(&snapshot, &suggestion.old_text)
-                                    .await;
+                                fuzzy_search_lines(snapshot.as_rope(), &suggestion.old_text);
                             if let Some(range) = ranges.first() {
                                 let edit_start = snapshot.anchor_after(range.start);
                                 let edit_end = snapshot.anchor_before(range.end);

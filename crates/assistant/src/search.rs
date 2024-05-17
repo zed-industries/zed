@@ -1,82 +1,64 @@
-use language::BufferSnapshot;
+use language::{BufferSnapshot, Rope};
 use project::search::SearchQuery;
 use std::ops::Range;
 use util::ResultExt as _;
 
 /// Search the given buffer for the given substring, ignoring any differences
-/// in indentation between the query and the buffer.
-///
-/// Although indentation differences are allowed, the relative indentation
-/// between lines must match.
+/// in line indentation between the query and the buffer.
 ///
 /// Returns a vector of ranges of byte offsets in the buffer corresponding
 /// to the entire lines of the buffer.
-pub async fn search_buffer_ignoring_indentation(
-    buffer: &BufferSnapshot,
-    query: &str,
-) -> Vec<Range<usize>> {
-    let mut result = Vec::new();
-    let query_lines = query.trim_end().split('\n');
-    let first_query_line = query_lines.clone().next().unwrap();
-    let Some(first_query_line) = SearchQuery::text(
-        first_query_line.trim_start(),
-        false,
-        true,
-        false,
-        Vec::new(),
-        Vec::new(),
-    )
-    .log_err() else {
-        return result;
-    };
-
-    let mut buffer_lines = buffer.as_rope().chunks().lines();
-    'matches: for match_range in first_query_line.search(&buffer, None).await {
-        let match_start_point = buffer.offset_to_point(match_range.start);
-        let start_offset = match_range.start - match_start_point.column as usize;
-        buffer_lines.seek(start_offset);
-
-        let mut first_line_indent_difference = None;
-        for query_line in query_lines.clone() {
-            let Some(buffer_line) = buffer_lines.next() else {
-                continue 'matches;
+pub fn fuzzy_search_lines(haystack: &Rope, needle: &str) -> Vec<Range<usize>> {
+    let mut matches = Vec::new();
+    let mut haystack_lines = haystack.chunks().lines();
+    let mut haystack_line_start = 0;
+    while let Some(haystack_line) = haystack_lines.next() {
+        let next_haystack_line_start = haystack_line_start + haystack_line.len() + 1;
+        let mut trimmed_needle_lines = needle.lines().map(|line| line.trim());
+        if Some(haystack_line.trim()) == trimmed_needle_lines.next() {
+            let match_start = haystack_line_start;
+            let mut match_end = next_haystack_line_start;
+            let matched = loop {
+                match (haystack_lines.next(), trimmed_needle_lines.next()) {
+                    (Some(haystack_line), Some(needle_line)) => {
+                        // Haystack line differs from needle line: not a match.
+                        if haystack_line.trim() == needle_line {
+                            match_end = haystack_lines.offset();
+                        } else {
+                            break false;
+                        }
+                    }
+                    // We exhausted the haystack but not the query: not a match.
+                    (None, Some(_)) => break false,
+                    // We exhausted the query: it's a match.
+                    (_, None) => break true,
+                }
             };
 
-            let trimmed_query_line = query_line.trim_start();
-            let trimmed_buffer_line = buffer_line.trim_start();
-            if trimmed_query_line != trimmed_buffer_line {
-                continue 'matches;
+            if matched {
+                matches.push(match_start..match_end)
             }
 
-            let query_indent = query_line.len() - trimmed_query_line.len();
-            let buffer_indent = buffer_line.len() - trimmed_buffer_line.len();
-            let indent_difference = query_indent as i32 - buffer_indent as i32;
-            if let Some(first_indent_difference) = first_line_indent_difference {
-                if indent_difference != first_indent_difference {
-                    continue 'matches;
-                }
-            } else {
-                first_line_indent_difference = Some(indent_difference);
-            }
+            // Advance to the next line.
+            haystack_lines.seek(next_haystack_line_start);
         }
 
-        result.push(start_offset..buffer_lines.offset());
+        haystack_line_start = next_haystack_line_start;
     }
-
-    result
+    matches
 }
 
 #[cfg(test)]
 mod test {
     use super::*;
-    use gpui::{Context as _, TestAppContext};
-    use language::Buffer;
+    use gpui::{AppContext, Context as _, TestAppContext};
+    use language::{Buffer, OffsetRangeExt};
     use unindent::Unindent as _;
     use util::test::marked_text_ranges;
 
     #[gpui::test]
-    async fn test_search_ignoring_indentation(cx: &mut TestAppContext) {
-        let (text, ranges) = marked_text_ranges(
+    fn test_fuzzy_search_lines(cx: &mut AppContext) {
+        let (text, expected_ranges) = marked_text_ranges(
             &r#"
             fn main() {
                 if a() {
@@ -119,35 +101,52 @@ mod test {
         let buffer = cx.new_model(|cx| Buffer::local(&text, cx));
         let snapshot = buffer.read_with(cx, |buffer, _| buffer.snapshot());
 
+        let actual_ranges = fuzzy_search_lines(
+            snapshot.as_rope(),
+            &"
+            assert_eq!(
+                1 + 2,
+                3,
+            );
+            "
+            .unindent(),
+        );
         assert_eq!(
-            search_buffer_ignoring_indentation(
-                &snapshot,
-                &"
-                assert_eq!(
-                    1 + 2,
-                    3,
-                );
-                "
-                .unindent()
-            )
-            .await,
-            ranges,
+            actual_ranges,
+            expected_ranges,
+            "actual: {:?}, expected: {:?}",
+            actual_ranges
+                .iter()
+                .map(|range| range.to_point(&snapshot))
+                .collect::<Vec<_>>(),
+            expected_ranges
+                .iter()
+                .map(|range| range.to_point(&snapshot))
+                .collect::<Vec<_>>()
         );
 
-        // Relative indentation must match.
+        let actual_ranges = fuzzy_search_lines(
+            snapshot.as_rope(),
+            &"
+            assert_eq!(
+                1 + 2,
+                3,
+                );
+            "
+            .unindent(),
+        );
         assert_eq!(
-            search_buffer_ignoring_indentation(
-                &snapshot,
-                &"
-                assert_eq!(
-                    1 + 2,
-                    3,
-                    );
-                "
-                .unindent()
-            )
-            .await,
-            Vec::<Range<usize>>::new(),
+            actual_ranges,
+            expected_ranges,
+            "actual: {:?}, expected: {:?}",
+            actual_ranges
+                .iter()
+                .map(|range| range.to_point(&snapshot))
+                .collect::<Vec<_>>(),
+            expected_ranges
+                .iter()
+                .map(|range| range.to_point(&snapshot))
+                .collect::<Vec<_>>()
         );
     }
 }
