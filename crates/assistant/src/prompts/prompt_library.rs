@@ -3,7 +3,6 @@ use editor::Editor;
 use fs::Fs;
 use gpui::{AppContext, DismissEvent, EventEmitter, FocusHandle, FocusableView, Render, View};
 use parking_lot::RwLock;
-use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use ui::{prelude::*, Checkbox, ModalHeader};
 use util::ResultExt;
@@ -325,46 +324,25 @@ impl Render for PromptManager {
                             .min_w_64()
                             .h_full()
                             .debug_bg_green()
-                            .child(
-                                v_flex()
-                                    .justify_start()
-                                    .py(Spacing::Medium.rems(cx))
-                                    .px(Spacing::Large.rems(cx))
-                                    .gap(Spacing::Large.rems(cx))
-                                    .when_some_else(
-                                        self.active_prompt_id,
-                                        |this, active_prompt_id| {
-                                            dbg!();
+                            .when_some(self.active_prompt_id, |this, active_prompt_id| {
+                                dbg!();
 
-                                            let editor_for_prompt = self
-                                                .prompt_editors
-                                                .entry(active_prompt_id)
-                                                .or_insert_with(|| {
-                                                    cx.new_view(|cx| {
-                                                        let mut editor = Editor::multi_line(cx);
-                                                        if let Some(prompt_text) = prompt_library
-                                                            .prompt_for_id(active_prompt_id)
-                                                        {
-                                                            editor.set_text(prompt_text, cx);
-                                                        }
-                                                        editor
-                                                    })
-                                                });
-                                            this.child("Edsdjaogijsda").child(
-                                                div()
-                                                    .size_full()
-                                                    .debug_bg_cyan()
-                                                    .child(editor_for_prompt.clone()),
-                                            )
-                                        },
-                                        |this| {
-                                            this.justify_center().items_center().child(
-                                                Label::new("Select a prompt to view details.")
-                                                    .color(Color::Placeholder),
-                                            )
-                                        },
-                                    ),
-                            ),
+                                let editor_for_prompt = self
+                                    .prompt_editors
+                                    .entry(active_prompt_id)
+                                    .or_insert_with(|| {
+                                        cx.new_view(|cx| {
+                                            let mut editor = Editor::multi_line(cx);
+                                            if let Some(prompt_text) =
+                                                prompt_library.prompt_for_id(active_prompt_id)
+                                            {
+                                                editor.set_text(prompt_text, cx);
+                                            }
+                                            editor
+                                        })
+                                    });
+                                this.child(editor_for_prompt.clone())
+                            }),
                     ),
             )
     }
