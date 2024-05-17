@@ -190,8 +190,8 @@ impl InlineCompletionProvider for CopilotCompletionProvider {
             self.copilot
                 .update(cx, |copilot, cx| copilot.accept_completion(completion, cx))
                 .detach_and_log_err(cx);
-            if let Some(telemetry) = self.telemetry.as_ref() {
-                if self.active_completion().is_some() {
+            if self.active_completion().is_some() {
+                if let Some(telemetry) = self.telemetry.as_ref() {
                     telemetry.report_inline_completion_event(
                         Self::name().to_string(),
                         true,
