@@ -40,15 +40,6 @@ pub fn init(client: Arc<Client>, app_state: AppState, cx: &mut AppContext) -> Ta
     let dev_server = cx.new_model(|cx| DevServer::new(client.clone(), app_state, cx));
     cx.set_global(GlobalDevServer(dev_server.clone()));
 
-    // Dev server cannot have any private files for now
-    SettingsStore::update_global(cx, |store, _cx| {
-        let old_settings = store.get::<WorktreeSettings>(None);
-        store.override_global(WorktreeSettings {
-            private_files: Some(vec![]),
-            ..old_settings.clone()
-        });
-    });
-
     #[cfg(not(target_os = "windows"))]
     {
         use signal_hook::consts::{SIGINT, SIGTERM};
@@ -229,11 +220,12 @@ impl DevServer {
 
         let path = shellexpand::tilde(&dev_server_project.path).to_string();
 
-        project
+        let (worktree, _) = project
             .update(cx, |project, cx| {
                 project.find_or_create_local_worktree(&path, true, cx)
             })?
             .await?;
+        worktree.update(cx, |worktree, cx| worktree.allow_sharing_private_files());
 
         let worktrees =
             project.read_with(cx, |project, cx| project.worktree_metadata_protos(cx))?;

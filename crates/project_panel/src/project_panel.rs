@@ -102,7 +102,7 @@ pub struct EntryDetails {
     is_processing: bool,
     is_cut: bool,
     git_status: Option<GitFileStatus>,
-    is_dotenv: bool,
+    is_private: bool,
 }
 
 #[derive(PartialEq, Clone, Default, Debug, Deserialize)]
@@ -1592,7 +1592,7 @@ impl ProjectPanel {
                             .clipboard_entry
                             .map_or(false, |e| e.is_cut() && e.entry_id() == entry.id),
                         git_status: status,
-                        is_dotenv: entry.is_private,
+                        is_private: entry.is_private,
                     };
 
                     if let Some(edit_state) = &self.edit_state {
