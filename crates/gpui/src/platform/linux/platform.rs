@@ -384,9 +384,20 @@ impl<P: LinuxClient + 'static> Platform for P {
         self.set_cursor_style(style)
     }
 
-    // todo(linux)
     fn should_auto_hide_scrollbars(&self) -> bool {
-        false
+        let cmd = Command::new("gsettings")
+            .arg("get")
+            .arg("org.gnome.desktop.interface")
+            .arg("overlay-scrolling")
+            .output()
+            .unwrap();
+        let value = String::from_utf8_lossy(&cmd.stdout);
+        let bool_value = match value.trim().to_lowercase().as_str() {
+            "true" => true,
+            "false" => false,
+            _ => false,
+        };
+        bool_value
     }
 
     fn write_credentials(&self, url: &str, username: &str, password: &[u8]) -> Task<Result<()>> {
