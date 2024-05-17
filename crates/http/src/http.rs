@@ -58,7 +58,15 @@ impl HttpClientWithUrl {
     /// Returns a new [`HttpClientWithUrl`] with the given base URL.
     pub fn new(base_url: impl Into<String>, unparsed_proxy: Option<String>) -> Self {
         let parsed_proxy = get_proxy(unparsed_proxy);
-        let proxy_string = parsed_proxy.as_ref().map(|p| p.to_string());
+        let proxy_string = parsed_proxy.as_ref().map(|p| {
+            // Map proxy settings from `http://localhost:10809` to `http://127.0.0.1:10809`
+            // NodeRuntime without environment information can not parse `localhost`
+            // correctly.
+            // TODO: map to `[::1]` if we are using ipv6
+            p.to_string()
+                .to_ascii_lowercase()
+                .replace("localhost", "127.0.0.1")
+        });
         Self {
             base_url: Mutex::new(base_url.into()),
             client: client(parsed_proxy),
