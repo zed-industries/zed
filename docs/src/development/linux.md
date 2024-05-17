@@ -74,7 +74,7 @@ Zed has basic support for both modes. The mode is selected at runtime. If you're
 
 To build & install the flatpak package locally follow the steps below:
 
-1. Install flatpak for your distrbution as outlined [here](https://flathub.org/setup).
+1. Install flatpak for your distribution as outlined [here](https://flathub.org/setup).
 2. Run the `script/flatpak` script to install the Freedesktop Platform and SDK.
 3. Generate the sources file by running `python script/flatpak-cargo-generator.py` *from the root directory*. This will need to be re-run if any cargo dependencies are changed (you will know to re-run when the build starts failing).
 4. Now you are ready to build & install the flatpak. Run `flatpak-builder --user --install --force-clean build dev.zed.Zed.json` from the root directory.
