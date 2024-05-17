@@ -331,9 +331,16 @@ impl MarkdownElement {
                                 match rendered_text.source_index_for_position(event.position) {
                                     Ok(ix) | Err(ix) => ix,
                                 };
+                            let range = if event.click_count == 2 {
+                                rendered_text.surrounding_word_range(source_index)
+                            } else if event.click_count == 3 {
+                                rendered_text.surrounding_line_range(source_index)
+                            } else {
+                                source_index..source_index
+                            };
                             markdown.selection = Selection {
-                                start: source_index,
-                                end: source_index,
+                                start: range.start,
+                                end: range.end,
                                 reversed: false,
                                 pending: true,
                             };
@@ -944,6 +951,46 @@ impl RenderedText {
             }
         }
         None
+    }
+
+    fn surrounding_word_range(&self, source_index: usize) -> Range<usize> {
+        for line in self.lines.iter() {
+            if source_index > line.source_end {
+                continue;
+            }
+
+            let line_rendered_start = line.source_mappings.first().unwrap().rendered_index;
+            let rendered_index_in_line =
+                line.rendered_index_for_source_index(source_index) - line_rendered_start;
+            let text = line.layout.text();
+            let previous_space = if let Some(idx) = text[0..rendered_index_in_line].rfind(' ') {
+                idx + ' '.len_utf8()
+            } else {
+                0
+            };
+            let next_space = if let Some(idx) = text[rendered_index_in_line..].find(' ') {
+                rendered_index_in_line + idx
+            } else {
+                text.len()
+            };
+
+            return line.source_index_for_rendered_index(line_rendered_start + previous_space)
+                ..line.source_index_for_rendered_index(line_rendered_start + next_space);
+        }
+
+        source_index..source_index
+    }
+
+    fn surrounding_line_range(&self, source_index: usize) -> Range<usize> {
+        for line in self.lines.iter() {
+            if source_index > line.source_end {
+                continue;
+            }
+            let line_source_start = line.source_mappings.first().unwrap().source_index;
+            return line_source_start..line.source_end;
+        }
+
+        source_index..source_index
     }
 
     fn text_for_range(&self, range: Range<usize>) -> String {
