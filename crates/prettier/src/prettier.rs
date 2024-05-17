@@ -292,6 +292,12 @@ impl Prettier {
                                     )),
                                 );
                             }
+                            if !options.contains_key("useTabs") {
+                                options.insert(
+                                    "useTabs".to_string(),
+                                    serde_json::Value::Bool(language_settings.hard_tabs),
+                                );
+                            }
                             Some(options)
                         } else {
                             None
