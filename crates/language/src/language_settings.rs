@@ -391,6 +391,8 @@ pub enum ShowWhitespaceSetting {
     None,
     /// Draw all invisible symbols.
     All,
+    /// Draw whitespace only at boundaries.
+    Boundary,
 }
 
 /// Controls which formatter should be used when formatting code.
