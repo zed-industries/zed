@@ -502,6 +502,13 @@ impl AppContext {
         })
     }
 
+    /// Returns Ok() if the platform supports opening windows.
+    /// This returns false (for example) on linux when we could
+    /// not establish a connection to X or Wayland.
+    pub fn can_open_windows(&self) -> anyhow::Result<()> {
+        self.platform.can_open_windows()
+    }
+
     /// Instructs the platform to activate the application by bringing it to the foreground.
     pub fn activate(&self, ignoring_other_apps: bool) {
         self.platform.activate(ignoring_other_apps);
