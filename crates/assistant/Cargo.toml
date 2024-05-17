@@ -47,6 +47,8 @@ ui.workspace = true
 util.workspace = true
 uuid.workspace = true
 workspace.workspace = true
+picker.workspace = true
+fuzzy.workspace = true
 
 [dev-dependencies]
 ctor.workspace = true

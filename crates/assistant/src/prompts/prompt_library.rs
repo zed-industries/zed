@@ -1,11 +1,14 @@
 use collections::HashMap;
-use editor::Editor;
+use editor::{Editor, SoftWrap};
 use fs::Fs;
-use gpui::{AppContext, DismissEvent, EventEmitter, FocusHandle, FocusableView, Render, View};
+use fuzzy::StringMatchCandidate;
+use gpui::{prelude::FluentBuilder, *};
+use language::language_settings;
 use parking_lot::RwLock;
+use picker::{Picker, PickerDelegate};
 use std::sync::Arc;
-use ui::{prelude::*, Checkbox, ModalHeader};
-use util::ResultExt;
+use ui::{prelude::*, Checkbox, ContextMenu, IconButtonShape, ListItem, ListItemSpacing};
+use util::{ResultExt, TryFutureExt};
 use uuid::Uuid;
 use workspace::ModalView;
 
@@ -157,18 +160,41 @@ pub struct PromptId(Uuid);
 pub struct PromptManager {
     focus_handle: FocusHandle,
     prompt_library: Arc<PromptLibrary>,
+    picker: View<Picker<PromptManagerDelegate>>,
     prompt_editors: HashMap<PromptId, View<Editor>>,
     active_prompt_id: Option<PromptId>,
 }
 
 impl PromptManager {
-    pub fn new(prompt_library: Arc<PromptLibrary>, cx: &mut WindowContext) -> Self {
+    pub fn new(prompt_library: Arc<PromptLibrary>, cx: &mut ViewContext<Self>) -> Self {
         let focus_handle = cx.focus_handle();
+        let prompt_manager = cx.view().downgrade();
+        let active_prompt_id = if prompt_library.prompts().is_empty() {
+            None
+        } else {
+            Some(prompt_library.prompts_with_ids()[0].0)
+        };
+        let picker = cx.new_view(|cx| {
+            Picker::uniform_list(
+                PromptManagerDelegate {
+                    prompt_manager,
+                    matching_prompts: vec![],
+                    matching_prompt_ids: vec![],
+                    prompt_library: prompt_library.clone(),
+                    selected_index: 0,
+                    match_candidates: vec![],
+                },
+                cx,
+            )
+            .modal(false)
+        });
+
         Self {
             focus_handle,
             prompt_library,
+            picker,
             prompt_editors: HashMap::default(),
-            active_prompt_id: None,
+            active_prompt_id,
         }
     }
 
@@ -205,29 +231,29 @@ impl PromptManager {
 
         let no_prompts_state = self.render_no_prompts_state(cx);
 
-        div()
+        v_flex()
             .id("prompt-list")
-            .overflow_y_scroll()
+            .bg(cx.theme().colors().surface_background)
             .h_full()
-            .min_w_64()
-            .max_w_1_2()
+            .w_2_5()
+            .child(
+                h_flex()
+                    .bg(cx.theme().colors().background)
+                    .p(Spacing::Small.rems(cx))
+                    .border_b_1()
+                    .border_color(cx.theme().colors().border)
+                    .h_7()
+                    .w_full()
+                    .justify_between()
+                    .child(Label::new("Prompts").size(LabelSize::Small))
+                    .child(IconButton::new("new-prompt", IconName::AtSign).disabled(true)),
+            )
             .child(
                 v_flex()
                     .justify_start()
                     .py(Spacing::Medium.rems(cx))
                     .px(Spacing::Large.rems(cx))
-                    .bg(cx.theme().colors().surface_background)
-                    .when_else(
-                        !prompts.is_empty(),
-                        |with_items| {
-                            with_items.children(
-                                prompts
-                                    .into_iter()
-                                    .map(|(id, prompt)| self.render_prompt_item(id, prompt, cx)),
-                            )
-                        },
-                        |no_items| no_items.child(no_prompts_state),
-                    ),
+                    .child(self.picker.clone()),
             )
     }
 
@@ -302,50 +328,60 @@ impl PromptManager {
                 if let Some(prompt_text) = prompt_library.prompt_for_id(prompt_id) {
                     editor.set_text(prompt_text, cx);
                 }
+                editor.set_soft_wrap_mode(language_settings::SoftWrap::EditorWidth, cx);
+                editor.set_show_gutter(false, cx);
                 editor
             })
         });
-        div()
-            .id("prompt-editor")
-            .border_l_1()
-            .border_color(cx.theme().colors().border)
-            .size_full()
-            .flex_none()
-            .min_w_64()
-            .h_full()
-            .child(editor_for_prompt.clone())
+        editor_for_prompt.clone()
     }
 }
 
 impl Render for PromptManager {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
-        let prompt_library = self.prompt_library.clone();
-
-        v_flex()
+        h_flex()
             .key_context("PromptManager")
             .track_focus(&self.focus_handle)
             .on_action(cx.listener(Self::dismiss))
             .elevation_3(cx)
             .size_full()
             .flex_none()
-            .w(rems(54.))
+            .w(rems(64.))
             .h(rems(40.))
             .overflow_hidden()
+            .child(self.render_prompt_list(cx))
             .child(
-                ModalHeader::new("prompt-manager-header")
-                    .child(Headline::new("Prompt Library").size(HeadlineSize::Small))
-                    .show_dismiss_button(true),
-            )
-            .child(
-                h_flex()
-                    .flex_grow()
-                    .overflow_hidden()
-                    .border_t_1()
-                    .border_color(cx.theme().colors().border)
-                    .child(self.render_prompt_list(cx))
-                    .when_some(self.active_prompt_id, |this, active_prompt_id| {
-                        this.child(self.render_editor_for_prompt(active_prompt_id, cx))
-                    }),
+                div().w_3_5().h_full().child(
+                    v_flex()
+                        .id("prompt-editor")
+                        .border_l_1()
+                        .border_color(cx.theme().colors().border)
+                        .size_full()
+                        .flex_none()
+                        .min_w_64()
+                        .h_full()
+                        .child(
+                            h_flex()
+                                .bg(cx.theme().colors().background)
+                                .p(Spacing::Small.rems(cx))
+                                .border_b_1()
+                                .border_color(cx.theme().colors().border)
+                                .h_7()
+                                .w_full()
+                                .justify_between()
+                                .child(div())
+                                .child(
+                                    IconButton::new("dismiss", IconName::Close)
+                                        .shape(IconButtonShape::Square)
+                                        .on_click(|_, cx| {
+                                            cx.dispatch_action(menu::Cancel.boxed_clone());
+                                        }),
+                                ),
+                        )
+                        .when_some(self.active_prompt_id, |this, active_prompt_id| {
+                            this.child(self.render_editor_for_prompt(active_prompt_id, cx))
+                        }),
+                ),
             )
     }
 }
@@ -356,5 +392,106 @@ impl ModalView for PromptManager {}
 impl FocusableView for PromptManager {
     fn focus_handle(&self, _cx: &AppContext) -> gpui::FocusHandle {
         self.focus_handle.clone()
+    }
+}
+
+pub struct PromptManagerDelegate {
+    prompt_manager: WeakView<PromptManager>,
+    matching_prompts: Vec<Arc<CustomPrompt>>,
+    matching_prompt_ids: Vec<PromptId>,
+    prompt_library: Arc<PromptLibrary>,
+    selected_index: usize,
+    match_candidates: Vec<StringMatchCandidate>,
+}
+
+impl PickerDelegate for PromptManagerDelegate {
+    type ListItem = ListItem;
+
+    fn placeholder_text(&self, _cx: &mut WindowContext) -> Arc<str> {
+        "Find a prompt…".into()
+    }
+
+    fn match_count(&self) -> usize {
+        self.matching_prompt_ids.len()
+    }
+
+    fn selected_index(&self) -> usize {
+        self.selected_index
+    }
+
+    fn set_selected_index(&mut self, ix: usize, _: &mut ViewContext<Picker<Self>>) {
+        self.selected_index = ix;
+    }
+
+    fn update_matches(&mut self, query: String, cx: &mut ViewContext<Picker<Self>>) -> Task<()> {
+        let prompt_library = self.prompt_library.clone();
+        cx.spawn(|picker, mut cx| async move {
+            async {
+                let prompts = prompt_library.prompts_with_ids();
+                let matching_prompts = prompts
+                    .into_iter()
+                    .filter(|(_, prompt)| {
+                        prompt.title.to_lowercase().contains(&query.to_lowercase())
+                    })
+                    .collect::<Vec<_>>();
+                picker.update(&mut cx, |picker, cx| {
+                    picker.delegate.matching_prompt_ids =
+                        matching_prompts.iter().map(|(id, _)| *id).collect();
+                    picker.delegate.matching_prompts = matching_prompts
+                        .into_iter()
+                        .map(|(_, prompt)| Arc::new(prompt))
+                        .collect();
+                    cx.notify();
+                })?;
+                anyhow::Ok(())
+            }
+            .log_err()
+            .await;
+        })
+    }
+
+    fn confirm(&mut self, _: bool, cx: &mut ViewContext<Picker<Self>>) {
+        if let Some(prompt_id) = self.matching_prompt_ids.get(self.selected_index) {
+            let prompt_manager = self.prompt_manager.upgrade().unwrap();
+            prompt_manager.update(cx, move |manager, cx| {
+                manager.set_active_prompt(Some(*prompt_id), cx);
+            });
+        }
+    }
+
+    fn dismissed(&mut self, cx: &mut ViewContext<Picker<Self>>) {
+        self.prompt_manager
+            .update(cx, |_, cx| {
+                cx.emit(DismissEvent);
+            })
+            .ok();
+    }
+
+    fn render_match(
+        &self,
+        ix: usize,
+        selected: bool,
+        _cx: &mut ViewContext<Picker<Self>>,
+    ) -> Option<Self::ListItem> {
+        let matching_prompt = self.matching_prompts.get(ix)?;
+        let prompt = matching_prompt.clone();
+
+        Some(
+            ListItem::new(ix)
+                .inset(true)
+                .spacing(ListItemSpacing::Sparse)
+                .selected(selected)
+                .child(Label::new(prompt.title.clone())),
+        )
+    }
+}
+
+impl PromptManagerDelegate {
+    fn prompt_for_index(
+        &mut self,
+        index: usize,
+        _cx: &mut ViewContext<Picker<Self>>,
+    ) -> Option<Arc<CustomPrompt>> {
+        self.matching_prompts.get(index).cloned()
     }
 }
