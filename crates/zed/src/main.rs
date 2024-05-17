@@ -124,6 +124,10 @@ fn init_ui(app_state: Arc<AppState>, cx: &mut AppContext) -> Result<()> {
         }
     };
 
+    if let Err(err) = cx.can_open_windows() {
+        return Err(err);
+    }
+
     SystemAppearance::init(cx);
     load_embedded_fonts(cx);
 
