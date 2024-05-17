@@ -2179,6 +2179,17 @@ impl Editor {
         cx: &mut ViewContext<Self>,
         change: impl FnOnce(&mut MutableSelectionsCollection<'_>) -> R,
     ) -> R {
+        // old body is moved into that inner function and adjusted a bit
+        self.change_selections_inner(autoscroll, true, cx, change)
+    }
+
+    pub fn change_selections_inner<R>(
+        &mut self,
+        autoscroll: Option<Autoscroll>,
+        request_completions: bool,
+        cx: &mut ViewContext<Self>,
+        change: impl FnOnce(&mut MutableSelectionsCollection<'_>) -> R,
+    ) -> R {
         let old_cursor_position = self.selections.newest_anchor().head();
         self.push_to_selection_history();
 
@@ -2188,7 +2199,7 @@ impl Editor {
             if let Some(autoscroll) = autoscroll {
                 self.request_autoscroll(autoscroll, cx);
             }
-            self.selections_did_change(true, &old_cursor_position, true, cx);
+            self.selections_did_change(true, &old_cursor_position, request_completions, cx);
         }
 
         result
@@ -2844,22 +2855,9 @@ impl Editor {
 
             drop(snapshot);
             let had_active_inline_completion = this.has_active_inline_completion(cx);
-
-            let trigger_in_words = !had_active_inline_completion;
-            let completions_triggered =
-                this.trigger_completion_on_input(&text, trigger_in_words, cx);
-
-            let old_cursor_position = this.selections.newest_anchor().head();
-            this.push_to_selection_history();
-
-            let (changed, _) = this
-                .selections
-                .change_with(cx, |s| s.select(new_selections));
-
-            if changed {
-                this.request_autoscroll(Autoscroll::fit(), cx);
-                this.selections_did_change(true, &old_cursor_position, !completions_triggered, cx);
-            }
+            this.change_selections_inner(Some(Autoscroll::fit()), false, cx, |s| {
+                s.select(new_selections)
+            });
 
             if brace_inserted {
                 // If we inserted a brace while composing text (i.e. typing `"` on a
@@ -2874,6 +2872,8 @@ impl Editor {
                 }
             }
 
+            let trigger_in_words = !had_active_inline_completion;
+            this.trigger_completion_on_input(&text, trigger_in_words, cx);
             this.refresh_inline_completion(true, cx);
         });
     }
@@ -3233,9 +3233,9 @@ impl Editor {
         text: &str,
         trigger_in_words: bool,
         cx: &mut ViewContext<Self>,
-    ) -> bool {
+    ) {
         if !EditorSettings::get_global(cx).show_completions_on_input {
-            return true;
+            return;
         }
 
         let selection = self.selections.newest_anchor();
@@ -3245,10 +3245,8 @@ impl Editor {
             .is_completion_trigger(selection.head(), text, trigger_in_words, cx)
         {
             self.show_completions(&ShowCompletions, cx);
-            return true;
         } else {
             self.hide_context_menu(cx);
-            return false;
         }
     }
 

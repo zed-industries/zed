@@ -6768,7 +6768,7 @@ async fn test_no_duplicated_completion_requests(cx: &mut gpui::TestAppContext) {
     let counter_clone = counter.clone();
     let mut request = cx.handle_request::<lsp::request::Completion, _, _>(move |_, _, _| {
         let task_completion_item = closure_completion_item.clone();
-        counter_clone.fetch_add(1, atomic::Ordering::Acquire);
+        counter_clone.fetch_add(1, atomic::Ordering::Release);
         async move {
             Ok(Some(lsp::CompletionResponse::Array(vec![
                 task_completion_item,
@@ -6793,8 +6793,11 @@ async fn test_no_duplicated_completion_requests(cx: &mut gpui::TestAppContext) {
     assert!(request.next().await.is_some());
     request.close();
     assert!(request.next().await.is_none());
-    assert_eq!(counter.load(atomic::Ordering::Acquire), 4);
-    assert_eq!(counter.load(atomic::Ordering::Acquire), 4);
+    assert_eq!(
+        counter.load(atomic::Ordering::Acquire),
+        4,
+        "With the completions menu open, only one LSP request should happen per input"
+    );
 }
 
 #[gpui::test]
@@ -11484,7 +11487,7 @@ pub fn handle_completion_request(
 
     let mut request = cx.handle_request::<lsp::request::Completion, _, _>(move |url, params, _| {
         let completions = completions.clone();
-        counter.fetch_add(1, atomic::Ordering::Acquire);
+        counter.fetch_add(1, atomic::Ordering::Release);
         async move {
             assert_eq!(params.text_document_position.text_document.uri, url.clone());
             assert_eq!(
