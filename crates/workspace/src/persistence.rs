@@ -1097,7 +1097,10 @@ mod tests {
 
         let workspace = SerializedWorkspace {
             id: WorkspaceId(5),
-            location: LocalPaths::new(["/tmp", "/tmp2"]).into(),
+            location: SerializedWorkspaceLocation::Local(
+                LocalPaths::new(["/tmp", "/tmp2"]),
+                LocalPathsOrder::new([1, 0]),
+            ),
             center_group,
             window_bounds: Default::default(),
             display: Default::default(),
@@ -1126,7 +1129,10 @@ mod tests {
 
         let workspace_1 = SerializedWorkspace {
             id: WorkspaceId(1),
-            location: LocalPaths::new(["/tmp", "/tmp2"]).into(),
+            location: SerializedWorkspaceLocation::Local(
+                LocalPaths::new(["/tmp", "/tmp2"]),
+                LocalPathsOrder::new([0, 1]),
+            ),
             center_group: Default::default(),
             window_bounds: Default::default(),
             display: Default::default(),
@@ -1173,7 +1179,10 @@ mod tests {
         // Test other mechanism for mutating
         let mut workspace_3 = SerializedWorkspace {
             id: WorkspaceId(3),
-            location: LocalPaths::new(&["/tmp", "/tmp2"]).into(),
+            location: SerializedWorkspaceLocation::Local(
+                LocalPaths::new(&["/tmp", "/tmp2"]),
+                LocalPathsOrder::new([1, 0]),
+            ),
             center_group: Default::default(),
             window_bounds: Default::default(),
             display: Default::default(),
