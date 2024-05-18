@@ -14,18 +14,12 @@
             Productive coding starts with a tool that stays out of your way. Zed blends the power of an IDE with the speed of a lightweight editor for productivity you can feel under your fingertips.
         </p>
         <p>Features:</p>
-        <p>
-            Performance: Efficiently uses every CPU core and your GPU for instant startup, quick file loading, and responsive keystrokes.
-        </p>
-        <p>
-            Language-aware: Maintains a syntax tree for precise highlighting, and auto-indent, with LSP support for autocompletion and refactoring.
-        </p>
-        <p>
-            Collaboration: Real-time editing and navigation for multiple developers in a shared workspace.
-        </p>
-        <p>
-            AI Integration: Integrates GitHub Copilot and GPT-4 for natural language code generation.
-        </p>
+        <ul>
+            <li>Performance: Efficiently uses every CPU core and your GPU for instant startup, quick file loading, and responsive keystrokes.</li>
+            <li>Language-aware: Maintains a syntax tree for precise highlighting, and auto-indent, with LSP support for autocompletion and refactoring.</li>
+            <li>Collaboration: Real-time editing and navigation for multiple developers in a shared workspace.</li>
+            <li>AI Integration: Integrates GitHub Copilot and GPT-4 for natural language code generation.</li>
+        </ul>
     </description>
 
     <launchable type="desktop-id">dev.zed.Zed.desktop</launchable>
