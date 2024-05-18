@@ -5928,11 +5928,11 @@ mod tests {
             },
             Invisible::Tab {
                 line_start_offset: TAB_SIZE as usize + 1,
-                line_end_offset: TAB_SIZE as usize * 2 + 1,
+                line_end_offset: TAB_SIZE as usize * 2,
             },
             Invisible::Tab {
                 line_start_offset: TAB_SIZE as usize * 2 + 1,
-                line_end_offset: TAB_SIZE as usize * 3 + 1,
+                line_end_offset: TAB_SIZE as usize * 3,
             },
             Invisible::Whitespace {
                 line_offset: TAB_SIZE as usize * 3 + 1,
@@ -5990,7 +5990,7 @@ mod tests {
         let repeated_invisibles = [
             Invisible::Tab {
                 line_start_offset: 1,
-                line_end_offset: tab_size as usize + 3,
+                line_end_offset: tab_size as usize,
             },
             Invisible::Whitespace {
                 line_offset: tab_size as usize + 3,
