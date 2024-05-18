@@ -304,6 +304,30 @@ struct ExcerptBytes<'a> {
     reversed: bool,
 }
 
+pub enum ExpandExcerptDirection {
+    Up,
+    Down,
+    UpAndDown,
+}
+
+impl ExpandExcerptDirection {
+    pub fn should_expand_up(&self) -> bool {
+        match self {
+            ExpandExcerptDirection::Up => true,
+            ExpandExcerptDirection::Down => false,
+            ExpandExcerptDirection::UpAndDown => true,
+        }
+    }
+
+    pub fn should_expand_down(&self) -> bool {
+        match self {
+            ExpandExcerptDirection::Up => false,
+            ExpandExcerptDirection::Down => true,
+            ExpandExcerptDirection::UpAndDown => true,
+        }
+    }
+}
+
 impl MultiBuffer {
     pub fn new(replica_id: ReplicaId, capability: Capability) -> Self {
         Self {
@@ -1650,6 +1674,7 @@ impl MultiBuffer {
         &mut self,
         ids: impl IntoIterator<Item = ExcerptId>,
         line_count: u32,
+        direction: ExpandExcerptDirection,
         cx: &mut ModelContext<Self>,
     ) {
         if line_count == 0 {
@@ -1670,18 +1695,31 @@ impl MultiBuffer {
             let mut excerpt = cursor.item().unwrap().clone();
             let old_text_len = excerpt.text_summary.len;
 
+            let up_line_count = if direction.should_expand_up() {
+                line_count
+            } else {
+                0
+            };
+
             let start_row = excerpt
                 .range
                 .context
                 .start
                 .to_point(&excerpt.buffer)
                 .row
-                .saturating_sub(line_count);
+                .saturating_sub(up_line_count);
             let start_point = Point::new(start_row, 0);
             excerpt.range.context.start = excerpt.buffer.anchor_before(start_point);
 
+            let down_line_count = if direction.should_expand_down() {
+                line_count
+            } else {
+                0
+            };
+
             let end_point = excerpt.buffer.clip_point(
-                excerpt.range.context.end.to_point(&excerpt.buffer) + Point::new(line_count, 0),
+                excerpt.range.context.end.to_point(&excerpt.buffer)
+                    + Point::new(down_line_count, 0),
                 Bias::Left,
             );
             excerpt.range.context.end = excerpt.buffer.anchor_after(end_point);
@@ -1960,7 +1998,12 @@ impl MultiBuffer {
 
                 log::info!("Expanding excerpts {excerpts:?} by {line_count} lines");
 
-                self.expand_excerpts(excerpts.iter().cloned(), line_count, cx);
+                self.expand_excerpts(
+                    excerpts.iter().cloned(),
+                    line_count,
+                    ExpandExcerptDirection::UpAndDown,
+                    cx,
+                );
                 continue;
             }
 
@@ -5017,7 +5060,12 @@ mod tests {
         });
 
         multibuffer.update(cx, |multibuffer, cx| {
-            multibuffer.expand_excerpts(multibuffer.excerpt_ids(), 1, cx)
+            multibuffer.expand_excerpts(
+                multibuffer.excerpt_ids(),
+                1,
+                ExpandExcerptDirection::UpAndDown,
+                cx,
+            )
         });
 
         let snapshot = multibuffer.read(cx).snapshot(cx);
@@ -5414,7 +5462,12 @@ mod tests {
                             .map(|id| excerpt_ids.iter().position(|i| i == id).unwrap())
                             .collect::<Vec<_>>();
                         log::info!("Expanding excerpts {excerpt_ixs:?} by {line_count} lines");
-                        multibuffer.expand_excerpts(excerpts.iter().cloned(), line_count, cx);
+                        multibuffer.expand_excerpts(
+                            excerpts.iter().cloned(),
+                            line_count,
+                            ExpandExcerptDirection::UpAndDown,
+                            cx,
+                        );
 
                         if line_count > 0 {
                             for id in excerpts {

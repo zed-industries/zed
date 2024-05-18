@@ -1929,7 +1929,7 @@ impl EditorElement {
                                             .style(ButtonStyle::Transparent)
                                             .child(
                                                 svg()
-                                                    .path(IconName::ExpandVertical.path())
+                                                    .path(IconName::ArrowUpFromLine.path())
                                                     .size(IconSize::XSmall.rems())
                                                     .text_color(
                                                         cx.theme().colors().editor_line_number,
@@ -1946,7 +1946,11 @@ impl EditorElement {
                                             .on_click(cx.listener_for(&self.editor, {
                                                 let id = *id;
                                                 move |editor, _, cx| {
-                                                    editor.expand_excerpt(id, cx);
+                                                    editor.expand_excerpt(
+                                                        id,
+                                                        multi_buffer::ExpandExcerptDirection::Up,
+                                                        cx,
+                                                    );
                                                 }
                                             }))
                                             .tooltip({
@@ -1993,7 +1997,7 @@ impl EditorElement {
                                             .style(ButtonStyle::Transparent)
                                             .child(
                                                 svg()
-                                                    .path(IconName::ExpandVertical.path())
+                                                    .path(IconName::ArrowUpFromLine.path())
                                                     .size(IconSize::XSmall.rems())
                                                     .text_color(
                                                         cx.theme().colors().editor_line_number,
@@ -2010,7 +2014,11 @@ impl EditorElement {
                                             .on_click(cx.listener_for(&self.editor, {
                                                 let id = *id;
                                                 move |editor, _, cx| {
-                                                    editor.expand_excerpt(id, cx);
+                                                    editor.expand_excerpt(
+                                                        id,
+                                                        multi_buffer::ExpandExcerptDirection::Up,
+                                                        cx,
+                                                    );
                                                 }
                                             }))
                                             .tooltip({
@@ -2070,7 +2078,7 @@ impl EditorElement {
                                     .style(ButtonStyle::Transparent)
                                     .child(
                                         svg()
-                                            .path(IconName::ExpandVertical.path())
+                                            .path(IconName::ArrowDownFromLine.path())
                                             .size(IconSize::XSmall.rems())
                                             .text_color(cx.theme().colors().editor_line_number)
                                             .group("")
@@ -2083,7 +2091,11 @@ impl EditorElement {
                                     .on_click(cx.listener_for(&self.editor, {
                                         let id = *id;
                                         move |editor, _, cx| {
-                                            editor.expand_excerpt(id, cx);
+                                            editor.expand_excerpt(
+                                                id,
+                                                multi_buffer::ExpandExcerptDirection::Down,
+                                                cx,
+                                            );
                                         }
                                     }))
                                     .tooltip({

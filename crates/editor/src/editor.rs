@@ -98,7 +98,7 @@ pub use multi_buffer::{
     Anchor, AnchorRangeExt, ExcerptId, ExcerptRange, MultiBuffer, MultiBufferSnapshot, ToOffset,
     ToPoint,
 };
-use multi_buffer::{MultiBufferPoint, MultiBufferRow, ToOffsetUtf16};
+use multi_buffer::{ExpandExcerptDirection, MultiBufferPoint, MultiBufferRow, ToOffsetUtf16};
 use ordered_float::OrderedFloat;
 use parking_lot::{Mutex, RwLock};
 use project::project_settings::{GitGutterSetting, ProjectSettings};
@@ -8053,7 +8053,11 @@ impl Editor {
     pub fn expand_excerpts(&mut self, action: &ExpandExcerpts, cx: &mut ViewContext<Self>) {
         let selections = self.selections.disjoint_anchors();
 
-        let lines = if action.lines == 0 { 1 } else { action.lines };
+        let lines = if action.lines == 0 {
+            EditorSettings::get_global(cx).expand_excerpt_lines
+        } else {
+            action.lines
+        };
 
         self.buffer.update(cx, |buffer, cx| {
             buffer.expand_excerpts(
@@ -8062,14 +8066,22 @@ impl Editor {
                     .map(|selection| selection.head().excerpt_id)
                     .dedup(),
                 lines,
+                ExpandExcerptDirection::UpAndDown,
                 cx,
             )
         })
     }
 
-    pub fn expand_excerpt(&mut self, excerpt: ExcerptId, cx: &mut ViewContext<Self>) {
-        self.buffer
-            .update(cx, |buffer, cx| buffer.expand_excerpts([excerpt], 3, cx))
+    pub fn expand_excerpt(
+        &mut self,
+        excerpt: ExcerptId,
+        direction: ExpandExcerptDirection,
+        cx: &mut ViewContext<Self>,
+    ) {
+        let lines = EditorSettings::get_global(cx).expand_excerpt_lines;
+        self.buffer.update(cx, |buffer, cx| {
+            buffer.expand_excerpts([excerpt], lines, direction, cx)
+        })
     }
 
     fn go_to_diagnostic(&mut self, _: &GoToDiagnostic, cx: &mut ViewContext<Self>) {
