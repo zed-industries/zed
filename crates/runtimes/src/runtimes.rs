@@ -19,6 +19,8 @@ use runtimelib::MimeType;
 use runtimelib::{
     ExecuteRequest, JupyterClient, JupyterMessage, JupyterMessageContent, JupyterRuntime, RuntimeId,
 };
+use serde_json::Value;
+use settings::Settings as _;
 #[allow(unused_imports)]
 use settings::SettingsStore;
 use std::path::PathBuf;
@@ -26,6 +28,8 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use ui::prelude::*;
 use workspace::Workspace;
+
+use theme::{ActiveTheme, ThemeSettings};
 
 actions!(runtimes, [Run]);
 
@@ -279,7 +283,14 @@ impl RuntimeManager {
                 let range = editor.selections.newest::<usize>(cx).range();
                 let buffer = editor.buffer().read(cx).snapshot(cx);
 
-                let anchor = buffer.anchor_after(range.end);
+                let mut end = range.end;
+                // // TODO(): Put block decoration after last bit of code that isn't whitespace.
+                // //         There is no `char_at`. There's a `chars_at`, but you've gotta iterate
+                // while end > range.start && buffer.char_at(end - 1).next().is_whitespace() {
+                //     end -= 1;
+                // }
+
+                let anchor = buffer.anchor_after(end);
 
                 // For handling of markdown documents, we'll need to get the language name
                 // based on where we're at in the document.
@@ -307,20 +318,32 @@ impl RuntimeManager {
 
                 cx.spawn(|_this, mut cx| async move {
                     while let Some(update) = receiver.next().await {
-                        let el: String = match update.update {
+                        let priority_order = vec![MimeType::Plain, MimeType::Markdown];
+
+                        // A bit hacky for the moment
+                        let output: Option<(MimeType, Value)> = match update.update {
                             JupyterMessageContent::ExecuteResult(result) => {
-                                // Just pull plain for now
-                                if let Some((_, data)) = result.data.richest(&[MimeType::Plain]) {
-                                    data.to_string()
-                                } else {
-                                    continue;
-                                }
+                                result.data.richest(&priority_order)
+                            }
+                            JupyterMessageContent::DisplayData(result) => {
+                                result.data.richest(&priority_order)
+                            }
+                            JupyterMessageContent::StreamContent(result) => {
+                                Some((MimeType::Plain, Value::from(result.text)))
+                            }
+                            JupyterMessageContent::ErrorOutput(result) => {
+                                Some((MimeType::Other, Value::from(result.ename)))
                             }
                             _ => continue,
                         };
 
+                        let output = match output {
+                            Some((_mime_type, value)) => value.as_str().unwrap_or("").to_string(),
+                            None => continue,
+                        };
+
                         editor.update(&mut cx, |editor, cx| {
-                            render_output_block(editor, el.into(), anchor, cx);
+                            render_output_block(editor, output.into(), anchor, cx);
                         })?;
                     }
                     anyhow::Ok(())
@@ -337,20 +360,45 @@ fn render_output_block(
     position: Anchor,
     cx: &mut ViewContext<Editor>,
 ) {
+    // This will only work for plain text output, not sure how we'll handle images
+    let height = output.lines().count() as u8;
+
+    dbg!(height);
+
     let render = move |cx: &mut BlockContext| {
-        // Simple rendering logic to display the output as text
-        ui::Label::new(output.clone()).into_any_element()
+        let text_font = ThemeSettings::get_global(cx).buffer_font.family.clone();
+        let anchor_x = cx.anchor_x;
+        let gutter_width = cx.gutter_dimensions.width;
+
+        h_flex()
+            .w_full()
+            .border_y_1()
+            .border_color(cx.theme().colors().border)
+            .child(
+                h_flex()
+                    // .justify_center()
+                    .w(gutter_width), // .child(Icon::new(IconName::Screen).color(Color::Hint)),
+            )
+            .child(
+                h_flex()
+                    .font_family(text_font)
+                    .w_full()
+                    .ml(anchor_x - gutter_width)
+                    .mt_2()
+                    .child(output.clone()),
+            )
+            .into_any_element()
     };
 
     editor.insert_blocks(
         [BlockProperties {
             position,
-            height: 1, // You might want to adjust height based on output content
-            style: BlockStyle::Fixed,
+            height: height + 1,
+            style: BlockStyle::Sticky,
             render: Box::new(render),
             disposition: BlockDisposition::Below,
         }],
-        None, // You might want to specify a scroll strategy differently
+        None,
         cx,
     );
 }
