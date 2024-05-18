@@ -257,7 +257,7 @@ async def get_git_package_sources(
     name = package['name']
     source = package['source']
     commit = urlparse(source).fragment
-    assert commit, 'The commit needs to be indicated in the fragement part'
+    assert commit, 'The commit needs to be indicated in the fragment part'
     canonical = canonical_url(source)
     repo_url = canonical.geturl()
 
