@@ -45,6 +45,7 @@ struct DirectWriteComponent {
     in_memory_loader: IDWriteInMemoryFontFileLoader,
     builder: IDWriteFontSetBuilder1,
     text_renderer: Arc<TextRendererWrapper>,
+    rendering_params: IDWriteRenderingParams3,
 }
 
 // All use of the IUnknown methods should be "thread-safe".
@@ -86,6 +87,21 @@ impl DirectWriteComponent {
             GetUserDefaultLocaleName(&mut locale_vec);
             let locale = String::from_utf16_lossy(&locale_vec);
             let text_renderer = Arc::new(TextRendererWrapper::new(&locale));
+            let rendering_params = {
+                let default_params: IDWriteRenderingParams3 =
+                    factory.CreateRenderingParams()?.cast()?;
+                println!(
+                    "  ==> {}, {}, {}, {}, {:?}, {:?}, {:?}",
+                    default_params.GetGamma(),
+                    default_params.GetEnhancedContrast(),
+                    default_params.GetGrayscaleEnhancedContrast(),
+                    default_params.GetClearTypeLevel(),
+                    default_params.GetGridFitMode(),
+                    default_params.GetPixelGeometry(),
+                    default_params.GetRenderingMode1()
+                );
+                default_params
+            };
 
             Ok(DirectWriteComponent {
                 locale,
@@ -95,6 +111,7 @@ impl DirectWriteComponent {
                 in_memory_loader,
                 builder,
                 text_renderer,
+                rendering_params,
             })
         }
     }
@@ -820,7 +837,6 @@ impl DirectWriteState {
                 }
             } else {
                 render_target.SetAntialiasMode(D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
-                render_target.SetTextAntialiasMode(D2D1_TEXT_ANTIALIAS_MODE_GRAYSCALE);
                 let render_param = self
                     .components
                     .factory
