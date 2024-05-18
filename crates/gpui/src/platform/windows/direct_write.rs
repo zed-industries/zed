@@ -743,7 +743,6 @@ impl DirectWriteState {
             // This `cast()` action here should never fail since we are running on Win10+, and
             // ID2D1DeviceContext4 requires Win8+
             let render_target = render_target.cast::<ID2D1DeviceContext4>().unwrap();
-            render_target.SetAntialiasMode(D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
             render_target.BeginDraw();
             if params.is_emoji {
                 render_target.SetTextRenderingParams(&self.components.rendering_params.emoji);
