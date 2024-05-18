@@ -564,61 +564,6 @@ impl DirectWriteState {
         }
     }
 
-    unsafe fn get_glyphrun_analysis(
-        &self,
-        params: &RenderGlyphParams,
-    ) -> windows::core::Result<IDWriteGlyphRunAnalysis> {
-        let font = &self.fonts[params.font_id.0];
-        let glyph_id = [params.glyph_id.0 as u16];
-        let advance = [0.0f32];
-        let offset = [DWRITE_GLYPH_OFFSET::default()];
-        let glyph_run = DWRITE_GLYPH_RUN {
-            fontFace: unsafe { std::mem::transmute_copy(&font.font_face) },
-            fontEmSize: params.font_size.0,
-            glyphCount: 1,
-            glyphIndices: glyph_id.as_ptr(),
-            glyphAdvances: advance.as_ptr(),
-            glyphOffsets: offset.as_ptr(),
-            isSideways: BOOL(0),
-            bidiLevel: 0,
-        };
-        let transform = DWRITE_MATRIX {
-            m11: params.scale_factor,
-            m12: 0.0,
-            m21: 0.0,
-            m22: params.scale_factor,
-            dx: 0.0,
-            dy: 0.0,
-        };
-        self.components.factory.CreateGlyphRunAnalysis(
-            &glyph_run as _,
-            Some(&transform as _),
-            DWRITE_RENDERING_MODE1_NATURAL,
-            DWRITE_MEASURING_MODE_NATURAL,
-            DWRITE_GRID_FIT_MODE_DEFAULT,
-            DWRITE_TEXT_ANTIALIAS_MODE_CLEARTYPE,
-            0.0,
-            0.0,
-        )
-    }
-
-    // fn raster_bounds(&self, params: &RenderGlyphParams) -> Result<Bounds<DevicePixels>> {
-    //     unsafe {
-    //         let glyph_run_analysis = self.get_glyphrun_analysis(params)?;
-    //         let bounds = glyph_run_analysis.GetAlphaTextureBounds(DWRITE_TEXTURE_CLEARTYPE_3x1)?;
-
-    //         Ok(Bounds {
-    //             origin: Point {
-    //                 x: DevicePixels(bounds.left),
-    //                 y: DevicePixels(bounds.top),
-    //             },
-    //             size: Size {
-    //                 width: DevicePixels(bounds.right - bounds.left),
-    //                 height: DevicePixels(bounds.bottom - bounds.top),
-    //             },
-    //         })
-    //     }
-    // }
     fn raster_bounds(&self, params: &RenderGlyphParams) -> Result<Bounds<DevicePixels>> {
         let render_target_property = D2D1_RENDER_TARGET_PROPERTIES {
             r#type: D2D1_RENDER_TARGET_TYPE_DEFAULT,
