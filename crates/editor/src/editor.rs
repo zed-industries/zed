@@ -4577,6 +4577,7 @@ impl Editor {
                     .size(ui::ButtonSize::None)
                     .icon_color(Color::Muted)
                     .selected(is_active)
+                    .tooltip(|cx| Tooltip::text("Code Actions", cx))
                     .on_click(cx.listener(move |editor, _e, cx| {
                         editor.focus(cx);
                         editor.toggle_code_actions(
@@ -4615,6 +4616,7 @@ impl Editor {
             .size(ui::ButtonSize::None)
             .icon_color(Color::Muted)
             .selected(is_active)
+            .tooltip(|cx| Tooltip::text("Run", cx))
             .on_click(cx.listener(move |editor, _e, cx| {
                 editor.focus(cx);
                 editor.toggle_code_actions(

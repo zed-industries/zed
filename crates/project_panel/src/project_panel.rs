@@ -29,7 +29,7 @@ use std::{
     sync::Arc,
 };
 use theme::ThemeSettings;
-use ui::{prelude::*, v_flex, ContextMenu, Icon, KeyBinding, Label, ListItem};
+use ui::{prelude::*, v_flex, ContextMenu, Icon, KeyBinding, Label, ListItem, Tooltip};
 use unicase::UniCase;
 use util::{maybe, NumericPrefixWithSuffix, ResultExt, TryFutureExt};
 use workspace::{
@@ -1677,6 +1677,14 @@ impl ProjectPanel {
         let width = self.size(cx);
         let filename_text_color =
             entry_git_aware_label_color(details.git_status, details.is_ignored, is_selected);
+        let mut tooltip_text = details.path.clone().to_string_lossy().to_string();
+        if !details.is_ignored {
+            tooltip_text += details.git_status.map_or("", |v| match v {
+                GitFileStatus::Added => " • Added",
+                GitFileStatus::Conflict => " • Conflict",
+                GitFileStatus::Modified => " • Modified",
+            })
+        }
         let file_name = details.filename.clone();
         let icon = details.icon.clone();
         let depth = details.depth;
@@ -1695,6 +1703,7 @@ impl ProjectPanel {
             .on_drop(cx.listener(move |this, dragged_id: &ProjectEntryId, cx| {
                 this.move_entry(*dragged_id, entry_id, kind.is_file(), cx);
             }))
+            .tooltip(move |cx| Tooltip::text(tooltip_text.clone(), cx))
             .child(
                 ListItem::new(entry_id.to_proto() as usize)
                     .indent_level(depth)
