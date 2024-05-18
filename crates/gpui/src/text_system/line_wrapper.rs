@@ -257,7 +257,6 @@ mod tests {
         #[track_caller]
         fn assert_not_word(word: &str) {
             let found = word.chars().any(|c| !LineWrapper::is_word_char(c));
-
             assert!(found, "assertion failed for '{}'", word);
         }
 
