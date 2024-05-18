@@ -1,5 +1,5 @@
 use collections::HashMap;
-use editor::{Editor, SoftWrap};
+use editor::Editor;
 use fs::Fs;
 use fuzzy::StringMatchCandidate;
 use gpui::{prelude::FluentBuilder, *};
@@ -7,10 +7,12 @@ use language::language_settings;
 use parking_lot::RwLock;
 use picker::{Picker, PickerDelegate};
 use std::sync::Arc;
-use ui::{prelude::*, Checkbox, ContextMenu, IconButtonShape, ListItem, ListItemSpacing};
+use ui::{prelude::*, Checkbox, IconButtonShape, ListItem, ListItemSpacing};
 use util::{ResultExt, TryFutureExt};
 use uuid::Uuid;
 use workspace::ModalView;
+
+// actions!(prompt_manager, [NewPrompt, EditPrompt, SavePrompt]);
 
 use super::custom_prompts::CustomPrompt;
 
@@ -203,6 +205,19 @@ impl PromptManager {
 
         self.active_prompt_id = prompt_id;
         cx.notify();
+    }
+
+    pub fn selected_index(&self, cx: &ViewContext<Self>) -> usize {
+        self.picker.read(cx).delegate.selected_index
+    }
+
+    pub fn prompt_for_selected_index(&self, cx: &ViewContext<Self>) -> Option<PromptId> {
+        self.picker
+            .read(cx)
+            .delegate
+            .matching_prompt_ids
+            .get(self.selected_index(cx))
+            .cloned()
     }
 
     fn dismiss(&mut self, _: &menu::Cancel, cx: &mut ViewContext<Self>) {
