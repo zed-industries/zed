@@ -113,6 +113,7 @@ impl From<String> for ExecutionId {
     }
 }
 
+#[derive(Debug)]
 struct ExecutionUpdate {
     #[allow(dead_code)]
     execution_id: ExecutionId,
@@ -146,18 +147,16 @@ impl DocumentClient {
             async move {
                 loop {
                     let message = iopub.read().await?;
-                    dbg!(&message);
 
                     if let Some(parent_header) = message.parent_header {
                         let execution_id = ExecutionId::from(parent_header.msg_id);
 
                         if let Some(mut execution) = executions.lock().await.get(&execution_id) {
-                            dbg!("Got that update, brah");
                             execution
-                                .send(ExecutionUpdate {
+                                .send(dbg!(ExecutionUpdate {
                                     execution_id,
                                     update: message.content,
-                                })
+                                }))
                                 .await
                                 .ok();
                         }
@@ -174,7 +173,6 @@ impl DocumentClient {
                 while let Some(execution) = execution_request_rx.next().await {
                     let mut message: JupyterMessage = execution.request.into();
                     message.header.msg_id = execution.execution_id.0.clone();
-                    dbg!(&message);
 
                     executions
                         .lock()
@@ -218,7 +216,6 @@ impl RuntimeManager {
                     .await
                     .unwrap();
 
-                dbg!("We made the client!");
                 let join_fut = futures::future::try_join(
                     document_client.iopub_handle,
                     document_client.shell_handle,
@@ -295,18 +292,16 @@ impl RuntimeManager {
                 Some(selected_text)
             });
 
-        dbg!(&code_snippet);
-
         if let Some(code) = code_snippet {
             if let Some(model) = RuntimeManager::global(cx) {
                 let execution_id = ExecutionId::new();
-                let mut receiver = model.read(cx).execute_code(execution_id, code.clone());
+                let mut receiver = model
+                    .read(cx)
+                    .execute_code(execution_id.clone(), code.clone());
 
                 cx.spawn(|_this, _cx| async move {
-                    async move {
-                        while let Some(update) = receiver.next().await {
-                            println!("Update: {:?}", update.update);
-                        }
+                    while let Some(update) = receiver.next().await {
+                        println!("Update: {:?}", update.update);
                     }
                 })
                 .detach();

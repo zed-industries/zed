@@ -167,7 +167,7 @@
       "enter": "editor::Newline",
       "shift-enter": "editor::Newline",
       "cmd-shift-enter": "editor::NewlineAbove",
-      "cmd-enter": "editor::NewlineBelow",
+      // "cmd-enter": "editor::NewlineBelow",
       "alt-z": "editor::ToggleSoftWrap",
       "cmd-f": "buffer_search::Deploy",
       "cmd-alt-f": [
@@ -211,6 +211,14 @@
     "context": "Markdown",
     "bindings": {
       "cmd-c": "markdown::Copy"
+    }
+  },
+  {
+    "context": "Editor",
+    "bindings": {
+      // Bindings for running code in the editor
+      "cmd-enter": "runtimes::Run"
+      // "cmd-enter": "editor::NewlineAbove"
     }
   },
   {
