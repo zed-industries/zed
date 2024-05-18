@@ -10,6 +10,7 @@ pub struct Model {
     pub name: String,
     pub user_id: UserId,
     pub hashed_token: String,
+    pub ssh_connection_string: Option<String>,
 }
 
 impl ActiveModelBehavior for ActiveModel {}
@@ -32,6 +33,7 @@ impl Model {
             dev_server_id: self.id.to_proto(),
             name: self.name.clone(),
             status: status as i32,
+            ssh_connection_string: self.ssh_connection_string.clone(),
         }
     }
 }

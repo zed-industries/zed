@@ -2,7 +2,7 @@
 
 use std::sync::Arc;
 
-use futures::StreamExt;
+use futures::{channel::mpsc::UnboundedSender, StreamExt};
 use gpui::AppContext;
 use parking_lot::RwLock;
 use serde::Deserialize;
@@ -17,15 +17,18 @@ pub struct StaticSource {
 }
 
 /// A Wrapper around deserializable T that keeps track of its contents
-/// via a provided channel. Once T value changes, the observers of [`TrackedFile`] are
-/// notified.
+/// via a provided channel.
 pub struct TrackedFile<T> {
     parsed_contents: Arc<RwLock<T>>,
 }
 
 impl<T: PartialEq + 'static + Sync> TrackedFile<T> {
     /// Initializes new [`TrackedFile`] with a type that's deserializable.
-    pub fn new(mut tracker: UnboundedReceiver<String>, cx: &mut AppContext) -> Self
+    pub fn new(
+        mut tracker: UnboundedReceiver<String>,
+        notification_outlet: UnboundedSender<()>,
+        cx: &mut AppContext,
+    ) -> Self
     where
         T: for<'a> Deserialize<'a> + Default + Send,
     {
@@ -46,7 +49,13 @@ impl<T: PartialEq + 'static + Sync> TrackedFile<T> {
                                 continue;
                             };
                             let mut contents = parsed_contents.write();
-                            *contents = new_contents;
+                            if *contents != new_contents {
+                                *contents = new_contents;
+                                if notification_outlet.unbounded_send(()).is_err() {
+                                    // Whoever cared about contents is not around anymore.
+                                    break;
+                                }
+                            }
                         }
                     }
                     anyhow::Ok(())
@@ -59,6 +68,7 @@ impl<T: PartialEq + 'static + Sync> TrackedFile<T> {
     /// Initializes new [`TrackedFile`] with a type that's convertible from another deserializable type.
     pub fn new_convertible<U: for<'a> Deserialize<'a> + TryInto<T, Error = anyhow::Error>>(
         mut tracker: UnboundedReceiver<String>,
+        notification_outlet: UnboundedSender<()>,
         cx: &mut AppContext,
     ) -> Self
     where
@@ -85,7 +95,13 @@ impl<T: PartialEq + 'static + Sync> TrackedFile<T> {
                                 continue;
                             };
                             let mut contents = parsed_contents.write();
-                            *contents = new_contents;
+                            if *contents != new_contents {
+                                *contents = new_contents;
+                                if notification_outlet.unbounded_send(()).is_err() {
+                                    // Whoever cared about contents is not around anymore.
+                                    break;
+                                }
+                            }
                         }
                     }
                     anyhow::Ok(())

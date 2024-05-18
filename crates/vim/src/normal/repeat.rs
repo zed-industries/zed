@@ -222,32 +222,32 @@ mod test {
 
         // "o"
         cx.set_shared_state("ˇhello").await;
-        cx.simulate_shared_keystrokes(["o", "w", "o", "r", "l", "d", "escape"])
-            .await;
-        cx.assert_shared_state("hello\nworlˇd").await;
-        cx.simulate_shared_keystrokes(["."]).await;
-        cx.assert_shared_state("hello\nworld\nworlˇd").await;
+        cx.simulate_shared_keystrokes("o w o r l d escape").await;
+        cx.shared_state().await.assert_eq("hello\nworlˇd");
+        cx.simulate_shared_keystrokes(".").await;
+        cx.shared_state().await.assert_eq("hello\nworld\nworlˇd");
 
         // "d"
-        cx.simulate_shared_keystrokes(["^", "d", "f", "o"]).await;
-        cx.simulate_shared_keystrokes(["g", "g", "."]).await;
-        cx.assert_shared_state("ˇ\nworld\nrld").await;
+        cx.simulate_shared_keystrokes("^ d f o").await;
+        cx.simulate_shared_keystrokes("g g .").await;
+        cx.shared_state().await.assert_eq("ˇ\nworld\nrld");
 
         // "p" (note that it pastes the current clipboard)
-        cx.simulate_shared_keystrokes(["j", "y", "y", "p"]).await;
-        cx.simulate_shared_keystrokes(["shift-g", "y", "y", "."])
-            .await;
-        cx.assert_shared_state("\nworld\nworld\nrld\nˇrld").await;
+        cx.simulate_shared_keystrokes("j y y p").await;
+        cx.simulate_shared_keystrokes("shift-g y y .").await;
+        cx.shared_state()
+            .await
+            .assert_eq("\nworld\nworld\nrld\nˇrld");
 
         // "~" (note that counts apply to the action taken, not . itself)
         cx.set_shared_state("ˇthe quick brown fox").await;
-        cx.simulate_shared_keystrokes(["2", "~", "."]).await;
+        cx.simulate_shared_keystrokes("2 ~ .").await;
         cx.set_shared_state("THE ˇquick brown fox").await;
-        cx.simulate_shared_keystrokes(["3", "."]).await;
+        cx.simulate_shared_keystrokes("3 .").await;
         cx.set_shared_state("THE QUIˇck brown fox").await;
         cx.run_until_parked();
-        cx.simulate_shared_keystrokes(["."]).await;
-        cx.assert_shared_state("THE QUICK ˇbrown fox").await;
+        cx.simulate_shared_keystrokes(".").await;
+        cx.shared_state().await.assert_eq("THE QUICK ˇbrown fox");
     }
 
     #[gpui::test]
@@ -255,16 +255,16 @@ mod test {
         let mut cx = VimTestContext::new(cx, true).await;
 
         cx.set_state("hˇllo", Mode::Normal);
-        cx.simulate_keystrokes(["i"]);
+        cx.simulate_keystrokes("i");
 
         // simulate brazilian input for ä.
         cx.update_editor(|editor, cx| {
             editor.replace_and_mark_text_in_range(None, "\"", Some(1..1), cx);
             editor.replace_text_in_range(None, "ä", cx);
         });
-        cx.simulate_keystrokes(["escape"]);
+        cx.simulate_keystrokes("escape");
         cx.assert_state("hˇällo", Mode::Normal);
-        cx.simulate_keystrokes(["."]);
+        cx.simulate_keystrokes(".");
         cx.assert_state("hˇäällo", Mode::Normal);
     }
 
@@ -316,11 +316,11 @@ mod test {
                     },
                 ])))
             });
-        cx.simulate_keystrokes(["a", "."]);
+        cx.simulate_keystrokes("a .");
         request.next().await;
         cx.condition(|editor, _| editor.context_menu_visible())
             .await;
-        cx.simulate_keystrokes(["down", "enter", "!", "escape"]);
+        cx.simulate_keystrokes("down enter ! escape");
 
         cx.assert_state(
             indoc! {"
@@ -330,7 +330,7 @@ mod test {
             "},
             Mode::Normal,
         );
-        cx.simulate_keystrokes(["j", "."]);
+        cx.simulate_keystrokes("j .");
         cx.assert_state(
             indoc! {"
                 one.second!
@@ -352,27 +352,23 @@ mod test {
             the lazy dog"
         })
         .await;
-        cx.simulate_shared_keystrokes(["v", "i", "w", "s", "o", "escape"])
-            .await;
-        cx.assert_shared_state(indoc! {
+        cx.simulate_shared_keystrokes("v i w s o escape").await;
+        cx.shared_state().await.assert_eq(indoc! {
             "ˇo quick brown
             fox jumps over
             the lazy dog"
-        })
-        .await;
-        cx.simulate_shared_keystrokes(["j", "w", "."]).await;
-        cx.assert_shared_state(indoc! {
+        });
+        cx.simulate_shared_keystrokes("j w .").await;
+        cx.shared_state().await.assert_eq(indoc! {
             "o quick brown
             fox ˇops over
             the lazy dog"
-        })
-        .await;
-        cx.simulate_shared_keystrokes(["f", "r", "."]).await;
-        cx.assert_shared_state(indoc! {
+        });
+        cx.simulate_shared_keystrokes("f r .").await;
+        cx.shared_state().await.assert_eq(indoc! {
             "o quick brown
             fox ops oveˇothe lazy dog"
-        })
-        .await;
+        });
 
         // visual
         cx.set_shared_state(indoc! {
@@ -383,33 +379,29 @@ mod test {
             the lazy dog"
         })
         .await;
-        cx.simulate_shared_keystrokes(["v", "j", "x"]).await;
-        cx.assert_shared_state(indoc! {
+        cx.simulate_shared_keystrokes("v j x").await;
+        cx.shared_state().await.assert_eq(indoc! {
             "the ˇumps over
             fox jumps over
             fox jumps over
             the lazy dog"
-        })
-        .await;
-        cx.simulate_shared_keystrokes(["."]).await;
-        cx.assert_shared_state(indoc! {
+        });
+        cx.simulate_shared_keystrokes(".").await;
+        cx.shared_state().await.assert_eq(indoc! {
             "the ˇumps over
             fox jumps over
             the lazy dog"
-        })
-        .await;
-        cx.simulate_shared_keystrokes(["w", "."]).await;
-        cx.assert_shared_state(indoc! {
+        });
+        cx.simulate_shared_keystrokes("w .").await;
+        cx.shared_state().await.assert_eq(indoc! {
             "the umps ˇumps over
             the lazy dog"
-        })
-        .await;
-        cx.simulate_shared_keystrokes(["j", "."]).await;
-        cx.assert_shared_state(indoc! {
+        });
+        cx.simulate_shared_keystrokes("j .").await;
+        cx.shared_state().await.assert_eq(indoc! {
             "the umps umps over
             the ˇog"
-        })
-        .await;
+        });
 
         // block mode (3 rows)
         cx.set_shared_state(indoc! {
@@ -418,21 +410,19 @@ mod test {
             the lazy dog"
         })
         .await;
-        cx.simulate_shared_keystrokes(["ctrl-v", "j", "j", "shift-i", "o", "escape"])
+        cx.simulate_shared_keystrokes("ctrl-v j j shift-i o escape")
             .await;
-        cx.assert_shared_state(indoc! {
+        cx.shared_state().await.assert_eq(indoc! {
             "ˇothe quick brown
             ofox jumps over
             othe lazy dog"
-        })
-        .await;
-        cx.simulate_shared_keystrokes(["j", "4", "l", "."]).await;
-        cx.assert_shared_state(indoc! {
+        });
+        cx.simulate_shared_keystrokes("j 4 l .").await;
+        cx.shared_state().await.assert_eq(indoc! {
             "othe quick brown
             ofoxˇo jumps over
             otheo lazy dog"
-        })
-        .await;
+        });
 
         // line mode
         cx.set_shared_state(indoc! {
@@ -441,21 +431,19 @@ mod test {
             the lazy dog"
         })
         .await;
-        cx.simulate_shared_keystrokes(["shift-v", "shift-r", "o", "escape"])
+        cx.simulate_shared_keystrokes("shift-v shift-r o escape")
             .await;
-        cx.assert_shared_state(indoc! {
+        cx.shared_state().await.assert_eq(indoc! {
             "ˇo
             fox jumps over
             the lazy dog"
-        })
-        .await;
-        cx.simulate_shared_keystrokes(["j", "."]).await;
-        cx.assert_shared_state(indoc! {
+        });
+        cx.simulate_shared_keystrokes("j .").await;
+        cx.shared_state().await.assert_eq(indoc! {
             "o
             ˇo
             the lazy dog"
-        })
-        .await;
+        });
     }
 
     #[gpui::test]
@@ -468,27 +456,24 @@ mod test {
             the lazy dog"
         })
         .await;
-        cx.simulate_shared_keystrokes(["3", "d", "3", "l"]).await;
-        cx.assert_shared_state(indoc! {
+        cx.simulate_shared_keystrokes("3 d 3 l").await;
+        cx.shared_state().await.assert_eq(indoc! {
             "ˇ brown
             fox jumps over
             the lazy dog"
-        })
-        .await;
-        cx.simulate_shared_keystrokes(["j", "."]).await;
-        cx.assert_shared_state(indoc! {
+        });
+        cx.simulate_shared_keystrokes("j .").await;
+        cx.shared_state().await.assert_eq(indoc! {
             " brown
             ˇ over
             the lazy dog"
-        })
-        .await;
-        cx.simulate_shared_keystrokes(["j", "2", "."]).await;
-        cx.assert_shared_state(indoc! {
+        });
+        cx.simulate_shared_keystrokes("j 2 .").await;
+        cx.shared_state().await.assert_eq(indoc! {
             " brown
              over
             ˇe lazy dog"
-        })
-        .await;
+        });
     }
 
     #[gpui::test]
@@ -496,8 +481,8 @@ mod test {
         let mut cx = VimTestContext::new(cx, true).await;
 
         cx.set_state("ˇhello\n", Mode::Normal);
-        cx.simulate_keystrokes(["4", "i", "j", "cmd-shift-p", "escape"]);
-        cx.simulate_keystrokes(["escape"]);
+        cx.simulate_keystrokes("4 i j cmd-shift-p escape");
+        cx.simulate_keystrokes("escape");
         cx.assert_state("ˇjhello\n", Mode::Normal);
     }
 
@@ -506,11 +491,10 @@ mod test {
         let mut cx = NeovimBackedTestContext::new(cx).await;
 
         cx.set_shared_state("ˇhello hello hello\n").await;
-        cx.simulate_shared_keystrokes(["c", "f", "o", "x", "escape"])
-            .await;
-        cx.assert_shared_state("ˇx hello hello\n").await;
-        cx.simulate_shared_keystrokes([":", "escape"]).await;
-        cx.simulate_shared_keystrokes(["."]).await;
-        cx.assert_shared_state("ˇx hello\n").await;
+        cx.simulate_shared_keystrokes("c f o x escape").await;
+        cx.shared_state().await.assert_eq("ˇx hello hello\n");
+        cx.simulate_shared_keystrokes(": escape").await;
+        cx.simulate_shared_keystrokes(".").await;
+        cx.shared_state().await.assert_eq("ˇx hello\n");
     }
 }

@@ -8,6 +8,7 @@ use clock::FakeSystemClock;
 use fs::{FakeFs, Fs, RealFs, RemoveOptions};
 use git::{repository::GitFileStatus, GITIGNORE};
 use gpui::{BorrowAppContext, ModelContext, Task, TestAppContext};
+use http::FakeHttpClient;
 use parking_lot::Mutex;
 use postage::stream::Stream;
 use pretty_assertions::assert_eq;
@@ -21,7 +22,7 @@ use std::{
     path::{Path, PathBuf},
     sync::Arc,
 };
-use util::{http::FakeHttpClient, test::temp_tree, ResultExt};
+use util::{test::temp_tree, ResultExt};
 
 #[gpui::test]
 async fn test_traversal(cx: &mut TestAppContext) {
@@ -2239,8 +2240,9 @@ async fn test_git_status(cx: &mut TestAppContext) {
     tree.read_with(cx, |tree, _cx| {
         let snapshot = tree.snapshot();
         assert_eq!(snapshot.repositories().count(), 1);
-        let (dir, _) = snapshot.repositories().next().unwrap();
+        let (dir, repo_entry) = snapshot.repositories().next().unwrap();
         assert_eq!(dir.as_ref(), Path::new("project"));
+        assert!(repo_entry.location_in_repo.is_none());
 
         assert_eq!(
             snapshot.status_for_file(project_path.join(B_TXT)),
@@ -2365,6 +2367,96 @@ async fn test_git_status(cx: &mut TestAppContext) {
             ),
             Some(GitFileStatus::Added)
         );
+    });
+}
+
+#[gpui::test]
+async fn test_repository_subfolder_git_status(cx: &mut TestAppContext) {
+    init_test(cx);
+    cx.executor().allow_parking();
+
+    let root = temp_tree(json!({
+        "my-repo": {
+            // .git folder will go here
+            "a.txt": "a",
+            "sub-folder-1": {
+                "sub-folder-2": {
+                    "c.txt": "cc",
+                    "d": {
+                        "e.txt": "eee"
+                    }
+                },
+            }
+        },
+
+    }));
+
+    const C_TXT: &str = "sub-folder-1/sub-folder-2/c.txt";
+    const E_TXT: &str = "sub-folder-1/sub-folder-2/d/e.txt";
+
+    // Set up git repository before creating the worktree.
+    let git_repo_work_dir = root.path().join("my-repo");
+    let repo = git_init(git_repo_work_dir.as_path());
+    git_add(C_TXT, &repo);
+    git_commit("Initial commit", &repo);
+
+    // Open the worktree in subfolder
+    let project_root = Path::new("my-repo/sub-folder-1/sub-folder-2");
+    let tree = Worktree::local(
+        build_client(cx),
+        root.path().join(project_root),
+        true,
+        Arc::new(RealFs::default()),
+        Default::default(),
+        &mut cx.to_async(),
+    )
+    .await
+    .unwrap();
+
+    tree.flush_fs_events(cx).await;
+    tree.flush_fs_events_in_root_git_repository(cx).await;
+    cx.read(|cx| tree.read(cx).as_local().unwrap().scan_complete())
+        .await;
+    cx.executor().run_until_parked();
+
+    // Ensure that the git status is loaded correctly
+    tree.read_with(cx, |tree, _cx| {
+        let snapshot = tree.snapshot();
+        assert_eq!(snapshot.repositories().count(), 1);
+        let (dir, repo_entry) = snapshot.repositories().next().unwrap();
+        // Path is blank because the working directory of
+        // the git repository is located at the root of the project
+        assert_eq!(dir.as_ref(), Path::new(""));
+
+        // This is the missing path between the root of the project (sub-folder-2) and its
+        // location relative to the root of the repository.
+        assert_eq!(
+            repo_entry.location_in_repo,
+            Some(Arc::from(Path::new("sub-folder-1/sub-folder-2")))
+        );
+
+        assert_eq!(snapshot.status_for_file("c.txt"), None);
+        assert_eq!(
+            snapshot.status_for_file("d/e.txt"),
+            Some(GitFileStatus::Added)
+        );
+    });
+
+    // Now we simulate FS events, but ONLY in the .git folder that's outside
+    // of out project root.
+    // Meaning: we don't produce any FS events for files inside the project.
+    git_add(E_TXT, &repo);
+    git_commit("Second commit", &repo);
+    tree.flush_fs_events_in_root_git_repository(cx).await;
+    cx.executor().run_until_parked();
+
+    tree.read_with(cx, |tree, _cx| {
+        let snapshot = tree.snapshot();
+
+        assert!(snapshot.repositories().next().is_some());
+
+        assert_eq!(snapshot.status_for_file("c.txt"), None);
+        assert_eq!(snapshot.status_for_file("d/e.txt"), None);
     });
 }
 

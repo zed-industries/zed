@@ -118,38 +118,33 @@ impl ThemeRegistry {
             };
             player_colors.merge(&user_theme.style.players);
 
-            let mut syntax_colors = match user_theme.appearance {
-                AppearanceContent::Light => SyntaxTheme::light(),
-                AppearanceContent::Dark => SyntaxTheme::dark(),
-            };
+            let syntax_highlights = user_theme
+                .style
+                .syntax
+                .iter()
+                .map(|(syntax_token, highlight)| {
+                    (
+                        syntax_token.clone(),
+                        HighlightStyle {
+                            color: highlight
+                                .color
+                                .as_ref()
+                                .and_then(|color| try_parse_color(color).ok()),
+                            font_style: highlight.font_style.map(Into::into),
+                            font_weight: highlight.font_weight.map(Into::into),
+                            ..Default::default()
+                        },
+                    )
+                })
+                .collect::<Vec<_>>();
+            let syntax_theme =
+                SyntaxTheme::merge(Arc::new(SyntaxTheme::default()), syntax_highlights);
 
             let window_background_appearance = user_theme
                 .style
                 .window_background_appearance
                 .map(Into::into)
                 .unwrap_or_default();
-
-            if !user_theme.style.syntax.is_empty() {
-                syntax_colors.highlights = user_theme
-                    .style
-                    .syntax
-                    .iter()
-                    .map(|(syntax_token, highlight)| {
-                        (
-                            syntax_token.clone(),
-                            HighlightStyle {
-                                color: highlight
-                                    .color
-                                    .as_ref()
-                                    .and_then(|color| try_parse_color(color).ok()),
-                                font_style: highlight.font_style.map(Into::into),
-                                font_weight: highlight.font_weight.map(Into::into),
-                                ..Default::default()
-                            },
-                        )
-                    })
-                    .collect::<Vec<_>>();
-            }
 
             Theme {
                 id: uuid::Uuid::new_v4().to_string(),
@@ -164,7 +159,7 @@ impl ThemeRegistry {
                     colors: theme_colors,
                     status: status_colors,
                     player: player_colors,
-                    syntax: Arc::new(syntax_colors),
+                    syntax: syntax_theme,
                     accents: Vec::new(),
                 },
             }

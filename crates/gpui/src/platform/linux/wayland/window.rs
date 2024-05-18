@@ -2,6 +2,7 @@ use std::any::Any;
 use std::cell::{Ref, RefCell, RefMut};
 use std::ffi::c_void;
 use std::num::NonZeroU32;
+use std::ops::Range;
 use std::ptr::NonNull;
 use std::rc::{Rc, Weak};
 use std::sync::Arc;
@@ -23,12 +24,13 @@ use wayland_protocols_plasma::blur::client::{org_kde_kwin_blur, org_kde_kwin_blu
 
 use crate::platform::blade::{BladeRenderer, BladeSurfaceConfig};
 use crate::platform::linux::wayland::display::WaylandDisplay;
+use crate::platform::linux::wayland::serial::SerialKind;
 use crate::platform::{PlatformAtlas, PlatformInputHandler, PlatformWindow};
 use crate::scene::Scene;
 use crate::{
     px, size, Bounds, DevicePixels, Globals, Modifiers, Pixels, PlatformDisplay, PlatformInput,
-    Point, PromptLevel, Size, WaylandClientState, WaylandClientStatePtr, WindowAppearance,
-    WindowBackgroundAppearance, WindowBounds, WindowParams,
+    Point, PromptLevel, Size, WaylandClientStatePtr, WindowAppearance, WindowBackgroundAppearance,
+    WindowBounds, WindowParams,
 };
 
 #[derive(Default)]
@@ -161,6 +163,11 @@ impl WaylandWindowState {
 }
 
 pub(crate) struct WaylandWindow(pub WaylandWindowStatePtr);
+pub enum ImeInput {
+    InsertText(String),
+    SetMarkedText(String),
+    DeleteText,
+}
 
 impl Drop for WaylandWindow {
     fn drop(&mut self) {
@@ -422,6 +429,40 @@ impl WaylandWindowStatePtr {
             }
             _ => {}
         }
+    }
+
+    pub fn handle_ime(&self, ime: ImeInput) {
+        let mut state = self.state.borrow_mut();
+        if let Some(mut input_handler) = state.input_handler.take() {
+            drop(state);
+            match ime {
+                ImeInput::InsertText(text) => {
+                    input_handler.replace_text_in_range(None, &text);
+                }
+                ImeInput::SetMarkedText(text) => {
+                    input_handler.replace_and_mark_text_in_range(None, &text, None);
+                }
+                ImeInput::DeleteText => {
+                    if let Some(marked) = input_handler.marked_text_range() {
+                        input_handler.replace_text_in_range(Some(marked), "");
+                    }
+                }
+            }
+            self.state.borrow_mut().input_handler = Some(input_handler);
+        }
+    }
+
+    pub fn get_ime_area(&self) -> Option<Bounds<Pixels>> {
+        let mut state = self.state.borrow_mut();
+        let mut bounds: Option<Bounds<Pixels>> = None;
+        if let Some(mut input_handler) = state.input_handler.take() {
+            drop(state);
+            if let Some(range) = input_handler.selected_text_range() {
+                bounds = input_handler.bounds_for_range(range);
+            }
+            self.state.borrow_mut().input_handler = Some(input_handler);
+        }
+        bounds
     }
 
     pub fn set_size_and_scale(
@@ -752,6 +793,27 @@ impl PlatformWindow for WaylandWindow {
     fn sprite_atlas(&self) -> Arc<dyn PlatformAtlas> {
         let state = self.borrow();
         state.renderer.sprite_atlas().clone()
+    }
+
+    fn show_window_menu(&self, position: Point<Pixels>) {
+        let state = self.borrow();
+        let serial = state.client.get_serial(SerialKind::MousePress);
+        state.toplevel.show_window_menu(
+            &state.globals.seat,
+            serial,
+            position.x.0 as i32,
+            position.y.0 as i32,
+        );
+    }
+
+    fn start_system_move(&self) {
+        let state = self.borrow();
+        let serial = state.client.get_serial(SerialKind::MousePress);
+        state.toplevel._move(&state.globals.seat, serial);
+    }
+
+    fn should_render_window_controls(&self) -> bool {
+        self.borrow().decoration_state == WaylandDecorationState::Client
     }
 }
 

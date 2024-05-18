@@ -5,6 +5,10 @@ edition = "2021"
 publish = false
 license = "AGPL-3.0-or-later"
 
+[features]
+default = []
+schemars = ["dep:schemars"]
+
 [lints]
 workspace = true
 
@@ -14,9 +18,11 @@ path = "src/anthropic.rs"
 [dependencies]
 anyhow.workspace = true
 futures.workspace = true
+http.workspace = true
+isahc.workspace = true
+schemars = { workspace = true, optional = true }
 serde.workspace = true
 serde_json.workspace = true
-util.workspace = true
 
 [dev-dependencies]
 tokio.workspace = true

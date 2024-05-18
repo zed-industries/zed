@@ -169,329 +169,401 @@ mod test {
 
     #[gpui::test]
     async fn test_change_h(cx: &mut gpui::TestAppContext) {
-        let mut cx = NeovimBackedTestContext::new(cx).await.binding(["c", "h"]);
-        cx.assert("Teˇst").await;
-        cx.assert("Tˇest").await;
-        cx.assert("ˇTest").await;
-        cx.assert(indoc! {"
+        let mut cx = NeovimBackedTestContext::new(cx).await;
+        cx.simulate("c h", "Teˇst").await.assert_matches();
+        cx.simulate("c h", "Tˇest").await.assert_matches();
+        cx.simulate("c h", "ˇTest").await.assert_matches();
+        cx.simulate(
+            "c h",
+            indoc! {"
             Test
-            ˇtest"})
-            .await;
+            ˇtest"},
+        )
+        .await
+        .assert_matches();
     }
 
     #[gpui::test]
     async fn test_change_backspace(cx: &mut gpui::TestAppContext) {
-        let mut cx = NeovimBackedTestContext::new(cx)
-            .await
-            .binding(["c", "backspace"]);
-        cx.assert("Teˇst").await;
-        cx.assert("Tˇest").await;
-        cx.assert("ˇTest").await;
-        cx.assert(indoc! {"
+        let mut cx = NeovimBackedTestContext::new(cx).await;
+        cx.simulate("c backspace", "Teˇst").await.assert_matches();
+        cx.simulate("c backspace", "Tˇest").await.assert_matches();
+        cx.simulate("c backspace", "ˇTest").await.assert_matches();
+        cx.simulate(
+            "c backspace",
+            indoc! {"
             Test
-            ˇtest"})
-            .await;
+            ˇtest"},
+        )
+        .await
+        .assert_matches();
     }
 
     #[gpui::test]
     async fn test_change_l(cx: &mut gpui::TestAppContext) {
-        let mut cx = NeovimBackedTestContext::new(cx).await.binding(["c", "l"]);
-        cx.assert("Teˇst").await;
-        cx.assert("Tesˇt").await;
+        let mut cx = NeovimBackedTestContext::new(cx).await;
+        cx.simulate("c l", "Teˇst").await.assert_matches();
+        cx.simulate("c l", "Tesˇt").await.assert_matches();
     }
 
     #[gpui::test]
     async fn test_change_w(cx: &mut gpui::TestAppContext) {
-        let mut cx = NeovimBackedTestContext::new(cx).await.binding(["c", "w"]);
-        cx.assert("Teˇst").await;
-        cx.assert("Tˇest test").await;
-        cx.assert("Testˇ  test").await;
-        cx.assert("Tesˇt  test").await;
-        cx.assert(indoc! {"
+        let mut cx = NeovimBackedTestContext::new(cx).await;
+        cx.simulate("c w", "Teˇst").await.assert_matches();
+        cx.simulate("c w", "Tˇest test").await.assert_matches();
+        cx.simulate("c w", "Testˇ  test").await.assert_matches();
+        cx.simulate("c w", "Tesˇt  test").await.assert_matches();
+        cx.simulate(
+            "c w",
+            indoc! {"
                 Test teˇst
-                test"})
-            .await;
-        cx.assert(indoc! {"
+                test"},
+        )
+        .await
+        .assert_matches();
+        cx.simulate(
+            "c w",
+            indoc! {"
                 Test tesˇt
-                test"})
-            .await;
-        cx.assert(indoc! {"
+                test"},
+        )
+        .await
+        .assert_matches();
+        cx.simulate(
+            "c w",
+            indoc! {"
                 Test test
                 ˇ
-                test"})
-            .await;
+                test"},
+        )
+        .await
+        .assert_matches();
 
-        let mut cx = cx.binding(["c", "shift-w"]);
-        cx.assert("Test teˇst-test test").await;
+        cx.simulate("c shift-w", "Test teˇst-test test")
+            .await
+            .assert_matches();
     }
 
     #[gpui::test]
     async fn test_change_e(cx: &mut gpui::TestAppContext) {
-        let mut cx = NeovimBackedTestContext::new(cx).await.binding(["c", "e"]);
-        cx.assert("Teˇst Test").await;
-        cx.assert("Tˇest test").await;
-        cx.assert(indoc! {"
+        let mut cx = NeovimBackedTestContext::new(cx).await;
+        cx.simulate("c e", "Teˇst Test").await.assert_matches();
+        cx.simulate("c e", "Tˇest test").await.assert_matches();
+        cx.simulate(
+            "c e",
+            indoc! {"
                 Test teˇst
-                test"})
-            .await;
-        cx.assert(indoc! {"
+                test"},
+        )
+        .await
+        .assert_matches();
+        cx.simulate(
+            "c e",
+            indoc! {"
                 Test tesˇt
-                test"})
-            .await;
-        cx.assert(indoc! {"
+                test"},
+        )
+        .await
+        .assert_matches();
+        cx.simulate(
+            "c e",
+            indoc! {"
                 Test test
                 ˇ
-                test"})
-            .await;
+                test"},
+        )
+        .await
+        .assert_matches();
 
-        let mut cx = cx.binding(["c", "shift-e"]);
-        cx.assert("Test teˇst-test test").await;
+        cx.simulate("c shift-e", "Test teˇst-test test")
+            .await
+            .assert_matches();
     }
 
     #[gpui::test]
     async fn test_change_b(cx: &mut gpui::TestAppContext) {
-        let mut cx = NeovimBackedTestContext::new(cx).await.binding(["c", "b"]);
-        cx.assert("Teˇst Test").await;
-        cx.assert("Test ˇtest").await;
-        cx.assert("Test1 test2 ˇtest3").await;
-        cx.assert(indoc! {"
+        let mut cx = NeovimBackedTestContext::new(cx).await;
+        cx.simulate("c b", "Teˇst Test").await.assert_matches();
+        cx.simulate("c b", "Test ˇtest").await.assert_matches();
+        cx.simulate("c b", "Test1 test2 ˇtest3")
+            .await
+            .assert_matches();
+        cx.simulate(
+            "c b",
+            indoc! {"
                 Test test
-                ˇtest"})
-            .await;
-        cx.assert(indoc! {"
+                ˇtest"},
+        )
+        .await
+        .assert_matches();
+        cx.simulate(
+            "c b",
+            indoc! {"
                 Test test
                 ˇ
-                test"})
-            .await;
+                test"},
+        )
+        .await
+        .assert_matches();
 
-        let mut cx = cx.binding(["c", "shift-b"]);
-        cx.assert("Test test-test ˇtest").await;
+        cx.simulate("c shift-b", "Test test-test ˇtest")
+            .await
+            .assert_matches();
     }
 
     #[gpui::test]
     async fn test_change_end_of_line(cx: &mut gpui::TestAppContext) {
-        let mut cx = NeovimBackedTestContext::new(cx).await.binding(["c", "$"]);
-        cx.assert(indoc! {"
+        let mut cx = NeovimBackedTestContext::new(cx).await;
+        cx.simulate(
+            "c $",
+            indoc! {"
             The qˇuick
-            brown fox"})
-            .await;
-        cx.assert(indoc! {"
+            brown fox"},
+        )
+        .await
+        .assert_matches();
+        cx.simulate(
+            "c $",
+            indoc! {"
             The quick
             ˇ
-            brown fox"})
-            .await;
+            brown fox"},
+        )
+        .await
+        .assert_matches();
     }
 
     #[gpui::test]
     async fn test_change_0(cx: &mut gpui::TestAppContext) {
         let mut cx = NeovimBackedTestContext::new(cx).await;
 
-        cx.assert_neovim_compatible(
+        cx.simulate(
+            "c 0",
             indoc! {"
             The qˇuick
             brown fox"},
-            ["c", "0"],
         )
-        .await;
-        cx.assert_neovim_compatible(
+        .await
+        .assert_matches();
+        cx.simulate(
+            "c 0",
             indoc! {"
             The quick
             ˇ
             brown fox"},
-            ["c", "0"],
         )
-        .await;
+        .await
+        .assert_matches();
     }
 
     #[gpui::test]
     async fn test_change_k(cx: &mut gpui::TestAppContext) {
         let mut cx = NeovimBackedTestContext::new(cx).await;
 
-        cx.assert_neovim_compatible(
+        cx.simulate(
+            "c k",
             indoc! {"
             The quick
             brown ˇfox
             jumps over"},
-            ["c", "k"],
         )
-        .await;
-        cx.assert_neovim_compatible(
+        .await
+        .assert_matches();
+        cx.simulate(
+            "c k",
             indoc! {"
             The quick
             brown fox
             jumps ˇover"},
-            ["c", "k"],
         )
-        .await;
-        cx.assert_neovim_compatible(
+        .await
+        .assert_matches();
+        cx.simulate(
+            "c k",
             indoc! {"
             The qˇuick
             brown fox
             jumps over"},
-            ["c", "k"],
         )
-        .await;
-        cx.assert_neovim_compatible(
+        .await
+        .assert_matches();
+        cx.simulate(
+            "c k",
             indoc! {"
             ˇ
             brown fox
             jumps over"},
-            ["c", "k"],
         )
-        .await;
+        .await
+        .assert_matches();
     }
 
     #[gpui::test]
     async fn test_change_j(cx: &mut gpui::TestAppContext) {
         let mut cx = NeovimBackedTestContext::new(cx).await;
-        cx.assert_neovim_compatible(
+        cx.simulate(
+            "c j",
             indoc! {"
             The quick
             brown ˇfox
             jumps over"},
-            ["c", "j"],
         )
-        .await;
-        cx.assert_neovim_compatible(
+        .await
+        .assert_matches();
+        cx.simulate(
+            "c j",
             indoc! {"
             The quick
             brown fox
             jumps ˇover"},
-            ["c", "j"],
         )
-        .await;
-        cx.assert_neovim_compatible(
+        .await
+        .assert_matches();
+        cx.simulate(
+            "c j",
             indoc! {"
             The qˇuick
             brown fox
             jumps over"},
-            ["c", "j"],
         )
-        .await;
-        cx.assert_neovim_compatible(
+        .await
+        .assert_matches();
+        cx.simulate(
+            "c j",
             indoc! {"
             The quick
             brown fox
             ˇ"},
-            ["c", "j"],
         )
-        .await;
+        .await
+        .assert_matches();
     }
 
     #[gpui::test]
     async fn test_change_end_of_document(cx: &mut gpui::TestAppContext) {
         let mut cx = NeovimBackedTestContext::new(cx).await;
-        cx.assert_neovim_compatible(
+        cx.simulate(
+            "c shift-g",
             indoc! {"
             The quick
             brownˇ fox
             jumps over
             the lazy"},
-            ["c", "shift-g"],
         )
-        .await;
-        cx.assert_neovim_compatible(
+        .await
+        .assert_matches();
+        cx.simulate(
+            "c shift-g",
             indoc! {"
             The quick
             brownˇ fox
             jumps over
             the lazy"},
-            ["c", "shift-g"],
         )
-        .await;
-        cx.assert_neovim_compatible(
+        .await
+        .assert_matches();
+        cx.simulate(
+            "c shift-g",
             indoc! {"
             The quick
             brown fox
             jumps over
             the lˇazy"},
-            ["c", "shift-g"],
         )
-        .await;
-        cx.assert_neovim_compatible(
+        .await
+        .assert_matches();
+        cx.simulate(
+            "c shift-g",
             indoc! {"
             The quick
             brown fox
             jumps over
             ˇ"},
-            ["c", "shift-g"],
         )
-        .await;
+        .await
+        .assert_matches();
     }
 
     #[gpui::test]
     async fn test_change_cc(cx: &mut gpui::TestAppContext) {
         let mut cx = NeovimBackedTestContext::new(cx).await;
-        cx.assert_neovim_compatible(
+        cx.simulate(
+            "c c",
             indoc! {"
            The quick
              brownˇ fox
            jumps over
            the lazy"},
-            ["c", "c"],
         )
-        .await;
+        .await
+        .assert_matches();
 
-        cx.assert_neovim_compatible(
+        cx.simulate(
+            "c c",
             indoc! {"
            ˇThe quick
            brown fox
            jumps over
            the lazy"},
-            ["c", "c"],
         )
-        .await;
+        .await
+        .assert_matches();
 
-        cx.assert_neovim_compatible(
+        cx.simulate(
+            "c c",
             indoc! {"
            The quick
              broˇwn fox
-           jumˇps over
+           jumps over
            the lazy"},
-            ["c", "c"],
         )
-        .await;
+        .await
+        .assert_matches();
     }
 
     #[gpui::test]
     async fn test_change_gg(cx: &mut gpui::TestAppContext) {
         let mut cx = NeovimBackedTestContext::new(cx).await;
-        cx.assert_neovim_compatible(
+        cx.simulate(
+            "c g g",
             indoc! {"
             The quick
             brownˇ fox
             jumps over
             the lazy"},
-            ["c", "g", "g"],
         )
-        .await;
-        cx.assert_neovim_compatible(
+        .await
+        .assert_matches();
+        cx.simulate(
+            "c g g",
             indoc! {"
             The quick
             brown fox
             jumps over
             the lˇazy"},
-            ["c", "g", "g"],
         )
-        .await;
-        cx.assert_neovim_compatible(
+        .await
+        .assert_matches();
+        cx.simulate(
+            "c g g",
             indoc! {"
             The qˇuick
             brown fox
             jumps over
             the lazy"},
-            ["c", "g", "g"],
         )
-        .await;
-        cx.assert_neovim_compatible(
+        .await
+        .assert_matches();
+        cx.simulate(
+            "c g g",
             indoc! {"
             ˇ
             brown fox
             jumps over
             the lazy"},
-            ["c", "g", "g"],
         )
-        .await;
+        .await
+        .assert_matches();
     }
 
     #[gpui::test]
@@ -499,8 +571,8 @@ mod test {
         let mut cx = NeovimBackedTestContext::new(cx).await;
 
         for count in 1..=5 {
-            cx.assert_binding_matches_all(
-                ["c", &count.to_string(), "j"],
+            cx.simulate_at_each_offset(
+                &format!("c {count} j"),
                 indoc! {"
                     ˇThe quˇickˇ browˇn
                     ˇ
@@ -508,7 +580,8 @@ mod test {
                     ˇthe lazy dog
                     "},
             )
-            .await;
+            .await
+            .assert_matches();
         }
     }
 
@@ -517,8 +590,8 @@ mod test {
         let mut cx = NeovimBackedTestContext::new(cx).await;
 
         for count in 1..=5 {
-            cx.assert_binding_matches_all(
-                ["c", &count.to_string(), "l"],
+            cx.simulate_at_each_offset(
+                &format!("c {count} l"),
                 indoc! {"
                     ˇThe quˇickˇ browˇn
                     ˇ
@@ -526,7 +599,8 @@ mod test {
                     ˇthe lazy dog
                     "},
             )
-            .await;
+            .await
+            .assert_matches();
         }
     }
 
@@ -535,16 +609,17 @@ mod test {
         let mut cx = NeovimBackedTestContext::new(cx).await;
 
         for count in 1..=5 {
-            for marked_text in cx.each_marked_position(indoc! {"
+            cx.simulate_at_each_offset(
+                &format!("c {count} b"),
+                indoc! {"
                 ˇThe quˇickˇ browˇn
                 ˇ
                 ˇfox ˇjumpsˇ-ˇoˇver
                 ˇthe lazy dog
-                "})
-            {
-                cx.assert_neovim_compatible(&marked_text, ["c", &count.to_string(), "b"])
-                    .await;
-            }
+                "},
+            )
+            .await
+            .assert_matches()
         }
     }
 
@@ -553,8 +628,8 @@ mod test {
         let mut cx = NeovimBackedTestContext::new(cx).await;
 
         for count in 1..=5 {
-            cx.assert_binding_matches_all(
-                ["c", &count.to_string(), "e"],
+            cx.simulate_at_each_offset(
+                &format!("c {count} e"),
                 indoc! {"
                     ˇThe quˇickˇ browˇn
                     ˇ
@@ -562,7 +637,8 @@ mod test {
                     ˇthe lazy dog
                     "},
             )
-            .await;
+            .await
+            .assert_matches();
         }
     }
 }

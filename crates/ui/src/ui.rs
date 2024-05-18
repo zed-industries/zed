@@ -13,12 +13,13 @@ mod styled_ext;
 mod styles;
 pub mod utils;
 mod visible_on_hover;
+mod with_rem_size;
 
 pub use clickable::*;
 pub use components::*;
 pub use disableable::*;
 pub use fixed::*;
 pub use prelude::*;
-
 pub use styled_ext::*;
 pub use styles::*;
+pub use with_rem_size::*;

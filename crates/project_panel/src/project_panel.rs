@@ -102,7 +102,7 @@ pub struct EntryDetails {
     is_processing: bool,
     is_cut: bool,
     git_status: Option<GitFileStatus>,
-    is_dotenv: bool,
+    is_private: bool,
 }
 
 #[derive(PartialEq, Clone, Default, Debug, Deserialize)]
@@ -1592,7 +1592,7 @@ impl ProjectPanel {
                             .clipboard_entry
                             .map_or(false, |e| e.is_cut() && e.entry_id() == entry.id),
                         git_status: status,
-                        is_dotenv: entry.is_private,
+                        is_private: entry.is_private,
                     };
 
                     if let Some(edit_state) = &self.edit_state {
@@ -1899,7 +1899,7 @@ impl Render for ProjectPanel {
 }
 
 impl Render for DraggedProjectEntryView {
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl Element {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         let settings = ProjectPanelSettings::get_global(cx);
         let ui_font = ThemeSettings::get_global(cx).ui_font.family.clone();
         h_flex()

@@ -1,5 +1,5 @@
 use anyhow::Context;
-use gpui::{AppContext, BorrowAppContext};
+use gpui::{AppContext, UpdateGlobal};
 pub use language::*;
 use node_runtime::NodeRuntime;
 use rust_embed::RustEmbed;
@@ -16,7 +16,6 @@ mod css;
 mod go;
 mod json;
 mod python;
-mod ruby;
 mod rust;
 mod tailwind;
 mod typescript;
@@ -37,10 +36,6 @@ pub fn init(
         ("c", tree_sitter_c::language()),
         ("cpp", tree_sitter_cpp::language()),
         ("css", tree_sitter_css::language()),
-        (
-            "embedded_template",
-            tree_sitter_embedded_template::language(),
-        ),
         ("go", tree_sitter_go::language()),
         ("gomod", tree_sitter_gomod::language()),
         ("gowork", tree_sitter_gowork::language()),
@@ -50,7 +45,6 @@ pub fn init(
         ("proto", tree_sitter_proto::language()),
         ("python", tree_sitter_python::language()),
         ("regex", tree_sitter_regex::language()),
-        ("ruby", tree_sitter_ruby::language()),
         ("rust", tree_sitter_rust::language()),
         ("tsx", tree_sitter_typescript::language_tsx()),
         ("typescript", tree_sitter_typescript::language_typescript()),
@@ -156,8 +150,6 @@ pub fn init(
             node_runtime.clone(),
         ))]
     );
-    language!("ruby", vec![Arc::new(ruby::RubyLanguageServer)]);
-    language!("erb", vec![Arc::new(ruby::RubyLanguageServer),]);
     language!("regex");
     language!(
         "yaml",
@@ -231,7 +223,7 @@ pub fn init(
             let language_settings = languages.language_settings();
             if language_settings != prev_language_settings {
                 cx.update(|cx| {
-                    cx.update_global(|settings: &mut SettingsStore, cx| {
+                    SettingsStore::update_global(cx, |settings, cx| {
                         settings
                             .set_extension_settings(language_settings.clone(), cx)
                             .log_err();

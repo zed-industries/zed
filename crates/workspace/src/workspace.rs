@@ -463,7 +463,7 @@ impl AppState {
         let fs = fs::FakeFs::new(cx.background_executor().clone());
         let languages = Arc::new(LanguageRegistry::test(cx.background_executor().clone()));
         let clock = Arc::new(clock::FakeSystemClock::default());
-        let http_client = util::http::FakeHttpClient::with_404_response();
+        let http_client = http::FakeHttpClient::with_404_response();
         let client = Client::new(clock, http_client.clone(), cx);
         let user_store = cx.new_model(|cx| UserStore::new(client.clone(), cx));
         let workspace_store = cx.new_model(|cx| WorkspaceStore::new(client.clone(), cx));
@@ -532,6 +532,9 @@ impl DelayedDebouncedEditAction {
 
 pub enum Event {
     PaneAdded(View<Pane>),
+    PaneRemoved,
+    ItemAdded,
+    ItemRemoved,
     ActiveItemChanged,
     ContactRequestedJoin(u64),
     WorkspaceCreated(WeakView<Workspace>),
@@ -2499,6 +2502,9 @@ impl Workspace {
         self.zoomed_position = None;
         cx.emit(Event::ZoomChanged);
         self.update_active_view_for_followers(cx);
+        pane.model.update(cx, |pane, _| {
+            pane.track_alternate_file_items();
+        });
 
         cx.notify();
     }
@@ -2510,12 +2516,18 @@ impl Workspace {
         cx: &mut ViewContext<Self>,
     ) {
         match event {
-            pane::Event::AddItem { item } => item.added_to_pane(self, pane, cx),
+            pane::Event::AddItem { item } => {
+                item.added_to_pane(self, pane, cx);
+                cx.emit(Event::ItemAdded);
+            }
             pane::Event::Split(direction) => {
                 self.split_and_clone(pane, *direction, cx);
             }
             pane::Event::Remove => self.remove_pane(pane, cx),
             pane::Event::ActivateItem { local } => {
+                pane.model.update(cx, |pane, _| {
+                    pane.track_alternate_file_items();
+                });
                 if *local {
                     self.unfollow(&pane, cx);
                 }
@@ -2690,6 +2702,7 @@ impl Workspace {
         } else {
             self.active_item_path_changed(cx);
         }
+        cx.emit(Event::PaneRemoved);
     }
 
     pub fn panes(&self) -> &[View<Pane>] {
@@ -5170,8 +5183,8 @@ mod tests {
     };
     use fs::FakeFs;
     use gpui::{
-        px, BorrowAppContext, DismissEvent, Empty, EventEmitter, FocusHandle, FocusableView,
-        Render, TestAppContext, VisualTestContext,
+        px, DismissEvent, Empty, EventEmitter, FocusHandle, FocusableView, Render, TestAppContext,
+        UpdateGlobal, VisualTestContext,
     };
     use project::{Project, ProjectEntryId};
     use serde_json::json;
@@ -5593,7 +5606,7 @@ mod tests {
 
         // Autosave on window change.
         item.update(cx, |item, cx| {
-            cx.update_global(|settings: &mut SettingsStore, cx| {
+            SettingsStore::update_global(cx, |settings, cx| {
                 settings.update_user_settings::<WorkspaceSettings>(cx, |settings| {
                     settings.autosave = Some(AutosaveSetting::OnWindowChange);
                 })
@@ -5613,7 +5626,7 @@ mod tests {
         // Autosave on focus change.
         item.update(cx, |item, cx| {
             cx.focus_self();
-            cx.update_global(|settings: &mut SettingsStore, cx| {
+            SettingsStore::update_global(cx, |settings, cx| {
                 settings.update_user_settings::<WorkspaceSettings>(cx, |settings| {
                     settings.autosave = Some(AutosaveSetting::OnFocusChange);
                 })
@@ -5636,7 +5649,7 @@ mod tests {
 
         // Autosave after delay.
         item.update(cx, |item, cx| {
-            cx.update_global(|settings: &mut SettingsStore, cx| {
+            SettingsStore::update_global(cx, |settings, cx| {
                 settings.update_user_settings::<WorkspaceSettings>(cx, |settings| {
                     settings.autosave = Some(AutosaveSetting::AfterDelay { milliseconds: 500 });
                 })
@@ -5655,7 +5668,7 @@ mod tests {
 
         // Autosave on focus change, ensuring closing the tab counts as such.
         item.update(cx, |item, cx| {
-            cx.update_global(|settings: &mut SettingsStore, cx| {
+            SettingsStore::update_global(cx, |settings, cx| {
                 settings.update_user_settings::<WorkspaceSettings>(cx, |settings| {
                     settings.autosave = Some(AutosaveSetting::OnFocusChange);
                 })

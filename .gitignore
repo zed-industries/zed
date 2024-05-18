@@ -24,3 +24,4 @@ DerivedData/
 .venv
 .blob_store
 .vscode
+.wrangler

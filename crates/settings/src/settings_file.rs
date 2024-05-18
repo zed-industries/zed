@@ -2,7 +2,7 @@ use crate::{settings_store::SettingsStore, Settings};
 use anyhow::{Context, Result};
 use fs::Fs;
 use futures::{channel::mpsc, StreamExt};
-use gpui::{AppContext, BackgroundExecutor, BorrowAppContext};
+use gpui::{AppContext, BackgroundExecutor, UpdateGlobal};
 use std::{io::ErrorKind, path::PathBuf, sync::Arc, time::Duration};
 use util::{paths, ResultExt};
 
@@ -70,7 +70,7 @@ pub fn handle_settings_file_changes(
         .background_executor()
         .block(user_settings_file_rx.next())
         .unwrap();
-    cx.update_global(|store: &mut SettingsStore, cx| {
+    SettingsStore::update_global(cx, |store, cx| {
         store
             .set_user_settings(&user_settings_content, cx)
             .log_err();

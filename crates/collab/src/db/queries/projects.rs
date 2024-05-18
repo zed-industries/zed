@@ -130,13 +130,21 @@ impl Database {
         .await
     }
 
+    pub async fn delete_project(&self, project_id: ProjectId) -> Result<()> {
+        self.weak_transaction(|tx| async move {
+            project::Entity::delete_by_id(project_id).exec(&*tx).await?;
+            Ok(())
+        })
+        .await
+    }
+
     /// Unshares the given project.
     pub async fn unshare_project(
         &self,
         project_id: ProjectId,
         connection: ConnectionId,
         user_id: Option<UserId>,
-    ) -> Result<TransactionGuard<(Option<proto::Room>, Vec<ConnectionId>)>> {
+    ) -> Result<TransactionGuard<(bool, Option<proto::Room>, Vec<ConnectionId>)>> {
         self.project_transaction(project_id, |tx| async move {
             let guest_connection_ids = self.project_guest_connection_ids(project_id, &tx).await?;
             let project = project::Entity::find_by_id(project_id)
@@ -149,10 +157,7 @@ impl Database {
                 None
             };
             if project.host_connection()? == connection {
-                project::Entity::delete(project.into_active_model())
-                    .exec(&*tx)
-                    .await?;
-                return Ok((room, guest_connection_ids));
+                return Ok((true, room, guest_connection_ids));
             }
             if let Some(dev_server_project_id) = project.dev_server_project_id {
                 if let Some(user_id) = user_id {
@@ -169,7 +174,7 @@ impl Database {
                     })
                     .exec(&*tx)
                     .await?;
-                    return Ok((room, guest_connection_ids));
+                    return Ok((false, room, guest_connection_ids));
                 }
             }
 
