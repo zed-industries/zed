@@ -477,6 +477,7 @@ impl EditorElement {
             editor.select(
                 SelectPhase::BeginColumnar {
                     position,
+                    reset: false,
                     goal_column: point_for_position.exact_unclipped.column(),
                 },
                 cx,
@@ -530,7 +531,6 @@ impl EditorElement {
         cx.stop_propagation();
     }
 
-    #[cfg(target_os = "linux")]
     fn mouse_middle_down(
         editor: &mut Editor,
         event: &MouseDownEvent,
@@ -538,25 +538,22 @@ impl EditorElement {
         text_hitbox: &Hitbox,
         cx: &mut ViewContext<Editor>,
     ) {
-        if !text_hitbox.is_hovered(cx) || editor.read_only(cx) {
+        if cx.default_prevented() {
             return;
         }
 
-        if let Some(item) = cx.read_from_primary() {
-            let point_for_position =
-                position_map.point_for_position(text_hitbox.bounds, event.position);
-            let position = point_for_position.previous_valid;
+        let point_for_position =
+            position_map.point_for_position(text_hitbox.bounds, event.position);
+        let position = point_for_position.previous_valid;
 
-            editor.select(
-                SelectPhase::Begin {
-                    position,
-                    add: false,
-                    click_count: 1,
-                },
-                cx,
-            );
-            editor.insert(item.text(), cx);
-        }
+        editor.select(
+            SelectPhase::BeginColumnar {
+                position,
+                reset: true,
+                goal_column: point_for_position.exact_unclipped.column(),
+            },
+            cx,
+        );
     }
 
     fn mouse_up(
@@ -586,6 +583,28 @@ impl EditorElement {
             cx.stop_propagation();
         } else if end_selection {
             cx.stop_propagation();
+        } else if cfg!(target_os = "linux") && event.button == MouseButton::Middle {
+            if !text_hitbox.is_hovered(cx) || editor.read_only(cx) {
+                return;
+            }
+
+            #[cfg(target_os = "linux")]
+            if let Some(item) = cx.read_from_clipboard() {
+                let point_for_position =
+                    position_map.point_for_position(text_hitbox.bounds, event.position);
+                let position = point_for_position.previous_valid;
+
+                editor.select(
+                    SelectPhase::Begin {
+                        position,
+                        add: false,
+                        click_count: 1,
+                    },
+                    cx,
+                );
+                editor.insert(item.text(), cx);
+            }
+            cx.stop_propagation()
         }
     }
 
@@ -3241,7 +3260,6 @@ impl EditorElement {
                         MouseButton::Right => editor.update(cx, |editor, cx| {
                             Self::mouse_right_down(editor, event, &position_map, &text_hitbox, cx);
                         }),
-                        #[cfg(target_os = "linux")]
                         MouseButton::Middle => editor.update(cx, |editor, cx| {
                             Self::mouse_middle_down(editor, event, &position_map, &text_hitbox, cx);
                         }),
@@ -3273,7 +3291,9 @@ impl EditorElement {
             move |event: &MouseMoveEvent, phase, cx| {
                 if phase == DispatchPhase::Bubble {
                     editor.update(cx, |editor, cx| {
-                        if event.pressed_button == Some(MouseButton::Left) {
+                        if event.pressed_button == Some(MouseButton::Left)
+                            || event.pressed_button == Some(MouseButton::Middle)
+                        {
                             Self::mouse_dragged(
                                 editor,
                                 event,

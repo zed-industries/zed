@@ -302,6 +302,7 @@ pub enum SelectPhase {
     },
     BeginColumnar {
         position: DisplayPoint,
+        reset: bool,
         goal_column: u32,
     },
     Extend {
@@ -2277,7 +2278,8 @@ impl Editor {
             SelectPhase::BeginColumnar {
                 position,
                 goal_column,
-            } => self.begin_columnar_selection(position, goal_column, cx),
+                reset,
+            } => self.begin_columnar_selection(position, goal_column, reset, cx),
             SelectPhase::Extend {
                 position,
                 click_count,
@@ -2397,6 +2399,7 @@ impl Editor {
         &mut self,
         position: DisplayPoint,
         goal_column: u32,
+        reset: bool,
         cx: &mut ViewContext<Self>,
     ) {
         if !self.focus_handle.is_focused(cx) {
@@ -2404,16 +2407,33 @@ impl Editor {
         }
 
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
+
+        if reset {
+            let pointer_position = display_map
+                .buffer_snapshot
+                .anchor_before(position.to_point(&display_map));
+
+            self.change_selections(Some(Autoscroll::newest()), cx, |s| {
+                s.clear_disjoint();
+                s.set_pending_anchor_range(
+                    pointer_position..pointer_position,
+                    SelectMode::Character,
+                );
+            });
+        }
+
         let tail = self.selections.newest::<Point>(cx).tail();
         self.columnar_selection_tail = Some(display_map.buffer_snapshot.anchor_before(tail));
 
-        self.select_columns(
-            tail.to_display_point(&display_map),
-            position,
-            goal_column,
-            &display_map,
-            cx,
-        );
+        if !reset {
+            self.select_columns(
+                tail.to_display_point(&display_map),
+                position,
+                goal_column,
+                &display_map,
+                cx,
+            );
+        }
     }
 
     fn update_selection(
