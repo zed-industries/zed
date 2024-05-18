@@ -756,11 +756,12 @@ impl PlatformWindow for X11Window {
 
     fn minimize(&self) {
         let state = self.0.state.borrow();
+        const WINDOW_ICONIC_STATE: u32 = 3;
         let message = ClientMessageEvent::new(
             32,
             self.0.x_window,
             state.atoms.WM_CHANGE_STATE,
-            [3, 0, 0, 0, 0],
+            [WINDOW_ICONIC_STATE, 0, 0, 0, 0],
         );
         self.0
             .xcb_connection
