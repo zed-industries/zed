@@ -620,65 +620,65 @@ impl DirectWriteState {
     //     }
     // }
     fn raster_bounds(&self, params: &RenderGlyphParams) -> Result<Bounds<DevicePixels>> {
-        unsafe {
-            // bitmap_format = &GUID_WICPixelFormat8bppAlpha;
-            let render_target_property = D2D1_RENDER_TARGET_PROPERTIES {
-                r#type: D2D1_RENDER_TARGET_TYPE_DEFAULT,
-                pixelFormat: D2D1_PIXEL_FORMAT {
-                    format: DXGI_FORMAT_B8G8R8A8_UNORM,
-                    alphaMode: D2D1_ALPHA_MODE_IGNORE,
-                },
-                dpiX: params.scale_factor * 96.0,
-                dpiY: params.scale_factor * 96.0,
-                usage: D2D1_RENDER_TARGET_USAGE_NONE,
-                minLevel: D2D1_FEATURE_LEVEL_DEFAULT,
-            };
-            let render_target = self
-                .components
+        let render_target_property = D2D1_RENDER_TARGET_PROPERTIES {
+            r#type: D2D1_RENDER_TARGET_TYPE_DEFAULT,
+            pixelFormat: D2D1_PIXEL_FORMAT {
+                format: DXGI_FORMAT_B8G8R8A8_UNORM,
+                alphaMode: D2D1_ALPHA_MODE_PREMULTIPLIED,
+            },
+            dpiX: params.scale_factor * 96.0,
+            dpiY: params.scale_factor * 96.0,
+            usage: D2D1_RENDER_TARGET_USAGE_NONE,
+            minLevel: D2D1_FEATURE_LEVEL_DEFAULT,
+        };
+        let render_target = unsafe {
+            self.components
                 .d2d1_factory
-                .CreateDCRenderTarget(&render_target_property)?;
-            let render_target = render_target.cast::<ID2D1DeviceContext4>()?;
-            let font = &self.fonts[params.font_id.0];
-            let glyph_id = [params.glyph_id.0 as u16];
-            let advance = [0.0f32];
-            let offset = [DWRITE_GLYPH_OFFSET::default()];
-            let glyph_run = DWRITE_GLYPH_RUN {
-                fontFace: unsafe { std::mem::transmute_copy(&font.font_face) },
-                fontEmSize: params.font_size.0,
-                glyphCount: 1,
-                glyphIndices: glyph_id.as_ptr(),
-                glyphAdvances: advance.as_ptr(),
-                glyphOffsets: offset.as_ptr(),
-                isSideways: BOOL(0),
-                bidiLevel: 0,
-            };
-            let bounds = render_target.GetGlyphRunWorldBounds(
+                .CreateDCRenderTarget(&render_target_property)?
+        };
+        let render_target = render_target.cast::<ID2D1DeviceContext4>()?;
+        let font = &self.fonts[params.font_id.0];
+        let glyph_id = [params.glyph_id.0 as u16];
+        let advance = [0.0f32];
+        let offset = [DWRITE_GLYPH_OFFSET::default()];
+        let glyph_run = DWRITE_GLYPH_RUN {
+            fontFace: unsafe { std::mem::transmute_copy(&font.font_face) },
+            fontEmSize: params.font_size.0,
+            glyphCount: 1,
+            glyphIndices: glyph_id.as_ptr(),
+            glyphAdvances: advance.as_ptr(),
+            glyphOffsets: offset.as_ptr(),
+            isSideways: BOOL(0),
+            bidiLevel: 0,
+        };
+        let bounds = unsafe {
+            render_target.GetGlyphRunWorldBounds(
                 D2D_POINT_2F { x: 0.0, y: 0.0 },
                 &glyph_run,
                 DWRITE_MEASURING_MODE_NATURAL,
-            )?;
+            )?
+        };
 
-            if bounds.right < bounds.left {
-                Ok(Bounds {
-                    origin: point(0.into(), 0.into()),
-                    size: size(0.into(), 0.into()),
-                })
-            } else {
-                Ok(Bounds {
-                    origin: Point {
-                        x: DevicePixels((bounds.left * params.scale_factor) as i32),
-                        y: DevicePixels((bounds.top * params.scale_factor) as i32),
-                    },
-                    size: Size {
-                        width: DevicePixels(
-                            ((bounds.right - bounds.left) * params.scale_factor) as i32,
-                        ),
-                        height: DevicePixels(
-                            ((bounds.bottom - bounds.top) * params.scale_factor) as i32,
-                        ),
-                    },
-                })
-            }
+        if bounds.right < bounds.left {
+            Ok(Bounds {
+                origin: point(0.into(), 0.into()),
+                size: size(0.into(), 0.into()),
+            })
+        } else {
+            Ok(Bounds {
+                origin: Point {
+                    x: DevicePixels((bounds.left * params.scale_factor) as i32),
+                    y: DevicePixels((bounds.top * params.scale_factor) as i32),
+                },
+                size: Size {
+                    width: DevicePixels(
+                        ((bounds.right - bounds.left) * params.scale_factor) as i32,
+                    ),
+                    height: DevicePixels(
+                        ((bounds.bottom - bounds.top) * params.scale_factor) as i32,
+                    ),
+                },
+            })
         }
     }
 
