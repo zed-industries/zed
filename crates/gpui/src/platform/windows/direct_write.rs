@@ -8,7 +8,6 @@ use parking_lot::{RwLock, RwLockUpgradableReadGuard};
 use smallvec::SmallVec;
 use windows::{
     core::*,
-    Foundation::Numerics::Matrix3x2,
     Win32::{
         Foundation::*,
         Globalization::GetUserDefaultLocaleName,
@@ -682,14 +681,7 @@ impl DirectWriteState {
         };
         let brush_property = D2D1_BRUSH_PROPERTIES {
             opacity: 1.0,
-            transform: Matrix3x2 {
-                M11: params.scale_factor,
-                M12: 0.0,
-                M21: 0.0,
-                M22: params.scale_factor,
-                M31: 0.0,
-                M32: 0.0,
-            },
+            ..Default::default()
         };
 
         let total_bytes;
