@@ -99,7 +99,7 @@ impl LineWrapper {
     }
 
     pub(crate) fn is_word_char(c: char) -> bool {
-        // ASCII alphanumeric characters, for English, numbers, etc.
+        // ASCII alphanumeric characters, for English, numbers: `Hello123`, etc.
         c.is_ascii_alphanumeric() ||
         // ASCII punctuation characters, e.g. `I'm`, '@mention`, `#hashtag`, chars in URL etc.
         c.is_ascii_punctuation() ||
@@ -116,7 +116,7 @@ impl LineWrapper {
         // Cyrillic for Russian, Ukrainian, etc.
         // https://en.wikipedia.org/wiki/Cyrillic_script_in_Unicode
         matches!(c, '\u{0400}'..='\u{04FF}') ||
-        // `⋯` character is special for used in Zed, to keep this at the end of the line.
+        // `⋯` character is special used in Zed, to keep this at the end of the line.
         matches!(c, '⋯')
     }
 
