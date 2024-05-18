@@ -291,6 +291,7 @@ mod flatpak {
         if let Some(bin_dir) = get_flatpak_bin_dir() {
             let mut args = vec!["/usr/bin/flatpak-spawn".into(), "--host".into()];
             args.append(&mut get_xdg_env_args());
+            args.push("--env=ZED_IS_FLATPAK_INSTALL=1".into());
             args.push(bin_dir.join("zed").into());
 
             let mut is_app_location_set = false;
