@@ -1,7 +1,6 @@
 use collections::HashMap;
 use editor::Editor;
 use fs::Fs;
-use fuzzy::StringMatchCandidate;
 use gpui::{prelude::FluentBuilder, *};
 use language::language_settings;
 use parking_lot::RwLock;
@@ -184,7 +183,7 @@ impl PromptManager {
                     matching_prompt_ids: vec![],
                     prompt_library: prompt_library.clone(),
                     selected_index: 0,
-                    match_candidates: vec![],
+                    // match_candidates: vec![],
                 },
                 cx,
             )
@@ -201,8 +200,6 @@ impl PromptManager {
     }
 
     pub fn set_active_prompt(&mut self, prompt_id: Option<PromptId>, cx: &mut ViewContext<Self>) {
-        dbg!();
-
         self.active_prompt_id = prompt_id;
         cx.notify();
     }
@@ -400,7 +397,7 @@ pub struct PromptManagerDelegate {
     matching_prompt_ids: Vec<PromptId>,
     prompt_library: Arc<PromptLibrary>,
     selected_index: usize,
-    match_candidates: Vec<StringMatchCandidate>,
+    // match_candidates: Vec<StringMatchCandidate>,
 }
 
 impl PickerDelegate for PromptManagerDelegate {
