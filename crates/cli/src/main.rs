@@ -336,7 +336,7 @@ mod windows {
     }
 
     impl Detect {
-        pub fn detect(_path: Option<&Path>) -> anyhow::Result<impl InstalledApp> {
+        pub fn detect<P: AsRef<Path>>(_path: Option<P>) -> anyhow::Result<impl InstalledApp> {
             Ok(App)
         }
     }
@@ -393,11 +393,14 @@ mod mac_os {
     }
 
     impl Detect {
-        pub fn detect(path: Option<&Path>) -> anyhow::Result<impl InstalledApp> {
+        pub fn detect<P: AsRef<Path>>(path: Option<P>) -> anyhow::Result<impl InstalledApp> {
             let bundle_path = if let Some(bundle_path) = path {
-                bundle_path
-                    .canonicalize()
-                    .with_context(|| format!("Args bundle path {bundle_path:?} canonicalization"))?
+                bundle_path.as_ref().canonicalize().with_context(|| {
+                    format!(
+                        "Args bundle path {:?} canonicalization",
+                        bundle_path.as_ref()
+                    )
+                })?
             } else {
                 locate_bundle().context("bundle autodiscovery")?
             };
