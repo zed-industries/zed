@@ -102,7 +102,7 @@ impl LineWrapper {
         c.is_ascii_alphanumeric() ||
         // The punctuation characters that can be part of a word.
         // https://doc.rust-lang.org/std/primitive.char.html#method.is_ascii_punctuation
-        matches!(c, '-' | '_' | '.' | '?' | '$' | '%' | '&' | '@' | '^' | '~' | ':' | '⋯')
+        matches!(c, '-' | '_' | '.' | '?' | '\'' | '$' | '%' | '&' | '@' | '^' | '~' | ':' | '⋯')
     }
 
     #[inline(always)]
