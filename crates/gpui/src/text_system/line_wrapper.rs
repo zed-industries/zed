@@ -101,8 +101,6 @@ impl LineWrapper {
     pub(crate) fn is_word_char(c: char) -> bool {
         // ASCII alphanumeric characters, for English, numbers: `Hello123`, etc.
         c.is_ascii_alphanumeric() ||
-        // ASCII punctuation characters, e.g. `I'm`, '@mention`, `#hashtag`, chars in URL etc.
-        c.is_ascii_punctuation() ||
         // Latin script in Unicode for French, German, Spanish, etc.
         // Latin-1 Supplement
         // https://en.wikipedia.org/wiki/Latin-1_Supplement
@@ -116,6 +114,11 @@ impl LineWrapper {
         // Cyrillic for Russian, Ukrainian, etc.
         // https://en.wikipedia.org/wiki/Cyrillic_script_in_Unicode
         matches!(c, '\u{0400}'..='\u{04FF}') ||
+        // Some other known special characters that should be treated as word characters,
+        // e.g. `a-b`, `var_name`, `I'm`, '@mention`, `#hashtag`, `100%`, `3.1415`, `2^3`, `a~b`, etc.
+        matches!(c, '-' | '_' | '.' | '\'' | '$' | '%' | '@' | '^' | '~') ||
+        // Characters that used in URL, e.g. `https://github.com/zed-industries/zed?a=1&b=2` for better wrapping a long URL.
+        matches!(c,  ':' | '?' | '/' | '&') ||
         // `⋯` character is special used in Zed, to keep this at the end of the line.
         matches!(c, '⋯')
     }
@@ -272,7 +275,7 @@ mod tests {
         }
 
         // non-word characters
-        for c in r"\/()[]{}<>,;好の설😀".chars() {
+        for c in r"()[]{}<>,;好の설😀".chars() {
             assert!(
                 !LineWrapper::is_word_char(c),
                 "assertion failed for '{}'",
