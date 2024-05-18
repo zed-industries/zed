@@ -5,13 +5,16 @@ use anyhow::{Context as _, Result};
 #[allow(unused_imports)]
 use client::Client;
 use collections::HashMap;
-use editor::Editor;
+use editor::{
+    display_map::{BlockContext, BlockDisposition, BlockProperties, BlockStyle},
+    Anchor, Editor,
+};
 use futures::{channel::mpsc, SinkExt as _, StreamExt as _};
 #[allow(unused_imports)]
 use gpui::{actions, AppContext, Context, Global, Model, ModelContext, WeakView};
 #[allow(unused_imports)]
 use language::language_settings::all_language_settings;
-use runtimelib::{ClientIoPubConnection, ClientShellConnection};
+use runtimelib::MimeType;
 #[allow(unused_imports)]
 use runtimelib::{
     ExecuteRequest, JupyterClient, JupyterMessage, JupyterMessageContent, JupyterRuntime, RuntimeId,
@@ -271,10 +274,12 @@ impl RuntimeManager {
         let code_snippet = workspace
             .active_item(cx)
             .and_then(|item| item.act_as::<Editor>(cx))
-            .and_then(|editor| {
-                let editor = editor.read(cx);
+            .and_then(|editor_view| {
+                let editor = editor_view.read(cx);
                 let range = editor.selections.newest::<usize>(cx).range();
                 let buffer = editor.buffer().read(cx).snapshot(cx);
+
+                let anchor = buffer.anchor_after(range.end);
 
                 // For handling of markdown documents, we'll need to get the language name
                 // based on where we're at in the document.
@@ -289,23 +294,63 @@ impl RuntimeManager {
                 // let language_name = language_name.as_deref().unwrap_or("");
 
                 let selected_text = buffer.text_for_range(range).collect::<String>();
-                Some(selected_text)
+
+                Some((selected_text, anchor, editor_view))
             });
 
-        if let Some(code) = code_snippet {
+        if let Some((code, anchor, editor)) = code_snippet {
             if let Some(model) = RuntimeManager::global(cx) {
                 let execution_id = ExecutionId::new();
                 let mut receiver = model
                     .read(cx)
                     .execute_code(execution_id.clone(), code.clone());
 
-                cx.spawn(|_this, _cx| async move {
+                cx.spawn(|_this, mut cx| async move {
                     while let Some(update) = receiver.next().await {
-                        println!("Update: {:?}", update.update);
+                        let el: String = match update.update {
+                            JupyterMessageContent::ExecuteResult(result) => {
+                                // Just pull plain for now
+                                if let Some((_, data)) = result.data.richest(&[MimeType::Plain]) {
+                                    data.to_string()
+                                } else {
+                                    continue;
+                                }
+                            }
+                            _ => continue,
+                        };
+
+                        editor.update(&mut cx, |editor, cx| {
+                            render_output_block(editor, el.into(), anchor, cx);
+                        })?;
                     }
+                    anyhow::Ok(())
                 })
                 .detach();
             }
         }
     }
+}
+
+fn render_output_block(
+    editor: &mut Editor,
+    output: SharedString,
+    position: Anchor,
+    cx: &mut ViewContext<Editor>,
+) {
+    let render = move |cx: &mut BlockContext| {
+        // Simple rendering logic to display the output as text
+        ui::Label::new(output.clone()).into_any_element()
+    };
+
+    editor.insert_blocks(
+        [BlockProperties {
+            position,
+            height: 1, // You might want to adjust height based on output content
+            style: BlockStyle::Fixed,
+            render: Box::new(render),
+            disposition: BlockDisposition::Below,
+        }],
+        None, // You might want to specify a scroll strategy differently
+        cx,
+    );
 }
