@@ -43,7 +43,6 @@ struct Args {
     /// Run zed in the foreground (useful for debugging)
     #[arg(long)]
     foreground: bool,
-    #[cfg(not(feature = "flatpak"))]
     /// Custom path to Zed.app or the zed binary
     #[arg(long)]
     zed: Option<PathBuf>,
@@ -61,6 +60,10 @@ fn parse_path_with_position(
 }
 
 fn main() -> Result<()> {
+    // Exit flatpak sandbox
+    #[cfg(feature = "flatpak")]
+    flatpak::restart_to_host();
+
     // Intercept version designators
     #[cfg(target_os = "macos")]
     if let Some(channel) = std::env::args().nth(1).filter(|arg| arg.starts_with("--")) {
@@ -73,12 +76,7 @@ fn main() -> Result<()> {
     }
     let args = Args::parse();
 
-    #[cfg(feature = "flatpak")]
-    let binary_path = Some("/app/bin/zed-app");
-    #[cfg(not(feature = "flatpak"))]
-    let binary_path = args.zed;
-
-    let app = Detect::detect(binary_path).context("Bundle detection")?;
+    let app = Detect::detect(args.zed.as_deref()).context("Bundle detection")?;
 
     if args.version {
         println!("{}", app.zed_version_string());
@@ -180,9 +178,9 @@ mod linux {
     struct App(PathBuf);
 
     impl Detect {
-        pub fn detect<P: AsRef<Path>>(path: Option<P>) -> anyhow::Result<impl InstalledApp> {
+        pub fn detect(path: Option<&Path>) -> anyhow::Result<impl InstalledApp> {
             let path = if let Some(path) = path {
-                path.as_ref().to_path_buf().canonicalize()
+                path.to_path_buf().canonicalize()
             } else {
                 let cli = env::current_exe()?;
                 let dir = cli
@@ -232,29 +230,15 @@ mod linux {
         }
 
         fn run_foreground(&self, ipc_url: String) -> io::Result<ExitStatus> {
-            #[cfg(not(feature = "flatpak"))]
-            let program = self.0.clone();
-            #[cfg(feature = "flatpak")]
-            let program = "/usr/bin/flatpak-spawn";
-
-            let args = vec![OsString::from(ipc_url)];
-            #[cfg(feature = "flatpak")]
-            let args = flatpak_spawn_args(args);
-
-            std::process::Command::new(program).args(args).status()
+            std::process::Command::new(self.0.clone())
+                .arg(ipc_url)
+                .status()
         }
     }
 
     impl App {
         fn boot_background(&self, ipc_url: String) -> anyhow::Result<()> {
-            #[cfg(not(feature = "flatpak"))]
-            let program = self.0.clone();
-            #[cfg(feature = "flatpak")]
-            let program = "/usr/bin/flatpak-spawn";
-
-            let args = vec![OsString::from(&program), OsString::from(ipc_url)];
-            #[cfg(feature = "flatpak")]
-            let args = flatpak_spawn_args(args);
+            let path = &self.0;
 
             match fork::fork() {
                 Ok(Fork::Parent(_)) => Ok(()),
@@ -269,9 +253,10 @@ mod linux {
                             eprintln!("failed to close_fd: {}", std::io::Error::last_os_error());
                         }
                     }
-                    let error = exec::execvp(&program, args);
+                    let error =
+                        exec::execvp(path.clone(), &[path.as_os_str(), &OsString::from(ipc_url)]);
                     // if exec succeeded, we never get here.
-                    eprintln!("failed to exec {:?}: {}", program, error);
+                    eprintln!("failed to exec {:?}: {}", path, error);
                     process::exit(1)
                 }
                 Err(_) => Err(anyhow!(io::Error::last_os_error())),
@@ -292,25 +277,56 @@ mod linux {
             sock.connect_addr(&sock_addr)
         }
     }
+}
 
-    #[cfg(feature = "flatpak")]
-    fn flatpak_spawn_args(mut args: Vec<OsString>) -> Vec<OsString> {
-        // When running flatpak-spawn with --host, we no longer have access to /app/bin, so we need to find the location on the host system
-        let install_dir = std::process::Command::new("/usr/bin/flatpak-spawn")
-            .arg("--host")
-            .arg("flatpak")
-            .arg("info")
-            .arg("--show-location")
-            .arg(env::var("FLATPAK_ID").unwrap())
-            .output()
-            .unwrap();
-        let install_dir = PathBuf::from(String::from_utf8(install_dir.stdout).unwrap().trim());
-        let app_cmd = install_dir.join("files").join("bin").join("zed-app");
+#[cfg(feature = "flatpak")]
+mod flatpak {
+    use std::path::PathBuf;
+    use std::process::Command;
+    use std::{env, process};
 
-        let mut out_args = vec!["--host".into()];
-        out_args.push(app_cmd.into());
-        out_args.append(&mut args);
-        out_args
+    /// Returns the bin dir on the host system if running inside a flatpak. If already running on the host, return None
+    pub fn get_flatpak_bin_dir() -> Option<PathBuf> {
+        if let Ok(flatpak_id) = env::var("FLATPAK_ID") {
+            let install_dir = Command::new("/usr/bin/flatpak-spawn")
+                .arg("--host")
+                .arg("flatpak")
+                .arg("info")
+                .arg("--show-location")
+                .arg(flatpak_id)
+                .output()
+                .unwrap();
+            let install_dir = PathBuf::from(String::from_utf8(install_dir.stdout).unwrap().trim());
+            Some(install_dir.join("files").join("bin"))
+        } else {
+            None
+        }
+    }
+
+    /// Restarts outside of the sandbox if currently inside
+    pub fn restart_to_host() {
+        if let Some(bin_dir) = get_flatpak_bin_dir() {
+            let mut args = vec![
+                "/usr/bin/flatpak-spawn".into(),
+                "--host".into(),
+                bin_dir.join("zed").into(),
+            ];
+
+            let mut is_app_location_set = false;
+            for arg in &env::args_os().collect::<Vec<_>>()[1..] {
+                args.push(arg.clone());
+                is_app_location_set |= arg == "--zed";
+            }
+
+            if !is_app_location_set {
+                args.push("--zed".into());
+                args.push(bin_dir.join("zed-app").into());
+            }
+
+            let error = exec::execvp("/usr/bin/flatpak-spawn", args);
+            eprintln!("failed restart cli on host: {:?}", error);
+            process::exit(1);
+        }
     }
 }
 
@@ -336,7 +352,7 @@ mod windows {
     }
 
     impl Detect {
-        pub fn detect<P: AsRef<Path>>(_path: Option<P>) -> anyhow::Result<impl InstalledApp> {
+        pub fn detect(_path: Option<&Path>) -> anyhow::Result<impl InstalledApp> {
             Ok(App)
         }
     }
@@ -393,14 +409,11 @@ mod mac_os {
     }
 
     impl Detect {
-        pub fn detect<P: AsRef<Path>>(path: Option<P>) -> anyhow::Result<impl InstalledApp> {
+        pub fn detect(path: Option<&Path>) -> anyhow::Result<impl InstalledApp> {
             let bundle_path = if let Some(bundle_path) = path {
-                bundle_path.as_ref().canonicalize().with_context(|| {
-                    format!(
-                        "Args bundle path {:?} canonicalization",
-                        bundle_path.as_ref()
-                    )
-                })?
+                bundle_path
+                    .canonicalize()
+                    .with_context(|| format!("Args bundle path {bundle_path:?} canonicalization"))?
             } else {
                 locate_bundle().context("bundle autodiscovery")?
             };
