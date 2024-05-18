@@ -70,6 +70,16 @@ cargo test --workspace
 
 Zed has basic support for both modes. The mode is selected at runtime. If you're on wayland and want to run in X11 mode, you can set `WAYLAND_DISPLAY='' cargo run` to do so.
 
+## Flatpak
+
+To build & install the flatpak package locally follow the steps below:
+
+1. Install flatpak for your distribution as outlined [here](https://flathub.org/setup).
+2. Run the `script/flatpak` script to install the Freedesktop Platform and SDK.
+3. Generate the sources file by running `python script/flatpak-cargo-generator.py` *from the project root directory*. This will need to be re-run if any cargo dependencies are changed (you will know to re-run when the build starts failing).
+4. Now you are ready to build & install the flatpak. Run `flatpak-builder --user --install --force-clean build dev.zed.Zed.json` from the root directory.
+5. To start the application, run `flatpak run dev.zed.Zed` or locate the program in your menu.
+
 ## Troubleshooting
 
 ### Can't compile zed
