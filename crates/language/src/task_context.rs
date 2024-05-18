@@ -90,8 +90,13 @@ impl ContextProvider for BasicContextProvider {
             task_variables.insert(VariableName::SelectedText, selected_text);
         }
         if let Some(path) = current_file {
-            task_variables.insert(VariableName::File, path);
+            task_variables.insert(VariableName::File, path.clone());
+
+            if let Some(file) = Path::new(&path).file_stem().and_then(|f| f.to_str()) {
+                task_variables.insert(VariableName::Filename, String::from(file));
+            }
         }
+
         if let Some(worktree_path) = worktree_abs_path {
             task_variables.insert(
                 VariableName::WorktreeRoot,
