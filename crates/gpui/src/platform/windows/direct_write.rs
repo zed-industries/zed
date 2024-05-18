@@ -611,18 +611,14 @@ impl DirectWriteState {
             })
         } else {
             Ok(Bounds {
-                origin: Point {
-                    x: DevicePixels((bounds.left * params.scale_factor) as i32),
-                    y: DevicePixels((bounds.top * params.scale_factor) as i32),
-                },
-                size: Size {
-                    width: DevicePixels(
-                        ((bounds.right - bounds.left) * params.scale_factor) as i32,
-                    ),
-                    height: DevicePixels(
-                        ((bounds.bottom - bounds.top) * params.scale_factor) as i32,
-                    ),
-                },
+                origin: point(
+                    ((bounds.left * params.scale_factor) as i32).into(),
+                    ((bounds.top * params.scale_factor) as i32).into(),
+                ),
+                size: size(
+                    (((bounds.right - bounds.left) * params.scale_factor) as i32).into(),
+                    (((bounds.bottom - bounds.top) * params.scale_factor) as i32).into(),
+                ),
             })
         }
     }
