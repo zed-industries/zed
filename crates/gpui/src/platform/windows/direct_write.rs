@@ -611,12 +611,12 @@ impl DirectWriteState {
         } else {
             Ok(Bounds {
                 origin: point(
-                    ((bounds.left * params.scale_factor) as i32).into(),
-                    ((bounds.top * params.scale_factor) as i32).into(),
+                    ((bounds.left * params.scale_factor).ceil() as i32).into(),
+                    ((bounds.top * params.scale_factor).ceil() as i32).into(),
                 ),
                 size: size(
-                    (((bounds.right - bounds.left) * params.scale_factor) as i32).into(),
-                    (((bounds.bottom - bounds.top) * params.scale_factor) as i32).into(),
+                    (((bounds.right - bounds.left) * params.scale_factor).ceil() as i32).into(),
+                    (((bounds.bottom - bounds.top) * params.scale_factor).ceil() as i32).into(),
                 ),
             })
         }
