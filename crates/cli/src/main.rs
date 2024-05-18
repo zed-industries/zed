@@ -281,6 +281,7 @@ mod linux {
 
 #[cfg(feature = "flatpak")]
 mod flatpak {
+    use std::ffi::OsString;
     use std::path::PathBuf;
     use std::process::Command;
     use std::{env, process};
@@ -306,11 +307,9 @@ mod flatpak {
     /// Restarts outside of the sandbox if currently inside
     pub fn restart_to_host() {
         if let Some(bin_dir) = get_flatpak_bin_dir() {
-            let mut args = vec![
-                "/usr/bin/flatpak-spawn".into(),
-                "--host".into(),
-                bin_dir.join("zed").into(),
-            ];
+            let mut args = vec!["/usr/bin/flatpak-spawn".into(), "--host".into()];
+            args.append(&mut get_xdg_env_args());
+            args.push(bin_dir.join("zed").into());
 
             let mut is_app_location_set = false;
             for arg in &env::args_os().collect::<Vec<_>>()[1..] {
@@ -327,6 +326,19 @@ mod flatpak {
             eprintln!("failed restart cli on host: {:?}", error);
             process::exit(1);
         }
+    }
+
+    fn get_xdg_env_args() -> Vec<OsString> {
+        let keep_keys = vec![
+            "XDG_DATA_HOME",
+            "XDG_CONFIG_HOME",
+            "XDG_CACHE_HOME",
+            "XDG_STATE_HOME",
+        ];
+        env::vars()
+            .filter(|(key, _)| keep_keys.contains(&key.as_str()))
+            .map(|(key, val)| format!("--env={}={}", key, val).into())
+            .collect()
     }
 }
 
