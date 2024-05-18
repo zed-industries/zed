@@ -743,9 +743,10 @@ impl DirectWriteState {
             // This `cast()` action here should never fail since we are running on Win10+, and
             // ID2D1DeviceContext4 requires Win8+
             let render_target = render_target.cast::<ID2D1DeviceContext4>().unwrap();
-            render_target.BeginDraw();
             if params.is_emoji {
+                render_target.SetTextAntialiasMode(D2D1_TEXT_ANTIALIAS_MODE_CLEARTYPE);
                 render_target.SetTextRenderingParams(&self.components.rendering_params.emoji);
+                render_target.BeginDraw();
                 // WARN: only DWRITE_GLYPH_IMAGE_FORMATS_COLR has been tested
                 let enumerator = self.components.factory.TranslateColorGlyphRun(
                     baseline_origin,
@@ -796,7 +797,9 @@ impl DirectWriteState {
                     }
                 }
             } else {
+                render_target.SetTextAntialiasMode(D2D1_TEXT_ANTIALIAS_MODE_GRAYSCALE);
                 render_target.SetTextRenderingParams(&self.components.rendering_params.text);
+                render_target.BeginDraw();
                 render_target.DrawGlyphRun(
                     baseline_origin,
                     &glyph_run,
