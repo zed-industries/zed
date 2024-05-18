@@ -118,7 +118,7 @@ impl LineWrapper {
         // e.g. `a-b`, `var_name`, `I'm`, '@mention`, `#hashtag`, `100%`, `3.1415`, `2^3`, `a~b`, etc.
         matches!(c, '-' | '_' | '.' | '\'' | '$' | '%' | '@' | '#' | '^' | '~') ||
         // Characters that used in URL, e.g. `https://github.com/zed-industries/zed?a=1&b=2` for better wrapping a long URL.
-        matches!(c,  ':' | '?' | '&' | '=') ||
+        matches!(c,  '/' | ':' | '?' | '&' | '=') ||
         // `⋯` character is special used in Zed, to keep this at the end of the line.
         matches!(c, '⋯')
     }
@@ -277,10 +277,9 @@ mod tests {
         assert_not_word("foo bar");
 
         // URL case
-        assert_word("https:");
+        assert_word("https://github.com/zed-industries/zed/");
         assert_word("github.com");
         assert_word("a=1&b=2");
-        assert_not_word("a/b/c");
 
         // Latin-1 Supplement
         assert_word("ÀÁÂÃÄÅÆÇÈÉÊËÌÍÎÏ");
