@@ -60,9 +60,9 @@ fn parse_path_with_position(
 }
 
 fn main() -> Result<()> {
-    // Exit flatpak sandbox
-    #[cfg(all(feature = "flatpak", target_os = "linux"))]
-    flatpak::restart_to_host();
+    // Exit flatpak sandbox if needed
+    #[cfg(target_os = "linux")]
+    flatpak::try_restart_to_host();
 
     // Intercept version designators
     #[cfg(target_os = "macos")]
@@ -279,33 +279,15 @@ mod linux {
     }
 }
 
-#[cfg(all(feature = "flatpak", target_os = "linux"))]
+#[cfg(target_os = "linux")]
 mod flatpak {
     use std::ffi::OsString;
     use std::path::PathBuf;
     use std::process::Command;
     use std::{env, process};
 
-    /// Returns the bin dir on the host system if running inside a flatpak. If already running on the host, return None
-    pub fn get_flatpak_bin_dir() -> Option<PathBuf> {
-        if let Ok(flatpak_id) = env::var("FLATPAK_ID") {
-            let install_dir = Command::new("/usr/bin/flatpak-spawn")
-                .arg("--host")
-                .arg("flatpak")
-                .arg("info")
-                .arg("--show-location")
-                .arg(flatpak_id)
-                .output()
-                .unwrap();
-            let install_dir = PathBuf::from(String::from_utf8(install_dir.stdout).unwrap().trim());
-            Some(install_dir.join("files").join("bin"))
-        } else {
-            None
-        }
-    }
-
-    /// Restarts outside of the sandbox if currently inside
-    pub fn restart_to_host() {
+    /// Restarts outside of the sandbox if currently running within it
+    pub fn try_restart_to_host() {
         if let Some(bin_dir) = get_flatpak_bin_dir() {
             let mut args = vec!["/usr/bin/flatpak-spawn".into(), "--host".into()];
             args.append(&mut get_xdg_env_args());
@@ -325,6 +307,23 @@ mod flatpak {
             let error = exec::execvp("/usr/bin/flatpak-spawn", args);
             eprintln!("failed restart cli on host: {:?}", error);
             process::exit(1);
+        }
+    }
+
+    fn get_flatpak_bin_dir() -> Option<PathBuf> {
+        if let Ok(flatpak_id) = env::var("FLATPAK_ID") {
+            let install_dir = Command::new("/usr/bin/flatpak-spawn")
+                .arg("--host")
+                .arg("flatpak")
+                .arg("info")
+                .arg("--show-location")
+                .arg(flatpak_id)
+                .output()
+                .unwrap();
+            let install_dir = PathBuf::from(String::from_utf8(install_dir.stdout).unwrap().trim());
+            Some(install_dir.join("files").join("bin"))
+        } else {
+            None
         }
     }
 

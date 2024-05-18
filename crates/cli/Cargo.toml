@@ -16,9 +16,6 @@ doctest = false
 name = "cli"
 path = "src/main.rs"
 
-[features]
-flatpak = []
-
 [dependencies]
 anyhow.workspace = true
 clap.workspace = true

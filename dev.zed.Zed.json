@@ -45,7 +45,7 @@
             },
             "build-commands": [
                 "cargo --offline fetch --manifest-path Cargo.toml",
-                "cargo --offline build --release --package cli --features flatpak",
+                "cargo --offline build --release --package cli",
                 "install -Dm755 ./target/release/cli /app/bin/zed",
                 "install -Dm644 crates/zed/resources/zed.desktop /app/share/applications/${FLATPAK_ID}.desktop",
                 "install -Dm644 crates/zed/resources/flatpak/${FLATPAK_ID}.metainfo.xml -t /app/share/metainfo",
