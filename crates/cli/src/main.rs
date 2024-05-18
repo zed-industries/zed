@@ -61,7 +61,7 @@ fn parse_path_with_position(
 
 fn main() -> Result<()> {
     // Exit flatpak sandbox
-    #[cfg(feature = "flatpak")]
+    #[cfg(all(feature = "flatpak", target_os = "linux"))]
     flatpak::restart_to_host();
 
     // Intercept version designators
@@ -279,7 +279,7 @@ mod linux {
     }
 }
 
-#[cfg(feature = "flatpak")]
+#[cfg(all(feature = "flatpak", target_os = "linux"))]
 mod flatpak {
     use std::ffi::OsString;
     use std::path::PathBuf;
@@ -329,7 +329,7 @@ mod flatpak {
     }
 
     fn get_xdg_env_args() -> Vec<OsString> {
-        let keep_keys = vec![
+        let keep_keys = [
             "XDG_DATA_HOME",
             "XDG_CONFIG_HOME",
             "XDG_CACHE_HOME",
