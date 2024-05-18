@@ -14,13 +14,13 @@ use workspace::ModalView;
 
 // actions!(prompt_manager, [NewPrompt, EditPrompt, SavePrompt]);
 
-use super::custom_prompts::CustomPrompt;
+use super::custom_prompts::StaticPrompt;
 
 pub struct PromptLibraryState {
     /// The default prompt all assistant contexts will start with
     _system_prompt: String,
     /// All [UserPrompt]s loaded into the library
-    prompts: HashMap<PromptId, CustomPrompt>,
+    prompts: HashMap<PromptId, StaticPrompt>,
     /// Prompts included in the default prompt
     default_prompts: Vec<PromptId>,
     /// Prompts that have a pending update that hasn't been applied yet
@@ -62,7 +62,7 @@ impl PromptLibrary {
     }
 
     fn load_prompts(&self, fs: Arc<dyn Fs>) -> anyhow::Result<()> {
-        let prompts = futures::executor::block_on(CustomPrompt::list(fs))?;
+        let prompts = futures::executor::block_on(StaticPrompt::list(fs))?;
         let prompts_with_ids = prompts
             .clone()
             .into_iter()
@@ -119,12 +119,12 @@ impl PromptLibrary {
     }
 
     #[allow(unused)]
-    pub fn prompts(&self) -> Vec<CustomPrompt> {
+    pub fn prompts(&self) -> Vec<StaticPrompt> {
         let state = self.state.read();
         state.prompts.values().cloned().collect()
     }
 
-    pub fn prompts_with_ids(&self) -> Vec<(PromptId, CustomPrompt)> {
+    pub fn prompts_with_ids(&self) -> Vec<(PromptId, StaticPrompt)> {
         let state = self.state.read();
         state
             .prompts
@@ -138,10 +138,10 @@ impl PromptLibrary {
             .read()
             .prompts
             .get(&prompt_id)
-            .and_then(|prompt| serde_json::to_string_pretty(prompt).log_err())
+            .and_then(|prompt| Some(prompt.to_str()))
     }
 
-    pub fn _default_prompts(&self) -> Vec<CustomPrompt> {
+    pub fn _default_prompts(&self) -> Vec<StaticPrompt> {
         let state = self.state.read();
         state
             .default_prompts
@@ -236,16 +236,6 @@ impl PromptManager {
     }
 
     fn render_prompt_list(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
-        let prompt_library = self.prompt_library.clone();
-        let prompts = prompt_library
-            .clone()
-            .prompts_with_ids()
-            .clone()
-            .into_iter()
-            .collect::<Vec<_>>();
-
-        let no_prompts_state = self.render_no_prompts_state(cx);
-
         v_flex()
             .id("prompt-list")
             .bg(cx.theme().colors().surface_background)
@@ -260,22 +250,16 @@ impl PromptManager {
                     .h_7()
                     .w_full()
                     .justify_between()
-                    .child(Label::new("Prompts").size(LabelSize::Small))
+                    .child(Label::new("Prompt Library").size(LabelSize::Small))
                     .child(IconButton::new("new-prompt", IconName::AtSign).disabled(true)),
             )
-            .child(
-                v_flex()
-                    .justify_start()
-                    .py(Spacing::Medium.rems(cx))
-                    .px(Spacing::Large.rems(cx))
-                    .child(self.picker.clone()),
-            )
+            .child(v_flex().justify_start().child(self.picker.clone()))
     }
 
     fn render_prompt_item(
         &mut self,
         id: PromptId,
-        prompt: CustomPrompt,
+        prompt: StaticPrompt,
         cx: &mut ViewContext<Self>,
     ) -> impl IntoElement {
         let prompt_library = self.prompt_library.clone();
@@ -412,7 +396,7 @@ impl FocusableView for PromptManager {
 
 pub struct PromptManagerDelegate {
     prompt_manager: WeakView<PromptManager>,
-    matching_prompts: Vec<Arc<CustomPrompt>>,
+    matching_prompts: Vec<Arc<StaticPrompt>>,
     matching_prompt_ids: Vec<PromptId>,
     prompt_library: Arc<PromptLibrary>,
     selected_index: usize,
@@ -506,7 +490,7 @@ impl PromptManagerDelegate {
         &mut self,
         index: usize,
         _cx: &mut ViewContext<Picker<Self>>,
-    ) -> Option<Arc<CustomPrompt>> {
+    ) -> Option<Arc<StaticPrompt>> {
         self.matching_prompts.get(index).cloned()
     }
 }

@@ -49,7 +49,7 @@ uuid.workspace = true
 workspace.workspace = true
 picker.workspace = true
 fuzzy.workspace = true
-serde_yml = "0.0.7"
+gray_matter = "0.2.7"
 
 [dev-dependencies]
 ctor.workspace = true
