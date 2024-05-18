@@ -4833,6 +4833,39 @@ impl Project {
                 }
 
                 (
+                    Formatter::LanguageServerName { 0: language_server },
+                    FormatOnSave::On | FormatOnSave::Off,
+                )
+                | (_, FormatOnSave::LanguageServerName { 0: language_server }) => {
+                    let formatter_language_server = adapters_and_servers
+                        .iter()
+                        .find(|(adapter, _)| {
+                            let server_name = &adapter.name.0;
+                            language_server == server_name
+                        })
+                        .map(|(_, server)| server.clone());
+
+                    if let Some((language_server, buffer_abs_path)) = formatter_language_server
+                        .as_ref()
+                        .zip(buffer_abs_path.as_ref())
+                    {
+                        log::info!("formatting with {} language server", language_server.name());
+
+                        format_operation = Some(FormatOperation::Lsp(
+                            Self::format_via_lsp(
+                                &project,
+                                buffer,
+                                buffer_abs_path,
+                                language_server,
+                                tab_size,
+                                &mut cx,
+                            )
+                            .await
+                            .context("failed to format via language server")?,
+                        ));
+                    }
+                }
+                (
                     Formatter::External { command, arguments },
                     FormatOnSave::On | FormatOnSave::Off,
                 )
@@ -4975,7 +5008,16 @@ impl Project {
                 })
                 .await?
         } else {
-            None
+            log::error!("Language Server does not provide formatting");
+
+            language_server
+                .request::<lsp::request::Formatting>(lsp::DocumentFormattingParams {
+                    text_document,
+                    options: lsp_command::lsp_formatting_options(tab_size.get()),
+                    work_done_progress_params: Default::default(),
+                })
+                .await?
+            // None
         };
 
         if let Some(lsp_edits) = lsp_edits {

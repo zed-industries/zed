@@ -30,7 +30,10 @@ pub fn prettier_plugins_for_language(
 ) -> Option<&HashSet<String>> {
     match &language_settings.formatter {
         Formatter::Prettier { .. } | Formatter::Auto => Some(&language_settings.prettier.plugins),
-        Formatter::LanguageServer | Formatter::External { .. } | Formatter::CodeActions(_) => None,
+        Formatter::LanguageServerName { .. }
+        | Formatter::LanguageServer
+        | Formatter::External { .. }
+        | Formatter::CodeActions(_) => None,
     }
 }
 
