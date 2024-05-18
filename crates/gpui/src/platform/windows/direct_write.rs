@@ -595,6 +595,17 @@ impl DirectWriteState {
             isSideways: BOOL(0),
             bidiLevel: 0,
         };
+        if params.is_emoji {
+            unsafe {
+                render_target.SetTextAntialiasMode(D2D1_TEXT_ANTIALIAS_MODE_CLEARTYPE);
+                render_target.SetTextRenderingParams(&self.components.rendering_params.emoji);
+            }
+        } else {
+            unsafe {
+                render_target.SetTextAntialiasMode(D2D1_TEXT_ANTIALIAS_MODE_GRAYSCALE);
+                render_target.SetTextRenderingParams(&self.components.rendering_params.text);
+            }
+        }
         let bounds = unsafe {
             render_target.GetGlyphRunWorldBounds(
                 D2D_POINT_2F { x: 0.0, y: 0.0 },
