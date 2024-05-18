@@ -43,6 +43,7 @@ struct Args {
     /// Run zed in the foreground (useful for debugging)
     #[arg(long)]
     foreground: bool,
+    #[cfg(not(feature = "flatpak"))]
     /// Custom path to Zed.app or the zed binary
     #[arg(long)]
     zed: Option<PathBuf>,
@@ -72,7 +73,12 @@ fn main() -> Result<()> {
     }
     let args = Args::parse();
 
-    let app = Detect::detect(args.zed.as_deref()).context("Bundle detection")?;
+    #[cfg(feature = "flatpak")]
+    let binary_path = Some("/app/bin/zed-app");
+    #[cfg(not(feature = "flatpak"))]
+    let binary_path = args.zed;
+
+    let app = Detect::detect(binary_path).context("Bundle detection")?;
 
     if args.version {
         println!("{}", app.zed_version_string());
@@ -174,9 +180,9 @@ mod linux {
     struct App(PathBuf);
 
     impl Detect {
-        pub fn detect(path: Option<&Path>) -> anyhow::Result<impl InstalledApp> {
+        pub fn detect<P: AsRef<Path>>(path: Option<P>) -> anyhow::Result<impl InstalledApp> {
             let path = if let Some(path) = path {
-                path.to_path_buf().canonicalize()
+                path.as_ref().to_path_buf().canonicalize()
             } else {
                 let cli = env::current_exe()?;
                 let dir = cli
@@ -226,15 +232,29 @@ mod linux {
         }
 
         fn run_foreground(&self, ipc_url: String) -> io::Result<ExitStatus> {
-            std::process::Command::new(self.0.clone())
-                .arg(ipc_url)
-                .status()
+            #[cfg(not(feature = "flatpak"))]
+            let program = self.0.clone();
+            #[cfg(feature = "flatpak")]
+            let program = "/usr/bin/flatpak-spawn";
+
+            let args = vec![OsString::from(ipc_url)];
+            #[cfg(feature = "flatpak")]
+            let args = flatpak_spawn_args(args);
+
+            std::process::Command::new(program).args(args).status()
         }
     }
 
     impl App {
         fn boot_background(&self, ipc_url: String) -> anyhow::Result<()> {
-            let path = &self.0;
+            #[cfg(not(feature = "flatpak"))]
+            let program = self.0.clone();
+            #[cfg(feature = "flatpak")]
+            let program = "/usr/bin/flatpak-spawn";
+
+            let args = vec![OsString::from(&program), OsString::from(ipc_url)];
+            #[cfg(feature = "flatpak")]
+            let args = flatpak_spawn_args(args);
 
             match fork::fork() {
                 Ok(Fork::Parent(_)) => Ok(()),
@@ -249,10 +269,9 @@ mod linux {
                             eprintln!("failed to close_fd: {}", std::io::Error::last_os_error());
                         }
                     }
-                    let error =
-                        exec::execvp(path.clone(), &[path.as_os_str(), &OsString::from(ipc_url)]);
+                    let error = exec::execvp(&program, args);
                     // if exec succeeded, we never get here.
-                    eprintln!("failed to exec {:?}: {}", path, error);
+                    eprintln!("failed to exec {:?}: {}", program, error);
                     process::exit(1)
                 }
                 Err(_) => Err(anyhow!(io::Error::last_os_error())),
@@ -272,6 +291,26 @@ mod linux {
             }
             sock.connect_addr(&sock_addr)
         }
+    }
+
+    #[cfg(feature = "flatpak")]
+    fn flatpak_spawn_args(mut args: Vec<OsString>) -> Vec<OsString> {
+        // When running flatpak-spawn with --host, we no longer have access to /app/bin, so we need to find the location on the host system
+        let install_dir = std::process::Command::new("/usr/bin/flatpak-spawn")
+            .arg("--host")
+            .arg("flatpak")
+            .arg("info")
+            .arg("--show-location")
+            .arg(env::var("FLATPAK_ID").unwrap())
+            .output()
+            .unwrap();
+        let install_dir = PathBuf::from(String::from_utf8(install_dir.stdout).unwrap().trim());
+        let app_cmd = install_dir.join("files").join("bin").join("zed-app");
+
+        let mut out_args = vec!["--host".into()];
+        out_args.push(app_cmd.into());
+        out_args.append(&mut args);
+        out_args
     }
 }
 
