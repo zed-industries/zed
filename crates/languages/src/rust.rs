@@ -393,14 +393,14 @@ impl ContextProvider for RustContextProvider {
                 label: format!(
                     "cargo test -p {} {}",
                     RUST_PACKAGE_TASK_VARIABLE.template_value(),
-                    VariableName::Filename.template_value(),
+                    VariableName::Stem.template_value(),
                 ),
                 command: "cargo".into(),
                 args: vec![
                     "test".into(),
                     "-p".into(),
                     RUST_PACKAGE_TASK_VARIABLE.template_value(),
-                    VariableName::Filename.template_value(),
+                    VariableName::Stem.template_value(),
                 ],
                 tags: vec!["rust-file-test".to_owned()],
                 ..TaskTemplate::default()

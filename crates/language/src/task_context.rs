@@ -92,8 +92,8 @@ impl ContextProvider for BasicContextProvider {
         if let Some(path) = current_file {
             task_variables.insert(VariableName::File, path.clone());
 
-            if let Some(file) = Path::new(&path).file_stem().and_then(|f| f.to_str()) {
-                task_variables.insert(VariableName::Filename, String::from(file));
+            if let Some(stem) = Path::new(&path).file_stem().and_then(|s| s.to_str()) {
+                task_variables.insert(VariableName::Stem, String::from(stem));
             }
         }
 
