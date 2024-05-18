@@ -99,10 +99,25 @@ impl LineWrapper {
     }
 
     pub(crate) fn is_word_char(c: char) -> bool {
+        // ASCII alphanumeric characters, for English, numbers, etc.
         c.is_ascii_alphanumeric() ||
-        // The punctuation characters that can be part of a word.
-        // https://doc.rust-lang.org/std/primitive.char.html#method.is_ascii_punctuation
-        matches!(c, '-' | '_' | '.' | '?' | '\'' | '$' | '%' | '&' | '@' | '^' | '~' | ':' | '⋯')
+        // ASCII punctuation characters, e.g. `I'm`, '@mention`, `#hashtag`, chars in URL etc.
+        c.is_ascii_punctuation() ||
+        // Latin script in Unicode for French, German, Spanish, etc.
+        // Latin-1 Supplement
+        // https://en.wikipedia.org/wiki/Latin-1_Supplement
+        matches!(c, '\u{00C0}'..='\u{00FF}') ||
+        // Latin Extended-A
+        // https://en.wikipedia.org/wiki/Latin_Extended-A
+        matches!(c, '\u{0100}'..='\u{017F}') ||
+        // Latin Extended-B
+        // https://en.wikipedia.org/wiki/Latin_Extended-B
+        matches!(c, '\u{0180}'..='\u{024F}') ||
+        // Cyrillic for Russian, Ukrainian, etc.
+        // https://en.wikipedia.org/wiki/Cyrillic_script_in_Unicode
+        matches!(c, '\u{0400}'..='\u{04FF}') ||
+        // `⋯` character is special for used in Zed, to keep this at the end of the line.
+        matches!(c, '⋯')
     }
 
     #[inline(always)]
@@ -229,11 +244,35 @@ mod tests {
 
     #[test]
     fn test_is_word_char() {
-        for c in "@hello-123_456.jpg$%&@^~:⋯".chars() {
+        // "⋯" is a special character for Zed.
+        assert!(LineWrapper::is_word_char('⋯'));
+
+        for c in "@hello-123_456.jpg$%&@^~:".chars() {
             assert!(LineWrapper::is_word_char(c), "assertion failed for '{}'", c);
         }
 
-        for c in r"\/()[]{}<>,;好😀".chars() {
+        // Latin-1 Supplement
+        for c in "ÀÁÂÃÄÅÆÇÈÉÊËÌÍÎÏ".chars() {
+            assert!(LineWrapper::is_word_char(c), "assertion failed for '{}'", c);
+        }
+
+        // Latin Extended-A
+        for c in "ĀāĂăĄąĆćĈĉĊċČčĎď".chars() {
+            assert!(LineWrapper::is_word_char(c), "assertion failed for '{}'", c);
+        }
+
+        // Latin Extended-B
+        for c in "ƀƁƂƃƄƅƆƇƈƉƊƋƌƍƎƏ".chars() {
+            assert!(LineWrapper::is_word_char(c), "assertion failed for '{}'", c);
+        }
+
+        // Cyrillic
+        for c in "АБВГДЕЖЗИЙКЛМНОП".chars() {
+            assert!(LineWrapper::is_word_char(c), "assertion failed for '{}'", c);
+        }
+
+        // non-word characters
+        for c in r"\/()[]{}<>,;好の설😀".chars() {
             assert!(
                 !LineWrapper::is_word_char(c),
                 "assertion failed for '{}'",
