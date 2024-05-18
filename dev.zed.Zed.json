@@ -8,7 +8,7 @@
     ],
     "command": "zed",
     "finish-args": [
-        "--socket=session-bus"
+        "--talk-name=org.freedesktop.Flatpak"
     ],
     "build-options": {
         "append-path": "/usr/lib/sdk/rust-stable/bin"
