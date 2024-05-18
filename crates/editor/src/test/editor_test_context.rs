@@ -74,25 +74,15 @@ impl EditorTestContext {
         }
     }
 
-    pub async fn new_multibuffer<const COUNT: usize>(
+    pub fn new_multibuffer<const COUNT: usize>(
         cx: &mut gpui::TestAppContext,
-        buffers: [&dyn AsBuffer; COUNT],
+        excerpts: [&str; COUNT],
     ) -> EditorTestContext {
-        let buffer_descriptions = buffers
-            .iter()
-            .map(|as_buffer| as_buffer.as_buffer())
-            .collect_vec();
-
         let mut multibuffer = MultiBuffer::new(0, language::Capability::ReadWrite);
         let buffer = cx.new_model(|cx| {
-            for buffer_description in buffer_descriptions.iter() {
-                let (text, ranges) = buffer_description.marked_text.clone();
+            for excerpt in excerpts.into_iter() {
+                let (text, ranges) = marked_text_ranges(excerpt, false);
                 let buffer = cx.new_model(|cx| Buffer::local(text, cx));
-
-                buffer.update(cx, |buffer, cx| {
-                    buffer.set_diff_base(buffer_description.base_text.clone(), cx)
-                });
-
                 multibuffer.push_excerpts(
                     buffer,
                     ranges.into_iter().map(|range| ExcerptRange {
@@ -105,51 +95,17 @@ impl EditorTestContext {
             multibuffer
         });
 
-        let mut has_file = false;
-        let fs = FakeFs::new(cx.executor());
-        let mut folder = serde_json::Map::new();
-        for buffer_description in buffer_descriptions {
-            if let Some(path) = buffer_description.file_name {
-                has_file = true;
-                folder.insert(
-                    path.to_str().unwrap().to_string(),
-                    serde_json::Value::String(buffer_description.marked_text.0),
-                );
-            }
-        }
+        let editor = cx.add_window(|cx| {
+            let editor = build_editor(buffer, cx);
+            editor.focus(cx);
+            editor
+        });
 
-        let (editor, window): (View<Editor>, AnyWindowHandle) = if has_file {
-            fs.insert_tree("/a", serde_json::Value::Object(folder))
-                .await;
-            let project = Project::test(fs, ["/a".as_ref()], cx).await;
-            let workspace = cx.add_window(|cx| Workspace::test_new(project.clone(), cx));
-            let editor = workspace
-                .update(cx, |_, cx| {
-                    cx.new_view(|cx| {
-                        Editor::new(EditorMode::Full, buffer, Some(project.clone()), cx)
-                    })
-                })
-                .unwrap();
-
-            (editor, workspace.into())
-        } else {
-            let editor_window_handle = cx.add_window(|cx| {
-                let editor = build_editor(buffer, cx);
-                editor.focus(cx);
-                editor
-            });
-
-            let editor = editor_window_handle.clone().root_view(cx).unwrap();
-
-            (editor, editor_window_handle.into())
-        };
-
-        let cx = VisualTestContext::from_window(window, cx);
-
+        let editor_view = editor.root_view(cx).unwrap();
         Self {
-            cx,
-            window,
-            editor,
+            cx: VisualTestContext::from_window(*editor.deref(), cx),
+            window: editor.into(),
+            editor: editor_view,
             assertion_cx: AssertionContextManager::new(),
         }
     }
@@ -361,20 +317,6 @@ impl EditorTestContext {
         self.assert_selections(expected_selections, marked_text.to_string())
     }
 
-    /// Make an assertion about the editor's diff hunks
-    /// See the `util::test::marked_diff_ranges` function for more information.
-    #[track_caller]
-    pub fn assert_editor_diff_state(&mut self, marked_text: &str) {
-        let (unmarked_text, expected_hunks) = marked_diff_ranges(marked_text, true);
-        let buffer_text = self.buffer_text();
-
-        if buffer_text != unmarked_text {
-            panic!("Unmarked text doesn't match buffer text\nBuffer text: {buffer_text:?}\nUnmarked text: {unmarked_text:?}\nRaw buffer text\n{buffer_text}\nRaw unmarked text\n{unmarked_text}");
-        }
-
-        self.assert_hunks(expected_hunks, marked_text.to_string())
-    }
-
     pub fn editor_state(&mut self) -> String {
         generate_marked_text(self.buffer_text().as_str(), &self.editor_selections(), true)
     }
@@ -521,45 +463,5 @@ impl Drop for ContextHandle {
     fn drop(&mut self) {
         let mut contexts = self.manager.contexts.write();
         contexts.remove(&self.id);
-    }
-}
-
-pub struct TestBufferDescription {
-    marked_text: (String, Vec<Range<usize>>),
-    base_text: Option<String>,
-    file_name: Option<PathBuf>,
-}
-
-pub trait AsBuffer {
-    fn as_buffer(&self) -> TestBufferDescription;
-}
-
-impl AsBuffer for &str {
-    fn as_buffer(&self) -> TestBufferDescription {
-        TestBufferDescription {
-            marked_text: marked_text_ranges(self, false),
-            base_text: None,
-            file_name: None,
-        }
-    }
-}
-
-impl AsBuffer for (&str, &str) {
-    fn as_buffer(&self) -> TestBufferDescription {
-        TestBufferDescription {
-            file_name: Some(PathBuf::from_str(self.0).unwrap()),
-            marked_text: marked_text_ranges(self.1, false),
-            base_text: None,
-        }
-    }
-}
-
-impl AsBuffer for (&str, &str, &str) {
-    fn as_buffer(&self) -> TestBufferDescription {
-        TestBufferDescription {
-            file_name: Some(PathBuf::from_str(self.0).unwrap()),
-            marked_text: marked_text_ranges(self.1, false),
-            base_text: Some(self.2.to_string()),
-        }
     }
 }

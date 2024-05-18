@@ -873,7 +873,7 @@ mod tests {
             init_test(cx);
         });
 
-        let mut cx = EditorTestContext::new_multibuffer(cx, [&"«abc\ndefg»\n«hijkl\nmn»"]).await;
+        let mut cx = EditorTestContext::new_multibuffer(cx, [&"«abc\ndefg»\n«hijkl\nmn»"]);
         cx.update_editor(|editor, cx| {
             editor.move_right(&Default::default(), cx);
             editor.move_right(&Default::default(), cx)
