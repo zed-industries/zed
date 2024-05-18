@@ -79,4 +79,6 @@
             <image type="source" width="1122" height="859" xml:lang="en">https://raw.githubusercontent.com/someone13574/zed/flatpak-2/crates/zed/resources/flatpak/screenshots/screenshot-4.png</image>
         </screenshot>
     </screenshots>
+
+    <releases />
 </component>
