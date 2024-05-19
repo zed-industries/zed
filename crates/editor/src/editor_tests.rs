@@ -11749,7 +11749,33 @@ async fn test_indent_guides_without_brackets(cx: &mut gpui::TestAppContext) {
 }
 
 #[gpui::test]
-async fn test_indent_continuing_off_screen(cx: &mut gpui::TestAppContext) {
+async fn test_indent_guides_ends_before_empty_line(cx: &mut gpui::TestAppContext) {
+    let (buffer_id, mut cx) = setup_indent_guides_editor(
+        &"
+        block1
+            block2
+                block3
+
+        block1
+        block1"
+            .unindent(),
+        cx,
+    )
+    .await;
+
+    assert_indent_guides(
+        0..6,
+        vec![
+            IndentGuide::new(buffer_id, 1, 2, 0, 4),
+            IndentGuide::new(buffer_id, 2, 2, 1, 4),
+        ],
+        None,
+        &mut cx,
+    );
+}
+
+#[gpui::test]
+async fn test_indent_guides_continuing_off_screen(cx: &mut gpui::TestAppContext) {
     let (buffer_id, mut cx) = setup_indent_guides_editor(
         &"
         block1

@@ -3158,8 +3158,8 @@ impl BufferSnapshot {
                         // and discovered that the indent we where on is ending.
                         // This means that the last display row must
                         // be on line that ends this indent range, so we
-                        // should display the range up to the row before this
-                        indent.end_row = last_row - 1;
+                        // should display the range up to the first non-empty line
+                        indent.end_row = first_row.saturating_sub(1);
                         range.end = Point::new(indent.end_row, 0).to_offset(self);
                     }
 
