@@ -596,6 +596,7 @@ impl DirectWriteState {
             isSideways: BOOL(0),
             bidiLevel: 0,
         };
+        // unsafe { render_target.SetDpi(96.0 * params.scale_factor, 96.0 * params.scale_factor) };
         let bounds = unsafe {
             render_target.GetGlyphRunWorldBounds(
                 D2D_POINT_2F { x: 0.0, y: 0.0 },
@@ -680,32 +681,16 @@ impl DirectWriteState {
         if params.is_emoji {
             total_bytes = bitmap_size.height.0 as usize * bitmap_size.width.0 as usize * 4;
             bitmap_format = &GUID_WICPixelFormat32bppPBGRA;
-            render_target_property = D2D1_RENDER_TARGET_PROPERTIES {
-                r#type: D2D1_RENDER_TARGET_TYPE_DEFAULT,
-                pixelFormat: D2D1_PIXEL_FORMAT {
-                    format: DXGI_FORMAT_B8G8R8A8_UNORM,
-                    alphaMode: D2D1_ALPHA_MODE_PREMULTIPLIED,
-                },
-                dpiX: 96.0,
-                dpiY: 96.0,
-                usage: D2D1_RENDER_TARGET_USAGE_NONE,
-                minLevel: D2D1_FEATURE_LEVEL_DEFAULT,
-            };
+            render_target_property = get_render_target_property(
+                DXGI_FORMAT_B8G8R8A8_UNORM,
+                D2D1_ALPHA_MODE_PREMULTIPLIED,
+            );
             bitmap_stride = bitmap_size.width.0 as u32 * 4;
         } else {
             total_bytes = bitmap_size.height.0 as usize * bitmap_size.width.0 as usize;
             bitmap_format = &GUID_WICPixelFormat8bppAlpha;
-            render_target_property = D2D1_RENDER_TARGET_PROPERTIES {
-                r#type: D2D1_RENDER_TARGET_TYPE_DEFAULT,
-                pixelFormat: D2D1_PIXEL_FORMAT {
-                    format: DXGI_FORMAT_A8_UNORM,
-                    alphaMode: D2D1_ALPHA_MODE_STRAIGHT,
-                },
-                dpiX: 96.0,
-                dpiY: 96.0,
-                usage: D2D1_RENDER_TARGET_USAGE_NONE,
-                minLevel: D2D1_FEATURE_LEVEL_DEFAULT,
-            };
+            render_target_property =
+                get_render_target_property(DXGI_FORMAT_A8_UNORM, D2D1_ALPHA_MODE_STRAIGHT);
             bitmap_stride = bitmap_size.width.0 as u32;
         }
 
@@ -734,10 +719,10 @@ impl DirectWriteState {
             let render_target = render_target.cast::<ID2D1DeviceContext4>().unwrap();
             render_target.SetUnitMode(D2D1_UNIT_MODE_DIPS);
             render_target.SetDpi(96.0 * params.scale_factor, 96.0 * params.scale_factor);
+            render_target.SetTextRenderingParams(&self.components.render_context.params);
+            render_target.BeginDraw();
 
             if params.is_emoji {
-                render_target.SetTextRenderingParams(&self.components.render_context.params);
-                render_target.BeginDraw();
                 // WARN: only DWRITE_GLYPH_IMAGE_FORMATS_COLR has been tested
                 let enumerator = self.components.factory.TranslateColorGlyphRun(
                     baseline_origin,
@@ -788,8 +773,6 @@ impl DirectWriteState {
                     }
                 }
             } else {
-                render_target.SetTextRenderingParams(&self.components.render_context.params);
-                render_target.BeginDraw();
                 render_target.DrawGlyphRun(
                     baseline_origin,
                     &glyph_run,
