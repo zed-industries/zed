@@ -59,7 +59,12 @@ pub trait PickerDelegate: Sized + 'static {
         Vec::new()
     }
     fn set_selected_index(&mut self, ix: usize, cx: &mut ViewContext<Picker<Self>>);
-
+    // Allows binding some optional after effect to the selection change.
+    fn selected_index_changed(
+        &self,
+        _ix: usize,
+        _cx: &mut ViewContext<Picker<Self>>,
+    ) -> Option<Box<dyn Fn(&mut WindowContext) + 'static>>;
     fn placeholder_text(&self, _cx: &mut WindowContext) -> Arc<str>;
     fn no_matches_text(&self, _cx: &mut WindowContext) -> SharedString {
         "No matches".into()
@@ -222,6 +227,19 @@ impl<D: PickerDelegate> Picker<D> {
 
     pub fn focus(&self, cx: &mut WindowContext) {
         self.focus_handle(cx).focus(cx);
+    }
+
+    fn _set_selected_index(&mut self, ix: usize, cx: &mut ViewContext<Self>) {
+        let previous_index = self.delegate.selected_index();
+        self.delegate.set_selected_index(ix, cx);
+        let current_index = self.delegate.selected_index();
+
+        if previous_index != current_index {
+            if let Some(action) = self.delegate.selected_index_changed(ix, cx) {
+                action(cx);
+            }
+            self.scroll_to_item_index(current_index);
+        }
     }
 
     pub fn select_next(&mut self, _: &menu::SelectNext, cx: &mut ViewContext<Self>) {

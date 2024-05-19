@@ -338,4 +338,12 @@ impl PickerDelegate for BranchListDelegate {
             ).style(ui::ButtonStyle::Filled)).into_any_element(),
         )
     }
+
+    fn selected_index_changed(
+        &self,
+        _ix: usize,
+        _cx: &mut ViewContext<Picker<Self>>,
+    ) -> Option<Box<dyn Fn(&mut WindowContext) + 'static>> {
+        None
+    }
 }

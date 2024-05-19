@@ -103,6 +103,14 @@ impl PickerDelegate for SavedConversationPickerDelegate {
         self.selected_index = ix;
     }
 
+    fn selected_index_changed(
+        &self,
+        _ix: usize,
+        _cx: &mut ViewContext<Picker<Self>>,
+    ) -> Option<Box<dyn Fn(&mut WindowContext) + 'static>> {
+        None
+    }
+
     fn update_matches(
         &mut self,
         query: String,
