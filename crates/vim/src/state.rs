@@ -2,13 +2,16 @@ use std::{fmt::Display, ops::Range, sync::Arc};
 
 use crate::normal::repeat::Replayer;
 use crate::surrounds::SurroundsType;
+use crate::HelixModeSetting;
 use crate::{motion::Motion, object::Object};
 use collections::HashMap;
 use editor::{Anchor, ClipboardSelection};
 use gpui::{Action, ClipboardItem, KeyContext};
 use language::{CursorShape, Selection, TransactionId};
 use serde::{Deserialize, Serialize};
+use settings::Settings;
 use ui::SharedString;
+use ui::WindowContext;
 use workspace::searchable::Direction;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize, Serialize)]
@@ -268,8 +271,11 @@ impl EditorState {
         self.operator_stack.last().cloned()
     }
 
-    pub fn keymap_context_layer(&self) -> KeyContext {
+    pub fn keymap_context_layer(&self, cx: &mut WindowContext) -> KeyContext {
         let mut context = KeyContext::new_with_defaults();
+        if HelixModeSetting::get_global(cx).0 {
+            context.add("HelixControl");
+        }
 
         let mut mode = match self.mode {
             Mode::Normal => "normal",

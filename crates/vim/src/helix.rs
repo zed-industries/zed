@@ -1,8 +1,18 @@
 use editor::{movement, scroll::Autoscroll};
+use gpui::actions;
 use language::{char_kind, CharKind};
-use ui::WindowContext;
+use ui::{ViewContext, WindowContext};
+use workspace::Workspace;
 
 use crate::{motion::Motion, normal::normal_motion, visual::visual_motion, Vim};
+
+actions!(helix, [SelectNextLine,]);
+
+pub fn register(workspace: &mut Workspace, cx: &mut ViewContext<Workspace>) {
+    workspace.register_action(|_: &mut Workspace, _: &SelectNextLine, cx: _| select_next_line(cx));
+}
+
+fn select_next_line(cx: &mut WindowContext) {}
 
 pub fn helix_normal_motion(motion: Motion, times: Option<usize>, cx: &mut WindowContext) {
     // Helix only selects the last of the motions
