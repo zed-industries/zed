@@ -355,7 +355,7 @@ tree-sitter-cpp = { git = "https://github.com/tree-sitter/tree-sitter-cpp", rev 
 tree-sitter-css = { git = "https://github.com/tree-sitter/tree-sitter-css", rev = "769203d0f9abe1a9a691ac2b9fe4bb4397a73c51" }
 tree-sitter-elixir = { git = "https://github.com/elixir-lang/tree-sitter-elixir", rev = "a2861e88a730287a60c11ea9299c033c7d076e30" }
 tree-sitter-embedded-template = "0.20.0"
-tree-sitter-go = { git = "https://github.com/tree-sitter/tree-sitter-go", rev = "aeb2f33b366fd78d5789ff104956ce23508b85db" }
+tree-sitter-go = { git = "https://github.com/tree-sitter/tree-sitter-go", rev = "b82ab803d887002a0af11f6ce63d72884580bf33" }
 tree-sitter-gomod = { git = "https://github.com/camdencheek/tree-sitter-go-mod" }
 tree-sitter-gowork = { git = "https://github.com/d1y/tree-sitter-go-work" }
 rustc-demangle = "0.1.23"
