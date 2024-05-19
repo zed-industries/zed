@@ -148,7 +148,7 @@ impl GlyphRenderingParams {
                 enhanced_contrast,
                 gray_contrast,
                 cleartype_level,
-                DWRITE_PIXEL_GEOMETRY_FLAT,
+                DWRITE_PIXEL_GEOMETRY_RGB,
                 DWRITE_RENDERING_MODE1_NATURAL_SYMMETRIC,
                 grid_fit_mode,
             )?;
@@ -755,10 +755,8 @@ impl DirectWriteState {
                 .subpixel_variant
                 .map(|v| v as f32 / SUBPIXEL_VARIANTS as f32);
             let baseline_origin = D2D_POINT_2F {
-                // x: subpixel_shift.x / params.scale_factor,
-                x: 0.0,
-                // y: subpixel_shift.y / params.scale_factor,
-                y: 0.0,
+                x: subpixel_shift.x / params.scale_factor,
+                y: subpixel_shift.y / params.scale_factor,
             };
 
             // This `cast()` action here should never fail since we are running on Win10+, and
