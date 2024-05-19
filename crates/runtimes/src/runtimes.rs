@@ -336,18 +336,7 @@ impl RuntimeManager {
                 // }
 
                 let anchor = buffer.anchor_after(range.end);
-
-                // For handling of markdown documents, we'll need to get the language name
-                // based on where we're at in the document.
-                //
-                // let start_language = buffer.language_at(range.start);
-                // let end_language = buffer.language_at(range.end);
-                // let language_name = if start_language == end_language {
-                //     start_language.map(|language| language.code_fence_block_name())
-                // } else {
-                //     None
-                // };
-                // let language_name = language_name.as_deref().unwrap_or("");
+                // todo()!: The anchor needs to be the next line after the end of the range.
 
                 let selected_text = buffer.text_for_range(range).collect::<String>();
 
@@ -374,7 +363,16 @@ impl RuntimeManager {
                                 result.data.richest(&priority_order)
                             }
                             JupyterMessageContent::StreamContent(result) => {
-                                Some((MimeType::Plain, Value::from(result.text)))
+                                // TODO: Process terminal colors, etc.
+                                Some((
+                                    MimeType::Plain,
+                                    Value::from(
+                                        result
+                                            .text
+                                            // Trim trailing newline for aesthetics
+                                            .trim_end(),
+                                    ),
+                                ))
                             }
                             JupyterMessageContent::ErrorOutput(result) => {
                                 Some((MimeType::Other, Value::from(result.ename)))
@@ -412,24 +410,26 @@ fn render_output_block(
 
     let render = move |cx: &mut BlockContext| {
         let text_font = ThemeSettings::get_global(cx).buffer_font.family.clone();
-        let anchor_x = cx.anchor_x;
+        // let anchor_x = cx.anchor_x; // Note: we'll want to use anchor_x when someone runs something with no output -- just show a checkmark and not make the full block below the line
         let gutter_width = cx.gutter_dimensions.width;
 
+        // This outer div will be all the outputs for a single execution
         h_flex()
+            .debug_bg_magenta()
             .w_full()
             .border_y_1()
             .border_color(cx.theme().colors().border)
+            //
+            // .child(h_flex().justify_center().w(gutter_width).child(div()))
             .child(
-                h_flex()
-                    // .justify_center()
-                    .w(gutter_width), // .child(Icon::new(IconName::Screen).color(Color::Hint)),
-            )
-            .child(
-                h_flex()
+                // Individual output
+                div()
+                    .debug_bg_blue()
                     .font_family(text_font)
                     .w_full()
-                    .ml(anchor_x - gutter_width)
-                    .mt_2()
+                    .ml(gutter_width)
+                    .my_2()
+                    .h_full()
                     .child(output.clone()),
             )
             .into_any_element()
@@ -438,7 +438,8 @@ fn render_output_block(
     editor.insert_blocks(
         [BlockProperties {
             position,
-            height: height + 1,
+            // todo()!: figure out how to dynamically calculate the height of the block
+            height: height + 2,
             style: BlockStyle::Sticky,
             render: Box::new(render),
             disposition: BlockDisposition::Below,
