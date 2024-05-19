@@ -1,33 +1,17 @@
-// Jupyter runtimed handling here
-
-#[allow(unused_imports)]
-use anyhow::{Context as _, Result};
-#[allow(unused_imports)]
-use client::Client;
+use anyhow::Result;
 use collections::{HashMap, HashSet};
 use editor::{
-    display_map::{
-        BlockContext, BlockDisposition, BlockId, BlockProperties, BlockStyle, RenderBlock,
-    },
-    Anchor, Editor,
+    display_map::{BlockContext, BlockDisposition, BlockProperties, BlockStyle, RenderBlock},
+    Editor,
 };
 use futures::{channel::mpsc, SinkExt as _, StreamExt as _};
 use gpui::View;
-#[allow(unused_imports)]
-use gpui::{actions, AppContext, Context, Global, Model, ModelContext, WeakView};
-#[allow(unused_imports)]
-use language::language_settings::all_language_settings;
+use gpui::{actions, AppContext, Context, Global, Model};
 use language::Point;
 use outputs::ExecutionView;
-#[allow(unused_imports)]
-use runtimelib::{
-    ExecuteRequest, JupyterClient, JupyterMessage, JupyterMessageContent, JupyterRuntime, RuntimeId,
-};
+use runtimelib::{JupyterMessage, JupyterMessageContent};
 use settings::Settings as _;
-#[allow(unused_imports)]
-use settings::SettingsStore;
 use std::path::PathBuf;
-#[allow(unused_imports)]
 use std::sync::Arc;
 use ui::prelude::*;
 use util::ResultExt;
@@ -104,7 +88,7 @@ struct ExecutionUpdate {
 struct DocumentClient {
     iopub_handle: tokio::task::JoinHandle<anyhow::Result<()>>,
     shell_handle: tokio::task::JoinHandle<anyhow::Result<()>>,
-    executions:
+    _executions:
         Arc<tokio::sync::Mutex<HashMap<ExecutionId, mpsc::UnboundedSender<ExecutionUpdate>>>>,
 }
 
@@ -142,8 +126,6 @@ impl DocumentClient {
                         }
                     }
                 }
-
-                // anyhow::Ok(())
             }
         });
 
@@ -171,7 +153,7 @@ impl DocumentClient {
         let document_client = Self {
             iopub_handle,
             shell_handle,
-            executions: Default::default(),
+            _executions: executions,
         };
 
         Ok(document_client)
@@ -297,14 +279,7 @@ impl RuntimeManager {
                     selection.range()
                 };
 
-                // // TODO(): Put block decoration after last bit of code that isn't whitespace.
-                // //         There is no `char_at`. There's a `chars_at`, but you've gotta iterate
-                // while end > range.start && buffer.char_at(end - 1).next().is_whitespace() {
-                //     end -= 1;
-                // }
-
                 let anchor = buffer.anchor_after(range.end);
-                // todo()!: The anchor needs to be the next line after the end of the range.
 
                 let selected_text = buffer.text_for_range(range).collect::<String>();
 
@@ -374,27 +349,21 @@ impl RuntimeManager {
     }
 }
 
-fn create_output_area_render(
-    // position: Anchor,
-    // // This somehow has to change as the output grows
-    // height: u8,
-    execution_view: View<ExecutionView>,
-) -> RenderBlock {
+fn create_output_area_render(execution_view: View<ExecutionView>) -> RenderBlock {
     let render = move |cx: &mut BlockContext| {
         let execution_view = execution_view.clone();
         let text_font = ThemeSettings::get_global(cx).buffer_font.family.clone();
-        // let anchor_x = cx.anchor_x; // Note: we'll want to use anchor_x when someone runs something with no output -- just show a checkmark and not make the full block below the line
+        // Note: we'll want to use `cx.anchor_x` when someone runs something with no output -- just show a checkmark and not make the full block below the line
+
         let gutter_width = cx.gutter_dimensions.width;
 
-        // This outer div will be all the outputs for a single execution
         h_flex()
             .w_full()
             .border_y_1()
             .border_color(cx.theme().colors().border)
-            //
+            // A left icon, if we want it
             // .child(h_flex().justify_center().w(gutter_width).child(div()))
             .child(
-                // Individual output
                 div()
                     .font_family(text_font)
                     .w_full()
@@ -407,22 +376,4 @@ fn create_output_area_render(
     };
 
     Box::new(render)
-
-    // let block_ids = editor.insert_blocks(
-    //     [
-
-    // BlockProperties {
-    //     position,
-    //     height,
-    //     style: BlockStyle::Sticky,
-    //     render: Box::new(render),
-    //     disposition: BlockDisposition::Below,
-    // }
-
-    //     ],
-    //     None,
-    //     cx,
-    // );
-
-    // block_ids[0]
 }
