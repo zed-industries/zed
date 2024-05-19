@@ -3215,11 +3215,10 @@ impl BufferSnapshot {
         // If there is a blank line at the current row, search for the next non indented lines
         if is_blank {
             let start_indent_size = self
-                .find_indented_row((0..buffer_row).rev(), |_, is_blank| !is_blank)
+                .find_indented_row((0..buffer_row).rev(), None)
                 .map(|(_, indent_size)| indent_size);
-
             let end_indent_size = self
-                .find_indented_row(buffer_row..=max_row, |_, is_blank| !is_blank)
+                .find_indented_row(buffer_row..=max_row, None)
                 .map(|(_, indent_size)| indent_size);
 
             target_indent_size = match (start_indent_size, end_indent_size) {
@@ -3232,32 +3231,27 @@ impl BufferSnapshot {
             };
         }
 
-        let (start_row, start_indent_size) = self
-            .find_indented_row((0..buffer_row).rev(), |indent_size, is_blank| {
-                !is_blank && indent_size < target_indent_size
-            })?;
+        let (start_row, start_indent_size) =
+            self.find_indented_row((0..buffer_row).rev(), Some(target_indent_size))?;
 
-        let (end_row, end_indent_size) = self
-            .find_indented_row((buffer_row + 1)..=max_row, |indent_size, is_blank| {
-                !is_blank && indent_size < target_indent_size
-            })?;
+        let (end_row, end_indent_size) =
+            self.find_indented_row((buffer_row + 1)..=max_row, Some(target_indent_size))?;
 
         Some((start_row..end_row, start_indent_size.max(end_indent_size)))
     }
 
     fn find_indented_row(
         &self,
-        mut iterator: impl Iterator<Item = u32>,
-        predicate: impl Fn(u32, bool) -> bool,
+        iterator: impl Iterator<Item = u32>,
+        target_indent_size: Option<u32>,
     ) -> Option<(u32, u32)> {
-        iterator.find_map(|row| {
+        for row in iterator {
             let (indent_size, is_blank) = self.line_indent_for_row(row);
-            if predicate(indent_size, is_blank) {
-                Some((row, indent_size))
-            } else {
-                None
+            if !is_blank && target_indent_size.is_none() || Some(indent_size) < target_indent_size {
+                return Some((row, indent_size));
             }
-        })
+        }
+        None
     }
 
     pub fn indented_range(&self, buffer_row: u32) -> Option<Range<Point>> {
