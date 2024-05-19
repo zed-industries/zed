@@ -50,7 +50,6 @@ struct DirectWriteComponent {
 struct GlyphRenderContext {
     params: IDWriteRenderingParams3,
     dc_target: ID2D1DeviceContext4,
-    converter: IWICFormatConverter,
 }
 
 // All use of the IUnknown methods should be "thread-safe".
@@ -108,7 +107,7 @@ impl DirectWriteComponent {
             GetUserDefaultLocaleName(&mut locale_vec);
             let locale = String::from_utf16_lossy(&locale_vec);
             let text_renderer = Arc::new(TextRendererWrapper::new(&locale));
-            let render_context = GlyphRenderContext::new(&factory, &d2d1_factory, &bitmap_factory)?;
+            let render_context = GlyphRenderContext::new(&factory, &d2d1_factory)?;
 
             Ok(DirectWriteComponent {
                 locale,
@@ -125,11 +124,7 @@ impl DirectWriteComponent {
 }
 
 impl GlyphRenderContext {
-    pub fn new(
-        factory: &IDWriteFactory5,
-        d2d1_factory: &ID2D1Factory,
-        bitmap_factory: &IWICImagingFactory2,
-    ) -> Result<Self> {
+    pub fn new(factory: &IDWriteFactory5, d2d1_factory: &ID2D1Factory) -> Result<Self> {
         unsafe {
             let default_params: IDWriteRenderingParams3 =
                 factory.CreateRenderingParams()?.cast()?;
@@ -157,13 +152,8 @@ impl GlyphRenderContext {
                 target.SetTextRenderingParams(&params);
                 target
             };
-            let converter = bitmap_factory.CreateFormatConverter()?;
 
-            Ok(Self {
-                params,
-                dc_target,
-                converter,
-            })
+            Ok(Self { params, dc_target })
         }
     }
 }
@@ -700,9 +690,6 @@ impl DirectWriteState {
             bitmap_stride = bitmap_size.width.0 as u32 * 4;
         } else {
             total_bytes = bitmap_size.height.0 as usize * bitmap_size.width.0 as usize;
-            // bitmap_format = &GUID_WICPixelFormat8bppAlpha;
-            // render_target_property =
-            //     get_render_target_property(DXGI_FORMAT_A8_UNORM, D2D1_ALPHA_MODE_STRAIGHT);
             bitmap_format = &GUID_WICPixelFormat32bppRGB;
             render_target_property =
                 get_render_target_property(DXGI_FORMAT_UNKNOWN, D2D1_ALPHA_MODE_UNKNOWN);
