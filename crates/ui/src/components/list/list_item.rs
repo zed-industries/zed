@@ -157,7 +157,7 @@ impl RenderOnce for ListItem {
                 this.ml(self.indent_level as f32 * self.indent_step_size)
                     .px_2()
             })
-            .when(!self.inset, |this| {
+            .when(!self.inset && !self.disabled, |this| {
                 this
                     // TODO: Add focus state
                     // .when(self.state == InteractionState::Focused, |this| {

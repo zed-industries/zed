@@ -5,7 +5,7 @@ use crate::{
     },
     toolbar::Toolbar,
     workspace_settings::{AutosaveSetting, TabBarSettings, WorkspaceSettings},
-    NewCenterTerminal, NewFile, NewSearch, OpenInTerminal, OpenTerminal, OpenVisible,
+    CloseWindow, NewCenterTerminal, NewFile, NewSearch, OpenInTerminal, OpenTerminal, OpenVisible,
     SplitDirection, ToggleZoom, Workspace,
 };
 use anyhow::Result;
@@ -41,7 +41,7 @@ use ui::{
     IconSize, Indicator, Label, Tab, TabBar, TabPosition, Tooltip,
 };
 use ui::{v_flex, ContextMenu};
-use util::{maybe, truncate_and_remove_front, ResultExt};
+use util::{debug_panic, maybe, truncate_and_remove_front, ResultExt};
 
 #[derive(PartialEq, Clone, Copy, Deserialize, Debug)]
 #[serde(rename_all = "camelCase")]
@@ -218,6 +218,7 @@ pub struct Pane {
     /// Otherwise, when `display_nav_history_buttons` is Some, it determines whether nav buttons should be displayed.
     display_nav_history_buttons: Option<bool>,
     double_click_dispatch_action: Box<dyn Action>,
+    save_modals_spawned: HashSet<EntityId>,
 }
 
 pub struct ActivationHistoryEntry {
@@ -401,6 +402,7 @@ impl Pane {
             ),
             _subscriptions: subscriptions,
             double_click_dispatch_action,
+            save_modals_spawned: HashSet::default(),
         }
     }
 
@@ -946,6 +948,14 @@ impl Pane {
         cx: &mut ViewContext<Self>,
     ) -> Option<Task<Result<()>>> {
         if self.items.is_empty() {
+            // Close the window when there's no active items to close, if configured
+            if WorkspaceSettings::get_global(cx)
+                .when_closing_with_no_tabs
+                .should_close()
+            {
+                cx.dispatch_action(Box::new(CloseWindow));
+            }
+
             return None;
         }
         let active_item_id = self.items[self.active_item_index].item_id();
@@ -1367,20 +1377,37 @@ impl Pane {
                     ) && Self::can_autosave_item(item, cx)
                 })?;
                 if !will_autosave {
-                    let answer = pane.update(cx, |pane, cx| {
-                        pane.activate_item(item_ix, true, true, cx);
-                        let prompt = dirty_message_for(item.project_path(cx));
-                        cx.prompt(
-                            PromptLevel::Warning,
-                            &prompt,
-                            None,
-                            &["Save", "Don't Save", "Cancel"],
-                        )
+                    let item_id = item.item_id();
+                    let answer_task = pane.update(cx, |pane, cx| {
+                        if pane.save_modals_spawned.insert(item_id) {
+                            pane.activate_item(item_ix, true, true, cx);
+                            let prompt = dirty_message_for(item.project_path(cx));
+                            Some(cx.prompt(
+                                PromptLevel::Warning,
+                                &prompt,
+                                None,
+                                &["Save", "Don't Save", "Cancel"],
+                            ))
+                        } else {
+                            None
+                        }
                     })?;
-                    match answer.await {
-                        Ok(0) => {}
-                        Ok(1) => return Ok(true), // Don't save this file
-                        _ => return Ok(false),    // Cancel
+                    if let Some(answer_task) = answer_task {
+                        let answer = answer_task.await;
+                        pane.update(cx, |pane, _| {
+                            if !pane.save_modals_spawned.remove(&item_id) {
+                                debug_panic!(
+                                    "save modal was not present in spawned modals after awaiting for its answer"
+                                )
+                            }
+                        })?;
+                        match answer {
+                            Ok(0) => {}
+                            Ok(1) => return Ok(true), // Don't save this file
+                            _ => return Ok(false),    // Cancel
+                        }
+                    } else {
+                        return Ok(false);
                     }
                 }
             }

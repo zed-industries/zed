@@ -3,8 +3,8 @@ use feature_flags::FeatureFlagAppExt;
 use fs::Fs;
 use fuzzy::{match_strings, StringMatch, StringMatchCandidate};
 use gpui::{
-    actions, impl_actions, AppContext, DismissEvent, EventEmitter, FocusableView, Render, View,
-    ViewContext, VisualContext, WeakView,
+    actions, impl_actions, AppContext, DismissEvent, EventEmitter, FocusableView, Render,
+    UpdateGlobal, View, ViewContext, VisualContext, WeakView,
 };
 use picker::{Picker, PickerDelegate};
 use serde::Deserialize;
@@ -165,7 +165,7 @@ impl ThemeSelectorDelegate {
     }
 
     fn set_theme(theme: Arc<Theme>, cx: &mut AppContext) {
-        cx.update_global(|store: &mut SettingsStore, cx| {
+        SettingsStore::update_global(cx, |store, cx| {
             let mut theme_settings = store.get::<ThemeSettings>(None).clone();
             theme_settings.active_theme = theme;
             theme_settings.apply_theme_overrides();

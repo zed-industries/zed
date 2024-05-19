@@ -30,14 +30,16 @@ There are two actions that drive the workflow of using tasks: `task: spawn` and 
 
 ## Task templates
 
-Tasks, defined in a config file (`tasks.json` in the Zed config directory).
-Zed supports both global task templates (available in all projects) or workspace-local task templates (available only in the current workspace).
-
-To edit global task templates, use `zed: open tasks` actions from command palette; to edit workspace-local task templates, use `zed: open local tasks` action.
+Tasks can be defined:
+- in global `tasks.json` file; such tasks are available in all Zed projects you work on. You can edit them by using `zed: open tasks` action.
+- in worktree-specific (local) `tasks.json` file; such tasks are available only when working on a project with that worktree included. You can edit worktree-specific tasks by using `zed: open local tasks`.
+- on the fly with [oneshot tasks](#oneshot-tasks). These tasks are project-specific and do not persist across sections.
+- by language extension.
 
 ## Variables
 
-Variables allow you to pull information from the current editor and use it in your tasks. The following variables are available:
+Zed tasks act just like your shell; that also means that you can reference environmental variables via sh-esque `$VAR_NAME` syntax. A couple of additional environmental variables are set for your convenience.
+These variables allow you to pull information from the current editor and use it in your tasks. The following variables are available:
 
 - `ZED_COLUMN`: current line column
 - `ZED_ROW`: current line row
@@ -66,6 +68,8 @@ The same task modal opened via `task: spawn` supports arbitrary bash-like comman
 
 Task modal will persist list of those command for current Zed session, `task: rerun` will also rerun such tasks if they were the last ones spawned.
 
+You can also adjust currently selected task in a modal (`opt-e` is a default key binding). Doing so will put it's command into a prompt that can then be edited & spawned as an oneshot task.
+
 ### Ephemeral tasks
 
 You can use cmd modifier when spawning a task via a modal; tasks spawned this way will not have their usage count increased (thus, they will not be respawned with `task: rerun` and they won't be have a high rank in task modal).
@@ -86,7 +90,7 @@ You can define your own keybindings for your tasks via additional argument to `t
 
 ## Binding runnable tags to task templates
 
-Zed supports overriding default action for inline runnable tags via workspace-local and global `tasks.json` file with the following precedence hierarchy:
+Zed supports overriding default action for inline runnable indicators via workspace-local and global `tasks.json` file with the following precedence hierarchy:
 
 1. Workspace `tasks.json`
 2. Global `tasks.json`
@@ -101,3 +105,5 @@ To tag a task, add the runnable tag name to `tags` field on task template:
   "tags": ["rust-test"]
 }
 ```
+
+In doing so, you can change which task is shown in runnables indicator.

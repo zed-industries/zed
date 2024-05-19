@@ -27,7 +27,7 @@ use crate::{
 };
 use anyhow::Result;
 use client::ParticipantIndex;
-use collections::{BTreeMap, HashMap, HashSet};
+use collections::{BTreeMap, HashMap};
 use git::{blame::BlameEntry, diff::DiffHunkStatus, Oid};
 use gpui::{
     anchored, deferred, div, fill, outline, point, px, quad, relative, size, svg,
@@ -59,7 +59,7 @@ use std::{
     sync::Arc,
 };
 use sum_tree::Bias;
-use theme::{ActiveTheme, PlayerColor, ThemeSettings};
+use theme::{ActiveTheme, PlayerColor};
 use ui::prelude::*;
 use ui::{h_flex, ButtonLike, ButtonStyle, ContextMenu, Tooltip};
 use util::ResultExt;
@@ -478,6 +478,7 @@ impl EditorElement {
             editor.select(
                 SelectPhase::BeginColumnar {
                     position,
+                    reset: false,
                     goal_column: point_for_position.exact_unclipped.column(),
                 },
                 cx,
@@ -538,25 +539,22 @@ impl EditorElement {
         text_hitbox: &Hitbox,
         cx: &mut ViewContext<Editor>,
     ) {
-        if !text_hitbox.is_hovered(cx) || editor.read_only(cx) {
+        if cx.default_prevented() {
             return;
         }
 
-        if let Some(item) = cx.read_from_primary() {
-            let point_for_position =
-                position_map.point_for_position(text_hitbox.bounds, event.position);
-            let position = point_for_position.previous_valid;
+        let point_for_position =
+            position_map.point_for_position(text_hitbox.bounds, event.position);
+        let position = point_for_position.previous_valid;
 
-            editor.select(
-                SelectPhase::Begin {
-                    position,
-                    add: false,
-                    click_count: 1,
-                },
-                cx,
-            );
-            editor.insert(item.text(), cx);
-        }
+        editor.select(
+            SelectPhase::BeginColumnar {
+                position,
+                reset: true,
+                goal_column: point_for_position.exact_unclipped.column(),
+            },
+            cx,
+        );
     }
 
     fn mouse_up(
@@ -586,6 +584,28 @@ impl EditorElement {
             cx.stop_propagation();
         } else if end_selection {
             cx.stop_propagation();
+        } else if cfg!(target_os = "linux") && event.button == MouseButton::Middle {
+            if !text_hitbox.is_hovered(cx) || editor.read_only(cx) {
+                return;
+            }
+
+            #[cfg(target_os = "linux")]
+            if let Some(item) = cx.read_from_clipboard() {
+                let point_for_position =
+                    position_map.point_for_position(text_hitbox.bounds, event.position);
+                let position = point_for_position.previous_valid;
+
+                editor.select(
+                    SelectPhase::Begin {
+                        position,
+                        add: false,
+                        click_count: 1,
+                    },
+                    cx,
+                );
+                editor.insert(item.text(), cx);
+            }
+            cx.stop_propagation()
         }
     }
 
@@ -3471,7 +3491,9 @@ impl EditorElement {
             move |event: &MouseMoveEvent, phase, cx| {
                 if phase == DispatchPhase::Bubble {
                     editor.update(cx, |editor, cx| {
-                        if event.pressed_button == Some(MouseButton::Left) {
+                        if event.pressed_button == Some(MouseButton::Left)
+                            || event.pressed_button == Some(MouseButton::Middle)
+                        {
                             Self::mouse_dragged(
                                 editor,
                                 event,
@@ -3588,11 +3610,7 @@ fn render_inline_blame_entry(
         .font_family(style.text.font().family)
         .text_color(cx.theme().status().hint)
         .line_height(style.text.line_height)
-        .child(
-            Icon::new(IconName::FileGit)
-                .color(Color::Hint)
-                .font_size(style.text.font_size),
-        )
+        .child(Icon::new(IconName::FileGit).color(Color::Hint))
         .child(text)
         .gap_2()
         .hoverable_tooltip(move |_| tooltip.clone().into())
@@ -3912,22 +3930,29 @@ impl EditorElement {
     fn rem_size(&self, cx: &WindowContext) -> Option<Pixels> {
         match self.editor.read(cx).mode {
             EditorMode::Full => {
-                let buffer_font_size = ThemeSettings::get_global(cx).buffer_font_size;
-                let rem_size_scale = {
-                    // Our default UI font size is 14px on a 16px base scale.
-                    // This means the default UI font size is 0.875rems.
-                    let default_font_size_scale = 14. / ui::BASE_REM_SIZE_IN_PX;
+                let buffer_font_size = self.style.text.font_size;
+                match buffer_font_size {
+                    AbsoluteLength::Pixels(pixels) => {
+                        let rem_size_scale = {
+                            // Our default UI font size is 14px on a 16px base scale.
+                            // This means the default UI font size is 0.875rems.
+                            let default_font_size_scale = 14. / ui::BASE_REM_SIZE_IN_PX;
 
-                    // We then determine the delta between a single rem and the default font
-                    // size scale.
-                    let default_font_size_delta = 1. - default_font_size_scale;
+                            // We then determine the delta between a single rem and the default font
+                            // size scale.
+                            let default_font_size_delta = 1. - default_font_size_scale;
 
-                    // Finally, we add this delta to 1rem to get the scale factor that
-                    // should be used to scale up the UI.
-                    1. + default_font_size_delta
-                };
+                            // Finally, we add this delta to 1rem to get the scale factor that
+                            // should be used to scale up the UI.
+                            1. + default_font_size_delta
+                        };
 
-                Some(buffer_font_size * rem_size_scale)
+                        Some(pixels * rem_size_scale)
+                    }
+                    AbsoluteLength::Rems(rems) => {
+                        Some(rems.to_pixels(ui::BASE_REM_SIZE_IN_PX.into()))
+                    }
+                }
             }
             // We currently use single-line and auto-height editors in UI contexts,
             // so we don't want to scale everything with the buffer font size, as it
@@ -4143,9 +4168,9 @@ impl Element for EditorElement {
                         )
                     };
 
-                    let highlighted_rows = self.editor.update(cx, |editor, cx| {
-                        editor.highlighted_display_rows(HashSet::default(), cx)
-                    });
+                    let highlighted_rows = self
+                        .editor
+                        .update(cx, |editor, cx| editor.highlighted_display_rows(cx));
                     let highlighted_ranges = self.editor.read(cx).background_highlights_in_range(
                         start_anchor..end_anchor,
                         &snapshot.display_snapshot,

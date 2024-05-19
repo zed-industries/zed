@@ -22,7 +22,7 @@ fn zed_pro_daylight() -> Theme {
             colors: ThemeColors::light(),
             status: StatusColors::light(),
             player: PlayerColors::light(),
-            syntax: Arc::new(SyntaxTheme::light()),
+            syntax: Arc::new(SyntaxTheme::default()),
             accents: AccentColors::light(),
         },
     }
@@ -39,7 +39,7 @@ pub(crate) fn zed_pro_moonlight() -> Theme {
             colors: ThemeColors::dark(),
             status: StatusColors::dark(),
             player: PlayerColors::dark(),
-            syntax: Arc::new(SyntaxTheme::dark()),
+            syntax: Arc::new(SyntaxTheme::default()),
             accents: AccentColors::dark(),
         },
     }
