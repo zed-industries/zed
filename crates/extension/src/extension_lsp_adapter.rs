@@ -100,12 +100,13 @@ impl LspAdapter for ExtensionLspAdapter {
                     .map(|arg| {
                         #[cfg(windows)]
                         {
+                            use regex::Regex;
                             // Workaround windows path
                             // `/C:\\Users\\d1y` need remove `/` prefix
-                            let pattern = r"^/[A-Z]:\\/";
+                            let pattern = r"^/[A-Z]:\\";
                             let regex = Regex::new(pattern).unwrap();
                             if regex.is_match(&arg) {
-                                return arg.trim_start_matches("/").to_string();
+                                return arg.trim_start_matches("/").into();
                             }
                         }
                         return arg.into();
