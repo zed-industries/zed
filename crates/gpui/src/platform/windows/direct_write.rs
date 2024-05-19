@@ -44,12 +44,12 @@ struct DirectWriteComponent {
     in_memory_loader: IDWriteInMemoryFontFileLoader,
     builder: IDWriteFontSetBuilder1,
     text_renderer: Arc<TextRendererWrapper>,
-    rendering_params: GlyphRenderingParams,
+    rendering_params: GlyphRenderContext,
 }
 
-struct GlyphRenderingParams {
-    emoji: IDWriteRenderingParams3,
-    text: IDWriteRenderingParams3,
+struct GlyphRenderContext {
+    params: IDWriteRenderingParams3,
+    dc_target: ID2D1DeviceContext4,
 }
 
 // All use of the IUnknown methods should be "thread-safe".
@@ -107,7 +107,7 @@ impl DirectWriteComponent {
             GetUserDefaultLocaleName(&mut locale_vec);
             let locale = String::from_utf16_lossy(&locale_vec);
             let text_renderer = Arc::new(TextRendererWrapper::new(&locale));
-            let rendering_params = GlyphRenderingParams::new(&factory)?;
+            let rendering_params = GlyphRenderContext::new(&factory)?;
 
             Ok(DirectWriteComponent {
                 locale,
@@ -123,7 +123,7 @@ impl DirectWriteComponent {
     }
 }
 
-impl GlyphRenderingParams {
+impl GlyphRenderContext {
     pub fn new(factory: &IDWriteFactory5) -> Result<Self> {
         unsafe {
             let default_params: IDWriteRenderingParams3 =
@@ -153,7 +153,10 @@ impl GlyphRenderingParams {
                 grid_fit_mode,
             )?;
 
-            Ok(Self { emoji, text })
+            Ok(Self {
+                params: emoji,
+                text,
+            })
         }
     }
 }
@@ -618,7 +621,7 @@ impl DirectWriteState {
         if params.is_emoji {
             unsafe {
                 render_target.SetTextAntialiasMode(D2D1_TEXT_ANTIALIAS_MODE_CLEARTYPE);
-                render_target.SetTextRenderingParams(&self.components.rendering_params.emoji);
+                render_target.SetTextRenderingParams(&self.components.rendering_params.params);
             }
         } else {
             unsafe {
@@ -766,7 +769,7 @@ impl DirectWriteState {
             render_target.SetDpi(96.0 * params.scale_factor, 96.0 * params.scale_factor);
 
             if params.is_emoji {
-                render_target.SetTextRenderingParams(&self.components.rendering_params.emoji);
+                render_target.SetTextRenderingParams(&self.components.rendering_params.params);
                 render_target.BeginDraw();
                 // WARN: only DWRITE_GLYPH_IMAGE_FORMATS_COLR has been tested
                 let enumerator = self.components.factory.TranslateColorGlyphRun(
