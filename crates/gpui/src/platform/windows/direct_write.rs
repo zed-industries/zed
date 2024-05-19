@@ -50,6 +50,7 @@ struct DirectWriteComponent {
 struct GlyphRenderContext {
     params: IDWriteRenderingParams3,
     dc_target: ID2D1DeviceContext4,
+    converter: IWICFormatConverter,
 }
 
 // All use of the IUnknown methods should be "thread-safe".
@@ -107,7 +108,7 @@ impl DirectWriteComponent {
             GetUserDefaultLocaleName(&mut locale_vec);
             let locale = String::from_utf16_lossy(&locale_vec);
             let text_renderer = Arc::new(TextRendererWrapper::new(&locale));
-            let render_context = GlyphRenderContext::new(&factory, &d2d1_factory)?;
+            let render_context = GlyphRenderContext::new(&factory, &d2d1_factory, &bitmap_factory)?;
 
             Ok(DirectWriteComponent {
                 locale,
@@ -124,7 +125,11 @@ impl DirectWriteComponent {
 }
 
 impl GlyphRenderContext {
-    pub fn new(factory: &IDWriteFactory5, d2d1_factory: &ID2D1Factory) -> Result<Self> {
+    pub fn new(
+        factory: &IDWriteFactory5,
+        d2d1_factory: &ID2D1Factory,
+        bitmap_factory: &IWICImagingFactory2,
+    ) -> Result<Self> {
         unsafe {
             let default_params: IDWriteRenderingParams3 =
                 factory.CreateRenderingParams()?.cast()?;
@@ -153,8 +158,13 @@ impl GlyphRenderContext {
                 target.SetTextRenderingParams(&params);
                 target
             };
+            let converter = bitmap_factory.CreateFormatConverter()?;
 
-            Ok(Self { params, dc_target })
+            Ok(Self {
+                params,
+                dc_target,
+                converter,
+            })
         }
     }
 }
