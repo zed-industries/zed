@@ -570,8 +570,8 @@ impl DirectWriteState {
                 format: DXGI_FORMAT_B8G8R8A8_UNORM,
                 alphaMode: D2D1_ALPHA_MODE_PREMULTIPLIED,
             },
-            dpiX: params.scale_factor * 96.0,
-            dpiY: params.scale_factor * 96.0,
+            dpiX: 96.0,
+            dpiY: 96.0,
             usage: D2D1_RENDER_TARGET_USAGE_NONE,
             minLevel: D2D1_FEATURE_LEVEL_DEFAULT,
         };
@@ -581,6 +581,10 @@ impl DirectWriteState {
                 .CreateDCRenderTarget(&render_target_property)?
         };
         let render_target = render_target.cast::<ID2D1DeviceContext4>()?;
+        unsafe {
+            render_target.SetUnitMode(D2D1_UNIT_MODE_DIPS);
+            render_target.SetDpi(96.0 * params.scale_factor, 96.0 * params.scale_factor);
+        }
         let font = &self.fonts[params.font_id.0];
         let glyph_id = [params.glyph_id.0 as u16];
         let advance = [0.0f32];
@@ -660,7 +664,9 @@ impl DirectWriteState {
         let advance = [glyph_bounds.size.width.0 as f32];
         let offset = [DWRITE_GLYPH_OFFSET {
             advanceOffset: -glyph_bounds.origin.x.0 as f32 / params.scale_factor,
+            // advanceOffset: 0.0,
             ascenderOffset: glyph_bounds.origin.y.0 as f32 / params.scale_factor,
+            // ascenderOffset: 0.0,
         }];
         let glyph_run = DWRITE_GLYPH_RUN {
             fontFace: unsafe { std::mem::transmute_copy(&font_info.font_face) },
@@ -682,18 +688,6 @@ impl DirectWriteState {
             bitmap_size.height += DevicePixels(1);
         }
         let bitmap_size = bitmap_size;
-        let transform = DWRITE_MATRIX {
-            m11: params.scale_factor,
-            m12: 0.0,
-            m21: 0.0,
-            m22: params.scale_factor,
-            dx: 0.0,
-            dy: 0.0,
-        };
-        let brush_property = D2D1_BRUSH_PROPERTIES {
-            opacity: 1.0,
-            ..Default::default()
-        };
 
         let total_bytes;
         let bitmap_format;
@@ -708,8 +702,8 @@ impl DirectWriteState {
                     format: DXGI_FORMAT_B8G8R8A8_UNORM,
                     alphaMode: D2D1_ALPHA_MODE_PREMULTIPLIED,
                 },
-                dpiX: params.scale_factor * 96.0,
-                dpiY: params.scale_factor * 96.0,
+                dpiX: 96.0,
+                dpiY: 96.0,
                 usage: D2D1_RENDER_TARGET_USAGE_NONE,
                 minLevel: D2D1_FEATURE_LEVEL_DEFAULT,
             };
@@ -723,8 +717,8 @@ impl DirectWriteState {
                     format: DXGI_FORMAT_A8_UNORM,
                     alphaMode: D2D1_ALPHA_MODE_STRAIGHT,
                 },
-                dpiX: params.scale_factor * 96.0,
-                dpiY: params.scale_factor * 96.0,
+                dpiX: 96.0,
+                dpiY: 96.0,
                 usage: D2D1_RENDER_TARGET_USAGE_NONE,
                 minLevel: D2D1_FEATURE_LEVEL_DEFAULT,
             };
@@ -742,20 +736,25 @@ impl DirectWriteState {
                 .components
                 .d2d1_factory
                 .CreateWicBitmapRenderTarget(&bitmap, &render_target_property)?;
-            let brush = render_target.CreateSolidColorBrush(&BRUSH_COLOR, Some(&brush_property))?;
+            let brush = render_target.CreateSolidColorBrush(&BRUSH_COLOR, None)?;
             let subpixel_shift = params
                 .subpixel_variant
                 .map(|v| v as f32 / SUBPIXEL_VARIANTS as f32);
             let baseline_origin = D2D_POINT_2F {
                 x: subpixel_shift.x / params.scale_factor,
+                // x: 0.0,
                 y: subpixel_shift.y / params.scale_factor,
+                // y: 0.0,
             };
 
             // This `cast()` action here should never fail since we are running on Win10+, and
             // ID2D1DeviceContext4 requires Win8+
             let render_target = render_target.cast::<ID2D1DeviceContext4>().unwrap();
+            render_target.SetUnitMode(D2D1_UNIT_MODE_DIPS);
+            render_target.SetDpi(96.0 * params.scale_factor, 96.0 * params.scale_factor);
+
             if params.is_emoji {
-                render_target.SetTextAntialiasMode(D2D1_TEXT_ANTIALIAS_MODE_CLEARTYPE);
+                // render_target.SetTextAntialiasMode(D2D1_TEXT_ANTIALIAS_MODE_CLEARTYPE);
                 render_target.SetTextRenderingParams(&self.components.rendering_params.emoji);
                 render_target.BeginDraw();
                 // WARN: only DWRITE_GLYPH_IMAGE_FORMATS_COLR has been tested
@@ -769,7 +768,7 @@ impl DirectWriteState {
                         | DWRITE_GLYPH_IMAGE_FORMATS_JPEG
                         | DWRITE_GLYPH_IMAGE_FORMATS_PREMULTIPLIED_B8G8R8A8,
                     DWRITE_MEASURING_MODE_NATURAL,
-                    Some(&transform as _),
+                    None,
                     0,
                 )?;
                 while enumerator.MoveNext().is_ok() {
