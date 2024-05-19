@@ -581,27 +581,7 @@ impl DirectWriteState {
     }
 
     fn raster_bounds(&self, params: &RenderGlyphParams) -> Result<Bounds<DevicePixels>> {
-        let render_target_property = D2D1_RENDER_TARGET_PROPERTIES {
-            r#type: D2D1_RENDER_TARGET_TYPE_DEFAULT,
-            pixelFormat: D2D1_PIXEL_FORMAT {
-                format: DXGI_FORMAT_B8G8R8A8_UNORM,
-                alphaMode: D2D1_ALPHA_MODE_PREMULTIPLIED,
-            },
-            dpiX: 96.0,
-            dpiY: 96.0,
-            usage: D2D1_RENDER_TARGET_USAGE_NONE,
-            minLevel: D2D1_FEATURE_LEVEL_DEFAULT,
-        };
-        let render_target = unsafe {
-            self.components
-                .d2d1_factory
-                .CreateDCRenderTarget(&render_target_property)?
-        };
-        let render_target = render_target.cast::<ID2D1DeviceContext4>()?;
-        unsafe {
-            render_target.SetUnitMode(D2D1_UNIT_MODE_DIPS);
-            render_target.SetDpi(96.0 * params.scale_factor, 96.0 * params.scale_factor);
-        }
+        let render_target = &self.components.rendering_params.dc_target;
         let font = &self.fonts[params.font_id.0];
         let glyph_id = [params.glyph_id.0 as u16];
         let advance = [0.0f32];
@@ -616,17 +596,6 @@ impl DirectWriteState {
             isSideways: BOOL(0),
             bidiLevel: 0,
         };
-        if params.is_emoji {
-            unsafe {
-                render_target.SetTextAntialiasMode(D2D1_TEXT_ANTIALIAS_MODE_CLEARTYPE);
-                render_target.SetTextRenderingParams(&self.components.rendering_params.params);
-            }
-        } else {
-            unsafe {
-                render_target.SetTextAntialiasMode(D2D1_TEXT_ANTIALIAS_MODE_GRAYSCALE);
-                render_target.SetTextRenderingParams(&self.components.rendering_params.text);
-            }
-        }
         let bounds = unsafe {
             render_target.GetGlyphRunWorldBounds(
                 D2D_POINT_2F { x: 0.0, y: 0.0 },
