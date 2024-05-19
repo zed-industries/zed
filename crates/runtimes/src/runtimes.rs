@@ -4,32 +4,36 @@
 use anyhow::{Context as _, Result};
 #[allow(unused_imports)]
 use client::Client;
-use collections::HashMap;
+use collections::{HashMap, HashSet};
 use editor::{
-    display_map::{BlockContext, BlockDisposition, BlockProperties, BlockStyle},
+    display_map::{
+        BlockContext, BlockDisposition, BlockId, BlockProperties, BlockStyle, RenderBlock,
+    },
     Anchor, Editor,
 };
 use futures::{channel::mpsc, SinkExt as _, StreamExt as _};
+use gpui::View;
 #[allow(unused_imports)]
 use gpui::{actions, AppContext, Context, Global, Model, ModelContext, WeakView};
 #[allow(unused_imports)]
 use language::language_settings::all_language_settings;
 use language::Point;
-use runtimelib::MimeType;
+use outputs::ExecutionView;
 #[allow(unused_imports)]
 use runtimelib::{
     ExecuteRequest, JupyterClient, JupyterMessage, JupyterMessageContent, JupyterRuntime, RuntimeId,
 };
-use serde_json::Value;
 use settings::Settings as _;
 #[allow(unused_imports)]
 use settings::SettingsStore;
+use std::path::PathBuf;
 #[allow(unused_imports)]
 use std::sync::Arc;
-use std::{ops::Range, path::PathBuf};
 use ui::prelude::*;
 use util::ResultExt;
 use workspace::Workspace;
+
+mod outputs;
 
 use theme::{ActiveTheme, ThemeSettings};
 
@@ -37,42 +41,6 @@ actions!(runtimes, [Run]);
 
 #[derive(Clone)]
 pub struct RuntimeGlobal(Model<RuntimeManager>);
-
-/*
-
-# Editor Document
-
-* Users will expect one runtime per editor.
-
-Hashmap<Identifier, Async Channel>
-
-```python
-// Status::busy()
-print("This my my model");      -> StreamContent { name: "stdout", text: "This my my model" }
-df = pd.read_csv("myfile.csv");
-display(df.tail()); // -> DisplayData { data: {"text/html": "<table>...</table>", "text/plain": "   ...\n"} }
-
-df.head()  -> ExecuteResult { execution_count: 1, data: {"text/html": "<table>...</table>", "text/plain": "   ...\n"} }"} }
-
-// Status::idle()
-```
-
-Message ID -> (Anchor, Outputs)
-   * Anchor
-   * Vec<Output> (ExecuteResult, DisplayData, StreamContent, ErrorOutput)
-
-
-#[derive(Serialize, Deserialize, Debug, Clone)]
-pub struct Header {
-    pub msg_id: String,
-    pub username: String,
-    pub session: String,
-    pub date: DateTime<Utc>,
-    pub msg_type: String,
-    pub version: String,
-}
-
-*/
 
 impl Global for RuntimeGlobal {}
 
@@ -165,10 +133,10 @@ impl DocumentClient {
 
                         if let Some(mut execution) = executions.lock().await.get(&execution_id) {
                             execution
-                                .send(dbg!(ExecutionUpdate {
+                                .send(ExecutionUpdate {
                                     execution_id,
                                     update: message.content,
-                                }))
+                                })
                                 .await
                                 .ok();
                         }
@@ -350,43 +318,52 @@ impl RuntimeManager {
                     .read(cx)
                     .execute_code(execution_id.clone(), code.clone());
 
+                let execution_view = cx.new_view(|cx| ExecutionView::new(execution_id.clone(), cx));
+
+                // Since we don't know the height, in editor terms, we have to calculate it over time
+                // and just create a new block, replacing the old. It would be better if we could
+                // just rely on the view updating and for the height to be calculated automatically.
+                // This works for now leaning straight into this being a pure text editor.
+                // Plots and other images will have to wait.
+                let mut guessed_height: u8 = 1;
+
+                let mut block_id = editor.update(cx, |editor, cx| {
+                    let block = BlockProperties {
+                        position: anchor,
+                        height: guessed_height,
+                        style: BlockStyle::Sticky,
+                        render: create_output_area_render(execution_view.clone()),
+                        disposition: BlockDisposition::Below,
+                    };
+
+                    editor.insert_blocks([block], None, cx)[0]
+                });
+
                 cx.spawn(|_this, mut cx| async move {
+                    let execution_view = execution_view.clone();
                     while let Some(update) = receiver.next().await {
-                        let priority_order = vec![MimeType::Plain, MimeType::Markdown];
-
-                        // A bit hacky for the moment
-                        let output: Option<(MimeType, Value)> = match update.update {
-                            JupyterMessageContent::ExecuteResult(result) => {
-                                result.data.richest(&priority_order)
-                            }
-                            JupyterMessageContent::DisplayData(result) => {
-                                result.data.richest(&priority_order)
-                            }
-                            JupyterMessageContent::StreamContent(result) => {
-                                // TODO: Process terminal colors, etc.
-                                Some((
-                                    MimeType::Plain,
-                                    Value::from(
-                                        result
-                                            .text
-                                            // Trim trailing newline for aesthetics
-                                            .trim_end(),
-                                    ),
-                                ))
-                            }
-                            JupyterMessageContent::ErrorOutput(result) => {
-                                Some((MimeType::Other, Value::from(result.ename)))
-                            }
-                            _ => continue,
-                        };
-
-                        let output = match output {
-                            Some((_mime_type, value)) => value.as_str().unwrap_or("").to_string(),
-                            None => continue,
-                        };
+                        let more_height = execution_view
+                            .update(&mut cx, |execution_view, cx| {
+                                execution_view.push_message(update.update, cx)
+                            })?;
 
                         editor.update(&mut cx, |editor, cx| {
-                            render_output_block(editor, output.into(), anchor, cx);
+                            let mut blocks_to_remove = HashSet::default();
+                            blocks_to_remove.insert(block_id);
+
+                            editor.remove_blocks(blocks_to_remove, None, cx);
+
+                            guessed_height = guessed_height.saturating_add(more_height);
+
+                            let block = BlockProperties {
+                                position: anchor,
+                                height: guessed_height,
+                                style: BlockStyle::Sticky,
+                                render: create_output_area_render(execution_view.clone()),
+                                disposition: BlockDisposition::Below,
+                            };
+
+                            block_id = editor.insert_blocks([block], None, cx)[0];
                         })?;
                     }
                     anyhow::Ok(())
@@ -397,25 +374,20 @@ impl RuntimeManager {
     }
 }
 
-fn render_output_block(
-    editor: &mut Editor,
-    output: SharedString,
-    position: Anchor,
-    cx: &mut ViewContext<Editor>,
-) {
-    // This will only work for plain text output, not sure how we'll handle images
-    let height = output.lines().count() as u8;
-
-    dbg!(height);
-
+fn create_output_area_render(
+    // position: Anchor,
+    // // This somehow has to change as the output grows
+    // height: u8,
+    execution_view: View<ExecutionView>,
+) -> RenderBlock {
     let render = move |cx: &mut BlockContext| {
+        let execution_view = execution_view.clone();
         let text_font = ThemeSettings::get_global(cx).buffer_font.family.clone();
         // let anchor_x = cx.anchor_x; // Note: we'll want to use anchor_x when someone runs something with no output -- just show a checkmark and not make the full block below the line
         let gutter_width = cx.gutter_dimensions.width;
 
         // This outer div will be all the outputs for a single execution
         h_flex()
-            .debug_bg_magenta()
             .w_full()
             .border_y_1()
             .border_color(cx.theme().colors().border)
@@ -424,27 +396,33 @@ fn render_output_block(
             .child(
                 // Individual output
                 div()
-                    .debug_bg_blue()
                     .font_family(text_font)
                     .w_full()
                     .ml(gutter_width)
                     .my_2()
                     .h_full()
-                    .child(output.clone()),
+                    .child(execution_view),
             )
             .into_any_element()
     };
 
-    editor.insert_blocks(
-        [BlockProperties {
-            position,
-            // todo()!: figure out how to dynamically calculate the height of the block
-            height: height + 2,
-            style: BlockStyle::Sticky,
-            render: Box::new(render),
-            disposition: BlockDisposition::Below,
-        }],
-        None,
-        cx,
-    );
+    Box::new(render)
+
+    // let block_ids = editor.insert_blocks(
+    //     [
+
+    // BlockProperties {
+    //     position,
+    //     height,
+    //     style: BlockStyle::Sticky,
+    //     render: Box::new(render),
+    //     disposition: BlockDisposition::Below,
+    // }
+
+    //     ],
+    //     None,
+    //     cx,
+    // );
+
+    // block_ids[0]
 }
