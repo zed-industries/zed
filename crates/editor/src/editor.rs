@@ -10215,13 +10215,8 @@ impl Editor {
             .indent_guides_in_range(start_anchor..end_anchor, cx)
             .into_iter()
             .filter(|(_, indent_guide)| {
-                // Filter out indent guides that are folded.
-                let buffer_row = if indent_guide.start_row == indent_guide.end_row {
-                    indent_guide.end_row
-                } else {
-                    indent_guide.end_row.saturating_sub(1)
-                };
-                !snapshot.is_line_folded(MultiBufferRow(buffer_row))
+                // Filter out indent guides that are inside a fold
+                !snapshot.is_line_folded(MultiBufferRow(indent_guide.start_row))
             })
             .collect()
     }
