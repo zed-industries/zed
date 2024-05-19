@@ -45,6 +45,8 @@ if [[ "$method" == "build" ]]; then
     cli_bin_cmd="\"cargo --offline fetch --manifest-path Cargo.toml\",\n${indent}\"cargo --offline build --release --package cli\",\n${indent}\"install -Dm755 ./target/release/cli /app/bin/zed\","
     extra_srcs=",\n${indent}\"crates/zed/resources/flatpak/flatpak-cargo-sources.json\""
 elif [[ "$method" == "copy" ]]; then
+    echo "Note: When using copy mode the 'crates/zed/RELEASE_CHANNEL' used to compile to 'target' should be '${channel}' for app-icons to work"
+
     app_bin_cmd="\"install -Dm755 ./target/release/Zed /app/bin/zed-app\""
     cli_bin_cmd="\"install -Dm755 ./target/release/cli /app/bin/zed\","
     extra_srcs=""
