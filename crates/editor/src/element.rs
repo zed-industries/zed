@@ -1431,58 +1431,6 @@ impl EditorElement {
         snapshot: &DisplaySnapshot,
         cx: &mut WindowContext,
     ) -> Option<Vec<IndentGuideLayout>> {
-        fn calculate_indent_guide_bounds(
-            multi_buffer_range: Range<usize>,
-            row_range: Range<DisplayRow>,
-            line_height: Pixels,
-            snapshot: &DisplaySnapshot,
-        ) -> (gpui::Pixels, gpui::Pixels) {
-            let mut prev_line = multi_buffer_range.start.to_point(&snapshot.buffer_snapshot);
-            prev_line.row = prev_line.row.saturating_sub(1);
-            let prev_line = prev_line.to_display_point(snapshot).row();
-
-            let mut cons_line = multi_buffer_range.end.to_point(&snapshot.buffer_snapshot);
-            cons_line.row += 1;
-            let cons_line = cons_line.to_display_point(snapshot).row();
-
-            let mut offset_y = row_range.start.0 as f32 * line_height;
-            let mut length = (cons_line.0 - row_range.start.0) as f32 * line_height;
-
-            // If there is a block (e.g. diagnostic) in between the start of the indent guide and the line above,
-            // we want to extend the indent guide to the start of the block.
-            let mut block_height = 0;
-            let mut block_offset = 0;
-            let mut found_excerpt_header = false;
-            for (_, block) in snapshot.blocks_in_range(prev_line..row_range.start) {
-                if matches!(block, TransformBlock::ExcerptHeader { .. }) {
-                    found_excerpt_header = true;
-                    break;
-                }
-                block_offset += block.height();
-                block_height += block.height();
-            }
-            if !found_excerpt_header {
-                offset_y -= block_offset as f32 * line_height;
-                length += block_height as f32 * line_height;
-            }
-
-            // If there is a block (e.g. diagnostic) at the end of an multibuffer excerpt,
-            // we want to ensure that the indent guide stops before the excerpt header.
-            let mut block_height = 0;
-            let mut found_excerpt_header = false;
-            for (_, block) in snapshot.blocks_in_range(row_range.end..cons_line) {
-                if matches!(block, TransformBlock::ExcerptHeader { .. }) {
-                    found_excerpt_header = true;
-                }
-                block_height += block.height();
-            }
-            if found_excerpt_header {
-                length -= block_height as f32 * line_height;
-            }
-
-            (offset_y, length)
-        }
-
         let settings = EditorSettings::get_global(cx).indent_guides;
         if !settings.enabled {
             return None;
@@ -1512,7 +1460,7 @@ impl EditorElement {
                         let start_row = multi_buffer_range.start.to_display_point(snapshot).row();
                         let end_row = multi_buffer_range.end.to_display_point(snapshot).row();
 
-                        let (offset_y, length) = calculate_indent_guide_bounds(
+                        let (offset_y, length) = Self::calculate_indent_guide_bounds(
                             multi_buffer_range.clone(),
                             start_row..end_row,
                             line_height,
@@ -1534,6 +1482,58 @@ impl EditorElement {
                 })
                 .collect(),
         )
+    }
+
+    fn calculate_indent_guide_bounds(
+        multi_buffer_range: Range<usize>,
+        row_range: Range<DisplayRow>,
+        line_height: Pixels,
+        snapshot: &DisplaySnapshot,
+    ) -> (gpui::Pixels, gpui::Pixels) {
+        let mut prev_line = multi_buffer_range.start.to_point(&snapshot.buffer_snapshot);
+        prev_line.row = prev_line.row.saturating_sub(1);
+        let prev_line = prev_line.to_display_point(snapshot).row();
+
+        let mut cons_line = multi_buffer_range.end.to_point(&snapshot.buffer_snapshot);
+        cons_line.row += 1;
+        let cons_line = cons_line.to_display_point(snapshot).row();
+
+        let mut offset_y = row_range.start.0 as f32 * line_height;
+        let mut length = (cons_line.0 - row_range.start.0) as f32 * line_height;
+
+        // If there is a block (e.g. diagnostic) in between the start of the indent guide and the line above,
+        // we want to extend the indent guide to the start of the block.
+        let mut block_height = 0;
+        let mut block_offset = 0;
+        let mut found_excerpt_header = false;
+        for (_, block) in snapshot.blocks_in_range(prev_line..row_range.start) {
+            if matches!(block, TransformBlock::ExcerptHeader { .. }) {
+                found_excerpt_header = true;
+                break;
+            }
+            block_offset += block.height();
+            block_height += block.height();
+        }
+        if !found_excerpt_header {
+            offset_y -= block_offset as f32 * line_height;
+            length += block_height as f32 * line_height;
+        }
+
+        // If there is a block (e.g. diagnostic) at the end of an multibuffer excerpt,
+        // we want to ensure that the indent guide stops before the excerpt header.
+        let mut block_height = 0;
+        let mut found_excerpt_header = false;
+        for (_, block) in snapshot.blocks_in_range(row_range.end..cons_line) {
+            if matches!(block, TransformBlock::ExcerptHeader { .. }) {
+                found_excerpt_header = true;
+            }
+            block_height += block.height();
+        }
+        if found_excerpt_header {
+            length -= block_height as f32 * line_height;
+        }
+
+        (offset_y, length)
     }
 
     fn layout_run_indicators(
