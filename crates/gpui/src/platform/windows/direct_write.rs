@@ -107,7 +107,7 @@ impl DirectWriteComponent {
             GetUserDefaultLocaleName(&mut locale_vec);
             let locale = String::from_utf16_lossy(&locale_vec);
             let text_renderer = Arc::new(TextRendererWrapper::new(&locale));
-            let rendering_params = GlyphRenderContext::new(&factory)?;
+            let rendering_params = GlyphRenderContext::new(&factory, &d2d1_factory)?;
 
             Ok(DirectWriteComponent {
                 locale,
@@ -124,7 +124,7 @@ impl DirectWriteComponent {
 }
 
 impl GlyphRenderContext {
-    pub fn new(factory: &IDWriteFactory5) -> Result<Self> {
+    pub fn new(factory: &IDWriteFactory5, d2d1_factory: &ID2D1Factory) -> Result<Self> {
         unsafe {
             let default_params: IDWriteRenderingParams3 =
                 factory.CreateRenderingParams()?.cast()?;
@@ -134,7 +134,7 @@ impl GlyphRenderContext {
             let cleartype_level = default_params.GetClearTypeLevel();
             let grid_fit_mode = default_params.GetGridFitMode();
 
-            let emoji = factory.CreateCustomRenderingParams(
+            let params = factory.CreateCustomRenderingParams(
                 gamma,
                 enhanced_contrast,
                 gray_contrast,
@@ -143,20 +143,18 @@ impl GlyphRenderContext {
                 DWRITE_RENDERING_MODE1_NATURAL_SYMMETRIC,
                 grid_fit_mode,
             )?;
-            let text = factory.CreateCustomRenderingParams(
-                gamma,
-                enhanced_contrast,
-                gray_contrast,
-                cleartype_level,
-                DWRITE_PIXEL_GEOMETRY_RGB,
-                DWRITE_RENDERING_MODE1_NATURAL_SYMMETRIC,
-                grid_fit_mode,
-            )?;
+            let dc_target = {
+                let target = d2d1_factory.CreateDCRenderTarget(&get_render_target_property(
+                    DXGI_FORMAT_B8G8R8A8_UNORM,
+                    D2D1_ALPHA_MODE_PREMULTIPLIED,
+                ))?;
+                let target = target.cast::<ID2D1DeviceContext4>()?;
+                target.SetUnitMode(D2D1_UNIT_MODE_DIPS);
+                target.SetTextRenderingParams(&params);
+                target
+            };
 
-            Ok(Self {
-                params: emoji,
-                text,
-            })
+            Ok(Self { params, dc_target })
         }
     }
 }
