@@ -3097,17 +3097,15 @@ impl BufferSnapshot {
 
         let start_row = range.start.to_point(self).row;
         let end_row = range.end.to_point(self).row;
-        let row_range = start_row..=end_row;
+        let row_range = start_row..end_row + 1;
+
+        let mut row_indents = self.line_indents_in_row_range(row_range.clone());
 
         let mut result_vec = Vec::new();
         let mut indent_stack = SmallVec::<[(Range<usize>, IndentGuide); 8]>::new();
-        let mut rows = row_range.into_iter();
 
-        while let Some(first_row) = rows.next() {
+        while let Some((first_row, mut line_indent, empty)) = row_indents.next() {
             let current_depth = indent_stack.len() as u32;
-
-            let (mut line_indent, empty) = self.line_indent_for_row(first_row);
-
             let indent_size = indent_size_for_row(self, first_row, cx);
 
             // When encountering empty, continue until found useful line indent
@@ -3117,20 +3115,25 @@ impl BufferSnapshot {
             if empty {
                 let mut trailing_row = end_row;
                 while !found_indent {
-                    let target_row = if let Some(display_row) = rows.next() {
-                        display_row
-                    } else {
-                        // This means we reached the end of the given range and found empty lines at the end.
-                        // We need to traverse further until we find a non-empty line to know if we need to add
-                        // an indent guide for the last visible indent.
-                        trailing_row += 1;
-                        if trailing_row > self.max_point().row {
-                            break;
-                        }
-                        trailing_row
-                    };
+                    let (target_row, new_line_indent, empty) =
+                        if let Some(display_row) = row_indents.next() {
+                            display_row
+                        } else {
+                            // This means we reached the end of the given range and found empty lines at the end.
+                            // We need to traverse further until we find a non-empty line to know if we need to add
+                            // an indent guide for the last visible indent.
+                            trailing_row += 1;
 
-                    let (new_line_indent, empty) = self.line_indent_for_row(target_row);
+                            const TRAILING_ROW_SEARCH_LIMIT: u32 = 25;
+                            if trailing_row > self.max_point().row
+                                || trailing_row > end_row + TRAILING_ROW_SEARCH_LIMIT
+                            {
+                                break;
+                            }
+                            let (new_line_indent, empty) = self.line_indent_for_row(trailing_row);
+                            (trailing_row, new_line_indent, empty)
+                        };
+
                     if empty {
                         continue;
                     }

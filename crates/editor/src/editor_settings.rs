@@ -189,7 +189,7 @@ pub struct EditorSettingsContent {
     pub scrollbar: Option<ScrollbarContent>,
     /// Gutter related settings
     pub gutter: Option<GutterContent>,
-    /// Indent guides related settings
+    /// Indent guide related settings
     pub indent_guides: Option<IndentGuidesContent>,
     /// The number of lines to keep above/below the cursor when auto-scrolling.
     ///
