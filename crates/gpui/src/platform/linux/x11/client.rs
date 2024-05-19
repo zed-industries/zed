@@ -42,6 +42,8 @@ use super::{XimCallbackEvent, XimHandler};
 use crate::platform::linux::is_within_click_distance;
 use crate::platform::linux::platform::DOUBLE_CLICK_INTERVAL;
 
+pub(super) const XINPUT_MASTER_DEVICE: u16 = 1;
+
 pub(crate) struct WindowRef {
     window: X11WindowStatePtr,
     refresh_event_token: RegistrationToken,
@@ -180,7 +182,7 @@ impl X11Client {
         );
 
         let master_device_query = xcb_connection
-            .xinput_xi_query_device(1_u16)
+            .xinput_xi_query_device(XINPUT_MASTER_DEVICE)
             .unwrap()
             .reply()
             .unwrap();

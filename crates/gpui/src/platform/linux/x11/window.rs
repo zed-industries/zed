@@ -18,7 +18,10 @@ use x11rb::{
     protocol::{
         render,
         xinput::{self, ConnectionExt as _},
-        xproto::{self, Atom, ClientMessageEvent, ConnectionExt as _, CreateWindowAux, EventMask},
+        xproto::{
+            self, Atom, ClientMessageEvent, ConnectionExt as _, CreateWindowAux, EventMask,
+            TranslateCoordinatesReply,
+        },
     },
     resource_manager::Database,
     wrapper::ConnectionExt as _,
@@ -38,7 +41,7 @@ use std::{
     sync::{self, Arc},
 };
 
-use super::X11Display;
+use super::{X11Display, XINPUT_MASTER_DEVICE};
 
 x11rb::atom_manager! {
     pub XcbAtoms: AtomsCookie {
@@ -53,6 +56,7 @@ x11rb::atom_manager! {
         _NET_WM_STATE_FULLSCREEN,
         _NET_WM_STATE_HIDDEN,
         _NET_WM_STATE_FOCUSED,
+        _GTK_SHOW_WINDOW_MENU,
     }
 }
 
@@ -316,7 +320,7 @@ impl X11WindowState {
             .xinput_xi_select_events(
                 x_window,
                 &[xinput::EventMask {
-                    deviceid: 1,
+                    deviceid: XINPUT_MASTER_DEVICE,
                     mask: vec![
                         xinput::XIEventMask::MOTION
                             | xinput::XIEventMask::BUTTON_PRESS
@@ -484,6 +488,21 @@ impl X11Window {
             .chunks_exact(4)
             .map(|chunk| u32::from_ne_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]))
             .collect()
+    }
+
+    fn get_root_position(&self, position: Point<Pixels>) -> TranslateCoordinatesReply {
+        let state = self.0.state.borrow();
+        self.0
+            .xcb_connection
+            .translate_coordinates(
+                self.0.x_window,
+                state.x_root_window,
+                (position.x.0 * state.scale_factor) as i16,
+                (position.y.0 * state.scale_factor) as i16,
+            )
+            .unwrap()
+            .reply()
+            .unwrap()
     }
 }
 
@@ -840,8 +859,31 @@ impl PlatformWindow for X11Window {
         inner.renderer.sprite_atlas().clone()
     }
 
-    // todo(linux)
-    fn show_window_menu(&self, _position: Point<Pixels>) {}
+    fn show_window_menu(&self, position: Point<Pixels>) {
+        let state = self.0.state.borrow();
+        let coords = self.get_root_position(position);
+        let message = ClientMessageEvent::new(
+            32,
+            self.0.x_window,
+            state.atoms._GTK_SHOW_WINDOW_MENU,
+            [
+                XINPUT_MASTER_DEVICE as u32,
+                coords.dst_x as u32,
+                coords.dst_y as u32,
+                0,
+                0,
+            ],
+        );
+        self.0
+            .xcb_connection
+            .send_event(
+                false,
+                state.x_root_window,
+                EventMask::SUBSTRUCTURE_REDIRECT | EventMask::SUBSTRUCTURE_NOTIFY,
+                message,
+            )
+            .unwrap();
+    }
 
     // todo(linux)
     fn start_system_move(&self) {}
