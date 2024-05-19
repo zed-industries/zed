@@ -1,10 +1,10 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <component type="desktop-application">
-    <id>dev.zed.Zed</id>
+    <id>app_id</id>
     <metadata_license>MIT</metadata_license>
     <project_license>AGPL-3.0-or-later and Apache-2.0 and GPL-3.0-or-later</project_license>
 
-    <name>Zed</name>
+    <name>app_name</name>
     <summary>High-performance, multiplayer code editor</summary>
     <developer id="dev.zed">
         <name translate="no">Zed Industries, Inc.</name>
@@ -22,7 +22,7 @@
         </ul>
     </description>
 
-    <launchable type="desktop-id">dev.zed.Zed.desktop</launchable>
+    <launchable type="desktop-id">app_id.desktop</launchable>
 
     <branding>
         <color type="primary" scheme_preference="light">#99c1f1</color>

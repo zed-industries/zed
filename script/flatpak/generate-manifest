@@ -1,0 +1,40 @@
+#!/bin/bash
+cd "$(dirname "$0")"
+
+if [[ $1 ]]; then
+    channel=$1
+else
+    echo "Please supply the target channel."
+    echo "Possible values: ['dev', 'nightly', 'preview', 'stable']"
+    exit
+fi
+
+if [[ "$channel" == "dev" ]]; then
+    app_id="dev.zed.Zed-Dev"
+    app_name="Zed Devel"
+    icon_name="app-icon-dev.png"
+elif [[ "$channel" == "nightly" ]]; then
+    app_id="dev.zed.Zed-Nightly"
+    app_name="Zed Nightly"
+    icon_name="app-icon-nightly.png"
+elif [[ "$channel" == "preview" ]]; then
+    app_id="dev.zed.Zed-Preview"
+    app_name="Zed Preview"
+    icon_name="app-icon-preview.png"
+elif [[ "$channel" == "stable" ]]; then
+    app_id="dev.zed.Zed"
+    app_name="Zed"
+    icon_name="app-icon.png"
+else
+    echo "Invalid channel '$channel'"
+    echo "Possible values: ['dev', 'nightly', 'preview', 'stable']"
+    exit
+fi
+
+manifest_path="../../${app_id}.json"
+cp "../../crates/zed/resources/flatpak/manifest-template.json" "${manifest_path}"
+
+sed -i "s|@app_id@|$app_id|g" "${manifest_path}"
+sed -i "s|@app_name@|$app_name|g" "${manifest_path}"
+sed -i "s|@channel@|$channel|g" "${manifest_path}"
+sed -i "s|@icon_name@|$icon_name|g" "${manifest_path}"

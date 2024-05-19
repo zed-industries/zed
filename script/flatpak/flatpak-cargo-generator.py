@@ -1,9 +1,12 @@
 #!/usr/bin/env python3
 
 __license__ = 'MIT'
+import os
+import sys
+os.chdir(sys.path[0])
+
 import json
 from urllib.parse import urlparse, ParseResult, parse_qs
-import os
 import contextlib
 import copy
 import glob
@@ -411,9 +414,9 @@ async def generate_sources(
 
 def main():
     logging.basicConfig(level=logging.DEBUG)
-    generated_sources = asyncio.run(generate_sources(load_toml("Cargo.lock"),
+    generated_sources = asyncio.run(generate_sources(load_toml("../../Cargo.lock"),
                                     git_tarballs=True))
-    with open("flatpak-cargo-sources.json", 'w') as out:
+    with open("../../crates/zed/resources/flatpak/flatpak-cargo-sources.json", 'w') as out:
         json.dump(generated_sources, out, indent=4, sort_keys=False)
 
 

@@ -1,0 +1,69 @@
+{
+    "id": "@app_id@",
+    "runtime": "org.freedesktop.Platform",
+    "runtime-version": "23.08",
+    "sdk": "org.freedesktop.Sdk",
+    "sdk-extensions": [
+        "org.freedesktop.Sdk.Extension.rust-stable"
+    ],
+    "command": "zed",
+    "finish-args": [
+        "--talk-name=org.freedesktop.Flatpak"
+    ],
+    "build-options": {
+        "append-path": "/usr/lib/sdk/rust-stable/bin"
+    },
+    "modules": [
+        {
+            "name": "zed-app",
+            "buildsystem": "simple",
+            "build-options": {
+                "env": {
+                    "CARGO_HOME": "/run/build/zed-app/cargo"
+                }
+            },
+            "build-commands": [
+                "echo @channel@ > crates/zed/RELEASE_CHANNEL",
+                "cargo --offline fetch --manifest-path Cargo.toml",
+                "cargo --offline build --release",
+                "install -Dm755 ./target/release/Zed /app/bin/zed-app"
+            ],
+            "sources": [
+                {
+                    "type": "dir",
+                    "path": "."
+                },
+                "crates/zed/resources/flatpak/flatpak-cargo-sources.json"
+            ]
+        },
+        {
+            "name": "zed",
+            "buildsystem": "simple",
+            "build-options": {
+                "env": {
+                    "CARGO_HOME": "/run/build/zed/cargo"
+                }
+            },
+            "build-commands": [
+                "echo @channel@ > crates/zed/RELEASE_CHANNEL",
+                "cargo --offline fetch --manifest-path Cargo.toml",
+                "cargo --offline build --release --package cli",
+                "install -Dm755 ./target/release/cli /app/bin/zed",
+                "install -Dm644 crates/zed/resources/zed.desktop /app/share/applications/${FLATPAK_ID}.desktop",
+                "install -Dm644 crates/zed/resources/flatpak/template.metainfo.xml /app/share/metainfo/${FLATPAK_ID}.metainfo.xml",
+                "install -Dm644 crates/zed/resources/@icon_name@ /app/share/icons/hicolor/512x512/apps/${FLATPAK_ID}.png",
+                "sed -i 's|Name=Zed|Name=@app_name@|g' /app/share/applications/${FLATPAK_ID}.desktop",
+                "sed -i 's|Icon=zed|Icon=@app_id@|g' /app/share/applications/${FLATPAK_ID}.desktop",
+                "sed -i 's|app_id|@app_id@|g' /app/share/metainfo/${FLATPAK_ID}.metainfo.xml",
+                "sed -i 's|app_name|@app_name@|g' /app/share/metainfo/${FLATPAK_ID}.metainfo.xml"
+            ],
+            "sources": [
+                {
+                    "type": "dir",
+                    "path": "."
+                },
+                "crates/zed/resources/flatpak/flatpak-cargo-sources.json"
+            ]
+        }
+    ]
+}
