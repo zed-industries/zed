@@ -106,7 +106,7 @@ impl LspAdapter for ExtensionLspAdapter {
                             let pattern = r"^/[A-Z]:\\";
                             let regex = Regex::new(pattern).unwrap();
                             if regex.is_match(&arg) {
-                                return arg.trim_start_matches("/").into();
+                                return arg.trim_start_matches('/').into();
                             }
                         }
                         return arg.into();
