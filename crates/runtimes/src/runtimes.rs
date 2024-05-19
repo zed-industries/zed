@@ -14,6 +14,7 @@ use futures::{channel::mpsc, SinkExt as _, StreamExt as _};
 use gpui::{actions, AppContext, Context, Global, Model, ModelContext, WeakView};
 #[allow(unused_imports)]
 use language::language_settings::all_language_settings;
+use language::Point;
 use runtimelib::MimeType;
 #[allow(unused_imports)]
 use runtimelib::{
@@ -23,10 +24,11 @@ use serde_json::Value;
 use settings::Settings as _;
 #[allow(unused_imports)]
 use settings::SettingsStore;
-use std::path::PathBuf;
 #[allow(unused_imports)]
 use std::sync::Arc;
+use std::{ops::Range, path::PathBuf};
 use ui::prelude::*;
+use util::ResultExt;
 use workspace::Workspace;
 
 use theme::{ActiveTheme, ThemeSettings};
@@ -98,12 +100,15 @@ struct ExecutionRequest {
 
 pub struct RuntimeManager {
     execution_request_tx: mpsc::UnboundedSender<ExecutionRequest>,
-    _runtime_handle: std::thread::JoinHandle<anyhow::Result<()>>,
+    _runtime_handle: std::thread::JoinHandle<()>,
 }
 
 // For now, we're going to connect to a running kernel that is already running
+// static HARDCODED_KERNEL: &str =
+// "/Users/kylekelley/Library/Jupyter/runtime/kernel-1bd7cb84-018f-4eea-a7de-55c637581c3e.json";
+
 static HARDCODED_KERNEL: &str =
-    "/Users/kylekelley/Library/Jupyter/runtime/kernel-1bd7cb84-018f-4eea-a7de-55c637581c3e.json";
+    "/Users/kylekelley/Library/Jupyter/runtime/kernel-af08b239-ed3a-43ec-8eaa-431f7beef959.json";
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 struct ExecutionId(String);
@@ -216,21 +221,30 @@ impl RuntimeManager {
                 .expect("tokio failed to start");
 
             // TODO: Will need a signal handler to shutdown the runtime
-            runtime.block_on(async move {
-                // Set up the kernel client here as our prototype
-                let kernel_path = std::path::PathBuf::from(HARDCODED_KERNEL);
-                let document_client = DocumentClient::new(&kernel_path, execution_request_rx)
-                    .await
-                    .unwrap();
+            runtime
+                .block_on(async move {
+                    // Set up the kernel client here as our prototype
+                    let kernel_path = std::path::PathBuf::from(HARDCODED_KERNEL);
+                    let document_client =
+                        DocumentClient::new(&kernel_path, execution_request_rx).await?;
 
-                let join_fut = futures::future::try_join(
-                    document_client.iopub_handle,
-                    document_client.shell_handle,
-                );
+                    let join_fut = futures::future::try_join(
+                        document_client.iopub_handle,
+                        document_client.shell_handle,
+                    );
 
-                join_fut.await?;
-                Ok(())
-            })
+                    let results = join_fut.await?;
+
+                    if let Err(e) = results.0 {
+                        log::error!("iopub error: {e:?}");
+                    }
+                    if let Err(e) = results.1 {
+                        log::error!("shell error: {e:?}");
+                    }
+
+                    anyhow::Ok(())
+                })
+                .log_err();
         });
         Self {
             execution_request_tx,
@@ -280,17 +294,48 @@ impl RuntimeManager {
             .and_then(|item| item.act_as::<Editor>(cx))
             .and_then(|editor_view| {
                 let editor = editor_view.read(cx);
-                let range = editor.selections.newest::<usize>(cx).range();
+                let selection = editor.selections.newest::<usize>(cx);
                 let buffer = editor.buffer().read(cx).snapshot(cx);
 
-                let mut end = range.end;
+                let range = if selection.is_empty() {
+                    let cursor = selection.head();
+
+                    let line_start = buffer.offset_to_point(cursor).row;
+                    let mut start_offset = buffer.point_to_offset(Point::new(line_start, 0));
+
+                    // Iterate backwards to find the start of the line
+                    while start_offset > 0 {
+                        let ch = buffer.chars_at(start_offset - 1).next().unwrap_or('\0');
+                        if ch == '\n' {
+                            break;
+                        }
+                        start_offset -= 1;
+                    }
+
+                    let mut end_offset = cursor;
+
+                    // Iterate forwards to find the end of the line
+                    while end_offset < buffer.len() {
+                        let ch = buffer.chars_at(end_offset).next().unwrap_or('\0');
+                        if ch == '\n' {
+                            break;
+                        }
+                        end_offset += 1;
+                    }
+
+                    // Create a range from the start to the end of the line
+                    start_offset..end_offset
+                } else {
+                    selection.range()
+                };
+
                 // // TODO(): Put block decoration after last bit of code that isn't whitespace.
                 // //         There is no `char_at`. There's a `chars_at`, but you've gotta iterate
                 // while end > range.start && buffer.char_at(end - 1).next().is_whitespace() {
                 //     end -= 1;
                 // }
 
-                let anchor = buffer.anchor_after(end);
+                let anchor = buffer.anchor_after(range.end);
 
                 // For handling of markdown documents, we'll need to get the language name
                 // based on where we're at in the document.
