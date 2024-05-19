@@ -1,9 +1,8 @@
-use gpui::{AnyElement, Model, ModelContext, Render, Size};
-use runtimelib::{
-    DisplayData, ErrorOutput, ExecuteResult, JupyterMessageContent, MimeType, StreamContent,
-};
+use gpui::{AnyElement, Hsla, Model, ModelContext, Render};
+use runtimelib::{ErrorOutput, JupyterMessageContent, MimeType};
 use ui::{
-    div, h_flex, v_flex, Context as _, IntoElement, ParentElement as _, SharedString, ViewContext,
+    div, prelude::*, v_flex, Color, Context as _, IntoElement, ParentElement as _, SharedString,
+    Styled, ViewContext, WindowContext,
 };
 
 use serde_json::Value;
@@ -20,13 +19,13 @@ pub enum OutputType {
 const PRIORITY_ORDER: &[MimeType] = &[MimeType::Plain, MimeType::Markdown];
 
 impl OutputType {
-    fn render(&self) -> Option<AnyElement> {
+    fn render(&self, cx: &ViewContext<ExecutionView>) -> Option<AnyElement> {
         let el = match self {
             // Note: in typical frontends we would show the execute_result.execution_count
             // Here we can just handle either
             Self::Media((mimetype, value)) => render_rich(mimetype, value),
             Self::Stream(stdio) => render_stdio(stdio),
-            Self::ErrorOutput(error_output) => render_error_output(&error_output),
+            Self::ErrorOutput(error_output) => render_error_output(&error_output, cx),
         };
 
         el
@@ -64,10 +63,23 @@ fn render_stdio(stdio: &SharedString) -> Option<AnyElement> {
     )
 }
 
-fn render_error_output(error_output: &ErrorOutput) -> Option<AnyElement> {
+fn render_error_output(
+    error_output: &ErrorOutput,
+    cx: &ViewContext<ExecutionView>,
+) -> Option<AnyElement> {
+    let status_colors = cx.theme().status();
+
     Some(
         v_flex()
-            .child(error_output.ename.clone())
+            .bg(status_colors.error_background)
+            .p_2()
+            .border_1()
+            .border_color(status_colors.error_border)
+            .child(
+                div()
+                    .text_color(status_colors.error)
+                    .child(error_output.ename.clone()),
+            )
             .children(
                 error_output
                     .traceback
@@ -105,7 +117,15 @@ impl Execution {
             // TODO: when we get stream input, we should combine it with all previous streams (before any other output type)
             // When we do that, we'll want to return the height of the _entire_ collection of outputs, not just this one.
             OutputType::Stream(text) => text.lines().count() as u8,
-            OutputType::ErrorOutput(error_output) => 1 + error_output.traceback.len() as u8,
+            OutputType::ErrorOutput(error_output) => {
+                let mut height: u8 = 0;
+
+                height = height.saturating_add(error_output.ename.lines().count() as u8);
+                // Note: skipping evalue in error output for now
+                height = height.saturating_add(error_output.traceback.len() as u8);
+
+                height
+            }
             OutputType::Media((_mime_type, value)) => {
                 // Convert to string, and then count the lines
                 let text = value.as_str().unwrap_or("").to_string();
@@ -185,7 +205,7 @@ impl Render for ExecutionView {
         let outputs = self.execution.read(cx).outputs();
 
         div()
-            .children(outputs.iter().filter_map(|output| output.render()))
+            .children(outputs.iter().filter_map(|output| output.render(cx)))
             .into_any_element()
     }
 }
