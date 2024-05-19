@@ -571,7 +571,6 @@
       "cmd-v": "project_panel::Paste",
       "cmd-alt-c": "project_panel::CopyPath",
       "alt-cmd-shift-c": "project_panel::CopyRelativePath",
-      "f2": "project_panel::Rename",
       "enter": "project_panel::Rename",
       "backspace": "project_panel::Trash",
       "delete": "project_panel::Trash",
