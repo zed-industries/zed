@@ -680,9 +680,7 @@ impl DirectWriteState {
         let advance = [glyph_bounds.size.width.0 as f32];
         let offset = [DWRITE_GLYPH_OFFSET {
             advanceOffset: -glyph_bounds.origin.x.0 as f32 / params.scale_factor,
-            // advanceOffset: 0.0,
             ascenderOffset: glyph_bounds.origin.y.0 as f32 / params.scale_factor,
-            // ascenderOffset: 0.0,
         }];
         let glyph_run = DWRITE_GLYPH_RUN {
             fontFace: unsafe { std::mem::transmute_copy(&font_info.font_face) },
@@ -758,9 +756,7 @@ impl DirectWriteState {
                 .map(|v| v as f32 / SUBPIXEL_VARIANTS as f32);
             let baseline_origin = D2D_POINT_2F {
                 x: subpixel_shift.x / params.scale_factor,
-                // x: 0.0,
                 y: subpixel_shift.y / params.scale_factor,
-                // y: 0.0,
             };
 
             // This `cast()` action here should never fail since we are running on Win10+, and
@@ -770,7 +766,7 @@ impl DirectWriteState {
             render_target.SetDpi(96.0 * params.scale_factor, 96.0 * params.scale_factor);
 
             if params.is_emoji {
-                // render_target.SetTextAntialiasMode(D2D1_TEXT_ANTIALIAS_MODE_CLEARTYPE);
+                render_target.SetTextAntialiasMode(D2D1_TEXT_ANTIALIAS_MODE_CLEARTYPE);
                 render_target.SetTextRenderingParams(&self.components.rendering_params.emoji);
                 render_target.BeginDraw();
                 // WARN: only DWRITE_GLYPH_IMAGE_FORMATS_COLR has been tested
