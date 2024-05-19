@@ -697,9 +697,12 @@ impl DirectWriteState {
             bitmap_stride = bitmap_size.width.0 as u32 * 4;
         } else {
             total_bytes = bitmap_size.height.0 as usize * bitmap_size.width.0 as usize;
-            bitmap_format = &GUID_WICPixelFormat8bppAlpha;
+            // bitmap_format = &GUID_WICPixelFormat8bppAlpha;
+            // render_target_property =
+            //     get_render_target_property(DXGI_FORMAT_A8_UNORM, D2D1_ALPHA_MODE_STRAIGHT);
+            bitmap_format = &GUID_WICPixelFormat32bppRGB;
             render_target_property =
-                get_render_target_property(DXGI_FORMAT_A8_UNORM, D2D1_ALPHA_MODE_STRAIGHT);
+                get_render_target_property(DXGI_FORMAT_UNKNOWN, D2D1_ALPHA_MODE_UNKNOWN);
             bitmap_stride = bitmap_size.width.0 as u32;
         }
 
@@ -792,7 +795,20 @@ impl DirectWriteState {
             }
             render_target.EndDraw(None, None)?;
             let mut raw_data = vec![0u8; total_bytes];
-            bitmap.CopyPixels(std::ptr::null() as _, bitmap_stride, &mut raw_data)?;
+            // let converter = &self.components.render_context.converter;
+            let converter = self.components.bitmap_factory.CreateFormatConverter()?;
+            converter
+                .Initialize(
+                    &bitmap,
+                    &GUID_WICPixelFormat8bppGray,
+                    WICBitmapDitherTypeNone,
+                    None,
+                    0.0,
+                    WICBitmapPaletteTypeCustom,
+                )
+                .unwrap();
+            // bitmap.CopyPixels(std::ptr::null() as _, bitmap_stride, &mut raw_data)?;
+            converter.CopyPixels(std::ptr::null() as _, bitmap_stride, &mut raw_data)?;
             if params.is_emoji {
                 // Convert from BGRA with premultiplied alpha to BGRA with straight alpha.
                 for pixel in raw_data.chunks_exact_mut(4) {
