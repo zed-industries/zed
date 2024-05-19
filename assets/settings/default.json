@@ -792,6 +792,7 @@
     "use_multiline_find": false,
     "use_smartcase_find": false
   },
+  "modal_editor_type": "off",
   // The server to connect to. If the environment variable
   // ZED_SERVER_URL is set, it will override this setting.
   "server_url": "https://zed.dev",

@@ -14,6 +14,7 @@ use std::ops::Range;
 use workspace::Workspace;
 
 use crate::{
+    helix::helix_normal_motion,
     normal::{mark, normal_motion},
     state::{Mode, Operator},
     surrounds::SurroundsType,
@@ -398,22 +399,19 @@ pub(crate) fn search_motion(m: Motion, cx: &mut WindowContext) {
         prior_selections, ..
     } = &m
     {
-        match Vim::read(cx).state().mode {
-            Mode::Visual | Mode::VisualLine | Mode::VisualBlock => {
-                if !prior_selections.is_empty() {
-                    Vim::update(cx, |vim, cx| {
-                        vim.update_active_editor(cx, |_, editor, cx| {
-                            editor.change_selections(Some(Autoscroll::fit()), cx, |s| {
-                                s.select_ranges(prior_selections.iter().cloned())
-                            })
-                        });
+        if Vim::read(cx).state().mode.is_visual() {
+            if !prior_selections.is_empty() {
+                Vim::update(cx, |vim, cx| {
+                    vim.update_active_editor(cx, |_, editor, cx| {
+                        editor.change_selections(Some(Autoscroll::fit()), cx, |s| {
+                            s.select_ranges(prior_selections.iter().cloned())
+                        })
                     });
-                }
+                });
             }
-            Mode::Normal | Mode::Replace | Mode::Insert => {
-                if Vim::read(cx).active_operator().is_none() {
-                    return;
-                }
+        } else {
+            if Vim::read(cx).active_operator().is_none() {
+                return;
             }
         }
     }
@@ -444,6 +442,7 @@ pub(crate) fn motion(motion: Motion, cx: &mut WindowContext) {
         Mode::Visual | Mode::VisualLine | Mode::VisualBlock => {
             visual_motion(motion.clone(), count, cx)
         }
+        Mode::HelixNormal => helix_normal_motion(motion.clone(), count, cx),
         Mode::Insert => {
             // Shouldn't execute a motion in insert mode. Ignoring
         }

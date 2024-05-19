@@ -66,7 +66,7 @@ where
                             cursor_positions.push(selection.start..selection.start);
                         }
                     }
-                    Mode::Insert | Mode::Normal | Mode::Replace => {
+                    Mode::Insert | Mode::Normal | Mode::Replace | Mode::HelixNormal => {
                         let start = selection.start;
                         let mut end = start;
                         for _ in 0..count {

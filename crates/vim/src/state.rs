@@ -17,6 +17,7 @@ pub enum Mode {
     Visual,
     VisualLine,
     VisualBlock,
+    HelixNormal,
 }
 
 impl Display for Mode {
@@ -28,6 +29,7 @@ impl Display for Mode {
             Mode::Visual => write!(f, "VISUAL"),
             Mode::VisualLine => write!(f, "VISUAL LINE"),
             Mode::VisualBlock => write!(f, "VISUAL BLOCK"),
+            Mode::HelixNormal => write!(f, "HELIX"),
         }
     }
 }
@@ -36,7 +38,7 @@ impl Mode {
     pub fn is_visual(&self) -> bool {
         match self {
             Mode::Normal | Mode::Insert | Mode::Replace => false,
-            Mode::Visual | Mode::VisualLine | Mode::VisualBlock => true,
+            Mode::Visual | Mode::VisualLine | Mode::VisualBlock | Mode::HelixNormal => true,
         }
     }
 }
@@ -168,6 +170,7 @@ impl EditorState {
             Mode::Replace => CursorShape::Underscore,
             Mode::Visual | Mode::VisualLine | Mode::VisualBlock => CursorShape::Block,
             Mode::Insert => CursorShape::Bar,
+            Mode::HelixNormal => CursorShape::Hollow,
         }
     }
 
@@ -191,9 +194,12 @@ impl EditorState {
 
     pub fn clip_at_line_ends(&self) -> bool {
         match self.mode {
-            Mode::Insert | Mode::Visual | Mode::VisualLine | Mode::VisualBlock | Mode::Replace => {
-                false
-            }
+            Mode::Insert
+            | Mode::Visual
+            | Mode::VisualLine
+            | Mode::VisualBlock
+            | Mode::Replace
+            | Mode::HelixNormal => false,
             Mode::Normal => true,
         }
     }
@@ -208,6 +214,7 @@ impl EditorState {
             "vim_mode",
             match self.mode {
                 Mode::Normal => "normal",
+                Mode::HelixNormal => "helixnormal",
                 Mode::Visual | Mode::VisualLine | Mode::VisualBlock => "visual",
                 Mode::Insert => "insert",
                 Mode::Replace => "replace",

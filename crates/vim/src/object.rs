@@ -101,7 +101,9 @@ pub fn register(workspace: &mut Workspace, _: &mut ViewContext<Workspace>) {
 fn object(object: Object, cx: &mut WindowContext) {
     match Vim::read(cx).state().mode {
         Mode::Normal => normal_object(object, cx),
-        Mode::Visual | Mode::VisualLine | Mode::VisualBlock => visual_object(object, cx),
+        Mode::Visual | Mode::VisualLine | Mode::VisualBlock | Mode::HelixNormal => {
+            visual_object(object, cx)
+        }
         Mode::Insert | Mode::Replace => {
             // Shouldn't execute a text object in insert mode. Ignoring
         }
