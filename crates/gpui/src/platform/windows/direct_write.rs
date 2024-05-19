@@ -44,7 +44,7 @@ struct DirectWriteComponent {
     in_memory_loader: IDWriteInMemoryFontFileLoader,
     builder: IDWriteFontSetBuilder1,
     text_renderer: Arc<TextRendererWrapper>,
-    rendering_params: GlyphRenderContext,
+    render_context: GlyphRenderContext,
 }
 
 struct GlyphRenderContext {
@@ -107,7 +107,7 @@ impl DirectWriteComponent {
             GetUserDefaultLocaleName(&mut locale_vec);
             let locale = String::from_utf16_lossy(&locale_vec);
             let text_renderer = Arc::new(TextRendererWrapper::new(&locale));
-            let rendering_params = GlyphRenderContext::new(&factory, &d2d1_factory)?;
+            let render_context = GlyphRenderContext::new(&factory, &d2d1_factory)?;
 
             Ok(DirectWriteComponent {
                 locale,
@@ -117,7 +117,7 @@ impl DirectWriteComponent {
                 in_memory_loader,
                 builder,
                 text_renderer,
-                rendering_params,
+                render_context,
             })
         }
     }
@@ -581,7 +581,7 @@ impl DirectWriteState {
     }
 
     fn raster_bounds(&self, params: &RenderGlyphParams) -> Result<Bounds<DevicePixels>> {
-        let render_target = &self.components.rendering_params.dc_target;
+        let render_target = &self.components.render_context.dc_target;
         let font = &self.fonts[params.font_id.0];
         let glyph_id = [params.glyph_id.0 as u16];
         let advance = [0.0f32];
@@ -736,7 +736,7 @@ impl DirectWriteState {
             render_target.SetDpi(96.0 * params.scale_factor, 96.0 * params.scale_factor);
 
             if params.is_emoji {
-                render_target.SetTextRenderingParams(&self.components.rendering_params.params);
+                render_target.SetTextRenderingParams(&self.components.render_context.params);
                 render_target.BeginDraw();
                 // WARN: only DWRITE_GLYPH_IMAGE_FORMATS_COLR has been tested
                 let enumerator = self.components.factory.TranslateColorGlyphRun(
@@ -788,7 +788,7 @@ impl DirectWriteState {
                     }
                 }
             } else {
-                render_target.SetTextRenderingParams(&self.components.rendering_params.params);
+                render_target.SetTextRenderingParams(&self.components.render_context.params);
                 render_target.BeginDraw();
                 render_target.DrawGlyphRun(
                     baseline_origin,
