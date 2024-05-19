@@ -1,4 +1,4 @@
-use gpui::{AnyElement, Hsla, Model, ModelContext, Render};
+use gpui::{AnyElement, FontWeight, Hsla, Model, ModelContext, Render};
 use runtimelib::{ErrorOutput, JupyterMessageContent, MimeType};
 use ui::{
     div, prelude::*, v_flex, Color, Context as _, IntoElement, ParentElement as _, SharedString,
@@ -71,13 +71,14 @@ fn render_error_output(
 
     Some(
         v_flex()
+            .w_full()
             .bg(status_colors.error_background)
             .p_2()
             .border_1()
             .border_color(status_colors.error_border)
             .child(
                 div()
-                    .text_color(status_colors.error)
+                    .font_weight(FontWeight::BOLD)
                     .child(error_output.ename.clone()),
             )
             .children(
@@ -118,7 +119,8 @@ impl Execution {
             // When we do that, we'll want to return the height of the _entire_ collection of outputs, not just this one.
             OutputType::Stream(text) => text.lines().count() as u8,
             OutputType::ErrorOutput(error_output) => {
-                let mut height: u8 = 0;
+                // Start with a height of 1 to account for the border and padding
+                let mut height: u8 = 1;
 
                 height = height.saturating_add(error_output.ename.lines().count() as u8);
                 // Note: skipping evalue in error output for now
@@ -205,6 +207,7 @@ impl Render for ExecutionView {
         let outputs = self.execution.read(cx).outputs();
 
         div()
+            .w_full()
             .children(outputs.iter().filter_map(|output| output.render(cx)))
             .into_any_element()
     }

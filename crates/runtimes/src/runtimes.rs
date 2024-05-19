@@ -359,17 +359,19 @@ fn create_output_area_render(execution_view: View<ExecutionView>) -> RenderBlock
 
         h_flex()
             .w_full()
+            .bg(cx.theme().colors().editor_active_line_background)
             .border_y_1()
             .border_color(cx.theme().colors().border)
-            // A left icon, if we want it
-            // .child(h_flex().justify_center().w(gutter_width).child(div()))
+            .pl(gutter_width)
             .child(
                 div()
                     .font_family(text_font)
-                    .w_full()
-                    .ml(gutter_width)
+                    // .ml(gutter_width)
+                    .mx_1()
                     .my_2()
                     .h_full()
+                    .w_full()
+                    .mr(gutter_width)
                     .child(execution_view),
             )
             .into_any_element()
