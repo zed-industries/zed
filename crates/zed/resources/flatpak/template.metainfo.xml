@@ -25,8 +25,8 @@
     <launchable type="desktop-id">app_id.desktop</launchable>
 
     <branding>
-        <color type="primary" scheme_preference="light">#99c1f1</color>
-        <color type="primary" scheme_preference="dark">#3180df</color>
+        <color type="primary" scheme_preference="light">branding_light</color>
+        <color type="primary" scheme_preference="dark">branding_dark</color>
     </branding>
 
     <content_rating type="oars-1.1">

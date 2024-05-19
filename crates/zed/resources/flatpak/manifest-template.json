@@ -50,7 +50,9 @@
                 "sed -i 's|Name=Zed|Name=@app_name@|g' /app/share/applications/${FLATPAK_ID}.desktop",
                 "sed -i 's|Icon=zed|Icon=@app_id@|g' /app/share/applications/${FLATPAK_ID}.desktop",
                 "sed -i 's|app_id|@app_id@|g' /app/share/metainfo/${FLATPAK_ID}.metainfo.xml",
-                "sed -i 's|app_name|@app_name@|g' /app/share/metainfo/${FLATPAK_ID}.metainfo.xml"
+                "sed -i 's|app_name|@app_name@|g' /app/share/metainfo/${FLATPAK_ID}.metainfo.xml",
+                "sed -i 's|branding_light|@branding_light@|g' /app/share/metainfo/${FLATPAK_ID}.metainfo.xml",
+                "sed -i 's|branding_dark|@branding_dark@|g' /app/share/metainfo/${FLATPAK_ID}.metainfo.xml"
             ],
             "sources": [
                 {
