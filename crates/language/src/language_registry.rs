@@ -29,7 +29,7 @@ use sum_tree::Bias;
 use text::{Point, Rope};
 use theme::Theme;
 use unicase::UniCase;
-use util::{maybe, paths::PathExt, post_inc, ResultExt};
+use util::{maybe, post_inc, ResultExt};
 
 pub struct LanguageRegistry {
     state: RwLock<LanguageRegistryState>,
@@ -509,20 +509,27 @@ impl LanguageRegistry {
         user_file_types: Option<&HashMap<Arc<str>, Vec<String>>>,
     ) -> impl Future<Output = Result<Arc<Language>>> {
         let filename = path.file_name().and_then(|name| name.to_str());
-        let extension = path.extension_or_hidden_file_name();
-        let path_suffixes = [extension, filename];
         let empty = Vec::new();
 
         let rx = self.get_or_load_language(move |language_name, config| {
-            let path_matches_default_suffix = config
-                .path_suffixes
-                .iter()
-                .any(|suffix| path_suffixes.contains(&Some(suffix.as_str())));
+            let filename = match filename {
+                Some(filename) => filename,
+                None => return 0,
+            };
+            let matching_default_suffix = config.path_suffixes.iter().fold(None, |acc, suffix| {
+                let ext = ".".to_string() + suffix;
+                let is_matched = filename.ends_with(&ext) || filename == suffix;
+                match (is_matched, &acc) {
+                    (true, None) => Some(suffix),
+                    (true, Some(s)) if suffix.len() > s.len() => Some(suffix),
+                    (true, Some(_)) | (false, Some(_)) | (false, None) => acc,
+                }
+            });
             let path_matches_custom_suffix = user_file_types
                 .and_then(|types| types.get(language_name))
                 .unwrap_or(&empty)
                 .iter()
-                .any(|suffix| path_suffixes.contains(&Some(suffix.as_str())));
+                .any(|suffix| filename.ends_with(suffix));
             let content_matches = content.zip(config.first_line_pattern.as_ref()).map_or(
                 false,
                 |(content, pattern)| {
@@ -533,8 +540,10 @@ impl LanguageRegistry {
                 },
             );
             if path_matches_custom_suffix {
-                2
-            } else if path_matches_default_suffix || content_matches {
+                usize::MAX
+            } else if let Some(matched_suffix) = matching_default_suffix {
+                matched_suffix.len()
+            } else if content_matches {
                 1
             } else {
                 0
