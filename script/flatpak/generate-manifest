@@ -9,6 +9,14 @@ else
     exit
 fi
 
+if [[ $2 ]]; then
+    method=$2
+else
+    echo "Please supply packaging method. See 'docs/src/development/linux.md' for details."
+    echo "Possible values: ['build', 'copy']."
+    exit
+fi
+
 if [[ "$channel" == "dev" ]]; then
     app_id="dev.zed.Zed-Dev"
     app_name="Zed Devel"
@@ -31,6 +39,21 @@ else
     exit
 fi
 
+indent="                "
+if [[ "$method" == "build" ]]; then
+    app_bin_cmd="\"cargo --offline fetch --manifest-path Cargo.toml\",\n${indent}\"cargo --offline build --release\",\n${indent}\"install -Dm755 ./target/release/Zed /app/bin/zed-app\""
+    cli_bin_cmd="\"cargo --offline fetch --manifest-path Cargo.toml\",\n${indent}\"cargo --offline build --release --package cli\",\n${indent}\"install -Dm755 ./target/release/cli /app/bin/zed\","
+    extra_srcs=",\n${indent}\"crates/zed/resources/flatpak/flatpak-cargo-sources.json\""
+elif [[ "$method" == "copy" ]]; then
+    app_bin_cmd="\"install -Dm755 ./target/release/Zed /app/bin/zed-app\""
+    cli_bin_cmd="\"install -Dm755 ./target/release/cli /app/bin/zed\","
+    extra_srcs=""
+else
+    echo "Invalid packaging method '$method'. See 'docs/src/development/linux.md' for details."
+    echo "Possible values: ['build', 'copy']."
+    exit
+fi
+
 manifest_path="../../${app_id}.json"
 cp "../../crates/zed/resources/flatpak/manifest-template.json" "${manifest_path}"
 
@@ -38,3 +61,7 @@ sed -i "s|@app_id@|$app_id|g" "${manifest_path}"
 sed -i "s|@app_name@|$app_name|g" "${manifest_path}"
 sed -i "s|@channel@|$channel|g" "${manifest_path}"
 sed -i "s|@icon_name@|$icon_name|g" "${manifest_path}"
+
+sed -i "s|@app_bin_cmd@|$app_bin_cmd|g" "${manifest_path}"
+sed -i "s|@cli_bin_cmd@|$cli_bin_cmd|g" "${manifest_path}"
+sed -i "s|@extra_srcs@|$extra_srcs|g" "${manifest_path}"

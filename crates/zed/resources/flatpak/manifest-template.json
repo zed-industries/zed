@@ -24,16 +24,13 @@
             },
             "build-commands": [
                 "echo @channel@ > crates/zed/RELEASE_CHANNEL",
-                "cargo --offline fetch --manifest-path Cargo.toml",
-                "cargo --offline build --release",
-                "install -Dm755 ./target/release/Zed /app/bin/zed-app"
+                @app_bin_cmd@
             ],
             "sources": [
                 {
                     "type": "dir",
                     "path": "."
-                },
-                "crates/zed/resources/flatpak/flatpak-cargo-sources.json"
+                }@extra_srcs@
             ]
         },
         {
@@ -46,9 +43,7 @@
             },
             "build-commands": [
                 "echo @channel@ > crates/zed/RELEASE_CHANNEL",
-                "cargo --offline fetch --manifest-path Cargo.toml",
-                "cargo --offline build --release --package cli",
-                "install -Dm755 ./target/release/cli /app/bin/zed",
+                @cli_bin_cmd@
                 "install -Dm644 crates/zed/resources/zed.desktop /app/share/applications/${FLATPAK_ID}.desktop",
                 "install -Dm644 crates/zed/resources/flatpak/template.metainfo.xml /app/share/metainfo/${FLATPAK_ID}.metainfo.xml",
                 "install -Dm644 crates/zed/resources/@icon_name@ /app/share/icons/hicolor/512x512/apps/${FLATPAK_ID}.png",
@@ -61,8 +56,7 @@
                 {
                     "type": "dir",
                     "path": "."
-                },
-                "crates/zed/resources/flatpak/flatpak-cargo-sources.json"
+                }@extra_srcs@
             ]
         }
     ]
