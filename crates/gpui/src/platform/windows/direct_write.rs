@@ -79,6 +79,22 @@ impl DirectWriteComponent {
             let factory: IDWriteFactory5 = DWriteCreateFactory(DWRITE_FACTORY_TYPE_SHARED)?;
             let bitmap_factory: IWICImagingFactory2 =
                 CoCreateInstance(&CLSID_WICImagingFactory2, None, CLSCTX_INPROC_SERVER)?;
+            #[cfg(debug_assertions)]
+            let d2d1_factory: ID2D1Factory = {
+                // install debug layer:
+                // https://learn.microsoft.com/en-us/windows/win32/Direct2D/installing-the-direct2d-debug-layer
+                D2D1CreateFactory(
+                    D2D1_FACTORY_TYPE_MULTI_THREADED,
+                    Some(&D2D1_FACTORY_OPTIONS {
+                        debugLevel: D2D1_DEBUG_LEVEL_INFORMATION,
+                    }),
+                )
+                .or_else(|_| {
+                    log::warn!("Can not enable D2D1Factory debug layer.");
+                    D2D1CreateFactory(D2D1_FACTORY_TYPE_MULTI_THREADED, None)
+                })?
+            };
+            #[cfg(not(debug_assertions))]
             let d2d1_factory: ID2D1Factory =
                 D2D1CreateFactory(D2D1_FACTORY_TYPE_MULTI_THREADED, None)?;
             // The `IDWriteInMemoryFontFileLoader` here is supported starting from
