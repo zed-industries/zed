@@ -575,9 +575,27 @@
     }
   },
   {
-    "context": "Editor && vim_mode == insert",
+    "context": "Editor && vim_mode == helixnormal",
+    "bindings": {
+      "escape": ["vim::SwitchMode", "HelixNormal"]
+
+    }
+  },
+  {
+    "context": "Editor && vim_mode == insert && HelixControl",
+    "bindings": {
+      "escape": ["vim::SwitchMode", "HelixNormal"]
+    }
+  },
+  {
+    "context": "Editor && vim_mode == insert && !HelixControl",
     "bindings": {
       "escape": "vim::NormalBefore",
+    }
+  },
+  {
+    "context": "Editor && vim_mode == insert",
+    "bindings": {
       "ctrl-c": "vim::NormalBefore",
       "ctrl-[": "vim::NormalBefore",
       "ctrl-x ctrl-o": "editor::ShowCompletions",

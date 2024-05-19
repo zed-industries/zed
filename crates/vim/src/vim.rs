@@ -93,10 +93,8 @@ impl_actions!(vim, [SwitchMode, PushOperator, Number]);
 pub fn init(cx: &mut AppContext) {
     cx.set_global(Vim::default());
     VimModeSetting::register(cx);
+    HelixModeSetting::register(cx);
     VimSettings::register(cx);
-    ModalEditorTypeSetting::register(cx);
-    let test = ModalEditorTypeSetting::get_global(cx).0;
-    println!("{:?}", test);
 
     cx.observe_keystrokes(observe_keystrokes).detach();
     editor_events::init(cx);
@@ -166,6 +164,7 @@ fn register(workspace: &mut Workspace, cx: &mut ViewContext<Workspace>) {
     object::register(workspace, cx);
     visual::register(workspace, cx);
     change_list::register(workspace, cx);
+    helix::register(workspace, cx);
 }
 
 /// Called whenever an keystroke is typed so vim can observe all actions
@@ -778,7 +777,11 @@ impl Vim {
                     let active_editor = workspace.active_item_as::<Editor>(cx);
                     if let Some(active_editor) = active_editor {
                         self.activate_editor(active_editor, cx);
-                        self.switch_mode(Mode::Normal, false, cx);
+                        if HelixModeSetting::get_global(cx).0 {
+                            self.switch_mode(Mode::HelixNormal, false, cx);
+                        } else {
+                            self.switch_mode(Mode::Normal, false, cx);
+                        }
                     }
                 })
                 .ok();
@@ -818,10 +821,10 @@ impl Vim {
             editor.set_autoindent(state.should_autoindent());
             editor.selections.line_mode = matches!(state.mode, Mode::VisualLine);
             if editor.is_focused(cx) || editor.mouse_menu_is_focused(cx) {
-                editor.set_keymap_context_layer::<Self>(state.keymap_context_layer(), cx);
+                editor.set_keymap_context_layer::<Self>(state.keymap_context_layer(cx), cx);
                 // disable vim mode if a sub-editor (inline assist, rename, etc.) is focused
             } else if editor.focus_handle(cx).contains_focused(cx) {
-                editor.remove_keymap_context_layer::<Self>(cx);
+                editor.remove_keymap_context_layer::<Self>(cx)
             }
         });
     }
@@ -841,6 +844,20 @@ impl Vim {
 
 impl Settings for VimModeSetting {
     const KEY: Option<&'static str> = Some("vim_mode");
+
+    type FileContent = Option<bool>;
+
+    fn load(sources: SettingsSources<Self::FileContent>, _: &mut AppContext) -> Result<Self> {
+        Ok(Self(sources.user.copied().flatten().unwrap_or(
+            sources.default.ok_or_else(Self::missing_default)?,
+        )))
+    }
+}
+
+pub struct HelixModeSetting(pub bool);
+
+impl Settings for HelixModeSetting {
+    const KEY: Option<&'static str> = Some("helix_mode");
 
     type FileContent = Option<bool>;
 
@@ -887,28 +904,5 @@ impl Settings for VimSettings {
 
     fn load(sources: SettingsSources<Self::FileContent>, _: &mut AppContext) -> Result<Self> {
         sources.json_merge()
-    }
-}
-
-#[derive(Copy, Clone, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
-#[serde(rename_all = "snake_case")]
-enum VimModes {
-    Off,
-    Vim,
-    Helix,
-}
-
-#[derive(Deserialize)]
-struct ModalEditorTypeSetting(pub VimModes);
-
-impl Settings for ModalEditorTypeSetting {
-    const KEY: Option<&'static str> = Some("modal_editor_type");
-
-    type FileContent = Option<VimModes>;
-
-    fn load(sources: SettingsSources<Self::FileContent>, _: &mut AppContext) -> Result<Self> {
-        Ok(Self(sources.user.copied().flatten().unwrap_or(
-            sources.default.ok_or_else(Self::missing_default)?,
-        )))
     }
 }

@@ -1,12 +1,15 @@
 use std::{fmt::Display, ops::Range, sync::Arc};
 
 use crate::surrounds::SurroundsType;
+use crate::HelixModeSetting;
 use crate::{motion::Motion, object::Object};
 use collections::HashMap;
 use editor::Anchor;
 use gpui::{Action, KeyContext};
 use language::{CursorShape, Selection, TransactionId};
 use serde::{Deserialize, Serialize};
+use settings::Settings;
+use ui::WindowContext;
 use workspace::searchable::Direction;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize, Serialize)]
@@ -208,7 +211,7 @@ impl EditorState {
         self.operator_stack.last().cloned()
     }
 
-    pub fn keymap_context_layer(&self) -> KeyContext {
+    pub fn keymap_context_layer(&self, cx: &mut WindowContext) -> KeyContext {
         let mut context = KeyContext::new_with_defaults();
         context.set(
             "vim_mode",
@@ -220,6 +223,9 @@ impl EditorState {
                 Mode::Replace => "replace",
             },
         );
+        if HelixModeSetting::get_global(cx).0 {
+            context.add("HelixControl");
+        }
 
         if self.vim_controlled() {
             context.add("VimControl");
