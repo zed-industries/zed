@@ -3259,8 +3259,6 @@ impl MultiBufferSnapshot {
 
                         (match_range, indent_guide)
                     })
-                    .skip_while(move |(match_range, _)| match_range.end < range.start)
-                    .take_while(move |(match_range, _)| match_range.start < range.end)
             })
             .collect()
     }

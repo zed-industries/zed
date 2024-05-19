@@ -10210,7 +10210,7 @@ impl Editor {
             .buffer_snapshot
             .anchor_after(Point::new(visible_buffer_range.end, 0));
 
-        let indent_guides: Vec<_> = snapshot
+        snapshot
             .buffer_snapshot
             .indent_guides_in_range(start_anchor..end_anchor, cx)
             .into_iter()
@@ -10223,9 +10223,7 @@ impl Editor {
                 };
                 !snapshot.is_line_folded(MultiBufferRow(buffer_row))
             })
-            .collect();
-
-        indent_guides
+            .collect()
     }
 
     fn find_active_indent_guide_indices(
@@ -10235,59 +10233,23 @@ impl Editor {
         cx: &WindowContext,
     ) -> Option<HashSet<usize>> {
         let selection = self.selections.newest::<Point>(cx);
-        let selection_range = selection.range();
+        let cursor_row = selection.head().row;
 
-        let (buffer_row_range, buffer_snapshot, buffer_id) =
-            if let Some((_, buffer_id, _)) = snapshot.buffer_snapshot.as_singleton() {
-                (
-                    selection_range.start.row..selection_range.end.row,
-                    None,
-                    buffer_id,
-                )
+        let (buffer_row, buffer_snapshot, buffer_id) =
+            if let Some((_, buffer_id, snapshot)) = snapshot.buffer_snapshot.as_singleton() {
+                (cursor_row, snapshot, buffer_id)
             } else {
-                let (buffer_snapshot, start_point) = snapshot
+                let (snapshot, point) = snapshot
                     .buffer_snapshot
-                    .buffer_line_for_row(MultiBufferRow(selection_range.start.row))?;
+                    .buffer_line_for_row(MultiBufferRow(cursor_row))?;
 
-                let (buffer_snapshot_end, end_point) = snapshot
-                    .buffer_snapshot
-                    .buffer_line_for_row(MultiBufferRow(selection_range.end.row))?;
-
-                let start_row = start_point.start.row;
-                let mut end_row = end_point.start.row;
-
-                if buffer_snapshot.remote_id() != buffer_snapshot_end.remote_id() {
-                    end_row = buffer_snapshot.max_point().row;
-                }
-
-                let buffer_id = buffer_snapshot.remote_id();
-                (start_row..end_row, Some(buffer_snapshot), buffer_id)
+                let buffer_id = snapshot.remote_id();
+                (point.start.row, snapshot, buffer_id)
             };
 
-        let mut containing_range = None;
-        let mut target_indent = None;
-        for row in (0..=buffer_row_range.end).rev() {
-            let fold_range = match buffer_snapshot {
-                Some(snapshot) => snapshot.foldable_range(row),
-                None => snapshot.foldable_range(MultiBufferRow(row)),
-            };
-
-            if let Some(fold_range) = fold_range {
-                if fold_range.end.row >= buffer_row_range.start {
-                    containing_range = Some(fold_range);
-                    target_indent = Some(match buffer_snapshot {
-                        Some(snapshot) => snapshot.line_indent_for_row(row).0,
-                        None => snapshot.line_indent_for_buffer_row(MultiBufferRow(row)).0,
-                    });
-                    if row <= buffer_row_range.start {
-                        break;
-                    }
-                }
-            }
-        }
-        let containing_range = containing_range?;
-        let buffer_row_range = containing_range.start.row..containing_range.end.row;
-        let target_indent = target_indent?;
+        let Some((row_range, target_indent)) = buffer_snapshot.enclosing_indent(buffer_row) else {
+            return None;
+        };
 
         let candidates = indent_guides
             .iter()
@@ -10298,9 +10260,8 @@ impl Editor {
 
         let mut matches = HashSet::default();
         for (i, (_, indent)) in candidates {
-            // Find matches that are either an exact match, partially on screen, or inside the fold
-            if buffer_row_range.start <= indent.end_row && indent.start_row <= buffer_row_range.end
-            {
+            // Find matches that are either an exact match, partially on screen, or inside the enclosing indent
+            if row_range.start <= indent.end_row && indent.start_row <= row_range.end {
                 matches.insert(i);
             }
         }

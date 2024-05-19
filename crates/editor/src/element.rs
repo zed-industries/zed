@@ -2555,10 +2555,6 @@ impl EditorElement {
             faded
         };
 
-        // TODO themes:
-        // test one dark and gruvbox
-        // test a theme that doesn't have accent to make sure it behaves as expected
-
         for indent_guide in indent_guides {
             let indent_accent_colors = cx.theme().accents().color_for_index(indent_guide.depth);
 

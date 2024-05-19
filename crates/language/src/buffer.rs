@@ -3194,9 +3194,75 @@ impl BufferSnapshot {
         result_vec
     }
 
-    pub fn foldable_range(&self, buffer_row: u32) -> Option<Range<Point>> {
+    pub fn enclosing_indent(&self, mut buffer_row: u32) -> Option<(Range<u32>, u32)> {
+        let max_row = self.max_point().row;
+        if buffer_row >= max_row {
+            return None;
+        }
+
+        let (mut target_indent_size, is_blank) = self.line_indent_for_row(buffer_row);
+
+        // If the current row is at the start of an indented block, we want to search return this
+        // block as the enclosing indent.
+        if !is_blank && buffer_row < max_row {
+            let (next_line_indent, is_blank) = self.line_indent_for_row(buffer_row + 1);
+            if !is_blank && target_indent_size < next_line_indent {
+                target_indent_size = next_line_indent;
+                buffer_row += 1;
+            }
+        }
+
+        // If there is a blank line at the current row, search for the next non indented lines
+        if is_blank {
+            let start_indent_size = self
+                .find_indented_row((0..buffer_row).rev(), |_, is_blank| !is_blank)
+                .map(|(_, indent_size)| indent_size);
+
+            let end_indent_size = self
+                .find_indented_row(buffer_row..=max_row, |_, is_blank| !is_blank)
+                .map(|(_, indent_size)| indent_size);
+
+            target_indent_size = match (start_indent_size, end_indent_size) {
+                (Some(start_indent_size), Some(end_indent_size)) => {
+                    start_indent_size.min(end_indent_size)
+                }
+                (Some(indent_size), None) => indent_size,
+                (None, Some(indent_size)) => indent_size,
+                _ => return None,
+            };
+        }
+
+        let (start_row, start_indent_size) = self
+            .find_indented_row((0..buffer_row).rev(), |indent_size, is_blank| {
+                !is_blank && indent_size < target_indent_size
+            })?;
+
+        let (end_row, end_indent_size) = self
+            .find_indented_row((buffer_row + 1)..=max_row, |indent_size, is_blank| {
+                !is_blank && indent_size < target_indent_size
+            })?;
+
+        Some((start_row..end_row, start_indent_size.max(end_indent_size)))
+    }
+
+    fn find_indented_row(
+        &self,
+        mut iterator: impl Iterator<Item = u32>,
+        predicate: impl Fn(u32, bool) -> bool,
+    ) -> Option<(u32, u32)> {
+        iterator.find_map(|row| {
+            let (indent_size, is_blank) = self.line_indent_for_row(row);
+            if predicate(indent_size, is_blank) {
+                Some((row, indent_size))
+            } else {
+                None
+            }
+        })
+    }
+
+    pub fn indented_range(&self, buffer_row: u32) -> Option<Range<Point>> {
         let start = Point::new(buffer_row, self.line_len(buffer_row));
-        if self.is_foldable(start.row) {
+        if self.is_indent_start(start.row) {
             let (start_indent, _) = self.line_indent_for_row(buffer_row);
             let max_point = self.max_point();
             let mut end = None;
@@ -3216,7 +3282,7 @@ impl BufferSnapshot {
         }
     }
 
-    pub fn is_foldable(&self, buffer_row: u32) -> bool {
+    pub fn is_indent_start(&self, buffer_row: u32) -> bool {
         let max_row = self.max_point().row;
         if buffer_row >= max_row {
             return false;
