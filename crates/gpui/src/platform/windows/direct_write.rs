@@ -1390,6 +1390,24 @@ fn get_system_ui_font_name() -> SharedString {
     }
 }
 
+#[inline]
+fn get_render_target_property(
+    pixel_format: DXGI_FORMAT,
+    alpha_mode: D2D1_ALPHA_MODE,
+) -> D2D1_RENDER_TARGET_PROPERTIES {
+    D2D1_RENDER_TARGET_PROPERTIES {
+        r#type: D2D1_RENDER_TARGET_TYPE_DEFAULT,
+        pixelFormat: D2D1_PIXEL_FORMAT {
+            format: pixel_format,
+            alphaMode: alpha_mode,
+        },
+        dpiX: 96.0,
+        dpiY: 96.0,
+        usage: D2D1_RENDER_TARGET_USAGE_NONE,
+        minLevel: D2D1_FEATURE_LEVEL_DEFAULT,
+    }
+}
+
 const DEFAULT_LOCALE_NAME: PCWSTR = windows::core::w!("en-US");
 const BRUSH_COLOR: D2D1_COLOR_F = D2D1_COLOR_F {
     r: 1.0,
