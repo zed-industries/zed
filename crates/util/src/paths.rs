@@ -13,9 +13,11 @@ lazy_static::lazy_static! {
             .expect("failed to determine RoamingAppData directory")
             .join("Zed")
     } else if cfg!(target_os = "linux") {
-        dirs::config_dir()
-            .expect("failed to determine XDG_CONFIG_HOME directory")
-            .join("zed")
+        if let Ok(flatpak_xdg_config) = std::env::var("FLATPAK_XDG_CONFIG_HOME") {
+           flatpak_xdg_config.into()
+        } else {
+            dirs::config_dir().expect("failed to determine XDG_CONFIG_HOME directory")
+        }.join("zed")
     } else {
         HOME.join(".config").join("zed")
     };
@@ -39,9 +41,11 @@ lazy_static::lazy_static! {
     pub static ref SUPPORT_DIR: PathBuf = if cfg!(target_os = "macos") {
         HOME.join("Library/Application Support/Zed")
     } else if cfg!(target_os = "linux") {
-        dirs::data_local_dir()
-            .expect("failed to determine XDG_DATA_DIR directory")
-            .join("zed")
+        if let Ok(flatpak_xdg_data) = std::env::var("FLATPAK_XDG_DATA_HOME") {
+            flatpak_xdg_data.into()
+        } else {
+            dirs::data_local_dir().expect("failed to determine XDG_DATA_HOME directory")
+        }.join("zed")
     } else if cfg!(target_os = "windows") {
         dirs::data_local_dir()
             .expect("failed to determine LocalAppData directory")
@@ -80,9 +84,11 @@ lazy_static::lazy_static! {
             .expect("failed to determine LocalAppData directory")
             .join("Zed")
     } else if cfg!(target_os = "linux") {
-        dirs::cache_dir()
-            .expect("failed to determine XDG_CACHE_HOME directory")
-            .join("zed")
+        if let Ok(flatpak_xdg_cache) = std::env::var("FLATPAK_XDG_CACHE_HOME") {
+            flatpak_xdg_cache.into()
+        } else {
+            dirs::cache_dir().expect("failed to determine XDG_CACHE_HOME directory")
+        }.join("zed")
     } else {
         HOME.join(".cache").join("zed")
     };

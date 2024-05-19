@@ -329,15 +329,15 @@ mod flatpak {
     }
 
     fn get_xdg_env_args() -> Vec<OsString> {
-        let keep_keys = [
+        let xdg_keys = [
             "XDG_DATA_HOME",
             "XDG_CONFIG_HOME",
             "XDG_CACHE_HOME",
             "XDG_STATE_HOME",
         ];
         env::vars()
-            .filter(|(key, _)| keep_keys.contains(&key.as_str()))
-            .map(|(key, val)| format!("--env={}={}", key, val).into())
+            .filter(|(key, _)| xdg_keys.contains(&key.as_str()))
+            .map(|(key, val)| format!("--env=FLATPAK_{}={}", key, val).into())
             .collect()
     }
 }
