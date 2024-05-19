@@ -56,6 +56,7 @@ x11rb::atom_manager! {
         _NET_WM_STATE_FULLSCREEN,
         _NET_WM_STATE_HIDDEN,
         _NET_WM_STATE_FOCUSED,
+        _NET_WM_MOVERESIZE,
         _GTK_SHOW_WINDOW_MENU,
     }
 }
@@ -885,8 +886,38 @@ impl PlatformWindow for X11Window {
             .unwrap();
     }
 
-    // todo(linux)
-    fn start_system_move(&self) {}
+    fn start_system_move(&self) {
+        let state = self.0.state.borrow();
+        let pointer = self
+            .0
+            .xcb_connection
+            .query_pointer(self.0.x_window)
+            .unwrap()
+            .reply()
+            .unwrap();
+        const MOVERESIZE_MOVE: u32 = 8;
+        let message = ClientMessageEvent::new(
+            32,
+            self.0.x_window,
+            state.atoms._NET_WM_MOVERESIZE,
+            [
+                pointer.root_x as u32,
+                pointer.root_y as u32,
+                MOVERESIZE_MOVE,
+                1, // Left mouse button
+                1,
+            ],
+        );
+        self.0
+            .xcb_connection
+            .send_event(
+                false,
+                state.x_root_window,
+                EventMask::SUBSTRUCTURE_REDIRECT | EventMask::SUBSTRUCTURE_NOTIFY,
+                message,
+            )
+            .unwrap();
+    }
 
     fn should_render_window_controls(&self) -> bool {
         false
