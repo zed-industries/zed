@@ -788,7 +788,7 @@ impl DirectWriteState {
                     }
                 }
             } else {
-                render_target.SetTextRenderingParams(&self.components.rendering_params.text);
+                render_target.SetTextRenderingParams(&self.components.rendering_params.params);
                 render_target.BeginDraw();
                 render_target.DrawGlyphRun(
                     baseline_origin,
