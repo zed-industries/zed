@@ -8,6 +8,6 @@ TryExec=zed
 StartupNotify=true
 Exec=zed
 Icon=zed
-Categories=TextEditor;Development;IDE;
+Categories=Utility;TextEditor;Development;IDE;
 Keywords=zed;
 MimeType=text/plain;inode/directory;
