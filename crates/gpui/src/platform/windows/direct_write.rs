@@ -596,7 +596,6 @@ impl DirectWriteState {
             isSideways: BOOL(0),
             bidiLevel: 0,
         };
-        // unsafe { render_target.SetDpi(96.0 * params.scale_factor, 96.0 * params.scale_factor) };
         let bounds = unsafe {
             render_target.GetGlyphRunWorldBounds(
                 D2D_POINT_2F { x: 0.0, y: 0.0 },
