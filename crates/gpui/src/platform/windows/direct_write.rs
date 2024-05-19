@@ -766,7 +766,7 @@ impl DirectWriteState {
             render_target.SetDpi(96.0 * params.scale_factor, 96.0 * params.scale_factor);
 
             if params.is_emoji {
-                render_target.SetTextAntialiasMode(D2D1_TEXT_ANTIALIAS_MODE_CLEARTYPE);
+                // render_target.SetTextAntialiasMode(D2D1_TEXT_ANTIALIAS_MODE_CLEARTYPE);
                 render_target.SetTextRenderingParams(&self.components.rendering_params.emoji);
                 render_target.BeginDraw();
                 // WARN: only DWRITE_GLYPH_IMAGE_FORMATS_COLR has been tested
