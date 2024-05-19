@@ -7,6 +7,7 @@ mod change_list;
 mod command;
 mod digraph;
 mod editor_events;
+mod helix;
 mod insert;
 mod mode_indicator;
 mod motion;
@@ -98,6 +99,9 @@ pub fn init(cx: &mut AppContext) {
     cx.set_global(Vim::default());
     VimModeSetting::register(cx);
     VimSettings::register(cx);
+    ModalEditorTypeSetting::register(cx);
+    let test = ModalEditorTypeSetting::get_global(cx).0;
+    println!("{:?}", test);
 
     cx.observe_keystrokes(observe_keystrokes).detach();
     editor_events::init(cx);
@@ -1081,5 +1085,28 @@ impl Settings for VimSettings {
 
     fn load(sources: SettingsSources<Self::FileContent>, _: &mut AppContext) -> Result<Self> {
         sources.json_merge()
+    }
+}
+
+#[derive(Copy, Clone, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+enum VimModes {
+    Off,
+    Vim,
+    Helix,
+}
+
+#[derive(Deserialize)]
+struct ModalEditorTypeSetting(pub VimModes);
+
+impl Settings for ModalEditorTypeSetting {
+    const KEY: Option<&'static str> = Some("modal_editor_type");
+
+    type FileContent = Option<VimModes>;
+
+    fn load(sources: SettingsSources<Self::FileContent>, _: &mut AppContext) -> Result<Self> {
+        Ok(Self(sources.user.copied().flatten().unwrap_or(
+            sources.default.ok_or_else(Self::missing_default)?,
+        )))
     }
 }
