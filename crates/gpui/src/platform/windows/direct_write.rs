@@ -154,7 +154,6 @@ impl GlyphRenderContext {
                     D2D1_ALPHA_MODE_PREMULTIPLIED,
                 ))?;
                 let target = target.cast::<ID2D1DeviceContext4>()?;
-                target.SetUnitMode(D2D1_UNIT_MODE_DIPS);
                 target.SetTextRenderingParams(&params);
                 target
             };
@@ -592,6 +591,10 @@ impl DirectWriteState {
 
     fn raster_bounds(&self, params: &RenderGlyphParams) -> Result<Bounds<DevicePixels>> {
         let render_target = &self.components.render_context.dc_target;
+        unsafe {
+            render_target.SetUnitMode(D2D1_UNIT_MODE_DIPS);
+            render_target.SetDpi(96.0 * params.scale_factor, 96.0 * params.scale_factor);
+        }
         let font = &self.fonts[params.font_id.0];
         let glyph_id = [params.glyph_id.0 as u16];
         let advance = [0.0f32];
