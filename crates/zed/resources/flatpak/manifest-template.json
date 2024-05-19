@@ -48,6 +48,8 @@
                 "install -Dm644 crates/zed/resources/flatpak/template.metainfo.xml /app/share/metainfo/${FLATPAK_ID}.metainfo.xml",
                 "install -Dm644 crates/zed/resources/@icon_name@ /app/share/icons/hicolor/512x512/apps/${FLATPAK_ID}.png",
                 "sed -i 's|Name=Zed|Name=@app_name@|g' /app/share/applications/${FLATPAK_ID}.desktop",
+                "sed -i 's|^Exec=zed|Exec=zed --foreground|g' /app/share/applications/${FLATPAK_ID}.desktop",
+                "sed -i 's|StartupNotify=true|StartupNotify=false|g' /app/share/applications/${FLATPAK_ID}.desktop",
                 "sed -i 's|Icon=zed|Icon=@app_id@|g' /app/share/applications/${FLATPAK_ID}.desktop",
                 "sed -i 's|app_id|@app_id@|g' /app/share/metainfo/${FLATPAK_ID}.metainfo.xml",
                 "sed -i 's|app_name|@app_name@|g' /app/share/metainfo/${FLATPAK_ID}.metainfo.xml",
