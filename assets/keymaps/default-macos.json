@@ -475,6 +475,7 @@
       "cmd-shift-p": "command_palette::Toggle",
       "cmd-shift-m": "diagnostics::Deploy",
       "cmd-shift-e": "project_panel::ToggleFocus",
+      "cmd-shift-b": "outline_panel::ToggleFocus",
       "cmd-?": "assistant::ToggleFocus",
       "cmd-alt-s": "workspace::SaveAll",
       "cmd-k m": "language_selector::Toggle",
@@ -582,6 +583,18 @@
     "context": "ProjectSearchBar && !in_replace",
     "bindings": {
       "cmd-enter": "project_search::SearchInNew"
+    }
+  },
+  {
+    "context": "OutlinePanel",
+    "bindings": {
+      "left": "project_panel::CollapseSelectedEntry",
+      "right": "project_panel::ExpandSelectedEntry",
+      "cmd-alt-c": "project_panel::CopyPath",
+      "alt-cmd-shift-c": "project_panel::CopyRelativePath",
+      "alt-cmd-r": "project_panel::RevealInFinder",
+      "shift-down": "menu::SelectNext",
+      "shift-up": "menu::SelectPrev"
     }
   },
   {

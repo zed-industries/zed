@@ -149,6 +149,9 @@ use workspace::{OpenInTerminal, OpenTerminal, TabBarSettings, Toast};
 
 use crate::hover_links::find_url;
 
+pub const FILE_HEADER_HEIGHT: u8 = 1;
+pub const MULTI_BUFFER_EXCERPT_HEADER_HEIGHT: u8 = 1;
+pub const MULTI_BUFFER_EXCERPT_FOOTER_HEIGHT: u8 = 1;
 pub const DEFAULT_MULTIBUFFER_CONTEXT: u32 = 2;
 const CURSOR_BLINK_INTERVAL: Duration = Duration::from_millis(500);
 const MAX_LINE_LEN: usize = 1024;
@@ -529,6 +532,7 @@ pub struct Editor {
     tasks: BTreeMap<(BufferId, BufferRow), RunnableTasks>,
     tasks_update_task: Option<Task<()>>,
     previous_search_ranges: Option<Arc<[Range<Anchor>]>>,
+    file_header_size: u8,
 }
 
 #[derive(Clone)]
@@ -1651,9 +1655,8 @@ impl Editor {
             }),
             merge_adjacent: true,
         };
+        let file_header_size = if show_excerpt_controls { 3 } else { 2 };
         let display_map = cx.new_model(|cx| {
-            let file_header_size = if show_excerpt_controls { 3 } else { 2 };
-
             DisplayMap::new(
                 buffer.clone(),
                 style.font(),
@@ -1661,8 +1664,8 @@ impl Editor {
                 None,
                 show_excerpt_controls,
                 file_header_size,
-                1,
-                1,
+                MULTI_BUFFER_EXCERPT_HEADER_HEIGHT,
+                MULTI_BUFFER_EXCERPT_FOOTER_HEIGHT,
                 fold_placeholder,
                 cx,
             )
@@ -1812,6 +1815,7 @@ impl Editor {
             git_blame_inline_enabled: ProjectSettings::get_global(cx).git.inline_blame_enabled(),
             blame: None,
             blame_subscription: None,
+            file_header_size,
             tasks: Default::default(),
             _subscriptions: vec![
                 cx.observe(&buffer, Self::on_buffer_changed),
@@ -11298,6 +11302,10 @@ impl Editor {
             })
         }));
         self
+    }
+
+    pub fn file_header_size(&self) -> u8 {
+        self.file_header_size
     }
 }
 
