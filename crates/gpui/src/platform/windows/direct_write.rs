@@ -682,7 +682,7 @@ impl DirectWriteState {
             total_bytes = bitmap_size.height.0 as usize * bitmap_size.width.0 as usize;
             bitmap_format = &GUID_WICPixelFormat8bppAlpha;
             render_target_property =
-                get_render_target_property(DXGI_FORMAT_UNKNOWN, D2D1_ALPHA_MODE_UNKNOWN);
+                get_render_target_property(DXGI_FORMAT_A8_UNORM, D2D1_ALPHA_MODE_STRAIGHT);
             bitmap_width = bitmap_size.width.0 as u32 * 2;
             bitmap_height = bitmap_size.height.0 as u32 * 2;
             bitmap_stride = bitmap_size.width.0 as u32;
