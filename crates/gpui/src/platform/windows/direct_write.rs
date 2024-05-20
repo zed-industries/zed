@@ -505,15 +505,20 @@ impl DirectWriteState {
                 } else {
                     &self.custom_font_collection
                 };
-                let format = self.components.factory.CreateTextFormat(
-                    &HSTRING::from(&font_info.font_family),
-                    collection,
-                    font_info.font_face.GetWeight(),
-                    font_info.font_face.GetStyle(),
-                    DWRITE_FONT_STRETCH_NORMAL,
-                    font_size.0,
-                    &HSTRING::from(&self.components.locale),
-                )?;
+                let format: IDWriteTextFormat1 = self
+                    .components
+                    .factory
+                    .CreateTextFormat(
+                        &HSTRING::from(&font_info.font_family),
+                        collection,
+                        font_info.font_face.GetWeight(),
+                        font_info.font_face.GetStyle(),
+                        DWRITE_FONT_STRETCH_NORMAL,
+                        font_size.0,
+                        &HSTRING::from(&self.components.locale),
+                    )?
+                    .cast()?;
+                format.SetFontFallback(&self.buffer_font_fallbacks)?;
 
                 let layout = self.components.factory.CreateTextLayout(
                     &text_wide,
