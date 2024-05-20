@@ -560,14 +560,6 @@ impl PickerDelegate for RecentProjectsDelegate {
                 .into_any(),
         )
     }
-
-    fn selected_index_changed(
-        &self,
-        _ix: usize,
-        _cx: &mut ViewContext<Picker<Self>>,
-    ) -> Option<Box<dyn Fn(&mut WindowContext) + 'static>> {
-        None
-    }
 }
 
 // Compute the highlighted text for the name and path

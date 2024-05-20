@@ -64,7 +64,9 @@ pub trait PickerDelegate: Sized + 'static {
         &self,
         _ix: usize,
         _cx: &mut ViewContext<Picker<Self>>,
-    ) -> Option<Box<dyn Fn(&mut WindowContext) + 'static>>;
+    ) -> Option<Box<dyn Fn(&mut WindowContext) + 'static>> {
+        None
+    }
     fn placeholder_text(&self, _cx: &mut WindowContext) -> Arc<str>;
     fn no_matches_text(&self, _cx: &mut WindowContext) -> SharedString {
         "No matches".into()

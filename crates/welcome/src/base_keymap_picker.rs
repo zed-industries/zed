@@ -215,12 +215,4 @@ impl PickerDelegate for BaseKeymapSelectorDelegate {
                 )),
         )
     }
-
-    fn selected_index_changed(
-        &self,
-        _ix: usize,
-        _cx: &mut ViewContext<Picker<Self>>,
-    ) -> Option<Box<dyn Fn(&mut WindowContext) + 'static>> {
-        None
-    }
 }

@@ -112,14 +112,6 @@ impl PickerDelegate for Delegate {
         self.selected_ix = 0;
         Task::ready(())
     }
-
-    fn selected_index_changed(
-        &self,
-        _ix: usize,
-        _cx: &mut ViewContext<Picker<Self>>,
-    ) -> Option<Box<dyn Fn(&mut WindowContext) + 'static>> {
-        None
-    }
 }
 
 impl PickerStory {

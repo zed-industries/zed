@@ -406,14 +406,6 @@ impl PickerDelegate for NewPathDelegate {
     fn placeholder_text(&self, _cx: &mut WindowContext) -> Arc<str> {
         Arc::from("[directory/]filename.ext")
     }
-
-    fn selected_index_changed(
-        &self,
-        _ix: usize,
-        _cx: &mut ViewContext<Picker<Self>>,
-    ) -> Option<Box<dyn Fn(&mut WindowContext) + 'static>> {
-        None
-    }
 }
 
 impl NewPathDelegate {
