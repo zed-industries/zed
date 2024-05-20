@@ -87,7 +87,12 @@ impl Render for QuickActionBar {
             return div().id("empty quick action bar");
         };
 
-        let has_git_diffs = editor.read(cx).buffer().read(cx).snapshot(cx).has_git_diffs();
+        let has_git_diffs = editor
+            .read(cx)
+            .buffer()
+            .read(cx)
+            .snapshot(cx)
+            .has_git_diffs();
 
         let search_button = Some(QuickActionBarButton::new(
             "toggle buffer search",
@@ -114,7 +119,7 @@ impl Render for QuickActionBar {
             "Previous Change",
             {
                 let editor = editor.clone();
-                move |_, cx| { 
+                move |_, cx| {
                     editor.update(cx, |editor: &mut Editor, cx| {
                         editor.go_to_prev_hunk(&GoToPrevHunk, cx);
                     });
@@ -131,7 +136,7 @@ impl Render for QuickActionBar {
             "Next Change",
             {
                 let editor = editor.clone();
-                move |_, cx| { 
+                move |_, cx| {
                     editor.update(cx, |editor, cx| {
                         editor.go_to_hunk(&GoToHunk, cx);
                     });
