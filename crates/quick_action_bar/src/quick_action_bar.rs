@@ -1,5 +1,6 @@
 use assistant::assistant_settings::AssistantSettings;
 use assistant::{AssistantPanel, InlineAssist};
+use editor::actions::{GoToHunk, GoToPrevHunk};
 use editor::{Editor, EditorSettings};
 
 use gpui::{
@@ -86,6 +87,8 @@ impl Render for QuickActionBar {
             return div().id("empty quick action bar");
         };
 
+        let has_git_diffs = editor.read(cx).buffer().read(cx).snapshot(cx).has_git_diffs();
+
         let search_button = Some(QuickActionBarButton::new(
             "toggle buffer search",
             IconName::MagnifyingGlass,
@@ -102,6 +105,40 @@ impl Render for QuickActionBar {
             },
         ))
         .filter(|_| editor.is_singleton(cx));
+
+        let prev_hunk = Some(QuickActionBarButton::new(
+            "prev hunk",
+            IconName::ArrowUp,
+            false,
+            Box::new(buffer_search::Deploy::find()),
+            "Previous Change",
+            {
+                let editor = editor.clone();
+                move |_, cx| { 
+                    editor.update(cx, |editor: &mut Editor, cx| {
+                        editor.go_to_prev_hunk(&GoToPrevHunk, cx);
+                    });
+                }
+            },
+        ))
+        .filter(|_| has_git_diffs);
+
+        let next_hunk = Some(QuickActionBarButton::new(
+            "next hunk",
+            IconName::ArrowDown,
+            false,
+            Box::new(buffer_search::Deploy::find()),
+            "Next Change",
+            {
+                let editor = editor.clone();
+                move |_, cx| { 
+                    editor.update(cx, |editor, cx| {
+                        editor.go_to_hunk(&GoToHunk, cx);
+                    });
+                }
+            },
+        ))
+        .filter(|_| has_git_diffs);
 
         let assistant_button = QuickActionBarButton::new(
             "toggle inline assistant",
@@ -191,6 +228,8 @@ impl Render for QuickActionBar {
                 h_flex()
                     .gap_1p5()
                     .children(search_button)
+                    .children(prev_hunk)
+                    .children(next_hunk)
                     .when(AssistantSettings::get_global(cx).button, |bar| {
                         bar.child(assistant_button)
                     }),
