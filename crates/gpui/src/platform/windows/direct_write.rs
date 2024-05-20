@@ -183,6 +183,8 @@ impl PlatformTextSystem for DirectWriteTextSystem {
         self.0.write().add_fonts(fonts)
     }
 
+    fn set_fallbacks(&self, fallbacks: &[String]) {}
+
     fn all_font_names(&self) -> Vec<String> {
         self.0.read().all_font_names()
     }
