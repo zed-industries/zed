@@ -208,15 +208,6 @@ impl PromptManager {
         self.picker.read(cx).delegate.selected_index
     }
 
-    pub fn prompt_for_selected_index(&self, cx: &ViewContext<Self>) -> Option<PromptId> {
-        self.picker
-            .read(cx)
-            .delegate
-            .matching_prompt_ids
-            .get(self.selected_index(cx))
-            .cloned()
-    }
-
     fn dismiss(&mut self, _: &menu::Cancel, cx: &mut ViewContext<Self>) {
         cx.emit(DismissEvent);
     }
@@ -246,11 +237,18 @@ impl PromptManager {
                     .border_color(cx.theme().colors().border)
                     .h_7()
                     .w_full()
+                    .flex_none()
                     .justify_between()
                     .child(Label::new("Prompt Library").size(LabelSize::Small))
                     .child(IconButton::new("new-prompt", IconName::AtSign).disabled(true)),
             )
-            .child(v_flex().justify_start().child(self.picker.clone()))
+            .child(
+                v_flex()
+                    .h_full()
+                    .flex_grow()
+                    .justify_start()
+                    .child(self.picker.clone()),
+            )
     }
 
     fn render_prompt_item(
@@ -277,12 +275,6 @@ impl PromptManager {
         v_flex()
             .id(ElementId::Name(format!("prompt-{:?}", prompt_id,).into()))
             .p(Spacing::Small.rems(cx))
-            .on_click(cx.listener({
-                let prompt_id = prompt_id.clone();
-                move |this, _event, cx| {
-                    this.set_active_prompt(Some(prompt_id), cx);
-                }
-            }))
             .child(
                 h_flex()
                     .justify_between()
@@ -417,6 +409,21 @@ impl PickerDelegate for PromptManagerDelegate {
 
     fn set_selected_index(&mut self, ix: usize, _: &mut ViewContext<Picker<Self>>) {
         self.selected_index = ix;
+    }
+
+    fn selected_index_changed(
+        &self,
+        ix: usize,
+        _cx: &mut ViewContext<Picker<Self>>,
+    ) -> Option<Box<dyn Fn(&mut WindowContext) + 'static>> {
+        let prompt_id = self.matching_prompt_ids.get(ix).copied()?;
+        let prompt_manager = self.prompt_manager.upgrade()?;
+
+        Some(Box::new(move |cx| {
+            prompt_manager.update(cx, |manager, cx| {
+                manager.set_active_prompt(Some(prompt_id), cx);
+            })
+        }))
     }
 
     fn update_matches(&mut self, query: String, cx: &mut ViewContext<Picker<Self>>) -> Task<()> {
