@@ -25,7 +25,9 @@
     "inline_completion_provider": "copilot"
   },
   // The name of a font to use for rendering text in the editor
-  "buffer_font_family": "Zed Plex Mono",
+  "buffer_font_family": [
+    "Zed Plex Mono"
+  ],
   // The OpenType features to enable for text in the editor.
   "buffer_font_features": {
     // Disable ligatures:
@@ -47,8 +49,10 @@
   //         },
   "buffer_line_height": "comfortable",
   // The name of a font to use for rendering text in the UI
-  // (On macOS) You can set this to ".SysmtemUIFont" to use the system font
-  "ui_font_family": "Zed Plex Sans",
+  // You can set this to ".SysmtemUIFont" to use the system font
+  "ui_font_family": [
+    "Zed Plex Sans"
+  ],
   // The OpenType features to enable for text in the UI
   "ui_font_features": {
     // Disable ligatures:
