@@ -8,7 +8,6 @@ use crate::ExecutionId;
 
 use crate::stdio::TerminalOutput;
 
-#[derive(Clone, Debug)]
 pub enum OutputType {
     Media((MimeType, Value)),
     Stream(TerminalOutput),
@@ -92,7 +91,6 @@ fn render_error_output(
     )
 }
 
-#[derive(Clone, Debug)]
 pub struct Execution {
     pub execution_id: ExecutionId,
     // pub anchor: Anchor,
