@@ -19,12 +19,41 @@ mod file_command;
 mod prompt_command;
 
 pub(crate) struct SlashCommandCompletionProvider {
-    commands: Arc<HashMap<String, Box<dyn SlashCommand>>>,
+    commands: Arc<SlashCommandRegistry>,
     cancel_flag: Mutex<Arc<AtomicBool>>,
-    project: Model<Project>,
 }
 
-trait SlashCommand: Send + Sync {
+#[derive(Default)]
+pub(crate) struct SlashCommandRegistry {
+    commands: HashMap<String, Box<dyn SlashCommand>>,
+}
+
+impl SlashCommandRegistry {
+    pub fn new(project: Model<Project>) -> Arc<Self> {
+        let mut this = Self {
+            commands: HashMap::default(),
+        };
+
+        this.register_command(file_command::FileSlashCommand::new(project.clone()));
+        this.register_command(prompt_command::PromptSlashCommand::new());
+
+        Arc::new(this)
+    }
+
+    fn register_command(&mut self, command: impl SlashCommand) {
+        self.commands.insert(command.name(), Box::new(command));
+    }
+
+    fn command_names(&self) -> impl Iterator<Item = &String> {
+        self.commands.keys()
+    }
+
+    pub(crate) fn command(&self, name: &str) -> Option<&dyn SlashCommand> {
+        self.commands.get(name).map(|b| &**b)
+    }
+}
+
+pub(crate) trait SlashCommand: 'static + Send + Sync {
     fn name(&self) -> String;
     fn description(&self) -> String;
     fn complete_argument(
@@ -33,86 +62,20 @@ trait SlashCommand: Send + Sync {
         cancel: Arc<AtomicBool>,
         cx: &mut AppContext,
     ) -> Task<Result<Vec<String>>>;
+    fn run(&self, argument: Option<&str>, cx: &mut AppContext) -> Task<Result<String>>;
 }
 
-struct SlashCommandInvocation {
-    name: (String, Point),
-    argument: Option<(String, Point)>,
+pub(crate) struct SlashCommandCall {
+    pub name: (String, usize),
+    pub argument: Option<(String, usize)>,
 }
 
 impl SlashCommandCompletionProvider {
-    pub fn new(project: Model<Project>, cx: &mut AppContext) -> Self {
-        let mut commands: HashMap<String, Box<dyn SlashCommand>> = HashMap::default();
-
-        let file_command = Box::new(file_command::FileSlashCommand::new(project.clone()));
-        let prompt_command = Box::new(prompt_command::PromptSlashCommand::new());
-        commands.insert(file_command.name(), file_command);
-        commands.insert(prompt_command.name(), prompt_command);
-
+    pub fn new(commands: Arc<SlashCommandRegistry>) -> Self {
         Self {
-            project,
             cancel_flag: Mutex::new(Arc::new(AtomicBool::new(false))),
-            commands: Arc::new(commands),
+            commands,
         }
-    }
-
-    fn current_slash_command(
-        &self,
-        buffer: &Model<Buffer>,
-        buffer_position: Anchor,
-        cx: &mut ViewContext<Editor>,
-    ) -> Option<SlashCommandInvocation> {
-        buffer.update(cx, |buffer, _| {
-            let mut command: Option<SlashCommandInvocation> = None;
-            let position = buffer_position.to_point(buffer);
-            let line_start = Point::new(position.row, 0);
-            let mut column = 0;
-            for chunk in buffer.text_for_range(line_start..position) {
-                for (ix, c) in chunk.char_indices() {
-                    if let Some(cmd) = &mut command {
-                        if cmd.name.0.is_empty() {
-                            if c.is_alphabetic() {
-                                cmd.name.0.push(c);
-                            } else {
-                                return None;
-                            }
-                        } else if let Some((arg, arg_position)) = &mut cmd.argument {
-                            if arg.is_empty() {
-                                if !c.is_whitespace() {
-                                    *arg_position = Point::new(position.row, (column + ix) as u32);
-                                    arg.push(c);
-                                }
-                            } else {
-                                arg.push(c);
-                            }
-                        } else {
-                            if c.is_whitespace() {
-                                cmd.argument = Some((
-                                    String::new(),
-                                    Point::new(position.row, (column + ix) as u32),
-                                ));
-                            } else {
-                                cmd.name.0.push(c);
-                            }
-                        }
-                    } else {
-                        if c == '/' {
-                            command = Some(SlashCommandInvocation {
-                                name: (
-                                    String::new(),
-                                    Point::new(position.row, (column + ix + 1) as u32),
-                                ),
-                                argument: None,
-                            });
-                        } else if !c.is_whitespace() {
-                            return None;
-                        }
-                    }
-                }
-                column += chunk.len();
-            }
-            command
-        })
     }
 
     fn complete_command_name(
@@ -123,7 +86,7 @@ impl SlashCommandCompletionProvider {
     ) -> Task<Result<Vec<project::Completion>>> {
         let candidates = self
             .commands
-            .keys()
+            .command_names()
             .enumerate()
             .map(|(ix, def)| StringMatchCandidate {
                 id: ix,
@@ -152,7 +115,7 @@ impl SlashCommandCompletionProvider {
                     label: CodeLabel::plain(mat.string.clone(), None),
                     new_text: mat.string.clone(),
                     documentation: commands
-                        .get(&mat.string)
+                        .command(&mat.string)
                         .map(|command| Documentation::SingleLine(command.description())),
                     server_id: LanguageServerId(0),
                     lsp_completion: Default::default(),
@@ -173,7 +136,7 @@ impl SlashCommandCompletionProvider {
         flag.store(true, SeqCst);
         *flag = new_cancel_flag.clone();
 
-        if let Some(command) = self.commands.get(&command_name) {
+        if let Some(command) = self.commands.command(&command_name) {
             let completions = command.complete_argument(argument, new_cancel_flag.clone(), cx);
             cx.background_executor().spawn(async move {
                 Ok(completions
@@ -203,19 +166,26 @@ impl CompletionProvider for SlashCommandCompletionProvider {
         buffer_position: Anchor,
         cx: &mut ViewContext<Editor>,
     ) -> Task<Result<Vec<project::Completion>>> {
-        let Some(command) = self.current_slash_command(buffer, buffer_position, cx) else {
-            return Task::ready(Ok(vec![]));
-        };
+        let task = buffer.update(cx, |buffer, cx| {
+            let position = buffer_position.to_point(buffer);
+            let line_start = Point::new(position.row, 0);
+            let mut lines = buffer.text_for_range(line_start..position).lines();
 
-        let buffer = buffer.read(cx);
-        let (name, name_position) = command.name;
-        if let Some((argument, argument_position)) = command.argument {
-            let start = buffer.anchor_after(argument_position);
-            self.complete_command_argument(name, argument, start..buffer_position, cx)
-        } else {
-            let start = buffer.anchor_after(name_position);
-            self.complete_command_name(name, start..buffer_position, cx)
-        }
+            let line = lines.next()?;
+            let invocation = parse_slash_command_call(line)?;
+
+            let (name, name_column) = invocation.name;
+            let task = if let Some((argument, argument_column)) = invocation.argument {
+                let start = buffer.anchor_after(Point::new(position.row, argument_column as u32));
+                self.complete_command_argument(name, argument, start..buffer_position, cx)
+            } else {
+                let start = buffer.anchor_after(Point::new(position.row, name_column as u32));
+                self.complete_command_name(name, start..buffer_position, cx)
+            };
+            Some(task)
+        });
+
+        task.unwrap_or_else(|| Task::ready(Ok(Vec::new())))
     }
 
     fn resolve_completions(
@@ -237,4 +207,44 @@ impl CompletionProvider for SlashCommandCompletionProvider {
     ) -> Task<Result<Option<language::Transaction>>> {
         Task::ready(Ok(None))
     }
+}
+
+pub(crate) fn parse_slash_command_call(line: &str) -> Option<SlashCommandCall> {
+    let mut command: Option<SlashCommandCall> = None;
+    for (ix, c) in line.char_indices() {
+        if let Some(cmd) = &mut command {
+            if cmd.name.0.is_empty() {
+                if c.is_alphabetic() {
+                    cmd.name.0.push(c);
+                } else {
+                    return None;
+                }
+            } else if let Some((arg, arg_position)) = &mut cmd.argument {
+                if arg.is_empty() {
+                    if !c.is_whitespace() {
+                        *arg_position = ix;
+                        arg.push(c);
+                    }
+                } else {
+                    arg.push(c);
+                }
+            } else {
+                if c.is_whitespace() {
+                    cmd.argument = Some((String::new(), ix));
+                } else {
+                    cmd.name.0.push(c);
+                }
+            }
+        } else {
+            if c == '/' {
+                command = Some(SlashCommandCall {
+                    name: (String::new(), ix + '/'.len_utf8()),
+                    argument: None,
+                });
+            } else if !c.is_whitespace() {
+                return None;
+            }
+        }
+    }
+    command
 }

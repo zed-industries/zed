@@ -1,6 +1,6 @@
 use super::SlashCommand;
-use fuzzy::PathMatch;
-use gpui::{AppContext, Model, Task};
+use anyhow::{anyhow, Result};
+use gpui::{AppContext, Task};
 use std::sync::{atomic::AtomicBool, Arc};
 
 pub(crate) struct PromptSlashCommand {}
@@ -28,5 +28,9 @@ impl SlashCommand for PromptSlashCommand {
     ) -> Task<http::Result<Vec<String>>> {
         cx.background_executor()
             .spawn(async move { Ok(Vec::new()) })
+    }
+
+    fn run(&self, argument: Option<&str>, cx: &mut AppContext) -> Task<Result<String>> {
+        Task::ready(Ok(format!("inserting prompt {:?}", argument)))
     }
 }

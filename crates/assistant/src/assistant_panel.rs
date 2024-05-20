@@ -5,7 +5,9 @@ use crate::{
     prompt_library::{PromptLibrary, PromptManager},
     prompts::generate_content_prompt,
     search::*,
-    slash_command::SlashCommandCompletionProvider,
+    slash_command::{
+        parse_slash_command_call, SlashCommandCompletionProvider, SlashCommandRegistry,
+    },
     ApplyEdit, Assist, CompletionProvider, CycleMessageRole, InlineAssist, InsertActivePrompt,
     LanguageModel, LanguageModelRequest, LanguageModelRequestMessage, MessageId, MessageMetadata,
     MessageStatus, QuoteSelection, ResetKey, Role, SavedConversation, SavedConversationMetadata,
@@ -99,6 +101,7 @@ pub struct AssistantPanel {
     focus_handle: FocusHandle,
     toolbar: View<Toolbar>,
     languages: Arc<LanguageRegistry>,
+    slash_commands: Arc<SlashCommandRegistry>,
     prompt_library: Arc<PromptLibrary>,
     fs: Arc<dyn Fs>,
     telemetry: Arc<Telemetry>,
@@ -191,6 +194,9 @@ impl AssistantPanel {
                     })
                     .detach();
 
+                    let slash_command_registry =
+                        SlashCommandRegistry::new(workspace.project().clone());
+
                     Self {
                         workspace: workspace_handle,
                         active_conversation_editor: None,
@@ -201,6 +207,7 @@ impl AssistantPanel {
                         focus_handle,
                         toolbar,
                         languages: workspace.app_state().languages.clone(),
+                        slash_commands: slash_command_registry,
                         prompt_library,
                         fs: workspace.app_state().fs.clone(),
                         telemetry: workspace.client().telemetry().clone(),
@@ -786,6 +793,7 @@ impl AssistantPanel {
             ConversationEditor::new(
                 self.model.clone(),
                 self.languages.clone(),
+                self.slash_commands.clone(),
                 self.fs.clone(),
                 workspace,
                 cx,
@@ -1084,6 +1092,7 @@ impl AssistantPanel {
 
         let fs = self.fs.clone();
         let workspace = self.workspace.clone();
+        let slash_commands = self.slash_commands.clone();
         let languages = self.languages.clone();
         let telemetry = self.telemetry.clone();
         cx.spawn(|this, mut cx| async move {
@@ -1094,6 +1103,7 @@ impl AssistantPanel {
                 model,
                 path.clone(),
                 languages,
+                slash_commands,
                 Some(telemetry),
                 &mut cx,
             )
@@ -1399,6 +1409,7 @@ pub struct Conversation {
     buffer: Model<Buffer>,
     pub(crate) ambient_context: AmbientContext,
     edit_suggestions: Vec<EditSuggestion>,
+    slash_command_calls: Vec<SlashCommandCall>,
     message_anchors: Vec<MessageAnchor>,
     messages_metadata: HashMap<MessageId, MessageMetadata>,
     next_message_id: MessageId,
@@ -1410,10 +1421,12 @@ pub struct Conversation {
     token_count: Option<usize>,
     pending_token_count: Task<Option<()>>,
     pending_edit_suggestion_parse: Option<Task<()>>,
+    pending_command_invocation_parse: Option<Task<()>>,
     pending_save: Task<Result<()>>,
     path: Option<PathBuf>,
     _subscriptions: Vec<Subscription>,
     telemetry: Option<Arc<Telemetry>>,
+    slash_command_registry: Arc<SlashCommandRegistry>,
     language_registry: Arc<LanguageRegistry>,
 }
 
@@ -1423,6 +1436,7 @@ impl Conversation {
     fn new(
         model: LanguageModel,
         language_registry: Arc<LanguageRegistry>,
+        slash_command_registry: Arc<SlashCommandRegistry>,
         telemetry: Option<Arc<Telemetry>>,
         cx: &mut ModelContext<Self>,
     ) -> Self {
@@ -1439,6 +1453,7 @@ impl Conversation {
             next_message_id: Default::default(),
             ambient_context: AmbientContext::default(),
             edit_suggestions: Vec::new(),
+            slash_command_calls: Vec::new(),
             summary: None,
             pending_summary: Task::ready(None),
             completion_count: Default::default(),
@@ -1446,12 +1461,14 @@ impl Conversation {
             token_count: None,
             pending_token_count: Task::ready(None),
             pending_edit_suggestion_parse: None,
+            pending_command_invocation_parse: None,
             model,
             _subscriptions: vec![cx.subscribe(&buffer, Self::handle_buffer_event)],
             pending_save: Task::ready(Ok(())),
             path: None,
             buffer,
             telemetry,
+            slash_command_registry,
             language_registry,
         };
 
@@ -1501,6 +1518,7 @@ impl Conversation {
         model: LanguageModel,
         path: PathBuf,
         language_registry: Arc<LanguageRegistry>,
+        slash_command_registry: Arc<SlashCommandRegistry>,
         telemetry: Option<Arc<Telemetry>>,
         cx: &mut AsyncAppContext,
     ) -> Result<Model<Self>> {
@@ -1541,6 +1559,7 @@ impl Conversation {
                 next_message_id,
                 ambient_context: AmbientContext::default(),
                 edit_suggestions: Vec::new(),
+                slash_command_calls: Vec::new(),
                 summary: Some(Summary {
                     text: saved_conversation.summary,
                     done: true,
@@ -1550,6 +1569,7 @@ impl Conversation {
                 pending_completions: Default::default(),
                 token_count: None,
                 pending_edit_suggestion_parse: None,
+                pending_command_invocation_parse: None,
                 pending_token_count: Task::ready(None),
                 model,
                 _subscriptions: vec![cx.subscribe(&buffer, Self::handle_buffer_event)],
@@ -1558,6 +1578,7 @@ impl Conversation {
                 buffer,
                 telemetry,
                 language_registry,
+                slash_command_registry,
             };
             this.set_language(cx);
             this.reparse_edit_suggestions(cx);
@@ -1641,6 +1662,7 @@ impl Conversation {
         if *event == language::Event::Edited {
             self.count_remaining_tokens(cx);
             self.reparse_edit_suggestions(cx);
+            self.reparse_slash_command_calls(cx);
             cx.emit(ConversationEvent::MessagesEdited);
         }
     }
@@ -1724,6 +1746,83 @@ impl Conversation {
         });
         cx.emit(ConversationEvent::EditSuggestionsChanged);
         cx.notify();
+    }
+
+    fn reparse_slash_command_calls(&mut self, cx: &mut ModelContext<Self>) {
+        self.pending_command_invocation_parse = Some(cx.spawn(|this, mut cx| async move {
+            cx.background_executor()
+                .timer(Duration::from_millis(200))
+                .await;
+
+            this.update(&mut cx, |this, cx| {
+                let buffer = this.buffer.read(cx).snapshot();
+                let mut new_calls = Vec::new();
+                let mut old_calls = this.slash_command_calls.iter().peekable();
+                let mut lines = buffer.as_rope().chunks().lines();
+                let mut offset = 0;
+                while let Some(line) = lines.next() {
+                    if let Some(call) = parse_slash_command_call(line) {
+                        let call = SlashCommandCall {
+                            source_range: buffer.anchor_before(offset)
+                                ..buffer.anchor_before(lines.offset()),
+                            name: call.name.0,
+                            argument: call.argument.map(|e| e.0),
+                        };
+
+                        let mut is_new = true;
+                        while let Some(old_call) = old_calls.peek() {
+                            match old_call.source_range.start.to_offset(&buffer).cmp(&offset) {
+                                Ordering::Less => {
+                                    eprintln!("removing call {:?}", old_call);
+                                    old_calls.next();
+                                }
+                                Ordering::Equal => {
+                                    if **old_call == call {
+                                        is_new = false;
+                                    } else {
+                                        eprintln!("removing call {:?}", old_call);
+                                    }
+                                    old_calls.next();
+                                    break;
+                                }
+                                Ordering::Greater => {
+                                    break;
+                                }
+                            }
+                        }
+
+                        if is_new {
+                            if let Some(command) = this.slash_command_registry.command(&call.name) {
+                                let task = command.run(call.argument.as_deref(), cx);
+                                let command_start = call.source_range.start.clone();
+                                cx.spawn(|this, mut cx| async move {
+                                    match task.await {
+                                        Ok(output) => {
+                                            this.update(&mut cx, |this, cx| {
+                                                eprintln!("finished call {:?}", output);
+                                            })
+                                            .ok();
+                                        }
+                                        Err(error) => log::error!("slash command failed {error:?}"),
+                                    }
+                                })
+                                .detach();
+                            }
+                        }
+
+                        new_calls.push(call);
+                    }
+                    offset = lines.offset();
+                }
+
+                for old_call in old_calls {
+                    eprintln!("removing call {:?}", old_call);
+                }
+
+                this.slash_command_calls = new_calls;
+            })
+            .ok();
+        }));
     }
 
     fn remaining_tokens(&self) -> Option<isize> {
@@ -2368,6 +2467,13 @@ fn parse_next_edit_suggestion(lines: &mut rope::Lines) -> Option<ParsedEditSugge
     }
 }
 
+#[derive(Debug, PartialEq, Eq)]
+struct SlashCommandCall {
+    source_range: Range<language::Anchor>,
+    name: String,
+    argument: Option<String>,
+}
+
 struct PendingCompletion {
     id: usize,
     _task: Task<()>,
@@ -2397,13 +2503,21 @@ impl ConversationEditor {
     fn new(
         model: LanguageModel,
         language_registry: Arc<LanguageRegistry>,
+        slash_command_registry: Arc<SlashCommandRegistry>,
         fs: Arc<dyn Fs>,
         workspace: View<Workspace>,
         cx: &mut ViewContext<Self>,
     ) -> Self {
         let telemetry = workspace.read(cx).client().telemetry().clone();
-        let conversation =
-            cx.new_model(|cx| Conversation::new(model, language_registry, Some(telemetry), cx));
+        let conversation = cx.new_model(|cx| {
+            Conversation::new(
+                model,
+                language_registry,
+                slash_command_registry,
+                Some(telemetry),
+                cx,
+            )
+        });
         Self::for_conversation(conversation, fs, workspace, cx)
     }
 
@@ -2413,8 +2527,8 @@ impl ConversationEditor {
         workspace: View<Workspace>,
         cx: &mut ViewContext<Self>,
     ) -> Self {
-        let completion_provider =
-            SlashCommandCompletionProvider::new(workspace.read(cx).project().clone(), cx);
+        let command_registry = conversation.read(cx).slash_command_registry.clone();
+        let completion_provider = SlashCommandCompletionProvider::new(command_registry);
 
         let editor = cx.new_view(|cx| {
             let mut editor = Editor::for_buffer(conversation.read(cx).buffer.clone(), None, cx);
@@ -3516,8 +3630,15 @@ mod tests {
         init(cx);
         let registry = Arc::new(LanguageRegistry::test(cx.background_executor().clone()));
 
-        let conversation =
-            cx.new_model(|cx| Conversation::new(LanguageModel::default(), registry, None, cx));
+        let conversation = cx.new_model(|cx| {
+            Conversation::new(
+                LanguageModel::default(),
+                registry,
+                Default::default(),
+                None,
+                cx,
+            )
+        });
         let buffer = conversation.read(cx).buffer.clone();
 
         let message_1 = conversation.read(cx).message_anchors[0].clone();
@@ -3648,8 +3769,15 @@ mod tests {
         init(cx);
         let registry = Arc::new(LanguageRegistry::test(cx.background_executor().clone()));
 
-        let conversation =
-            cx.new_model(|cx| Conversation::new(LanguageModel::default(), registry, None, cx));
+        let conversation = cx.new_model(|cx| {
+            Conversation::new(
+                LanguageModel::default(),
+                registry,
+                Default::default(),
+                None,
+                cx,
+            )
+        });
         let buffer = conversation.read(cx).buffer.clone();
 
         let message_1 = conversation.read(cx).message_anchors[0].clone();
@@ -3747,8 +3875,15 @@ mod tests {
         cx.set_global(settings_store);
         init(cx);
         let registry = Arc::new(LanguageRegistry::test(cx.background_executor().clone()));
-        let conversation =
-            cx.new_model(|cx| Conversation::new(LanguageModel::default(), registry, None, cx));
+        let conversation = cx.new_model(|cx| {
+            Conversation::new(
+                LanguageModel::default(),
+                registry,
+                Default::default(),
+                None,
+                cx,
+            )
+        });
         let buffer = conversation.read(cx).buffer.clone();
 
         let message_1 = conversation.read(cx).message_anchors[0].clone();
@@ -3903,7 +4038,13 @@ mod tests {
         cx.update(init);
         let registry = Arc::new(LanguageRegistry::test(cx.executor()));
         let conversation = cx.new_model(|cx| {
-            Conversation::new(LanguageModel::default(), registry.clone(), None, cx)
+            Conversation::new(
+                LanguageModel::default(),
+                registry.clone(),
+                Default::default(),
+                None,
+                cx,
+            )
         });
         let buffer = conversation.read_with(cx, |conversation, _| conversation.buffer.clone());
         let message_0 =
@@ -3943,6 +4084,7 @@ mod tests {
             LanguageModel::default(),
             Default::default(),
             registry.clone(),
+            Default::default(),
             None,
             &mut cx.to_async(),
         )

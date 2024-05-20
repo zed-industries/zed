@@ -1,4 +1,5 @@
 use super::SlashCommand;
+use anyhow::{anyhow, Result};
 use fuzzy::PathMatch;
 use gpui::{AppContext, Model, Task};
 use project::{PathMatchCandidateSet, Project};
@@ -70,7 +71,7 @@ impl SlashCommand for FileSlashCommand {
         query: String,
         cancellation_flag: Arc<AtomicBool>,
         cx: &mut AppContext,
-    ) -> gpui::Task<http::Result<Vec<String>>> {
+    ) -> gpui::Task<Result<Vec<String>>> {
         let paths = self.search_paths(query, cancellation_flag, cx);
         cx.background_executor().spawn(async move {
             Ok(paths
@@ -85,5 +86,10 @@ impl SlashCommand for FileSlashCommand {
                 })
                 .collect())
         })
+    }
+
+    fn run(&self, argument: Option<&str>, cx: &mut AppContext) -> Task<Result<String>> {
+        eprintln!("inserting file {:?}", argument);
+        Task::ready(Ok(String::new()))
     }
 }
