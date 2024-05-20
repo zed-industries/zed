@@ -3,7 +3,12 @@ use client::{ErrorCode, ErrorExt};
 use settings::{Settings, SettingsStore};
 
 use db::kvp::KEY_VALUE_STORE;
-use editor::{items::entry_git_aware_label_color, scroll::Autoscroll, Editor};
+use editor::{
+
+    items::entry_git_aware_label_color,
+    scroll::{Autoscroll, ScrollAnchor},
+    Editor,
+};
 use file_icons::FileIcons;
 
 use anyhow::{anyhow, Result};
@@ -1647,6 +1652,7 @@ impl ProjectPanel {
             }
 
             // TODO kb can we speed things up? Sort by path before inserting?
+            // TODO kb need to set those directories as expanded
             let mut entries_to_re_add = Vec::with_capacity(maybe_applicable_folder_entries.len());
             for visible_entry in &visible_worktree_entries {
                 maybe_applicable_folder_entries.retain(|maybe_parent_entry| {
@@ -2063,14 +2069,14 @@ impl ProjectPanel {
                         }
                         .ml_1(),
                     )
-                    .on_click(cx.listener(move |this, event: &gpui::ClickEvent, cx| {
-                        if event.down.button == MouseButton::Right || event.down.first_mouse {
-                            return;
-                        }
-                        // TODO kb custom click handlers for the multibuffer case, to scroll to the corresponding multibuffer place
-                        if !show_editor {
-                            if let Some(selection) =
-                                this.selection.filter(|_| event.down.modifiers.shift)
+                    .on_click(
+                        cx.listener(move |project_panel, event: &gpui::ClickEvent, cx| {
+                            if event.down.button == MouseButton::Right || event.down.first_mouse {
+                                return;
+                            }
+                            if !show_editor {
+                                if let Some(selection) =
+                                    project_panel.selection.filter(|_| event.down.modifiers.shift)
                             {
                                 let current_selection = this.index_for_selection(selection);
                                 let target_selection = this.index_for_selection(SelectedEntry {
@@ -2086,7 +2092,7 @@ impl ProjectPanel {
                                     this.for_each_visible_entry(
                                         range_start..range_end,
                                         cx,
-                                        |entry_id, details, _| {
+                                |entry_id, details, _| {
                                             new_selections.insert(SelectedEntry {
                                                 entry_id,
                                                 worktree_id: details.worktree_id,
@@ -2110,28 +2116,76 @@ impl ProjectPanel {
                                         worktree_id,
                                     });
                                 }
-                            } else if event.down.modifiers.secondary() {
+                                   } else if event.down.modifiers.secondary() {
                                 if !this.marked_entries.insert(selection) {
-                                    this.marked_entries.remove(&selection);
+                                        project_panel.marked_entries.remove(&selection);
                                 }
                             } else if kind.is_dir() {
                                 this.toggle_expanded(entry_id, cx);
-                            } else {
-                                let click_count = event.up.click_count;
-                                if click_count > 1 && event.down.modifiers.secondary() {
+                                    } else if !project_panel.active_multi_buffer_entries.is_empty()
+                                    {
+                                        if let Some(active_editor) = project_panel
+                                            .workspace
+                                            .update(cx, |workspace, cx| {
+                                                workspace
+                                                    .active_item(cx)
+                                                    .and_then(|item| item.act_as::<Editor>(cx))
+                                            })
+                                            .ok()
+                                            .flatten()
+                                        {
+                                            let active_multi_buffer =
+                                                active_editor.read(cx).buffer().clone();
+                                            let multi_buffer_snapshot =
+                                                active_multi_buffer.read(cx).snapshot(cx);
+                                            let scroll_target = project_panel
+                                                .project
+                                                .update(cx, |project, cx| {
+                                                    project.path_for_entry(entry_id, cx).and_then(
+                                                        |path| project.get_open_buffer(&path, cx),
+                                                    )
+                                                })
+                                                .map(|buffer| {
+                                                    active_multi_buffer
+                                                        .read(cx)
+                                                        .excerpts_for_buffer(&buffer, cx)
+                                                })
+                                                .and_then(|excerpts| {
+                                                    let (excerpt_id, excerpt_range) =
+                                                        excerpts.first()?;
+                                                    multi_buffer_snapshot.anchor_in_excerpt(
+                                                        *excerpt_id,
+                                                        excerpt_range.context.start,
+                                                    )
+                                                });
+                                            if let Some(anchor) = scroll_target {
+                                                active_editor.update(cx, |editor, cx| {
+                                                    editor.set_scroll_anchor(
+                                                        ScrollAnchor {
+                                                            // TODO kb headers are not taken into account
+                                                            offset: Point::default(),
+                                                            anchor,
+                                                        },
+                                                        cx,
+                                                    );
+                                                })
+                                            }
+                                        }
+                                    } else {
+                                        let click_count = event.up.click_count;if click_count > 1 && event.down.modifiers.secondary() {
                                     this.split_entry(entry_id, cx);
                                 } else {
-                                    this.open_entry(
-                                        entry_id,
-                                        cx.modifiers().secondary(),
-                                        click_count > 1,
-                                        click_count == 1,
-                                        cx,
-                                    );
+                                        project_panel.open_entry(
+                                            entry_id,cx.modifiers().secondary(),
+                                            click_count > 1,
+                                            click_count == 1,
+                                            cx,
+                                        );
+                                    }
                                 }
                             }
-                        }
-                    }))
+                        }),
+                    )
                     .on_secondary_mouse_down(cx.listener(
                         move |this, event: &MouseDownEvent, cx| {
                             // Stop propagation to prevent the catch-all context menu for the project
