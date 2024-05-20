@@ -1,10 +1,10 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <component type="desktop-application">
-    <id>app_id</id>
+    <id>@app_id@</id>
     <metadata_license>MIT</metadata_license>
     <project_license>AGPL-3.0-or-later and Apache-2.0 and GPL-3.0-or-later</project_license>
 
-    <name>app_name</name>
+    <name>@app_name@</name>
     <summary>High-performance, multiplayer code editor</summary>
     <developer id="dev.zed">
         <name translate="no">Zed Industries, Inc.</name>
@@ -22,11 +22,11 @@
         </ul>
     </description>
 
-    <launchable type="desktop-id">app_id.desktop</launchable>
+    <launchable type="desktop-id">@app_id@.desktop</launchable>
 
     <branding>
-        <color type="primary" scheme_preference="light">branding_light</color>
-        <color type="primary" scheme_preference="dark">branding_dark</color>
+        <color type="primary" scheme_preference="light">@light_branding@</color>
+        <color type="primary" scheme_preference="dark">@dark_branding@</color>
     </branding>
 
     <content_rating type="oars-1.1">
@@ -75,6 +75,6 @@
     </screenshots>
 
     <releases>
-        release_info
+        @release_info@
     </releases>
 </component>

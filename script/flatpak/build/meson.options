@@ -1,0 +1,17 @@
+option(
+    'channel',
+    type: 'combo',
+    choices: [
+        'dev',
+        'nightly',
+        'preview',
+        'stable'
+    ],
+    value: 'dev'
+)
+
+option(
+    'copy_build',
+    type: 'boolean',
+    value: 'true'
+)
