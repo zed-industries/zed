@@ -4,7 +4,6 @@ use settings::{Settings, SettingsStore};
 
 use db::kvp::KEY_VALUE_STORE;
 use editor::{
-
     items::entry_git_aware_label_color,
     scroll::{Autoscroll, ScrollAnchor},
     Editor,
@@ -218,6 +217,7 @@ impl ProjectPanel {
                     .upgrade()
                     .expect("have a &mut Workspace"),
                 move |project_panel, workspace, event, cx| {
+                    // TODO kb subscribe for multibuffer events, and select panel items on selection jumping to other buffer's excerpt
                     if let WorkspaceEvent::ActiveItemChanged = event {
                         let new_multi_buffer_entries =
                             active_multi_buffer_entries(workspace.read(cx), cx);
@@ -1516,6 +1516,7 @@ impl ProjectPanel {
         Some(())
     }
 
+    // TODO kb indicate new `active_multi_buffer_entries` here and only unfold parents for those
     fn update_visible_entries(
         &mut self,
         new_selected_entry: Option<(WorktreeId, ProjectEntryId)>,
@@ -1632,7 +1633,6 @@ impl ProjectPanel {
             }
 
             // TODO kb can we speed things up? Sort by path before inserting?
-            // TODO kb need to set those directories as expanded
             let mut entries_to_re_add = Vec::with_capacity(maybe_applicable_folder_entries.len());
             for visible_entry in &visible_worktree_entries {
                 maybe_applicable_folder_entries.retain(|maybe_parent_entry| {
@@ -1644,6 +1644,8 @@ impl ProjectPanel {
                     }
                 })
             }
+
+            // TODO kb this always re-adds the entries as open, even if it was toggled
             self.expanded_dir_ids
                 .entry(worktree_id)
                 .or_default()
@@ -2053,108 +2055,114 @@ impl ProjectPanel {
                                 return;
                             }
                             if !show_editor {
-                                if let Some(selection) =
-                                    project_panel.selection.filter(|_| event.down.modifiers.shift)
-                            {
-                                let current_selection = this.index_for_selection(selection);
-                                let target_selection = this.index_for_selection(SelectedEntry {
-                                    entry_id,
-                                    worktree_id,
-                                });
-                                if let Some(((_, _, source_index), (_, _, target_index))) =
-                                    current_selection.zip(target_selection)
+                                if let Some(selection) = project_panel
+                                    .selection
+                                    .filter(|_| event.down.modifiers.shift)
                                 {
-                                    let range_start = source_index.min(target_index);
-                                    let range_end = source_index.max(target_index) + 1; // Make the range inclusive.
-                                    let mut new_selections = BTreeSet::new();
-                                    this.for_each_visible_entry(
-                                        range_start..range_end,
-                                        cx,
-                                |entry_id, details, _| {
-                                            new_selections.insert(SelectedEntry {
-                                                entry_id,
-                                                worktree_id: details.worktree_id,
-                                            });
-                                        },
-                                    );
-
-                                    this.marked_entries = this
-                                        .marked_entries
-                                        .union(&new_selections)
-                                        .cloned()
-                                        .collect();
-
-                                    this.selection = Some(SelectedEntry {
-                                        entry_id,
-                                        worktree_id,
-                                    });
-                                    // Ensure that the current entry is selected.
-                                    this.marked_entries.insert(SelectedEntry {
-                                        entry_id,
-                                        worktree_id,
-                                    });
-                                }
-                                   } else if event.down.modifiers.secondary() {
-                                if !this.marked_entries.insert(selection) {
-                                        project_panel.marked_entries.remove(&selection);
-                                }
-                            } else if kind.is_dir() {
-                                this.toggle_expanded(entry_id, cx);
-                                    } else if !project_panel.active_multi_buffer_entries.is_empty()
+                                    let current_selection =
+                                        project_panel.index_for_selection(selection);
+                                    let target_selection =
+                                        project_panel.index_for_selection(SelectedEntry {
+                                            entry_id,
+                                            worktree_id,
+                                        });
+                                    if let Some(((_, _, source_index), (_, _, target_index))) =
+                                        current_selection.zip(target_selection)
                                     {
-                                        if let Some(active_editor) = project_panel
-                                            .workspace
-                                            .update(cx, |workspace, cx| {
-                                                workspace
-                                                    .active_item(cx)
-                                                    .and_then(|item| item.act_as::<Editor>(cx))
-                                            })
-                                            .ok()
-                                            .flatten()
-                                        {
-                                            let active_multi_buffer =
-                                                active_editor.read(cx).buffer().clone();
-                                            let multi_buffer_snapshot =
-                                                active_multi_buffer.read(cx).snapshot(cx);
-                                            let scroll_target = project_panel
-                                                .project
-                                                .update(cx, |project, cx| {
-                                                    project.path_for_entry(entry_id, cx).and_then(
-                                                        |path| project.get_open_buffer(&path, cx),
-                                                    )
-                                                })
-                                                .map(|buffer| {
-                                                    active_multi_buffer
-                                                        .read(cx)
-                                                        .excerpts_for_buffer(&buffer, cx)
-                                                })
-                                                .and_then(|excerpts| {
-                                                    let (excerpt_id, excerpt_range) =
-                                                        excerpts.first()?;
-                                                    multi_buffer_snapshot.anchor_in_excerpt(
-                                                        *excerpt_id,
-                                                        excerpt_range.context.start,
-                                                    )
+                                        let range_start = source_index.min(target_index);
+                                        let range_end = source_index.max(target_index) + 1; // Make the range inclusive.
+                                        let mut new_selections = BTreeSet::new();
+                                        project_panel.for_each_visible_entry(
+                                            range_start..range_end,
+                                            cx,
+                                            |entry_id, details, _| {
+                                                new_selections.insert(SelectedEntry {
+                                                    entry_id,
+                                                    worktree_id: details.worktree_id,
                                                 });
-                                            if let Some(anchor) = scroll_target {
-                                                active_editor.update(cx, |editor, cx| {
-                                                    editor.set_scroll_anchor(
-                                                        ScrollAnchor {
-                                                            // TODO kb headers are not taken into account
-                                                            offset: Point::default(),
-                                                            anchor,
-                                                        },
-                                                        cx,
-                                                    );
-                                                })
-                                            }
+                                            },
+                                        );
+
+                                        project_panel.marked_entries = project_panel
+                                            .marked_entries
+                                            .union(&new_selections)
+                                            .cloned()
+                                            .collect();
+
+                                        project_panel.selection = Some(SelectedEntry {
+                                            entry_id,
+                                            worktree_id,
+                                        });
+                                        // Ensure that the current entry is selected.
+                                        project_panel.marked_entries.insert(SelectedEntry {
+                                            entry_id,
+                                            worktree_id,
+                                        });
+                                    }
+                                } else if event.down.modifiers.secondary() {
+                                    if !project_panel.marked_entries.insert(selection) {
+                                        project_panel.marked_entries.remove(&selection);
+                                    }
+                                } else if kind.is_dir() {
+                                    project_panel.toggle_expanded(entry_id, cx);
+                                } else if !project_panel.active_multi_buffer_entries.is_empty() {
+                                    if let Some(active_editor) = project_panel
+                                        .workspace
+                                        .update(cx, |workspace, cx| {
+                                            workspace
+                                                .active_item(cx)
+                                                .and_then(|item| item.act_as::<Editor>(cx))
+                                        })
+                                        .ok()
+                                        .flatten()
+                                    {
+                                        let active_multi_buffer =
+                                            active_editor.read(cx).buffer().clone();
+                                        let multi_buffer_snapshot =
+                                            active_multi_buffer.read(cx).snapshot(cx);
+                                        let scroll_target = project_panel
+                                            .project
+                                            .update(cx, |project, cx| {
+                                                project.path_for_entry(entry_id, cx).and_then(
+                                                    |path| project.get_open_buffer(&path, cx),
+                                                )
+                                            })
+                                            .map(|buffer| {
+                                                active_multi_buffer
+                                                    .read(cx)
+                                                    .excerpts_for_buffer(&buffer, cx)
+                                            })
+                                            .and_then(|excerpts| {
+                                                let (excerpt_id, excerpt_range) =
+                                                    excerpts.first()?;
+                                                multi_buffer_snapshot.anchor_in_excerpt(
+                                                    *excerpt_id,
+                                                    excerpt_range.context.start,
+                                                )
+                                            });
+                                        if let Some(anchor) = scroll_target {
+                                            active_editor.update(cx, |editor, cx| {
+                                                editor.set_scroll_anchor(
+                                                    ScrollAnchor {
+                                                        offset: Point::new(
+                                                            0.0,
+                                                            -(editor.file_header_size() as f32),
+                                                        ),
+                                                        anchor,
+                                                    },
+                                                    cx,
+                                                );
+                                            })
                                         }
-                                    } else {
-                                        let click_count = event.up.click_count;if click_count > 1 && event.down.modifiers.secondary() {
-                                    this.split_entry(entry_id, cx);
+                                    }
                                 } else {
+                                    let click_count = event.up.click_count;
+                                    if click_count > 1 && event.down.modifiers.secondary() {
+                                        project_panel.split_entry(entry_id, cx);
+                                    } else {
                                         project_panel.open_entry(
-                                            entry_id,cx.modifiers().secondary(),
+                                            entry_id,
+                                            cx.modifiers().secondary(),
                                             click_count > 1,
                                             click_count == 1,
                                             cx,
