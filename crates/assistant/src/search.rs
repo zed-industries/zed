@@ -156,5 +156,17 @@ mod test {
         )
         .unwrap();
         assert_eq!(actual_range, expected_ranges[1]);
+
+        let actual_range = fuzzy_search_lines(
+            snapshot.as_rope(),
+            &"
+            assert_eq!(
+                2 + 1,
+                3,
+            );
+            "
+            .unindent(),
+        );
+        assert_eq!(actual_range, None);
     }
 }
