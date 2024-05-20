@@ -1,10 +1,11 @@
-use gpui::AnyElement;
-use ui::{IntoElement, SharedString};
+use gpui::{font, AnyElement, StyledText, TextRun};
+use theme::Theme;
+use ui::{div, IntoElement, ParentElement as _, Styled};
 
 use core::iter;
 
 use alacritty_terminal::vte::{
-    ansi::{Attr, Color, ModifyOtherKeys, NamedColor, Rgb},
+    ansi::{Attr, Color, NamedColor, Rgb},
     Params, ParamsIter, Parser, Perform,
 };
 
@@ -23,132 +24,175 @@ impl TerminalOutput {
 
     pub fn append_text(&mut self, text: &str) {
         for byte in text.as_bytes() {
-            self.parser.advance(&mut self.state, *byte);
+            self.parser.advance(&mut self.state.handler, *byte);
         }
     }
 
     pub fn num_lines(&self) -> u8 {
         // todo!(): Track this over time with our parser and just return it when needed
-        self.state.buffer.iter().filter(|c| **c == '\n').count() as u8 // the line itself
+        self.state.handler.buffer.lines().count() as u8
     }
 
-    pub fn render(&self) -> AnyElement {
-        // todo!(): be less hacky
-        let trimmed_buffer: String = self
-            .state
-            .buffer
+    pub fn render(&self, theme: &Theme) -> AnyElement {
+        let mut text_runs = self.state.handler.text_runs.clone();
+        text_runs.push(self.state.handler.current_text_run.clone());
+
+        let runs = text_runs
             .iter()
-            .collect::<String>()
-            .trim_end()
-            .to_string();
-        SharedString::from(trimmed_buffer).into_any_element()
+            .map(|ansi_run| {
+                let color = terminal_view::terminal_element::convert_color(&ansi_run.fg, theme);
+                let background_color = Some(terminal_view::terminal_element::convert_color(
+                    &ansi_run.bg,
+                    theme,
+                ));
+
+                TextRun {
+                    len: ansi_run.len,
+                    color,
+                    background_color,
+                    underline: Default::default(),
+                    font: font("Zed Mono"),
+                    strikethrough: None,
+                }
+            })
+            .collect::<Vec<TextRun>>();
+
+        let text =
+            StyledText::new(self.state.handler.buffer.trim_end().to_string()).with_runs(runs);
+        div().child(text).into_any_element()
     }
 }
 
 pub struct ParserState {
-    buffer: Vec<char>,
-    handler: SimpleHandler,
+    handler: TerminalHandler,
 }
 
 impl ParserState {
     fn new() -> Self {
         Self {
-            buffer: Vec::new(),
-            handler: SimpleHandler::new(),
+            handler: TerminalHandler::new(),
         }
     }
 }
 
-struct SimpleHandler {
-    fg: Color,
-    bg: Color,
+#[derive(Clone)]
+struct AnsiTextRun {
+    pub len: usize,
+    pub fg: alacritty_terminal::vte::ansi::Color,
+    pub bg: alacritty_terminal::vte::ansi::Color,
 }
 
-// ansi::Handler requires way more for a trait than we need
-impl SimpleHandler {
-    fn new() -> Self {
+impl AnsiTextRun {
+    fn default() -> Self {
         Self {
+            len: 0,
             fg: Color::Named(NamedColor::Foreground),
             bg: Color::Named(NamedColor::Background),
         }
     }
 
+    fn push(&mut self, c: char) {
+        self.len += 1;
+    }
+}
+
+// This should instead gather `TextRun`s
+struct TerminalHandler {
+    text_runs: Vec<AnsiTextRun>,
+    current_text_run: AnsiTextRun,
+    buffer: String,
+}
+
+impl TerminalHandler {
+    fn new() -> Self {
+        Self {
+            text_runs: Vec::new(),
+            current_text_run: AnsiTextRun {
+                len: 0,
+                fg: Color::Named(NamedColor::Foreground),
+                bg: Color::Named(NamedColor::Background),
+            },
+            buffer: String::new(),
+        }
+    }
+
+    fn add_text(&mut self, c: char) {
+        self.buffer.push(c);
+        self.current_text_run.len += 1;
+
+        // TODO: Handle newlines and carriage returns
+    }
+
     fn reset(&mut self) {
-        self.fg = Color::Named(NamedColor::Foreground);
-        self.bg = Color::Named(NamedColor::Background);
+        if self.current_text_run.len > 0 {
+            self.text_runs.push(self.current_text_run.clone());
+        }
+
+        self.current_text_run = AnsiTextRun::default();
     }
 
     fn terminal_attribute(&mut self, attr: Attr) {
         // println!("[terminal_attribute] attr={:?}", attr);
+        if Attr::Reset == attr {
+            self.reset();
+            return;
+        }
+
+        if self.current_text_run.len > 0 {
+            self.text_runs.push(self.current_text_run.clone());
+        }
+
+        let mut text_run = AnsiTextRun {
+            len: 0,
+            fg: self.current_text_run.fg,
+            bg: self.current_text_run.bg,
+        };
 
         match attr {
-            Attr::Reset => {
-                self.reset();
-            }
-            Attr::Foreground(color) => {
-                self.fg = color;
-            }
-            Attr::Background(color) => {
-                self.bg = color;
-            }
-            Attr::UnderlineColor(_) => todo!(),
-            _ => {
-                // Skipping Dim, Italic, etc. for now
-            }
+            Attr::Foreground(color) => text_run.fg = color,
+            Attr::Background(color) => text_run.bg = color,
+            _ => {}
         }
-    }
 
-    fn set_modify_other_keys(&mut self, mode: ModifyOtherKeys) {
-        // println!("[set_modify_other_keys] mode={:?}", mode);
-    }
-
-    fn report_modify_other_keys(&mut self) {
-        // println!("[report_modify_other_keys]");
+        self.current_text_run = text_run;
     }
 }
 
-impl Perform for ParserState {
+impl Perform for TerminalHandler {
     fn print(&mut self, c: char) {
-        println!("[print] c={:?}", c);
-        self.buffer.push(c);
+        // println!("[print] c={:?}", c);
+        self.add_text(c);
     }
 
     fn execute(&mut self, byte: u8) {
-        println!("[execute] {:02x}", byte);
+        // println!("[execute] {:02x}", byte);
         match byte {
             b'\n' => {
-                self.buffer.push('\n');
+                self.add_text('\n');
             }
             b'\r' => {
-                self.buffer.retain(|b| *b != '\r');
-                self.buffer.push('\r');
+                // TODO: get rid of text runs up to the cursor position
+                self.buffer.retain(|b| b != '\r');
+                self.add_text('\r');
             }
-            _ => {
-                // self.buffer.push(byte as char);
-            }
+            _ => {}
         }
     }
 
     fn hook(&mut self, params: &Params, intermediates: &[u8], ignore: bool, c: char) {
-        println!(
-            "[hook] params={:?}, intermediates={:?}, ignore={:?}, char={:?}",
-            params, intermediates, ignore, c
-        );
+        // noop
     }
 
     fn put(&mut self, byte: u8) {
-        // println!("[put] {:02x}", byte);
+        // noop
     }
 
     fn unhook(&mut self) {
-        // println!("[unhook]");
+        // noop
     }
 
     fn osc_dispatch(&mut self, params: &[&[u8]], bell_terminated: bool) {
-        println!(
-            "[osc_dispatch] params={:?} bell_terminated={}",
-            params, bell_terminated
-        );
+        // noop
     }
 
     fn csi_dispatch(
@@ -158,59 +202,27 @@ impl Perform for ParserState {
         ignore: bool,
         action: char,
     ) {
-        // Handle control sequences like colors
-        println!(
-            "[csi_dispatch] params={:#?}, intermediates={:?}, ignore={:?}, action={:?}",
-            params, intermediates, ignore, action
-        );
-
         let mut params_iter = params.iter();
-
-        let mut next_param_or = |default: u16| match params_iter.next() {
-            Some(&[param, ..]) if param != 0 => param,
-            _ => default,
-        };
-
+        // Collect colors
         match (action, intermediates) {
             ('m', []) => {
                 if params.is_empty() {
-                    self.handler.terminal_attribute(Attr::Reset);
+                    self.terminal_attribute(Attr::Reset);
                 } else {
                     for attr in attrs_from_sgr_parameters(&mut params_iter) {
                         match attr {
-                            Some(attr) => self.handler.terminal_attribute(attr),
+                            Some(attr) => self.terminal_attribute(attr),
                             None => return,
                         }
                     }
                 }
             }
-            ('m', [b'>']) => {
-                let mode = match (next_param_or(1) == 4).then(|| next_param_or(0)) {
-                    Some(0) => ModifyOtherKeys::Reset,
-                    Some(1) => ModifyOtherKeys::EnableExceptWellDefined,
-                    Some(2) => ModifyOtherKeys::EnableAll,
-                    _ => return,
-                };
-                self.handler.set_modify_other_keys(mode);
-            }
-            ('m', [b'?']) => {
-                if params_iter.next() == Some(&[4]) {
-                    self.handler.report_modify_other_keys();
-                } else {
-                    return;
-                }
-            }
             _ => {}
         }
-
-        ()
     }
 
     fn esc_dispatch(&mut self, intermediates: &[u8], ignore: bool, byte: u8) {
-        // println!(
-        //     "[esc_dispatch] intermediates={:?}, ignore={:?}, byte={:02x}",
-        //     intermediates, ignore, byte
-        // );
+        // noop
     }
 }
 

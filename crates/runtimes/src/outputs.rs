@@ -18,11 +18,13 @@ const PRIORITY_ORDER: &[MimeType] = &[MimeType::Plain, MimeType::Markdown];
 
 impl OutputType {
     fn render(&self, cx: &ViewContext<ExecutionView>) -> Option<AnyElement> {
+        let theme = cx.theme();
+
         let el = match self {
             // Note: in typical frontends we would show the execute_result.execution_count
             // Here we can just handle either
             Self::Media((mimetype, value)) => render_rich(mimetype, value),
-            Self::Stream(stdio) => Some(stdio.render()),
+            Self::Stream(stdio) => Some(stdio.render(theme)),
             Self::ErrorOutput(error_output) => render_error_output(&error_output, cx),
         };
 
@@ -114,7 +116,7 @@ impl Execution {
     }
 
     /// Push a new message
-    pub fn push_message(&mut self, message: &JupyterMessageContent) {
+    pub fn push_message(&mut self, message: &JupyterMessageContent, cx: &mut ModelContext<Self>) {
         let output = match message {
             JupyterMessageContent::ExecuteResult(result) => {
                 let (mimetype, value) =
@@ -186,7 +188,7 @@ impl ExecutionView {
 
     pub fn push_message(&mut self, message: &JupyterMessageContent, cx: &mut ViewContext<Self>) {
         self.execution
-            .update(cx, |execution, _cx| execution.push_message(message));
+            .update(cx, |execution, cx| execution.push_message(message, cx));
 
         cx.notify();
     }

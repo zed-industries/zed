@@ -401,7 +401,7 @@ fn create_output_area_render(execution_view: View<ExecutionView>) -> RenderBlock
 
         h_flex()
             .w_full()
-            .bg(cx.theme().colors().editor_active_line_background)
+            .bg(cx.theme().colors().background)
             .border_y_1()
             .border_color(cx.theme().colors().border)
             .pl(gutter_width)
