@@ -674,7 +674,7 @@ impl DirectWriteState {
             bitmap_stride = bitmap_size.width.0 as u32 * 4;
         } else {
             total_bytes = bitmap_size.height.0 as usize * bitmap_size.width.0 as usize;
-            bitmap_format = &GUID_WICPixelFormat32bppRGB;
+            bitmap_format = &GUID_WICPixelFormat8bppAlpha;
             render_target_property =
                 get_render_target_property(DXGI_FORMAT_UNKNOWN, D2D1_ALPHA_MODE_UNKNOWN);
             bitmap_stride = bitmap_size.width.0 as u32;
@@ -682,8 +682,8 @@ impl DirectWriteState {
 
         unsafe {
             let bitmap = self.components.bitmap_factory.CreateBitmap(
-                bitmap_size.width.0 as u32,
-                bitmap_size.height.0 as u32,
+                bitmap_size.width.0 as u32 * 2,
+                bitmap_size.height.0 as u32 * 2,
                 bitmap_format,
                 WICBitmapCacheOnLoad,
             )?;
@@ -704,7 +704,7 @@ impl DirectWriteState {
             // ID2D1DeviceContext4 requires Win8+
             let render_target = render_target.cast::<ID2D1DeviceContext4>().unwrap();
             render_target.SetUnitMode(D2D1_UNIT_MODE_DIPS);
-            render_target.SetDpi(96.0 * params.scale_factor, 96.0 * params.scale_factor);
+            render_target.SetDpi(192.0 * params.scale_factor, 192.0 * params.scale_factor);
             render_target.SetTextRenderingParams(&self.components.render_context.params);
             render_target.BeginDraw();
 
@@ -780,18 +780,18 @@ impl DirectWriteState {
                     pixel[2] = (pixel[2] as f32 / a) as u8;
                 }
             } else {
-                let converter = self.components.bitmap_factory.CreateFormatConverter()?;
-                converter
+                let scaler = self.components.bitmap_factory.CreateBitmapScaler()?;
+                scaler
                     .Initialize(
                         &bitmap,
-                        &GUID_WICPixelFormat8bppGray,
-                        WICBitmapDitherTypeNone,
-                        None,
-                        0.0,
-                        WICBitmapPaletteTypeCustom,
+                        bitmap_size.width.0 as u32,
+                        bitmap_size.height.0 as u32,
+                        WICBitmapInterpolationModeHighQualityCubic,
                     )
                     .unwrap();
-                converter.CopyPixels(std::ptr::null() as _, bitmap_stride, &mut raw_data)?;
+                scaler
+                    .CopyPixels(std::ptr::null() as _, bitmap_stride, &mut raw_data)
+                    .unwrap();
             }
             Ok((bitmap_size, raw_data))
         }
