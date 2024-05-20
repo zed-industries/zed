@@ -92,10 +92,6 @@ pub fn handle_settings_file_changes(
     .detach();
 }
 
-pub fn init_settings(cx: &mut AppContext) {
-    FontFallbacks::register(cx);
-}
-
 pub fn update_settings_file<T: Settings>(
     fs: Arc<dyn Fs>,
     cx: &AppContext,
