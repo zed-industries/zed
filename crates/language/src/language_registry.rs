@@ -511,13 +511,17 @@ impl LanguageRegistry {
         let filename = path.file_name().and_then(|name| name.to_str());
         let extension = path.extension_or_hidden_file_name();
         let path_suffixes = [extension, filename];
+        let filename_parts: Vec<&str> = filename.unwrap_or("").split('.').collect();
         let empty = Vec::new();
 
         let rx = self.get_or_load_language(move |language_name, config| {
-            let path_matches_default_suffix = config
-                .path_suffixes
-                .iter()
-                .any(|suffix| path_suffixes.contains(&Some(suffix.as_str())));
+            let path_matches_default_suffix = config.path_suffixes.iter().any(|suffix| {
+                suffix
+                    .split('.')
+                    .rev()
+                    .zip(filename_parts.iter().rev())
+                    .all(|(s, f)| s == *f)
+            });
             let path_matches_custom_suffix = user_file_types
                 .and_then(|types| types.get(language_name))
                 .unwrap_or(&empty)
