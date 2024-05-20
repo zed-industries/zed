@@ -1,18 +1,40 @@
-use gpui::{AnyElement, FontWeight, Hsla, Model, ModelContext, Render};
+use gpui::{AnyElement, FontWeight, Model, ModelContext, Render};
 use runtimelib::{ErrorOutput, JupyterMessageContent, MimeType};
-use ui::{
-    div, prelude::*, v_flex, Color, Context as _, IntoElement, ParentElement as _, SharedString,
-    Styled, ViewContext, WindowContext,
-};
+use ui::{div, prelude::*, v_flex, IntoElement, SharedString, Styled, ViewContext};
 
 use serde_json::Value;
 
 use crate::ExecutionId;
 
 #[derive(Clone, Debug)]
+pub struct TerminalOutput {
+    buffer: String,
+}
+
+impl TerminalOutput {
+    fn new() -> Self {
+        Self {
+            buffer: String::new(),
+        }
+    }
+
+    fn append_text(&mut self, text: &str) {
+        self.buffer.push_str(text);
+    }
+
+    fn num_lines(&self) -> u8 {
+        dbg!(self.buffer.lines().count() as u8)
+    }
+
+    fn render(&self) -> AnyElement {
+        SharedString::from(self.buffer.trim_end().to_string()).into_any_element()
+    }
+}
+
+#[derive(Clone, Debug)]
 pub enum OutputType {
     Media((MimeType, Value)),
-    Stream(SharedString),
+    Stream(TerminalOutput),
     ErrorOutput(ErrorOutput),
 }
 
@@ -24,11 +46,27 @@ impl OutputType {
             // Note: in typical frontends we would show the execute_result.execution_count
             // Here we can just handle either
             Self::Media((mimetype, value)) => render_rich(mimetype, value),
-            Self::Stream(stdio) => render_stdio(stdio),
+            Self::Stream(stdio) => Some(stdio.render()),
             Self::ErrorOutput(error_output) => render_error_output(&error_output, cx),
         };
 
         el
+    }
+
+    fn num_lines(&self) -> u8 {
+        match self {
+            Self::Media((_mimetype, value)) => value.as_str().unwrap_or("").lines().count() as u8,
+            Self::Stream(stdio) => stdio.num_lines(),
+            Self::ErrorOutput(error_output) => {
+                let mut height: u8 = 1;
+
+                height = height.saturating_add(error_output.ename.lines().count() as u8);
+                // Note: skipping evalue in error output for now
+                height = height.saturating_add(error_output.traceback.len() as u8);
+
+                height
+            }
+        }
     }
 }
 
@@ -47,20 +85,6 @@ fn render_rich(mimetype: &MimeType, value: &Value) -> Option<AnyElement> {
         ),
         _ => None,
     }
-}
-
-fn render_stdio(stdio: &SharedString) -> Option<AnyElement> {
-    // todo()!: process terminal colors, etc.
-
-    // For aesthethics, trim the end of the string to remove trailing newlines.
-    // Helps when using `console.log()`, `print`, and similar.
-    let trimmed_string = stdio.trim_end().to_string();
-
-    Some(
-        div()
-            .child(trimmed_string.into_any_element())
-            .into_any_element(),
-    )
 }
 
 fn render_error_output(
@@ -110,40 +134,74 @@ impl Execution {
         &self.outputs
     }
 
-    /// Push a new output and return the height of the output
-    pub fn push_output(&mut self, output: &OutputType) -> u8 {
-        // We're going to lean hard into this being an editor of text, and just use the height coming out of the
-        // text output.
-        let height = match output {
-            // TODO: when we get stream input, we should combine it with all previous streams (before any other output type)
-            // When we do that, we'll want to return the height of the _entire_ collection of outputs, not just this one.
-            OutputType::Stream(text) => text.lines().count() as u8,
-            OutputType::ErrorOutput(error_output) => {
-                // Start with a height of 1 to account for the border and padding
-                let mut height: u8 = 1;
+    pub fn num_lines(&self) -> u8 {
+        dbg!(&self.outputs);
 
-                height = height.saturating_add(error_output.ename.lines().count() as u8);
-                // Note: skipping evalue in error output for now
-                height = height.saturating_add(error_output.traceback.len() as u8);
+        dbg!(self.outputs.iter().map(|output| output.num_lines()).sum())
+    }
 
-                height
+    /// Push a new message
+    pub fn push_message(&mut self, message: &JupyterMessageContent) {
+        let output = match message {
+            JupyterMessageContent::ExecuteResult(result) => {
+                let (mimetype, value) =
+                    if let Some((mimetype, value)) = result.data.richest(PRIORITY_ORDER) {
+                        (mimetype, value)
+                    } else {
+                        // We don't support this media type, so just ignore it
+                        return;
+                    };
+
+                OutputType::Media((mimetype, value))
             }
-            OutputType::Media((_mime_type, value)) => {
-                // Convert to string, and then count the lines
-                let text = value.as_str().unwrap_or("").to_string();
-                text.lines().count() as u8
+            JupyterMessageContent::DisplayData(result) => {
+                let (mimetype, value) =
+                    if let Some((mimetype, value)) = result.data.richest(PRIORITY_ORDER) {
+                        (mimetype, value)
+                    } else {
+                        // We don't support this media type, so just ignore it
+                        return;
+                    };
+
+                OutputType::Media((mimetype, value))
+            }
+            JupyterMessageContent::StreamContent(result) => {
+                if let Some(new_terminal) = self.apply_terminal_text(&result.text) {
+                    new_terminal
+                } else {
+                    return;
+                }
+            }
+            JupyterMessageContent::ErrorOutput(result) => OutputType::ErrorOutput(result.clone()),
+            _ => {
+                return;
             }
         };
 
-        if height > 0 {
-            self.outputs.push(output.clone());
+        self.outputs.push(output);
+    }
+
+    fn apply_terminal_text(&mut self, text: &str) -> Option<OutputType> {
+        // This doesn't handle the base case where there is no last output
+
+        if let Some(last_output) = self.outputs.last_mut() {
+            if let OutputType::Stream(last_stream) = last_output {
+                last_stream.append_text(text);
+                // Don't need to add a new output, we already have a terminal output
+                return None;
+            }
+            // A different output type is "in the way", so we need to create a new output,
+            // which is the same as having no prior output
         }
-        height
+
+        let mut new_terminal = TerminalOutput::new();
+        new_terminal.append_text(text);
+        Some(OutputType::Stream(new_terminal))
     }
 }
 
 pub struct ExecutionView {
-    execution: Model<Execution>,
+    pub execution: Model<Execution>,
 }
 
 impl ExecutionView {
@@ -153,52 +211,11 @@ impl ExecutionView {
         Self { execution }
     }
 
-    pub fn push_message(
-        &mut self,
-        message: JupyterMessageContent,
-        cx: &mut ViewContext<Self>,
-    ) -> u8 {
-        let height: u8 = match message {
-            JupyterMessageContent::ExecuteResult(result) => {
-                let (mimetype, value) =
-                    if let Some((mimetype, value)) = result.data.richest(PRIORITY_ORDER) {
-                        (mimetype, value)
-                    } else {
-                        return 0;
-                    };
+    pub fn push_message(&mut self, message: &JupyterMessageContent, cx: &mut ViewContext<Self>) {
+        self.execution
+            .update(cx, |execution, _cx| execution.push_message(message));
 
-                self.execution.update(cx, |execution, _cx| {
-                    execution.push_output(&OutputType::Media((mimetype, value)))
-                })
-            }
-            JupyterMessageContent::DisplayData(result) => {
-                let (mimetype, value) =
-                    if let Some((mimetype, value)) = result.data.richest(PRIORITY_ORDER) {
-                        (mimetype, value)
-                    } else {
-                        return 0;
-                    };
-
-                self.execution.update(cx, |execution, _cx| {
-                    execution.push_output(&OutputType::Media((mimetype, value)))
-                })
-            }
-            JupyterMessageContent::StreamContent(result) => {
-                self.execution.update(cx, |execution, _cx| {
-                    // TODO: Join previous stream content, if not broken up with displays, errors, etc.
-                    execution.push_output(&OutputType::Stream(SharedString::from(result.text)))
-                })
-            }
-            JupyterMessageContent::ErrorOutput(result) => {
-                self.execution.update(cx, |execution, _cx| {
-                    execution.push_output(&OutputType::ErrorOutput(result))
-                })
-            }
-            _ => 0,
-        };
         cx.notify();
-
-        return height;
     }
 }
 

@@ -14,6 +14,8 @@ doctest = false
 
 [dependencies]
 anyhow.workspace = true
+# the terminal crate doesn't add alacritty to the workspace, so we directly depend on it here
+alacritty_terminal = "0.23"
 client.workspace = true
 clock.workspace = true
 collections.workspace = true

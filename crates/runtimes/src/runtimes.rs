@@ -18,6 +18,7 @@ use util::ResultExt;
 use workspace::Workspace;
 
 mod outputs;
+mod stdio;
 
 use theme::{ActiveTheme, ThemeSettings};
 
@@ -298,14 +299,14 @@ impl RuntimeManager {
                 // Since we don't know the height, in editor terms, we have to calculate it over time
                 // and just create a new block, replacing the old. It would be better if we could
                 // just rely on the view updating and for the height to be calculated automatically.
-                // This works for now leaning straight into this being a pure text editor.
+                //
+                // We will just handle text for the moment to keep this accurate.
                 // Plots and other images will have to wait.
-                let mut guessed_height: u8 = 1;
 
                 let mut block_id = editor.update(cx, |editor, cx| {
                     let block = BlockProperties {
                         position: anchor,
-                        height: guessed_height,
+                        height: 1,
                         style: BlockStyle::Sticky,
                         render: create_output_area_render(execution_view.clone()),
                         disposition: BlockDisposition::Below,
@@ -317,10 +318,9 @@ impl RuntimeManager {
                 cx.spawn(|_this, mut cx| async move {
                     let execution_view = execution_view.clone();
                     while let Some(update) = receiver.next().await {
-                        let more_height = execution_view
-                            .update(&mut cx, |execution_view, cx| {
-                                execution_view.push_message(update.update, cx)
-                            })?;
+                        execution_view.update(&mut cx, |execution_view, cx| {
+                            execution_view.push_message(&update.update, cx)
+                        })?;
 
                         editor.update(&mut cx, |editor, cx| {
                             let mut blocks_to_remove = HashSet::default();
@@ -328,11 +328,9 @@ impl RuntimeManager {
 
                             editor.remove_blocks(blocks_to_remove, None, cx);
 
-                            guessed_height = guessed_height.saturating_add(more_height);
-
                             let block = BlockProperties {
                                 position: anchor,
-                                height: guessed_height,
+                                height: 1 + execution_view.read(cx).execution.read(cx).num_lines(),
                                 style: BlockStyle::Sticky,
                                 render: create_output_area_render(execution_view.clone()),
                                 disposition: BlockDisposition::Below,
