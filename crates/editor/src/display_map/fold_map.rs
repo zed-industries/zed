@@ -948,7 +948,7 @@ impl<'a> sum_tree::Dimension<'a, FoldSummary> for FoldRange {
 
 impl<'a> sum_tree::SeekTarget<'a, FoldSummary, FoldRange> for FoldRange {
     fn cmp(&self, other: &Self, buffer: &MultiBufferSnapshot) -> Ordering {
-        self.0.cmp(&other.0, buffer)
+        AnchorRangeExt::cmp(&self.0, &other.0, buffer)
     }
 }
 

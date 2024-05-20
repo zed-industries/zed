@@ -24,14 +24,15 @@ mod inlay_map;
 mod tab_map;
 mod wrap_map;
 
+use crate::scroll::Autoscroll;
 use crate::{hover_links::InlayHighlight, movement::TextLayoutDetails, InlayId};
-use crate::{EditorStyle, RowExt};
+use crate::{Editor, EditorStyle, FoldAt, RowExt};
 pub use block_map::{BlockMap, BlockPoint};
 use collections::{HashMap, HashSet};
 use fold_map::FoldMap;
 use gpui::{
-    AnyElement, AnyView, Font, HighlightStyle, Hsla, LineLayout, Model, ModelContext, Pixels,
-    UnderlineStyle,
+    AnyElement, Font, HighlightStyle, Hsla, LineLayout, Model, ModelContext, Pixels,
+    UnderlineStyle, View,
 };
 use inlay_map::InlayMap;
 use language::{
@@ -42,7 +43,6 @@ use multi_buffer::{
     Anchor, AnchorRangeExt, MultiBuffer, MultiBufferPoint, MultiBufferRow, MultiBufferSnapshot,
     ToOffset, ToPoint,
 };
-use rpc::proto::create_buffer_for_peer;
 use serde::Deserialize;
 use std::{any::TypeId, borrow::Cow, fmt::Debug, num::NonZeroU32, ops::Range, sync::Arc};
 use sum_tree::{Bias, TreeMap};
@@ -58,9 +58,14 @@ pub use block_map::{
 
 pub use foldable::*;
 
-use self::block_map::BlockRow;
+use self::block_map::{BlockRow, BlockSnapshot};
+use self::fold_map::FoldSnapshot;
 pub use self::fold_map::{Fold, FoldId, FoldPoint};
+use self::foldable::FlapSnapshot;
+use self::inlay_map::InlaySnapshot;
 pub use self::inlay_map::{InlayOffset, InlayPoint};
+use self::tab_map::TabSnapshot;
+use self::wrap_map::WrapSnapshot;
 pub(crate) use inlay_map::Inlay;
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -70,12 +75,6 @@ pub enum FoldStatus {
 }
 
 pub type RenderFoldToggle = Arc<dyn Fn(FoldStatus, &mut WindowContext) -> AnyElement>;
-
-#[derive(Clone)]
-pub struct FoldIndicator {
-    toggle: Option<RenderFoldToggle>,
-    folded: bool,
-}
 
 const UNNECESSARY_CODE_FADE: f32 = 0.3;
 
@@ -109,7 +108,7 @@ pub struct DisplayMap {
     /// Regions of inlays that should be highlighted.
     inlay_highlights: InlayHighlights,
     /// A container for explicitly foldable ranges, which supersede indentation based fold range suggestions.
-    foldables: FoldableRanges,
+    flaps: FlapMap,
     pub clip_at_line_ends: bool,
 }
 
@@ -142,7 +141,7 @@ impl DisplayMap {
             block_map,
             text_highlights: Default::default(),
             inlay_highlights: Default::default(),
-            foldables: Default::default(),
+            flaps: Default::default(),
             clip_at_line_ends: false,
         }
     }
@@ -166,7 +165,7 @@ impl DisplayMap {
             tab_snapshot,
             wrap_snapshot,
             block_snapshot,
-            foldable_ranges: self.foldables.clone(),
+            flap_snapshot: self.flaps.snapshot(),
             text_highlights: self.text_highlights.clone(),
             inlay_highlights: self.inlay_highlights.clone(),
             clip_at_line_ends: self.clip_at_line_ends,
@@ -229,10 +228,22 @@ impl DisplayMap {
         self.block_map.read(snapshot, edits);
     }
 
-    pub fn insert_foldables(
+    pub fn insert_flaps(
         &mut self,
-        foldables: impl IntoIterator<Item = (Range<Anchor>, RenderFoldToggle)>,
+        flaps: impl IntoIterator<Item = Flap>,
+        cx: &mut ModelContext<Self>,
+    ) -> Vec<FlapId> {
+        let snapshot = self.buffer.read(cx).snapshot(cx);
+        self.flaps.insert(flaps, &snapshot)
+    }
+
+    pub fn remove_flaps(
+        &mut self,
+        flap_ids: impl IntoIterator<Item = FlapId>,
+        cx: &mut ModelContext<Self>,
     ) {
+        let snapshot = self.buffer.read(cx).snapshot(cx);
+        self.flaps.remove(flap_ids, &snapshot)
     }
 
     pub fn insert_blocks(
@@ -369,27 +380,6 @@ impl DisplayMap {
     pub fn is_rewrapping(&self, cx: &gpui::AppContext) -> bool {
         self.wrap_map.read(cx).is_rewrapping()
     }
-
-    pub fn fold_indicator(
-        &self,
-        row: MultiBufferRow,
-        cx: &gpui::WindowContext,
-    ) -> Option<FoldIndicator> {
-
-        // FoldIndicator {
-        //     toggle: todo!(),
-        //     folded: todo!(),
-        // }
-    }
-
-    pub fn render_fold_toggle(
-        &self,
-        row: MultiBufferRow,
-        cx: &mut WindowContext,
-    ) -> Option<AnyElement> {
-        todo!()
-        //map.foldables.render_fold_toggle(self.id, fold_status, cx)
-    }
 }
 
 #[derive(Debug, Default)]
@@ -414,12 +404,12 @@ pub struct HighlightedChunk<'a> {
 #[derive(Clone)]
 pub struct DisplaySnapshot {
     pub buffer_snapshot: MultiBufferSnapshot,
-    pub fold_snapshot: fold_map::FoldSnapshot,
-    inlay_snapshot: inlay_map::InlaySnapshot,
-    tab_snapshot: tab_map::TabSnapshot,
-    wrap_snapshot: wrap_map::WrapSnapshot,
-    block_snapshot: block_map::BlockSnapshot,
-    foldable_ranges: FoldableRanges,
+    pub fold_snapshot: FoldSnapshot,
+    pub flap_snapshot: FlapSnapshot,
+    inlay_snapshot: InlaySnapshot,
+    tab_snapshot: TabSnapshot,
+    wrap_snapshot: WrapSnapshot,
+    block_snapshot: BlockSnapshot,
     text_highlights: TextHighlights,
     inlay_highlights: InlayHighlights,
     clip_at_line_ends: bool,
@@ -881,41 +871,41 @@ impl DisplaySnapshot {
         DisplayRow(self.block_snapshot.longest_row())
     }
 
-    pub fn fold_indicator_for_row(&self, buffer_row: MultiBufferRow) -> Option<FoldIndicator> {
-        if let Some(foldable_range) = self
-            .foldable_ranges
-            .query_row(buffer_row, &self.buffer_snapshot)
-        {
-            Some(FoldIndicator {
-                toggle: foldable_range.toggle.clone(),
-                folded: self.is_line_folded(buffer_row),
-            })
-        } else if self.is_line_folded(buffer_row) {
-            Some(FoldIndicator {
-                toggle: None,
-                folded: true,
-            })
-        } else if self.is_foldable(buffer_row) {
-            Some(FoldIndicator {
-                toggle: None,
-                folded: false,
-            })
-        } else {
-            None
-        }
-    }
+    // pub fn fold_indicator(&self, buffer_row: MultiBufferRow) -> Option<FoldIndicator> {
+    //     if let Some(foldable_range) = self
+    //         .foldable_ranges
+    //         .query_row(buffer_row, &self.buffer_snapshot)
+    //     {
+    //         Some(FoldIndicator {
+    //             toggle: foldable_range.toggle.clone(),
+    //             folded: self.is_line_folded(buffer_row),
+    //         })
+    //     } else if self.is_line_folded(buffer_row) {
+    //         Some(FoldIndicator {
+    //             toggle: None,
+    //             folded: true,
+    //         })
+    //     } else if self.is_foldable(buffer_row) {
+    //         Some(FoldIndicator {
+    //             toggle: None,
+    //             folded: false,
+    //         })
+    //     } else {
+    //         None
+    //     }
+    // }
 
     pub fn fold_for_line(&self, buffer_row: MultiBufferRow) -> Option<FoldStatus> {
         if self.is_line_folded(buffer_row) {
             Some(FoldStatus::Folded)
-        } else if self.is_foldable(buffer_row) {
+        } else if self.starts_indent(buffer_row) {
             Some(FoldStatus::Foldable)
         } else {
             None
         }
     }
 
-    pub fn is_foldable(&self, buffer_row: MultiBufferRow) -> bool {
+    pub fn starts_indent(&self, buffer_row: MultiBufferRow) -> bool {
         let max_row = self.buffer_snapshot.max_buffer_row();
         if buffer_row >= max_row {
             return false;
@@ -941,7 +931,7 @@ impl DisplaySnapshot {
 
     pub fn foldable_range(&self, buffer_row: MultiBufferRow) -> Option<Range<Point>> {
         let start = MultiBufferPoint::new(buffer_row.0, self.buffer_snapshot.line_len(buffer_row));
-        if self.is_foldable(MultiBufferRow(start.row))
+        if self.starts_indent(MultiBufferRow(start.row))
             && !self.is_line_folded(MultiBufferRow(start.row))
         {
             let (start_indent, _) = self.line_indent_for_buffer_row(buffer_row);
@@ -1840,8 +1830,8 @@ pub mod tests {
             let range =
                 snapshot.anchor_before(Point::new(2, 0))..snapshot.anchor_after(Point::new(3, 3));
 
-            map.foldables.insert(
-                Some(FoldableRange::new(range, |status, cx| div())),
+            map.flaps.insert(
+                Some(Flap::new(range, |status, toggle, cx| div())),
                 &map.buffer.read(cx).snapshot(cx),
             );
 

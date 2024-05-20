@@ -1146,7 +1146,7 @@ impl EditorElement {
     #[allow(clippy::too_many_arguments)]
     fn layout_gutter_fold_indicators(
         &self,
-        fold_statuses: Vec<Option<(FoldStatus, MultiBufferRow, bool)>>,
+        mut indicators: Vec<Option<AnyElement>>,
         line_height: Pixels,
         gutter_dimensions: &GutterDimensions,
         gutter_settings: crate::editor_settings::Gutter,
@@ -1154,17 +1154,6 @@ impl EditorElement {
         gutter_hitbox: &Hitbox,
         cx: &mut WindowContext,
     ) -> Vec<Option<AnyElement>> {
-        let mut indicators = self.editor.update(cx, |editor, cx| {
-            editor.render_fold_indicators(
-                fold_statuses,
-                &self.style,
-                editor.gutter_hovered,
-                line_height,
-                gutter_dimensions.margin,
-                cx,
-            )
-        });
-
         for (ix, fold_indicator) in indicators.iter_mut().enumerate() {
             if let Some(fold_indicator) = fold_indicator {
                 debug_assert!(gutter_settings.folds);
@@ -1561,11 +1550,8 @@ impl EditorElement {
         active_rows: &BTreeMap<DisplayRow, bool>,
         newest_selection_head: Option<DisplayPoint>,
         snapshot: &EditorSnapshot,
-        cx: &WindowContext,
-    ) -> (
-        Vec<Option<ShapedLine>>,
-        Vec<Option<(FoldStatus, MultiBufferRow, bool)>>,
-    ) {
+        cx: &mut WindowContext,
+    ) -> (Vec<Option<ShapedLine>>, Vec<Option<AnyElement>>) {
         let editor = self.editor.read(cx);
         let is_singleton = editor.is_singleton(cx);
         let newest_selection_head = newest_selection_head.unwrap_or_else(|| {
@@ -1587,7 +1573,7 @@ impl EditorElement {
         let include_fold_statuses =
             EditorSettings::get_global(cx).gutter.folds && snapshot.mode == EditorMode::Full;
         let mut shaped_line_numbers = Vec::with_capacity(rows.len());
-        let mut fold_statuses = Vec::with_capacity(rows.len());
+        let mut fold_toggles = Vec::with_capacity(rows.len());
         let mut line_number = String::new();
         let is_relative = EditorSettings::get_global(cx).relative_line_numbers;
         let relative_to = if is_relative {
@@ -1628,25 +1614,21 @@ impl EditorElement {
                     shaped_line_numbers.push(Some(shaped_line));
                 }
                 if include_fold_statuses {
-                    editor.display_map.fold_indicator(multibuffer_row);
-
-                    fold_statuses.push(
-                        is_singleton
-                            .then(|| {
-                                snapshot
-                                    .fold_for_line(multibuffer_row)
-                                    .map(|fold_status| (fold_status, multibuffer_row, active))
-                            })
-                            .flatten(),
-                    )
+                    fold_toggles.push(snapshot.render_fold_toggle(
+                        multibuffer_row,
+                        active,
+                        self.editor.clone(),
+                        cx,
+                    ));
                 }
             } else {
-                fold_statuses.push(None);
+                fold_toggles.push(None);
                 shaped_line_numbers.push(None);
             }
         }
 
-        (shaped_line_numbers, fold_statuses)
+        // todo! return the fold toggles
+        (shaped_line_numbers, fold_toggles)
     }
 
     fn layout_lines(
@@ -3974,7 +3956,7 @@ impl Element for EditorElement {
                         cx,
                     );
 
-                    let (line_numbers, fold_statuses) = self.layout_line_numbers(
+                    let (line_numbers, fold_indicators) = self.layout_line_numbers(
                         start_row..end_row,
                         buffer_rows.clone().into_iter(),
                         &active_rows,
@@ -4211,7 +4193,7 @@ impl Element for EditorElement {
                     let fold_indicators = if gutter_settings.folds {
                         cx.with_element_namespace("gutter_fold_indicators", |cx| {
                             self.layout_gutter_fold_indicators(
-                                fold_statuses,
+                                fold_indicators,
                                 line_height,
                                 &gutter_dimensions,
                                 gutter_settings,

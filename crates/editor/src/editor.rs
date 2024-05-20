@@ -63,6 +63,26 @@ use futures::FutureExt;
 use fuzzy::{StringMatch, StringMatchCandidate};
 use git::blame::GitBlame;
 use git::diff_hunk_to_display;
+
+/*
+/search {}
+
+> [search_results]
+
+-> click on search results
+
+v | [search_results]
+> |  editor.rs
+> |  editor-2.rs
+-> [Anchor 72->74], [anchor 73,0-73,end], [anchor 74,0-74,end]
+
+v | [search_results]
+> | editor.rs
+> | editor-2.rs
+
+
+*/
+
 use gpui::{
     div, impl_actions, point, prelude::*, px, relative, size, uniform_list, Action, AnyElement,
     AppContext, AsyncWindowContext, AvailableSpace, BackgroundExecutor, Bounds, ClipboardItem,
@@ -11037,6 +11057,61 @@ impl EditorSnapshot {
             width: line_gutter_width + left_padding + right_padding,
             margin: -descent,
             git_blame_entries_width,
+        }
+    }
+
+    pub fn render_fold_toggle(
+        &self,
+        buffer_row: MultiBufferRow,
+        row_contains_cursor: bool,
+        editor: View<Editor>,
+        cx: &mut WindowContext,
+    ) -> Option<AnyElement> {
+        let folded = self.is_line_folded(buffer_row);
+        let gutter_hovered = editor.read(cx).gutter_hovered;
+
+        if let Some(flap) = self
+            .flap_snapshot
+            .query_row(buffer_row, &self.buffer_snapshot)
+        {
+            let range = flap.range.clone();
+            let toggle_callback = Arc::new(move |folded, cx: &mut WindowContext| {
+                if folded {
+                    editor.update(cx, |editor, cx| {
+                        editor.fold_ranges(Some(range.clone()), false, cx)
+                    });
+                } else {
+                    editor.update(cx, |editor, cx| {
+                        editor.unfold_at(&crate::UnfoldAt { buffer_row }, cx)
+                    });
+                }
+            });
+
+            Some((flap.render_toggle)(folded, toggle_callback, cx))
+        } else if folded
+            || (self.starts_indent(buffer_row) && (row_contains_cursor || gutter_hovered))
+        {
+            Some(
+                IconButton::new(
+                    ("indent-fold-indicator", buffer_row.0),
+                    ui::IconName::ChevronDown,
+                )
+                .on_click(cx.listener_for(&editor, move |this, _e, cx| {
+                    if folded {
+                        this.unfold_at(&UnfoldAt { buffer_row }, cx);
+                    } else {
+                        this.fold_at(&FoldAt { buffer_row }, cx);
+                    }
+                }))
+                .icon_color(ui::Color::Muted)
+                .icon_size(ui::IconSize::Small)
+                .selected(folded)
+                .selected_icon(ui::IconName::ChevronRight)
+                .size(ui::ButtonSize::None)
+                .into_any_element(),
+            )
+        } else {
+            None
         }
     }
 }
