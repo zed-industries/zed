@@ -69,14 +69,15 @@ pub fn init_font_fallbacks(cx: &mut AppContext) {
 }
 
 #[derive(Default, Clone, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
-struct FontFallbacksContent {
+pub struct FontFallbacksContent {
     ui_font_family: Option<Vec<String>>,
     buffer_font_family: Option<Vec<String>>,
 }
 
-struct FontFallbacks {
-    ui_font_family: Vec<String>,
-    buffer_font_family: Vec<String>,
+#[derive(Debug, Clone)]
+pub struct FontFallbacks {
+    pub ui_font_family: Vec<String>,
+    pub buffer_font_family: Vec<String>,
 }
 
 impl Settings for FontFallbacks {
@@ -86,7 +87,7 @@ impl Settings for FontFallbacks {
 
     fn load(
         sources: crate::SettingsSources<Self::FileContent>,
-        cx: &mut AppContext,
+        _: &mut AppContext,
     ) -> anyhow::Result<Self>
     where
         Self: Sized,
