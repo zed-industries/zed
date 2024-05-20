@@ -428,7 +428,7 @@ impl TerminalPanel {
         }
     }
 
-    fn spawn_in_new_terminal(
+    pub fn spawn_in_new_terminal(
         &mut self,
         spawn_task: SpawnInTerminal,
         working_directory: Option<PathBuf>,

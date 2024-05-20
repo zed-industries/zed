@@ -31,25 +31,30 @@ impl Project {
         &self,
         cx: &AppContext,
     ) -> Option<ConnectRemoteTerminal> {
-        self.dev_server_project_id()
-            .and_then(|dev_server_project_id| {
-                let projects_store = dev_server_projects::Store::global(cx).read(cx);
-                let project_path = projects_store
-                    .dev_server_project(dev_server_project_id)?
-                    .path
-                    .clone();
-                let ssh_connection_string = projects_store
-                    .dev_server_for_project(dev_server_project_id)?
-                    .ssh_connection_string
-                    .clone();
-                Some(project_path).zip(ssh_connection_string)
-            })
-            .map(
-                |(project_path, ssh_connection_string)| ConnectRemoteTerminal {
-                    ssh_connection_string,
-                    project_path,
-                },
-            )
+        return Some(ConnectRemoteTerminal {
+            ssh_connection_string: "dev".into(),
+            project_path: "~/0/zed/zed".into(), // <--- no path yet
+        });
+        // TODO: Restore
+        // self.dev_server_project_id()
+        //     .and_then(|dev_server_project_id| {
+        //         let projects_store = dev_server_projects::Store::global(cx).read(cx);
+        //         let project_path = projects_store
+        //             .dev_server_project(dev_server_project_id)?
+        //             .path
+        //             .clone();
+        //         let ssh_connection_string = projects_store
+        //             .dev_server_for_project(dev_server_project_id)?
+        //             .ssh_connection_string
+        //             .clone();
+        //         Some(project_path).zip(ssh_connection_string)
+        //     })
+        //     .map(
+        //         |(project_path, ssh_connection_string)| ConnectRemoteTerminal {
+        //             ssh_connection_string,
+        //             project_path,
+        //         },
+        //     )
     }
 
     pub fn create_terminal(

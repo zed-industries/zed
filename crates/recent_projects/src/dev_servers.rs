@@ -1,10 +1,13 @@
+ase std::env;
 use std::time::Duration;
 
+use anyhow::Context;
 use dev_server_projects::{DevServer, DevServerId, DevServerProject, DevServerProjectId};
 use editor::Editor;
 use feature_flags::FeatureFlagAppExt;
 use feature_flags::FeatureFlagViewExt;
 use gpui::Subscription;
+use gpui::WeakView;
 use gpui::{
     percentage, Action, Animation, AnimationExt, AnyElement, AppContext, ClipboardItem,
     DismissEvent, EventEmitter, FocusHandle, FocusableView, Model, ScrollHandle, Transformation,
@@ -16,6 +19,9 @@ use rpc::{
     proto::{CreateDevServerResponse, DevServerStatus, RegenerateDevServerTokenResponse},
     ErrorCode, ErrorExt,
 };
+use task::RevealStrategy;
+use task::SpawnInTerminal;
+use terminal_view::terminal_panel::TerminalPanel;
 use ui::CheckboxWithLabel;
 use ui::{prelude::*, Indicator, List, ListHeader, ListItem, ModalContent, ModalHeader, Tooltip};
 use ui_text_field::{FieldLabelLayout, TextField};
@@ -29,6 +35,7 @@ pub struct DevServerProjects {
     focus_handle: FocusHandle,
     scroll_handle: ScrollHandle,
     dev_server_store: Model<dev_server_projects::Store>,
+    workspace: WeakView<Workspace>,
     project_path_input: View<Editor>,
     dev_server_name_input: View<TextField>,
     use_server_name_in_ssh: Selection,
@@ -86,17 +93,19 @@ impl DevServerProjects {
 
     fn register_open_remote_action(workspace: &mut Workspace) {
         workspace.register_action(|workspace, _: &OpenRemote, cx| {
-            workspace.toggle_modal(cx, |cx| Self::new(cx))
+            let handle = cx.view().downgrade();
+            workspace.toggle_modal(cx, |cx| Self::new(cx, handle))
         });
     }
 
     pub fn open(workspace: View<Workspace>, cx: &mut WindowContext) {
         workspace.update(cx, |workspace, cx| {
-            workspace.toggle_modal(cx, |cx| Self::new(cx))
+            let handle = cx.view().downgrade();
+            workspace.toggle_modal(cx, |cx| Self::new(cx, handle))
         })
     }
 
-    pub fn new(cx: &mut ViewContext<Self>) -> Self {
+    pub fn new(cx: &mut ViewContext<Self>, workspace: WeakView<Workspace>) -> Self {
         let project_path_input = cx.new_view(|cx| {
             let mut editor = Editor::single_line(cx);
             editor.set_placeholder_text("Project path (~/work/zed, /workspace/zed, …)", cx);
@@ -140,6 +149,7 @@ impl DevServerProjects {
             dev_server_name_input,
             rename_dev_server_input,
             markdown,
+            workspace,
             use_server_name_in_ssh: Selection::Unselected,
             _dev_server_subscription: subscription,
         }
@@ -267,26 +277,80 @@ impl DevServerProjects {
         };
 
         let dev_server = self.dev_server_store.update(cx, |store, cx| {
-            store.create_dev_server(name, ssh_connection_string, cx)
+            store.create_dev_server(name, ssh_connection_string.clone(), cx)
         });
+
+        let workspace = self.workspace.clone();
 
         cx.spawn(|this, mut cx| async move {
             let result = dev_server.await;
 
-            this.update(&mut cx, |this, cx| match &result {
+            match result {
                 Ok(dev_server) => {
-                    this.focus_handle.focus(cx);
-                    this.mode = Mode::CreateDevServer(CreateDevServer {
-                        creating: false,
-                        dev_server: Some(dev_server.clone()),
-                    });
-                }
-                Err(_) => {
-                    this.mode = Mode::CreateDevServer(Default::default());
-                }
-            })
-            .log_err();
-            result
+                    if let Some(ssh_connection_string) =  ssh_connection_string {
+                    if let Some(terminal_panel) = workspace
+                        .update(&mut cx, |workspace, cx| workspace.panel::<TerminalPanel>(cx))
+                        .ok()
+                        .flatten()
+                        .with_context(|| anyhow::anyhow!("No terminal panel"))
+                        .log_err()
+                    {
+                        let install_command = if env::var("ZED_RPC_URL") == Ok("http://localhost:8080/rpc".to_string()) {
+                            format!(r#"cd; (curl -sSL https://zed.dev/install.sh || wget -qO- https://zed.dev/install.sh) | bash && ZED_RPC_URL=http://localhost:8080/rpc ~/.local/bin/zed --dev-server-token {} && exec $SHELL"#, dev_server.access_token)
+                        } else {
+                            format!(r#"cd; (curl -sSL https://zed.dev/install.sh || wget -qO- https://zed.dev/install.sh) | bash && ~/.local/bin/zed --dev-server-token {}"#, dev_server.access_token)
+                        };
+
+                        let mut args = shlex::split(&ssh_connection_string).unwrap_or_default();
+                        let command = args.drain(0..1).next().unwrap_or("ssh".to_string());
+
+                        if env::var("ZED_RPC_URL") == Ok("http://localhost:8080/rpc".to_string()) {
+                            args.extend(["-R".to_string(), "8080:localhost:8080".to_string()])
+                        }
+
+                        args.extend(["sh".to_string(), "-c".to_string(), install_command]);
+
+                        terminal_panel.update(&mut cx, |terminal_panel, cx| {
+                            terminal_panel.spawn_in_new_terminal(
+                                SpawnInTerminal {
+                                    id: task::TaskId("ssh-remote".into()),
+                                    full_label: "Install Zed over ssh".into(),
+                                    label: "Install Zed over ssh".into(),
+                                    command,
+                                    args,
+                                    command_label: ssh_connection_string,
+                                    cwd: None,
+                                    env: Default::default(),
+                                    use_new_terminal: true,
+                                    allow_concurrent_runs: false,
+                                    reveal: RevealStrategy::Always,
+                                },
+                                None,
+                                cx,
+                            );
+                        })?;
+                    } else {
+                        dbg!("noo!");
+                    }
+                    }
+
+                    this.update(&mut cx, |this, cx| {
+                            this.focus_handle.focus(cx);
+                            this.mode = Mode::CreateDevServer(CreateDevServer {
+                                creating: false,
+                                dev_server: Some(dev_server.clone()),
+                        });
+                    })
+            }
+            Err(e) => {
+                this.update(&mut cx, |this, cx| {
+                        this.mode = Mode::CreateDevServer(Default::default());
+                })
+                .log_err();
+
+                return Err(e)
+            }
+            }
         })
         .detach_and_prompt_err("Failed to create server", cx, |_, _| None);
 
