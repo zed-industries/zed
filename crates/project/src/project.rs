@@ -55,9 +55,9 @@ use language::{
 use log::error;
 use lsp::{
     DiagnosticSeverity, DiagnosticTag, DidChangeWatchedFilesRegistrationOptions,
-    DocumentHighlightKind, LanguageServer, LanguageServerBinary, LanguageServerId,
+    DocumentHighlightKind, Edit, LanguageServer, LanguageServerBinary, LanguageServerId,
     LspRequestFuture, MessageActionItem, OneOf, ServerCapabilities, ServerHealthStatus,
-    ServerStatus,
+    ServerStatus, TextEdit,
 };
 use lsp_command::*;
 use node_runtime::NodeRuntime;
@@ -67,6 +67,7 @@ use prettier_support::{DefaultPrettier, PrettierInstance};
 use project_settings::{LspSettings, ProjectSettings};
 use rand::prelude::*;
 use search_history::SearchHistory;
+use snippet::Snippet;
 use worktree::LocalSnapshot;
 
 use http::{HttpClient, Url};
@@ -332,6 +333,7 @@ pub enum Event {
     CollaboratorLeft(proto::PeerId),
     RefreshInlayHints,
     RevealInProjectPanel(ProjectEntryId),
+    SnippetEdit(BufferId, Vec<(lsp::Range, Snippet)>),
 }
 
 pub enum LanguageServerState {
@@ -2694,7 +2696,6 @@ impl Project {
                     };
 
                     let next_version = previous_snapshot.version + 1;
-
                     buffer_snapshots.push(LspBufferSnapshot {
                         version: next_version,
                         snapshot: next_snapshot.clone(),
@@ -6209,7 +6210,7 @@ impl Project {
                         uri,
                         version: None,
                     },
-                    edits: edits.into_iter().map(OneOf::Left).collect(),
+                    edits: edits.into_iter().map(Edit::Plain).collect(),
                 })
             }));
         }
@@ -6287,7 +6288,7 @@ impl Project {
                     let buffer_to_edit = this
                         .update(cx, |this, cx| {
                             this.open_local_buffer_via_lsp(
-                                op.text_document.uri,
+                                op.text_document.uri.clone(),
                                 language_server.server_id(),
                                 lsp_adapter.name.clone(),
                                 cx,
@@ -6297,10 +6298,68 @@ impl Project {
 
                     let edits = this
                         .update(cx, |this, cx| {
-                            let edits = op.edits.into_iter().map(|edit| match edit {
-                                OneOf::Left(edit) => edit,
-                                OneOf::Right(edit) => edit.text_edit,
+                            let path = buffer_to_edit.read(cx).project_path(cx);
+                            let active_entry = this.active_entry;
+                            let is_active_entry = path.clone().map_or(false, |project_path| {
+                                this.entry_for_path(&project_path, cx)
+                                    .map_or(false, |entry| Some(entry.id) == active_entry)
                             });
+
+                            let (mut edits, mut snippet_edits) = (vec![], vec![]);
+                            for edit in op.edits {
+                                match edit {
+                                    Edit::Plain(edit) => edits.push(edit),
+                                    Edit::Annotated(edit) => edits.push(edit.text_edit),
+                                    Edit::Snippet(edit) => {
+                                        let Ok(snippet) = Snippet::parse(&edit.snippet.value)
+                                        else {
+                                            continue;
+                                        };
+
+                                        if is_active_entry {
+                                            snippet_edits.push((edit.range, snippet));
+                                        } else {
+                                            // Since this buffer is not focused, apply a normal edit.
+                                            edits.push(TextEdit {
+                                                range: edit.range,
+                                                new_text: snippet.text,
+                                            });
+                                        }
+                                    }
+                                }
+                            }
+                            if !snippet_edits.is_empty() {
+                                if let Some(buffer_version) = op.text_document.version {
+                                    let buffer_id = buffer_to_edit.read(cx).remote_id();
+                                    // Check if the edit that triggered that edit has been made by this participant.
+                                    let should_apply_edit = this
+                                        .buffer_snapshots
+                                        .get(&buffer_id)
+                                        .and_then(|server_to_snapshots| {
+                                            let all_snapshots = server_to_snapshots
+                                                .get(&language_server.server_id())?;
+                                            all_snapshots
+                                                .binary_search_by_key(&buffer_version, |snapshot| {
+                                                    snapshot.version
+                                                })
+                                                .ok()
+                                                .and_then(|index| all_snapshots.get(index))
+                                        })
+                                        .map_or(false, |lsp_snapshot| {
+                                            let version = lsp_snapshot.snapshot.version();
+                                            let most_recent_edit = version
+                                                .iter()
+                                                .max_by_key(|timestamp| timestamp.value);
+                                            most_recent_edit.map_or(false, |edit| {
+                                                edit.replica_id == this.replica_id()
+                                            })
+                                        });
+                                    if should_apply_edit {
+                                        cx.emit(Event::SnippetEdit(buffer_id, snippet_edits));
+                                    }
+                                }
+                            }
+
                             this.edits_from_lsp(
                                 &buffer_to_edit,
                                 edits,

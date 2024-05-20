@@ -3,7 +3,7 @@
 use crate::{File, Language, LanguageServerName};
 use anyhow::Result;
 use collections::{HashMap, HashSet};
-use globset::GlobMatcher;
+use globset::{Glob, GlobMatcher, GlobSet, GlobSetBuilder};
 use gpui::AppContext;
 use itertools::{Either, Itertools};
 use schemars::{
@@ -55,7 +55,7 @@ pub struct AllLanguageSettings {
     pub inline_completions: InlineCompletionSettings,
     defaults: LanguageSettings,
     languages: HashMap<Arc<str>, LanguageSettings>,
-    pub(crate) file_types: HashMap<Arc<str>, Vec<String>>,
+    pub(crate) file_types: HashMap<Arc<str>, GlobSet>,
 }
 
 /// The settings for a particular language.
@@ -573,7 +573,7 @@ impl settings::Settings for AllLanguageSettings {
             .and_then(|c| c.disabled_globs.as_ref())
             .ok_or_else(Self::missing_default)?;
 
-        let mut file_types: HashMap<Arc<str>, Vec<String>> = HashMap::default();
+        let mut file_types: HashMap<Arc<str>, GlobSet> = HashMap::default();
         for user_settings in sources.customizations() {
             if let Some(copilot) = user_settings.features.as_ref().and_then(|f| f.copilot) {
                 copilot_enabled = Some(copilot);
@@ -611,10 +611,13 @@ impl settings::Settings for AllLanguageSettings {
             }
 
             for (language, suffixes) in &user_settings.file_types {
-                file_types
-                    .entry(language.clone())
-                    .or_default()
-                    .extend_from_slice(suffixes);
+                let mut builder = GlobSetBuilder::new();
+
+                for suffix in suffixes {
+                    builder.add(Glob::new(suffix)?);
+                }
+
+                file_types.insert(language.clone(), builder.build()?);
             }
         }
 
