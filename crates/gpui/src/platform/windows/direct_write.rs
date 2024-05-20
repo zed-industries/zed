@@ -793,17 +793,13 @@ impl DirectWriteState {
                 }
             } else {
                 let scaler = self.components.bitmap_factory.CreateBitmapScaler()?;
-                scaler
-                    .Initialize(
-                        &bitmap,
-                        bitmap_size.width.0 as u32,
-                        bitmap_size.height.0 as u32,
-                        WICBitmapInterpolationModeHighQualityCubic,
-                    )
-                    .unwrap();
-                scaler
-                    .CopyPixels(std::ptr::null() as _, bitmap_stride, &mut raw_data)
-                    .unwrap();
+                scaler.Initialize(
+                    &bitmap,
+                    bitmap_size.width.0 as u32,
+                    bitmap_size.height.0 as u32,
+                    WICBitmapInterpolationModeHighQualityCubic,
+                )?;
+                scaler.CopyPixels(std::ptr::null() as _, bitmap_stride, &mut raw_data)?;
             }
             Ok((bitmap_size, raw_data))
         }
