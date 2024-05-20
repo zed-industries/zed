@@ -510,13 +510,15 @@ impl settings::Settings for ThemeSettings {
         let mut this = Self {
             ui_font_size: defaults.ui_font_size.unwrap().into(),
             ui_font: Font {
-                family: defaults.ui_font_family.clone().unwrap().into(),
+                family: defaults.ui_font_family.as_ref().unwrap()[0].clone().into(),
                 features: defaults.ui_font_features.clone().unwrap(),
                 weight: defaults.ui_font_weight.map(FontWeight).unwrap(),
                 style: Default::default(),
             },
             buffer_font: Font {
-                family: defaults.buffer_font_family.clone().unwrap().into(),
+                family: defaults.buffer_font_family.as_ref().unwrap()[0]
+                    .clone()
+                    .into(),
                 features: defaults.buffer_font_features.clone().unwrap(),
                 weight: defaults.buffer_font_weight.map(FontWeight).unwrap(),
                 style: FontStyle::default(),
@@ -538,7 +540,7 @@ impl settings::Settings for ThemeSettings {
             }
 
             if let Some(value) = value.buffer_font_family.clone() {
-                this.buffer_font.family = value.into();
+                this.buffer_font.family = value.as_ref()[0].clone().into();
             }
             if let Some(value) = value.buffer_font_features.clone() {
                 this.buffer_font.features = value;
@@ -549,7 +551,7 @@ impl settings::Settings for ThemeSettings {
             }
 
             if let Some(value) = value.ui_font_family.clone() {
-                this.ui_font.family = value.into();
+                this.ui_font.family = value.as_ref()[0].clone().into();
             }
             if let Some(value) = value.ui_font_features.clone() {
                 this.ui_font.features = value;
@@ -605,12 +607,27 @@ impl settings::Settings for ThemeSettings {
             .iter()
             .cloned()
             .map(Value::String)
-            .collect();
-        let fonts_schema = SchemaObject {
-            instance_type: Some(InstanceType::String.into()),
-            enum_values: Some(available_fonts),
-            ..Default::default()
-        };
+            .collect::<Vec<_>>();
+        let mut fonts_schema = SchemaObject::default();
+        fonts_schema.instance_type = Some(schemars::schema::SingleOrVec::Vec(vec![
+            InstanceType::String,
+            InstanceType::Array,
+        ]));
+        fonts_schema.enum_values = Some(available_fonts.clone());
+        fonts_schema.array().unique_items = Some(true);
+        fonts_schema.array().items = Some(schemars::schema::SingleOrVec::Single(Box::new(
+            SchemaObject {
+                instance_type: Some(InstanceType::String.into()),
+                enum_values: Some(available_fonts.clone()),
+                ..Default::default()
+            }
+            .into(),
+        )));
+        // let fonts_schema = SchemaObject {
+        //     instance_type: Some(InstanceType::String.into()),
+        //     enum_values: Some(available_fonts),
+        //     ..Default::default()
+        // };
         root_schema.definitions.extend([
             ("ThemeName".into(), theme_name_schema.into()),
             ("FontFamilies".into(), fonts_schema.into()),
