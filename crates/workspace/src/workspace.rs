@@ -3528,7 +3528,7 @@ impl Workspace {
         let project = self.project().read(cx);
 
         if project.is_local() {
-            Some(LocalPathsOrder::new(project.worktree_order_index(cx)))
+            Some(LocalPathsOrder::new(project.worktree_order_indexes(cx)))
         } else {
             None
         }

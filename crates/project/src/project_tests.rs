@@ -2414,7 +2414,7 @@ async fn test_definition(cx: &mut gpui::TestAppContext) {
         assert_eq!(
             project
                 .read(cx)
-                .worktree_order_index(cx)
+                .worktree_order_indexes(cx)
                 .collect::<Vec<_>>(),
             [1, 0],
         );
@@ -4944,7 +4944,7 @@ async fn test_reordering_worktrees(cx: &mut gpui::TestAppContext) {
         assert_eq!(worktree_a.abs_path().to_str().unwrap(), "/dir/a.rs");
         assert_eq!(worktree_b.abs_path().to_str().unwrap(), "/dir/b.rs");
         assert_eq!(
-            project.worktree_order_index(cx).collect::<Vec<_>>(),
+            project.worktree_order_indexes(cx).collect::<Vec<_>>(),
             vec![0, 1]
         );
 
@@ -4974,7 +4974,7 @@ async fn test_reordering_worktrees(cx: &mut gpui::TestAppContext) {
         assert_eq!(worktree_a.abs_path().to_str().unwrap(), "/dir/a.rs");
         assert_eq!(worktree_b.abs_path().to_str().unwrap(), "/dir/b.rs");
         assert_eq!(
-            project.worktree_order_index(cx).collect::<Vec<_>>(),
+            project.worktree_order_indexes(cx).collect::<Vec<_>>(),
             vec![1, 0],
         );
     });
@@ -5002,7 +5002,7 @@ async fn test_reordering_worktrees(cx: &mut gpui::TestAppContext) {
         assert_eq!(worktree_a.abs_path().to_str().unwrap(), "/dir/a.rs");
         assert_eq!(worktree_b.abs_path().to_str().unwrap(), "/dir/b.rs");
         assert_eq!(
-            project.worktree_order_index(cx).collect::<Vec<_>>(),
+            project.worktree_order_indexes(cx).collect::<Vec<_>>(),
             vec![0, 1],
         );
     });
@@ -5024,7 +5024,7 @@ async fn test_reordering_worktrees(cx: &mut gpui::TestAppContext) {
         assert_eq!(worktree_a.abs_path().to_str().unwrap(), "/dir/a.rs");
         assert_eq!(worktree_b.abs_path().to_str().unwrap(), "/dir/b.rs");
         assert_eq!(
-            project.worktree_order_index(cx).collect::<Vec<_>>(),
+            project.worktree_order_indexes(cx).collect::<Vec<_>>(),
             vec![1, 0],
         );
     });
