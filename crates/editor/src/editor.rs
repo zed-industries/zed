@@ -11087,7 +11087,12 @@ impl EditorSnapshot {
                 }
             });
 
-            Some((flap.render_toggle)(folded, toggle_callback, cx))
+            Some((flap.render_toggle)(
+                buffer_row,
+                folded,
+                toggle_callback,
+                cx,
+            ))
         } else if folded
             || (self.starts_indent(buffer_row) && (row_contains_cursor || gutter_hovered))
         {

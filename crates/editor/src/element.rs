@@ -1,8 +1,7 @@
 use crate::{
     blame_entry_tooltip::{blame_entry_relative_timestamp, BlameEntryTooltip},
     display_map::{
-        BlockContext, BlockStyle, DisplaySnapshot, FoldStatus, HighlightedChunk, ToDisplayPoint,
-        TransformBlock,
+        BlockContext, BlockStyle, DisplaySnapshot, HighlightedChunk, ToDisplayPoint, TransformBlock,
     },
     editor_settings::{
         CurrentLineHighlight, DoubleClickInMultibuffer, MultiCursorModifier, ShowScrollbar,
@@ -1553,7 +1552,6 @@ impl EditorElement {
         cx: &mut WindowContext,
     ) -> (Vec<Option<ShapedLine>>, Vec<Option<AnyElement>>) {
         let editor = self.editor.read(cx);
-        let is_singleton = editor.is_singleton(cx);
         let newest_selection_head = newest_selection_head.unwrap_or_else(|| {
             let newest = editor.selections.newest::<Point>(cx);
             SelectionLayout::new(
@@ -1570,8 +1568,9 @@ impl EditorElement {
         let font_size = self.style.text.font_size.to_pixels(cx.rem_size());
         let include_line_numbers =
             EditorSettings::get_global(cx).gutter.line_numbers && snapshot.mode == EditorMode::Full;
-        let include_fold_statuses =
-            EditorSettings::get_global(cx).gutter.folds && snapshot.mode == EditorMode::Full;
+        let include_fold_statuses = EditorSettings::get_global(cx).gutter.folds
+            && snapshot.mode == EditorMode::Full
+            && !editor.is_singleton(cx);
         let mut shaped_line_numbers = Vec::with_capacity(rows.len());
         let mut fold_toggles = Vec::with_capacity(rows.len());
         let mut line_number = String::new();

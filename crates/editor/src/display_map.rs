@@ -18,21 +18,19 @@
 //! [EditorElement]: crate::element::EditorElement
 
 mod block_map;
+mod flap_map;
 mod fold_map;
-mod foldable;
 mod inlay_map;
 mod tab_map;
 mod wrap_map;
 
-use crate::scroll::Autoscroll;
 use crate::{hover_links::InlayHighlight, movement::TextLayoutDetails, InlayId};
-use crate::{Editor, EditorStyle, FoldAt, RowExt};
+use crate::{EditorStyle, RowExt};
 pub use block_map::{BlockMap, BlockPoint};
 use collections::{HashMap, HashSet};
 use fold_map::FoldMap;
 use gpui::{
-    AnyElement, Font, HighlightStyle, Hsla, LineLayout, Model, ModelContext, Pixels,
-    UnderlineStyle, View,
+    AnyElement, Font, HighlightStyle, Hsla, LineLayout, Model, ModelContext, Pixels, UnderlineStyle,
 };
 use inlay_map::InlayMap;
 use language::{
@@ -47,7 +45,7 @@ use serde::Deserialize;
 use std::{any::TypeId, borrow::Cow, fmt::Debug, num::NonZeroU32, ops::Range, sync::Arc};
 use sum_tree::{Bias, TreeMap};
 use tab_map::TabMap;
-use ui::WindowContext;
+use ui::{InteractiveElement as _, StatefulInteractiveElement, Styled as _, WindowContext};
 
 use wrap_map::WrapMap;
 
@@ -55,13 +53,11 @@ pub use block_map::{
     BlockBufferRows, BlockChunks as DisplayChunks, BlockContext, BlockDisposition, BlockId,
     BlockProperties, BlockStyle, RenderBlock, TransformBlock,
 };
-
-pub use foldable::*;
+pub use flap_map::*;
 
 use self::block_map::{BlockRow, BlockSnapshot};
 use self::fold_map::FoldSnapshot;
 pub use self::fold_map::{Fold, FoldId, FoldPoint};
-use self::foldable::FlapSnapshot;
 use self::inlay_map::InlaySnapshot;
 pub use self::inlay_map::{InlayOffset, InlayPoint};
 use self::tab_map::TabSnapshot;
@@ -131,6 +127,20 @@ impl DisplayMap {
         let (wrap_map, snapshot) = WrapMap::new(snapshot, font, font_size, wrap_width, cx);
         let block_map = BlockMap::new(snapshot, buffer_header_height, excerpt_header_height);
         cx.observe(&wrap_map, |_, _, cx| cx.notify()).detach();
+
+        let mut flaps = FlapMap::default();
+        let snapshot = buffer.read(cx).read(cx);
+        let start = snapshot.anchor_before(0);
+        let end = snapshot.anchor_before(snapshot.max_point().min(Point::new(10, 0)));
+        let flap = Flap::new(start..end, |row, folded, toggle, _cx| {
+            gpui::div()
+                .id(("custom-flap-indicator", row.0))
+                .size_full()
+                .on_click(move |_, cx| toggle(!folded, cx))
+                .bg(if folded { gpui::red() } else { gpui::blue() })
+        });
+        flaps.insert(Some(flap), &snapshot);
+
         DisplayMap {
             buffer,
             buffer_subscription,
@@ -141,7 +151,7 @@ impl DisplayMap {
             block_map,
             text_highlights: Default::default(),
             inlay_highlights: Default::default(),
-            flaps: Default::default(),
+            flaps,
             clip_at_line_ends: false,
         }
     }
@@ -1817,13 +1827,13 @@ pub mod tests {
     }
 
     #[gpui::test]
-    fn test_foldable_ranges(cx: &mut gpui::AppContext) {
+    fn test_flaps(cx: &mut gpui::AppContext) {
         init_test(cx, |_| {});
 
         let text = "aaa\nbbb\nccc\nddd\neee\nfff\nggg\nhhh\niii\njjj\nkkk\nlll";
         let buffer = MultiBuffer::build_simple(text, cx);
         let font_size = px(14.0);
-        let map = cx.new_model(|cx| {
+        cx.new_model(|cx| {
             let mut map =
                 DisplayMap::new(buffer.clone(), font("Helvetica"), font_size, None, 1, 1, cx);
             let snapshot = map.buffer.read(cx).snapshot(cx);
@@ -1831,14 +1841,12 @@ pub mod tests {
                 snapshot.anchor_before(Point::new(2, 0))..snapshot.anchor_after(Point::new(3, 3));
 
             map.flaps.insert(
-                Some(Flap::new(range, |status, toggle, cx| div())),
+                Some(Flap::new(range, |_row, _status, _toggle, _cx| div())),
                 &map.buffer.read(cx).snapshot(cx),
             );
 
             map
         });
-
-        let snapshot = map.update(cx, |map, cx| map.snapshot(cx));
     }
 
     #[gpui::test]

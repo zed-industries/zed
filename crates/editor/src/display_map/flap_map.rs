@@ -47,8 +47,9 @@ pub struct Flap {
         dyn Send
             + Sync
             + Fn(
+                MultiBufferRow,
                 bool,
-                Arc<dyn Send + Sync + Fn(bool, &'_ mut WindowContext)>,
+                Arc<dyn Send + Sync + Fn(bool, &mut WindowContext)>,
                 &mut WindowContext,
             ) -> AnyElement,
     >,
@@ -60,14 +61,19 @@ impl Flap {
         F: 'static
             + Send
             + Sync
-            + Fn(bool, Arc<dyn Send + Sync + Fn(bool, &mut WindowContext)>, &mut WindowContext) -> E
+            + Fn(
+                MultiBufferRow,
+                bool,
+                Arc<dyn Send + Sync + Fn(bool, &mut WindowContext)>,
+                &mut WindowContext,
+            ) -> E
             + 'static,
         E: IntoElement,
     {
         Flap {
             range,
-            render_toggle: Arc::new(move |folded, toggle, cx| {
-                render_toggle(folded, toggle, cx).into_any_element()
+            render_toggle: Arc::new(move |row, folded, toggle, cx| {
+                render_toggle(row, folded, toggle, cx).into_any_element()
             }),
         }
     }
