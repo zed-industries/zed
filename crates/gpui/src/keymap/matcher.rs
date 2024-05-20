@@ -1,9 +1,10 @@
 use crate::{KeyBinding, KeyContext, Keymap, KeymapVersion, Keystroke};
 use smallvec::SmallVec;
-use std::{cell::RefCell, rc::Rc};
+use std::{cell::RefCell, rc::Rc, time::SystemTime};
 
 pub(crate) struct KeystrokeMatcher {
     pending_keystrokes: Vec<Keystroke>,
+    last_single_modifier_timestamp: u64,
     keymap: Rc<RefCell<Keymap>>,
     keymap_version: KeymapVersion,
 }
@@ -18,6 +19,7 @@ impl KeystrokeMatcher {
         let keymap_version = keymap.borrow().version();
         Self {
             pending_keystrokes: Vec::new(),
+            last_single_modifier_timestamp: 0,
             keymap_version,
             keymap,
         }
@@ -51,6 +53,21 @@ impl KeystrokeMatcher {
 
         let mut pending_key = None;
         let mut bindings = SmallVec::new();
+
+        let now = SystemTime::now()
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .unwrap()
+            .as_millis() as u64;
+
+        if keystroke.is_single_modifer_key() {
+            if now - self.last_single_modifier_timestamp > 300 {
+                self.pending_keystrokes.clear();
+            }
+
+            self.last_single_modifier_timestamp = now;
+        }
+
+        //TODO: make configurable
 
         for binding in keymap.bindings().rev() {
             if !keymap.binding_enabled(binding, context_stack) {
