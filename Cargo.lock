@@ -3786,6 +3786,7 @@ dependencies = [
  "node_runtime",
  "parking_lot",
  "project",
+ "regex",
  "schemars",
  "semantic_version",
  "serde",

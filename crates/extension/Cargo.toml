@@ -46,6 +46,7 @@ wasmparser.workspace = true
 wit-component.workspace = true
 task.workspace = true
 serde_json_lenient.workspace = true
+regex.workspace = true
 
 [dev-dependencies]
 ctor.workspace = true
