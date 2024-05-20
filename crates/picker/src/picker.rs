@@ -59,7 +59,7 @@ pub trait PickerDelegate: Sized + 'static {
         Vec::new()
     }
     fn set_selected_index(&mut self, ix: usize, cx: &mut ViewContext<Picker<Self>>);
-    // Allows binding some optional after effect to the selection change.
+    // Allows binding some optional effect to when the selection changes.
     fn selected_index_changed(
         &self,
         _ix: usize,
@@ -229,6 +229,10 @@ impl<D: PickerDelegate> Picker<D> {
         self.focus_handle(cx).focus(cx);
     }
 
+    /// Handles the selecting an index, and passing the change to the delegate.
+    /// If `scroll_to_index` is true, the new selected index will be scrolled into view.
+    ///
+    /// If some effect is bound to `selected_index_changed`, it will be executed.
     fn set_selected_index(&mut self, ix: usize, scroll_to_index: bool, cx: &mut ViewContext<Self>) {
         let previous_index = self.delegate.selected_index();
         self.delegate.set_selected_index(ix, cx);
