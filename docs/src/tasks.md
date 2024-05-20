@@ -43,8 +43,9 @@ These variables allow you to pull information from the current editor and use it
 
 - `ZED_COLUMN`: current line column
 - `ZED_ROW`: current line row
-- `ZED_FILE`: absolute path to the file
-- `ZED_STEM`: stem (filename without extension)
+- `ZED_FILE`: absolute path of the currently opened file
+- `ZED_FILENAME`: filename of the currently opened file
+- `ZED_STEM`: stem (filename without extension) of the currently opened file
 - `ZED_SYMBOL`: currently selected symbol; should match the last symbol shown in a symbol breadcrumb (e.g. `mod tests > fn test_task_contexts`)
 - `ZED_SELECTED_TEXT`: currently selected text
 - `ZED_WORKTREE_ROOT`: absolute path to the root of the current worktree.
