@@ -63,6 +63,11 @@ impl PlatformTextSystem for CosmicTextSystem {
         self.0.write().add_fonts(fonts)
     }
 
+    // todo(linux)
+    fn set_fallbacks(&self, _fallbacks: &[String], _is_ui_font: bool) -> Result<()> {
+        Ok(())
+    }
+
     fn all_font_names(&self) -> Vec<String> {
         self.0
             .read()
