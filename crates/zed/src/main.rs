@@ -410,6 +410,7 @@ fn main() {
         handle_settings_file_changes(user_settings_file_rx, cx);
         handle_keymap_file_changes(user_keymap_file_rx, cx);
 
+        settings::init_font_fallbacks(cx);
         client::init_settings(cx);
         let client = Client::production(cx);
         cx.update_http_client(client.http_client().clone());

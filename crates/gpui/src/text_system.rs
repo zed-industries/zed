@@ -11,8 +11,8 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    px, Bounds, DevicePixels, Hsla, Pixels, PlatformTextSystem, Point, Result, SharedString, Size,
-    StrikethroughStyle, UnderlineStyle,
+    px, AsyncAppContext, Bounds, DevicePixels, Hsla, Pixels, PlatformTextSystem, Point, Result,
+    SharedString, Size, StrikethroughStyle, UnderlineStyle,
 };
 use anyhow::anyhow;
 use collections::{BTreeSet, FxHashMap};
@@ -97,9 +97,11 @@ impl TextSystem {
     }
 
     /// TODO:
-    pub fn set_fallbacks(&self, font_families: &[String], is_ui_font: bool) -> Result<()> {
-        self.platform_text_system
-            .set_fallbacks(font_families, is_ui_font)
+    pub fn set_fallbacks(&self, cx: &AsyncAppContext) -> Result<()> {
+        // let theme_settins = ThemeSetting
+        // self.platform_text_system
+        //     .set_fallbacks(font_families, is_ui_font)
+        Ok(())
     }
 
     /// Get the FontId for the configure font family and style.
