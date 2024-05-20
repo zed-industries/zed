@@ -1,4 +1,5 @@
-ase std::env;
+use std::env;
+use std::env::temp_dir;
 use std::time::Duration;
 
 use anyhow::Context;
@@ -19,6 +20,7 @@ use rpc::{
     proto::{CreateDevServerResponse, DevServerStatus, RegenerateDevServerTokenResponse},
     ErrorCode, ErrorExt,
 };
+use smol::fs::unix::PermissionsExt;
 use task::RevealStrategy;
 use task::SpawnInTerminal;
 use terminal_view::terminal_panel::TerminalPanel;
@@ -301,14 +303,25 @@ impl DevServerProjects {
                             format!(r#"cd; (curl -sSL https://zed.dev/install.sh || wget -qO- https://zed.dev/install.sh) | bash && ~/.local/bin/zed --dev-server-token {}"#, dev_server.access_token)
                         };
 
+                        if let Ok(real_ssh) = which::which("ssh") {
+                            let tmpd = temp_dir();
+                            let file = temp_dir().join("ssh");
+                            dbg!(&file);
+                            if let Ok(mut file) = File::create(file) {
+                                if let Err(e) = file.write_all("#!/bin/bash\n{} \"$@\" -R 8080:localhost:8080 sh -c {}", real_ssh, shlex::try_quote(install_command).unwrap()) {
+                                    eprintln!("Failed to write to file: {}", e);
+                                }
+                            } else {
+                                eprintln!("Failed to create file");
+                            }
+                            let mut perms = file.metadata()?.permissions();
+                            perms.set_mode(0o755); // Set the executable bit
+                            file.set_permissions(perms)?;
+
+                            let  path = format!("{}:{}", tmpd.to_string_lossy(), os::env::var("PATH").unwrap())
+
                         let mut args = shlex::split(&ssh_connection_string).unwrap_or_default();
                         let command = args.drain(0..1).next().unwrap_or("ssh".to_string());
-
-                        if env::var("ZED_RPC_URL") == Ok("http://localhost:8080/rpc".to_string()) {
-                            args.extend(["-R".to_string(), "8080:localhost:8080".to_string()])
-                        }
-
-                        args.extend(["sh".to_string(), "-c".to_string(), install_command]);
 
                         terminal_panel.update(&mut cx, |terminal_panel, cx| {
                             terminal_panel.spawn_in_new_terminal(
@@ -320,7 +333,7 @@ impl DevServerProjects {
                                     args,
                                     command_label: ssh_connection_string,
                                     cwd: None,
-                                    env: Default::default(),
+                                    env: [("PATH".to_string(), path)].iter().collect(),
                                     use_new_terminal: true,
                                     allow_concurrent_runs: false,
                                     reveal: RevealStrategy::Always,
@@ -329,6 +342,7 @@ impl DevServerProjects {
                                 cx,
                             );
                         })?;
+                        }
                     } else {
                         dbg!("noo!");
                     }

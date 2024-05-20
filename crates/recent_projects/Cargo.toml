@@ -32,6 +32,7 @@ terminal_view.workspace = true
 ui.workspace = true
 ui_text_field.workspace = true
 util.workspace = true
+which.workspace = true
 workspace.workspace = true
 
 [dev-dependencies]
