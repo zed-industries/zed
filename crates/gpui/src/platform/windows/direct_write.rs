@@ -239,10 +239,18 @@ impl PlatformTextSystem for DirectWriteTextSystem {
         self.0.read().rasterize_glyph(params, raster_bounds)
     }
 
-    fn layout_line(&self, text: &str, font_size: Pixels, runs: &[FontRun]) -> LineLayout {
+    fn layout_line(
+        &self,
+        text: &str,
+        font_size: Pixels,
+        runs: &[FontRun],
+        is_ui_font: bool,
+    ) -> LineLayout {
         self.0
+            
             .write()
-            .layout_line(text, font_size, runs)
+            
+            .layout_line(text, font_size, runs, is_ui_font)
             .log_err()
             .unwrap_or(LineLayout {
                 font_size,
@@ -480,10 +488,16 @@ impl DirectWriteState {
     }
 
     fn layout_line(
+        
         &mut self,
+       
         text: &str,
+       
         font_size: Pixels,
+       
         font_runs: &[FontRun],
+    ,
+        is_ui_font: bool,
     ) -> Result<LineLayout> {
         if font_runs.is_empty() {
             return Ok(LineLayout {
@@ -518,7 +532,11 @@ impl DirectWriteState {
                         &HSTRING::from(&self.components.locale),
                     )?
                     .cast()?;
-                format.SetFontFallback(&self.buffer_font_fallbacks)?;
+                if is_ui_font {
+                    format.SetFontFallback(&self.ui_font_fallbacks)?;
+                } else {
+                    format.SetFontFallback(&self.buffer_font_fallbacks)?;
+                }
 
                 let layout = self.components.factory.CreateTextLayout(
                     &text_wide,
