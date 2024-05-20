@@ -243,7 +243,7 @@ pub struct ThemeSettingsContent {
     pub ui_font_size: Option<f32>,
     /// The name of a font to use for rendering in the UI.
     #[serde(default)]
-    pub ui_font_family: Option<String>,
+    pub ui_font_family: Option<Arc<Vec<String>>>,
     /// The OpenType features to enable for text in the UI.
     #[serde(default)]
     pub ui_font_features: Option<FontFeatures>,
@@ -252,7 +252,7 @@ pub struct ThemeSettingsContent {
     pub ui_font_weight: Option<f32>,
     /// The name of a font to use for rendering in text buffers.
     #[serde(default)]
-    pub buffer_font_family: Option<String>,
+    pub buffer_font_family: Option<Arc<Vec<String>>>,
     /// The default font size for rendering in text buffers.
     #[serde(default)]
     pub buffer_font_size: Option<f32>,
