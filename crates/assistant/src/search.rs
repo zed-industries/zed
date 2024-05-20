@@ -44,14 +44,13 @@ pub fn fuzzy_search_lines(haystack: &Rope, needle: &str) -> Option<Range<usize>>
             }
         }
 
-        if matched {
-            if best_match
+        if matched
+            && best_match
                 .as_ref()
                 .map(|(_, best_score)| match_score > *best_score)
                 .unwrap_or(true)
-            {
-                best_match = Some((match_start..match_end, match_score));
-            }
+        {
+            best_match = Some((match_start..match_end, match_score));
         }
 
         if advanced_to_next_haystack_line {
