@@ -1,35 +1,12 @@
 use gpui::{AnyElement, FontWeight, Model, ModelContext, Render};
 use runtimelib::{ErrorOutput, JupyterMessageContent, MimeType};
-use ui::{div, prelude::*, v_flex, IntoElement, SharedString, Styled, ViewContext};
+use ui::{div, prelude::*, v_flex, IntoElement, Styled, ViewContext};
 
 use serde_json::Value;
 
 use crate::ExecutionId;
 
-#[derive(Clone, Debug)]
-pub struct TerminalOutput {
-    buffer: String,
-}
-
-impl TerminalOutput {
-    fn new() -> Self {
-        Self {
-            buffer: String::new(),
-        }
-    }
-
-    fn append_text(&mut self, text: &str) {
-        self.buffer.push_str(text);
-    }
-
-    fn num_lines(&self) -> u8 {
-        dbg!(self.buffer.lines().count() as u8)
-    }
-
-    fn render(&self) -> AnyElement {
-        SharedString::from(self.buffer.trim_end().to_string()).into_any_element()
-    }
-}
+use crate::stdio::TerminalOutput;
 
 #[derive(Clone, Debug)]
 pub enum OutputType {
@@ -135,9 +112,7 @@ impl Execution {
     }
 
     pub fn num_lines(&self) -> u8 {
-        dbg!(&self.outputs);
-
-        dbg!(self.outputs.iter().map(|output| output.num_lines()).sum())
+        self.outputs.iter().map(|output| output.num_lines()).sum()
     }
 
     /// Push a new message
