@@ -680,6 +680,9 @@ pub struct Font {
     /// The special name ".SystemUIFont" is used to identify the system UI font, which varies based on platform.
     pub family: SharedString,
 
+    /// TODO:
+    pub fallbacks: Arc<Vec<String>>,
+
     /// The font features to use.
     pub features: FontFeatures,
 
@@ -694,6 +697,7 @@ pub struct Font {
 pub fn font(family: impl Into<SharedString>) -> Font {
     Font {
         family: family.into(),
+        fallbacks: Arc::new(vec![]),
         features: FontFeatures::default(),
         weight: FontWeight::default(),
         style: FontStyle::default(),

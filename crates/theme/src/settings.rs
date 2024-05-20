@@ -235,28 +235,6 @@ impl ThemeSelection {
     }
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
-#[serde(untagged)]
-pub enum FontFamilies {
-    Single(String),
-    Multiple(Arc<Vec<String>>),
-}
-
-impl Default for FontFamilies {
-    fn default() -> Self {
-        Self::Multiple(Arc::new(Vec::new()))
-    }
-}
-
-impl FontFamilies {
-    pub fn get_family_name(&self) -> String {
-        match self {
-            FontFamilies::Single(name) => name.clone(),
-            FontFamilies::Multiple(list) => list[0].clone(),
-        }
-    }
-}
-
 /// Settings for rendering text in UI and text buffers.
 #[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
 pub struct ThemeSettingsContent {
@@ -265,7 +243,7 @@ pub struct ThemeSettingsContent {
     pub ui_font_size: Option<f32>,
     /// The name of a font to use for rendering in the UI.
     #[serde(default)]
-    pub ui_font_family: Option<FontFamilies>,
+    pub ui_font_family: Option<Vec<String>>,
     /// The OpenType features to enable for text in the UI.
     #[serde(default)]
     pub ui_font_features: Option<FontFeatures>,
@@ -274,7 +252,7 @@ pub struct ThemeSettingsContent {
     pub ui_font_weight: Option<f32>,
     /// The name of a font to use for rendering in text buffers.
     #[serde(default)]
-    pub buffer_font_family: Option<FontFamilies>,
+    pub buffer_font_family: Option<Vec<String>>,
     /// The default font size for rendering in text buffers.
     #[serde(default)]
     pub buffer_font_size: Option<f32>,
@@ -532,12 +510,8 @@ impl settings::Settings for ThemeSettings {
         let mut this = Self {
             ui_font_size: defaults.ui_font_size.unwrap().into(),
             ui_font: Font {
-                family: defaults
-                    .ui_font_family
-                    .as_ref()
-                    .unwrap()
-                    .get_family_name()
-                    .into(),
+                family: defaults.ui_font_family.as_ref().unwrap()[0].into(),
+                fallbacks: todo!(),
                 features: defaults.ui_font_features.clone().unwrap(),
                 weight: defaults.ui_font_weight.map(FontWeight).unwrap(),
                 style: Default::default(),
@@ -549,6 +523,7 @@ impl settings::Settings for ThemeSettings {
                     .unwrap()
                     .get_family_name()
                     .into(),
+                fallbacks: todo!(),
                 features: defaults.buffer_font_features.clone().unwrap(),
                 weight: defaults.buffer_font_weight.map(FontWeight).unwrap(),
                 style: FontStyle::default(),
@@ -640,27 +615,11 @@ impl settings::Settings for ThemeSettings {
             .collect::<Vec<_>>();
         let fonts_schema = {
             let mut fonts_schema = SchemaObject::default();
-            let string_schema = {
-                let mut string_schema = SchemaObject::default();
-                string_schema.instance_type = Some(InstanceType::String.into());
-                string_schema.enum_values = Some(available_fonts.clone());
-                string_schema.into()
-            };
-            let array_schema = {
-                let mut array_schema = SchemaObject::default();
-                array_schema.instance_type = Some(InstanceType::Array.into());
-                array_schema.array().unique_items = Some(true);
-                array_schema.array().items = Some(schemars::schema::SingleOrVec::Single(Box::new(
-                    SchemaObject {
-                        instance_type: Some(InstanceType::String.into()),
-                        enum_values: Some(available_fonts.clone()),
-                        ..Default::default()
-                    }
-                    .into(),
-                )));
-                array_schema.into()
-            };
-            fonts_schema.subschemas().any_of = Some(vec![string_schema, array_schema]);
+            fonts_schema.instance_type = Some(InstanceType::Array.into());
+            let mut array_schema = SchemaObject::default();
+            array_schema.instance_type = Some(InstanceType::String.into());
+            array_schema.enum_values = Some(available_fonts);
+            fonts_schema.array().items = Some(array_schema.into());
             fonts_schema
         };
         root_schema.definitions.extend([
