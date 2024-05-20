@@ -93,10 +93,6 @@ pub fn handle_settings_file_changes(
     .detach();
 }
 
-pub fn init_settings(cx: &mut AppContext) {
-    FontFallbacks::register(cx);
-}
-
 async fn load_settings(fs: &Arc<dyn Fs>) -> Result<String> {
     match fs.load(paths::settings_file()).await {
         result @ Ok(_) => result,
