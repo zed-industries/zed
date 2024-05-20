@@ -184,7 +184,10 @@ async fn test_language_for_file_with_custom_file_types(cx: &mut TestAppContext) 
             settings.file_types.extend([
                 ("TypeScript".into(), vec!["js".into()]),
                 ("C++".into(), vec!["c".into()]),
-                ("Dockerfile".into(), vec!["Dockerfile".into(), "Dockerfile.*".into()]),
+                (
+                    "Dockerfile".into(),
+                    vec!["Dockerfile".into(), "Dockerfile.*".into()],
+                ),
             ]);
         })
     });
