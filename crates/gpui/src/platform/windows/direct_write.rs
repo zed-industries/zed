@@ -179,8 +179,7 @@ impl PlatformTextSystem for DirectWriteTextSystem {
     }
 
     fn set_fallbacks(&self, fallbacks: &[String], is_ui_font: bool) -> Result<()> {
-        // todo(windows)
-        Ok(())
+        self.0.write().set_fallbacks(fallbacks, is_ui_font)
     }
 
     fn all_font_names(&self) -> Vec<String> {
@@ -290,6 +289,56 @@ impl DirectWriteState {
         self.custom_font_collection = collection;
 
         Ok(())
+    }
+
+    fn set_fallbacks(&self, fallbacks: &[String], is_ui_font: bool) -> Result<()> {
+        unsafe {
+            let builder = self.components.factory.CreateFontFallbackBuilder()?;
+            let font_set = &self.system_font_collection.GetFontSet()?;
+            for family_name in fallbacks {
+                let Some(fonts) = font_set
+                    .GetMatchingFonts(
+                        &HSTRING::from(family_name),
+                        DWRITE_FONT_WEIGHT_NORMAL,
+                        DWRITE_FONT_STRETCH_NORMAL,
+                        DWRITE_FONT_STYLE_NORMAL,
+                    )
+                    .log_err()
+                else {
+                    continue;
+                };
+                if fonts.GetFontCount() == 0 {
+                    log::error!("No mathcing font find for {}", family_name);
+                    continue;
+                }
+                let font = fonts.GetFontFaceReference(0)?.CreateFontFace()?;
+                let mut count = 0;
+                font.GetUnicodeRanges(None, &mut count).ok();
+                println!("Unicode ranges for {}: {}", family_name, count);
+                if count == 0 {
+                    continue;
+                }
+                let mut unicode_ranges = vec![DWRITE_UNICODE_RANGE::default(); count as usize];
+                let Some(_) = font
+                    .GetUnicodeRanges(Some(&mut unicode_ranges), &mut count)
+                    .log_err()
+                else {
+                    continue;
+                };
+                let target_family_name = HSTRING::from(family_name);
+                builder.AddMapping(
+                    &unicode_ranges,
+                    &[target_family_name.as_ptr()],
+                    None,
+                    None,
+                    None,
+                    1.0,
+                )?;
+            }
+            let system_fallbacks = self.components.factory.GetSystemFontFallback()?;
+            builder.AddMappings(&system_fallbacks)?;
+            Ok(())
+        }
     }
 
     unsafe fn generate_font_features(
