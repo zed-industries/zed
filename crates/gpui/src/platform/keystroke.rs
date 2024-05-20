@@ -94,6 +94,27 @@ impl Keystroke {
             }
         }
 
+        //Allow for the user to specify a keystroke modifier as the key itself
+        //This sets the `key` to the modifier, and disables the modifier
+        if key.is_none() {
+            if shift {
+                key = Some("shift".to_string());
+                shift = false;
+            } else if control {
+                key = Some("control".to_string());
+                control = false;
+            } else if alt {
+                key = Some("alt".to_string());
+                alt = false;
+            } else if platform {
+                key = Some("platform".to_string());
+                platform = false;
+            } else if function {
+                key = Some("function".to_string());
+                function = false;
+            }
+        }
+
         let key = key.ok_or_else(|| anyhow!("Invalid keystroke `{}`", source))?;
 
         Ok(Keystroke {
