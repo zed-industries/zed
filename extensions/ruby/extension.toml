@@ -1,13 +1,17 @@
 id = "ruby"
 name = "Ruby"
 description = "Ruby support."
-version = "0.0.1"
+version = "0.0.3"
 schema_version = 1
 authors = ["Vitaly Slobodin <vitaliy.slobodin@gmail.com>"]
 repository = "https://github.com/zed-industries/zed"
 
 [language_servers.solargraph]
 name = "Solargraph"
+language = "Ruby"
+
+[language_servers.ruby-lsp]
+name = "Ruby LSP"
 language = "Ruby"
 
 [grammars.ruby]

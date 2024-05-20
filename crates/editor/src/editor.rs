@@ -48,11 +48,12 @@ use anyhow::{anyhow, Context as _, Result};
 use blink_manager::BlinkManager;
 use client::{Collaborator, ParticipantIndex};
 use clock::ReplicaId;
-use collections::{hash_map, BTreeMap, Bound, HashMap, HashSet, VecDeque};
+use collections::{BTreeMap, Bound, HashMap, HashSet, VecDeque};
 use convert_case::{Case, Casing};
 use debounced_delay::DebouncedDelay;
 pub use display_map::DisplayPoint;
 use display_map::*;
+use editor_settings::CurrentLineHighlight;
 pub use editor_settings::EditorSettings;
 use element::LineWithInvisibles;
 pub use element::{
@@ -301,6 +302,7 @@ pub enum SelectPhase {
     },
     BeginColumnar {
         position: DisplayPoint,
+        reset: bool,
         goal_column: u32,
     },
     Extend {
@@ -449,7 +451,7 @@ pub struct Editor {
     show_wrap_guides: Option<bool>,
     placeholder_text: Option<Arc<str>>,
     highlight_order: usize,
-    highlighted_rows: HashMap<TypeId, Vec<(usize, RangeInclusive<Anchor>, Option<Hsla>)>>,
+    highlighted_rows: HashMap<TypeId, Vec<RowHighlight>>,
     background_highlights: TreeMap<TypeId, BackgroundHighlight>,
     scrollbar_marker_state: ScrollbarMarkerState,
     nav_history: Option<ItemNavHistory>,
@@ -465,6 +467,7 @@ pub struct Editor {
     pending_rename: Option<RenameState>,
     searchable: bool,
     cursor_shape: CursorShape,
+    current_line_highlight: CurrentLineHighlight,
     collapse_matches: bool,
     autoindent_mode: Option<AutoindentMode>,
     workspace: Option<(WeakView<Workspace>, WorkspaceId)>,
@@ -519,6 +522,7 @@ pub struct EditorSnapshot {
     is_focused: bool,
     scroll_anchor: ScrollAnchor,
     ongoing_scroll: OngoingScroll,
+    current_line_highlight: CurrentLineHighlight,
 }
 
 const GIT_BLAME_GUTTER_WIDTH_CHARS: f32 = 53.;
@@ -655,6 +659,13 @@ impl SelectionHistory {
             }
         }
     }
+}
+
+struct RowHighlight {
+    index: usize,
+    range: RangeInclusive<Anchor>,
+    color: Option<Hsla>,
+    should_autoscroll: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -1592,6 +1603,10 @@ impl Editor {
                         }
                     }
                 }));
+                let task_inventory = project.read(cx).task_inventory().clone();
+                project_subscriptions.push(cx.observe(&task_inventory, |editor, _, cx| {
+                    editor.tasks_update_task = Some(editor.refresh_runnables(cx));
+                }));
             }
         }
 
@@ -1649,6 +1664,7 @@ impl Editor {
             pending_rename: Default::default(),
             searchable: true,
             cursor_shape: Default::default(),
+            current_line_highlight: EditorSettings::get_global(cx).current_line_highlight,
             autoindent_mode: Some(AutoindentMode::EachLine),
             collapse_matches: false,
             workspace: None,
@@ -1724,6 +1740,12 @@ impl Editor {
 
         this.report_editor_event("open", None, cx);
         this
+    }
+
+    pub fn mouse_menu_is_focused(&self, cx: &mut WindowContext) -> bool {
+        self.mouse_context_menu
+            .as_ref()
+            .is_some_and(|menu| menu.context_menu.focus_handle(cx).is_focused(cx))
     }
 
     fn key_context(&self, cx: &AppContext) -> KeyContext {
@@ -1863,6 +1885,7 @@ impl Editor {
             ongoing_scroll: self.scroll_manager.ongoing_scroll(),
             placeholder_text: self.placeholder_text.clone(),
             is_focused: self.focus_handle.is_focused(cx),
+            current_line_highlight: self.current_line_highlight,
         }
     }
 
@@ -1951,6 +1974,10 @@ impl Editor {
         cx.notify();
     }
 
+    pub fn set_current_line_highlight(&mut self, current_line_highlight: CurrentLineHighlight) {
+        self.current_line_highlight = current_line_highlight;
+    }
+
     pub fn set_collapse_matches(&mut self, collapse_matches: bool) {
         self.collapse_matches = collapse_matches;
     }
@@ -2028,6 +2055,7 @@ impl Editor {
         &mut self,
         local: bool,
         old_cursor_position: &Anchor,
+        show_completions: bool,
         cx: &mut ViewContext<Self>,
     ) {
         // Copy selections to primary selection buffer
@@ -2129,7 +2157,9 @@ impl Editor {
                     })
                     .detach();
 
-                    self.show_completions(&ShowCompletions, cx);
+                    if show_completions {
+                        self.show_completions(&ShowCompletions, cx);
+                    }
                 } else {
                     drop(context_menu);
                     self.hide_context_menu(cx);
@@ -2148,7 +2178,7 @@ impl Editor {
             self.refresh_code_actions(cx);
             self.refresh_document_highlights(cx);
             refresh_matching_bracket_highlights(self, cx);
-            self.discard_inline_completion(cx);
+            self.discard_inline_completion(false, cx);
             if self.git_blame_inline_enabled {
                 self.start_inline_blame_timer(cx);
             }
@@ -2170,6 +2200,16 @@ impl Editor {
         cx: &mut ViewContext<Self>,
         change: impl FnOnce(&mut MutableSelectionsCollection<'_>) -> R,
     ) -> R {
+        self.change_selections_inner(autoscroll, true, cx, change)
+    }
+
+    pub fn change_selections_inner<R>(
+        &mut self,
+        autoscroll: Option<Autoscroll>,
+        request_completions: bool,
+        cx: &mut ViewContext<Self>,
+        change: impl FnOnce(&mut MutableSelectionsCollection<'_>) -> R,
+    ) -> R {
         let old_cursor_position = self.selections.newest_anchor().head();
         self.push_to_selection_history();
 
@@ -2179,7 +2219,7 @@ impl Editor {
             if let Some(autoscroll) = autoscroll {
                 self.request_autoscroll(autoscroll, cx);
             }
-            self.selections_did_change(true, &old_cursor_position, cx);
+            self.selections_did_change(true, &old_cursor_position, request_completions, cx);
         }
 
         result
@@ -2251,7 +2291,8 @@ impl Editor {
             SelectPhase::BeginColumnar {
                 position,
                 goal_column,
-            } => self.begin_columnar_selection(position, goal_column, cx),
+                reset,
+            } => self.begin_columnar_selection(position, goal_column, reset, cx),
             SelectPhase::Extend {
                 position,
                 click_count,
@@ -2371,6 +2412,7 @@ impl Editor {
         &mut self,
         position: DisplayPoint,
         goal_column: u32,
+        reset: bool,
         cx: &mut ViewContext<Self>,
     ) {
         if !self.focus_handle.is_focused(cx) {
@@ -2378,16 +2420,33 @@ impl Editor {
         }
 
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
+
+        if reset {
+            let pointer_position = display_map
+                .buffer_snapshot
+                .anchor_before(position.to_point(&display_map));
+
+            self.change_selections(Some(Autoscroll::newest()), cx, |s| {
+                s.clear_disjoint();
+                s.set_pending_anchor_range(
+                    pointer_position..pointer_position,
+                    SelectMode::Character,
+                );
+            });
+        }
+
         let tail = self.selections.newest::<Point>(cx).tail();
         self.columnar_selection_tail = Some(display_map.buffer_snapshot.anchor_before(tail));
 
-        self.select_columns(
-            tail.to_display_point(&display_map),
-            position,
-            goal_column,
-            &display_map,
-            cx,
-        );
+        if !reset {
+            self.select_columns(
+                tail.to_display_point(&display_map),
+                position,
+                goal_column,
+                &display_map,
+                cx,
+            );
+        }
     }
 
     fn update_selection(
@@ -2553,7 +2612,7 @@ impl Editor {
 
     pub fn cancel(&mut self, _: &Cancel, cx: &mut ViewContext<Self>) {
         self.clear_expanded_diff_hunks(cx);
-        if self.dismiss_menus_and_popups(cx) {
+        if self.dismiss_menus_and_popups(true, cx) {
             return;
         }
 
@@ -2566,7 +2625,11 @@ impl Editor {
         cx.propagate();
     }
 
-    pub fn dismiss_menus_and_popups(&mut self, cx: &mut ViewContext<Self>) -> bool {
+    pub fn dismiss_menus_and_popups(
+        &mut self,
+        should_report_inline_completion_event: bool,
+        cx: &mut ViewContext<Self>,
+    ) -> bool {
         if self.take_rename(false, cx).is_some() {
             return true;
         }
@@ -2579,7 +2642,7 @@ impl Editor {
             return true;
         }
 
-        if self.discard_inline_completion(cx) {
+        if self.discard_inline_completion(should_report_inline_completion_event, cx) {
             return true;
         }
 
@@ -2835,7 +2898,9 @@ impl Editor {
 
             drop(snapshot);
             let had_active_inline_completion = this.has_active_inline_completion(cx);
-            this.change_selections(Some(Autoscroll::fit()), cx, |s| s.select(new_selections));
+            this.change_selections_inner(Some(Autoscroll::fit()), false, cx, |s| {
+                s.select(new_selections)
+            });
 
             if brace_inserted {
                 // If we inserted a brace while composing text (i.e. typing `"` on a
@@ -3691,7 +3756,7 @@ impl Editor {
                         let menu = menu.unwrap();
                         *context_menu = Some(ContextMenu::Completions(menu));
                         drop(context_menu);
-                        this.discard_inline_completion(cx);
+                        this.discard_inline_completion(false, cx);
                         cx.notify();
                     } else if this.completion_tasks.len() <= 1 {
                         // If there are no more completion tasks and the last menu was
@@ -3905,7 +3970,7 @@ impl Editor {
                     }
 
                     this.completion_tasks.clear();
-                    this.discard_inline_completion(cx);
+                    this.discard_inline_completion(false, cx);
                     let task_context = tasks.as_ref().zip(this.workspace.clone()).and_then(
                         |(tasks, (workspace, _))| {
                             let position = Point::new(buffer_row, tasks.1.column);
@@ -4042,7 +4107,7 @@ impl Editor {
         }
     }
 
-    async fn open_project_transaction(
+    pub async fn open_project_transaction(
         this: &WeakView<Editor>,
         workspace: WeakView<Workspace>,
         transaction: ProjectTransaction,
@@ -4300,7 +4365,7 @@ impl Editor {
         if !self.show_inline_completions
             || !provider.is_enabled(&buffer, cursor_buffer_position, cx)
         {
-            self.discard_inline_completion(cx);
+            self.discard_inline_completion(false, cx);
             return None;
         }
 
@@ -4435,9 +4500,13 @@ impl Editor {
         }
     }
 
-    fn discard_inline_completion(&mut self, cx: &mut ViewContext<Self>) -> bool {
+    fn discard_inline_completion(
+        &mut self,
+        should_report_inline_completion_event: bool,
+        cx: &mut ViewContext<Self>,
+    ) -> bool {
         if let Some(provider) = self.inline_completion_provider() {
-            provider.discard(cx);
+            provider.discard(should_report_inline_completion_event, cx);
         }
 
         self.take_active_inline_completion(cx).is_some()
@@ -4500,7 +4569,7 @@ impl Editor {
             }
         }
 
-        self.discard_inline_completion(cx);
+        self.discard_inline_completion(false, cx);
     }
 
     fn inline_completion_provider(&self) -> Option<Arc<dyn InlineCompletionProviderHandle>> {
@@ -4554,7 +4623,7 @@ impl Editor {
         row: DisplayRow,
         cx: &mut ViewContext<Self>,
     ) -> IconButton {
-        IconButton::new("run_indicator", ui::IconName::Play)
+        IconButton::new(("run_indicator", row.0 as usize), ui::IconName::Play)
             .icon_size(IconSize::XSmall)
             .size(ui::ButtonSize::None)
             .icon_color(Color::Muted)
@@ -4683,12 +4752,11 @@ impl Editor {
                                 delta +=
                                     snippet.text.len() as isize - insertion_range.len() as isize;
 
-                                let start = snapshot.anchor_before(
-                                    (insertion_start + tabstop_range.start) as usize,
-                                );
-                                let end = snapshot
-                                    .anchor_after((insertion_start + tabstop_range.end) as usize);
-                                start..end
+                                let start = ((insertion_start + tabstop_range.start) as usize)
+                                    .min(snapshot.len());
+                                let end = ((insertion_start + tabstop_range.end) as usize)
+                                    .min(snapshot.len());
+                                snapshot.anchor_before(start)..snapshot.anchor_after(end)
                             })
                         })
                         .collect::<Vec<_>>();
@@ -8360,7 +8428,25 @@ impl Editor {
 
                         let range = target.range.to_offset(target.buffer.read(cx));
                         let range = editor.range_for_match(&range);
+
+                        /// If select range has more than one line, we
+                        /// just point the cursor to range.start.
+                        fn check_multiline_range(
+                            buffer: &Buffer,
+                            range: Range<usize>,
+                        ) -> Range<usize> {
+                            if buffer.offset_to_point(range.start).row
+                                == buffer.offset_to_point(range.end).row
+                            {
+                                range
+                            } else {
+                                range.start..range.start
+                            }
+                        }
+
                         if Some(&target.buffer) == editor.buffer.read(cx).as_singleton().as_ref() {
+                            let buffer = target.buffer.read(cx);
+                            let range = check_multiline_range(buffer, range);
                             editor.change_selections(Some(Autoscroll::focused()), cx, |s| {
                                 s.select_ranges([range]);
                             });
@@ -8380,6 +8466,8 @@ impl Editor {
                                     // When selecting a definition in a different buffer, disable the nav history
                                     // to avoid creating a history entry at the previous cursor location.
                                     pane.update(cx, |pane, _| pane.disable_history());
+                                    let buffer = target.buffer.read(cx);
+                                    let range = check_multiline_range(buffer, range);
                                     target_editor.change_selections(
                                         Some(Autoscroll::focused()),
                                         cx,
@@ -9125,7 +9213,7 @@ impl Editor {
                 s.clear_pending();
             }
         });
-        self.selections_did_change(false, &old_cursor_position, cx);
+        self.selections_did_change(false, &old_cursor_position, true, cx);
     }
 
     fn push_to_selection_history(&mut self) {
@@ -9789,47 +9877,30 @@ impl Editor {
         &mut self,
         rows: RangeInclusive<Anchor>,
         color: Option<Hsla>,
+        should_autoscroll: bool,
         cx: &mut ViewContext<Self>,
     ) {
-        let multi_buffer_snapshot = self.buffer().read(cx).snapshot(cx);
-        match self.highlighted_rows.entry(TypeId::of::<T>()) {
-            hash_map::Entry::Occupied(o) => {
-                let row_highlights = o.into_mut();
-                let existing_highlight_index =
-                    row_highlights.binary_search_by(|(_, highlight_range, _)| {
-                        highlight_range
-                            .start()
-                            .cmp(&rows.start(), &multi_buffer_snapshot)
-                            .then(
-                                highlight_range
-                                    .end()
-                                    .cmp(&rows.end(), &multi_buffer_snapshot),
-                            )
-                    });
-                match color {
-                    Some(color) => {
-                        let insert_index = match existing_highlight_index {
-                            Ok(i) => i,
-                            Err(i) => i,
-                        };
-                        row_highlights.insert(
-                            insert_index,
-                            (post_inc(&mut self.highlight_order), rows, Some(color)),
-                        );
-                    }
-                    None => match existing_highlight_index {
-                        Ok(i) => {
-                            row_highlights.remove(i);
-                        }
-                        Err(i) => {
-                            row_highlights
-                                .insert(i, (post_inc(&mut self.highlight_order), rows, None));
-                        }
-                    },
-                }
-            }
-            hash_map::Entry::Vacant(v) => {
-                v.insert(vec![(post_inc(&mut self.highlight_order), rows, color)]);
+        let snapshot = self.buffer().read(cx).snapshot(cx);
+        let row_highlights = self.highlighted_rows.entry(TypeId::of::<T>()).or_default();
+        let existing_highlight_index = row_highlights.binary_search_by(|highlight| {
+            highlight
+                .range
+                .start()
+                .cmp(&rows.start(), &snapshot)
+                .then(highlight.range.end().cmp(&rows.end(), &snapshot))
+        });
+        match (color, existing_highlight_index) {
+            (Some(_), Ok(ix)) | (_, Err(ix)) => row_highlights.insert(
+                ix,
+                RowHighlight {
+                    index: post_inc(&mut self.highlight_order),
+                    range: rows,
+                    should_autoscroll,
+                    color,
+                },
+            ),
+            (None, Ok(i)) => {
+                row_highlights.remove(i);
             }
         }
     }
@@ -9847,7 +9918,7 @@ impl Editor {
             self.highlighted_rows
                 .get(&TypeId::of::<T>())?
                 .iter()
-                .map(|(_, range, color)| (range, color.as_ref())),
+                .map(|highlight| (&highlight.range, highlight.color.as_ref())),
         )
     }
 
@@ -9856,38 +9927,48 @@ impl Editor {
     /// Allows to ignore certain kinds of highlights.
     pub fn highlighted_display_rows(
         &mut self,
-        exclude_highlights: HashSet<TypeId>,
         cx: &mut WindowContext,
     ) -> BTreeMap<DisplayRow, Hsla> {
         let snapshot = self.snapshot(cx);
         let mut used_highlight_orders = HashMap::default();
         self.highlighted_rows
             .iter()
-            .filter(|(type_id, _)| !exclude_highlights.contains(type_id))
             .flat_map(|(_, highlighted_rows)| highlighted_rows.iter())
             .fold(
                 BTreeMap::<DisplayRow, Hsla>::new(),
-                |mut unique_rows, (highlight_order, anchor_range, hsla)| {
-                    let start_row = anchor_range.start().to_display_point(&snapshot).row();
-                    let end_row = anchor_range.end().to_display_point(&snapshot).row();
+                |mut unique_rows, highlight| {
+                    let start_row = highlight.range.start().to_display_point(&snapshot).row();
+                    let end_row = highlight.range.end().to_display_point(&snapshot).row();
                     for row in start_row.0..=end_row.0 {
                         let used_index =
-                            used_highlight_orders.entry(row).or_insert(*highlight_order);
-                        if highlight_order >= used_index {
-                            *used_index = *highlight_order;
-                            match hsla {
-                                Some(hsla) => {
-                                    unique_rows.insert(DisplayRow(row), *hsla);
-                                }
-                                None => {
-                                    unique_rows.remove(&DisplayRow(row));
-                                }
-                            }
+                            used_highlight_orders.entry(row).or_insert(highlight.index);
+                        if highlight.index >= *used_index {
+                            *used_index = highlight.index;
+                            match highlight.color {
+                                Some(hsla) => unique_rows.insert(DisplayRow(row), hsla),
+                                None => unique_rows.remove(&DisplayRow(row)),
+                            };
                         }
                     }
                     unique_rows
                 },
             )
+    }
+
+    pub fn highlighted_display_row_for_autoscroll(
+        &self,
+        snapshot: &DisplaySnapshot,
+    ) -> Option<DisplayRow> {
+        self.highlighted_rows
+            .values()
+            .flat_map(|highlighted_rows| highlighted_rows.iter())
+            .filter_map(|highlight| {
+                if highlight.color.is_none() || !highlight.should_autoscroll {
+                    return None;
+                }
+                Some(highlight.range.start().to_display_point(&snapshot).row())
+            })
+            .min()
     }
 
     pub fn set_search_within_ranges(
@@ -10297,6 +10378,7 @@ impl Editor {
         let editor_settings = EditorSettings::get_global(cx);
         self.scroll_manager.vertical_scroll_margin = editor_settings.vertical_scroll_margin;
         self.show_breadcrumbs = editor_settings.toolbar.breadcrumbs;
+        self.current_line_highlight = editor_settings.current_line_highlight;
 
         if self.mode == EditorMode::Full {
             let inline_blame_enabled = ProjectSettings::get_global(cx).git.inline_blame_enabled();

@@ -64,10 +64,10 @@ You can also only execute a single ESLint rule when using `fixAll`:
 }
 ```
 
-**Note:** the other formatter you have configured will still run, after ESLint.
-So if your language server or prettier configuration don't format according to
-ESLint's rules, then they will overwrite what ESLint fixed and you end up with
-errors.
+> **Note:** the other formatter you have configured will still run, after ESLint.
+> So if your language server or prettier configuration don't format according to
+> ESLint's rules, then they will overwrite what ESLint fixed and you end up with
+> errors.
 
 If you **only** want to run ESLint on save, you can configure code actions as
 the formatter (requires Zed `0.130.x`):

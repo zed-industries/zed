@@ -25,10 +25,11 @@ mod test;
 mod windows;
 
 use crate::{
-    Action, AnyWindowHandle, AsyncWindowContext, BackgroundExecutor, Bounds, DevicePixels,
+    point, Action, AnyWindowHandle, AsyncWindowContext, BackgroundExecutor, Bounds, DevicePixels,
     DispatchEventResult, Font, FontId, FontMetrics, FontRun, ForegroundExecutor, GlyphId, Keymap,
     LineLayout, Pixels, PlatformInput, Point, RenderGlyphParams, RenderImageParams,
     RenderSvgParams, Scene, SharedString, Size, Task, TaskLabel, WindowContext,
+    DEFAULT_WINDOW_SIZE,
 };
 use anyhow::Result;
 use async_task::Runnable;
@@ -107,6 +108,9 @@ pub(crate) trait Platform: 'static {
     fn displays(&self) -> Vec<Rc<dyn PlatformDisplay>>;
     fn primary_display(&self) -> Option<Rc<dyn PlatformDisplay>>;
     fn active_window(&self) -> Option<AnyWindowHandle>;
+    fn can_open_windows(&self) -> anyhow::Result<()> {
+        Ok(())
+    }
     fn open_window(
         &self,
         handle: AnyWindowHandle,
@@ -146,8 +150,10 @@ pub(crate) trait Platform: 'static {
     fn set_cursor_style(&self, style: CursorStyle);
     fn should_auto_hide_scrollbars(&self) -> bool;
 
+    #[cfg(target_os = "linux")]
     fn write_to_primary(&self, item: ClipboardItem);
     fn write_to_clipboard(&self, item: ClipboardItem);
+    #[cfg(target_os = "linux")]
     fn read_from_primary(&self) -> Option<ClipboardItem>;
     fn read_from_clipboard(&self) -> Option<ClipboardItem>;
 
@@ -167,6 +173,14 @@ pub trait PlatformDisplay: Send + Sync + Debug {
 
     /// Get the bounds for this display
     fn bounds(&self) -> Bounds<DevicePixels>;
+
+    /// Get the default bounds for this display to place a window
+    fn default_bounds(&self) -> Bounds<DevicePixels> {
+        let center = self.bounds().center();
+        let offset = DEFAULT_WINDOW_SIZE / 2;
+        let origin = point(center.x - offset.width, center.y - offset.height);
+        Bounds::new(origin, DEFAULT_WINDOW_SIZE)
+    }
 }
 
 /// An opaque identifier for a hardware display
@@ -225,6 +239,10 @@ pub(crate) trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
 
     #[cfg(target_os = "windows")]
     fn get_raw_handle(&self) -> windows::HWND;
+
+    fn show_window_menu(&self, position: Point<Pixels>);
+    fn start_system_move(&self);
+    fn should_render_window_controls(&self) -> bool;
 
     #[cfg(any(test, feature = "test-support"))]
     fn as_test(&mut self) -> Option<&mut TestWindow> {

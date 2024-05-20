@@ -257,6 +257,18 @@ impl PlatformWindow for TestWindow {
     fn get_raw_handle(&self) -> windows::Win32::Foundation::HWND {
         unimplemented!()
     }
+
+    fn show_window_menu(&self, _position: Point<Pixels>) {
+        unimplemented!()
+    }
+
+    fn start_system_move(&self) {
+        unimplemented!()
+    }
+
+    fn should_render_window_controls(&self) -> bool {
+        false
+    }
 }
 
 pub(crate) struct TestAtlasState {

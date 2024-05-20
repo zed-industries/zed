@@ -186,6 +186,38 @@ left and right padding of the central pane from the workspace when the centered 
 
 List of `string` values
 
+## Current Line Highlight
+
+- Description: How to highlight the current line in the editor.
+- Setting: `current_line_highlight`
+- Default: `all`
+
+**Options**
+
+1. Don't highlight the current line:
+
+```json
+"current_line_highlight": "none"
+```
+
+2. Highlight the gutter area.
+
+```json
+"current_line_highlight": "gutter"
+```
+
+3. Highlight the editor area.
+
+```json
+"current_line_highlight": "line"
+```
+
+4. Highlight the full line.
+
+```json
+"current_line_highlight": "all"
+```
+
 ## Cursor Blink
 
 - Description: Whether or not the cursor blinks.
@@ -619,18 +651,19 @@ The result is still `)))` and not `))))))`, which is what it would be by default
 ## File Types
 
 - Setting: `file_types`
-- Description: Configure how Zed selects a language for a file based on its filename or extension.
+- Description: Configure how Zed selects a language for a file based on its filename or extension. Supports glob entries.
 - Default: `{}`
 
 **Examples**
 
-To interpret all `.c` files as C++, and files called `MyLockFile` as TOML:
+To interpret all `.c` files as C++, files called `MyLockFile` as TOML and files starting with `Dockerfile` as Dockerfile:
 
 ```json
 {
   "file_types": {
     "C++": ["c"],
-    "TOML": ["MyLockFile"]
+    "TOML": ["MyLockFile"],
+    "Dockerfile": ["Dockerfile*"]
   }
 }
 ```

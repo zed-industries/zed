@@ -3,10 +3,11 @@ mod parser;
 use crate::parser::CodeBlockKind;
 use futures::FutureExt;
 use gpui::{
-    point, quad, AnyElement, AppContext, Bounds, CursorStyle, DispatchPhase, Edges, FocusHandle,
-    FocusableView, FontStyle, FontWeight, GlobalElementId, Hitbox, Hsla, KeyContext,
-    MouseDownEvent, MouseEvent, MouseMoveEvent, MouseUpEvent, Point, Render, StrikethroughStyle,
-    Style, StyledText, Task, TextLayout, TextRun, TextStyle, TextStyleRefinement, View,
+    actions, point, quad, AnyElement, AppContext, Bounds, ClipboardItem, CursorStyle,
+    DispatchPhase, Edges, FocusHandle, FocusableView, FontStyle, FontWeight, GlobalElementId,
+    Hitbox, Hsla, KeyContext, MouseDownEvent, MouseEvent, MouseMoveEvent, MouseUpEvent, Point,
+    Render, StrikethroughStyle, Style, StyledText, Task, TextLayout, TextRun, TextStyle,
+    TextStyleRefinement, View,
 };
 use language::{Language, LanguageRegistry, Rope};
 use parser::{parse_markdown, MarkdownEvent, MarkdownTag, MarkdownTagEnd};
@@ -37,14 +38,16 @@ pub struct Markdown {
     should_reparse: bool,
     pending_parse: Option<Task<Option<()>>>,
     focus_handle: FocusHandle,
-    language_registry: Arc<LanguageRegistry>,
+    language_registry: Option<Arc<LanguageRegistry>>,
 }
+
+actions!(markdown, [Copy]);
 
 impl Markdown {
     pub fn new(
         source: String,
         style: MarkdownStyle,
-        language_registry: Arc<LanguageRegistry>,
+        language_registry: Option<Arc<LanguageRegistry>>,
         cx: &mut ViewContext<Self>,
     ) -> Self {
         let focus_handle = cx.focus_handle();
@@ -81,6 +84,11 @@ impl Markdown {
 
     pub fn source(&self) -> &str {
         &self.source
+    }
+
+    fn copy(&self, text: &RenderedText, cx: &mut ViewContext<Self>) {
+        let text = text.text_for_range(self.selection.start..self.selection.end);
+        cx.write_to_clipboard(ClipboardItem::new(text));
     }
 
     fn parse(&mut self, cx: &mut ViewContext<Self>) {
@@ -191,14 +199,14 @@ impl Default for ParsedMarkdown {
 pub struct MarkdownElement {
     markdown: View<Markdown>,
     style: MarkdownStyle,
-    language_registry: Arc<LanguageRegistry>,
+    language_registry: Option<Arc<LanguageRegistry>>,
 }
 
 impl MarkdownElement {
     fn new(
         markdown: View<Markdown>,
         style: MarkdownStyle,
-        language_registry: Arc<LanguageRegistry>,
+        language_registry: Option<Arc<LanguageRegistry>>,
     ) -> Self {
         Self {
             markdown,
@@ -210,6 +218,7 @@ impl MarkdownElement {
     fn load_language(&self, name: &str, cx: &mut WindowContext) -> Option<Arc<Language>> {
         let language = self
             .language_registry
+            .as_ref()?
             .language_for_name(name)
             .map(|language| language.ok())
             .shared();
@@ -322,13 +331,21 @@ impl MarkdownElement {
                                 match rendered_text.source_index_for_position(event.position) {
                                     Ok(ix) | Err(ix) => ix,
                                 };
+                            let range = if event.click_count == 2 {
+                                rendered_text.surrounding_word_range(source_index)
+                            } else if event.click_count == 3 {
+                                rendered_text.surrounding_line_range(source_index)
+                            } else {
+                                source_index..source_index
+                            };
                             markdown.selection = Selection {
-                                start: source_index,
-                                end: source_index,
+                                start: range.start,
+                                end: range.end,
                                 reversed: false,
                                 pending: true,
                             };
                             cx.focus(&markdown.focus_handle);
+                            cx.prevent_default()
                         }
 
                         cx.notify();
@@ -378,6 +395,12 @@ impl MarkdownElement {
                 } else {
                     if markdown.selection.pending {
                         markdown.selection.pending = false;
+                        #[cfg(target_os = "linux")]
+                        {
+                            let text = rendered_text
+                                .text_for_range(markdown.selection.start..markdown.selection.end);
+                            cx.write_to_primary(ClipboardItem::new(text))
+                        }
                         cx.notify();
                     }
                 }
@@ -619,6 +642,16 @@ impl Element for MarkdownElement {
         let mut context = KeyContext::default();
         context.add("Markdown");
         cx.set_key_context(context);
+        let view = self.markdown.clone();
+        cx.on_action(std::any::TypeId::of::<crate::Copy>(), {
+            let text = rendered_markdown.text.clone();
+            move |_, phase, cx| {
+                let text = text.clone();
+                if phase == DispatchPhase::Bubble {
+                    view.update(cx, move |this, cx| this.copy(&text, cx))
+                }
+            }
+        });
 
         self.paint_mouse_listeners(hitbox, &rendered_markdown.text, cx);
         rendered_markdown.element.paint(cx);
@@ -918,6 +951,77 @@ impl RenderedText {
             }
         }
         None
+    }
+
+    fn surrounding_word_range(&self, source_index: usize) -> Range<usize> {
+        for line in self.lines.iter() {
+            if source_index > line.source_end {
+                continue;
+            }
+
+            let line_rendered_start = line.source_mappings.first().unwrap().rendered_index;
+            let rendered_index_in_line =
+                line.rendered_index_for_source_index(source_index) - line_rendered_start;
+            let text = line.layout.text();
+            let previous_space = if let Some(idx) = text[0..rendered_index_in_line].rfind(' ') {
+                idx + ' '.len_utf8()
+            } else {
+                0
+            };
+            let next_space = if let Some(idx) = text[rendered_index_in_line..].find(' ') {
+                rendered_index_in_line + idx
+            } else {
+                text.len()
+            };
+
+            return line.source_index_for_rendered_index(line_rendered_start + previous_space)
+                ..line.source_index_for_rendered_index(line_rendered_start + next_space);
+        }
+
+        source_index..source_index
+    }
+
+    fn surrounding_line_range(&self, source_index: usize) -> Range<usize> {
+        for line in self.lines.iter() {
+            if source_index > line.source_end {
+                continue;
+            }
+            let line_source_start = line.source_mappings.first().unwrap().source_index;
+            return line_source_start..line.source_end;
+        }
+
+        source_index..source_index
+    }
+
+    fn text_for_range(&self, range: Range<usize>) -> String {
+        let mut ret = vec![];
+
+        for line in self.lines.iter() {
+            if range.start > line.source_end {
+                continue;
+            }
+            let line_source_start = line.source_mappings.first().unwrap().source_index;
+            if range.end < line_source_start {
+                break;
+            }
+
+            let text = line.layout.text();
+
+            let start = if range.start < line_source_start {
+                0
+            } else {
+                line.rendered_index_for_source_index(range.start)
+            };
+            let end = if range.end > line.source_end {
+                line.rendered_index_for_source_index(line.source_end)
+            } else {
+                line.rendered_index_for_source_index(range.end)
+            }
+            .min(text.len());
+
+            ret.push(text[start..end].to_string());
+        }
+        ret.join("\n")
     }
 
     fn link_for_position(&self, position: Point<Pixels>) -> Option<&RenderedLink> {

@@ -532,6 +532,9 @@ impl DelayedDebouncedEditAction {
 
 pub enum Event {
     PaneAdded(View<Pane>),
+    PaneRemoved,
+    ItemAdded,
+    ItemRemoved,
     ActiveItemChanged,
     ContactRequestedJoin(u64),
     WorkspaceCreated(WeakView<Workspace>),
@@ -2513,7 +2516,10 @@ impl Workspace {
         cx: &mut ViewContext<Self>,
     ) {
         match event {
-            pane::Event::AddItem { item } => item.added_to_pane(self, pane, cx),
+            pane::Event::AddItem { item } => {
+                item.added_to_pane(self, pane, cx);
+                cx.emit(Event::ItemAdded);
+            }
             pane::Event::Split(direction) => {
                 self.split_and_clone(pane, *direction, cx);
             }
@@ -2696,6 +2702,7 @@ impl Workspace {
         } else {
             self.active_item_path_changed(cx);
         }
+        cx.emit(Event::PaneRemoved);
     }
 
     pub fn panes(&self) -> &[View<Pane>] {
@@ -5176,8 +5183,8 @@ mod tests {
     };
     use fs::FakeFs;
     use gpui::{
-        px, BorrowAppContext, DismissEvent, Empty, EventEmitter, FocusHandle, FocusableView,
-        Render, TestAppContext, VisualTestContext,
+        px, DismissEvent, Empty, EventEmitter, FocusHandle, FocusableView, Render, TestAppContext,
+        UpdateGlobal, VisualTestContext,
     };
     use project::{Project, ProjectEntryId};
     use serde_json::json;
@@ -5599,7 +5606,7 @@ mod tests {
 
         // Autosave on window change.
         item.update(cx, |item, cx| {
-            cx.update_global(|settings: &mut SettingsStore, cx| {
+            SettingsStore::update_global(cx, |settings, cx| {
                 settings.update_user_settings::<WorkspaceSettings>(cx, |settings| {
                     settings.autosave = Some(AutosaveSetting::OnWindowChange);
                 })
@@ -5619,7 +5626,7 @@ mod tests {
         // Autosave on focus change.
         item.update(cx, |item, cx| {
             cx.focus_self();
-            cx.update_global(|settings: &mut SettingsStore, cx| {
+            SettingsStore::update_global(cx, |settings, cx| {
                 settings.update_user_settings::<WorkspaceSettings>(cx, |settings| {
                     settings.autosave = Some(AutosaveSetting::OnFocusChange);
                 })
@@ -5642,7 +5649,7 @@ mod tests {
 
         // Autosave after delay.
         item.update(cx, |item, cx| {
-            cx.update_global(|settings: &mut SettingsStore, cx| {
+            SettingsStore::update_global(cx, |settings, cx| {
                 settings.update_user_settings::<WorkspaceSettings>(cx, |settings| {
                     settings.autosave = Some(AutosaveSetting::AfterDelay { milliseconds: 500 });
                 })
@@ -5661,7 +5668,7 @@ mod tests {
 
         // Autosave on focus change, ensuring closing the tab counts as such.
         item.update(cx, |item, cx| {
-            cx.update_global(|settings: &mut SettingsStore, cx| {
+            SettingsStore::update_global(cx, |settings, cx| {
                 settings.update_user_settings::<WorkspaceSettings>(cx, |settings| {
                     settings.autosave = Some(AutosaveSetting::OnFocusChange);
                 })

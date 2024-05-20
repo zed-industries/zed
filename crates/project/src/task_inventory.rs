@@ -7,8 +7,12 @@ use std::{
 };
 
 use collections::{btree_map, BTreeMap, VecDeque};
-use gpui::{AppContext, Context, Model, ModelContext};
-use itertools::{Either, Itertools};
+use futures::{
+    channel::mpsc::{unbounded, UnboundedSender},
+    StreamExt,
+};
+use gpui::{AppContext, Context, Model, ModelContext, Task};
+use itertools::Itertools;
 use language::Language;
 use task::{
     static_source::StaticSource, ResolvedTask, TaskContext, TaskId, TaskTemplate, VariableName,
@@ -20,6 +24,8 @@ use worktree::WorktreeId;
 pub struct Inventory {
     sources: Vec<SourceInInventory>,
     last_scheduled_tasks: VecDeque<(TaskSourceKind, ResolvedTask)>,
+    update_sender: UnboundedSender<()>,
+    _update_pooler: Task<anyhow::Result<()>>,
 }
 
 struct SourceInInventory {
@@ -82,9 +88,22 @@ impl TaskSourceKind {
 
 impl Inventory {
     pub fn new(cx: &mut AppContext) -> Model<Self> {
-        cx.new_model(|_| Self {
-            sources: Vec::new(),
-            last_scheduled_tasks: VecDeque::new(),
+        cx.new_model(|cx| {
+            let (update_sender, mut rx) = unbounded();
+            let _update_pooler = cx.spawn(|this, mut cx| async move {
+                while let Some(()) = rx.next().await {
+                    this.update(&mut cx, |_, cx| {
+                        cx.notify();
+                    })?;
+                }
+                Ok(())
+            });
+            Self {
+                sources: Vec::new(),
+                last_scheduled_tasks: VecDeque::new(),
+                update_sender,
+                _update_pooler,
+            }
         })
     }
 
@@ -94,7 +113,7 @@ impl Inventory {
     pub fn add_source(
         &mut self,
         kind: TaskSourceKind,
-        source: StaticSource,
+        create_source: impl FnOnce(UnboundedSender<()>, &mut AppContext) -> StaticSource,
         cx: &mut ModelContext<Self>,
     ) {
         let abs_path = kind.abs_path();
@@ -104,7 +123,7 @@ impl Inventory {
                 return;
             }
         }
-
+        let source = create_source(self.update_sender.clone(), cx);
         let source = SourceInInventory { source, kind };
         self.sources.push(source);
         cx.notify();
@@ -188,7 +207,6 @@ impl Inventory {
             .last_scheduled_tasks
             .iter()
             .rev()
-            .filter(|(_, task)| !task.original_task().ignore_previously_resolved)
             .filter(|(task_kind, _)| {
                 if matches!(task_kind, TaskSourceKind::Language { .. }) {
                     Some(task_kind) == task_source_kind.as_ref()
@@ -256,38 +274,46 @@ impl Inventory {
                 tasks_by_label
             },
         );
-        tasks_by_label = currently_resolved_tasks.into_iter().fold(
+        tasks_by_label = currently_resolved_tasks.iter().fold(
             tasks_by_label,
             |mut tasks_by_label, (source, task, lru_score)| {
-                match tasks_by_label.entry((source, task.resolved_label.clone())) {
+                match tasks_by_label.entry((source.clone(), task.resolved_label.clone())) {
                     btree_map::Entry::Occupied(mut o) => {
                         let (previous_task, _) = o.get();
                         let new_template = task.original_task();
-                        if new_template.ignore_previously_resolved
-                            || new_template != previous_task.original_task()
-                        {
-                            o.insert((task, lru_score));
+                        if new_template != previous_task.original_task() {
+                            o.insert((task.clone(), *lru_score));
                         }
                     }
                     btree_map::Entry::Vacant(v) => {
-                        v.insert((task, lru_score));
+                        v.insert((task.clone(), *lru_score));
                     }
                 }
                 tasks_by_label
             },
         );
 
-        tasks_by_label
+        let resolved = tasks_by_label
             .into_iter()
             .map(|((kind, _), (task, lru_score))| (kind, task, lru_score))
-            .sorted_unstable_by(task_lru_comparator)
-            .partition_map(|(kind, task, lru_score)| {
+            .sorted_by(task_lru_comparator)
+            .filter_map(|(kind, task, lru_score)| {
                 if lru_score < not_used_score {
-                    Either::Left((kind, task))
+                    Some((kind, task))
                 } else {
-                    Either::Right((kind, task))
+                    None
                 }
             })
+            .collect();
+
+        (
+            resolved,
+            currently_resolved_tasks
+                .into_iter()
+                .sorted_unstable_by(task_lru_comparator)
+                .map(|(kind, task, _)| (kind, task))
+                .collect(),
+        )
     }
 
     /// Returns the last scheduled task, if any of the sources contains one with the matching id.
@@ -334,6 +360,7 @@ fn task_lru_comparator(
                     &task_b.resolved_label,
                 ))
                 .then(task_a.resolved_label.cmp(&task_b.resolved_label))
+                .then(kind_a.cmp(kind_b))
         })
 }
 
@@ -367,7 +394,7 @@ mod test_inventory {
 
     use crate::Inventory;
 
-    use super::{task_source_kind_preference, TaskSourceKind};
+    use super::{task_source_kind_preference, TaskSourceKind, UnboundedSender};
 
     #[derive(Debug, Clone, PartialEq, Eq)]
     pub struct TestTask {
@@ -376,6 +403,7 @@ mod test_inventory {
 
     pub(super) fn static_test_source(
         task_names: impl IntoIterator<Item = String>,
+        updates: UnboundedSender<()>,
         cx: &mut AppContext,
     ) -> StaticSource {
         let tasks = TaskTemplates(
@@ -389,7 +417,7 @@ mod test_inventory {
                 .collect(),
         );
         let (tx, rx) = futures::channel::mpsc::unbounded();
-        let file = TrackedFile::new(rx, cx);
+        let file = TrackedFile::new(rx, updates, cx);
         tx.unbounded_send(serde_json::to_string(&tasks).unwrap())
             .unwrap();
         StaticSource::new(file)
@@ -487,21 +515,24 @@ mod tests {
         inventory.update(cx, |inventory, cx| {
             inventory.add_source(
                 TaskSourceKind::UserInput,
-                static_test_source(vec!["3_task".to_string()], cx),
+                |tx, cx| static_test_source(vec!["3_task".to_string()], tx, cx),
                 cx,
             );
         });
         inventory.update(cx, |inventory, cx| {
             inventory.add_source(
                 TaskSourceKind::UserInput,
-                static_test_source(
-                    vec![
-                        "1_task".to_string(),
-                        "2_task".to_string(),
-                        "1_a_task".to_string(),
-                    ],
-                    cx,
-                ),
+                |tx, cx| {
+                    static_test_source(
+                        vec![
+                            "1_task".to_string(),
+                            "2_task".to_string(),
+                            "1_a_task".to_string(),
+                        ],
+                        tx,
+                        cx,
+                    )
+                },
                 cx,
             );
         });
@@ -531,6 +562,7 @@ mod tests {
             resolved_task_names(&inventory, None, cx),
             vec![
                 "2_task".to_string(),
+                "2_task".to_string(),
                 "1_a_task".to_string(),
                 "1_task".to_string(),
                 "3_task".to_string()
@@ -551,6 +583,9 @@ mod tests {
                 "3_task".to_string(),
                 "1_task".to_string(),
                 "2_task".to_string(),
+                "3_task".to_string(),
+                "1_task".to_string(),
+                "2_task".to_string(),
                 "1_a_task".to_string(),
             ],
         );
@@ -558,7 +593,9 @@ mod tests {
         inventory.update(cx, |inventory, cx| {
             inventory.add_source(
                 TaskSourceKind::UserInput,
-                static_test_source(vec!["10_hello".to_string(), "11_hello".to_string()], cx),
+                |tx, cx| {
+                    static_test_source(vec!["10_hello".to_string(), "11_hello".to_string()], tx, cx)
+                },
                 cx,
             );
         });
@@ -581,6 +618,9 @@ mod tests {
                 "3_task".to_string(),
                 "1_task".to_string(),
                 "2_task".to_string(),
+                "3_task".to_string(),
+                "1_task".to_string(),
+                "2_task".to_string(),
                 "1_a_task".to_string(),
                 "10_hello".to_string(),
                 "11_hello".to_string(),
@@ -595,6 +635,10 @@ mod tests {
         assert_eq!(
             resolved_task_names(&inventory, None, cx),
             vec![
+                "11_hello".to_string(),
+                "3_task".to_string(),
+                "1_task".to_string(),
+                "2_task".to_string(),
                 "11_hello".to_string(),
                 "3_task".to_string(),
                 "1_task".to_string(),
@@ -619,7 +663,13 @@ mod tests {
         inventory_with_statics.update(cx, |inventory, cx| {
             inventory.add_source(
                 TaskSourceKind::UserInput,
-                static_test_source(vec!["user_input".to_string(), common_name.to_string()], cx),
+                |tx, cx| {
+                    static_test_source(
+                        vec!["user_input".to_string(), common_name.to_string()],
+                        tx,
+                        cx,
+                    )
+                },
                 cx,
             );
             inventory.add_source(
@@ -627,10 +677,13 @@ mod tests {
                     id_base: "test source",
                     abs_path: path_1.to_path_buf(),
                 },
-                static_test_source(
-                    vec!["static_source_1".to_string(), common_name.to_string()],
-                    cx,
-                ),
+                |tx, cx| {
+                    static_test_source(
+                        vec!["static_source_1".to_string(), common_name.to_string()],
+                        tx,
+                        cx,
+                    )
+                },
                 cx,
             );
             inventory.add_source(
@@ -638,10 +691,13 @@ mod tests {
                     id_base: "test source",
                     abs_path: path_2.to_path_buf(),
                 },
-                static_test_source(
-                    vec!["static_source_2".to_string(), common_name.to_string()],
-                    cx,
-                ),
+                |tx, cx| {
+                    static_test_source(
+                        vec!["static_source_2".to_string(), common_name.to_string()],
+                        tx,
+                        cx,
+                    )
+                },
                 cx,
             );
             inventory.add_source(
@@ -650,7 +706,13 @@ mod tests {
                     abs_path: worktree_path_1.to_path_buf(),
                     id_base: "test_source",
                 },
-                static_test_source(vec!["worktree_1".to_string(), common_name.to_string()], cx),
+                |tx, cx| {
+                    static_test_source(
+                        vec!["worktree_1".to_string(), common_name.to_string()],
+                        tx,
+                        cx,
+                    )
+                },
                 cx,
             );
             inventory.add_source(
@@ -659,7 +721,13 @@ mod tests {
                     abs_path: worktree_path_2.to_path_buf(),
                     id_base: "test_source",
                 },
-                static_test_source(vec!["worktree_2".to_string(), common_name.to_string()], cx),
+                |tx, cx| {
+                    static_test_source(
+                        vec!["worktree_2".to_string(), common_name.to_string()],
+                        tx,
+                        cx,
+                    )
+                },
                 cx,
             );
         });

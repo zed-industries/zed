@@ -325,15 +325,8 @@ impl ThemeSettings {
                 .status
                 .refine(&theme_overrides.status_colors_refinement());
             base_theme.styles.player.merge(&theme_overrides.players);
-            base_theme.styles.syntax = Arc::new(SyntaxTheme {
-                highlights: {
-                    let mut highlights = base_theme.styles.syntax.highlights.clone();
-                    // Overrides come second in the highlight list so that they take precedence
-                    // over the ones in the base theme.
-                    highlights.extend(theme_overrides.syntax_overrides());
-                    highlights
-                },
-            });
+            base_theme.styles.syntax =
+                SyntaxTheme::merge(base_theme.styles.syntax, theme_overrides.syntax_overrides());
 
             self.active_theme = Arc::new(base_theme);
         }

@@ -1,7 +1,7 @@
 id = "astro"
 name = "Astro"
 description = "Astro support."
-version = "0.0.1"
+version = "0.0.2"
 schema_version = 1
 authors = ["Alvaro Gaona <alvgaona@gmail.com>"]
 repository = "https://github.com/zed-industries/zed"
@@ -12,4 +12,4 @@ language = "Astro"
 
 [grammars.astro]
 repository = "https://github.com/virchau13/tree-sitter-astro"
-commit = "dfa0893bdc4bdfada102043404758c66e3580568"
+commit = "4be180759ec13651f72bacee65fa477c64222a1a"

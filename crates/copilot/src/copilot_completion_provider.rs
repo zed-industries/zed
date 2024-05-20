@@ -59,6 +59,10 @@ impl CopilotCompletionProvider {
 }
 
 impl InlineCompletionProvider for CopilotCompletionProvider {
+    fn name() -> &'static str {
+        "copilot"
+    }
+
     fn is_enabled(
         &self,
         buffer: &Model<Buffer>,
@@ -186,17 +190,23 @@ impl InlineCompletionProvider for CopilotCompletionProvider {
             self.copilot
                 .update(cx, |copilot, cx| copilot.accept_completion(completion, cx))
                 .detach_and_log_err(cx);
-            if let Some(telemetry) = self.telemetry.as_ref() {
-                telemetry.report_copilot_event(
-                    Some(completion.uuid.clone()),
-                    true,
-                    self.file_extension.clone(),
-                );
+            if self.active_completion().is_some() {
+                if let Some(telemetry) = self.telemetry.as_ref() {
+                    telemetry.report_inline_completion_event(
+                        Self::name().to_string(),
+                        true,
+                        self.file_extension.clone(),
+                    );
+                }
             }
         }
     }
 
-    fn discard(&mut self, cx: &mut ModelContext<Self>) {
+    fn discard(
+        &mut self,
+        should_report_inline_completion_event: bool,
+        cx: &mut ModelContext<Self>,
+    ) {
         let settings = AllLanguageSettings::get_global(cx);
 
         let copilot_enabled = settings.inline_completions_enabled(None, None);
@@ -210,8 +220,17 @@ impl InlineCompletionProvider for CopilotCompletionProvider {
                 copilot.discard_completions(&self.completions, cx)
             })
             .detach_and_log_err(cx);
-        if let Some(telemetry) = self.telemetry.as_ref() {
-            telemetry.report_copilot_event(None, false, self.file_extension.clone());
+
+        if should_report_inline_completion_event {
+            if self.active_completion().is_some() {
+                if let Some(telemetry) = self.telemetry.as_ref() {
+                    telemetry.report_inline_completion_event(
+                        Self::name().to_string(),
+                        false,
+                        self.file_extension.clone(),
+                    );
+                }
+            }
         }
     }
 
@@ -273,7 +292,7 @@ mod tests {
     };
     use fs::FakeFs;
     use futures::StreamExt;
-    use gpui::{BackgroundExecutor, BorrowAppContext, Context, TestAppContext};
+    use gpui::{BackgroundExecutor, Context, TestAppContext, UpdateGlobal};
     use indoc::indoc;
     use language::{
         language_settings::{AllLanguageSettings, AllLanguageSettingsContent},
@@ -1138,7 +1157,7 @@ mod tests {
             editor::init_settings(cx);
             Project::init_settings(cx);
             workspace::init_settings(cx);
-            cx.update_global(|store: &mut SettingsStore, cx| {
+            SettingsStore::update_global(cx, |store: &mut SettingsStore, cx| {
                 store.update_user_settings::<AllLanguageSettings>(cx, f);
             });
         });

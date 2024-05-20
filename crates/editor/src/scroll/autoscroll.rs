@@ -1,13 +1,9 @@
-use std::{any::TypeId, cmp, f32};
-
-use collections::HashSet;
+use crate::{
+    display_map::ToDisplayPoint, DisplayRow, Editor, EditorMode, LineWithInvisibles, RowExt,
+};
 use gpui::{px, Bounds, Pixels, ViewContext};
 use language::Point;
-
-use crate::{
-    display_map::ToDisplayPoint, DiffRowHighlight, DisplayRow, Editor, EditorMode,
-    LineWithInvisibles, RowExt,
-};
+use std::{cmp, f32};
 
 #[derive(PartialEq, Eq, Clone, Copy)]
 pub enum Autoscroll {
@@ -107,14 +103,10 @@ impl Editor {
 
         let mut target_top;
         let mut target_bottom;
-        if let Some(first_highlighted_row) = &self
-            .highlighted_display_rows(
-                HashSet::from_iter(Some(TypeId::of::<DiffRowHighlight>())),
-                cx,
-            )
-            .first_entry()
+        if let Some(first_highlighted_row) =
+            self.highlighted_display_row_for_autoscroll(&display_map)
         {
-            target_top = first_highlighted_row.key().as_f32();
+            target_top = first_highlighted_row.as_f32();
             target_bottom = target_top + 1.;
         } else {
             let selections = self.selections.all::<Point>(cx);
@@ -244,7 +236,10 @@ impl Editor {
         let mut target_left;
         let mut target_right;
 
-        if self.highlighted_rows.is_empty() {
+        if self
+            .highlighted_display_row_for_autoscroll(&display_map)
+            .is_none()
+        {
             target_left = px(f32::INFINITY);
             target_right = px(0.);
             for selection in selections {

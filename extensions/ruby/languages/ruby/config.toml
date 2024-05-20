@@ -38,3 +38,4 @@ brackets = [
     ] },
 ]
 collapsed_placeholder = "# ..."
+tab_size = 2
