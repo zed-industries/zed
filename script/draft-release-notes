@@ -97,7 +97,7 @@ async function main() {
   } else if (channel == "flatpak") {
     var date = new Date();
 
-    console.log("Add the following to the top of the <releases> section of dev.zed.Zed.metainfo.xml.");
+    console.log("Add the following to `crates/zed/resources/flatpak/release-info/{channel}`.");
     console.log("NOTE: Choose the top 5 most important bullet points.\n\n");
     console.log("-".repeat(process.stdout.columns));
 
@@ -112,7 +112,7 @@ async function main() {
     console.log("            <url>https://github.com/zed-industries/zed/releases/tag/%s</url>", tag);
     console.log("        </release>");
     console.log("-".repeat(process.stdout.columns));
-    console.log("\n\nAdd the above to the top of the <releases> section of dev.zed.Zed.metainfo.xml.")
+    console.log("\n\nAdd the following to `crates/zed/resources/flatpak/release-info/{channel}`.")
     console.log("NOTE: Choose the top 5 most important bullet points.");
   }
 }

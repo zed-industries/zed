@@ -80,8 +80,8 @@ To build & install the flatpak package locally follow the steps below:
 4. Choose your target channel. This can be one of the following values: `[dev, nightly, preview, stable]`. This will be `{channel}` in step 6 and *only changes the icon and name of the application*.
 5. Choose the packaging method, either `build` or `copy`. The build method will re-build from scratch. The copy method will copy the binary files **built in release mode** from `target` (use `cargo build --release && cargo build --release --cli`). This will be `{method}` in step 6.
 6. Generate the manifest by running `script/flatpak/generate-manifest {channel} {method}` where `{channel}` and `{method}` where chosen in steps 4 & 5;
-7. Now you are ready to build & install the flatpak. Run `flatpak-builder --user --install --force-clean build dev.zed.Zed{prefix}.json` from the root directory. (where `{prefix}` depends on `{channel}`)
-8. To start the application, run `flatpak run dev.zed.Zed{prefix}` or locate the program in your menu.
+7. Now you are ready to build & install the flatpak. Run `flatpak-builder --user --install --force-clean build dev.zed.Zed{suffix}.json` from the root directory. (where `{suffix}` depends on `{channel}`)
+8. To start the application, run `flatpak run dev.zed.Zed{suffix}` or locate the program in your menu.
 
 ## Troubleshooting
 

@@ -74,5 +74,7 @@
         </screenshot>
     </screenshots>
 
-    <releases />
+    <releases>
+        release_info
+    </releases>
 </component>

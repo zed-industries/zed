@@ -54,7 +54,8 @@
                 "sed -i 's|app_id|@app_id@|g' /app/share/metainfo/${FLATPAK_ID}.metainfo.xml",
                 "sed -i 's|app_name|@app_name@|g' /app/share/metainfo/${FLATPAK_ID}.metainfo.xml",
                 "sed -i 's|branding_light|@branding_light@|g' /app/share/metainfo/${FLATPAK_ID}.metainfo.xml",
-                "sed -i 's|branding_dark|@branding_dark@|g' /app/share/metainfo/${FLATPAK_ID}.metainfo.xml"
+                "sed -i 's|branding_dark|@branding_dark@|g' /app/share/metainfo/${FLATPAK_ID}.metainfo.xml",
+                "sed -i -e '/release_info/{r crates/zed/resources/flatpak/release-info/@channel@' -e 'd}' /app/share/metainfo/${FLATPAK_ID}.metainfo.xml"
             ],
             "sources": [
                 {
