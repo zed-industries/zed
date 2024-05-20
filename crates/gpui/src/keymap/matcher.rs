@@ -60,14 +60,14 @@ impl KeystrokeMatcher {
             .as_millis() as u64;
 
         if keystroke.is_single_modifer_key() {
+            //TODO: make configurable. 300ms is a good value for most users.
+            //(and we stole it from VSCode, so it must be good, right? ;)
             if now - self.last_single_modifier_timestamp > 300 {
                 self.pending_keystrokes.clear();
             }
 
             self.last_single_modifier_timestamp = now;
         }
-
-        //TODO: make configurable
 
         for binding in keymap.bindings().rev() {
             if !keymap.binding_enabled(binding, context_stack) {
