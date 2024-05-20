@@ -1,10 +1,11 @@
 use anyhow::Result;
+use collections::HashMap;
 use editor::{CompletionProvider, Editor};
-use fuzzy::{match_strings, PathMatch, StringMatchCandidate};
+use fuzzy::{match_strings, StringMatchCandidate};
 use gpui::{AppContext, Model, Task, ViewContext};
-use language::{Anchor, Buffer, CodeLabel, LanguageServerId, ToPoint};
+use language::{Anchor, Buffer, CodeLabel, Documentation, LanguageServerId, ToPoint};
 use parking_lot::{Mutex, RwLock};
-use project::{PathMatchCandidateSet, Project};
+use project::Project;
 use rope::Point;
 use std::{
     ops::Range,
@@ -14,42 +15,44 @@ use std::{
     },
 };
 
+mod file_command;
+mod prompt_command;
+
 pub(crate) struct SlashCommandCompletionProvider {
-    command_definitions: Vec<SlashCommandDefinition>,
+    commands: Arc<HashMap<String, Box<dyn SlashCommand>>>,
     cancel_flag: Mutex<Arc<AtomicBool>>,
     project: Model<Project>,
 }
 
-struct SlashCommandDefinition {
-    name: String,
-    description: String,
+trait SlashCommand: Send + Sync {
+    fn name(&self) -> String;
+    fn description(&self) -> String;
+    fn complete_argument(
+        &self,
+        query: String,
+        cancel: Arc<AtomicBool>,
+        cx: &mut AppContext,
+    ) -> Task<Result<Vec<String>>>;
 }
 
-struct SlashCommand {
-    position: Point,
-    name: String,
+struct SlashCommandInvocation {
+    name: (String, Point),
     argument: Option<(String, Point)>,
 }
 
 impl SlashCommandCompletionProvider {
     pub fn new(project: Model<Project>, cx: &mut AppContext) -> Self {
+        let mut commands: HashMap<String, Box<dyn SlashCommand>> = HashMap::default();
+
+        let file_command = Box::new(file_command::FileSlashCommand::new(project.clone()));
+        let prompt_command = Box::new(prompt_command::PromptSlashCommand::new());
+        commands.insert(file_command.name(), file_command);
+        commands.insert(prompt_command.name(), prompt_command);
+
         Self {
             project,
             cancel_flag: Mutex::new(Arc::new(AtomicBool::new(false))),
-            command_definitions: vec![
-                SlashCommandDefinition {
-                    name: "file".into(),
-                    description: "insert a file".into(),
-                },
-                SlashCommandDefinition {
-                    name: "current-file".into(),
-                    description: "insert the current file".into(),
-                },
-                SlashCommandDefinition {
-                    name: "prompt".into(),
-                    description: "insert a prompt from the library".into(),
-                },
-            ],
+            commands: Arc::new(commands),
         }
     }
 
@@ -58,18 +61,18 @@ impl SlashCommandCompletionProvider {
         buffer: &Model<Buffer>,
         buffer_position: Anchor,
         cx: &mut ViewContext<Editor>,
-    ) -> Option<SlashCommand> {
+    ) -> Option<SlashCommandInvocation> {
         buffer.update(cx, |buffer, _| {
-            let mut command: Option<SlashCommand> = None;
+            let mut command: Option<SlashCommandInvocation> = None;
             let position = buffer_position.to_point(buffer);
             let line_start = Point::new(position.row, 0);
             let mut column = 0;
             for chunk in buffer.text_for_range(line_start..position) {
                 for (ix, c) in chunk.char_indices() {
                     if let Some(cmd) = &mut command {
-                        if cmd.name.is_empty() {
+                        if cmd.name.0.is_empty() {
                             if c.is_alphabetic() {
-                                cmd.name.push(c);
+                                cmd.name.0.push(c);
                             } else {
                                 return None;
                             }
@@ -89,14 +92,16 @@ impl SlashCommandCompletionProvider {
                                     Point::new(position.row, (column + ix) as u32),
                                 ));
                             } else {
-                                cmd.name.push(c);
+                                cmd.name.0.push(c);
                             }
                         }
                     } else {
                         if c == '/' {
-                            command = Some(SlashCommand {
-                                position: Point::new(position.row, (column + ix + 1) as u32),
-                                name: String::new(),
+                            command = Some(SlashCommandInvocation {
+                                name: (
+                                    String::new(),
+                                    Point::new(position.row, (column + ix + 1) as u32),
+                                ),
                                 argument: None,
                             });
                         } else if !c.is_whitespace() {
@@ -117,15 +122,16 @@ impl SlashCommandCompletionProvider {
         cx: &mut AppContext,
     ) -> Task<Result<Vec<project::Completion>>> {
         let candidates = self
-            .command_definitions
-            .iter()
+            .commands
+            .keys()
             .enumerate()
             .map(|(ix, def)| StringMatchCandidate {
                 id: ix,
-                string: def.name.clone(),
-                char_bag: def.name.as_str().into(),
+                string: def.clone(),
+                char_bag: def.as_str().into(),
             })
             .collect::<Vec<_>>();
+        let commands = self.commands.clone();
 
         let executor = cx.background_executor().clone();
         executor.clone().spawn(async move {
@@ -145,7 +151,9 @@ impl SlashCommandCompletionProvider {
                     old_range: range.clone(),
                     label: CodeLabel::plain(mat.string.clone(), None),
                     new_text: mat.string.clone(),
-                    documentation: None,
+                    documentation: commands
+                        .get(&mat.string)
+                        .map(|command| Documentation::SingleLine(command.description())),
                     server_id: LanguageServerId(0),
                     lsp_completion: Default::default(),
                 })
@@ -160,79 +168,31 @@ impl SlashCommandCompletionProvider {
         range: Range<Anchor>,
         cx: &mut AppContext,
     ) -> Task<Result<Vec<project::Completion>>> {
-        match command_name.as_str() {
-            "file" => {
-                let paths = self.search_paths(argument, cx);
-                cx.background_executor().spawn(async move {
-                    Ok(paths
-                        .await
-                        .into_iter()
-                        .map(|path_match| {
-                            let path = format!(
-                                "{}{}",
-                                path_match.path_prefix,
-                                path_match.path.to_string_lossy()
-                            );
-                            project::Completion {
-                                old_range: range.clone(),
-                                new_text: path.clone(),
-                                label: CodeLabel::plain(path.clone(), None),
-                                server_id: LanguageServerId(0),
-                                documentation: None,
-                                lsp_completion: Default::default(),
-                            }
-                        })
-                        .collect())
-                })
-            }
-            _ => {
-                cx.background_executor().spawn(async move {
-                    //
-                    Ok(Vec::new())
-                })
-            }
-        }
-    }
-
-    fn search_paths(&self, query: String, cx: &mut AppContext) -> Task<Vec<PathMatch>> {
-        let worktrees = self
-            .project
-            .read(cx)
-            .visible_worktrees(cx)
-            .collect::<Vec<_>>();
-        let include_root_name = worktrees.len() > 1;
-        let candidate_sets = worktrees
-            .into_iter()
-            .map(|worktree| {
-                let worktree = worktree.read(cx);
-                PathMatchCandidateSet {
-                    snapshot: worktree.snapshot(),
-                    include_ignored: worktree
-                        .root_entry()
-                        .map_or(false, |entry| entry.is_ignored),
-                    include_root_name,
-                    directories_only: false,
-                }
-            })
-            .collect::<Vec<_>>();
-
         let new_cancel_flag = Arc::new(AtomicBool::new(false));
         let mut flag = self.cancel_flag.lock();
         flag.store(true, SeqCst);
         *flag = new_cancel_flag.clone();
-        let executor = cx.background_executor().clone();
-        cx.foreground_executor().spawn(async move {
-            fuzzy::match_path_sets(
-                candidate_sets.as_slice(),
-                query.as_str(),
-                None,
-                false,
-                100,
-                &new_cancel_flag,
-                executor,
-            )
-            .await
-        })
+
+        if let Some(command) = self.commands.get(&command_name) {
+            let completions = command.complete_argument(argument, new_cancel_flag.clone(), cx);
+            cx.background_executor().spawn(async move {
+                Ok(completions
+                    .await?
+                    .into_iter()
+                    .map(|arg| project::Completion {
+                        old_range: range.clone(),
+                        label: CodeLabel::plain(arg.clone(), None),
+                        new_text: arg.clone(),
+                        documentation: None,
+                        server_id: LanguageServerId(0),
+                        lsp_completion: Default::default(),
+                    })
+                    .collect())
+            })
+        } else {
+            cx.background_executor()
+                .spawn(async move { Ok(Vec::new()) })
+        }
     }
 }
 
@@ -248,12 +208,13 @@ impl CompletionProvider for SlashCommandCompletionProvider {
         };
 
         let buffer = buffer.read(cx);
+        let (name, name_position) = command.name;
         if let Some((argument, argument_position)) = command.argument {
             let start = buffer.anchor_after(argument_position);
-            self.complete_command_argument(command.name, argument, start..buffer_position, cx)
+            self.complete_command_argument(name, argument, start..buffer_position, cx)
         } else {
-            let start = buffer.anchor_after(command.position);
-            self.complete_command_name(command.name, start..buffer_position, cx)
+            let start = buffer.anchor_after(name_position);
+            self.complete_command_name(name, start..buffer_position, cx)
         }
     }
 

@@ -1930,8 +1930,8 @@ impl Editor {
         self.custom_context_menu = Some(Box::new(f))
     }
 
-    pub fn set_completion_provider(&mut self, hub: Box<dyn CompletionProvider>) {
-        self.completion_provider = Some(hub);
+    pub fn set_completion_provider(&mut self, provider: Box<dyn CompletionProvider>) {
+        self.completion_provider = Some(provider);
     }
 
     pub fn set_inline_completion_provider<T>(
