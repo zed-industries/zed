@@ -73,9 +73,15 @@ impl zed::Extension for HtmlExtension {
         language_server_id: &zed::LanguageServerId,
         _worktree: &zed::Worktree,
     ) -> Result<zed::Command> {
-        let path = self.server_script_path(language_server_id)?;
-        dbg!(&path);
-        self.path = Some(path.clone());
+        let path = match &self.path {
+            Some(path) => path,
+            None => {
+                let path = self.server_script_path(language_server_id)?;
+                self.path = Some(path);
+                self.path.as_ref().unwrap()
+            }
+        };
+
         Ok(zed::Command {
             command: zed::node_binary_path()?,
             args: vec![
