@@ -1,7 +1,7 @@
 use crate::{settings_store::SettingsStore, FontFallbacks, Settings};
 use fs::Fs;
 use futures::{channel::mpsc, StreamExt};
-use gpui::{AppContext, BackgroundExecutor, ReadGlobal, UpdateGlobal};
+use gpui::{AppContext, BackgroundExecutor, ReadGlobal, TextSystem, UpdateGlobal};
 use std::{path::PathBuf, sync::Arc, time::Duration};
 use util::ResultExt;
 
@@ -88,17 +88,21 @@ pub fn handle_settings_file_changes(
             }
         }
         cx.read_global::<SettingsStore, ()>(|_, cx| {
-            let fallbacks = FontFallbacks::get_global(cx);
-            text_system
-                .set_fallbacks(&fallbacks.ui_font_family, true)
-                .log_err();
-            text_system
-                .set_fallbacks(&fallbacks.buffer_font_family, false)
-                .log_err();
+            set_font_fallbacks(&text_system, cx);
         })
         .log_err();
     })
     .detach();
+}
+
+pub fn set_font_fallbacks(text_system: &TextSystem, cx: &AppContext) {
+    let fallbacks = FontFallbacks::get_global(cx);
+    text_system
+        .set_fallbacks(&fallbacks.ui_font_family, true)
+        .log_err();
+    text_system
+        .set_fallbacks(&fallbacks.buffer_font_family, false)
+        .log_err();
 }
 
 pub fn update_settings_file<T: Settings>(

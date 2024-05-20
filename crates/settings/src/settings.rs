@@ -114,7 +114,7 @@ impl Settings for FontFallbacks {
                         None
                     }
                 })
-                .unwrap(),
+                .unwrap_or_default(),
             buffer_font_family: sources
                 .user
                 .and_then(|fallbacks| {
@@ -136,7 +136,7 @@ impl Settings for FontFallbacks {
                         None
                     }
                 })
-                .unwrap(),
+                .unwrap_or_default(),
         })
     }
 }
