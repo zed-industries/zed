@@ -262,6 +262,7 @@ impl AppContext {
         );
 
         let text_system = Arc::new(TextSystem::new(platform.text_system()));
+        // text_system.set_fallbacks(, is_ui_font).log_err();
         let entities = EntityMap::new();
 
         let app = Rc::new_cyclic(|this| AppCell {
