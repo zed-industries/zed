@@ -1,38 +1,32 @@
 #!/bin/bash
 cd "$(dirname "$0")"
 
-if [[ $1 ]]; then
-    channel=$1
-else
-    echo "Please supply the target channel."
-    echo "Possible values: ['dev', 'nightly', 'preview', 'stable']"
+if [ "$#" -ne 2 ]; then
+    echo "Incorrect number of arguments. Expected 2, found $#."
+    echo
+    echo "Usage: generate-manifest [channel] [method]"
+    echo "    [channel]: Release channel to generate the manifest for."
+    echo "               Possible values: [dev, nightly, preview, stable]"
+    echo "    [method]:  Method of creating the binary."
+    echo "                   'build': Build the binary from scratch"
+    echo "                   'copy':  Copy the release binary from 'target'"
     exit
 fi
 
-if [[ $2 ]]; then
-    method=$2
-else
-    echo "Please supply packaging method. See 'docs/src/development/linux.md' for details."
-    echo "Possible values: ['build', 'copy']."
+channel=$1
+method=$2
+
+declare -A app_id_lookup=( ["dev"]="-Dev" ["nightly"]="-Nightly" ["preview"]="-Preview" ["stable"]="")
+app_id="dev.zed.Zed${app_id_lookup[$channel]}"
+
+if [[ -z "$app_id" ]]; then
+    echo "Invalid release channel: '$channel'"
+    echo "Possible values: [dev, nightly, preview, stable]"
     exit
 fi
 
-if [[ "$channel" == "dev" ]]; then
-    app_id="dev.zed.Zed-Dev"
-elif [[ "$channel" == "nightly" ]]; then
-    app_id="dev.zed.Zed-Nightly"
-elif [[ "$channel" == "preview" ]]; then
-    app_id="dev.zed.Zed-Preview"
-elif [[ "$channel" == "stable" ]]; then
-    app_id="dev.zed.Zed"
-else
-    echo "Invalid channel '$channel'"
-    echo "Possible values: ['dev', 'nightly', 'preview', 'stable']"
-    exit
-fi
-
-manifest_path="../../${app_id}.json"
-cp "../../crates/zed/resources/flatpak/manifest-template.json" "${manifest_path}"
+manifest_path="../../$app_id.json"
+cp "../../crates/zed/resources/flatpak/manifest-template.json" "$manifest_path"
 
 if [[ "$method" == "build" ]]; then
     copy_build="false"
@@ -40,11 +34,13 @@ elif [[ "$method" == "copy" ]]; then
     copy_build="true"
     sed -i "s|,\n                \"crates/zed/resources/flatpak/flatpak-cargo-sources.json\"||g" "${manifest_path}"
 else
-    echo "Invalid packaging method '$method'. See 'docs/src/development/linux.md' for details."
+    echo "Invalid packaging method '$method'."
     echo "Possible values: ['build', 'copy']."
     exit
 fi
 
-sed -i "s|@app_id@|$app_id|g" "${manifest_path}"
-sed -i "s|@channel@|$channel|g" "${manifest_path}"
-sed -i "s|@copy_build@|$copy_build|g" "${manifest_path}"
+sed -i "s|@app_id@|$app_id|g" "$manifest_path"
+sed -i "s|@channel@|$channel|g" "$manifest_path"
+sed -i "s|@copy_build@|$copy_build|g" "$manifest_path"
+
+echo "Generated $app_id.json"
