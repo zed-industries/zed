@@ -786,23 +786,23 @@ impl Item for TerminalView {
     fn tab_content(&self, params: TabContentParams, cx: &WindowContext) -> AnyElement {
         let terminal = self.terminal().read(cx);
         let title = terminal.title(true);
-        let icon = match terminal.task() {
+        let (icon, icon_color) = match terminal.task() {
             Some(terminal_task) => match &terminal_task.status {
-                TaskStatus::Unknown => IconName::ExclamationTriangle,
-                TaskStatus::Running => IconName::Play,
+                TaskStatus::Unknown => (IconName::ExclamationTriangle, Color::Warning),
+                TaskStatus::Running => (IconName::Play, Color::Default),
                 TaskStatus::Completed { success } => {
                     if *success {
-                        IconName::Check
+                        (IconName::Check, Color::Success)
                     } else {
-                        IconName::XCircle
+                        (IconName::XCircle, Color::Error)
                     }
                 }
             },
-            None => IconName::Terminal,
+            None => (IconName::Terminal, Color::Muted),
         };
         h_flex()
             .gap_2()
-            .child(Icon::new(icon))
+            .child(Icon::new(icon).color(icon_color))
             .child(Label::new(title).color(if params.selected {
                 Color::Default
             } else {
