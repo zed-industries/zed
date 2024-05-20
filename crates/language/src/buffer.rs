@@ -3217,10 +3217,10 @@ impl BufferSnapshot {
         // If there is a blank line at the current row, search for the next non indented lines
         if is_blank {
             let start_indent_size = self
-                .find_indented_row((0..buffer_row).rev(), None)
+                .find_indented_row(0..buffer_row, true, None)
                 .map(|(_, indent_size)| indent_size);
             let end_indent_size = self
-                .find_indented_row(buffer_row..=max_row, None)
+                .find_indented_row(buffer_row..(max_row + 1), false, None)
                 .map(|(_, indent_size)| indent_size);
 
             target_indent_size = match (start_indent_size, end_indent_size) {
@@ -3233,24 +3233,44 @@ impl BufferSnapshot {
             };
         }
 
+        const MAX_SEARCH_ROWS: u32 = 100;
+
+        let start = buffer_row.saturating_sub(MAX_SEARCH_ROWS);
+        let end = max_row.min(buffer_row + MAX_SEARCH_ROWS);
+
         let (start_row, start_indent_size) =
-            self.find_indented_row((0..buffer_row).rev(), Some(target_indent_size))?;
+            self.find_indented_row(start..buffer_row, true, Some(target_indent_size))?;
 
         let (end_row, end_indent_size) =
-            self.find_indented_row((buffer_row + 1)..=max_row, Some(target_indent_size))?;
+            self.find_indented_row((buffer_row + 1)..(end + 1), false, Some(target_indent_size))?;
 
         Some((start_row..end_row, start_indent_size.max(end_indent_size)))
     }
 
     fn find_indented_row(
         &self,
-        iterator: impl Iterator<Item = u32>,
+        range: Range<u32>,
+        reversed: bool,
         target_indent_size: Option<u32>,
     ) -> Option<(u32, u32)> {
-        for row in iterator {
-            let (indent_size, is_blank) = self.line_indent_for_row(row);
-            if !is_blank && target_indent_size.is_none() || Some(indent_size) < target_indent_size {
-                return Some((row, indent_size));
+        if reversed {
+            for (row, indent_size, is_blank) in self.text.reversed_line_indents_in_row_range(range)
+            {
+                // every 1000 ticks, yield_now().await
+                if !is_blank && target_indent_size.is_none()
+                    || Some(indent_size) < target_indent_size
+                {
+                    return Some((row, indent_size));
+                }
+            }
+        } else {
+            for (row, indent_size, is_blank) in self.text.line_indents_in_row_range(range) {
+                // every 1000 ticks, yield_now().await
+                if !is_blank && target_indent_size.is_none()
+                    || Some(indent_size) < target_indent_size
+                {
+                    return Some((row, indent_size));
+                }
             }
         }
         None
