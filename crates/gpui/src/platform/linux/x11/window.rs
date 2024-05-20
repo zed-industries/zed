@@ -632,7 +632,7 @@ impl PlatformWindow for X11Window {
     fn is_maximized(&self) -> bool {
         let state = self.0.state.borrow();
         let wm_hints = self.get_wm_hints();
-        // If a maximized window gets minimized, it will still have the maximized properties.
+        // A maximized window that gets minimized will still retain its maximized state.
         !wm_hints.contains(&state.atoms._NET_WM_STATE_HIDDEN)
             && wm_hints.contains(&state.atoms._NET_WM_STATE_MAXIMIZED_VERT)
             && wm_hints.contains(&state.atoms._NET_WM_STATE_MAXIMIZED_HORZ)
