@@ -61,6 +61,8 @@ struct DirectWriteState {
     system_ui_font_name: SharedString,
     system_font_collection: IDWriteFontCollection1,
     custom_font_collection: IDWriteFontCollection1,
+    ui_font_fallbacks: IDWriteFontFallback,
+    buffer_font_fallbacks: IDWriteFontFallback,
     fonts: Vec<FontInfo>,
     font_selections: HashMap<Font, FontId>,
     font_id_by_identifier: HashMap<FontIdentifier, FontId>,
@@ -159,6 +161,8 @@ impl DirectWriteTextSystem {
                 .factory
                 .CreateFontCollectionFromFontSet(&custom_font_set)?
         };
+        let ui_font_fallbacks = unsafe { components.factory.GetSystemFontFallback()? };
+        let buffer_font_fallbacks = unsafe { components.factory.GetSystemFontFallback()? };
         let system_ui_font_name = get_system_ui_font_name();
 
         Ok(Self(RwLock::new(DirectWriteState {
@@ -166,6 +170,8 @@ impl DirectWriteTextSystem {
             system_ui_font_name,
             system_font_collection,
             custom_font_collection,
+            ui_font_fallbacks,
+            buffer_font_fallbacks,
             fonts: Vec::new(),
             font_selections: HashMap::default(),
             font_id_by_identifier: HashMap::default(),
@@ -291,7 +297,7 @@ impl DirectWriteState {
         Ok(())
     }
 
-    fn set_fallbacks(&self, fallbacks: &[String], is_ui_font: bool) -> Result<()> {
+    fn set_fallbacks(&mut self, fallbacks: &[String], is_ui_font: bool) -> Result<()> {
         unsafe {
             let builder = self.components.factory.CreateFontFallbackBuilder()?;
             let font_set = &self.system_font_collection.GetFontSet()?;
@@ -337,6 +343,11 @@ impl DirectWriteState {
             }
             let system_fallbacks = self.components.factory.GetSystemFontFallback()?;
             builder.AddMappings(&system_fallbacks)?;
+            if is_ui_font {
+                self.ui_font_fallbacks = builder.CreateFontFallback()?;
+            } else {
+                self.buffer_font_fallbacks = builder.CreateFontFallback()?;
+            }
             Ok(())
         }
     }
