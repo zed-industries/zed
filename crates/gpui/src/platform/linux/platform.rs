@@ -34,7 +34,7 @@ use xkbcommon::xkb::{self, Keycode, Keysym, State};
 use crate::platform::linux::wayland::WaylandClient;
 use crate::{
     px, Action, AnyWindowHandle, BackgroundExecutor, ClipboardItem, CosmicTextSystem, CursorStyle,
-    DisplayId, ForegroundExecutor, Keymap, Keystroke, LinuxDispatcher, Menu, Modifiers,
+    DisplayId, ForegroundExecutor, Keymap, Keystroke, LinuxDispatcher, Menu, MenuItem, Modifiers,
     PathPromptOptions, Pixels, Platform, PlatformDisplay, PlatformInputHandler, PlatformTextSystem,
     PlatformWindow, Point, PromptLevel, Result, SemanticVersion, Size, Task, WindowAppearance,
     WindowOptions, WindowParams,
@@ -375,6 +375,7 @@ impl<P: LinuxClient + 'static> Platform for P {
 
     // todo(linux)
     fn set_menus(&self, menus: Vec<Menu>, keymap: &Keymap) {}
+    fn set_dock_menu(&self, menu: Vec<MenuItem>, keymap: &Keymap) {}
 
     fn local_timezone(&self) -> UtcOffset {
         UtcOffset::UTC
