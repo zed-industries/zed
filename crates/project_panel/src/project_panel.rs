@@ -214,10 +214,12 @@ impl ProjectPanel {
                     .expect("have a &mut Workspace"),
                 move |project_panel, workspace, event, cx| {
                     if let WorkspaceEvent::ActiveItemChanged = event {
-                        if project_panel.active_multi_buffer_entries
-                            != active_multi_buffer_entries(workspace.read(cx), cx)
-                        {
+                        let new_multi_buffer_entries =
+                            active_multi_buffer_entries(workspace.read(cx), cx);
+                        if project_panel.active_multi_buffer_entries != new_multi_buffer_entries {
+                            project_panel.active_multi_buffer_entries = new_multi_buffer_entries;
                             project_panel.update_visible_entries(None, cx);
+                            cx.notify();
                         }
                     }
                 },
@@ -1532,11 +1534,6 @@ impl ProjectPanel {
         new_selected_entry: Option<(WorktreeId, ProjectEntryId)>,
         cx: &mut ViewContext<Self>,
     ) {
-        let Ok(()) = self.workspace.update(cx, |workspace, cx| {
-            self.active_multi_buffer_entries = active_multi_buffer_entries(workspace, cx);
-        }) else {
-            return;
-        };
         let auto_collapse_dirs = ProjectPanelSettings::get_global(cx).auto_fold_dirs;
         let project = self.project.read(cx);
         self.last_worktree_root_id = project
@@ -1596,10 +1593,13 @@ impl ProjectPanel {
 
             let mut visible_worktree_entries = Vec::new();
             let mut entry_iter = snapshot.entries(true);
+            let mut maybe_applicable_folder_entries = Vec::new();
             while let Some(entry) = entry_iter.entry() {
-                // TODO kb preserve parent directories
                 if let Some(active_multi_buffer_entries) = &active_multi_buffer_entries {
                     if !active_multi_buffer_entries.contains(&entry.id) {
+                        if entry.is_dir() {
+                            maybe_applicable_folder_entries.push(entry.clone());
+                        }
                         entry_iter.advance();
                         continue;
                     }
@@ -1645,6 +1645,20 @@ impl ProjectPanel {
                 }
                 entry_iter.advance();
             }
+
+            // TODO kb can we speed things up? Sort by path before inserting?
+            let mut entries_to_re_add = Vec::with_capacity(maybe_applicable_folder_entries.len());
+            for visible_entry in &visible_worktree_entries {
+                maybe_applicable_folder_entries.retain(|maybe_parent_entry| {
+                    if visible_entry.path.starts_with(&maybe_parent_entry.path) {
+                        entries_to_re_add.push(maybe_parent_entry.clone());
+                        false
+                    } else {
+                        true
+                    }
+                })
+            }
+            visible_worktree_entries.extend(entries_to_re_add);
 
             snapshot.propagate_git_statuses(&mut visible_worktree_entries);
 
@@ -2053,6 +2067,7 @@ impl ProjectPanel {
                         if event.down.button == MouseButton::Right || event.down.first_mouse {
                             return;
                         }
+                        // TODO kb custom click handlers for the multibuffer case, to scroll to the corresponding multibuffer place
                         if !show_editor {
                             if let Some(selection) =
                                 this.selection.filter(|_| event.down.modifiers.shift)
