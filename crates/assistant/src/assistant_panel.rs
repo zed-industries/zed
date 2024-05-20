@@ -3058,9 +3058,9 @@ impl ConversationEditor {
                                 .entry(buffer)
                                 .or_insert(Vec::<(Range<language::Anchor>, _)>::new());
                         for suggestion in suggestions {
-                            let ranges =
-                                fuzzy_search_lines(snapshot.as_rope(), &suggestion.old_text);
-                            if let Some(range) = ranges.first() {
+                            if let Some(range) =
+                                fuzzy_search_lines(snapshot.as_rope(), &suggestion.old_text)
+                            {
                                 let edit_start = snapshot.anchor_after(range.start);
                                 let edit_end = snapshot.anchor_before(range.end);
                                 if let Err(ix) = edits.binary_search_by(|(range, _)| {
