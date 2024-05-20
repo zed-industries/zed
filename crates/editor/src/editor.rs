@@ -1594,7 +1594,7 @@ impl Editor {
                                 let snapshot = buffer.read(cx).snapshot();
                                 for (range, snippet) in snippet_edits {
                                     let editor_range =
-                                        language::range_from_lsp(range).to_offset(&snapshot);
+                                        language::range_from_lsp(*range).to_offset(&snapshot);
                                     editor
                                         .insert_snippet(&[editor_range], snippet.clone(), cx)
                                         .ok();
