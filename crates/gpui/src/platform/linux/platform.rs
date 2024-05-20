@@ -375,6 +375,7 @@ impl<P: LinuxClient + 'static> Platform for P {
 
     // todo(linux)
     fn set_menus(&self, menus: Vec<Menu>, keymap: &Keymap) {}
+    fn set_dock_menu(&self, menu: Vec<MenuItem>, keymap: &Keymap) {}
 
     fn local_timezone(&self) -> UtcOffset {
         UtcOffset::UTC
