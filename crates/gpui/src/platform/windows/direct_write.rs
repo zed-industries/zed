@@ -663,7 +663,10 @@ impl DirectWriteState {
         let total_bytes;
         let bitmap_format;
         let render_target_property;
+        let bitmap_width;
+        let bitmap_height;
         let bitmap_stride;
+        let bitmap_dpi;
         if params.is_emoji {
             total_bytes = bitmap_size.height.0 as usize * bitmap_size.width.0 as usize * 4;
             bitmap_format = &GUID_WICPixelFormat32bppPBGRA;
@@ -671,19 +674,25 @@ impl DirectWriteState {
                 DXGI_FORMAT_B8G8R8A8_UNORM,
                 D2D1_ALPHA_MODE_PREMULTIPLIED,
             );
+            bitmap_width = bitmap_size.width.0 as u32;
+            bitmap_height = bitmap_size.height.0 as u32;
             bitmap_stride = bitmap_size.width.0 as u32 * 4;
+            bitmap_dpi = 96.0;
         } else {
             total_bytes = bitmap_size.height.0 as usize * bitmap_size.width.0 as usize;
             bitmap_format = &GUID_WICPixelFormat8bppAlpha;
             render_target_property =
                 get_render_target_property(DXGI_FORMAT_UNKNOWN, D2D1_ALPHA_MODE_UNKNOWN);
+            bitmap_width = bitmap_size.width.0 as u32 * 2;
+            bitmap_height = bitmap_size.height.0 as u32 * 2;
             bitmap_stride = bitmap_size.width.0 as u32;
+            bitmap_dpi = 192.0;
         }
 
         unsafe {
             let bitmap = self.components.bitmap_factory.CreateBitmap(
-                bitmap_size.width.0 as u32 * 2,
-                bitmap_size.height.0 as u32 * 2,
+                bitmap_width,
+                bitmap_height,
                 bitmap_format,
                 WICBitmapCacheOnLoad,
             )?;
@@ -704,7 +713,10 @@ impl DirectWriteState {
             // ID2D1DeviceContext4 requires Win8+
             let render_target = render_target.cast::<ID2D1DeviceContext4>().unwrap();
             render_target.SetUnitMode(D2D1_UNIT_MODE_DIPS);
-            render_target.SetDpi(192.0 * params.scale_factor, 192.0 * params.scale_factor);
+            render_target.SetDpi(
+                bitmap_dpi * params.scale_factor,
+                bitmap_dpi * params.scale_factor,
+            );
             render_target.SetTextRenderingParams(&self.components.render_context.params);
             render_target.BeginDraw();
 
