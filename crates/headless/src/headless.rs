@@ -223,8 +223,8 @@ impl DevServer {
             })?
             .await?;
 
-        worktree.update(cx, |worktree, _| {
-            worktree.as_local_mut().unwrap().share_private_files()
+        worktree.update(cx, |worktree, cx| {
+            worktree.as_local_mut().unwrap().share_private_files(cx)
         })?;
 
         let worktrees =
