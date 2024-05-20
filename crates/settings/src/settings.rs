@@ -63,3 +63,79 @@ pub fn initial_keymap_content() -> Cow<'static, str> {
 pub fn initial_tasks_content() -> Cow<'static, str> {
     asset_str::<SettingsAssets>("settings/initial_tasks.json")
 }
+
+pub fn init_font_fallbacks(cx: &mut AppContext) {
+    FontFallbacks::register(cx);
+}
+
+#[derive(Default, Clone, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
+struct FontFallbacksContent {
+    ui_font_family: Option<Vec<String>>,
+    buffer_font_family: Option<Vec<String>>,
+}
+
+struct FontFallbacks {
+    ui_font_family: Vec<String>,
+    buffer_font_family: Vec<String>,
+}
+
+impl Settings for FontFallbacks {
+    const KEY: Option<&'static str> = None;
+
+    type FileContent = FontFallbacksContent;
+
+    fn load(
+        sources: crate::SettingsSources<Self::FileContent>,
+        cx: &mut AppContext,
+    ) -> anyhow::Result<Self>
+    where
+        Self: Sized,
+    {
+        Ok(Self {
+            ui_font_family: sources
+                .user
+                .and_then(|fallbacks| {
+                    if let Some(ref fallbacks) = fallbacks.ui_font_family {
+                        if fallbacks.len() > 1 {
+                            Some(fallbacks[1..].to_vec())
+                        } else {
+                            None
+                        }
+                    } else {
+                        None
+                    }
+                })
+                .or_else(|| {
+                    let fallbacks = sources.default.ui_font_family.as_ref().unwrap();
+                    if fallbacks.len() > 1 {
+                        Some(fallbacks[1..].to_vec())
+                    } else {
+                        None
+                    }
+                })
+                .unwrap(),
+            buffer_font_family: sources
+                .user
+                .and_then(|fallbacks| {
+                    if let Some(ref fallbacks) = fallbacks.buffer_font_family {
+                        if fallbacks.len() > 1 {
+                            Some(fallbacks[1..].to_vec())
+                        } else {
+                            None
+                        }
+                    } else {
+                        None
+                    }
+                })
+                .or_else(|| {
+                    let fallbacks = sources.default.buffer_font_family.as_ref().unwrap();
+                    if fallbacks.len() > 1 {
+                        Some(fallbacks[1..].to_vec())
+                    } else {
+                        None
+                    }
+                })
+                .unwrap(),
+        })
+    }
+}

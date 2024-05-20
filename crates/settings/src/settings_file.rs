@@ -74,6 +74,7 @@ pub fn handle_settings_file_changes(
             .set_user_settings(&user_settings_content, cx)
             .log_err();
     });
+    let text_system = cx.text_system().clone();
     cx.spawn(move |mut cx| async move {
         while let Some(user_settings_content) = user_settings_file_rx.next().await {
             let result = cx.update_global(|store: &mut SettingsStore, cx| {
@@ -86,8 +87,13 @@ pub fn handle_settings_file_changes(
                 break; // App dropped
             }
         }
+        // text_system.set_fallbacks(font_families, is_ui_font)
     })
     .detach();
+}
+
+pub fn init_settings(cx: &mut AppContext) {
+    FontFallbacks::register(cx);
 }
 
 pub fn update_settings_file<T: Settings>(

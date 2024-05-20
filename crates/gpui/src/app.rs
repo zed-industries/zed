@@ -1259,6 +1259,11 @@ impl AppContext {
     ) {
         self.prompt_builder = Some(PromptBuilder::Custom(Box::new(renderer)))
     }
+
+    /// TODO:
+    pub fn observe_fallbacks_changed(&self) {
+        // self.observe_global::<ThemeSetting>(f)
+    }
 }
 
 impl Context for AppContext {
