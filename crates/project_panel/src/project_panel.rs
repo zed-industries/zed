@@ -57,7 +57,6 @@ pub struct ProjectPanel {
     edit_state: Option<EditState>,
     filename_editor: View<Editor>,
     clipboard: Option<ClipboardEntry>,
-    _dragged_entry_destination: Option<Arc<Path>>,
     workspace: WeakView<Workspace>,
     width: Option<Pixels>,
     pending_serialization: Task<Option<()>>,
@@ -295,7 +294,7 @@ impl ProjectPanel {
                 scroll_handle: UniformListScrollHandle::new(),
                 focus_handle,
                 visible_entries: Default::default(),
-                last_worktree_root_id: Default::default(),
+                last_worktree_root_id: None,
                 expanded_dir_ids: Default::default(),
                 unfolded_dir_ids: Default::default(),
                 selection: None,
@@ -304,7 +303,6 @@ impl ProjectPanel {
                 context_menu: None,
                 filename_editor,
                 clipboard: None,
-                _dragged_entry_destination: None,
                 workspace: workspace.weak_handle(),
                 width: None,
                 pending_serialization: Task::ready(None),
@@ -1545,13 +1543,30 @@ impl ProjectPanel {
             .visible_worktrees(cx)
             .rev()
             .next()
-            .and_then(|worktree| worktree.read(cx).root_entry())
+            .and_then(|worktree| {
+                let worktree = worktree.read(cx);
+                if self.active_multi_buffer_entries.is_empty()
+                    || self
+                        .active_multi_buffer_entries
+                        .contains_key(&worktree.id())
+                {
+                    worktree.root_entry()
+                } else {
+                    None
+                }
+            })
             .map(|entry| entry.id);
 
         self.visible_entries.clear();
         for worktree in project.visible_worktrees(cx) {
             let snapshot = worktree.read(cx).snapshot();
             let worktree_id = snapshot.id();
+
+            let active_multi_buffer_entries = self.active_multi_buffer_entries.get(&worktree_id);
+            if !self.active_multi_buffer_entries.is_empty() && active_multi_buffer_entries.is_none()
+            {
+                continue;
+            }
 
             let expanded_dir_ids = match self.expanded_dir_ids.entry(worktree_id) {
                 hash_map::Entry::Occupied(e) => e.into_mut(),
@@ -1582,6 +1597,13 @@ impl ProjectPanel {
             let mut visible_worktree_entries = Vec::new();
             let mut entry_iter = snapshot.entries(true);
             while let Some(entry) = entry_iter.entry() {
+                // TODO kb preserve parent directories
+                if let Some(active_multi_buffer_entries) = &active_multi_buffer_entries {
+                    if !active_multi_buffer_entries.contains(&entry.id) {
+                        entry_iter.advance();
+                        continue;
+                    }
+                }
                 if auto_collapse_dirs
                     && entry.kind.is_dir()
                     && !self.unfolded_dir_ids.contains(&entry.id)
