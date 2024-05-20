@@ -1587,7 +1587,21 @@ impl Editor {
                 project_subscriptions.push(cx.subscribe(project, |editor, _, event, cx| {
                     if let project::Event::RefreshInlayHints = event {
                         editor.refresh_inlay_hints(InlayHintRefreshReason::RefreshRequested, cx);
-                    };
+                    } else if let project::Event::SnippetEdit(id, snippet_edits) = event {
+                        if let Some(buffer) = editor.buffer.read(cx).buffer(*id) {
+                            let focus_handle = editor.focus_handle(cx);
+                            if focus_handle.is_focused(cx) {
+                                let snapshot = buffer.read(cx).snapshot();
+                                for (range, snippet) in snippet_edits {
+                                    let editor_range =
+                                        language::range_from_lsp(*range).to_offset(&snapshot);
+                                    editor
+                                        .insert_snippet(&[editor_range], snippet.clone(), cx)
+                                        .ok();
+                                }
+                            }
+                        }
+                    }
                 }));
                 let task_inventory = project.read(cx).task_inventory().clone();
                 project_subscriptions.push(cx.observe(&task_inventory, |editor, _, cx| {
@@ -1601,7 +1615,6 @@ impl Editor {
             &buffer.read(cx).snapshot(cx),
             cx,
         );
-
         let focus_handle = cx.focus_handle();
         cx.on_focus(&focus_handle, Self::handle_focus).detach();
         cx.on_blur(&focus_handle, Self::handle_blur).detach();
@@ -10728,7 +10741,6 @@ impl Editor {
 
     fn handle_focus(&mut self, cx: &mut ViewContext<Self>) {
         cx.emit(EditorEvent::Focused);
-
         if let Some(rename) = self.pending_rename.as_ref() {
             let rename_editor_focus_handle = rename.editor.read(cx).focus_handle.clone();
             cx.focus(&rename_editor_focus_handle);
