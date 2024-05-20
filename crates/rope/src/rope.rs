@@ -740,7 +740,7 @@ impl<'a> Lines<'a> {
         self.current_line.clear();
 
         while let Some(chunk) = self.chunks.peek() {
-            let lines = chunk.split('\n');
+            let lines = chunk.split_terminator('\n');
             if self.reversed {
                 let mut lines = lines.rev().peekable();
                 while let Some(line) = lines.next() {

@@ -1888,9 +1888,8 @@ impl BufferSnapshot {
                     }
                 }
 
-                let curr_row = row;
                 row += 1;
-                Some((curr_row, indent_size, is_blank))
+                Some((row - 1, indent_size, is_blank))
             } else {
                 None
             }
@@ -1911,7 +1910,7 @@ impl BufferSnapshot {
                 let mut indent_size = 0;
                 let mut is_blank = true;
 
-                for c in line.chars().rev() {
+                for c in line.chars() {
                     is_blank = false;
                     if c == ' ' || c == '\t' {
                         indent_size += 1;
@@ -1920,9 +1919,8 @@ impl BufferSnapshot {
                     }
                 }
 
-                let curr_row = row;
                 row = row.saturating_sub(1);
-                Some((curr_row, indent_size, is_blank))
+                Some((row, indent_size, is_blank))
             } else {
                 None
             }

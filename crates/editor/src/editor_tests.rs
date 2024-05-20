@@ -11886,6 +11886,60 @@ async fn test_active_indent_guides_respect_indented_range(cx: &mut gpui::TestApp
     );
 }
 
+#[gpui::test]
+async fn test_active_indent_guides_empty_line(cx: &mut gpui::TestAppContext) {
+    let (buffer_id, mut cx) = setup_indent_guides_editor(
+        &"
+    fn main() {
+        let a = 1;
+
+        let b = 2;
+    }"
+        .unindent(),
+        cx,
+    )
+    .await;
+
+    cx.update_editor(|editor, cx| {
+        editor.change_selections(None, cx, |s| {
+            s.select_ranges([Point::new(2, 0)..Point::new(2, 0)])
+        });
+    });
+
+    assert_indent_guides(
+        0..5,
+        vec![IndentGuide::new(buffer_id, 1, 3, 0, 4)],
+        Some(vec![0]),
+        &mut cx,
+    );
+}
+
+#[gpui::test]
+async fn test_active_indent_guides_non_matching_indent(cx: &mut gpui::TestAppContext) {
+    let (buffer_id, mut cx) = setup_indent_guides_editor(
+        &"
+    def m:
+        a = 1
+        pass"
+            .unindent(),
+        cx,
+    )
+    .await;
+
+    cx.update_editor(|editor, cx| {
+        editor.change_selections(None, cx, |s| {
+            s.select_ranges([Point::new(1, 0)..Point::new(1, 0)])
+        });
+    });
+
+    assert_indent_guides(
+        0..3,
+        vec![IndentGuide::new(buffer_id, 1, 2, 0, 4)],
+        Some(vec![0]),
+        &mut cx,
+    );
+}
+
 fn empty_range(row: usize, column: usize) -> Range<DisplayPoint> {
     let point = DisplayPoint::new(DisplayRow(row as u32), column as u32);
     point..point

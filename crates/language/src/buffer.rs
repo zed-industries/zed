@@ -3204,7 +3204,7 @@ impl BufferSnapshot {
 
         let (mut target_indent_size, is_blank) = self.line_indent_for_row(buffer_row);
 
-        // If the current row is at the start of an indented block, we want to search return this
+        // If the current row is at the start of an indented block, we want to return this
         // block as the enclosing indent.
         if !is_blank && buffer_row < max_row {
             let (next_line_indent, is_blank) = self.line_indent_for_row(buffer_row + 1);
@@ -3214,35 +3214,52 @@ impl BufferSnapshot {
             }
         }
 
-        // If there is a blank line at the current row, search for the next non indented lines
-        if is_blank {
-            let start_indent_size = self
-                .find_indented_row(0..buffer_row, true, None)
-                .map(|(_, indent_size)| indent_size);
-            let end_indent_size = self
-                .find_indented_row(buffer_row..(max_row + 1), false, None)
-                .map(|(_, indent_size)| indent_size);
-
-            target_indent_size = match (start_indent_size, end_indent_size) {
-                (Some(start_indent_size), Some(end_indent_size)) => {
-                    start_indent_size.min(end_indent_size)
-                }
-                (Some(indent_size), None) => indent_size,
-                (None, Some(indent_size)) => indent_size,
-                _ => return None,
-            };
-        }
-
         const MAX_SEARCH_ROWS: u32 = 100;
 
         let start = buffer_row.saturating_sub(MAX_SEARCH_ROWS);
-        let end = max_row.min(buffer_row + MAX_SEARCH_ROWS);
+        let end = (max_row + 1).min(buffer_row + MAX_SEARCH_ROWS);
+
+        let upwards_range = start..buffer_row;
+        let downwards_range = (buffer_row + 1)..end;
+
+        // If there is a blank line at the current row, search for the next non indented lines
+        if is_blank {
+            let non_empty_row_above = self.find_indented_row(upwards_range.clone(), true, None);
+            let non_empty_row_below = self.find_indented_row(downwards_range.clone(), false, None);
+
+            let (row, indent_size) = match (non_empty_row_above, non_empty_row_below) {
+                (Some((above_row, above_indent)), Some((below_row, below_indent))) => {
+                    if above_indent < below_indent {
+                        (above_row, above_indent)
+                    } else {
+                        (below_row, below_indent)
+                    }
+                }
+                (Some(above), None) => above,
+                (None, Some(below)) => below,
+                _ => return None,
+            };
+
+            target_indent_size = indent_size;
+            buffer_row = row;
+        }
+
+        let start = buffer_row.saturating_sub(MAX_SEARCH_ROWS);
+        let end = (max_row + 1).min(buffer_row + MAX_SEARCH_ROWS);
+
+        let upwards_range = start..buffer_row;
+        let downwards_range = (buffer_row + 1)..end;
 
         let (start_row, start_indent_size) =
-            self.find_indented_row(start..buffer_row, true, Some(target_indent_size))?;
+            self.find_indented_row(upwards_range, true, Some(target_indent_size))?;
 
         let (end_row, end_indent_size) =
-            self.find_indented_row((buffer_row + 1)..(end + 1), false, Some(target_indent_size))?;
+            self.find_indented_row(downwards_range, false, Some(target_indent_size))?;
+
+        println!(
+            "{}..{} {} {}",
+            start_row, end_row, start_indent_size, end_indent_size,
+        );
 
         Some((start_row..end_row, start_indent_size.max(end_indent_size)))
     }
