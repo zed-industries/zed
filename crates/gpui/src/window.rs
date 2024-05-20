@@ -3054,8 +3054,9 @@ impl<'a> WindowContext<'a> {
         let mut pending = false;
         let mut keystroke: Option<Keystroke> = None;
 
-        if let Some(modifer_change_event) = event.downcast_ref::<ModifiersChangedEvent>() {
-            let key = match modifer_change_event.modifiers {
+        if let Some(modifier_change_event) = event.downcast_ref::<ModifiersChangedEvent>() {
+            //TODO: ensure this is atomic
+            let key = match modifier_change_event.modifiers {
                 modifiers if modifiers.shift => Some("shift"),
                 modifiers if modifiers.control => Some("control"),
                 modifiers if modifiers.alt => Some("alt"),
@@ -3070,7 +3071,7 @@ impl<'a> WindowContext<'a> {
                     modifiers: Modifiers::default(),
                 };
                 let KeymatchResult {
-                    bindings: modifer_bindings,
+                    bindings: modifier_bindings,
                     pending: pending_bindings,
                 } = self
                     .window
@@ -3079,7 +3080,7 @@ impl<'a> WindowContext<'a> {
                     .dispatch_key(&key, &dispatch_path);
 
                 keystroke = Some(key);
-                bindings = modifer_bindings;
+                bindings = modifier_bindings;
                 pending = pending_bindings;
             }
         }
