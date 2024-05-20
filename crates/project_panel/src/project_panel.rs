@@ -7,7 +7,7 @@ use editor::{items::entry_git_aware_label_color, scroll::Autoscroll, Editor};
 use file_icons::FileIcons;
 
 use anyhow::{anyhow, Result};
-use collections::{hash_map, BTreeSet, HashMap};
+use collections::{hash_map, BTreeMap, BTreeSet, HashMap};
 use git::repository::GitFileStatus;
 use gpui::{
     actions, anchored, deferred, div, impl_actions, px, uniform_list, Action, AnyElement,
@@ -35,7 +35,7 @@ use util::{maybe, NumericPrefixWithSuffix, ResultExt, TryFutureExt};
 use workspace::{
     dock::{DockPosition, Panel, PanelEvent},
     notifications::DetachAndPromptErr,
-    OpenInTerminal, Workspace,
+    Event as WorkspaceEvent, OpenInTerminal, Workspace,
 };
 
 const PROJECT_PANEL_KEY: &str = "ProjectPanel";
@@ -61,6 +61,7 @@ pub struct ProjectPanel {
     workspace: WeakView<Workspace>,
     width: Option<Pixels>,
     pending_serialization: Task<Option<()>>,
+    active_multi_buffer_entries: BTreeMap<WorktreeId, BTreeSet<ProjectEntryId>>,
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -207,6 +208,23 @@ impl ProjectPanel {
             let focus_handle = cx.focus_handle();
             cx.on_focus(&focus_handle, Self::focus_in).detach();
 
+            cx.subscribe(
+                &workspace
+                    .weak_handle()
+                    .upgrade()
+                    .expect("have a &mut Workspace"),
+                move |project_panel, workspace, event, cx| {
+                    if let WorkspaceEvent::ActiveItemChanged = event {
+                        if project_panel.active_multi_buffer_entries
+                            != active_multi_buffer_entries(workspace.read(cx), cx)
+                        {
+                            project_panel.update_visible_entries(None, cx);
+                        }
+                    }
+                },
+            )
+            .detach();
+
             cx.subscribe(&project, |this, project, event, cx| match event {
                 project::Event::ActiveEntryChanged(Some(entry_id)) => {
                     if ProjectPanelSettings::get_global(cx).auto_reveal_entries {
@@ -290,6 +308,7 @@ impl ProjectPanel {
                 workspace: workspace.weak_handle(),
                 width: None,
                 pending_serialization: Task::ready(None),
+                active_multi_buffer_entries: BTreeMap::new(),
             };
             this.update_visible_entries(None, cx);
 
@@ -1515,6 +1534,11 @@ impl ProjectPanel {
         new_selected_entry: Option<(WorktreeId, ProjectEntryId)>,
         cx: &mut ViewContext<Self>,
     ) {
+        let Ok(()) = self.workspace.update(cx, |workspace, cx| {
+            self.active_multi_buffer_entries = active_multi_buffer_entries(workspace, cx);
+        }) else {
+            return;
+        };
         let auto_collapse_dirs = ProjectPanelSettings::get_global(cx).auto_fold_dirs;
         let project = self.project.read(cx);
         self.last_worktree_root_id = project
@@ -2247,6 +2271,31 @@ impl Render for ProjectPanel {
                 )
         }
     }
+}
+
+fn active_multi_buffer_entries(
+    workspace: &Workspace,
+    cx: &AppContext,
+) -> BTreeMap<WorktreeId, BTreeSet<ProjectEntryId>> {
+    workspace
+        .active_item(cx)
+        .filter(|item| !item.is_singleton(cx))
+        .map(|item| item.project_entry_ids(cx))
+        .into_iter()
+        .flatten()
+        .filter_map(|entry_id| {
+            let worktree_id = workspace
+                .project()
+                .read(cx)
+                .worktree_for_entry(entry_id, cx)?
+                .read(cx)
+                .id();
+            Some((worktree_id, entry_id))
+        })
+        .fold(BTreeMap::new(), |mut entries, (worktree_id, entry_id)| {
+            entries.entry(worktree_id).or_default().insert(entry_id);
+            entries
+        })
 }
 
 impl Render for DraggedProjectEntryView {
