@@ -2961,7 +2961,7 @@ struct DraggedChannelView {
 }
 
 impl Render for DraggedChannelView {
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl Element {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         let ui_font = ThemeSettings::get_global(cx).ui_font.family.clone();
         h_flex()
             .font_family(ui_font)

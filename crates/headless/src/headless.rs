@@ -178,7 +178,7 @@ impl DevServer {
         let path = std::path::Path::new(&expanded);
         let fs = cx.read_model(&this, |this, _| this.app_state.fs.clone())?;
 
-        let path_exists = fs.is_dir(path).await;
+        let path_exists = fs.metadata(path).await.is_ok_and(|result| result.is_some());
         if !path_exists {
             return Err(anyhow!(ErrorCode::DevServerProjectPathDoesNotExist))?;
         }

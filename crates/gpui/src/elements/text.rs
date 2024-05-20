@@ -432,6 +432,19 @@ impl TextLayout {
     pub fn line_height(&self) -> Pixels {
         self.0.lock().as_ref().unwrap().line_height
     }
+
+    /// todo!()
+    pub fn text(&self) -> String {
+        self.0
+            .lock()
+            .as_ref()
+            .unwrap()
+            .lines
+            .iter()
+            .map(|s| s.text.to_string())
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
 }
 
 /// A text element that can be interacted with.

@@ -22,7 +22,6 @@ pub struct CopilotCompletionProvider {
     pending_cycling_refresh: Task<Result<()>>,
     copilot: Model<Copilot>,
     telemetry: Option<Arc<Telemetry>>,
-    should_allow_event_to_send: bool,
 }
 
 impl CopilotCompletionProvider {
@@ -37,7 +36,6 @@ impl CopilotCompletionProvider {
             pending_cycling_refresh: Task::ready(Ok(())),
             copilot,
             telemetry: None,
-            should_allow_event_to_send: false,
         }
     }
 
@@ -105,7 +103,6 @@ impl InlineCompletionProvider for CopilotCompletionProvider {
 
             this.update(&mut cx, |this, cx| {
                 if !completions.is_empty() {
-                    this.should_allow_event_to_send = true;
                     this.cycled = false;
                     this.pending_cycling_refresh = Task::ready(Ok(()));
                     this.completions.clear();
@@ -193,8 +190,8 @@ impl InlineCompletionProvider for CopilotCompletionProvider {
             self.copilot
                 .update(cx, |copilot, cx| copilot.accept_completion(completion, cx))
                 .detach_and_log_err(cx);
-            if let Some(telemetry) = self.telemetry.as_ref() {
-                if self.should_allow_event_to_send {
+            if self.active_completion().is_some() {
+                if let Some(telemetry) = self.telemetry.as_ref() {
                     telemetry.report_inline_completion_event(
                         Self::name().to_string(),
                         true,
@@ -203,11 +200,13 @@ impl InlineCompletionProvider for CopilotCompletionProvider {
                 }
             }
         }
-
-        self.should_allow_event_to_send = false;
     }
 
-    fn discard(&mut self, cx: &mut ModelContext<Self>) {
+    fn discard(
+        &mut self,
+        should_report_inline_completion_event: bool,
+        cx: &mut ModelContext<Self>,
+    ) {
         let settings = AllLanguageSettings::get_global(cx);
 
         let copilot_enabled = settings.inline_completions_enabled(None, None);
@@ -222,17 +221,17 @@ impl InlineCompletionProvider for CopilotCompletionProvider {
             })
             .detach_and_log_err(cx);
 
-        if let Some(telemetry) = self.telemetry.as_ref() {
-            if self.should_allow_event_to_send {
-                telemetry.report_inline_completion_event(
-                    Self::name().to_string(),
-                    false,
-                    self.file_extension.clone(),
-                );
+        if should_report_inline_completion_event {
+            if self.active_completion().is_some() {
+                if let Some(telemetry) = self.telemetry.as_ref() {
+                    telemetry.report_inline_completion_event(
+                        Self::name().to_string(),
+                        false,
+                        self.file_extension.clone(),
+                    );
+                }
             }
         }
-
-        self.should_allow_event_to_send = false;
     }
 
     fn active_completion_text<'a>(

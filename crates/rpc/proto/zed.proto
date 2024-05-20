@@ -490,6 +490,7 @@ message ValidateDevServerProjectRequest {
 message CreateDevServer {
     reserved 1;
     string name = 2;
+    optional string ssh_connection_string = 3;
 }
 
 message RegenerateDevServerToken {
@@ -1251,6 +1252,7 @@ message DevServer {
     uint64 dev_server_id = 2;
     string name = 3;
     DevServerStatus status = 4;
+    optional string ssh_connection_string = 5;
 }
 
 enum DevServerStatus {

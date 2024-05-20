@@ -440,7 +440,7 @@ impl AssistantChat {
                     Markdown::new(
                         text,
                         self.markdown_style.clone(),
-                        self.language_registry.clone(),
+                        Some(self.language_registry.clone()),
                         cx,
                     )
                 });
@@ -573,7 +573,7 @@ impl AssistantChat {
                                         Markdown::new(
                                             "".into(),
                                             this.markdown_style.clone(),
-                                            this.language_registry.clone(),
+                                            Some(this.language_registry.clone()),
                                             cx,
                                         )
                                     }),
@@ -667,7 +667,7 @@ impl AssistantChat {
                     Markdown::new(
                         "".into(),
                         self.markdown_style.clone(),
-                        self.language_registry.clone(),
+                        Some(self.language_registry.clone()),
                         cx,
                     )
                 }),
@@ -683,7 +683,7 @@ impl AssistantChat {
                     Markdown::new(
                         "".into(),
                         self.markdown_style.clone(),
-                        self.language_registry.clone(),
+                        Some(self.language_registry.clone()),
                         cx,
                     )
                 }),

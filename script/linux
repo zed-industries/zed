@@ -41,8 +41,11 @@ if [[ -n $dnf ]]; then
     libxkbcommon-x11-devel
     openssl-devel
     libzstd-devel
+    # Perl dependencies are needed for openssl-sys crate see https://docs.rs/openssl/latest/openssl/
     perl-FindBin
     perl-IPC-Cmd
+    perl-File-Compare
+    perl-File-Copy
     vulkan-loader
   )
 

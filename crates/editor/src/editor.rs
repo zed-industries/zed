@@ -302,6 +302,7 @@ pub enum SelectPhase {
     },
     BeginColumnar {
         position: DisplayPoint,
+        reset: bool,
         goal_column: u32,
     },
     Extend {
@@ -2041,6 +2042,7 @@ impl Editor {
         &mut self,
         local: bool,
         old_cursor_position: &Anchor,
+        show_completions: bool,
         cx: &mut ViewContext<Self>,
     ) {
         // Copy selections to primary selection buffer
@@ -2142,7 +2144,9 @@ impl Editor {
                     })
                     .detach();
 
-                    self.show_completions(&ShowCompletions, cx);
+                    if show_completions {
+                        self.show_completions(&ShowCompletions, cx);
+                    }
                 } else {
                     drop(context_menu);
                     self.hide_context_menu(cx);
@@ -2161,7 +2165,7 @@ impl Editor {
             self.refresh_code_actions(cx);
             self.refresh_document_highlights(cx);
             refresh_matching_bracket_highlights(self, cx);
-            self.discard_inline_completion(cx);
+            self.discard_inline_completion(false, cx);
             if self.git_blame_inline_enabled {
                 self.start_inline_blame_timer(cx);
             }
@@ -2183,6 +2187,16 @@ impl Editor {
         cx: &mut ViewContext<Self>,
         change: impl FnOnce(&mut MutableSelectionsCollection<'_>) -> R,
     ) -> R {
+        self.change_selections_inner(autoscroll, true, cx, change)
+    }
+
+    pub fn change_selections_inner<R>(
+        &mut self,
+        autoscroll: Option<Autoscroll>,
+        request_completions: bool,
+        cx: &mut ViewContext<Self>,
+        change: impl FnOnce(&mut MutableSelectionsCollection<'_>) -> R,
+    ) -> R {
         let old_cursor_position = self.selections.newest_anchor().head();
         self.push_to_selection_history();
 
@@ -2192,7 +2206,7 @@ impl Editor {
             if let Some(autoscroll) = autoscroll {
                 self.request_autoscroll(autoscroll, cx);
             }
-            self.selections_did_change(true, &old_cursor_position, cx);
+            self.selections_did_change(true, &old_cursor_position, request_completions, cx);
         }
 
         result
@@ -2264,7 +2278,8 @@ impl Editor {
             SelectPhase::BeginColumnar {
                 position,
                 goal_column,
-            } => self.begin_columnar_selection(position, goal_column, cx),
+                reset,
+            } => self.begin_columnar_selection(position, goal_column, reset, cx),
             SelectPhase::Extend {
                 position,
                 click_count,
@@ -2384,6 +2399,7 @@ impl Editor {
         &mut self,
         position: DisplayPoint,
         goal_column: u32,
+        reset: bool,
         cx: &mut ViewContext<Self>,
     ) {
         if !self.focus_handle.is_focused(cx) {
@@ -2391,16 +2407,33 @@ impl Editor {
         }
 
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
+
+        if reset {
+            let pointer_position = display_map
+                .buffer_snapshot
+                .anchor_before(position.to_point(&display_map));
+
+            self.change_selections(Some(Autoscroll::newest()), cx, |s| {
+                s.clear_disjoint();
+                s.set_pending_anchor_range(
+                    pointer_position..pointer_position,
+                    SelectMode::Character,
+                );
+            });
+        }
+
         let tail = self.selections.newest::<Point>(cx).tail();
         self.columnar_selection_tail = Some(display_map.buffer_snapshot.anchor_before(tail));
 
-        self.select_columns(
-            tail.to_display_point(&display_map),
-            position,
-            goal_column,
-            &display_map,
-            cx,
-        );
+        if !reset {
+            self.select_columns(
+                tail.to_display_point(&display_map),
+                position,
+                goal_column,
+                &display_map,
+                cx,
+            );
+        }
     }
 
     fn update_selection(
@@ -2566,7 +2599,7 @@ impl Editor {
 
     pub fn cancel(&mut self, _: &Cancel, cx: &mut ViewContext<Self>) {
         self.clear_expanded_diff_hunks(cx);
-        if self.dismiss_menus_and_popups(cx) {
+        if self.dismiss_menus_and_popups(true, cx) {
             return;
         }
 
@@ -2579,7 +2612,11 @@ impl Editor {
         cx.propagate();
     }
 
-    pub fn dismiss_menus_and_popups(&mut self, cx: &mut ViewContext<Self>) -> bool {
+    pub fn dismiss_menus_and_popups(
+        &mut self,
+        should_report_inline_completion_event: bool,
+        cx: &mut ViewContext<Self>,
+    ) -> bool {
         if self.take_rename(false, cx).is_some() {
             return true;
         }
@@ -2592,7 +2629,7 @@ impl Editor {
             return true;
         }
 
-        if self.discard_inline_completion(cx) {
+        if self.discard_inline_completion(should_report_inline_completion_event, cx) {
             return true;
         }
 
@@ -2848,7 +2885,9 @@ impl Editor {
 
             drop(snapshot);
             let had_active_inline_completion = this.has_active_inline_completion(cx);
-            this.change_selections(Some(Autoscroll::fit()), cx, |s| s.select(new_selections));
+            this.change_selections_inner(Some(Autoscroll::fit()), false, cx, |s| {
+                s.select(new_selections)
+            });
 
             if brace_inserted {
                 // If we inserted a brace while composing text (i.e. typing `"` on a
@@ -3704,7 +3743,7 @@ impl Editor {
                         let menu = menu.unwrap();
                         *context_menu = Some(ContextMenu::Completions(menu));
                         drop(context_menu);
-                        this.discard_inline_completion(cx);
+                        this.discard_inline_completion(false, cx);
                         cx.notify();
                     } else if this.completion_tasks.len() <= 1 {
                         // If there are no more completion tasks and the last menu was
@@ -3918,7 +3957,7 @@ impl Editor {
                     }
 
                     this.completion_tasks.clear();
-                    this.discard_inline_completion(cx);
+                    this.discard_inline_completion(false, cx);
                     let task_context = tasks.as_ref().zip(this.workspace.clone()).and_then(
                         |(tasks, (workspace, _))| {
                             let position = Point::new(buffer_row, tasks.1.column);
@@ -4055,7 +4094,7 @@ impl Editor {
         }
     }
 
-    async fn open_project_transaction(
+    pub async fn open_project_transaction(
         this: &WeakView<Editor>,
         workspace: WeakView<Workspace>,
         transaction: ProjectTransaction,
@@ -4313,7 +4352,7 @@ impl Editor {
         if !self.show_inline_completions
             || !provider.is_enabled(&buffer, cursor_buffer_position, cx)
         {
-            self.discard_inline_completion(cx);
+            self.discard_inline_completion(false, cx);
             return None;
         }
 
@@ -4448,9 +4487,13 @@ impl Editor {
         }
     }
 
-    fn discard_inline_completion(&mut self, cx: &mut ViewContext<Self>) -> bool {
+    fn discard_inline_completion(
+        &mut self,
+        should_report_inline_completion_event: bool,
+        cx: &mut ViewContext<Self>,
+    ) -> bool {
         if let Some(provider) = self.inline_completion_provider() {
-            provider.discard(cx);
+            provider.discard(should_report_inline_completion_event, cx);
         }
 
         self.take_active_inline_completion(cx).is_some()
@@ -4513,7 +4556,7 @@ impl Editor {
             }
         }
 
-        self.discard_inline_completion(cx);
+        self.discard_inline_completion(false, cx);
     }
 
     fn inline_completion_provider(&self) -> Option<Arc<dyn InlineCompletionProviderHandle>> {
@@ -9157,7 +9200,7 @@ impl Editor {
                 s.clear_pending();
             }
         });
-        self.selections_did_change(false, &old_cursor_position, cx);
+        self.selections_did_change(false, &old_cursor_position, true, cx);
     }
 
     fn push_to_selection_history(&mut self) {

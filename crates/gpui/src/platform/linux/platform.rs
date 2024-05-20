@@ -55,6 +55,9 @@ pub trait LinuxClient {
     fn displays(&self) -> Vec<Rc<dyn PlatformDisplay>>;
     fn primary_display(&self) -> Option<Rc<dyn PlatformDisplay>>;
     fn display(&self, id: DisplayId) -> Option<Rc<dyn PlatformDisplay>>;
+    fn can_open_windows(&self) -> anyhow::Result<()> {
+        Ok(())
+    }
     fn open_window(
         &self,
         handle: AnyWindowHandle,
@@ -130,6 +133,10 @@ impl<P: LinuxClient + 'static> Platform for P {
                 fun();
             }
         });
+    }
+
+    fn can_open_windows(&self) -> anyhow::Result<()> {
+        self.can_open_windows()
     }
 
     fn quit(&self) {
@@ -485,7 +492,7 @@ pub(super) fn open_uri_internal(uri: &str, activation_token: Option<&str>) {
         if let Some(token) = activation_token {
             command.env("XDG_ACTIVATION_TOKEN", token);
         }
-        match command.status() {
+        match command.spawn() {
             Ok(_) => return,
             Err(err) => last_err = Some(err),
         }

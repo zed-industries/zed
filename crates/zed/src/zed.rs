@@ -214,8 +214,24 @@ pub fn initialize_workspace(app_state: Arc<AppState>, cx: &mut AppContext) {
             workspace_handle.update(&mut cx, |workspace, cx| {
                 workspace.add_panel(assistant_panel, cx);
                 workspace.add_panel(project_panel, cx);
-                if !workspace.project().read(cx).is_remote() {
-                    workspace.add_panel(terminal_panel, cx);
+                {
+                    let project = workspace.project().read(cx);
+                    if project.is_local()
+                        || project
+                            .dev_server_project_id()
+                            .and_then(|dev_server_project_id| {
+                                Some(
+                                    dev_server_projects::Store::global(cx)
+                                        .read(cx)
+                                        .dev_server_for_project(dev_server_project_id)?
+                                        .ssh_connection_string
+                                        .is_some(),
+                                )
+                            })
+                            .unwrap_or(false)
+                    {
+                        workspace.add_panel(terminal_panel, cx);
+                    }
                 }
                 workspace.add_panel(channels_panel, cx);
                 workspace.add_panel(chat_panel, cx);
