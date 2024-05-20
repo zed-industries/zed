@@ -758,7 +758,7 @@ impl Platform for MacPlatform {
         }
     }
 
-    fn set_dock_menu<'a>(&self, menu: Vec<MenuItem<'a>>, keymap: &Keymap) {
+    fn set_dock_menu(&self, menu: Vec<MenuItem>, keymap: &Keymap) {
         unsafe {
             let app: id = msg_send![APP_CLASS, sharedApplication];
             let mut state = self.0.lock();
