@@ -11,8 +11,8 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    px, AsyncAppContext, Bounds, DevicePixels, Hsla, Pixels, PlatformTextSystem, Point, Result,
-    SharedString, Size, StrikethroughStyle, UnderlineStyle,
+    px, Bounds, DevicePixels, Hsla, Pixels, PlatformTextSystem, Point, Result, SharedString, Size,
+    StrikethroughStyle, UnderlineStyle,
 };
 use anyhow::anyhow;
 use collections::{BTreeSet, FxHashMap};
