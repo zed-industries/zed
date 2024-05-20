@@ -414,6 +414,7 @@ fn main() {
         client::init_settings(cx);
         let client = Client::production(cx);
         cx.update_http_client(client.http_client().clone());
+        settings::set_font_fallbacks(cx.text_system(), cx);
         let mut languages =
             LanguageRegistry::new(login_shell_env_loaded, cx.background_executor().clone());
         languages.set_language_server_download_dir(paths::languages_dir().clone());
