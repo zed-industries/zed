@@ -9970,6 +9970,10 @@ impl Editor {
         )
     }
 
+    pub fn clear_search_within_ranges(&mut self, cx: &mut ViewContext<Self>) {
+        self.clear_background_highlights::<SearchWithinRange>(cx);
+    }
+
     pub fn highlight_background<T: 'static>(
         &mut self,
         ranges: &[Range<Anchor>],
