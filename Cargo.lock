@@ -348,6 +348,7 @@ dependencies = [
  "file_icons",
  "fs",
  "futures 0.3.28",
+ "fuzzy",
  "gpui",
  "http 0.1.0",
  "indoc",

@@ -5,6 +5,7 @@ use crate::{
     prompt_library::{PromptLibrary, PromptManager},
     prompts::generate_content_prompt,
     search::*,
+    slash_command::SlashCommandCompletionProvider,
     ApplyEdit, Assist, CompletionProvider, CycleMessageRole, InlineAssist, InsertActivePrompt,
     LanguageModel, LanguageModelRequest, LanguageModelRequestMessage, MessageId, MessageMetadata,
     MessageStatus, QuoteSelection, ResetKey, Role, SavedConversation, SavedConversationMetadata,
@@ -2412,11 +2413,15 @@ impl ConversationEditor {
         workspace: View<Workspace>,
         cx: &mut ViewContext<Self>,
     ) -> Self {
+        let completion_provider =
+            SlashCommandCompletionProvider::new(workspace.read(cx).project().clone(), cx);
+
         let editor = cx.new_view(|cx| {
             let mut editor = Editor::for_buffer(conversation.read(cx).buffer.clone(), None, cx);
             editor.set_soft_wrap_mode(SoftWrap::EditorWidth, cx);
             editor.set_show_gutter(false, cx);
             editor.set_show_wrap_guides(false, cx);
+            editor.set_completion_provider(Box::new(completion_provider));
             editor
         });
 

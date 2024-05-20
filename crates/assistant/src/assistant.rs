@@ -7,6 +7,7 @@ mod prompt_library;
 mod prompts;
 mod saved_conversation;
 mod search;
+mod slash_command;
 mod streaming_diff;
 
 use ambient_context::AmbientContextSnapshot;
