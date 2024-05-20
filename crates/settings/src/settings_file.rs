@@ -1,4 +1,4 @@
-use crate::{settings_store::SettingsStore, Settings};
+use crate::{settings_store::SettingsStore, FontFallbacks, Settings};
 use fs::Fs;
 use futures::{channel::mpsc, StreamExt};
 use gpui::{AppContext, BackgroundExecutor, ReadGlobal, UpdateGlobal};
@@ -87,7 +87,16 @@ pub fn handle_settings_file_changes(
                 break; // App dropped
             }
         }
-        // text_system.set_fallbacks(font_families, is_ui_font)
+        cx.read_global::<SettingsStore, ()>(|_, cx| {
+            let fallbacks = FontFallbacks::get_global(cx);
+            text_system
+                .set_fallbacks(&fallbacks.ui_font_family, true)
+                .log_err();
+            text_system
+                .set_fallbacks(&fallbacks.buffer_font_family, false)
+                .log_err();
+        })
+        .log_err();
     })
     .detach();
 }

@@ -97,11 +97,9 @@ impl TextSystem {
     }
 
     /// TODO:
-    pub fn set_fallbacks(&self, cx: &AsyncAppContext) -> Result<()> {
-        // let theme_settins = ThemeSetting
-        // self.platform_text_system
-        //     .set_fallbacks(font_families, is_ui_font)
-        Ok(())
+    pub fn set_fallbacks(&self, fallbacks: &[String], is_ui_font: bool) -> Result<()> {
+        self.platform_text_system
+            .set_fallbacks(fallbacks, is_ui_font)
     }
 
     /// Get the FontId for the configure font family and style.
