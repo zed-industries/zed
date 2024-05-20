@@ -6,8 +6,10 @@ mod completion_provider;
 mod prompt_library;
 mod prompts;
 mod saved_conversation;
+mod search;
 mod streaming_diff;
 
+use ambient_context::AmbientContextSnapshot;
 pub use assistant_panel::AssistantPanel;
 use assistant_settings::{AnthropicModel, AssistantSettings, OpenAiModel, ZedDotDevModel};
 use client::{proto, Client};
@@ -35,6 +37,7 @@ actions!(
         InsertActivePrompt,
         ToggleIncludeConversation,
         ToggleHistory,
+        ApplyEdit
     ]
 );
 
@@ -184,6 +187,9 @@ pub struct LanguageModelChoiceDelta {
 struct MessageMetadata {
     role: Role,
     status: MessageStatus,
+    // todo!("delete this")
+    #[serde(skip)]
+    ambient_context: AmbientContextSnapshot,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]

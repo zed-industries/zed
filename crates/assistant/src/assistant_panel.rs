@@ -1,14 +1,14 @@
-use crate::ambient_context::{AmbientContext, ContextUpdated, RecentBuffer};
-use crate::InsertActivePrompt;
 use crate::{
+    ambient_context::*,
     assistant_settings::{AssistantDockPosition, AssistantSettings, ZedDotDevModel},
     codegen::{self, Codegen, CodegenKind},
     prompt_library::{PromptLibrary, PromptManager},
     prompts::generate_content_prompt,
-    Assist, CompletionProvider, CycleMessageRole, InlineAssist, LanguageModel,
-    LanguageModelRequest, LanguageModelRequestMessage, MessageId, MessageMetadata, MessageStatus,
-    QuoteSelection, ResetKey, Role, SavedConversation, SavedConversationMetadata, SavedMessage,
-    Split, ToggleFocus, ToggleHistory, ToggleIncludeConversation,
+    search::*,
+    ApplyEdit, Assist, CompletionProvider, CycleMessageRole, InlineAssist, InsertActivePrompt,
+    LanguageModel, LanguageModelRequest, LanguageModelRequestMessage, MessageId, MessageMetadata,
+    MessageStatus, QuoteSelection, ResetKey, Role, SavedConversation, SavedConversationMetadata,
+    SavedMessage, Split, ToggleFocus, ToggleHistory, ToggleIncludeConversation,
 };
 use anyhow::{anyhow, Result};
 use client::telemetry::Telemetry;
@@ -30,17 +30,20 @@ use gpui::{
     AsyncWindowContext, AvailableSpace, ClipboardItem, Context, Entity, EventEmitter, FocusHandle,
     FocusableView, FontStyle, FontWeight, HighlightStyle, InteractiveElement, IntoElement, Model,
     ModelContext, ParentElement, Pixels, Render, SharedString, StatefulInteractiveElement, Styled,
-    Subscription, Task, TextStyle, UniformListScrollHandle, UpdateGlobal, View, ViewContext,
-    VisualContext, WeakModel, WeakView, WhiteSpace, WindowContext,
+    Subscription, Task, TextStyle, UniformListScrollHandle, View, ViewContext, VisualContext,
+    WeakModel, WeakView, WhiteSpace, WindowContext,
 };
-use language::{language_settings::SoftWrap, Buffer, LanguageRegistry, Point, ToOffset as _};
+use language::{
+    language_settings::SoftWrap, AutoindentMode, Buffer, BufferSnapshot, LanguageRegistry,
+    OffsetRangeExt as _, Point, ToOffset as _,
+};
 use multi_buffer::MultiBufferRow;
 use parking_lot::Mutex;
-use project::Project;
+use project::{Project, ProjectTransaction};
 use search::{buffer_search::DivRegistrar, BufferSearchBar};
 use settings::Settings;
 use std::{
-    cmp,
+    cmp::{self, Ordering},
     fmt::Write,
     iter,
     ops::Range,
@@ -252,7 +255,7 @@ impl AssistantPanel {
             || prev_settings_version != CompletionProvider::global(cx).settings_version()
         {
             self.authentication_prompt =
-                Some(CompletionProvider::update_global(cx, |provider, cx| {
+                Some(cx.update_global::<CompletionProvider, _>(|provider, cx| {
                     provider.authentication_prompt(cx)
                 }));
         }
@@ -1122,7 +1125,7 @@ impl AssistantPanel {
     }
 
     fn authenticate(&mut self, cx: &mut ViewContext<Self>) -> Task<Result<()>> {
-        CompletionProvider::update_global(cx, |provider, cx| provider.authenticate(cx))
+        cx.update_global::<CompletionProvider, _>(|provider, cx| provider.authenticate(cx))
     }
 
     fn render_signed_in(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
@@ -1380,6 +1383,7 @@ impl FocusableView for AssistantPanel {
 enum ConversationEvent {
     MessagesEdited,
     SummaryChanged,
+    EditSuggestionsChanged,
     StreamedCompletion,
 }
 
@@ -1393,6 +1397,7 @@ pub struct Conversation {
     id: Option<String>,
     buffer: Model<Buffer>,
     pub(crate) ambient_context: AmbientContext,
+    edit_suggestions: Vec<EditSuggestion>,
     message_anchors: Vec<MessageAnchor>,
     messages_metadata: HashMap<MessageId, MessageMetadata>,
     next_message_id: MessageId,
@@ -1403,10 +1408,12 @@ pub struct Conversation {
     model: LanguageModel,
     token_count: Option<usize>,
     pending_token_count: Task<Option<()>>,
+    pending_edit_suggestion_parse: Option<Task<()>>,
     pending_save: Task<Result<()>>,
     path: Option<PathBuf>,
     _subscriptions: Vec<Subscription>,
     telemetry: Option<Arc<Telemetry>>,
+    language_registry: Arc<LanguageRegistry>,
 }
 
 impl EventEmitter<ConversationEvent> for Conversation {}
@@ -1418,18 +1425,9 @@ impl Conversation {
         telemetry: Option<Arc<Telemetry>>,
         cx: &mut ModelContext<Self>,
     ) -> Self {
-        let markdown = language_registry.language_for_name("Markdown");
         let buffer = cx.new_model(|cx| {
             let mut buffer = Buffer::local("", cx);
-            buffer.set_language_registry(language_registry);
-            cx.spawn(|buffer, mut cx| async move {
-                let markdown = markdown.await?;
-                buffer.update(&mut cx, |buffer: &mut Buffer, cx| {
-                    buffer.set_language(Some(markdown), cx)
-                })?;
-                anyhow::Ok(())
-            })
-            .detach_and_log_err(cx);
+            buffer.set_language_registry(language_registry.clone());
             buffer
         });
 
@@ -1439,18 +1437,21 @@ impl Conversation {
             messages_metadata: Default::default(),
             next_message_id: Default::default(),
             ambient_context: AmbientContext::default(),
+            edit_suggestions: Vec::new(),
             summary: None,
             pending_summary: Task::ready(None),
             completion_count: Default::default(),
             pending_completions: Default::default(),
             token_count: None,
             pending_token_count: Task::ready(None),
+            pending_edit_suggestion_parse: None,
             model,
             _subscriptions: vec![cx.subscribe(&buffer, Self::handle_buffer_event)],
             pending_save: Task::ready(Ok(())),
             path: None,
             buffer,
             telemetry,
+            language_registry,
         };
 
         let message = MessageAnchor {
@@ -1463,9 +1464,11 @@ impl Conversation {
             MessageMetadata {
                 role: Role::User,
                 status: MessageStatus::Done,
+                ambient_context: AmbientContextSnapshot::default(),
             },
         );
 
+        this.set_language(cx);
         this.count_remaining_tokens(cx);
         this
     }
@@ -1517,7 +1520,7 @@ impl Conversation {
                 });
                 next_message_id = cmp::max(next_message_id, MessageId(message.id.0 + 1));
             }
-            buffer.set_language_registry(language_registry);
+            buffer.set_language_registry(language_registry.clone());
             cx.spawn(|buffer, mut cx| async move {
                 let markdown = markdown.await?;
                 buffer.update(&mut cx, |buffer: &mut Buffer, cx| {
@@ -1529,13 +1532,14 @@ impl Conversation {
             buffer
         })?;
 
-        cx.new_model(|cx| {
+        cx.new_model(move |cx| {
             let mut this = Self {
                 id,
                 message_anchors,
                 messages_metadata: saved_conversation.message_metadata,
                 next_message_id,
                 ambient_context: AmbientContext::default(),
+                edit_suggestions: Vec::new(),
                 summary: Some(Summary {
                     text: saved_conversation.summary,
                     done: true,
@@ -1544,6 +1548,7 @@ impl Conversation {
                 completion_count: Default::default(),
                 pending_completions: Default::default(),
                 token_count: None,
+                pending_edit_suggestion_parse: None,
                 pending_token_count: Task::ready(None),
                 model,
                 _subscriptions: vec![cx.subscribe(&buffer, Self::handle_buffer_event)],
@@ -1551,10 +1556,25 @@ impl Conversation {
                 path: Some(path),
                 buffer,
                 telemetry,
+                language_registry,
             };
+            this.set_language(cx);
+            this.reparse_edit_suggestions(cx);
             this.count_remaining_tokens(cx);
             this
         })
+    }
+
+    fn set_language(&mut self, cx: &mut ModelContext<Self>) {
+        let markdown = self.language_registry.language_for_name("Markdown");
+        cx.spawn(|this, mut cx| async move {
+            let markdown = markdown.await?;
+            this.update(&mut cx, |this, cx| {
+                this.buffer
+                    .update(cx, |buffer, cx| buffer.set_language(Some(markdown), cx));
+            })
+        })
+        .detach_and_log_err(cx);
     }
 
     fn toggle_recent_buffers(&mut self, cx: &mut ModelContext<Self>) {
@@ -1619,6 +1639,7 @@ impl Conversation {
     ) {
         if *event == language::Event::Edited {
             self.count_remaining_tokens(cx);
+            self.reparse_edit_suggestions(cx);
             cx.emit(ConversationEvent::MessagesEdited);
         }
     }
@@ -1643,6 +1664,65 @@ impl Conversation {
             }
             .log_err()
         });
+    }
+
+    fn reparse_edit_suggestions(&mut self, cx: &mut ModelContext<Self>) {
+        self.pending_edit_suggestion_parse = Some(cx.spawn(|this, mut cx| async move {
+            cx.background_executor()
+                .timer(Duration::from_millis(200))
+                .await;
+
+            this.update(&mut cx, |this, cx| {
+                this.reparse_edit_suggestions_in_range(0..this.buffer.read(cx).len(), cx);
+            })
+            .ok();
+        }));
+    }
+
+    fn reparse_edit_suggestions_in_range(
+        &mut self,
+        range: Range<usize>,
+        cx: &mut ModelContext<Self>,
+    ) {
+        self.buffer.update(cx, |buffer, _| {
+            let range_start = buffer.anchor_before(range.start);
+            let range_end = buffer.anchor_after(range.end);
+            let start_ix = self
+                .edit_suggestions
+                .binary_search_by(|probe| {
+                    probe
+                        .source_range
+                        .end
+                        .cmp(&range_start, buffer)
+                        .then(Ordering::Greater)
+                })
+                .unwrap_err();
+            let end_ix = self
+                .edit_suggestions
+                .binary_search_by(|probe| {
+                    probe
+                        .source_range
+                        .start
+                        .cmp(&range_end, buffer)
+                        .then(Ordering::Less)
+                })
+                .unwrap_err();
+
+            let mut new_edit_suggestions = Vec::new();
+            let mut message_lines = buffer.as_rope().chunks_in_range(range).lines();
+            while let Some(suggestion) = parse_next_edit_suggestion(&mut message_lines) {
+                let start_anchor = buffer.anchor_after(suggestion.outer_range.start);
+                let end_anchor = buffer.anchor_before(suggestion.outer_range.end);
+                new_edit_suggestions.push(EditSuggestion {
+                    source_range: start_anchor..end_anchor,
+                    full_path: suggestion.path,
+                });
+            }
+            self.edit_suggestions
+                .splice(start_ix..end_ix, new_edit_suggestions);
+        });
+        cx.emit(ConversationEvent::EditSuggestionsChanged);
+        cx.notify();
     }
 
     fn remaining_tokens(&self) -> Option<isize> {
@@ -1733,15 +1813,26 @@ impl Conversation {
                                     .message_anchors
                                     .iter()
                                     .position(|message| message.id == assistant_message_id)?;
-                                this.buffer.update(cx, |buffer, cx| {
-                                    let offset = this.message_anchors[message_ix + 1..]
+                                let message_range = this.buffer.update(cx, |buffer, cx| {
+                                    let message_start_offset =
+                                        this.message_anchors[message_ix].start.to_offset(buffer);
+                                    let message_old_end_offset = this.message_anchors
+                                        [message_ix + 1..]
                                         .iter()
                                         .find(|message| message.start.is_valid(buffer))
                                         .map_or(buffer.len(), |message| {
                                             message.start.to_offset(buffer).saturating_sub(1)
                                         });
-                                    buffer.edit([(offset..offset, text)], None, cx);
+                                    let message_new_end_offset =
+                                        message_old_end_offset + text.len();
+                                    buffer.edit(
+                                        [(message_old_end_offset..message_old_end_offset, text)],
+                                        None,
+                                        cx,
+                                    );
+                                    message_start_offset..message_new_end_offset
                                 });
+                                this.reparse_edit_suggestions_in_range(message_range, cx);
                                 cx.emit(ConversationEvent::StreamedCompletion);
 
                                 Some(())
@@ -1801,11 +1892,17 @@ impl Conversation {
     }
 
     fn to_completion_request(&self, cx: &mut ModelContext<Conversation>) -> LanguageModelRequest {
+        let edits_system_prompt = LanguageModelRequestMessage {
+            role: Role::System,
+            content: include_str!("./system_prompts/edits.md").to_string(),
+        };
+
         let recent_buffers_context = self.ambient_context.recent_buffers.to_message();
         let current_project_context = self.ambient_context.current_project.to_message();
 
-        let messages = recent_buffers_context
+        let messages = Some(edits_system_prompt)
             .into_iter()
+            .chain(recent_buffers_context)
             .chain(current_project_context)
             .chain(
                 self.messages(cx)
@@ -1870,8 +1967,14 @@ impl Conversation {
             };
             self.message_anchors
                 .insert(next_message_ix, message.clone());
-            self.messages_metadata
-                .insert(message.id, MessageMetadata { role, status });
+            self.messages_metadata.insert(
+                message.id,
+                MessageMetadata {
+                    role,
+                    status,
+                    ambient_context: self.ambient_context.snapshot(),
+                },
+            );
             cx.emit(ConversationEvent::MessagesEdited);
             Some(message)
         } else {
@@ -1929,6 +2032,7 @@ impl Conversation {
                 MessageMetadata {
                     role,
                     status: MessageStatus::Done,
+                    ambient_context: message.ambient_context.clone(),
                 },
             );
 
@@ -1973,6 +2077,7 @@ impl Conversation {
                         MessageMetadata {
                             role,
                             status: MessageStatus::Done,
+                            ambient_context: message.ambient_context,
                         },
                     );
                     (Some(selection), Some(suffix))
@@ -2104,6 +2209,7 @@ impl Conversation {
                     anchor: message_anchor.start,
                     role: metadata.role,
                     status: metadata.status.clone(),
+                    ambient_context: metadata.ambient_context.clone(),
                 });
             }
             None
@@ -2165,6 +2271,99 @@ impl Conversation {
 
             Ok(())
         });
+    }
+}
+
+#[derive(Debug)]
+enum EditParsingState {
+    None,
+    InOldText {
+        path: PathBuf,
+        start_offset: usize,
+        old_text_start_offset: usize,
+    },
+    InNewText {
+        path: PathBuf,
+        start_offset: usize,
+        old_text_range: Range<usize>,
+        new_text_start_offset: usize,
+    },
+}
+
+#[derive(Clone, Debug, PartialEq)]
+struct EditSuggestion {
+    source_range: Range<language::Anchor>,
+    full_path: PathBuf,
+}
+
+struct ParsedEditSuggestion {
+    path: PathBuf,
+    outer_range: Range<usize>,
+    old_text_range: Range<usize>,
+    new_text_range: Range<usize>,
+}
+
+fn parse_next_edit_suggestion(lines: &mut rope::Lines) -> Option<ParsedEditSuggestion> {
+    let mut state = EditParsingState::None;
+    loop {
+        let offset = lines.offset();
+        let message_line = lines.next()?;
+        match state {
+            EditParsingState::None => {
+                if let Some(rest) = message_line.strip_prefix("```edit ") {
+                    let path = rest.trim();
+                    if !path.is_empty() {
+                        state = EditParsingState::InOldText {
+                            path: PathBuf::from(path),
+                            start_offset: offset,
+                            old_text_start_offset: lines.offset(),
+                        };
+                    }
+                }
+            }
+            EditParsingState::InOldText {
+                path,
+                start_offset,
+                old_text_start_offset,
+            } => {
+                if message_line == "---" {
+                    state = EditParsingState::InNewText {
+                        path,
+                        start_offset,
+                        old_text_range: old_text_start_offset..offset,
+                        new_text_start_offset: lines.offset(),
+                    };
+                } else {
+                    state = EditParsingState::InOldText {
+                        path,
+                        start_offset,
+                        old_text_start_offset,
+                    };
+                }
+            }
+            EditParsingState::InNewText {
+                path,
+                start_offset,
+                old_text_range,
+                new_text_start_offset,
+            } => {
+                if message_line == "```" {
+                    return Some(ParsedEditSuggestion {
+                        path,
+                        outer_range: start_offset..offset + "```".len(),
+                        old_text_range,
+                        new_text_range: new_text_start_offset..offset,
+                    });
+                } else {
+                    state = EditParsingState::InNewText {
+                        path,
+                        start_offset,
+                        old_text_range,
+                        new_text_start_offset,
+                    };
+                }
+            }
+        }
     }
 }
 
@@ -2315,6 +2514,40 @@ impl ConversationEditor {
                 self.update_message_headers(cx);
                 self.conversation.update(cx, |conversation, cx| {
                     conversation.save(Some(Duration::from_millis(500)), self.fs.clone(), cx);
+                });
+            }
+            ConversationEvent::EditSuggestionsChanged => {
+                self.editor.update(cx, |editor, cx| {
+                    let buffer = editor.buffer().read(cx).snapshot(cx);
+                    let excerpt_id = *buffer.as_singleton().unwrap().0;
+                    let conversation = self.conversation.read(cx);
+                    let highlighted_rows = conversation
+                        .edit_suggestions
+                        .iter()
+                        .map(|suggestion| {
+                            let start = buffer
+                                .anchor_in_excerpt(excerpt_id, suggestion.source_range.start)
+                                .unwrap();
+                            let end = buffer
+                                .anchor_in_excerpt(excerpt_id, suggestion.source_range.end)
+                                .unwrap();
+                            start..=end
+                        })
+                        .collect::<Vec<_>>();
+
+                    editor.clear_row_highlights::<EditSuggestion>();
+                    for range in highlighted_rows {
+                        editor.highlight_rows::<EditSuggestion>(
+                            range,
+                            Some(
+                                cx.theme()
+                                    .colors()
+                                    .editor_document_highlight_read_background,
+                            ),
+                            false,
+                            cx,
+                        );
+                    }
                 });
             }
             ConversationEvent::SummaryChanged => {
@@ -2737,6 +2970,159 @@ impl ConversationEditor {
         });
     }
 
+    fn apply_edit(&mut self, _: &ApplyEdit, cx: &mut ViewContext<Self>) {
+        struct Edit {
+            old_text: String,
+            new_text: String,
+        }
+
+        let conversation = self.conversation.read(cx);
+        let conversation_buffer = conversation.buffer.read(cx);
+        let conversation_buffer_snapshot = conversation_buffer.snapshot();
+
+        let selections = self.editor.read(cx).selections.disjoint_anchors();
+        let mut selections = selections.iter().peekable();
+        let selected_suggestions = conversation.edit_suggestions.iter().filter(|suggestion| {
+            while let Some(selection) = selections.peek() {
+                if selection
+                    .end
+                    .text_anchor
+                    .cmp(&suggestion.source_range.start, conversation_buffer)
+                    .is_lt()
+                {
+                    selections.next();
+                    continue;
+                }
+                if selection
+                    .start
+                    .text_anchor
+                    .cmp(&suggestion.source_range.end, conversation_buffer)
+                    .is_gt()
+                {
+                    break;
+                }
+                return true;
+            }
+            false
+        });
+
+        let mut suggestions_by_buffer =
+            HashMap::<Model<Buffer>, (BufferSnapshot, Vec<Edit>)>::default();
+        for suggestion in selected_suggestions {
+            let offset = suggestion.source_range.start.to_offset(conversation_buffer);
+            if let Some(message) = conversation.message_for_offset(offset, cx) {
+                if let Some(buffer) = message
+                    .ambient_context
+                    .recent_buffers
+                    .source_buffers
+                    .iter()
+                    .find(|source_buffer| {
+                        source_buffer.full_path.as_ref() == Some(&suggestion.full_path)
+                    })
+                {
+                    if let Some(buffer) = buffer.model.upgrade() {
+                        let (_, edits) = suggestions_by_buffer
+                            .entry(buffer.clone())
+                            .or_insert_with(|| (buffer.read(cx).snapshot(), Vec::new()));
+
+                        let mut lines = conversation_buffer_snapshot
+                            .as_rope()
+                            .chunks_in_range(
+                                suggestion
+                                    .source_range
+                                    .to_offset(&conversation_buffer_snapshot),
+                            )
+                            .lines();
+                        if let Some(suggestion) = parse_next_edit_suggestion(&mut lines) {
+                            let old_text = conversation_buffer_snapshot
+                                .text_for_range(suggestion.old_text_range)
+                                .collect();
+                            let new_text = conversation_buffer_snapshot
+                                .text_for_range(suggestion.new_text_range)
+                                .collect();
+                            edits.push(Edit { old_text, new_text });
+                        }
+                    }
+                }
+            }
+        }
+
+        cx.spawn(|this, mut cx| async move {
+            let edits_by_buffer = cx
+                .background_executor()
+                .spawn(async move {
+                    let mut result = HashMap::default();
+                    for (buffer, (snapshot, suggestions)) in suggestions_by_buffer {
+                        let edits =
+                            result
+                                .entry(buffer)
+                                .or_insert(Vec::<(Range<language::Anchor>, _)>::new());
+                        for suggestion in suggestions {
+                            let ranges =
+                                fuzzy_search_lines(snapshot.as_rope(), &suggestion.old_text);
+                            if let Some(range) = ranges.first() {
+                                let edit_start = snapshot.anchor_after(range.start);
+                                let edit_end = snapshot.anchor_before(range.end);
+                                if let Err(ix) = edits.binary_search_by(|(range, _)| {
+                                    range.start.cmp(&edit_start, &snapshot)
+                                }) {
+                                    edits.insert(
+                                        ix,
+                                        (edit_start..edit_end, suggestion.new_text.clone()),
+                                    );
+                                }
+                            } else {
+                                log::info!(
+                                    "assistant edit did not match any text in buffer {:?}",
+                                    &suggestion.old_text
+                                );
+                            }
+                        }
+                    }
+                    result
+                })
+                .await;
+
+            let mut project_transaction = ProjectTransaction::default();
+            let (editor, workspace, title) = this.update(&mut cx, |this, cx| {
+                for (buffer_handle, edits) in edits_by_buffer {
+                    buffer_handle.update(cx, |buffer, cx| {
+                        buffer.start_transaction();
+                        buffer.edit(
+                            edits,
+                            Some(AutoindentMode::Block {
+                                original_indent_columns: Vec::new(),
+                            }),
+                            cx,
+                        );
+                        buffer.end_transaction(cx);
+                        if let Some(transaction) = buffer.finalize_last_transaction() {
+                            project_transaction
+                                .0
+                                .insert(buffer_handle.clone(), transaction.clone());
+                        }
+                    });
+                }
+
+                (
+                    this.editor.downgrade(),
+                    this.workspace.clone(),
+                    this.title(cx),
+                )
+            })?;
+
+            Editor::open_project_transaction(
+                &editor,
+                workspace,
+                project_transaction,
+                format!("Edits from {}", title),
+                cx,
+            )
+            .await
+        })
+        .detach_and_log_err(cx);
+    }
+
     fn save(&mut self, _: &Save, cx: &mut ViewContext<Self>) {
         self.conversation.update(cx, |conversation, cx| {
             conversation.save(None, self.fs.clone(), cx)
@@ -2765,6 +3151,7 @@ impl Render for ConversationEditor {
             .capture_action(cx.listener(ConversationEditor::cycle_message_role))
             .on_action(cx.listener(ConversationEditor::assist))
             .on_action(cx.listener(ConversationEditor::split))
+            .on_action(cx.listener(ConversationEditor::apply_edit))
             .size_full()
             .v_flex()
             .child(
@@ -2797,6 +3184,7 @@ pub struct Message {
     anchor: language::Anchor,
     role: Role,
     status: MessageStatus,
+    ambient_context: AmbientContextSnapshot,
 }
 
 impl Message {
@@ -3106,10 +3494,14 @@ fn merge_ranges(ranges: &mut Vec<Range<Anchor>>, buffer: &MultiBufferSnapshot) {
 
 #[cfg(test)]
 mod tests {
+    use std::path::Path;
+
     use super::*;
     use crate::{FakeCompletionProvider, MessageId};
     use gpui::{AppContext, TestAppContext};
+    use rope::Rope;
     use settings::SettingsStore;
+    use unindent::Unindent;
 
     #[gpui::test]
     fn test_inserting_and_removing_messages(cx: &mut AppContext) {
@@ -3426,6 +3818,76 @@ mod tests {
                 .map(|message| message.id)
                 .collect()
         }
+    }
+
+    #[test]
+    fn test_parse_next_edit_suggestion() {
+        let text = "
+            some output:
+
+            ```edit src/foo.rs
+                let a = 1;
+                let b = 2;
+            ---
+                let w = 1;
+                let x = 2;
+                let y = 3;
+                let z = 4;
+            ```
+
+            some more output:
+
+            ```edit src/foo.rs
+                let c = 1;
+            ---
+            ```
+
+            and the conclusion.
+        "
+        .unindent();
+
+        let rope = Rope::from(text.as_str());
+        let mut lines = rope.chunks().lines();
+        let mut suggestions = vec![];
+        while let Some(suggestion) = parse_next_edit_suggestion(&mut lines) {
+            suggestions.push((
+                suggestion.path.clone(),
+                text[suggestion.old_text_range].to_string(),
+                text[suggestion.new_text_range].to_string(),
+            ));
+        }
+
+        assert_eq!(
+            suggestions,
+            vec![
+                (
+                    Path::new("src/foo.rs").into(),
+                    [
+                        "    let a = 1;", //
+                        "    let b = 2;",
+                        "",
+                    ]
+                    .join("\n"),
+                    [
+                        "    let w = 1;",
+                        "    let x = 2;",
+                        "    let y = 3;",
+                        "    let z = 4;",
+                        "",
+                    ]
+                    .join("\n"),
+                ),
+                (
+                    Path::new("src/foo.rs").into(),
+                    [
+                        "    let c = 1;", //
+                        "",
+                    ]
+                    .join("\n"),
+                    String::new(),
+                )
+            ]
+        );
     }
 
     #[gpui::test]
