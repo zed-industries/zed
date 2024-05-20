@@ -5,8 +5,8 @@ use editor::{
     Editor,
 };
 use futures::{channel::mpsc, SinkExt as _, StreamExt as _};
-use gpui::View;
-use gpui::{actions, AppContext, Context, Global, Model};
+use gpui::{actions, AppContext, Context, EntityId, Global, Model};
+use gpui::{Entity, View};
 use language::Point;
 use outputs::ExecutionView;
 use runtimelib::{JupyterMessage, JupyterMessageContent};
@@ -51,17 +51,20 @@ struct ExecutionRequest {
     response_sender: mpsc::UnboundedSender<ExecutionUpdate>,
 }
 
-pub struct RuntimeManager {
+pub struct Runtime {
     execution_request_tx: mpsc::UnboundedSender<ExecutionRequest>,
     _runtime_handle: std::thread::JoinHandle<()>,
 }
 
-// For now, we're going to connect to a running kernel that is already running
-// static HARDCODED_KERNEL: &str =
-// "/Users/kylekelley/Library/Jupyter/runtime/kernel-1bd7cb84-018f-4eea-a7de-55c637581c3e.json";
+pub struct RuntimeManager {
+    runtimes: HashMap<EntityId, Runtime>,
+}
 
-static HARDCODED_KERNEL: &str =
-    "/Users/kylekelley/Library/Jupyter/runtime/kernel-af08b239-ed3a-43ec-8eaa-431f7beef959.json";
+static HARDCODED_DENO_KERNEL: &str =
+    "/Users/kylekelley/Library/Jupyter/runtime/kernel-c4579ffe-82a7-4a82-bf70-41af60dc39ec.json";
+
+static HARDCODED_PYTHON_KERNEL: &str =
+    "/Users/kylekelley/Library/Jupyter/runtime/kernel-890afee2-2367-4dc2-b6f6-1dede4493f82.json";
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 struct ExecutionId(String);
@@ -163,7 +166,24 @@ impl DocumentClient {
 
 impl RuntimeManager {
     pub fn new(_cx: &mut AppContext) -> Self {
+        Self {
+            runtimes: Default::default(),
+        }
+    }
+
+    pub fn spawn_kernel(
+        &mut self,
+        kernel_path: &str,
+        entity_id: EntityId,
+    ) -> Option<mpsc::UnboundedSender<ExecutionRequest>> {
+        let maybe_runtime = self.runtimes.get(&entity_id);
+        if let Some(runtime) = maybe_runtime {
+            return Some(runtime.execution_request_tx.clone());
+        }
+
         let (execution_request_tx, execution_request_rx) = mpsc::unbounded::<ExecutionRequest>();
+
+        let kernel_path = std::path::PathBuf::from(kernel_path);
 
         let _runtime_handle = std::thread::spawn(|| {
             let runtime = tokio::runtime::Builder::new_current_thread()
@@ -175,7 +195,7 @@ impl RuntimeManager {
             runtime
                 .block_on(async move {
                     // Set up the kernel client here as our prototype
-                    let kernel_path = std::path::PathBuf::from(HARDCODED_KERNEL);
+                    let kernel_path = kernel_path.clone();
                     let document_client =
                         DocumentClient::new(&kernel_path, execution_request_rx).await?;
 
@@ -197,20 +217,34 @@ impl RuntimeManager {
                 })
                 .log_err();
         });
-        Self {
-            execution_request_tx,
+
+        let runtime = Runtime {
+            execution_request_tx: execution_request_tx.clone(),
             _runtime_handle,
-        }
+        };
+
+        self.runtimes.insert(entity_id, runtime);
+
+        Some(execution_request_tx)
     }
 
     fn execute_code(
-        &self,
+        &mut self,
+        entity_id: EntityId,
         execution_id: ExecutionId,
         code: String,
-    ) -> mpsc::UnboundedReceiver<ExecutionUpdate> {
+    ) -> Result<mpsc::UnboundedReceiver<ExecutionUpdate>> {
         let (tx, rx) = mpsc::unbounded();
 
-        self.execution_request_tx
+        // For now...
+        let kernel_path = HARDCODED_DENO_KERNEL;
+
+        let execution_request_tx = match self.spawn_kernel(kernel_path, entity_id) {
+            Some(execution_request_tx) => execution_request_tx,
+            None => return Err(anyhow::anyhow!("Could not spawn kernel")),
+        };
+
+        execution_request_tx
             .unbounded_send(ExecutionRequest {
                 execution_id,
                 request: runtimelib::ExecuteRequest {
@@ -227,7 +261,7 @@ impl RuntimeManager {
             })
             .expect("Failed to send execution request");
 
-        rx
+        Ok(rx)
     }
 
     pub fn global(cx: &AppContext) -> Option<Model<Self>> {
@@ -289,10 +323,20 @@ impl RuntimeManager {
 
         if let Some((code, anchor, editor)) = code_snippet {
             if let Some(model) = RuntimeManager::global(cx) {
+                let entity_id = editor.entity_id();
                 let execution_id = ExecutionId::new();
-                let mut receiver = model
-                    .read(cx)
-                    .execute_code(execution_id.clone(), code.clone());
+
+                let receiver = model.update(cx, |model, _| {
+                    model.execute_code(entity_id, execution_id.clone(), code.clone())
+                });
+
+                let mut receiver = match receiver {
+                    Ok(receiver) => receiver,
+                    Err(e) => {
+                        log::error!("Failed to execute code: {e:?}");
+                        return;
+                    }
+                };
 
                 let execution_view = cx.new_view(|cx| ExecutionView::new(execution_id.clone(), cx));
 
