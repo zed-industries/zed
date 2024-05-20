@@ -393,7 +393,7 @@ pub trait PlatformDispatcher: Send + Sync {
 
 pub(crate) trait PlatformTextSystem: Send + Sync {
     fn add_fonts(&self, fonts: Vec<Cow<'static, [u8]>>) -> Result<()>;
-    fn set_fallbacks(&self, fallbacks: &[String]);
+    fn set_fallbacks(&self, fallbacks: &[String], is_ui_font: bool) -> Result<()>;
     fn all_font_names(&self) -> Vec<String>;
     fn all_font_families(&self) -> Vec<String>;
     fn font_id(&self, descriptor: &Font) -> Result<FontId>;
