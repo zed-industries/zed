@@ -342,6 +342,7 @@ fn replace_command(
 ) {
     let replacement = parse_replace_all(&action.query);
     let pane = workspace.active_pane().clone();
+    let mut save_range = None;
     let mut editor = Vim::read(cx)
         .active_editor
         .as_ref()
@@ -353,6 +354,8 @@ fn replace_command(
                 let range = snapshot
                     .anchor_before(Point::new(range.start.saturating_sub(1) as u32, 0))
                     ..snapshot.anchor_before(Point::new(range.end as u32, 0));
+
+                save_range = Some(range.clone());
 
                 editor.set_search_within_ranges(&[range], cx)
             })
@@ -393,11 +396,13 @@ fn replace_command(
                             cx.background_executor()
                                 .timer(Duration::from_millis(200))
                                 .await;
-                            editor
-                                .update(&mut cx, |editor, cx| {
-                                    editor.set_search_within_ranges(&[], cx)
-                                })
-                                .ok();
+                            if let Some(range) = save_range {
+                                editor
+                                    .update(&mut cx, |editor, cx| {
+                                        editor.set_search_within_ranges(&[range], cx)
+                                    })
+                                    .ok();
+                            }
                         })
                         .detach();
                     }
