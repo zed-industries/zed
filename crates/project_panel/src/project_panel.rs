@@ -1679,7 +1679,7 @@ impl ProjectPanel {
             entry_git_aware_label_color(details.git_status, details.is_ignored, is_selected);
         let file_name = details.filename.clone();
         let mut icon = details.icon.clone();
-        if show_editor {
+        if show_editor && details.kind.is_file() {
             let filename = self.filename_editor.read(cx).text(cx);
             if !filename.is_empty() {
                 icon = FileIcons::get_icon(Path::new(&filename), cx);
