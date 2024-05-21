@@ -152,6 +152,12 @@ pub enum OpenedBufferEvent {
 /// Can be either local (for the project opened on the same host) or remote.(for collab projects, browsed by multiple remote users).
 pub struct Project {
     worktrees: Vec<WorktreeHandle>,
+    /// The order of worktrees in the project.
+    ///
+    /// This is used to determine the order of worktrees in the UI.
+    ///
+    /// The key is the worktree ID and the value is the intended
+    /// index of the worktree in the ordered list.
     worktree_order: HashMap<WorktreeId, usize>,
     active_entry: Option<ProjectEntryId>,
     buffer_ordered_messages_tx: mpsc::UnboundedSender<BufferOrderedMessage>,
@@ -1312,15 +1318,20 @@ impl Project {
             .map(|tree| tree.read(cx).root_name())
     }
 
-    // Returns the indexes of the worktrees in the order they appear in the project panel
-    //
-    // given the local paths [/one, /two, /three]
-    // which map to worktrees with ids [11, 22, 33]
-    // and the order of the worktrees in the project panel is [33, 11, 22]
-    // stored in the hashmap worktree_order as [33, 0], [11, 1], [22, 2]
-    // the function will return [2, 0, 1]
-    // if any worktree is not in the worktree_order hashmap, it will be placed at the end
-    // of the list
+    /// Returns the indexes of worktrees in the order they appear in the project panel.
+    ///
+    /// Each index refers to the position of a worktree in the worktrees field, and its
+    /// position in the returned list is determined by the worktree_order hashmap.
+    ///
+    /// If a worktree is not in the worktree_order hashmap, it will be placed at the end of this list.
+    ///
+    /// # Example
+    ///
+    /// Given the local paths `["./one", "./two", "./three", "./four", "./five"]`
+    /// which map to worktrees with ids `[11, 22, 33, 44, 55]`
+    /// and the order of the worktrees in the project panel is `[33, 11, 22, 44, 55]`
+    /// stored in the hashmap worktree_order as `[(11, 1), (22, 2), (33, 0)]`
+    /// the function will return `[2, 0, 1, 3, 4]`.
     pub fn worktree_order_indexes<'a>(
         &'a self,
         cx: &'a AppContext,
@@ -1335,7 +1346,18 @@ impl Project {
             .map(|(index, _)| index)
     }
 
-    // reverse of worktree_order_indexes
+    // Sets the worktree_order map from a list of indexes.
+    //
+    // The indexes refer to the position of a worktree in the worktrees field.
+    //
+    // The worktree_order hashmap will be updated to reflect the new order.
+    //
+    // # Example
+    //
+    // Given the local paths `["./one", "./two", "./three", "./four", "./five"]`
+    // which map to worktrees with ids `[11, 22, 33, 44, 55]`
+    // and the indexes `[22, 33, 11, 55, 44]`
+    // the function will update the worktree_order hashmap to `[(11, 2), (22, 0), (33, 1), (44, 4), (55, 3)]`.
     pub fn set_worktree_order_from_indexes(
         &mut self,
         indexes: Vec<usize>,
@@ -1384,6 +1406,7 @@ impl Project {
             .map(|worktree| worktree.read(cx).id())
     }
 
+    /// Checks if the entry is the root of a worktree.
     pub fn entry_is_worktree_root(&self, entry_id: ProjectEntryId, cx: &AppContext) -> bool {
         self.worktree_for_entry(entry_id, cx)
             .map(|worktree| {
@@ -7130,6 +7153,21 @@ impl Project {
         })
     }
 
+    /// Move a worktree to a new position in the worktree order.
+    ///
+    /// The worktree will moved to the opposite side of the destination worktree.
+    ///
+    /// # Example
+    ///
+    /// Given the worktree order `[11, 22, 33]` and a call to move worktree `22` to `33`,
+    /// worktree_order will be updated to produce the indexes `[11, 33, 22]`.
+    ///
+    /// Given the worktree order `[11, 22, 33]` and a call to move worktree `22` to `11`,
+    /// worktree_order will be updated to produce the indexes `[22, 11, 33]`.
+    ///
+    /// # Errors
+    ///
+    /// An error will be returned if the worktree or destination worktree are not found.
     pub fn move_worktree(
         &mut self,
         worktree: WorktreeId,
