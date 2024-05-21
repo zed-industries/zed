@@ -110,6 +110,7 @@ impl MultiBufferRow {
     pub const MIN: Self = Self(0);
     pub const MAX: Self = Self(u32::MAX);
 }
+
 #[derive(Clone)]
 struct History {
     next_transaction_id: TransactionId,

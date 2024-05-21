@@ -15,9 +15,9 @@ use anyhow::{anyhow, Result};
 use client::telemetry::Telemetry;
 use collections::{hash_map, HashMap, HashSet, VecDeque};
 use editor::{
-    actions::{MoveDown, MoveUp},
+    actions::{FoldAt, MoveDown, MoveUp},
     display_map::{
-        BlockContext, BlockDisposition, BlockId, BlockProperties, BlockStyle, ToDisplayPoint,
+        BlockContext, BlockDisposition, BlockId, BlockProperties, BlockStyle, Flap, ToDisplayPoint,
     },
     scroll::{Autoscroll, AutoscrollStrategy},
     Anchor, Editor, EditorElement, EditorEvent, EditorStyle, MultiBufferSnapshot, RowExt,
@@ -27,12 +27,13 @@ use file_icons::FileIcons;
 use fs::Fs;
 use futures::StreamExt;
 use gpui::{
-    canvas, div, point, relative, rems, uniform_list, Action, AnyView, AppContext, AsyncAppContext,
-    AsyncWindowContext, AvailableSpace, ClipboardItem, Context, Entity, EventEmitter, FocusHandle,
-    FocusableView, FontStyle, FontWeight, HighlightStyle, InteractiveElement, IntoElement, Model,
-    ModelContext, ParentElement, Pixels, Render, SharedString, StatefulInteractiveElement, Styled,
-    Subscription, Task, TextStyle, UniformListScrollHandle, View, ViewContext, VisualContext,
-    WeakModel, WeakView, WhiteSpace, WindowContext,
+    canvas, div, point, relative, rems, uniform_list, Action, AnyElement, AnyView, AppContext,
+    AsyncAppContext, AsyncWindowContext, AvailableSpace, ClipboardItem, Context, Entity,
+    EventEmitter, FocusHandle, FocusableView, FontStyle, FontWeight, HighlightStyle,
+    InteractiveElement, IntoElement, Model, ModelContext, ParentElement, Pixels, Render,
+    SharedString, StatefulInteractiveElement, Styled, Subscription, Task, TextStyle,
+    UniformListScrollHandle, View, ViewContext, VisualContext, WeakModel, WeakView, WhiteSpace,
+    WindowContext,
 };
 use language::{
     language_settings::SoftWrap, AutoindentMode, Buffer, BufferSnapshot, LanguageRegistry,
@@ -2557,7 +2558,7 @@ impl ConversationEditor {
         let editor = cx.new_view(|cx| {
             let mut editor = Editor::for_buffer(conversation.read(cx).buffer.clone(), None, cx);
             editor.set_soft_wrap_mode(SoftWrap::EditorWidth, cx);
-            editor.set_show_gutter(false, cx);
+            // editor.set_show_gutter(false, cx);
             editor.set_show_wrap_guides(false, cx);
             editor.set_completion_provider(Box::new(completion_provider));
             editor
@@ -2726,11 +2727,8 @@ impl ConversationEditor {
                             let start = buffer
                                 .anchor_in_excerpt(excerpt_id, call.source_range.start)
                                 .unwrap();
-                            let end = buffer
-                                .anchor_in_excerpt(excerpt_id, call.source_range.end)
-                                .unwrap();
                             (
-                                start..=end,
+                                start..=start,
                                 match &call.result {
                                     Some(Ok(_)) => {
                                         Some(colors.editor_document_highlight_read_background)
@@ -2765,12 +2763,26 @@ impl ConversationEditor {
                             let output = call.result.as_ref()?.as_ref().ok()?;
                             let content = format!("\t\n{output}\n");
                             buffer.edit([(offset..offset, content)], None, cx);
-                            let start = offset + '\t'.len_utf8();
-                            Some(start..start + output.len())
+                            let start_offset = offset + '\t'.len_utf8();
+                            Some(start_offset..start_offset + output.len())
                         })
                     });
                     if let Some(range) = range {
-                        editor.fold_ranges([range], false, cx);
+                        let multibuffer = editor.buffer().read(cx).snapshot(cx);
+                        let start = multibuffer.anchor_before(range.start);
+                        let end = multibuffer.anchor_after(range.end);
+                        let buffer_row =
+                            MultiBufferRow(multibuffer.offset_to_point(range.start).row);
+
+                        editor.insert_flaps(
+                            [Flap {
+                                range: start..end,
+                                render_toggle: Arc::new(render_slash_command_output_toggle),
+                                render_trailer: Arc::new(render_slash_command_output_trailer),
+                            }],
+                            cx,
+                        );
+                        editor.fold_at(&FoldAt { buffer_row }, cx);
                     }
                 });
             }
@@ -3672,6 +3684,33 @@ struct PendingInlineAssist {
     codegen: Model<Codegen>,
     _subscriptions: Vec<Subscription>,
     project: WeakModel<Project>,
+}
+
+fn render_slash_command_output_toggle(
+    row: MultiBufferRow,
+    is_folded: bool,
+    fold: Arc<dyn Fn(bool, &mut WindowContext) + Send + Sync>,
+    _cx: &mut WindowContext,
+) -> AnyElement {
+    IconButton::new(
+        ("slash-command-output-fold-indicator", row.0),
+        ui::IconName::ChevronDown,
+    )
+    .on_click(move |_e, cx| fold(!is_folded, cx))
+    .icon_color(ui::Color::Muted)
+    .icon_size(ui::IconSize::Small)
+    .selected(is_folded)
+    .selected_icon(ui::IconName::ChevronRight)
+    .size(ui::ButtonSize::None)
+    .into_any_element()
+}
+
+fn render_slash_command_output_trailer(
+    _row: MultiBufferRow,
+    _is_folded: bool,
+    _cx: &mut WindowContext,
+) -> AnyElement {
+    div().into_any_element()
 }
 
 fn merge_ranges(ranges: &mut Vec<Range<Anchor>>, buffer: &MultiBufferSnapshot) {
