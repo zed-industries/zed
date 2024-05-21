@@ -267,7 +267,6 @@ fn init_ui(app_state: Arc<AppState>, cx: &mut AppContext) -> Result<()> {
                     client.reconnect(&cx.to_async());
                 }
             }
-            // let fallbacks = FontFallbacks::get_global(cx);
             settings::set_font_fallbacks(cx.text_system(), cx);
         }
     })
