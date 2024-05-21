@@ -9,6 +9,7 @@ use crate::ExecutionId;
 use crate::stdio::TerminalOutput;
 
 pub enum OutputType {
+    Plain(TerminalOutput),
     Media((MimeType, Value)),
     Stream(TerminalOutput),
     ErrorOutput(ErrorOutput),
@@ -23,6 +24,8 @@ impl OutputType {
         let el = match self {
             // Note: in typical frontends we would show the execute_result.execution_count
             // Here we can just handle either
+            Self::Plain(stdio) => Some(stdio.render(theme)),
+            // Self::Markdown(markdown) => Some(markdown.render(theme)),
             Self::Media((mimetype, value)) => render_rich(mimetype, value),
             Self::Stream(stdio) => Some(stdio.render(theme)),
             Self::ErrorOutput(error_output) => render_error_output(&error_output, cx),
@@ -33,6 +36,7 @@ impl OutputType {
 
     fn num_lines(&self) -> u8 {
         match self {
+            Self::Plain(stdio) => stdio.num_lines(),
             Self::Media((_mimetype, value)) => value.as_str().unwrap_or("").lines().count() as u8,
             Self::Stream(stdio) => stdio.num_lines(),
             Self::ErrorOutput(error_output) => {
@@ -127,7 +131,16 @@ impl Execution {
                         return;
                     };
 
-                OutputType::Media((mimetype, value))
+                match mimetype {
+                    MimeType::Plain => {
+                        let mut terminal = TerminalOutput::new();
+                        terminal.append_text(value.as_str().unwrap_or(""));
+
+                        OutputType::Plain(terminal)
+                    }
+                    // We don't handle this type, but ok
+                    _ => OutputType::Media((mimetype, value)),
+                }
             }
             JupyterMessageContent::DisplayData(result) => {
                 let (mimetype, value) =
@@ -141,13 +154,24 @@ impl Execution {
                 OutputType::Media((mimetype, value))
             }
             JupyterMessageContent::StreamContent(result) => {
+                // Previous stream data will combine together, handling colors, carriage returns, etc
                 if let Some(new_terminal) = self.apply_terminal_text(&result.text) {
                     new_terminal
                 } else {
                     return;
                 }
             }
-            JupyterMessageContent::ErrorOutput(result) => OutputType::ErrorOutput(result.clone()),
+            JupyterMessageContent::ErrorOutput(result) => {
+                let mut terminal = TerminalOutput::new();
+                terminal.append_text(&result.ename);
+                terminal.append_text(": ");
+                terminal.append_text(&result.evalue);
+                terminal.append_text("\n");
+
+                terminal.append_text(&result.traceback.join("\n"));
+
+                OutputType::Plain(terminal)
+            }
             _ => {
                 return;
             }

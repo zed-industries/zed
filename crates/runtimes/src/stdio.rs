@@ -188,6 +188,7 @@ impl TerminalHandler {
 
 impl Perform for TerminalHandler {
     fn print(&mut self, c: char) {
+        // println!("[print] c={:?}", c);
         self.add_text(c);
     }
 
@@ -199,16 +200,24 @@ impl Perform for TerminalHandler {
             b'\r' => {
                 self.process_carriage_return();
             }
-            _ => {}
+            _ => {
+                // Format as hex
+                println!("[execute] byte={:02x}", byte);
+            }
         }
     }
 
     fn hook(&mut self, _params: &Params, _intermediates: &[u8], _ignore: bool, _c: char) {
         // noop
+        // println!(
+        //     "[hook] params={:?}, intermediates={:?}, c={:?}",
+        //     _params, _intermediates, _c
+        // );
     }
 
     fn put(&mut self, _byte: u8) {
         // noop
+        // println!("[put] byte={:02x}", _byte);
     }
 
     fn unhook(&mut self) {
@@ -217,6 +226,7 @@ impl Perform for TerminalHandler {
 
     fn osc_dispatch(&mut self, _params: &[&[u8]], _bell_terminated: bool) {
         // noop
+        // println!("[osc_dispatch] params={:?}", _params);
     }
 
     fn csi_dispatch(
@@ -226,6 +236,11 @@ impl Perform for TerminalHandler {
         _ignore: bool,
         action: char,
     ) {
+        // println!(
+        //     "[csi_dispatch] action={:?}, params={:?}, intermediates={:?}",
+        //     action, params, intermediates
+        // );
+
         let mut params_iter = params.iter();
         // Collect colors
         match (action, intermediates) {
@@ -247,6 +262,10 @@ impl Perform for TerminalHandler {
 
     fn esc_dispatch(&mut self, _intermediates: &[u8], _ignore: bool, _byte: u8) {
         // noop
+        // println!(
+        //     "[esc_dispatch] intermediates={:?}, byte={:?}",
+        //     _intermediates, _byte
+        // );
     }
 }
 
