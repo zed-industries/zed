@@ -1,5 +1,5 @@
 use super::SlashCommand;
-use anyhow::{anyhow, Result};
+use anyhow::Result;
 use gpui::{AppContext, Task};
 use std::sync::{atomic::AtomicBool, Arc};
 

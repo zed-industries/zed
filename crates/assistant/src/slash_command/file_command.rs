@@ -1,9 +1,12 @@
 use super::SlashCommand;
-use anyhow::{anyhow, Result};
+use anyhow::Result;
 use fuzzy::PathMatch;
 use gpui::{AppContext, Model, Task};
 use project::{PathMatchCandidateSet, Project};
-use std::sync::{atomic::AtomicBool, Arc};
+use std::{
+    path::Path,
+    sync::{atomic::AtomicBool, Arc},
+};
 
 pub(crate) struct FileSlashCommand {
     project: Model<Project>,
@@ -89,7 +92,27 @@ impl SlashCommand for FileSlashCommand {
     }
 
     fn run(&self, argument: Option<&str>, cx: &mut AppContext) -> Task<Result<String>> {
-        eprintln!("inserting file {:?}", argument);
-        Task::ready(Ok(String::new()))
+        let project = self.project.read(cx);
+        let Some(argument) = argument else {
+            return Task::ready(Err(anyhow::anyhow!("missing path")));
+        };
+
+        let path = Path::new(argument);
+        let abs_path = project.worktrees().find_map(|worktree| {
+            let worktree = worktree.read(cx);
+            worktree.entry_for_path(path)?;
+            worktree.absolutize(path).ok()
+        });
+
+        let Some(abs_path) = abs_path else {
+            return Task::ready(Err(anyhow::anyhow!("missing path")));
+        };
+
+        let fs = project.fs().clone();
+        let argument = argument.to_string();
+        cx.background_executor().spawn(async move {
+            let content = fs.load(&abs_path).await?;
+            Ok(format!("```{argument}\n{content}\n```\n"))
+        })
     }
 }

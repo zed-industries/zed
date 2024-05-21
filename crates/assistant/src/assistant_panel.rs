@@ -5,9 +5,7 @@ use crate::{
     prompt_library::{PromptLibrary, PromptManager},
     prompts::generate_content_prompt,
     search::*,
-    slash_command::{
-        parse_slash_command_call, SlashCommandCompletionProvider, SlashCommandRegistry,
-    },
+    slash_command::{SlashCommandCompletionProvider, SlashCommandLine, SlashCommandRegistry},
     ApplyEdit, Assist, CompletionProvider, CycleMessageRole, InlineAssist, InsertActivePrompt,
     LanguageModel, LanguageModelRequest, LanguageModelRequestMessage, MessageId, MessageMetadata,
     MessageStatus, QuoteSelection, ResetKey, Role, SavedConversation, SavedConversationMetadata,
@@ -1396,6 +1394,8 @@ enum ConversationEvent {
     SummaryChanged,
     EditSuggestionsChanged,
     StreamedCompletion,
+    SlashCommandsChanged(Range<language::Anchor>),
+    SlashCommandRan(Range<language::Anchor>),
 }
 
 #[derive(Default)]
@@ -1756,67 +1756,91 @@ impl Conversation {
 
             this.update(&mut cx, |this, cx| {
                 let buffer = this.buffer.read(cx).snapshot();
+
+                let mut change_start = None;
+                let mut change_end = language::Anchor::MIN;
                 let mut new_calls = Vec::new();
-                let mut old_calls = this.slash_command_calls.iter().peekable();
+                let mut old_calls = this.slash_command_calls.drain(..).peekable();
                 let mut lines = buffer.as_rope().chunks().lines();
                 let mut offset = 0;
                 while let Some(line) = lines.next() {
-                    if let Some(call) = parse_slash_command_call(line) {
-                        let call = SlashCommandCall {
-                            name: line[call.name].to_string(),
-                            argument: call.argument.map(|range| line[range].to_string()),
-                            source_range: buffer.anchor_before(offset)
-                                ..buffer.anchor_before(lines.offset()),
-                        };
+                    if let Some(call) = SlashCommandLine::parse(line) {
+                        let name = &line[call.name];
+                        let argument = call.argument.map(|range| &line[range]);
 
-                        let mut is_new = true;
+                        let mut unchanged_call = None;
                         while let Some(old_call) = old_calls.peek() {
                             match old_call.source_range.start.to_offset(&buffer).cmp(&offset) {
-                                Ordering::Less => {
-                                    eprintln!("removing call {:?}", old_call);
-                                    old_calls.next();
+                                Ordering::Greater => break,
+                                Ordering::Equal
+                                    if old_call.name == name
+                                        && old_call.argument.as_deref() == argument =>
+                                {
+                                    unchanged_call = old_calls.next();
                                 }
-                                Ordering::Equal => {
-                                    if **old_call == call {
-                                        is_new = false;
-                                    } else {
-                                        eprintln!("removing call {:?}", old_call);
-                                    }
+                                _ => {
+                                    change_start.get_or_insert(old_call.source_range.start);
+                                    change_end = old_call.source_range.end;
                                     old_calls.next();
-                                    break;
-                                }
-                                Ordering::Greater => {
-                                    break;
                                 }
                             }
                         }
 
-                        if is_new {
-                            if let Some(command) = this.slash_command_registry.command(&call.name) {
-                                let task = command.run(call.argument.as_deref(), cx);
-                                let command_start = call.source_range.start.clone();
-                                cx.spawn(|this, mut cx| async move {
-                                    match task.await {
-                                        Ok(output) => {
-                                            this.update(&mut cx, |this, cx| {
-                                                eprintln!("finished call {:?}", output);
-                                            })
-                                            .ok();
+                        if let Some(call) = unchanged_call {
+                            new_calls.push(call);
+                        } else if let Some(command) = this.slash_command_registry.command(&name) {
+                            let name = name.to_string();
+                            let argument = argument.map(|s| s.to_string());
+                            let start = buffer.anchor_before(offset);
+                            let end = buffer.anchor_before(lines.offset());
+                            let version = buffer.version().clone();
+                            let task = command.run(argument.as_deref(), cx);
+
+                            change_start.get_or_insert(start);
+                            change_end = end;
+
+                            cx.spawn(|this, mut cx| async move {
+                                let result = task.await;
+                                this.update(&mut cx, |this, cx| {
+                                    let buffer = this.buffer.read(cx);
+                                    if !buffer.has_edits_since_in_range(&version, start..end) {
+                                        let call_ix =
+                                            this.slash_command_calls.binary_search_by(|probe| {
+                                                probe.source_range.start.cmp(&start, &buffer)
+                                            });
+                                        if let Ok(ix) = call_ix {
+                                            let call = &mut this.slash_command_calls[ix];
+                                            call.result = Some(result);
                                         }
-                                        Err(error) => log::error!("slash command failed {error:?}"),
+                                        cx.emit(ConversationEvent::SlashCommandsChanged(
+                                            start..end,
+                                        ));
+                                        cx.emit(ConversationEvent::SlashCommandRan(start..end));
                                     }
                                 })
-                                .detach();
-                            }
+                                .ok();
+                            })
+                            .detach();
+                            new_calls.push(SlashCommandCall {
+                                name,
+                                argument,
+                                source_range: start..end,
+                                result: None,
+                            });
                         }
-
-                        new_calls.push(call);
                     }
                     offset = lines.offset();
                 }
 
                 for old_call in old_calls {
-                    eprintln!("removing call {:?}", old_call);
+                    change_start.get_or_insert(old_call.source_range.start);
+                    change_end = old_call.source_range.end;
+                }
+
+                if let Some(change_start) = change_start {
+                    cx.emit(ConversationEvent::SlashCommandsChanged(
+                        change_start..change_end,
+                    ));
                 }
 
                 this.slash_command_calls = new_calls;
@@ -2467,11 +2491,11 @@ fn parse_next_edit_suggestion(lines: &mut rope::Lines) -> Option<ParsedEditSugge
     }
 }
 
-#[derive(Debug, PartialEq, Eq)]
 struct SlashCommandCall {
     source_range: Range<language::Anchor>,
     name: String,
     argument: Option<String>,
+    result: Option<Result<String>>,
 }
 
 struct PendingCompletion {
@@ -2686,6 +2710,67 @@ impl ConversationEditor {
                             point(scroll_position.offset_before_cursor.x, scroll_top),
                             cx,
                         );
+                    }
+                });
+            }
+            ConversationEvent::SlashCommandsChanged(_) => {
+                self.editor.update(cx, |editor, cx| {
+                    let buffer = editor.buffer().read(cx).snapshot(cx);
+                    let excerpt_id = *buffer.as_singleton().unwrap().0;
+                    let conversation = self.conversation.read(cx);
+                    let colors = cx.theme().colors();
+                    let highlighted_rows = conversation
+                        .slash_command_calls
+                        .iter()
+                        .map(|call| {
+                            let start = buffer
+                                .anchor_in_excerpt(excerpt_id, call.source_range.start)
+                                .unwrap();
+                            let end = buffer
+                                .anchor_in_excerpt(excerpt_id, call.source_range.end)
+                                .unwrap();
+                            (
+                                start..=end,
+                                match &call.result {
+                                    Some(Ok(_)) => {
+                                        Some(colors.editor_document_highlight_read_background)
+                                    }
+                                    Some(Err(_)) => {
+                                        Some(colors.editor_document_highlight_write_background)
+                                    }
+                                    None => None,
+                                },
+                            )
+                        })
+                        .collect::<Vec<_>>();
+
+                    editor.clear_row_highlights::<SlashCommandCall>();
+                    for (range, color) in highlighted_rows {
+                        editor.highlight_rows::<SlashCommandCall>(range, color, false, cx);
+                    }
+                });
+            }
+            ConversationEvent::SlashCommandRan(range) => {
+                self.editor.update(cx, |editor, cx| {
+                    let range = self.conversation.update(cx, |conversation, cx| {
+                        conversation.buffer.update(cx, |buffer, cx| {
+                            let call_ix = conversation
+                                .slash_command_calls
+                                .binary_search_by(|probe| {
+                                    probe.source_range.start.cmp(&range.start, &buffer)
+                                })
+                                .ok()?;
+                            let call = &conversation.slash_command_calls[call_ix];
+                            let offset = call.source_range.end.to_offset(buffer);
+                            let output = call.result.as_ref()?.as_ref().ok()?;
+                            let content = format!("\t\n{output}\n");
+                            buffer.edit([(offset..offset, content)], None, cx);
+                            let start = offset + '\t'.len_utf8();
+                            Some(start..start + output.len())
+                        })
+                    });
+                    if let Some(range) = range {
+                        editor.fold_ranges([range], false, cx);
                     }
                 });
             }

@@ -28,6 +28,25 @@ pub(crate) struct SlashCommandRegistry {
     commands: HashMap<String, Box<dyn SlashCommand>>,
 }
 
+pub(crate) trait SlashCommand: 'static + Send + Sync {
+    fn name(&self) -> String;
+    fn description(&self) -> String;
+    fn complete_argument(
+        &self,
+        query: String,
+        cancel: Arc<AtomicBool>,
+        cx: &mut AppContext,
+    ) -> Task<Result<Vec<String>>>;
+    fn run(&self, argument: Option<&str>, cx: &mut AppContext) -> Task<Result<String>>;
+}
+
+pub(crate) struct SlashCommandLine {
+    /// The range within the line containing the command name.
+    pub name: Range<usize>,
+    /// The range within the line containing the command argument.
+    pub argument: Option<Range<usize>>,
+}
+
 impl SlashCommandRegistry {
     pub fn new(project: Model<Project>) -> Arc<Self> {
         let mut this = Self {
@@ -51,25 +70,6 @@ impl SlashCommandRegistry {
     pub(crate) fn command(&self, name: &str) -> Option<&dyn SlashCommand> {
         self.commands.get(name).map(|b| &**b)
     }
-}
-
-pub(crate) trait SlashCommand: 'static + Send + Sync {
-    fn name(&self) -> String;
-    fn description(&self) -> String;
-    fn complete_argument(
-        &self,
-        query: String,
-        cancel: Arc<AtomicBool>,
-        cx: &mut AppContext,
-    ) -> Task<Result<Vec<String>>>;
-    fn run(&self, argument: Option<&str>, cx: &mut AppContext) -> Task<Result<String>>;
-}
-
-pub(crate) struct SlashCommandCall {
-    /// The range within the line containing the command name.
-    pub name: Range<usize>,
-    /// The range within the line containing the command argument.
-    pub argument: Option<Range<usize>>,
 }
 
 impl SlashCommandCompletionProvider {
@@ -173,7 +173,7 @@ impl CompletionProvider for SlashCommandCompletionProvider {
             let line_start = Point::new(position.row, 0);
             let mut lines = buffer.text_for_range(line_start..position).lines();
             let line = lines.next()?;
-            let call = parse_slash_command_call(line)?;
+            let call = SlashCommandLine::parse(line)?;
 
             let name = &line[call.name.clone()];
             if let Some(argument) = call.argument {
@@ -191,68 +191,70 @@ impl CompletionProvider for SlashCommandCompletionProvider {
 
     fn resolve_completions(
         &self,
-        buffer: Model<Buffer>,
-        completion_indices: Vec<usize>,
-        completions: Arc<RwLock<Box<[project::Completion]>>>,
-        cx: &mut ViewContext<Editor>,
+        _: Model<Buffer>,
+        _: Vec<usize>,
+        _: Arc<RwLock<Box<[project::Completion]>>>,
+        _: &mut ViewContext<Editor>,
     ) -> Task<Result<bool>> {
         Task::ready(Ok(true))
     }
 
     fn apply_additional_edits_for_completion(
         &self,
-        buffer: Model<Buffer>,
-        completion: project::Completion,
-        push_to_history: bool,
-        cx: &mut ViewContext<Editor>,
+        _: Model<Buffer>,
+        _: project::Completion,
+        _: bool,
+        _: &mut ViewContext<Editor>,
     ) -> Task<Result<Option<language::Transaction>>> {
         Task::ready(Ok(None))
     }
 }
 
-pub(crate) fn parse_slash_command_call(line: &str) -> Option<SlashCommandCall> {
-    let mut call: Option<SlashCommandCall> = None;
-    let mut ix = 0;
-    for c in line.chars() {
-        let next_ix = ix + c.len_utf8();
-        if let Some(call) = &mut call {
-            // The command arguments start at the first non-whitespace character
-            // after the command name, and continue until the end of the line.
-            if let Some(argument) = &mut call.argument {
-                if (*argument).is_empty() && c.is_whitespace() {
-                    argument.start = next_ix;
+impl SlashCommandLine {
+    pub(crate) fn parse(line: &str) -> Option<Self> {
+        let mut call: Option<Self> = None;
+        let mut ix = 0;
+        for c in line.chars() {
+            let next_ix = ix + c.len_utf8();
+            if let Some(call) = &mut call {
+                // The command arguments start at the first non-whitespace character
+                // after the command name, and continue until the end of the line.
+                if let Some(argument) = &mut call.argument {
+                    if (*argument).is_empty() && c.is_whitespace() {
+                        argument.start = next_ix;
+                    }
+                    argument.end = next_ix;
                 }
-                argument.end = next_ix;
-            }
-            // The command name ends at the first whitespace character.
-            else if call.name.len() > 0 {
-                if c.is_whitespace() {
-                    call.argument = Some(next_ix..next_ix);
-                } else {
-                    call.name.end = next_ix;
+                // The command name ends at the first whitespace character.
+                else if call.name.len() > 0 {
+                    if c.is_whitespace() {
+                        call.argument = Some(next_ix..next_ix);
+                    } else {
+                        call.name.end = next_ix;
+                    }
+                }
+                // The command name must begin with a letter.
+                else {
+                    if c.is_alphabetic() {
+                        call.name.end = next_ix;
+                    } else {
+                        return None;
+                    }
                 }
             }
-            // The command name must begin with a letter.
-            else {
-                if c.is_alphabetic() {
-                    call.name.end = next_ix;
-                } else {
-                    return None;
-                }
+            // Commands start with a slash.
+            else if c == '/' {
+                call = Some(SlashCommandLine {
+                    name: next_ix..next_ix,
+                    argument: None,
+                });
             }
+            // The line can't contain anything before the slash except for whitespace.
+            else if !c.is_whitespace() {
+                return None;
+            }
+            ix = next_ix;
         }
-        // Commands start with a slash.
-        else if c == '/' {
-            call = Some(SlashCommandCall {
-                name: next_ix..next_ix,
-                argument: None,
-            });
-        }
-        // The line can't contain anything before the slash except for whitespace.
-        else if !c.is_whitespace() {
-            return None;
-        }
-        ix = next_ix;
+        call
     }
-    call
 }
