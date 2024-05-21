@@ -45,7 +45,7 @@ pub fn init(cx: &mut AppContext) {
 }
 
 #[derive(Debug)]
-struct ExecutionRequest {
+pub struct ExecutionRequest {
     execution_id: ExecutionId,
     request: runtimelib::ExecuteRequest,
     response_sender: mpsc::UnboundedSender<ExecutionUpdate>,
@@ -173,9 +173,16 @@ impl RuntimeManager {
 
     pub fn spawn_kernel(
         &mut self,
-        kernel_path: &str,
+        language_name: &Arc<str>,
         entity_id: EntityId,
     ) -> Option<mpsc::UnboundedSender<ExecutionRequest>> {
+        let kernel_path = match language_name.as_ref() {
+            "python" => HARDCODED_PYTHON_KERNEL,
+            "typescript" => HARDCODED_DENO_KERNEL,
+            // todo!(): don't run any kernel if the language is not supported
+            _ => HARDCODED_PYTHON_KERNEL,
+        };
+
         let maybe_runtime = self.runtimes.get(&entity_id);
         if let Some(runtime) = maybe_runtime {
             return Some(runtime.execution_request_tx.clone());
@@ -231,15 +238,13 @@ impl RuntimeManager {
     fn execute_code(
         &mut self,
         entity_id: EntityId,
+        language_name: &Arc<str>,
         execution_id: ExecutionId,
         code: String,
     ) -> Result<mpsc::UnboundedReceiver<ExecutionUpdate>> {
         let (tx, rx) = mpsc::unbounded();
 
-        // For now...
-        let kernel_path = HARDCODED_DENO_KERNEL;
-
-        let execution_request_tx = match self.spawn_kernel(kernel_path, entity_id) {
+        let execution_request_tx = match self.spawn_kernel(language_name, entity_id) {
             Some(execution_request_tx) => execution_request_tx,
             None => return Err(anyhow::anyhow!("Could not spawn kernel")),
         };
@@ -316,18 +321,41 @@ impl RuntimeManager {
 
                 let anchor = buffer.anchor_after(range.end);
 
-                let selected_text = buffer.text_for_range(range).collect::<String>();
+                let selected_text = buffer.text_for_range(range.clone()).collect::<String>();
 
-                Some((selected_text, anchor, editor_view))
+                let start_language = buffer.language_at(range.start);
+                let end_language = buffer.language_at(range.end);
+                let language_name = if start_language == end_language {
+                    start_language.map(|language| language.code_fence_block_name())
+                } else {
+                    None
+                };
+
+                Some((selected_text, language_name, anchor, editor_view))
             });
 
-        if let Some((code, anchor, editor)) = code_snippet {
+        if let Some((code, language_name, anchor, editor)) = code_snippet {
+            let language_name = if let Some(language_name) = language_name {
+                language_name
+            } else {
+                return;
+            };
+
+            if language_name.as_ref() == "markdown" {
+                return;
+            }
+
             if let Some(model) = RuntimeManager::global(cx) {
                 let entity_id = editor.entity_id();
                 let execution_id = ExecutionId::new();
 
                 let receiver = model.update(cx, |model, _| {
-                    model.execute_code(entity_id, execution_id.clone(), code.clone())
+                    model.execute_code(
+                        entity_id,
+                        &language_name,
+                        execution_id.clone(),
+                        code.clone(),
+                    )
                 });
 
                 let mut receiver = match receiver {
