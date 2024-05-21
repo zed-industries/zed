@@ -339,7 +339,6 @@ impl WindowTextSystem {
         text: SharedString,
         font_size: Pixels,
         runs: &[TextRun],
-        is_ui_font: bool,
     ) -> Result<ShapedLine> {
         debug_assert!(
             text.find('\n').is_none(),
@@ -367,7 +366,7 @@ impl WindowTextSystem {
             });
         }
 
-        let layout = self.layout_line(text.as_ref(), font_size, runs, is_ui_font)?;
+        let layout = self.layout_line(text.as_ref(), font_size, runs)?;
 
         Ok(ShapedLine {
             layout,
@@ -385,7 +384,6 @@ impl WindowTextSystem {
         font_size: Pixels,
         runs: &[TextRun],
         wrap_width: Option<Pixels>,
-        is_ui_font: bool,
     ) -> Result<SmallVec<[WrappedLine; 1]>> {
         let mut runs = runs.iter().cloned().peekable();
         let mut font_runs = self.font_runs_pool.lock().pop().unwrap_or_default();
@@ -444,7 +442,7 @@ impl WindowTextSystem {
 
             let layout = self
                 .line_layout_cache
-                .layout_wrapped_line(&line_text, font_size, &font_runs, wrap_width, is_ui_font);
+                .layout_wrapped_line(&line_text, font_size, &font_runs, wrap_width);
 
             lines.push(WrappedLine {
                 layout,
@@ -500,7 +498,6 @@ impl WindowTextSystem {
         text: &str,
         font_size: Pixels,
         runs: &[TextRun],
-        is_ui_font: bool,
     ) -> Result<Arc<LineLayout>> {
         let mut font_runs = self.font_runs_pool.lock().pop().unwrap_or_default();
         for run in runs.iter() {
@@ -519,7 +516,7 @@ impl WindowTextSystem {
 
         let layout = self
             .line_layout_cache
-            .layout_line(text, font_size, &font_runs, is_ui_font);
+            .layout_line(text, font_size, &font_runs);
 
         font_runs.clear();
         self.font_runs_pool.lock().push(font_runs);
