@@ -7,9 +7,9 @@ use collections::{HashMap, HashSet};
 use editor::{scroll::Autoscroll, Bias, Editor};
 use fuzzy::{CharBag, PathMatch, PathMatchCandidate};
 use gpui::{
-    actions, rems, Action, AppContext, DismissEvent, EventEmitter, FocusHandle, FocusableView,
-    Model, Modifiers, ModifiersChangedEvent, ParentElement, Render, Styled, Task, View,
-    ViewContext, VisualContext, WeakView,
+    actions, rems, Action, AnyElement, AppContext, DismissEvent, EventEmitter, FocusHandle,
+    FocusableView, Model, Modifiers, ModifiersChangedEvent, ParentElement, Render, Styled, Task,
+    View, ViewContext, VisualContext, WeakView,
 };
 use itertools::Itertools;
 use new_path_prompt::NewPathPrompt;
@@ -919,12 +919,23 @@ impl PickerDelegate for FileFinderDelegate {
             .get(ix)
             .expect("Invalid matches state: no element for index {ix}");
 
+        let icon = match &path_match {
+            Match::History(_, _) => Icon::new(IconName::HistoryRerun)
+                .color(Color::Muted)
+                .size(IconSize::Small)
+                .into_any_element(),
+            Match::Search(_) => v_flex()
+                .flex_none()
+                .size(IconSize::Small.rems())
+                .into_any_element(),
+        };
         let (file_name, file_name_positions, full_path, full_path_positions) =
             self.labels_for_match(path_match, cx, ix);
 
         Some(
             ListItem::new(ix)
                 .spacing(ListItemSpacing::Sparse)
+                .end_slot::<AnyElement>(Some(icon))
                 .inset(true)
                 .selected(selected)
                 .child(
