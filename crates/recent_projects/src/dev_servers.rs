@@ -1,7 +1,5 @@
 use std::env;
-use std::env::temp_dir;
 use std::fs::File;
-use std::fs::OpenOptions;
 use std::io::Write;
 use std::time::Duration;
 
@@ -26,9 +24,8 @@ use rpc::{
 use smol::fs::unix::PermissionsExt;
 use task::RevealStrategy;
 use task::SpawnInTerminal;
-use terminal::terminal_settings::AlternateScroll;
 use terminal_view::terminal_panel::TerminalPanel;
-use ui::CheckboxWithLabel;
+use ui::RadioWithLabel;
 use ui::{prelude::*, Indicator, List, ListHeader, ListItem, ModalContent, ModalHeader, Tooltip};
 use ui_text_field::{FieldLabelLayout, TextField};
 use util::ResultExt;
@@ -44,7 +41,6 @@ pub struct DevServerProjects {
     workspace: WeakView<Workspace>,
     project_path_input: View<Editor>,
     dev_server_name_input: View<TextField>,
-    use_server_name_in_ssh: Selection,
     rename_dev_server_input: View<TextField>,
     markdown: View<Markdown>,
     _dev_server_subscription: Subscription,
@@ -54,7 +50,7 @@ pub struct DevServerProjects {
 struct CreateDevServer {
     creating: bool,
     dev_server: Option<CreateDevServerResponse>,
-    // ssh_connection_string: Option<String>,
+    manual_setup: bool,
 }
 
 #[derive(Clone)]
@@ -156,7 +152,6 @@ impl DevServerProjects {
             rename_dev_server_input,
             markdown,
             workspace,
-            use_server_name_in_ssh: Selection::Unselected,
             _dev_server_subscription: subscription,
         }
     }
@@ -270,16 +265,16 @@ impl DevServerProjects {
         }));
     }
 
-    pub fn create_dev_server(&mut self, cx: &mut ViewContext<Self>) {
+    pub fn create_dev_server(&mut self, manual_setup: bool, cx: &mut ViewContext<Self>) {
         let name = get_text(&self.dev_server_name_input, cx);
         if name.is_empty() {
             return;
         }
 
-        let ssh_connection_string = if self.use_server_name_in_ssh == Selection::Selected {
-            Some(name.clone())
-        } else {
+        let ssh_connection_string = if manual_setup {
             None
+        } else {
+            Some(name.clone())
         };
 
         let dev_server = self.dev_server_store.update(cx, |store, cx| {
@@ -344,7 +339,6 @@ impl DevServerProjects {
                         terminal.update(&mut cx, |terminal, cx| {
                             terminal.wait_for_completed_task(cx)
                         })?.await;
-                        dbg!("oops");
                         drop(tmp_dir);
                     } else {
                         dbg!("noo!");
@@ -355,6 +349,7 @@ impl DevServerProjects {
                             this.mode = Mode::CreateDevServer(CreateDevServer {
                                 creating: false,
                                 dev_server: Some(dev_server.clone()),
+                                manual_setup: false,
                         });
                     })?;
                 }
@@ -362,7 +357,7 @@ impl DevServerProjects {
             }
             Err(e) => {
                 this.update(&mut cx, |this, cx| {
-                        this.mode = Mode::CreateDevServer(Default::default());
+                    this.mode = Mode::CreateDevServer(CreateDevServer { creating:false, dev_server: None, manual_setup });
                 })
                 .log_err();
 
@@ -375,6 +370,7 @@ impl DevServerProjects {
         self.mode = Mode::CreateDevServer(CreateDevServer {
             creating: true,
             dev_server: None,
+            manual_setup,
         });
         cx.notify()
     }
@@ -540,7 +536,7 @@ impl DevServerProjects {
             }
             Mode::CreateDevServer(state) => {
                 if !state.creating && state.dev_server.is_none() {
-                    self.create_dev_server(cx);
+                    self.create_dev_server(state.manual_setup, cx);
                 }
             }
             Mode::EditDevServer(edit_dev_server) => {
@@ -755,6 +751,7 @@ impl DevServerProjects {
         let CreateDevServer {
             creating,
             dev_server,
+            manual_setup,
         } = state;
 
         self.dev_server_name_input.update(cx, |input, cx| {
@@ -802,34 +799,49 @@ impl DevServerProjects {
                                     div()
                                         .pl_1()
                                         .pb(px(3.))
-                                        .when(!creating && dev_server.is_none(), |div| {
+                                        // .when(!creating && dev_server.is_none(), |div| {
+                                        //     div
+                                        //         .child(
+                                        //             CheckboxWithLabel::new(
+                                        //                 "use-server-name-in-ssh",
+                                        //                 Label::new("Use name as ssh connection string"),
+                                        //                 self.use_server_name_in_ssh,
+                                        //                 cx.listener(move |this, &new_selection, _| {
+                                        //                     this.mode = Mode::CreateDevServer(CreateDevServer { creating: false, dev_server: None, manual_setup: true });
+                                        //                     this.use_server_name_in_ssh = new_selection;
+                                        //                 })
+                                        //             )
+                                        //         )
+                                        //         .child(
+                                        //             Button::new("create-dev-server", "Create").on_click(
+                                        //                 cx.listener(move |this, _, cx| {
+                                        //                     this.create_dev_server(cx);
+                                        //                 })
+                                        //             )
+                                        //         )
+                                        // })
+                                        .when(true, |div| {
                                             div
                                                 .child(
-                                                    CheckboxWithLabel::new(
+                                                    RadioWithLabel::new(
                                                         "use-server-name-in-ssh",
-                                                        Label::new("Use name as ssh connection string"),
-                                                        self.use_server_name_in_ssh,
-                                                        cx.listener(move |this, &new_selection, _| {
-                                                            this.use_server_name_in_ssh = new_selection;
+                                                        Label::new("Connect via SSH (default)"),
+                                                        !manual_setup,
+                                                        cx.listener(|this, _, cx| {
+                                                            this.mode = Mode::CreateDevServer(CreateDevServer { creating: false, dev_server: None, manual_setup: false });
+                                                            cx.notify()
                                                         })
                                                     )
                                                 )
                                                 .child(
-                                                    Button::new("create-dev-server", "Create").on_click(
-                                                        cx.listener(move |this, _, cx| {
-                                                            this.create_dev_server(cx);
-                                                        })
-                                                    )
-                                                )
-                                        })
-                                        .when(creating && dev_server.is_none(), |div| {
-                                            div
-                                                .child(
-                                                    CheckboxWithLabel::new(
+                                                    RadioWithLabel::new(
                                                         "use-server-name-in-ssh",
-                                                        Label::new("Use SSH for terminals"),
-                                                        self.use_server_name_in_ssh,
-                                                        |&_, _| {}
+                                                        Label::new("Manual Setup"),
+                                                        manual_setup,
+                                                        cx.listener(|this, _, cx| {
+                                                            this.mode = Mode::CreateDevServer(CreateDevServer { creating: false, dev_server: None, manual_setup: true });
+                                                            cx.notify()
+                                                        })
                                                     )
                                                 )
                                                 .child(
@@ -1107,7 +1119,6 @@ impl DevServerProjects {
                                                 editor.set_text("", cx);
                                             });
                                         });
-                                        this.use_server_name_in_ssh = Selection::Unselected;
                                         cx.notify();
                                     })),
                             ),
