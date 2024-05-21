@@ -22,7 +22,7 @@ pub struct FlapSnapshot {
 }
 
 impl FlapSnapshot {
-    /// Returns the first FoldableRange starting on the specified buffer row.
+    /// Returns the first Flap starting on the specified buffer row.
     pub fn query_row<'a>(
         &'a self,
         row: MultiBufferRow,
@@ -31,12 +31,32 @@ impl FlapSnapshot {
         let start = snapshot.anchor_before(Point::new(row.0, 0));
         let mut cursor = self.flaps.cursor::<ItemSummary>();
         cursor.seek(&start, Bias::Left, snapshot);
-        if let Some(item) = cursor.item() {
-            if item.flap.range.start.to_point(snapshot).row == row.0 {
-                return Some(&item.flap);
+        while let Some(item) = cursor.item() {
+            match Ord::cmp(&item.flap.range.start.to_point(snapshot).row, &row.0) {
+                Ordering::Less => cursor.next(snapshot),
+                Ordering::Equal => return Some(&item.flap),
+                Ordering::Greater => break,
             }
         }
         return None;
+    }
+
+    pub fn flap_items_with_offsets(
+        &self,
+        snapshot: &MultiBufferSnapshot,
+    ) -> Vec<(FlapId, Range<Point>)> {
+        let mut cursor = self.flaps.cursor::<ItemSummary>();
+        let mut results = Vec::new();
+
+        cursor.next(snapshot);
+        while let Some(item) = cursor.item() {
+            let start_point = item.flap.range.start.to_point(snapshot);
+            let end_point = item.flap.range.end.to_point(snapshot);
+            results.push((item.id, start_point..end_point));
+            cursor.next(snapshot);
+        }
+
+        results
     }
 }
 
@@ -79,16 +99,16 @@ impl Flap {
     }
 }
 
+impl std::fmt::Debug for Flap {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Flap").field("range", &self.range).finish()
+    }
+}
+
 #[derive(Clone)]
 struct FlapItem {
     id: FlapId,
     flap: Flap,
-}
-
-impl SeekTarget<'_, ItemSummary, ItemSummary> for Range<Anchor> {
-    fn cmp(&self, cursor_location: &ItemSummary, snapshot: &MultiBufferSnapshot) -> Ordering {
-        AnchorRangeExt::cmp(self, &cursor_location.range, snapshot)
-    }
 }
 
 impl FlapMap {
@@ -136,49 +156,55 @@ impl FlapMap {
         });
 
         self.snapshot.flaps = {
-            let mut new_foldables = SumTree::new();
+            let mut new_flaps = SumTree::new();
             let mut cursor = self.snapshot.flaps.cursor::<ItemSummary>();
 
             for (id, range) in removals {
-                new_foldables.append(cursor.slice(&range, Bias::Left, snapshot), snapshot);
+                dbg!(id, range.start.to_point(snapshot));
+                new_flaps.append(cursor.slice(&range, Bias::Left, snapshot), snapshot);
+                dbg!(new_flaps.items(snapshot).len());
                 while let Some(item) = cursor.item() {
-                    cursor.next(snapshot);
                     if item.id == id {
+                        dbg!("cursor next");
+                        cursor.next(snapshot);
                         break;
                     } else {
-                        new_foldables.push(item.clone(), snapshot);
+                        new_flaps.push(item.clone(), snapshot);
+                        cursor.next(snapshot);
                     }
                 }
             }
 
-            new_foldables.append(cursor.suffix(snapshot), snapshot);
-            new_foldables
+            new_flaps.append(cursor.suffix(snapshot), snapshot);
+            dbg!(new_flaps.items(snapshot).len());
+
+            new_flaps
         };
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Default, Debug, Clone)]
 pub struct ItemSummary {
-    range: Range<Anchor>,
-}
-
-impl Default for ItemSummary {
-    fn default() -> Self {
-        Self {
-            range: Anchor::max()..Anchor::min(),
-        }
-    }
+    range: Option<Range<Anchor>>,
 }
 
 impl sum_tree::Summary for ItemSummary {
     type Context = MultiBufferSnapshot;
 
     fn add_summary(&mut self, other: &Self, snapshot: &Self::Context) {
-        if other.range.start.cmp(&self.range.start, snapshot) == Ordering::Less {
-            self.range.start = other.range.start;
-        }
-        if other.range.end.cmp(&self.range.end, snapshot) == Ordering::Greater {
-            self.range.end = other.range.end;
+        match (self.range.as_mut(), other.range.as_ref()) {
+            (Some(self_range), Some(other_range)) => {
+                if other_range.start.cmp(&self_range.start, snapshot) == Ordering::Less {
+                    self_range.start = other_range.start.clone();
+                }
+                if other_range.end.cmp(&self_range.end, snapshot) == Ordering::Greater {
+                    self_range.end = other_range.end.clone();
+                }
+            }
+            (None, Some(other_range)) => {
+                self.range = Some(other_range.clone());
+            }
+            _ => {}
         }
     }
 }
@@ -188,23 +214,81 @@ impl sum_tree::Item for FlapItem {
 
     fn summary(&self) -> Self::Summary {
         ItemSummary {
-            range: self.flap.range.clone(),
+            range: Some(self.flap.range.clone()),
+        }
+    }
+}
+
+/// Implements `SeekTarget` for `Range<Anchor>` to enable seeking within a `SumTree` of `FlapItem`s.
+impl SeekTarget<'_, ItemSummary, ItemSummary> for Range<Anchor> {
+    fn cmp(&self, cursor_location: &ItemSummary, snapshot: &MultiBufferSnapshot) -> Ordering {
+        if let Some(range) = cursor_location.range.as_ref() {
+            AnchorRangeExt::cmp(self, range, snapshot)
+        } else {
+            Ordering::Greater
         }
     }
 }
 
 impl SeekTarget<'_, ItemSummary, ItemSummary> for Anchor {
     fn cmp(&self, other: &ItemSummary, snapshot: &MultiBufferSnapshot) -> Ordering {
-        other.range.start.cmp(&self, snapshot)
+        if let Some(ref range) = other.range {
+            range.start.cmp(&self, snapshot)
+        } else {
+            Ordering::Greater
+        }
     }
 }
 
-impl SeekTarget<'_, ItemSummary, ItemSummary> for ItemSummary {
-    fn cmp(&self, other: &ItemSummary, snapshot: &MultiBufferSnapshot) -> Ordering {
-        other
-            .range
-            .start
-            .cmp(&self.range.start, snapshot)
-            .then_with(|| other.range.end.cmp(&self.range.end, snapshot).reverse())
+#[cfg(test)]
+mod test {
+    use super::*;
+    use gpui::{div, AppContext};
+    use multi_buffer::MultiBuffer;
+
+    #[gpui::test]
+    fn test_insert_and_remove_flaps(cx: &mut AppContext) {
+        let text = "line1\nline2\nline3\nline4\nline5";
+        let buffer = MultiBuffer::build_simple(text, cx);
+        let snapshot = buffer.read_with(cx, |buffer, cx| buffer.snapshot(cx));
+        let mut flap_map = FlapMap::default();
+
+        // Insert flaps
+        let flaps = [
+            Flap::new(
+                snapshot.anchor_before(Point::new(1, 0))..snapshot.anchor_after(Point::new(1, 5)),
+                |_row, _folded, _toggle, _cx| div(),
+            ),
+            Flap::new(
+                snapshot.anchor_before(Point::new(3, 0))..snapshot.anchor_after(Point::new(3, 5)),
+                |_row, _folded, _toggle, _cx| div(),
+            ),
+        ];
+        let flap_ids = flap_map.insert(flaps, &snapshot);
+        assert_eq!(flap_ids.len(), 2);
+
+        // Verify flaps are inserted
+        let flap_snapshot = flap_map.snapshot();
+        assert!(flap_snapshot
+            .query_row(MultiBufferRow(1), &snapshot)
+            .is_some());
+        assert!(flap_snapshot
+            .query_row(MultiBufferRow(3), &snapshot)
+            .is_some());
+
+        // Remove flaps
+        dbg!(">>>>>>>>");
+        flap_map.remove(flap_ids, &snapshot);
+
+        dbg!(flap_map.snapshot.flap_items_with_offsets(&snapshot));
+
+        // Verify flaps are removed
+        let flap_snapshot = flap_map.snapshot();
+        assert!(flap_snapshot
+            .query_row(MultiBufferRow(1), &snapshot)
+            .is_none());
+        assert!(flap_snapshot
+            .query_row(MultiBufferRow(3), &snapshot)
+            .is_none());
     }
 }

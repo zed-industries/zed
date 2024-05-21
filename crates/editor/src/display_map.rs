@@ -1841,7 +1841,7 @@ pub mod tests {
                 snapshot.anchor_before(Point::new(2, 0))..snapshot.anchor_after(Point::new(3, 3));
 
             map.flaps.insert(
-                Some(Flap::new(range, |_row, _status, _toggle, _cx| div())),
+                [Flap::new(range, |_row, _status, _toggle, _cx| div())],
                 &map.buffer.read(cx).snapshot(cx),
             );
 

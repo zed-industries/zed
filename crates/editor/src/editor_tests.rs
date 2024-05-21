@@ -11335,6 +11335,59 @@ async fn test_multiple_expanded_hunks_merge(
     );
 }
 
+#[gpui::test]
+fn test_flap_insertion_and_rendering(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let editor = cx.add_window(|cx| {
+        let buffer = MultiBuffer::build_simple("aaaaaa\nbbbbbb\ncccccc\nddddddd\n", cx);
+        build_editor(buffer, cx)
+    });
+
+    _ = editor.update(cx, |editor, cx| {
+        let snapshot = editor.buffer().read(cx).snapshot(cx);
+        let range =
+            snapshot.anchor_before(Point::new(1, 0))..snapshot.anchor_after(Point::new(2, 6));
+
+        struct RenderArgs {
+            row: MultiBufferRow,
+            folded: bool,
+            callback: Arc<dyn Fn(bool, &mut WindowContext) + Send + Sync>,
+        }
+
+        let render_args = Arc::new(Mutex::new(None));
+        let flap = Flap::new(range, {
+            let toggle_callback = render_args.clone();
+            move |row, folded, callback, _cx| {
+                *toggle_callback.lock() = Some(RenderArgs {
+                    row,
+                    folded,
+                    callback,
+                });
+                div()
+            }
+        });
+
+        editor.insert_flaps(Some(flap), cx);
+
+        let snapshot = editor.snapshot(cx);
+
+        let _div = snapshot.render_fold_toggle(MultiBufferRow(1), false, cx.view().clone(), cx);
+
+        let render_args = render_args.lock().take().unwrap();
+        assert_eq!(render_args.row, MultiBufferRow(1));
+        assert_eq!(render_args.folded, false);
+
+        assert!(!snapshot.is_line_folded(MultiBufferRow(1)));
+        (render_args.callback)(true, cx);
+        let snapshot = editor.snapshot(cx);
+        assert!(snapshot.is_line_folded(MultiBufferRow(1)));
+        (render_args.callback)(false, cx);
+        let snapshot = editor.snapshot(cx);
+        assert!(!snapshot.is_line_folded(MultiBufferRow(1)));
+    });
+}
+
 fn empty_range(row: usize, column: usize) -> Range<DisplayPoint> {
     let point = DisplayPoint::new(DisplayRow(row as u32), column as u32);
     point..point
