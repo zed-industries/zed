@@ -55,9 +55,9 @@ use language::{
 use log::error;
 use lsp::{
     DiagnosticSeverity, DiagnosticTag, DidChangeWatchedFilesRegistrationOptions,
-    DocumentHighlightKind, LanguageServer, LanguageServerBinary, LanguageServerId,
-    LspRequestFuture, MessageActionItem, OneOf, ServerCapabilities, ServerHealthStatus,
-    ServerStatus,
+    DocumentHighlightKind, Edit, FileSystemWatcher, LanguageServer, LanguageServerBinary,
+    LanguageServerId, LspRequestFuture, MessageActionItem, OneOf, ServerCapabilities,
+    ServerHealthStatus, ServerStatus, TextEdit,
 };
 use lsp_command::*;
 use node_runtime::NodeRuntime;
@@ -67,6 +67,7 @@ use prettier_support::{DefaultPrettier, PrettierInstance};
 use project_settings::{LspSettings, ProjectSettings};
 use rand::prelude::*;
 use search_history::SearchHistory;
+use snippet::Snippet;
 use worktree::LocalSnapshot;
 
 use http::{HttpClient, Url};
@@ -166,6 +167,8 @@ pub struct Project {
     last_formatting_failure: Option<String>,
     last_workspace_edits_by_language_server: HashMap<LanguageServerId, ProjectTransaction>,
     language_server_watched_paths: HashMap<LanguageServerId, HashMap<WorktreeId, GlobSet>>,
+    language_server_watcher_registrations:
+        HashMap<LanguageServerId, HashMap<String, Vec<FileSystemWatcher>>>,
     client: Arc<client::Client>,
     next_entry_id: Arc<AtomicUsize>,
     join_project_response_message_id: u32,
@@ -332,6 +335,7 @@ pub enum Event {
     CollaboratorLeft(proto::PeerId),
     RefreshInlayHints,
     RevealInProjectPanel(ProjectEntryId),
+    SnippetEdit(BufferId, Vec<(lsp::Range, Snippet)>),
 }
 
 pub enum LanguageServerState {
@@ -723,6 +727,7 @@ impl Project {
                 last_formatting_failure: None,
                 last_workspace_edits_by_language_server: Default::default(),
                 language_server_watched_paths: HashMap::default(),
+                language_server_watcher_registrations: HashMap::default(),
                 buffers_being_formatted: Default::default(),
                 buffers_needing_diff: Default::default(),
                 git_diff_debouncer: DebouncedDelay::new(),
@@ -873,6 +878,7 @@ impl Project {
                 last_formatting_failure: None,
                 last_workspace_edits_by_language_server: Default::default(),
                 language_server_watched_paths: HashMap::default(),
+                language_server_watcher_registrations: HashMap::default(),
                 opened_buffers: Default::default(),
                 buffers_being_formatted: Default::default(),
                 buffers_needing_diff: Default::default(),
@@ -2694,7 +2700,6 @@ impl Project {
                     };
 
                     let next_version = previous_snapshot.version + 1;
-
                     buffer_snapshots.push(LspBufferSnapshot {
                         version: next_version,
                         snapshot: next_snapshot.clone(),
@@ -3470,10 +3475,31 @@ impl Project {
                                     let options = serde_json::from_value(options)?;
                                     this.update(&mut cx, |this, cx| {
                                         this.on_lsp_did_change_watched_files(
-                                            server_id, options, cx,
+                                            server_id, &reg.id, options, cx,
                                         );
                                     })?;
                                 }
+                            }
+                        }
+                        Ok(())
+                    }
+                }
+            })
+            .detach();
+
+        language_server
+            .on_request::<lsp::request::UnregisterCapability, _, _>({
+                let this = this.clone();
+                move |params, mut cx| {
+                    let this = this.clone();
+                    async move {
+                        for unreg in params.unregisterations.iter() {
+                            if unreg.method == "workspace/didChangeWatchedFiles" {
+                                this.update(&mut cx, |this, cx| {
+                                    this.on_lsp_unregister_did_change_watched_files(
+                                        server_id, &unreg.id, cx,
+                                    );
+                                })?;
                             }
                         }
                         Ok(())
@@ -4207,16 +4233,67 @@ impl Project {
     fn on_lsp_did_change_watched_files(
         &mut self,
         language_server_id: LanguageServerId,
+        registration_id: &str,
         params: DidChangeWatchedFilesRegistrationOptions,
         cx: &mut ModelContext<Self>,
     ) {
+        let registrations = self
+            .language_server_watcher_registrations
+            .entry(language_server_id)
+            .or_default();
+
+        registrations.insert(registration_id.to_string(), params.watchers);
+
+        self.rebuild_watched_paths(language_server_id, cx);
+    }
+
+    fn on_lsp_unregister_did_change_watched_files(
+        &mut self,
+        language_server_id: LanguageServerId,
+        registration_id: &str,
+        cx: &mut ModelContext<Self>,
+    ) {
+        let registrations = self
+            .language_server_watcher_registrations
+            .entry(language_server_id)
+            .or_default();
+
+        if registrations.remove(registration_id).is_some() {
+            log::info!(
+                "language server {}: unregistered workspace/DidChangeWatchedFiles capability with id {}",
+                language_server_id,
+                registration_id
+            );
+        } else {
+            log::warn!(
+                "language server {}: failed to unregister workspace/DidChangeWatchedFiles capability with id {}. not registered.",
+                language_server_id,
+                registration_id
+            );
+        }
+
+        self.rebuild_watched_paths(language_server_id, cx);
+    }
+
+    fn rebuild_watched_paths(
+        &mut self,
+        language_server_id: LanguageServerId,
+        cx: &mut ModelContext<Self>,
+    ) {
+        let Some(watchers) = self
+            .language_server_watcher_registrations
+            .get(&language_server_id)
+        else {
+            return;
+        };
+
         let watched_paths = self
             .language_server_watched_paths
             .entry(language_server_id)
             .or_default();
 
         let mut builders = HashMap::default();
-        for watcher in params.watchers {
+        for watcher in watchers.values().flatten() {
             for worktree in &self.worktrees {
                 if let Some(worktree) = worktree.upgrade() {
                     let glob_is_inside_worktree = worktree.update(cx, |tree, _| {
@@ -6209,7 +6286,7 @@ impl Project {
                         uri,
                         version: None,
                     },
-                    edits: edits.into_iter().map(OneOf::Left).collect(),
+                    edits: edits.into_iter().map(Edit::Plain).collect(),
                 })
             }));
         }
@@ -6287,7 +6364,7 @@ impl Project {
                     let buffer_to_edit = this
                         .update(cx, |this, cx| {
                             this.open_local_buffer_via_lsp(
-                                op.text_document.uri,
+                                op.text_document.uri.clone(),
                                 language_server.server_id(),
                                 lsp_adapter.name.clone(),
                                 cx,
@@ -6297,10 +6374,68 @@ impl Project {
 
                     let edits = this
                         .update(cx, |this, cx| {
-                            let edits = op.edits.into_iter().map(|edit| match edit {
-                                OneOf::Left(edit) => edit,
-                                OneOf::Right(edit) => edit.text_edit,
+                            let path = buffer_to_edit.read(cx).project_path(cx);
+                            let active_entry = this.active_entry;
+                            let is_active_entry = path.clone().map_or(false, |project_path| {
+                                this.entry_for_path(&project_path, cx)
+                                    .map_or(false, |entry| Some(entry.id) == active_entry)
                             });
+
+                            let (mut edits, mut snippet_edits) = (vec![], vec![]);
+                            for edit in op.edits {
+                                match edit {
+                                    Edit::Plain(edit) => edits.push(edit),
+                                    Edit::Annotated(edit) => edits.push(edit.text_edit),
+                                    Edit::Snippet(edit) => {
+                                        let Ok(snippet) = Snippet::parse(&edit.snippet.value)
+                                        else {
+                                            continue;
+                                        };
+
+                                        if is_active_entry {
+                                            snippet_edits.push((edit.range, snippet));
+                                        } else {
+                                            // Since this buffer is not focused, apply a normal edit.
+                                            edits.push(TextEdit {
+                                                range: edit.range,
+                                                new_text: snippet.text,
+                                            });
+                                        }
+                                    }
+                                }
+                            }
+                            if !snippet_edits.is_empty() {
+                                if let Some(buffer_version) = op.text_document.version {
+                                    let buffer_id = buffer_to_edit.read(cx).remote_id();
+                                    // Check if the edit that triggered that edit has been made by this participant.
+                                    let should_apply_edit = this
+                                        .buffer_snapshots
+                                        .get(&buffer_id)
+                                        .and_then(|server_to_snapshots| {
+                                            let all_snapshots = server_to_snapshots
+                                                .get(&language_server.server_id())?;
+                                            all_snapshots
+                                                .binary_search_by_key(&buffer_version, |snapshot| {
+                                                    snapshot.version
+                                                })
+                                                .ok()
+                                                .and_then(|index| all_snapshots.get(index))
+                                        })
+                                        .map_or(false, |lsp_snapshot| {
+                                            let version = lsp_snapshot.snapshot.version();
+                                            let most_recent_edit = version
+                                                .iter()
+                                                .max_by_key(|timestamp| timestamp.value);
+                                            most_recent_edit.map_or(false, |edit| {
+                                                edit.replica_id == this.replica_id()
+                                            })
+                                        });
+                                    if should_apply_edit {
+                                        cx.emit(Event::SnippetEdit(buffer_id, snippet_edits));
+                                    }
+                                }
+                            }
+
                             this.edits_from_lsp(
                                 &buffer_to_edit,
                                 edits,

@@ -58,6 +58,7 @@ settings.workspace = true
 sha2.workspace = true
 similar = "1.3"
 smol.workspace = true
+snippet.workspace = true
 terminal.workspace = true
 text.workspace = true
 util.workspace = true

@@ -29,8 +29,8 @@ use crate::{
     current_platform, init_app_menus, Action, ActionRegistry, Any, AnyView, AnyWindowHandle,
     AppMetadata, AssetCache, AssetSource, BackgroundExecutor, ClipboardItem, Context,
     DispatchPhase, DisplayId, Entity, EventEmitter, ForegroundExecutor, Global, KeyBinding, Keymap,
-    Keystroke, LayoutId, Menu, PathPromptOptions, Pixels, Platform, PlatformDisplay, Point,
-    PromptBuilder, PromptHandle, PromptLevel, Render, RenderablePromptHandle, Reservation,
+    Keystroke, LayoutId, Menu, MenuItem, PathPromptOptions, Pixels, Platform, PlatformDisplay,
+    Point, PromptBuilder, PromptHandle, PromptLevel, Render, RenderablePromptHandle, Reservation,
     SharedString, SubscriberSet, Subscription, SvgRenderer, Task, TextSystem, View, ViewContext,
     Window, WindowAppearance, WindowContext, WindowHandle, WindowId,
 };
@@ -1165,6 +1165,11 @@ impl AppContext {
     /// Sets the menu bar for this application. This will replace any existing menu bar.
     pub fn set_menus(&mut self, menus: Vec<Menu>) {
         self.platform.set_menus(menus, &self.keymap.borrow());
+    }
+
+    /// Sets the right click menu for the app icon in the dock
+    pub fn set_dock_menu(&mut self, menus: Vec<MenuItem>) {
+        self.platform.set_dock_menu(menus, &self.keymap.borrow());
     }
 
     /// Adds given path to the bottom of the list of recent paths for the application.
