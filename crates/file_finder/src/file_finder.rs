@@ -7,9 +7,9 @@ use collections::{BTreeSet, HashMap};
 use editor::{scroll::Autoscroll, Bias, Editor};
 use fuzzy::{CharBag, PathMatch, PathMatchCandidate};
 use gpui::{
-    actions, rems, Action, AnyElement, AppContext, DismissEvent, EventEmitter, FocusHandle,
-    FocusableView, Model, Modifiers, ModifiersChangedEvent, ParentElement, Render, Styled, Task,
-    View, ViewContext, VisualContext, WeakView,
+    actions, impl_actions, rems, Action, AnyElement, AppContext, DismissEvent, EventEmitter,
+    FocusHandle, FocusableView, Model, Modifiers, ModifiersChangedEvent, ParentElement, Render,
+    Styled, Task, View, ViewContext, VisualContext, WeakView,
 };
 use itertools::Itertools;
 use new_path_prompt::NewPathPrompt;
@@ -29,7 +29,14 @@ use ui::{prelude::*, HighlightedLabel, ListItem, ListItemSpacing};
 use util::{paths::PathLikeWithPosition, post_inc, ResultExt};
 use workspace::{item::PreviewTabsSettings, ModalView, Workspace};
 
-actions!(file_finder, [Toggle, SelectPrev]);
+actions!(file_finder, [SelectPrev]);
+impl_actions!(file_finder, [Toggle]);
+
+#[derive(Default, PartialEq, Eq, Clone, serde::Deserialize)]
+pub struct Toggle {
+    #[serde(default)]
+    pub separate_history: bool,
+}
 
 impl ModalView for FileFinder {}
 
@@ -45,9 +52,9 @@ pub fn init(cx: &mut AppContext) {
 
 impl FileFinder {
     fn register(workspace: &mut Workspace, _: &mut ViewContext<Workspace>) {
-        workspace.register_action(|workspace, _: &Toggle, cx| {
+        workspace.register_action(|workspace, action: &Toggle, cx| {
             let Some(file_finder) = workspace.active_modal::<Self>(cx) else {
-                Self::open(workspace, cx);
+                Self::open(workspace, action.separate_history, cx);
                 return;
             };
 
@@ -60,7 +67,7 @@ impl FileFinder {
         });
     }
 
-    fn open(workspace: &mut Workspace, cx: &mut ViewContext<Workspace>) {
+    fn open(workspace: &mut Workspace, separate_history: bool, cx: &mut ViewContext<Workspace>) {
         let project = workspace.project().read(cx);
 
         let currently_opened_path = workspace
@@ -92,8 +99,7 @@ impl FileFinder {
                 project,
                 currently_opened_path,
                 history_items,
-                // TODO kb add this into the action
-                true,
+                separate_history,
                 cx,
             );
 
