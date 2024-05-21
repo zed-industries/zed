@@ -1271,6 +1271,7 @@ fn get_font_identifier_and_font_struct(
         features: FontFeatures::default(),
         weight: weight.into(),
         style: style.into(),
+        fallbacks: FontFallbacks::None,
     };
     let is_emoji = unsafe { font_face.IsColorFont().as_bool() };
     Some((identifier, font_struct, is_emoji))
