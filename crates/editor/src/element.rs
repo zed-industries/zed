@@ -1676,7 +1676,10 @@ impl EditorElement {
         snapshot: &EditorSnapshot,
         cx: &mut WindowContext,
     ) -> Vec<Option<AnyElement>> {
-        if EditorSettings::get_global(cx).gutter.folds && snapshot.mode == EditorMode::Full {
+        let include_fold_statuses = EditorSettings::get_global(cx).gutter.folds
+            && snapshot.mode == EditorMode::Full
+            && self.editor.read(cx).is_singleton(cx);
+        if include_fold_statuses {
             buffer_rows
                 .into_iter()
                 .enumerate()
