@@ -63,26 +63,6 @@ use futures::FutureExt;
 use fuzzy::{StringMatch, StringMatchCandidate};
 use git::blame::GitBlame;
 use git::diff_hunk_to_display;
-
-/*
-/search {}
-
-> [search_results]
-
--> click on search results
-
-v | [search_results]
-> |  editor.rs
-> |  editor-2.rs
--> [Anchor 72->74], [anchor 73,0-73,end], [anchor 74,0-74,end]
-
-v | [search_results]
-> | editor.rs
-> | editor-2.rs
-
-
-*/
-
 use gpui::{
     div, impl_actions, point, prelude::*, px, relative, size, uniform_list, Action, AnyElement,
     AppContext, AsyncWindowContext, AvailableSpace, BackgroundExecutor, Bounds, ClipboardItem,

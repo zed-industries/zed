@@ -869,16 +869,6 @@ impl DisplaySnapshot {
         DisplayRow(self.block_snapshot.longest_row())
     }
 
-    pub fn fold_for_line(&self, buffer_row: MultiBufferRow) -> Option<FoldStatus> {
-        if self.is_line_folded(buffer_row) {
-            Some(FoldStatus::Folded)
-        } else if self.starts_indent(buffer_row) {
-            Some(FoldStatus::Foldable)
-        } else {
-            None
-        }
-    }
-
     pub fn starts_indent(&self, buffer_row: MultiBufferRow) -> bool {
         let max_row = self.buffer_snapshot.max_buffer_row();
         if buffer_row >= max_row {
