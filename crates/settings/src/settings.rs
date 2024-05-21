@@ -3,7 +3,7 @@ mod keymap_file;
 mod settings_file;
 mod settings_store;
 
-use gpui::AppContext;
+use gpui::{AppContext, Global, Subscription};
 use rust_embed::RustEmbed;
 use std::{borrow::Cow, str};
 use util::asset_str;
@@ -64,8 +64,12 @@ pub fn initial_tasks_content() -> Cow<'static, str> {
     asset_str::<SettingsAssets>("settings/initial_tasks.json")
 }
 
-pub fn init_font_fallbacks(cx: &mut AppContext) {
+pub fn init_font_fallbacks(cx: &mut AppContext) -> Subscription {
     FontFallbacks::register(cx);
+    cx.observe_global::<FontFallbacks>(|cx| {
+        let text_system = cx.text_system();
+        set_font_fallbacks(text_system, cx);
+    })
 }
 
 #[derive(Default, Clone, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
@@ -79,6 +83,8 @@ pub struct FontFallbacks {
     pub ui_font_family: Vec<String>,
     pub buffer_font_family: Vec<String>,
 }
+
+impl Global for FontFallbacks {}
 
 impl Settings for FontFallbacks {
     const KEY: Option<&'static str> = None;
