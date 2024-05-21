@@ -286,13 +286,12 @@ impl DevServerProjects {
             match result {
                 Ok(dev_server) => {
                     if let Some(ssh_connection_string) =  ssh_connection_string {
-                    if let Some(terminal_panel) = workspace
+                    let terminal_panel = workspace
                         .update(&mut cx, |workspace, cx| workspace.panel::<TerminalPanel>(cx))
                         .ok()
                         .flatten()
-                        .with_context(|| anyhow::anyhow!("No terminal panel"))
-                        .log_err()
-                    {
+                        .with_context(|| anyhow::anyhow!("No terminal panel"))?;
+
                         let command = "sh".to_string();
                         let args = vec!["-c".to_string(), "-x".to_string(),
                             format!(r#"(curl -sSL https://zed.dev/install.sh || wget -qO- https://zed.dev/install.sh) | bash && ~/.local/bin/zed --dev-server-token {}"#, dev_server.access_token)];
@@ -319,9 +318,6 @@ impl DevServerProjects {
                         terminal.update(&mut cx, |terminal, cx| {
                             terminal.wait_for_completed_task(cx)
                         })?.await;
-                    } else {
-                        dbg!("noo!");
-                    }
 
                     this.update(&mut cx, |this, cx| {
                             this.focus_handle.focus(cx);

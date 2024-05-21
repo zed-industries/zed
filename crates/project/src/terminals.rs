@@ -70,7 +70,6 @@ impl Project {
         window: AnyWindowHandle,
         cx: &mut ModelContext<Self>,
     ) -> anyhow::Result<Model<Terminal>> {
-        dbg!(&working_directory, &spawn_task);
         // used only for TerminalSettings::get
         let worktree = {
             let terminal_cwd = working_directory
@@ -167,7 +166,6 @@ impl Project {
                     port_forward,
                     shlex::try_quote(shell_invocation)?,
                 )?;
-                dbg!(&ssh_path);
                 let mut perms = ssh_file.metadata()?.permissions();
                 perms.set_mode(0o755); // Set the executable bit
                 std::fs::set_permissions(ssh_path, perms)?;
@@ -374,39 +372,3 @@ impl Project {
         &self.terminals.local_handles
     }
 }
-
-#[cfg(unix)]
-fn escape_path_for_shell(input: &str) -> String {
-    input
-        .chars()
-        .fold(String::with_capacity(input.len()), |mut s, c| {
-            match c {
-                ' ' | '"' | '\'' | '\\' | '(' | ')' | '{' | '}' | '[' | ']' | '|' | ';' | '&'
-                | '<' | '>' | '*' | '?' | '$' | '#' | '!' | '=' | '^' | '%' | ':' => {
-                    s.push('\\');
-                    s.push('\\');
-                    s.push(c);
-                }
-                _ => s.push(c),
-            }
-            s
-        })
-}
-
-#[cfg(windows)]
-fn escape_path_for_shell(input: &str) -> String {
-    input
-        .chars()
-        .fold(String::with_capacity(input.len()), |mut s, c| {
-            match c {
-                '^' | '&' | '|' | '<' | '>' | ' ' | '(' | ')' | '@' | '`' | '=' | ';' | '%' => {
-                    s.push('^');
-                    s.push(c);
-                }
-                _ => s.push(c),
-            }
-            s
-        })
-}
-
-// TODO: Add a few tests for adding and removing terminal tabs
