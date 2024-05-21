@@ -105,7 +105,7 @@ impl std::fmt::Debug for Flap {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 struct FlapItem {
     id: FlapId,
     flap: Flap,
@@ -160,52 +160,41 @@ impl FlapMap {
             let mut cursor = self.snapshot.flaps.cursor::<ItemSummary>();
 
             for (id, range) in removals {
-                dbg!(id, range.start.to_point(snapshot));
                 new_flaps.append(cursor.slice(&range, Bias::Left, snapshot), snapshot);
-                dbg!(new_flaps.items(snapshot).len());
                 while let Some(item) = cursor.item() {
+                    cursor.next(snapshot);
                     if item.id == id {
-                        dbg!("cursor next");
-                        cursor.next(snapshot);
                         break;
                     } else {
                         new_flaps.push(item.clone(), snapshot);
-                        cursor.next(snapshot);
                     }
                 }
             }
 
             new_flaps.append(cursor.suffix(snapshot), snapshot);
-            dbg!(new_flaps.items(snapshot).len());
-
             new_flaps
         };
     }
 }
 
-#[derive(Default, Debug, Clone)]
+#[derive(Debug, Clone)]
 pub struct ItemSummary {
-    range: Option<Range<Anchor>>,
+    range: Range<Anchor>,
+}
+
+impl Default for ItemSummary {
+    fn default() -> Self {
+        Self {
+            range: Anchor::min()..Anchor::min(),
+        }
+    }
 }
 
 impl sum_tree::Summary for ItemSummary {
     type Context = MultiBufferSnapshot;
 
-    fn add_summary(&mut self, other: &Self, snapshot: &Self::Context) {
-        match (self.range.as_mut(), other.range.as_ref()) {
-            (Some(self_range), Some(other_range)) => {
-                if other_range.start.cmp(&self_range.start, snapshot) == Ordering::Less {
-                    self_range.start = other_range.start.clone();
-                }
-                if other_range.end.cmp(&self_range.end, snapshot) == Ordering::Greater {
-                    self_range.end = other_range.end.clone();
-                }
-            }
-            (None, Some(other_range)) => {
-                self.range = Some(other_range.clone());
-            }
-            _ => {}
-        }
+    fn add_summary(&mut self, other: &Self, _snapshot: &MultiBufferSnapshot) {
+        self.range = other.range.clone();
     }
 }
 
@@ -214,7 +203,7 @@ impl sum_tree::Item for FlapItem {
 
     fn summary(&self) -> Self::Summary {
         ItemSummary {
-            range: Some(self.flap.range.clone()),
+            range: self.flap.range.clone(),
         }
     }
 }
@@ -222,21 +211,13 @@ impl sum_tree::Item for FlapItem {
 /// Implements `SeekTarget` for `Range<Anchor>` to enable seeking within a `SumTree` of `FlapItem`s.
 impl SeekTarget<'_, ItemSummary, ItemSummary> for Range<Anchor> {
     fn cmp(&self, cursor_location: &ItemSummary, snapshot: &MultiBufferSnapshot) -> Ordering {
-        if let Some(range) = cursor_location.range.as_ref() {
-            AnchorRangeExt::cmp(self, range, snapshot)
-        } else {
-            Ordering::Greater
-        }
+        AnchorRangeExt::cmp(self, &cursor_location.range, snapshot)
     }
 }
 
 impl SeekTarget<'_, ItemSummary, ItemSummary> for Anchor {
     fn cmp(&self, other: &ItemSummary, snapshot: &MultiBufferSnapshot) -> Ordering {
-        if let Some(ref range) = other.range {
-            range.start.cmp(&self, snapshot)
-        } else {
-            Ordering::Greater
-        }
+        self.cmp(&other.range.start, snapshot)
     }
 }
 
@@ -277,10 +258,7 @@ mod test {
             .is_some());
 
         // Remove flaps
-        dbg!(">>>>>>>>");
         flap_map.remove(flap_ids, &snapshot);
-
-        dbg!(flap_map.snapshot.flap_items_with_offsets(&snapshot));
 
         // Verify flaps are removed
         let flap_snapshot = flap_map.snapshot();

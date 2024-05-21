@@ -11051,9 +11051,9 @@ impl EditorSnapshot {
     ) -> Option<AnyElement> {
         let folded = self.is_line_folded(buffer_row);
 
-        if let Some(flap) = dbg!(self
+        if let Some(flap) = self
             .flap_snapshot
-            .query_row(buffer_row, &self.buffer_snapshot))
+            .query_row(buffer_row, &self.buffer_snapshot)
         {
             let range = flap.range.clone();
             let toggle_callback = Arc::new(move |folded, cx: &mut WindowContext| {
