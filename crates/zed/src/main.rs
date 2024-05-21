@@ -236,6 +236,8 @@ fn init_ui(app_state: Arc<AppState>, cx: &mut AppContext) -> Result<()> {
     settings_ui::init(cx);
     extensions_ui::init(cx);
 
+    settings::init_font_fallbacks(cx);
+
     // Initialize each completion provider. Settings are used for toggling between them.
     let copilot_language_server_id = app_state.languages.next_language_server_id();
     copilot::init(
@@ -413,11 +415,9 @@ fn main() {
         handle_settings_file_changes(user_settings_file_rx, cx);
         handle_keymap_file_changes(user_keymap_file_rx, cx);
 
-        let _ = settings::init_font_fallbacks(cx);
         client::init_settings(cx);
         let client = Client::production(cx);
         cx.update_http_client(client.http_client().clone());
-        settings::set_font_fallbacks(cx.text_system(), cx);
         let mut languages =
             LanguageRegistry::new(login_shell_env_loaded, cx.background_executor().clone());
         languages.set_language_server_download_dir(paths::languages_dir().clone());
