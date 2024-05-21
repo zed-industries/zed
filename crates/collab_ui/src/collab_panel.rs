@@ -2198,6 +2198,7 @@ impl CollabPanel {
             underline: None,
             strikethrough: None,
             white_space: WhiteSpace::Normal,
+            fallbacks: settings.ui_font.fallbacks,
         };
 
         EditorElement::new(
