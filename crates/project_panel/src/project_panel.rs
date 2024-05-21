@@ -1235,14 +1235,14 @@ impl ProjectPanel {
         destination_is_file: bool,
         cx: &mut ViewContext<Self>,
     ) {
-        let entry_is_worktree_root = self
+        if self
             .project
             .read(cx)
-            .entry_is_worktree_root(entry_to_move, cx);
-
-        match entry_is_worktree_root {
-            true => self.move_worktree_root(entry_to_move, destination, cx),
-            false => self.move_worktree_entry(entry_to_move, destination, destination_is_file, cx),
+            .entry_is_worktree_root(entry_to_move, cx)
+        {
+            self.move_worktree_root(entry_to_move, destination, cx)
+        } else {
+            self.move_worktree_entry(entry_to_move, destination, destination_is_file, cx)
         }
     }
 
@@ -1263,8 +1263,9 @@ impl ProjectPanel {
             let worktree_id = worktree_to_move.read(cx).id();
             let destination_id = destination_worktree.read(cx).id();
 
-            let task = project.move_worktree(worktree_id, destination_id, cx);
-            cx.foreground_executor().spawn(task).detach_and_log_err(cx);
+            project
+                .move_worktree(worktree_id, destination_id, cx)
+                .log_err();
         });
         return;
     }

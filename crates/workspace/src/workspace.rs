@@ -46,13 +46,10 @@ use node_runtime::NodeRuntime;
 use notifications::{simple_message_notification::MessageNotification, NotificationHandle};
 pub use pane::*;
 pub use pane_group::*;
+use persistence::{model::SerializedWorkspace, SerializedWindowBounds, DB};
 pub use persistence::{
     model::{ItemId, LocalPaths, SerializedDevServerProject, SerializedWorkspaceLocation},
     WorkspaceDb, DB as WORKSPACE_DB,
-};
-use persistence::{
-    model::{LocalPathsOrder, SerializedWorkspace},
-    SerializedWindowBounds, DB,
 };
 use postage::stream::Stream;
 use project::{Project, ProjectEntryId, ProjectPath, Worktree, WorktreeId};
@@ -93,11 +90,11 @@ pub use workspace_settings::{
     AutosaveSetting, RestoreOnStartupBehaviour, TabBarSettings, WorkspaceSettings,
 };
 
-use crate::notifications::NotificationId;
 use crate::persistence::{
     model::{DockData, DockStructure, SerializedItem, SerializedPane, SerializedPaneGroup},
     SerializedAxis,
 };
+use crate::{notifications::NotificationId, persistence::model::LocalPathsOrder};
 
 lazy_static! {
     static ref ZED_WINDOW_SIZE: Option<Size<DevicePixels>> = env::var("ZED_WINDOW_SIZE")
@@ -907,19 +904,31 @@ impl Workspace {
             let serialized_workspace: Option<SerializedWorkspace> =
                 persistence::DB.workspace_for_roots(abs_paths.as_slice());
 
-            let paths_to_open = Arc::new(abs_paths);
+            let mut paths_to_open = Arc::new(abs_paths);
 
             let paths_order = serialized_workspace
                 .as_ref()
                 .map(|ws| ws.location.clone())
                 .and_then(|loc| match loc {
-                    SerializedWorkspaceLocation::Local(_, order) => Some(order),
+                    SerializedWorkspaceLocation::Local(_, order) => Some(order.order()),
                     _ => None,
-                })
-                .unwrap_or(LocalPathsOrder::default_for_length(paths_to_open.len()))
-                .order()
-                .as_ref()
-                .clone();
+                });
+
+            if let Some(paths_order) = paths_order {
+                paths_to_open = Arc::new(
+                    paths_order
+                        .iter()
+                        .filter_map(|i| paths_to_open.get(*i).cloned())
+                        .collect::<Vec<_>>(),
+                );
+                if paths_order.iter().enumerate().any(|(i, &j)| i != j) {
+                    project_handle
+                        .update(&mut cx, |project, _| {
+                            project.set_worktrees_reordered(true);
+                        })
+                        .log_err();
+                }
+            }
 
             // Get project paths for all of the abs_paths
             let mut worktree_roots: HashSet<Arc<Path>> = Default::default();
@@ -1002,12 +1011,6 @@ impl Workspace {
                 })?
                 .await
                 .unwrap_or_default();
-
-            project_handle
-                .update(&mut cx, |project, cx| {
-                    project.set_worktree_order_from_indexes(paths_order, cx);
-                })
-                .log_err();
 
             window
                 .update(&mut cx, |_, cx| cx.activate_window())
@@ -3509,26 +3512,16 @@ impl Workspace {
         self.database_id
     }
 
-    fn local_paths(&self, cx: &AppContext) -> Option<LocalPaths> {
+    fn local_paths(&self, cx: &AppContext) -> Option<Vec<Arc<Path>>> {
         let project = self.project().read(cx);
 
         if project.is_local() {
-            Some(LocalPaths::new(
+            Some(
                 project
                     .visible_worktrees(cx)
                     .map(|worktree| worktree.read(cx).abs_path())
                     .collect::<Vec<_>>(),
-            ))
-        } else {
-            None
-        }
-    }
-
-    fn local_paths_order(&self, cx: &AppContext) -> Option<LocalPathsOrder> {
-        let project = self.project().read(cx);
-
-        if project.is_local() {
-            Some(LocalPathsOrder::new(project.worktree_order_indexes(cx)))
+            )
         } else {
             None
         }
@@ -3672,15 +3665,19 @@ impl Workspace {
         }
 
         let location = if let Some(local_paths) = self.local_paths(cx) {
-            match (local_paths.paths().is_empty(), self.local_paths_order(cx)) {
-                (false, Some(order)) => {
-                    Some(SerializedWorkspaceLocation::Local(local_paths, order))
-                }
-                (false, None) => {
-                    let order = LocalPathsOrder::default_for_paths(&local_paths);
-                    Some(SerializedWorkspaceLocation::Local(local_paths, order))
-                }
-                (true, _) => None,
+            if !local_paths.is_empty() {
+                let (order, paths): (Vec<_>, Vec<_>) = local_paths
+                    .iter()
+                    .enumerate()
+                    .sorted_by(|a, b| a.1.cmp(b.1))
+                    .unzip();
+
+                Some(SerializedWorkspaceLocation::Local(
+                    LocalPaths::new(paths),
+                    LocalPathsOrder::new(order),
+                ))
+            } else {
+                None
             }
         } else if let Some(dev_server_project_id) = self.project().read(cx).dev_server_project_id()
         {
@@ -5356,7 +5353,7 @@ mod tests {
         // Add a project folder
         project
             .update(cx, |project, cx| {
-                project.find_or_create_local_worktree("/root2", true, cx)
+                project.find_or_create_local_worktree("root2", true, cx)
             })
             .await
             .unwrap();

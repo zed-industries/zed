@@ -2411,13 +2411,6 @@ async fn test_definition(cx: &mut gpui::TestAppContext) {
             list_worktrees(&project, cx),
             [("/dir/a.rs".as_ref(), false), ("/dir/b.rs".as_ref(), true)],
         );
-        assert_eq!(
-            project
-                .read(cx)
-                .worktree_order_indexes(cx)
-                .collect::<Vec<_>>(),
-            [1, 0],
-        );
 
         drop(definition);
     });
@@ -4955,10 +4948,6 @@ async fn test_reordering_worktrees(cx: &mut gpui::TestAppContext) {
         assert_eq!(worktree_a.abs_path().to_str().unwrap(), "/dir/a.rs");
         assert_eq!(worktree_b.abs_path().to_str().unwrap(), "/dir/b.rs");
         assert_eq!(worktree_c.abs_path().to_str().unwrap(), "/dir/c.rs");
-        assert_eq!(
-            project.worktree_order_indexes(cx).collect::<Vec<_>>(),
-            vec![0, 1, 2]
-        );
 
         (
             worktrees[0].clone(),
@@ -4975,7 +4964,6 @@ async fn test_reordering_worktrees(cx: &mut gpui::TestAppContext) {
             let second = worktree_b.read(cx);
             project.move_worktree(first.id(), second.id(), cx)
         })
-        .await
         .expect("moving first after second");
 
     // check the state after moving
@@ -4991,10 +4979,6 @@ async fn test_reordering_worktrees(cx: &mut gpui::TestAppContext) {
         assert_eq!(first.abs_path().to_str().unwrap(), "/dir/b.rs");
         assert_eq!(second.abs_path().to_str().unwrap(), "/dir/a.rs");
         assert_eq!(third.abs_path().to_str().unwrap(), "/dir/c.rs");
-        assert_eq!(
-            project.worktree_order_indexes(cx).collect::<Vec<_>>(),
-            vec![1, 0, 2],
-        );
     });
 
     // move the second worktree to before the first
@@ -5005,7 +4989,6 @@ async fn test_reordering_worktrees(cx: &mut gpui::TestAppContext) {
             let first = worktree_b.read(cx);
             project.move_worktree(first.id(), second.id(), cx)
         })
-        .await
         .expect("moving second before first");
 
     // check the state after moving
@@ -5021,10 +5004,6 @@ async fn test_reordering_worktrees(cx: &mut gpui::TestAppContext) {
         assert_eq!(first.abs_path().to_str().unwrap(), "/dir/a.rs");
         assert_eq!(second.abs_path().to_str().unwrap(), "/dir/b.rs");
         assert_eq!(third.abs_path().to_str().unwrap(), "/dir/c.rs");
-        assert_eq!(
-            project.worktree_order_indexes(cx).collect::<Vec<_>>(),
-            vec![0, 1, 2],
-        );
     });
 
     // move the second worktree to after the third
@@ -5035,7 +5014,6 @@ async fn test_reordering_worktrees(cx: &mut gpui::TestAppContext) {
             let third = worktree_c.read(cx);
             project.move_worktree(second.id(), third.id(), cx)
         })
-        .await
         .expect("moving second after third");
 
     // check the state after moving
@@ -5051,10 +5029,6 @@ async fn test_reordering_worktrees(cx: &mut gpui::TestAppContext) {
         assert_eq!(first.abs_path().to_str().unwrap(), "/dir/a.rs");
         assert_eq!(second.abs_path().to_str().unwrap(), "/dir/c.rs");
         assert_eq!(third.abs_path().to_str().unwrap(), "/dir/b.rs");
-        assert_eq!(
-            project.worktree_order_indexes(cx).collect::<Vec<_>>(),
-            vec![0, 2, 1],
-        );
     });
 
     // move the third worktree to before the second
@@ -5065,7 +5039,6 @@ async fn test_reordering_worktrees(cx: &mut gpui::TestAppContext) {
             let second = worktree_b.read(cx);
             project.move_worktree(third.id(), second.id(), cx)
         })
-        .await
         .expect("moving third before second");
 
     // check the state after moving
@@ -5081,10 +5054,6 @@ async fn test_reordering_worktrees(cx: &mut gpui::TestAppContext) {
         assert_eq!(first.abs_path().to_str().unwrap(), "/dir/a.rs");
         assert_eq!(second.abs_path().to_str().unwrap(), "/dir/b.rs");
         assert_eq!(third.abs_path().to_str().unwrap(), "/dir/c.rs");
-        assert_eq!(
-            project.worktree_order_indexes(cx).collect::<Vec<_>>(),
-            vec![0, 1, 2],
-        );
     });
 
     // move the first worktree to after the third
@@ -5095,7 +5064,6 @@ async fn test_reordering_worktrees(cx: &mut gpui::TestAppContext) {
             let third = worktree_c.read(cx);
             project.move_worktree(first.id(), third.id(), cx)
         })
-        .await
         .expect("moving first after third");
 
     // check the state after moving
@@ -5111,10 +5079,6 @@ async fn test_reordering_worktrees(cx: &mut gpui::TestAppContext) {
         assert_eq!(first.abs_path().to_str().unwrap(), "/dir/b.rs");
         assert_eq!(second.abs_path().to_str().unwrap(), "/dir/c.rs");
         assert_eq!(third.abs_path().to_str().unwrap(), "/dir/a.rs");
-        assert_eq!(
-            project.worktree_order_indexes(cx).collect::<Vec<_>>(),
-            vec![1, 2, 0],
-        );
     });
 
     // move the third worktree to before the first
@@ -5125,7 +5089,6 @@ async fn test_reordering_worktrees(cx: &mut gpui::TestAppContext) {
             let first = worktree_b.read(cx);
             project.move_worktree(third.id(), first.id(), cx)
         })
-        .await
         .expect("moving third before first");
 
     // check the state after moving
@@ -5141,34 +5104,6 @@ async fn test_reordering_worktrees(cx: &mut gpui::TestAppContext) {
         assert_eq!(first.abs_path().to_str().unwrap(), "/dir/a.rs");
         assert_eq!(second.abs_path().to_str().unwrap(), "/dir/b.rs");
         assert_eq!(third.abs_path().to_str().unwrap(), "/dir/c.rs");
-        assert_eq!(
-            project.worktree_order_indexes(cx).collect::<Vec<_>>(),
-            vec![0, 1, 2],
-        );
-    });
-
-    // now try setting it like on load from the db
-    project.update(cx, |project, cx| {
-        project.set_worktree_order_from_indexes(vec![2, 1, 0], cx)
-    });
-
-    // check the state after moving
-    project.update(cx, |project, cx| {
-        let worktrees = project.visible_worktrees(cx).collect::<Vec<_>>();
-        assert_eq!(worktrees.len(), 3);
-
-        let first = worktrees[0].read(cx);
-        let second = worktrees[1].read(cx);
-        let third = worktrees[2].read(cx);
-
-        // check they are now in the right order
-        assert_eq!(first.abs_path().to_str().unwrap(), "/dir/c.rs");
-        assert_eq!(second.abs_path().to_str().unwrap(), "/dir/b.rs");
-        assert_eq!(third.abs_path().to_str().unwrap(), "/dir/a.rs");
-        assert_eq!(
-            project.worktree_order_indexes(cx).collect::<Vec<_>>(),
-            vec![2, 1, 0],
-        );
     });
 }
 
