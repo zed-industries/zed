@@ -20,7 +20,8 @@ use core_graphics::{
 use core_text::{
     font::CTFont,
     font_descriptor::{
-        kCTFontSlantTrait, kCTFontSymbolicTrait, kCTFontWeightTrait, kCTFontWidthTrait,
+        kCTFontCascadeListAttribute, kCTFontSlantTrait, kCTFontSymbolicTrait, kCTFontWeightTrait,
+        kCTFontWidthTrait,
     },
     line::CTLine,
     string_attributes::kCTFontAttributeName,
@@ -488,6 +489,10 @@ impl MacTextSystemState {
 
                 // TODO: apply fallbacks
                 let font: &FontKitFont = &self.fonts[run.font_id.0].font;
+                let desc = font.native_font().copy_descriptor();
+                let x = desc.attributes();
+                let y = unsafe { x.get(kCTFontCascadeListAttribute) };
+                println!("  => list: {:#?}", y);
                 unsafe {
                     string.set_attribute(
                         cf_range,
