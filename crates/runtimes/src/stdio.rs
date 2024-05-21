@@ -1,6 +1,6 @@
 use gpui::{font, AnyElement, StyledText, TextRun};
 use theme::Theme;
-use ui::{div, IntoElement, ParentElement as _, Styled};
+use ui::{div, IntoElement, ParentElement as _};
 
 use core::iter;
 
@@ -96,10 +96,6 @@ impl AnsiTextRun {
             bg: Color::Named(NamedColor::Background),
         }
     }
-
-    fn push(&mut self, c: char) {
-        self.len += 1;
-    }
 }
 
 // This should instead gather `TextRun`s
@@ -125,8 +121,6 @@ impl TerminalHandler {
     fn add_text(&mut self, c: char) {
         self.buffer.push(c);
         self.current_text_run.len += 1;
-
-        // TODO: Handle newlines and carriage returns
     }
 
     fn reset(&mut self) {

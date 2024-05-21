@@ -9,14 +9,21 @@ use project::Fs;
 use std::{path::PathBuf, sync::Arc};
 
 use runtimelib::dirs;
-use runtimelib::{JupyterKernelspec, KernelspecDir};
+use runtimelib::JupyterKernelspec;
+
+#[derive(Debug)]
+pub struct Runtime {
+    pub name: String,
+    pub path: PathBuf,
+    pub spec: JupyterKernelspec,
+}
 
 pub async fn read_kernelspec_at(
     // Path should be a directory to a jupyter kernelspec, as in
     // /usr/local/share/jupyter/kernels/python3
     kernel_dir: PathBuf,
     fs: Arc<dyn Fs>,
-) -> anyhow::Result<KernelspecDir> {
+) -> anyhow::Result<Runtime> {
     let path = kernel_dir;
     let kernel_name = if let Some(kernel_name) = path.file_name() {
         kernel_name.to_string_lossy().to_string()
@@ -29,21 +36,18 @@ pub async fn read_kernelspec_at(
     }
 
     let expected_kernel_json = path.join("kernel.json");
-    let kernelspec = fs.load(expected_kernel_json.as_path()).await?;
-    let kernelspec = serde_json::from_str::<JupyterKernelspec>(&kernelspec)?;
+    let spec = fs.load(expected_kernel_json.as_path()).await?;
+    let spec = serde_json::from_str::<JupyterKernelspec>(&spec)?;
 
-    Ok(KernelspecDir {
-        kernel_name,
+    Ok(Runtime {
+        name: kernel_name,
         path,
-        kernelspec,
+        spec,
     })
 }
 
 /// Read a directory of kernelspec directories
-pub async fn read_kernels_dir(
-    path: PathBuf,
-    fs: Arc<dyn Fs>,
-) -> anyhow::Result<Vec<KernelspecDir>> {
+pub async fn read_kernels_dir(path: PathBuf, fs: Arc<dyn Fs>) -> anyhow::Result<Vec<Runtime>> {
     let mut kernelspec_dirs = fs.read_dir(&path).await?;
 
     let mut valid_kernelspecs = Vec::new();
@@ -66,7 +70,7 @@ pub async fn read_kernels_dir(
     Ok(valid_kernelspecs)
 }
 
-pub async fn get_kernelspecs(fs: Arc<dyn Fs>) -> anyhow::Result<Vec<KernelspecDir>> {
+pub async fn get_runtimes(fs: Arc<dyn Fs>) -> anyhow::Result<Vec<Runtime>> {
     let data_dirs = dirs::data_dirs();
     let kernel_dirs = data_dirs
         .iter()
@@ -89,7 +93,6 @@ mod test {
     use super::*;
     use std::path::PathBuf;
 
-    use gpui::prelude::*;
     use gpui::TestAppContext;
     use project::FakeFs;
     use serde_json::json;
@@ -134,13 +137,10 @@ mod test {
             .await
             .unwrap();
 
-        kernels.sort_by(|a, b| a.kernel_name.cmp(&b.kernel_name));
+        kernels.sort_by(|a, b| a.name.cmp(&b.name));
 
         assert_eq!(
-            kernels
-                .iter()
-                .map(|c| c.kernel_name.clone())
-                .collect::<Vec<_>>(),
+            kernels.iter().map(|c| c.name.clone()).collect::<Vec<_>>(),
             vec!["deno", "python"]
         );
     }

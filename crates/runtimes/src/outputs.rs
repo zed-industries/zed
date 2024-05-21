@@ -129,7 +129,7 @@ impl Execution {
     }
 
     /// Push a new message
-    pub fn push_message(&mut self, message: &JupyterMessageContent, cx: &mut ModelContext<Self>) {
+    pub fn push_message(&mut self, message: &JupyterMessageContent, _cx: &mut ModelContext<Self>) {
         let output = match message {
             JupyterMessageContent::ExecuteResult(result) => {
                 let (mimetype, value) =

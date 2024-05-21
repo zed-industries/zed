@@ -7,8 +7,10 @@ use editor::{
 use futures::{channel::mpsc, SinkExt as _, StreamExt as _};
 use gpui::{actions, AppContext, Context, EntityId, Global, Model};
 use gpui::{Entity, View};
+use kernelspecs::{get_runtimes, Runtime};
 use language::Point;
 use outputs::ExecutionView;
+use project::Fs;
 use runtimelib::{JupyterMessage, JupyterMessageContent};
 use settings::Settings as _;
 use std::path::PathBuf;
@@ -32,9 +34,22 @@ impl Global for RuntimeGlobal {}
 
 /** On startup, we will look for all available kernels, or so I expect */
 
-pub fn init(cx: &mut AppContext) {
-    let runtime = cx.new_model(|cx| RuntimeManager::new(cx));
-    RuntimeManager::set_global(runtime.clone(), cx);
+pub fn init(fs: Arc<dyn Fs>, cx: &mut AppContext) {
+    let runtime_manager = cx.new_model(|cx| RuntimeManager::new(cx));
+    RuntimeManager::set_global(runtime_manager.clone(), cx);
+
+    cx.spawn(|mut cx| async move {
+        let fs = fs.clone();
+
+        let runtimes = get_runtimes(fs).await?;
+
+        runtime_manager.update(&mut cx, |this, _cx| {
+            this.runtimes = runtimes;
+        })?;
+
+        anyhow::Ok(())
+    })
+    .detach_and_log_err(cx);
 
     cx.observe_new_views(
         |workspace: &mut Workspace, _: &mut ViewContext<Workspace>| {
@@ -52,13 +67,14 @@ pub struct ExecutionRequest {
     response_sender: mpsc::UnboundedSender<ExecutionUpdate>,
 }
 
-pub struct Runtime {
+pub struct RuntimeInstance {
     execution_request_tx: mpsc::UnboundedSender<ExecutionRequest>,
     _runtime_handle: std::thread::JoinHandle<()>,
 }
 
 pub struct RuntimeManager {
-    runtimes: HashMap<EntityId, Runtime>,
+    runtimes: Vec<Runtime>,
+    instances: HashMap<EntityId, RuntimeInstance>,
 }
 
 static HARDCODED_DENO_KERNEL: &str =
@@ -169,6 +185,7 @@ impl RuntimeManager {
     pub fn new(_cx: &mut AppContext) -> Self {
         Self {
             runtimes: Default::default(),
+            instances: Default::default(),
         }
     }
 
@@ -184,7 +201,7 @@ impl RuntimeManager {
             _ => HARDCODED_PYTHON_KERNEL,
         };
 
-        let maybe_runtime = self.runtimes.get(&entity_id);
+        let maybe_runtime = self.instances.get(&entity_id);
         if let Some(runtime) = maybe_runtime {
             return Some(runtime.execution_request_tx.clone());
         }
@@ -226,12 +243,12 @@ impl RuntimeManager {
                 .log_err();
         });
 
-        let runtime = Runtime {
+        let runtime = RuntimeInstance {
             execution_request_tx: execution_request_tx.clone(),
             _runtime_handle,
         };
 
-        self.runtimes.insert(entity_id, runtime);
+        self.instances.insert(entity_id, runtime);
 
         Some(execution_request_tx)
     }
