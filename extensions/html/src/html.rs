@@ -1,3 +1,4 @@
+use crate::zed::settings::LspSettings;
 use std::{env, fs, path::PathBuf};
 use zed_extension_api::{self as zed, Result};
 
@@ -94,6 +95,17 @@ impl zed::Extension for HtmlExtension {
             ],
             env: Default::default(),
         })
+    }
+    fn language_server_workspace_configuration(
+        &mut self,
+        server_id: &zed::LanguageServerId,
+        worktree: &zed::Worktree,
+    ) -> Result<Option<zed::serde_json::Value>> {
+        let settings = LspSettings::for_worktree(server_id.as_ref(), worktree)
+            .ok()
+            .and_then(|lsp_settings| lsp_settings.settings.clone())
+            .unwrap_or_default();
+        Ok(Some(settings))
     }
 }
 
