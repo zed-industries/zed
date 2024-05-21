@@ -1,6 +1,8 @@
 use crate::Project;
 use collections::HashMap;
-use gpui::{AnyWindowHandle, Context, Entity, Model, ModelContext, WeakModel};
+use gpui::{
+    AnyWindowHandle, AppContext, Context, Entity, Model, ModelContext, SharedString, WeakModel,
+};
 use settings::{Settings, SettingsLocation};
 use smol::channel::bounded;
 use std::path::{Path, PathBuf};
@@ -18,7 +20,38 @@ pub struct Terminals {
     pub(crate) local_handles: Vec<WeakModel<terminal::Terminal>>,
 }
 
+#[derive(Debug, Clone)]
+pub struct ConnectRemoteTerminal {
+    pub ssh_connection_string: SharedString,
+    pub project_path: SharedString,
+}
+
 impl Project {
+    pub fn remote_terminal_connection_data(
+        &self,
+        cx: &AppContext,
+    ) -> Option<ConnectRemoteTerminal> {
+        self.dev_server_project_id()
+            .and_then(|dev_server_project_id| {
+                let projects_store = dev_server_projects::Store::global(cx).read(cx);
+                let project_path = projects_store
+                    .dev_server_project(dev_server_project_id)?
+                    .path
+                    .clone();
+                let ssh_connection_string = projects_store
+                    .dev_server_for_project(dev_server_project_id)?
+                    .ssh_connection_string
+                    .clone();
+                Some(project_path).zip(ssh_connection_string)
+            })
+            .map(
+                |(project_path, ssh_connection_string)| ConnectRemoteTerminal {
+                    ssh_connection_string,
+                    project_path,
+                },
+            )
+    }
+
     pub fn create_terminal(
         &mut self,
         working_directory: Option<PathBuf>,
@@ -26,10 +59,15 @@ impl Project {
         window: AnyWindowHandle,
         cx: &mut ModelContext<Self>,
     ) -> anyhow::Result<Model<Terminal>> {
-        anyhow::ensure!(
-            !self.is_remote(),
-            "creating terminals as a guest is not supported yet"
-        );
+        let remote_connection_data = if self.is_remote() {
+            let remote_connection_data = self.remote_terminal_connection_data(cx);
+            if remote_connection_data.is_none() {
+                anyhow::bail!("Cannot create terminal for remote project without connection data")
+            }
+            remote_connection_data
+        } else {
+            None
+        };
 
         // used only for TerminalSettings::get
         let worktree = {
@@ -48,7 +86,7 @@ impl Project {
             path,
         });
 
-        let is_terminal = spawn_task.is_none();
+        let is_terminal = spawn_task.is_none() && remote_connection_data.is_none();
         let settings = TerminalSettings::get(settings_location, cx);
         let python_settings = settings.detect_venv.clone();
         let (completion_tx, completion_rx) = bounded(1);
@@ -61,7 +99,30 @@ impl Project {
             .as_deref()
             .unwrap_or_else(|| Path::new(""));
 
-        let (spawn_task, shell) = if let Some(spawn_task) = spawn_task {
+        let (spawn_task, shell) = if let Some(remote_connection_data) = remote_connection_data {
+            log::debug!("Connecting to a remote server: {remote_connection_data:?}");
+            // Alacritty sets its terminfo to `alacritty`, this requiring hosts to have it installed
+            // to properly display colors.
+            // We do not have the luxury of assuming the host has it installed,
+            // so we set it to a default that does not break the highlighting via ssh.
+            env.entry("TERM".to_string())
+                .or_insert_with(|| "xterm-256color".to_string());
+
+            (
+                None,
+                Shell::WithArguments {
+                    program: "ssh".to_string(),
+                    args: vec![
+                        remote_connection_data.ssh_connection_string.to_string(),
+                        "-t".to_string(),
+                        format!(
+                            "cd {} && exec $SHELL -l",
+                            escape_path_for_shell(remote_connection_data.project_path.as_ref())
+                        ),
+                    ],
+                },
+            )
+        } else if let Some(spawn_task) = spawn_task {
             log::debug!("Spawning task: {spawn_task:?}");
             env.extend(spawn_task.env);
             // Activate minimal Python virtual environment
@@ -229,6 +290,40 @@ impl Project {
     pub fn local_terminal_handles(&self) -> &Vec<WeakModel<terminal::Terminal>> {
         &self.terminals.local_handles
     }
+}
+
+#[cfg(unix)]
+fn escape_path_for_shell(input: &str) -> String {
+    input
+        .chars()
+        .fold(String::with_capacity(input.len()), |mut s, c| {
+            match c {
+                ' ' | '"' | '\'' | '\\' | '(' | ')' | '{' | '}' | '[' | ']' | '|' | ';' | '&'
+                | '<' | '>' | '*' | '?' | '$' | '#' | '!' | '=' | '^' | '%' | ':' => {
+                    s.push('\\');
+                    s.push('\\');
+                    s.push(c);
+                }
+                _ => s.push(c),
+            }
+            s
+        })
+}
+
+#[cfg(windows)]
+fn escape_path_for_shell(input: &str) -> String {
+    input
+        .chars()
+        .fold(String::with_capacity(input.len()), |mut s, c| {
+            match c {
+                '^' | '&' | '|' | '<' | '>' | ' ' | '(' | ')' | '@' | '`' | '=' | ';' | '%' => {
+                    s.push('^');
+                    s.push(c);
+                }
+                _ => s.push(c),
+            }
+            s
+        })
 }
 
 // TODO: Add a few tests for adding and removing terminal tabs

@@ -4,7 +4,8 @@ use std::rc::{Rc, Weak};
 use std::time::{Duration, Instant};
 
 use calloop::generic::{FdWrapper, Generic};
-use calloop::{EventLoop, LoopHandle, RegistrationToken};
+use calloop::{channel, EventLoop, LoopHandle, RegistrationToken};
+
 use collections::HashMap;
 use copypasta::x11_clipboard::{Clipboard, Primary, X11ClipboardContext};
 use copypasta::ClipboardProvider;
@@ -20,6 +21,7 @@ use x11rb::protocol::xproto::{ChangeWindowAttributesAux, ConnectionExt as _};
 use x11rb::protocol::{randr, render, xinput, xkb, xproto, Event};
 use x11rb::resource_manager::Database;
 use x11rb::xcb_ffi::XCBConnection;
+use xim::{x11rb::X11rbClient, Client};
 use xkbc::x11::ffi::{XKB_X11_MIN_MAJOR_XKB_VERSION, XKB_X11_MIN_MINOR_XKB_VERSION};
 use xkbcommon::xkb as xkbc;
 
@@ -36,6 +38,7 @@ use super::{
     X11Display, X11WindowStatePtr, XcbAtoms,
 };
 use super::{button_from_mask, button_of_key, modifiers_from_state};
+use super::{XimCallbackEvent, XimHandler};
 use crate::platform::linux::is_within_click_distance;
 use crate::platform::linux::platform::DOUBLE_CLICK_INTERVAL;
 
@@ -49,6 +52,36 @@ impl Deref for WindowRef {
 
     fn deref(&self) -> &Self::Target {
         &self.window
+    }
+}
+
+#[derive(Debug)]
+#[non_exhaustive]
+pub enum EventHandlerError {
+    XCBConnectionError(ConnectionError),
+    XIMClientError(xim::ClientError),
+}
+
+impl std::error::Error for EventHandlerError {}
+
+impl std::fmt::Display for EventHandlerError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            EventHandlerError::XCBConnectionError(err) => err.fmt(f),
+            EventHandlerError::XIMClientError(err) => err.fmt(f),
+        }
+    }
+}
+
+impl From<ConnectionError> for EventHandlerError {
+    fn from(err: ConnectionError) -> Self {
+        EventHandlerError::XCBConnectionError(err)
+    }
+}
+
+impl From<xim::ClientError> for EventHandlerError {
+    fn from(err: xim::ClientError) -> Self {
+        EventHandlerError::XIMClientError(err)
     }
 }
 
@@ -69,6 +102,8 @@ pub struct X11ClientState {
     pub(crate) windows: HashMap<xproto::Window, WindowRef>,
     pub(crate) focused_window: Option<xproto::Window>,
     pub(crate) xkb: xkbc::State,
+    pub(crate) ximc: Option<X11rbClient<Rc<XCBConnection>>>,
+    pub(crate) xim_handler: Option<XimHandler>,
 
     pub(crate) cursor_handle: cursor::Handle,
     pub(crate) cursor_styles: HashMap<xproto::Window, CursorStyle>,
@@ -227,12 +262,21 @@ impl X11Client {
 
         let xcb_connection = Rc::new(xcb_connection);
 
+        let (xim_tx, xim_rx) = channel::channel::<XimCallbackEvent>();
+
+        let ximc = X11rbClient::init(Rc::clone(&xcb_connection), x_root_index, None).ok();
+        let xim_handler = if ximc.is_some() {
+            Some(XimHandler::new(xim_tx))
+        } else {
+            None
+        };
+
         // Safety: Safe if xcb::Connection always returns a valid fd
         let fd = unsafe { FdWrapper::new(Rc::clone(&xcb_connection)) };
 
         handle
             .insert_source(
-                Generic::new_with_error::<ConnectionError>(
+                Generic::new_with_error::<EventHandlerError>(
                     fd,
                     calloop::Interest::READ,
                     calloop::Mode::Level,
@@ -241,14 +285,63 @@ impl X11Client {
                     let xcb_connection = xcb_connection.clone();
                     move |_readiness, _, client| {
                         while let Some(event) = xcb_connection.poll_for_event()? {
-                            client.handle_event(event);
+                            let mut state = client.0.borrow_mut();
+                            if state.ximc.is_none() || state.xim_handler.is_none() {
+                                drop(state);
+                                client.handle_event(event);
+                                continue;
+                            }
+                            let mut ximc = state.ximc.take().unwrap();
+                            let mut xim_handler = state.xim_handler.take().unwrap();
+                            let xim_connected = xim_handler.connected;
+                            drop(state);
+                            let xim_filtered = match ximc.filter_event(&event, &mut xim_handler) {
+                                Ok(handled) => handled,
+                                Err(err) => {
+                                    log::error!("XIMClientError: {}", err);
+                                    false
+                                }
+                            };
+                            let mut state = client.0.borrow_mut();
+                            state.ximc = Some(ximc);
+                            state.xim_handler = Some(xim_handler);
+                            drop(state);
+                            if xim_filtered {
+                                continue;
+                            }
+                            if xim_connected {
+                                client.xim_handle_event(event);
+                            } else {
+                                client.handle_event(event);
+                            }
                         }
                         Ok(calloop::PostAction::Continue)
                     }
                 },
             )
             .expect("Failed to initialize x11 event source");
-
+        handle
+            .insert_source(xim_rx, {
+                move |chan_event, _, client| match chan_event {
+                    channel::Event::Msg(xim_event) => {
+                        match (xim_event) {
+                            XimCallbackEvent::XimXEvent(event) => {
+                                client.handle_event(event);
+                            }
+                            XimCallbackEvent::XimCommitEvent(window, text) => {
+                                client.xim_handle_commit(window, text);
+                            }
+                            XimCallbackEvent::XimPreeditEvent(window, text) => {
+                                client.xim_handle_preedit(window, text);
+                            }
+                        };
+                    }
+                    channel::Event::Closed => {
+                        log::error!("XIM Event Sender dropped")
+                    }
+                }
+            })
+            .expect("Failed to initialize XIM event source");
         X11Client(Rc::new(RefCell::new(X11ClientState {
             event_loop: Some(event_loop),
             loop_handle: handle,
@@ -265,6 +358,8 @@ impl X11Client {
             windows: HashMap::default(),
             focused_window: None,
             xkb: xkb_state,
+            ximc,
+            xim_handler,
 
             cursor_handle,
             cursor_styles: HashMap::default(),
@@ -365,7 +460,6 @@ impl X11Client {
                     }
                     keystroke
                 };
-
                 drop(state);
                 window.handle_input(PlatformInput::KeyDown(crate::KeyDownEvent {
                     keystroke,
@@ -548,6 +642,79 @@ impl X11Client {
             _ => {}
         };
 
+        Some(())
+    }
+
+    fn xim_handle_event(&self, event: Event) -> Option<()> {
+        match event {
+            Event::KeyPress(event) | Event::KeyRelease(event) => {
+                let mut state = self.0.borrow_mut();
+                let mut ximc = state.ximc.take().unwrap();
+                let mut xim_handler = state.xim_handler.take().unwrap();
+                drop(state);
+                xim_handler.window = event.event;
+                ximc.forward_event(
+                    xim_handler.im_id,
+                    xim_handler.ic_id,
+                    xim::ForwardEventFlag::empty(),
+                    &event,
+                )
+                .unwrap();
+                let mut state = self.0.borrow_mut();
+                state.ximc = Some(ximc);
+                state.xim_handler = Some(xim_handler);
+                drop(state);
+            }
+            event => {
+                self.handle_event(event);
+            }
+        }
+        Some(())
+    }
+
+    fn xim_handle_commit(&self, window: xproto::Window, text: String) -> Option<()> {
+        let window = self.get_window(window).unwrap();
+
+        window.handle_ime_commit(text);
+        Some(())
+    }
+
+    fn xim_handle_preedit(&self, window: xproto::Window, text: String) -> Option<()> {
+        let window = self.get_window(window).unwrap();
+        window.handle_ime_preedit(text);
+
+        let mut state = self.0.borrow_mut();
+        let mut ximc = state.ximc.take().unwrap();
+        let mut xim_handler = state.xim_handler.take().unwrap();
+        drop(state);
+
+        if let Some(area) = window.get_ime_area() {
+            let ic_attributes = ximc
+                .build_ic_attributes()
+                .push(
+                    xim::AttributeName::InputStyle,
+                    xim::InputStyle::PREEDIT_CALLBACKS
+                        | xim::InputStyle::STATUS_NOTHING
+                        | xim::InputStyle::PREEDIT_POSITION,
+                )
+                .push(xim::AttributeName::ClientWindow, xim_handler.window)
+                .push(xim::AttributeName::FocusWindow, xim_handler.window)
+                .nested_list(xim::AttributeName::PreeditAttributes, |b| {
+                    b.push(
+                        xim::AttributeName::SpotLocation,
+                        xim::Point {
+                            x: u32::from(area.origin.x + area.size.width) as i16,
+                            y: u32::from(area.origin.y + area.size.height) as i16,
+                        },
+                    );
+                })
+                .build();
+            ximc.set_ic_values(xim_handler.im_id, xim_handler.ic_id, ic_attributes);
+        }
+        let mut state = self.0.borrow_mut();
+        state.ximc = Some(ximc);
+        state.xim_handler = Some(xim_handler);
+        drop(state);
         Some(())
     }
 }

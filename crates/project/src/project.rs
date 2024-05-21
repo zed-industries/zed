@@ -55,9 +55,9 @@ use language::{
 use log::error;
 use lsp::{
     DiagnosticSeverity, DiagnosticTag, DidChangeWatchedFilesRegistrationOptions,
-    DocumentHighlightKind, LanguageServer, LanguageServerBinary, LanguageServerId,
-    LspRequestFuture, MessageActionItem, OneOf, ServerCapabilities, ServerHealthStatus,
-    ServerStatus,
+    DocumentHighlightKind, Edit, FileSystemWatcher, LanguageServer, LanguageServerBinary,
+    LanguageServerId, LspRequestFuture, MessageActionItem, OneOf, ServerCapabilities,
+    ServerHealthStatus, ServerStatus, TextEdit,
 };
 use lsp_command::*;
 use node_runtime::NodeRuntime;
@@ -67,6 +67,7 @@ use prettier_support::{DefaultPrettier, PrettierInstance};
 use project_settings::{LspSettings, ProjectSettings};
 use rand::prelude::*;
 use search_history::SearchHistory;
+use snippet::Snippet;
 use worktree::LocalSnapshot;
 
 use http::{HttpClient, Url};
@@ -166,6 +167,8 @@ pub struct Project {
     last_formatting_failure: Option<String>,
     last_workspace_edits_by_language_server: HashMap<LanguageServerId, ProjectTransaction>,
     language_server_watched_paths: HashMap<LanguageServerId, HashMap<WorktreeId, GlobSet>>,
+    language_server_watcher_registrations:
+        HashMap<LanguageServerId, HashMap<String, Vec<FileSystemWatcher>>>,
     client: Arc<client::Client>,
     next_entry_id: Arc<AtomicUsize>,
     join_project_response_message_id: u32,
@@ -332,6 +335,7 @@ pub enum Event {
     CollaboratorLeft(proto::PeerId),
     RefreshInlayHints,
     RevealInProjectPanel(ProjectEntryId),
+    SnippetEdit(BufferId, Vec<(lsp::Range, Snippet)>),
 }
 
 pub enum LanguageServerState {
@@ -550,6 +554,7 @@ pub enum FormatTrigger {
 
 // Currently, formatting operations are represented differently depending on
 // whether they come from a language server or an external command.
+#[derive(Debug)]
 enum FormatOperation {
     Lsp(Vec<(Range<Anchor>, String)>),
     External(Diff),
@@ -722,6 +727,7 @@ impl Project {
                 last_formatting_failure: None,
                 last_workspace_edits_by_language_server: Default::default(),
                 language_server_watched_paths: HashMap::default(),
+                language_server_watcher_registrations: HashMap::default(),
                 buffers_being_formatted: Default::default(),
                 buffers_needing_diff: Default::default(),
                 git_diff_debouncer: DebouncedDelay::new(),
@@ -872,6 +878,7 @@ impl Project {
                 last_formatting_failure: None,
                 last_workspace_edits_by_language_server: Default::default(),
                 language_server_watched_paths: HashMap::default(),
+                language_server_watcher_registrations: HashMap::default(),
                 opened_buffers: Default::default(),
                 buffers_being_formatted: Default::default(),
                 buffers_needing_diff: Default::default(),
@@ -1088,11 +1095,8 @@ impl Project {
                                 .push((file.worktree.clone(), Arc::clone(language)));
                         }
                     }
-                    language_formatters_to_check.push((
-                        buffer_file.map(|f| f.worktree_id(cx)),
-                        Arc::clone(language),
-                        settings.clone(),
-                    ));
+                    language_formatters_to_check
+                        .push((buffer_file.map(|f| f.worktree_id(cx)), settings.clone()));
                 }
             }
         }
@@ -1148,9 +1152,9 @@ impl Project {
         }
 
         let mut prettier_plugins_by_worktree = HashMap::default();
-        for (worktree, language, settings) in language_formatters_to_check {
+        for (worktree, language_settings) in language_formatters_to_check {
             if let Some(plugins) =
-                prettier_support::prettier_plugins_for_language(&language, &settings)
+                prettier_support::prettier_plugins_for_language(&language_settings)
             {
                 prettier_plugins_by_worktree
                     .entry(worktree)
@@ -1159,7 +1163,11 @@ impl Project {
             }
         }
         for (worktree, prettier_plugins) in prettier_plugins_by_worktree {
-            self.install_default_prettier(worktree, prettier_plugins.into_iter(), cx);
+            self.install_default_prettier(
+                worktree,
+                prettier_plugins.into_iter().map(Arc::from),
+                cx,
+            );
         }
 
         // Start all the newly-enabled language servers.
@@ -2692,7 +2700,6 @@ impl Project {
                     };
 
                     let next_version = previous_snapshot.version + 1;
-
                     buffer_snapshots.push(LspBufferSnapshot {
                         version: next_version,
                         snapshot: next_snapshot.clone(),
@@ -3070,10 +3077,12 @@ impl Project {
         let settings = language_settings(Some(&new_language), buffer_file.as_ref(), cx).clone();
         let buffer_file = File::from_dyn(buffer_file.as_ref());
         let worktree = buffer_file.as_ref().map(|f| f.worktree_id(cx));
-        if let Some(prettier_plugins) =
-            prettier_support::prettier_plugins_for_language(&new_language, &settings)
-        {
-            self.install_default_prettier(worktree, prettier_plugins.iter().cloned(), cx);
+        if let Some(prettier_plugins) = prettier_support::prettier_plugins_for_language(&settings) {
+            self.install_default_prettier(
+                worktree,
+                prettier_plugins.iter().map(|s| Arc::from(s.as_str())),
+                cx,
+            );
         };
         if let Some(file) = buffer_file {
             let worktree = file.worktree.clone();
@@ -3466,10 +3475,31 @@ impl Project {
                                     let options = serde_json::from_value(options)?;
                                     this.update(&mut cx, |this, cx| {
                                         this.on_lsp_did_change_watched_files(
-                                            server_id, options, cx,
+                                            server_id, &reg.id, options, cx,
                                         );
                                     })?;
                                 }
+                            }
+                        }
+                        Ok(())
+                    }
+                }
+            })
+            .detach();
+
+        language_server
+            .on_request::<lsp::request::UnregisterCapability, _, _>({
+                let this = this.clone();
+                move |params, mut cx| {
+                    let this = this.clone();
+                    async move {
+                        for unreg in params.unregisterations.iter() {
+                            if unreg.method == "workspace/didChangeWatchedFiles" {
+                                this.update(&mut cx, |this, cx| {
+                                    this.on_lsp_unregister_did_change_watched_files(
+                                        server_id, &unreg.id, cx,
+                                    );
+                                })?;
                             }
                         }
                         Ok(())
@@ -4203,16 +4233,67 @@ impl Project {
     fn on_lsp_did_change_watched_files(
         &mut self,
         language_server_id: LanguageServerId,
+        registration_id: &str,
         params: DidChangeWatchedFilesRegistrationOptions,
         cx: &mut ModelContext<Self>,
     ) {
+        let registrations = self
+            .language_server_watcher_registrations
+            .entry(language_server_id)
+            .or_default();
+
+        registrations.insert(registration_id.to_string(), params.watchers);
+
+        self.rebuild_watched_paths(language_server_id, cx);
+    }
+
+    fn on_lsp_unregister_did_change_watched_files(
+        &mut self,
+        language_server_id: LanguageServerId,
+        registration_id: &str,
+        cx: &mut ModelContext<Self>,
+    ) {
+        let registrations = self
+            .language_server_watcher_registrations
+            .entry(language_server_id)
+            .or_default();
+
+        if registrations.remove(registration_id).is_some() {
+            log::info!(
+                "language server {}: unregistered workspace/DidChangeWatchedFiles capability with id {}",
+                language_server_id,
+                registration_id
+            );
+        } else {
+            log::warn!(
+                "language server {}: failed to unregister workspace/DidChangeWatchedFiles capability with id {}. not registered.",
+                language_server_id,
+                registration_id
+            );
+        }
+
+        self.rebuild_watched_paths(language_server_id, cx);
+    }
+
+    fn rebuild_watched_paths(
+        &mut self,
+        language_server_id: LanguageServerId,
+        cx: &mut ModelContext<Self>,
+    ) {
+        let Some(watchers) = self
+            .language_server_watcher_registrations
+            .get(&language_server_id)
+        else {
+            return;
+        };
+
         let watched_paths = self
             .language_server_watched_paths
             .entry(language_server_id)
             .or_default();
 
         let mut builders = HashMap::default();
-        for watcher in params.watchers {
+        for watcher in watchers.values().flatten() {
             for worktree in &self.worktrees {
                 if let Some(worktree) = worktree.upgrade() {
                     let glob_is_inside_worktree = worktree.update(cx, |tree, _| {
@@ -4786,6 +4867,11 @@ impl Project {
                 .zip(buffer_abs_path.as_ref());
 
             let mut format_operation = None;
+            let prettier_settings = buffer.read_with(&mut cx, |buffer, cx| {
+                language_settings(buffer.language(), buffer.file(), cx)
+                    .prettier
+                    .clone()
+            })?;
             match (&settings.formatter, &settings.format_on_save) {
                 (_, FormatOnSave::Off) if trigger == FormatTrigger::Save => {}
 
@@ -4845,11 +4931,18 @@ impl Project {
                     }
                 }
                 (Formatter::Auto, FormatOnSave::On | FormatOnSave::Off) => {
-                    let prettier =
-                        prettier_support::format_with_prettier(&project, buffer, &mut cx).await;
+                    let prettier = if prettier_settings.allowed {
+                        prettier_support::format_with_prettier(&project, buffer, &mut cx)
+                            .await
+                            .transpose()
+                            .ok()
+                            .flatten()
+                    } else {
+                        None
+                    };
 
                     if let Some(operation) = prettier {
-                        format_operation = Some(operation?);
+                        format_operation = Some(operation);
                     } else if let Some((language_server, buffer_abs_path)) = server_and_buffer {
                         format_operation = Some(FormatOperation::Lsp(
                             Self::format_via_lsp(
@@ -4866,11 +4959,12 @@ impl Project {
                     }
                 }
                 (Formatter::Prettier, FormatOnSave::On | FormatOnSave::Off) => {
-                    let prettier =
-                        prettier_support::format_with_prettier(&project, buffer, &mut cx).await;
-
-                    if let Some(operation) = prettier {
-                        format_operation = Some(operation?);
+                    if prettier_settings.allowed {
+                        if let Some(operation) =
+                            prettier_support::format_with_prettier(&project, buffer, &mut cx).await
+                        {
+                            format_operation = Some(operation?);
+                        }
                     }
                 }
             };
@@ -6192,7 +6286,7 @@ impl Project {
                         uri,
                         version: None,
                     },
-                    edits: edits.into_iter().map(OneOf::Left).collect(),
+                    edits: edits.into_iter().map(Edit::Plain).collect(),
                 })
             }));
         }
@@ -6270,7 +6364,7 @@ impl Project {
                     let buffer_to_edit = this
                         .update(cx, |this, cx| {
                             this.open_local_buffer_via_lsp(
-                                op.text_document.uri,
+                                op.text_document.uri.clone(),
                                 language_server.server_id(),
                                 lsp_adapter.name.clone(),
                                 cx,
@@ -6280,10 +6374,68 @@ impl Project {
 
                     let edits = this
                         .update(cx, |this, cx| {
-                            let edits = op.edits.into_iter().map(|edit| match edit {
-                                OneOf::Left(edit) => edit,
-                                OneOf::Right(edit) => edit.text_edit,
+                            let path = buffer_to_edit.read(cx).project_path(cx);
+                            let active_entry = this.active_entry;
+                            let is_active_entry = path.clone().map_or(false, |project_path| {
+                                this.entry_for_path(&project_path, cx)
+                                    .map_or(false, |entry| Some(entry.id) == active_entry)
                             });
+
+                            let (mut edits, mut snippet_edits) = (vec![], vec![]);
+                            for edit in op.edits {
+                                match edit {
+                                    Edit::Plain(edit) => edits.push(edit),
+                                    Edit::Annotated(edit) => edits.push(edit.text_edit),
+                                    Edit::Snippet(edit) => {
+                                        let Ok(snippet) = Snippet::parse(&edit.snippet.value)
+                                        else {
+                                            continue;
+                                        };
+
+                                        if is_active_entry {
+                                            snippet_edits.push((edit.range, snippet));
+                                        } else {
+                                            // Since this buffer is not focused, apply a normal edit.
+                                            edits.push(TextEdit {
+                                                range: edit.range,
+                                                new_text: snippet.text,
+                                            });
+                                        }
+                                    }
+                                }
+                            }
+                            if !snippet_edits.is_empty() {
+                                if let Some(buffer_version) = op.text_document.version {
+                                    let buffer_id = buffer_to_edit.read(cx).remote_id();
+                                    // Check if the edit that triggered that edit has been made by this participant.
+                                    let should_apply_edit = this
+                                        .buffer_snapshots
+                                        .get(&buffer_id)
+                                        .and_then(|server_to_snapshots| {
+                                            let all_snapshots = server_to_snapshots
+                                                .get(&language_server.server_id())?;
+                                            all_snapshots
+                                                .binary_search_by_key(&buffer_version, |snapshot| {
+                                                    snapshot.version
+                                                })
+                                                .ok()
+                                                .and_then(|index| all_snapshots.get(index))
+                                        })
+                                        .map_or(false, |lsp_snapshot| {
+                                            let version = lsp_snapshot.snapshot.version();
+                                            let most_recent_edit = version
+                                                .iter()
+                                                .max_by_key(|timestamp| timestamp.value);
+                                            most_recent_edit.map_or(false, |edit| {
+                                                edit.replica_id == this.replica_id()
+                                            })
+                                        });
+                                    if should_apply_edit {
+                                        cx.emit(Event::SnippetEdit(buffer_id, snippet_edits));
+                                    }
+                                }
+                            }
+
                             this.edits_from_lsp(
                                 &buffer_to_edit,
                                 edits,

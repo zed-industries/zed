@@ -3,7 +3,7 @@
 use crate::{File, Language, LanguageServerName};
 use anyhow::Result;
 use collections::{HashMap, HashSet};
-use globset::GlobMatcher;
+use globset::{Glob, GlobMatcher, GlobSet, GlobSetBuilder};
 use gpui::AppContext;
 use itertools::{Either, Itertools};
 use schemars::{
@@ -55,7 +55,7 @@ pub struct AllLanguageSettings {
     pub inline_completions: InlineCompletionSettings,
     defaults: LanguageSettings,
     languages: HashMap<Arc<str>, LanguageSettings>,
-    pub(crate) file_types: HashMap<Arc<str>, Vec<String>>,
+    pub(crate) file_types: HashMap<Arc<str>, GlobSet>,
 }
 
 /// The settings for a particular language.
@@ -89,9 +89,7 @@ pub struct LanguageSettings {
     /// How to perform a buffer format.
     pub formatter: Formatter,
     /// Zed's Prettier integration settings.
-    /// If Prettier is enabled, Zed will use this for its Prettier instance for any applicable file, if
-    /// the project has no other Prettier installed.
-    pub prettier: HashMap<String, serde_json::Value>,
+    pub prettier: PrettierSettings,
     /// Whether to use language servers to provide code intelligence.
     pub enable_language_server: bool,
     /// The list of language servers to use (or disable) for this language.
@@ -267,12 +265,12 @@ pub struct LanguageSettingsContent {
     #[serde(default)]
     pub formatter: Option<Formatter>,
     /// Zed's Prettier integration settings.
-    /// If Prettier is enabled, Zed will use this for its Prettier instance for any applicable file, if
-    /// the project has no other Prettier installed.
+    /// Allows to enable/disable formatting with Prettier
+    /// and configure default Prettier, used when no project-level Prettier installation is found.
     ///
-    /// Default: {}
+    /// Default: off
     #[serde(default)]
-    pub prettier: Option<HashMap<String, serde_json::Value>>,
+    pub prettier: Option<PrettierSettings>,
     /// Whether to use language servers to provide code intelligence.
     ///
     /// Default: true
@@ -575,7 +573,7 @@ impl settings::Settings for AllLanguageSettings {
             .and_then(|c| c.disabled_globs.as_ref())
             .ok_or_else(Self::missing_default)?;
 
-        let mut file_types: HashMap<Arc<str>, Vec<String>> = HashMap::default();
+        let mut file_types: HashMap<Arc<str>, GlobSet> = HashMap::default();
         for user_settings in sources.customizations() {
             if let Some(copilot) = user_settings.features.as_ref().and_then(|f| f.copilot) {
                 copilot_enabled = Some(copilot);
@@ -613,10 +611,13 @@ impl settings::Settings for AllLanguageSettings {
             }
 
             for (language, suffixes) in &user_settings.file_types {
-                file_types
-                    .entry(language.clone())
-                    .or_default()
-                    .extend_from_slice(suffixes);
+                let mut builder = GlobSetBuilder::new();
+
+                for suffix in suffixes {
+                    builder.add(Glob::new(suffix)?);
+                }
+
+                file_types.insert(language.clone(), builder.build()?);
             }
         }
 
@@ -749,6 +750,30 @@ fn merge_settings(settings: &mut LanguageSettings, src: &LanguageSettingsContent
         src.extend_comment_on_newline,
     );
     merge(&mut settings.inlay_hints, src.inlay_hints);
+}
+
+/// Allows to enable/disable formatting with Prettier
+/// and configure default Prettier, used when no project-level Prettier installation is found.
+/// Prettier formatting is disabled by default.
+#[derive(Default, Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct PrettierSettings {
+    /// Enables or disables formatting with Prettier for a given language.
+    #[serde(default)]
+    pub allowed: bool,
+
+    /// Forces Prettier integration to use a specific parser name when formatting files with the language.
+    #[serde(default)]
+    pub parser: Option<String>,
+
+    /// Forces Prettier integration to use specific plugins when formatting files with the language.
+    /// The default Prettier will be installed with these plugins.
+    #[serde(default)]
+    pub plugins: HashSet<String>,
+
+    /// Default Prettier options, in the format as in package.json section for Prettier.
+    /// If project installs Prettier via its package.json, these options will be ignored.
+    #[serde(flatten)]
+    pub options: HashMap<String, serde_json::Value>,
 }
 
 #[cfg(test)]

@@ -1,7 +1,7 @@
 use crate::{
     db::{
         tests::{channel_tree, new_test_connection, new_test_user},
-        Channel, ChannelId, ChannelRole, Database, NewUserParams, RoomId,
+        Channel, ChannelId, ChannelRole, Database, NewUserParams, RoomId, UserId,
     },
     test_both_dbs,
 };
@@ -40,15 +40,15 @@ async fn test_channels(db: &Arc<Database>) {
         .await
         .unwrap();
 
-    let mut members = db
-        .transaction(|tx| async move {
-            let channel = db.get_channel_internal(replace_id, &tx).await?;
-            db.get_channel_participants(&channel, &tx).await
-        })
+    let (members, _) = db
+        .get_channel_participant_details(replace_id, "", 10, a_id)
         .await
         .unwrap();
-    members.sort();
-    assert_eq!(members, &[a_id, b_id]);
+    let ids = members
+        .into_iter()
+        .map(|m| UserId::from_proto(m.user_id))
+        .collect::<Vec<_>>();
+    assert_eq!(ids, &[a_id, b_id]);
 
     let rust_id = db.create_root_channel("rust", a_id).await.unwrap();
     let cargo_id = db.create_sub_channel("cargo", rust_id, a_id).await.unwrap();
@@ -195,8 +195,8 @@ async fn test_channel_invites(db: &Arc<Database>) {
 
     assert_eq!(user_3_invites, &[channel_1_1]);
 
-    let mut members = db
-        .get_channel_participant_details(channel_1_1, user_1)
+    let (mut members, _) = db
+        .get_channel_participant_details(channel_1_1, "", 100, user_1)
         .await
         .unwrap();
 
@@ -231,8 +231,8 @@ async fn test_channel_invites(db: &Arc<Database>) {
         .await
         .unwrap();
 
-    let members = db
-        .get_channel_participant_details(channel_1_3, user_1)
+    let (members, _) = db
+        .get_channel_participant_details(channel_1_3, "", 100, user_1)
         .await
         .unwrap();
     assert_eq!(
@@ -244,14 +244,14 @@ async fn test_channel_invites(db: &Arc<Database>) {
                 role: proto::ChannelRole::Admin.into(),
             },
             proto::ChannelMember {
-                user_id: user_2.to_proto(),
-                kind: proto::channel_member::Kind::Member.into(),
-                role: proto::ChannelRole::Member.into(),
-            },
-            proto::ChannelMember {
                 user_id: user_3.to_proto(),
                 kind: proto::channel_member::Kind::Invitee.into(),
                 role: proto::ChannelRole::Admin.into(),
+            },
+            proto::ChannelMember {
+                user_id: user_2.to_proto(),
+                kind: proto::channel_member::Kind::Member.into(),
+                role: proto::ChannelRole::Member.into(),
             },
         ]
     );
@@ -482,8 +482,8 @@ async fn test_user_is_channel_participant(db: &Arc<Database>) {
     .await
     .unwrap();
 
-    let mut members = db
-        .get_channel_participant_details(public_channel_id, admin)
+    let (mut members, _) = db
+        .get_channel_participant_details(public_channel_id, "", 100, admin)
         .await
         .unwrap();
 
@@ -557,8 +557,8 @@ async fn test_user_is_channel_participant(db: &Arc<Database>) {
         .await
         .is_err());
 
-    let mut members = db
-        .get_channel_participant_details(public_channel_id, admin)
+    let (mut members, _) = db
+        .get_channel_participant_details(public_channel_id, "", 100, admin)
         .await
         .unwrap();
 
@@ -594,8 +594,8 @@ async fn test_user_is_channel_participant(db: &Arc<Database>) {
         .unwrap();
 
     // currently people invited to parent channels are not shown here
-    let mut members = db
-        .get_channel_participant_details(public_channel_id, admin)
+    let (mut members, _) = db
+        .get_channel_participant_details(public_channel_id, "", 100, admin)
         .await
         .unwrap();
 
@@ -663,8 +663,8 @@ async fn test_user_is_channel_participant(db: &Arc<Database>) {
     .await
     .unwrap();
 
-    let mut members = db
-        .get_channel_participant_details(public_channel_id, admin)
+    let (mut members, _) = db
+        .get_channel_participant_details(public_channel_id, "", 100, admin)
         .await
         .unwrap();
 

@@ -89,6 +89,7 @@ pub enum ContactRequestStatus {
 
 pub struct UserStore {
     users: HashMap<u64, Arc<User>>,
+    by_github_login: HashMap<String, u64>,
     participant_indices: HashMap<u64, ParticipantIndex>,
     update_contacts_tx: mpsc::UnboundedSender<UpdateContacts>,
     current_user: watch::Receiver<Option<Arc<User>>>,
@@ -144,6 +145,7 @@ impl UserStore {
         ];
         Self {
             users: Default::default(),
+            by_github_login: Default::default(),
             current_user: current_user_rx,
             contacts: Default::default(),
             incoming_contact_requests: Default::default(),
@@ -231,6 +233,7 @@ impl UserStore {
     #[cfg(feature = "test-support")]
     pub fn clear_cache(&mut self) {
         self.users.clear();
+        self.by_github_login.clear();
     }
 
     async fn handle_update_invite_info(
@@ -644,6 +647,12 @@ impl UserStore {
         })
     }
 
+    pub fn cached_user_by_github_login(&self, github_login: &str) -> Option<Arc<User>> {
+        self.by_github_login
+            .get(github_login)
+            .and_then(|id| self.users.get(id).cloned())
+    }
+
     pub fn current_user(&self) -> Option<Arc<User>> {
         self.current_user.borrow().clone()
     }
@@ -661,24 +670,29 @@ impl UserStore {
         cx.spawn(|this, mut cx| async move {
             if let Some(rpc) = client.upgrade() {
                 let response = rpc.request(request).await.context("error loading users")?;
-                let users = response
-                    .users
-                    .into_iter()
-                    .map(User::new)
-                    .collect::<Vec<_>>();
+                let users = response.users;
 
-                this.update(&mut cx, |this, _| {
-                    for user in &users {
-                        this.users.insert(user.id, user.clone());
-                    }
-                })
-                .ok();
-
-                Ok(users)
+                this.update(&mut cx, |this, _| this.insert(users))
             } else {
                 Ok(Vec::new())
             }
         })
+    }
+
+    pub fn insert(&mut self, users: Vec<proto::User>) -> Vec<Arc<User>> {
+        let mut ret = Vec::with_capacity(users.len());
+        for user in users {
+            let user = User::new(user);
+            if let Some(old) = self.users.insert(user.id, user.clone()) {
+                if old.github_login != user.github_login {
+                    self.by_github_login.remove(&old.github_login);
+                }
+            }
+            self.by_github_login
+                .insert(user.github_login.clone(), user.id);
+            ret.push(user)
+        }
+        ret
     }
 
     pub fn set_participant_indices(

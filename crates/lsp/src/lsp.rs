@@ -601,6 +601,7 @@ impl LanguageServer {
                             ResourceOperationKind::Delete,
                         ]),
                         document_changes: Some(true),
+                        snippet_edit_support: Some(true),
                         ..WorkspaceEditClientCapabilities::default()
                     }),
                     ..Default::default()
@@ -712,6 +713,7 @@ impl LanguageServer {
                 }
             }),
             locale: None,
+            ..Default::default()
         };
 
         cx.spawn(|_| async move {

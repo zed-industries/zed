@@ -9,10 +9,12 @@ use crate::{
     JoinLines,
 };
 use futures::StreamExt;
-use gpui::{div, TestAppContext, VisualTestContext, WindowBounds, WindowOptions};
+use gpui::{div, TestAppContext, UpdateGlobal, VisualTestContext, WindowBounds, WindowOptions};
 use indoc::indoc;
 use language::{
-    language_settings::{AllLanguageSettings, AllLanguageSettingsContent, LanguageSettingsContent},
+    language_settings::{
+        AllLanguageSettings, AllLanguageSettingsContent, LanguageSettingsContent, PrettierSettings,
+    },
     BracketPairConfig,
     Capability::ReadWrite,
     FakeLspAdapter, LanguageConfig, LanguageConfigOverride, LanguageMatcher, Override, Point,
@@ -492,8 +494,8 @@ fn test_clone(cx: &mut TestAppContext) {
         editor.change_selections(None, cx, |s| s.select_ranges(selection_ranges.clone()));
         editor.fold_ranges(
             [
-                Point::new(1, 0)..Point::new(2, 0),
-                Point::new(3, 0)..Point::new(4, 0),
+                (Point::new(1, 0)..Point::new(2, 0), "⋯"),
+                (Point::new(3, 0)..Point::new(4, 0), "⋯"),
             ],
             true,
             cx,
@@ -901,9 +903,9 @@ fn test_move_cursor_multibyte(cx: &mut TestAppContext) {
     _ = view.update(cx, |view, cx| {
         view.fold_ranges(
             vec![
-                Point::new(0, 6)..Point::new(0, 12),
-                Point::new(1, 2)..Point::new(1, 4),
-                Point::new(2, 4)..Point::new(2, 8),
+                (Point::new(0, 6)..Point::new(0, 12), "⋯"),
+                (Point::new(1, 2)..Point::new(1, 4), "⋯"),
+                (Point::new(2, 4)..Point::new(2, 8), "⋯"),
             ],
             true,
             cx,
@@ -3405,9 +3407,9 @@ fn test_move_line_up_down(cx: &mut TestAppContext) {
     _ = view.update(cx, |view, cx| {
         view.fold_ranges(
             vec![
-                Point::new(0, 2)..Point::new(1, 2),
-                Point::new(2, 3)..Point::new(4, 1),
-                Point::new(7, 0)..Point::new(8, 4),
+                (Point::new(0, 2)..Point::new(1, 2), "⋯"),
+                (Point::new(2, 3)..Point::new(4, 1), "⋯"),
+                (Point::new(7, 0)..Point::new(8, 4), "⋯"),
             ],
             true,
             cx,
@@ -3889,9 +3891,9 @@ fn test_split_selection_into_lines(cx: &mut TestAppContext) {
     _ = view.update(cx, |view, cx| {
         view.fold_ranges(
             vec![
-                Point::new(0, 2)..Point::new(1, 2),
-                Point::new(2, 3)..Point::new(4, 1),
-                Point::new(7, 0)..Point::new(8, 4),
+                (Point::new(0, 2)..Point::new(1, 2), "⋯"),
+                (Point::new(2, 3)..Point::new(4, 1), "⋯"),
+                (Point::new(7, 0)..Point::new(8, 4), "⋯"),
             ],
             true,
             cx,
@@ -4546,8 +4548,8 @@ async fn test_select_larger_smaller_syntax_node(cx: &mut gpui::TestAppContext) {
     _ = view.update(cx, |view, cx| {
         view.fold_ranges(
             vec![
-                Point::new(0, 21)..Point::new(0, 24),
-                Point::new(3, 20)..Point::new(3, 22),
+                (Point::new(0, 21)..Point::new(0, 24), "⋯"),
+                (Point::new(3, 20)..Point::new(3, 22), "⋯"),
             ],
             true,
             cx,
@@ -6254,13 +6256,18 @@ async fn test_document_format_manual_trigger(cx: &mut gpui::TestAppContext) {
                 path_suffixes: vec!["rs".to_string()],
                 ..Default::default()
             },
-            // Enable Prettier formatting for the same buffer, and ensure
-            // LSP is called instead of Prettier.
-            prettier_parser_name: Some("test_parser".to_string()),
-            ..Default::default()
+            ..LanguageConfig::default()
         },
         Some(tree_sitter_rust::language()),
     )));
+    update_test_language_settings(cx, |settings| {
+        // Enable Prettier formatting for the same buffer, and ensure
+        // LSP is called instead of Prettier.
+        settings.defaults.prettier = Some(PrettierSettings {
+            allowed: true,
+            ..PrettierSettings::default()
+        });
+    });
     let mut fake_servers = language_registry.register_fake_lsp_adapter(
         "Rust",
         FakeLspAdapter {
@@ -6524,6 +6531,7 @@ async fn test_completion(cx: &mut gpui::TestAppContext) {
         cx,
     )
     .await;
+    let counter = Arc::new(AtomicUsize::new(0));
 
     cx.set_state(indoc! {"
         oneˇ
@@ -6539,10 +6547,13 @@ async fn test_completion(cx: &mut gpui::TestAppContext) {
             three
         "},
         vec!["first_completion", "second_completion"],
+        counter.clone(),
     )
     .await;
     cx.condition(|editor, _| editor.context_menu_visible())
         .await;
+    assert_eq!(counter.load(atomic::Ordering::Acquire), 1);
+
     let apply_additional_edits = cx.update_editor(|editor, cx| {
         editor.context_menu_next(&Default::default(), cx);
         editor
@@ -6613,10 +6624,12 @@ async fn test_completion(cx: &mut gpui::TestAppContext) {
             additional edit
         "},
         vec!["fourth_completion", "fifth_completion", "sixth_completion"],
+        counter.clone(),
     )
     .await;
     cx.condition(|editor, _| editor.context_menu_visible())
         .await;
+    assert_eq!(counter.load(atomic::Ordering::Acquire), 2);
 
     cx.simulate_keystroke("i");
 
@@ -6629,10 +6642,12 @@ async fn test_completion(cx: &mut gpui::TestAppContext) {
             additional edit
         "},
         vec!["fourth_completion", "fifth_completion", "sixth_completion"],
+        counter.clone(),
     )
     .await;
     cx.condition(|editor, _| editor.context_menu_visible())
         .await;
+    assert_eq!(counter.load(atomic::Ordering::Acquire), 3);
 
     let apply_additional_edits = cx.update_editor(|editor, cx| {
         editor
@@ -6667,9 +6682,17 @@ async fn test_completion(cx: &mut gpui::TestAppContext) {
     cx.update_editor(|editor, cx| {
         editor.show_completions(&ShowCompletions, cx);
     });
-    handle_completion_request(&mut cx, "editor.<clo|>", vec!["close", "clobber"]).await;
+    handle_completion_request(
+        &mut cx,
+        "editor.<clo|>",
+        vec!["close", "clobber"],
+        counter.clone(),
+    )
+    .await;
     cx.condition(|editor, _| editor.context_menu_visible())
         .await;
+    assert_eq!(counter.load(atomic::Ordering::Acquire), 4);
+
     let apply_additional_edits = cx.update_editor(|editor, cx| {
         editor
             .confirm_completion(&ConfirmCompletion::default(), cx)
@@ -6678,6 +6701,103 @@ async fn test_completion(cx: &mut gpui::TestAppContext) {
     cx.assert_editor_state("editor.closeˇ");
     handle_resolve_completion_request(&mut cx, None).await;
     apply_additional_edits.await.unwrap();
+}
+
+#[gpui::test]
+async fn test_no_duplicated_completion_requests(cx: &mut gpui::TestAppContext) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorLspTestContext::new_rust(
+        lsp::ServerCapabilities {
+            completion_provider: Some(lsp::CompletionOptions {
+                trigger_characters: Some(vec![".".to_string()]),
+                resolve_provider: Some(true),
+                ..Default::default()
+            }),
+            ..Default::default()
+        },
+        cx,
+    )
+    .await;
+
+    cx.set_state(indoc! {"fn main() { let a = 2ˇ; }"});
+    cx.simulate_keystroke(".");
+    let completion_item = lsp::CompletionItem {
+        label: "Some".into(),
+        kind: Some(lsp::CompletionItemKind::SNIPPET),
+        detail: Some("Wrap the expression in an `Option::Some`".to_string()),
+        documentation: Some(lsp::Documentation::MarkupContent(lsp::MarkupContent {
+            kind: lsp::MarkupKind::Markdown,
+            value: "```rust\nSome(2)\n```".to_string(),
+        })),
+        deprecated: Some(false),
+        sort_text: Some("Some".to_string()),
+        filter_text: Some("Some".to_string()),
+        insert_text_format: Some(lsp::InsertTextFormat::SNIPPET),
+        text_edit: Some(lsp::CompletionTextEdit::Edit(lsp::TextEdit {
+            range: lsp::Range {
+                start: lsp::Position {
+                    line: 0,
+                    character: 22,
+                },
+                end: lsp::Position {
+                    line: 0,
+                    character: 22,
+                },
+            },
+            new_text: "Some(2)".to_string(),
+        })),
+        additional_text_edits: Some(vec![lsp::TextEdit {
+            range: lsp::Range {
+                start: lsp::Position {
+                    line: 0,
+                    character: 20,
+                },
+                end: lsp::Position {
+                    line: 0,
+                    character: 22,
+                },
+            },
+            new_text: "".to_string(),
+        }]),
+        ..Default::default()
+    };
+
+    let closure_completion_item = completion_item.clone();
+    let counter = Arc::new(AtomicUsize::new(0));
+    let counter_clone = counter.clone();
+    let mut request = cx.handle_request::<lsp::request::Completion, _, _>(move |_, _, _| {
+        let task_completion_item = closure_completion_item.clone();
+        counter_clone.fetch_add(1, atomic::Ordering::Release);
+        async move {
+            Ok(Some(lsp::CompletionResponse::Array(vec![
+                task_completion_item,
+            ])))
+        }
+    });
+
+    cx.condition(|editor, _| editor.context_menu_visible())
+        .await;
+    cx.assert_editor_state(indoc! {"fn main() { let a = 2.ˇ; }"});
+    assert!(request.next().await.is_some());
+    assert_eq!(counter.load(atomic::Ordering::Acquire), 1);
+
+    cx.simulate_keystroke("S");
+    cx.simulate_keystroke("o");
+    cx.simulate_keystroke("m");
+    cx.condition(|editor, _| editor.context_menu_visible())
+        .await;
+    cx.assert_editor_state(indoc! {"fn main() { let a = 2.Somˇ; }"});
+    assert!(request.next().await.is_some());
+    assert!(request.next().await.is_some());
+    assert!(request.next().await.is_some());
+    request.close();
+    assert!(request.next().await.is_none());
+    assert_eq!(
+        counter.load(atomic::Ordering::Acquire),
+        4,
+        "With the completions menu open, only one LSP request should happen per input"
+    );
 }
 
 #[gpui::test]
@@ -8599,27 +8719,32 @@ async fn test_document_format_with_prettier(cx: &mut gpui::TestAppContext) {
     });
 
     let fs = FakeFs::new(cx.executor());
-    fs.insert_file("/file.rs", Default::default()).await;
+    fs.insert_file("/file.ts", Default::default()).await;
 
-    let project = Project::test(fs, ["/file.rs".as_ref()], cx).await;
+    let project = Project::test(fs, ["/file.ts".as_ref()], cx).await;
     let language_registry = project.read_with(cx, |project, _| project.languages().clone());
 
     language_registry.add(Arc::new(Language::new(
         LanguageConfig {
-            name: "Rust".into(),
+            name: "TypeScript".into(),
             matcher: LanguageMatcher {
-                path_suffixes: vec!["rs".to_string()],
+                path_suffixes: vec!["ts".to_string()],
                 ..Default::default()
             },
-            prettier_parser_name: Some("test_parser".to_string()),
             ..Default::default()
         },
         Some(tree_sitter_rust::language()),
     )));
+    update_test_language_settings(cx, |settings| {
+        settings.defaults.prettier = Some(PrettierSettings {
+            allowed: true,
+            ..PrettierSettings::default()
+        });
+    });
 
     let test_plugin = "test_plugin";
     let _ = language_registry.register_fake_lsp_adapter(
-        "Rust",
+        "TypeScript",
         FakeLspAdapter {
             prettier_plugins: vec![test_plugin],
             ..Default::default()
@@ -8628,7 +8753,7 @@ async fn test_document_format_with_prettier(cx: &mut gpui::TestAppContext) {
 
     let prettier_format_suffix = project::TEST_PRETTIER_FORMAT_SUFFIX;
     let buffer = project
-        .update(cx, |project, cx| project.open_local_buffer("/file.rs", cx))
+        .update(cx, |project, cx| project.open_local_buffer("/file.ts", cx))
         .await
         .unwrap();
 
@@ -11323,6 +11448,67 @@ async fn test_multiple_expanded_hunks_merge(
     );
 }
 
+#[gpui::test]
+fn test_flap_insertion_and_rendering(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let editor = cx.add_window(|cx| {
+        let buffer = MultiBuffer::build_simple("aaaaaa\nbbbbbb\ncccccc\nddddddd\n", cx);
+        build_editor(buffer, cx)
+    });
+
+    let render_args = Arc::new(Mutex::new(None));
+    let snapshot = editor
+        .update(cx, |editor, cx| {
+            let snapshot = editor.buffer().read(cx).snapshot(cx);
+            let range =
+                snapshot.anchor_before(Point::new(1, 0))..snapshot.anchor_after(Point::new(2, 6));
+
+            struct RenderArgs {
+                row: MultiBufferRow,
+                folded: bool,
+                callback: Arc<dyn Fn(bool, &mut WindowContext) + Send + Sync>,
+            }
+
+            let flap = Flap::new(
+                range,
+                {
+                    let toggle_callback = render_args.clone();
+                    move |row, folded, callback, _cx| {
+                        *toggle_callback.lock() = Some(RenderArgs {
+                            row,
+                            folded,
+                            callback,
+                        });
+                        div()
+                    }
+                },
+                |_row, _folded, _cx| div(),
+            );
+
+            editor.insert_flaps(Some(flap), cx);
+            let snapshot = editor.snapshot(cx);
+            let _div = snapshot.render_fold_toggle(MultiBufferRow(1), false, cx.view().clone(), cx);
+            snapshot
+        })
+        .unwrap();
+
+    let render_args = render_args.lock().take().unwrap();
+    assert_eq!(render_args.row, MultiBufferRow(1));
+    assert_eq!(render_args.folded, false);
+    assert!(!snapshot.is_line_folded(MultiBufferRow(1)));
+
+    cx.update_window(*editor, |_, cx| (render_args.callback)(true, cx))
+        .unwrap();
+    let snapshot = editor.update(cx, |editor, cx| editor.snapshot(cx)).unwrap();
+    assert!(snapshot.is_line_folded(MultiBufferRow(1)));
+
+    cx.update_window(*editor, |_, cx| (render_args.callback)(false, cx))
+        .unwrap();
+    let snapshot = editor.update(cx, |editor, cx| editor.snapshot(cx)).unwrap();
+    assert!(!snapshot.is_line_folded(MultiBufferRow(1)));
+}
+
 fn empty_range(row: usize, column: usize) -> Range<DisplayPoint> {
     let point = DisplayPoint::new(DisplayRow(row as u32), column as u32);
     point..point
@@ -11346,6 +11532,7 @@ pub fn handle_completion_request(
     cx: &mut EditorLspTestContext,
     marked_string: &str,
     completions: Vec<&'static str>,
+    counter: Arc<AtomicUsize>,
 ) -> impl Future<Output = ()> {
     let complete_from_marker: TextRangeMarker = '|'.into();
     let replace_range_marker: TextRangeMarker = ('<', '>').into();
@@ -11361,6 +11548,7 @@ pub fn handle_completion_request(
 
     let mut request = cx.handle_request::<lsp::request::Completion, _, _>(move |url, params, _| {
         let completions = completions.clone();
+        counter.fetch_add(1, atomic::Ordering::Release);
         async move {
             assert_eq!(params.text_document_position.text_document.uri, url.clone());
             assert_eq!(
@@ -11424,7 +11612,7 @@ pub(crate) fn update_test_language_settings(
     f: impl Fn(&mut AllLanguageSettingsContent),
 ) {
     _ = cx.update(|cx| {
-        cx.update_global(|store: &mut SettingsStore, cx| {
+        SettingsStore::update_global(cx, |store, cx| {
             store.update_user_settings::<AllLanguageSettings>(cx, f);
         });
     });
@@ -11435,7 +11623,7 @@ pub(crate) fn update_test_project_settings(
     f: impl Fn(&mut ProjectSettings),
 ) {
     _ = cx.update(|cx| {
-        cx.update_global(|store: &mut SettingsStore, cx| {
+        SettingsStore::update_global(cx, |store, cx| {
             store.update_user_settings::<ProjectSettings>(cx, f);
         });
     });
