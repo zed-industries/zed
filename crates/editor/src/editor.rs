@@ -523,6 +523,7 @@ pub struct EditorSnapshot {
     scroll_anchor: ScrollAnchor,
     ongoing_scroll: OngoingScroll,
     current_line_highlight: CurrentLineHighlight,
+    gutter_hovered: bool,
 }
 
 const GIT_BLAME_GUTTER_WIDTH_CHARS: f32 = 53.;
@@ -1886,6 +1887,7 @@ impl Editor {
             placeholder_text: self.placeholder_text.clone(),
             is_focused: self.focus_handle.is_focused(cx),
             current_line_highlight: self.current_line_highlight,
+            gutter_hovered: self.gutter_hovered,
         }
     }
 
@@ -4639,44 +4641,6 @@ impl Editor {
             }))
     }
 
-    pub fn render_fold_indicators(
-        &mut self,
-        fold_data: Vec<Option<(FoldStatus, MultiBufferRow, bool)>>,
-        _style: &EditorStyle,
-        gutter_hovered: bool,
-        _line_height: Pixels,
-        _gutter_margin: Pixels,
-        cx: &mut ViewContext<Self>,
-    ) -> Vec<Option<AnyElement>> {
-        fold_data
-            .iter()
-            .enumerate()
-            .map(|(ix, fold_data)| {
-                fold_data
-                    .map(|(fold_status, buffer_row, active)| {
-                        (active || gutter_hovered || fold_status == FoldStatus::Folded).then(|| {
-                            IconButton::new(ix, ui::IconName::ChevronDown)
-                                .on_click(cx.listener(move |this, _e, cx| match fold_status {
-                                    FoldStatus::Folded => {
-                                        this.unfold_at(&UnfoldAt { buffer_row }, cx);
-                                    }
-                                    FoldStatus::Foldable => {
-                                        this.fold_at(&FoldAt { buffer_row }, cx);
-                                    }
-                                }))
-                                .icon_color(ui::Color::Muted)
-                                .icon_size(ui::IconSize::Small)
-                                .selected(fold_status == FoldStatus::Folded)
-                                .selected_icon(ui::IconName::ChevronRight)
-                                .size(ui::ButtonSize::None)
-                                .into_any_element()
-                        })
-                    })
-                    .flatten()
-            })
-            .collect()
-    }
-
     pub fn context_menu_visible(&self) -> bool {
         self.context_menu
             .read()
@@ -5830,7 +5794,7 @@ impl Editor {
                         let mut end = fold.range.end.to_point(&buffer);
                         start.row -= row_delta;
                         end.row -= row_delta;
-                        refold_ranges.push(start..end);
+                        refold_ranges.push((start..end, fold.text));
                     }
                 }
             }
@@ -5924,7 +5888,7 @@ impl Editor {
                         let mut end = fold.range.end.to_point(&buffer);
                         start.row += row_delta;
                         end.row += row_delta;
-                        refold_ranges.push(start..end);
+                        refold_ranges.push((start..end, fold.text));
                     }
                 }
             }
@@ -9282,11 +9246,11 @@ impl Editor {
             let buffer_start_row = range.start.row;
 
             for row in (0..=range.end.row).rev() {
-                let fold_range = display_map.foldable_range(MultiBufferRow(row));
-
-                if let Some(fold_range) = fold_range {
-                    if fold_range.end.row >= buffer_start_row {
-                        fold_ranges.push(fold_range);
+                if let Some((foldable_range, fold_text)) =
+                    display_map.foldable_range(MultiBufferRow(row))
+                {
+                    if foldable_range.end.row >= buffer_start_row {
+                        fold_ranges.push((foldable_range, fold_text));
                         if row <= range.start.row {
                             break;
                         }
@@ -9302,14 +9266,14 @@ impl Editor {
         let buffer_row = fold_at.buffer_row;
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
 
-        if let Some(fold_range) = display_map.foldable_range(buffer_row) {
+        if let Some((fold_range, fold_text)) = display_map.foldable_range(buffer_row) {
             let autoscroll = self
                 .selections
                 .all::<Point>(cx)
                 .iter()
                 .any(|selection| fold_range.overlaps(&selection.range()));
 
-            self.fold_ranges(std::iter::once(fold_range), autoscroll, cx);
+            self.fold_ranges([(fold_range, fold_text)], autoscroll, cx);
         }
     }
 
@@ -9363,9 +9327,9 @@ impl Editor {
                         .buffer_snapshot
                         .line_len(MultiBufferRow(s.end.row)),
                 );
-                start..end
+                (start..end, "⋯")
             } else {
-                s.start..s.end
+                (s.start..s.end, "⋯")
             }
         });
         self.fold_ranges(ranges, true, cx);
@@ -9373,18 +9337,20 @@ impl Editor {
 
     pub fn fold_ranges<T: ToOffset + Clone>(
         &mut self,
-        ranges: impl IntoIterator<Item = Range<T>>,
+        ranges: impl IntoIterator<Item = (Range<T>, &'static str)>,
         auto_scroll: bool,
         cx: &mut ViewContext<Self>,
     ) {
         let mut fold_ranges = Vec::new();
         let mut buffers_affected = HashMap::default();
         let multi_buffer = self.buffer().read(cx);
-        for range in ranges {
-            if let Some((_, buffer, _)) = multi_buffer.excerpt_containing(range.start.clone(), cx) {
+        for (fold_range, fold_text) in ranges {
+            if let Some((_, buffer, _)) =
+                multi_buffer.excerpt_containing(fold_range.start.clone(), cx)
+            {
                 buffers_affected.insert(buffer.read(cx).remote_id(), buffer);
             };
-            fold_ranges.push(range);
+            fold_ranges.push((fold_range, fold_text));
         }
 
         let mut ranges = fold_ranges.into_iter().peekable();
@@ -9498,6 +9464,24 @@ impl Editor {
         if let Some(autoscroll) = autoscroll {
             self.request_autoscroll(autoscroll, cx);
         }
+    }
+
+    pub fn insert_flaps(
+        &mut self,
+        flaps: impl IntoIterator<Item = Flap>,
+        cx: &mut ViewContext<Self>,
+    ) -> Vec<FlapId> {
+        self.display_map
+            .update(cx, |map, cx| map.insert_flaps(flaps, cx))
+    }
+
+    pub fn remove_flaps(
+        &mut self,
+        ids: impl IntoIterator<Item = FlapId>,
+        cx: &mut ViewContext<Self>,
+    ) {
+        self.display_map
+            .update(cx, |map, cx| map.remove_flaps(ids, cx));
     }
 
     pub fn longest_row(&self, cx: &mut AppContext) -> DisplayRow {
@@ -11097,6 +11081,76 @@ impl EditorSnapshot {
             margin: -descent,
             git_blame_entries_width,
         }
+    }
+
+    pub fn render_fold_toggle(
+        &self,
+        buffer_row: MultiBufferRow,
+        row_contains_cursor: bool,
+        editor: View<Editor>,
+        cx: &mut WindowContext,
+    ) -> Option<AnyElement> {
+        let folded = self.is_line_folded(buffer_row);
+
+        if let Some(flap) = self
+            .flap_snapshot
+            .query_row(buffer_row, &self.buffer_snapshot)
+        {
+            let toggle_callback = Arc::new(move |folded, cx: &mut WindowContext| {
+                if folded {
+                    editor.update(cx, |editor, cx| {
+                        editor.fold_at(&crate::FoldAt { buffer_row }, cx)
+                    });
+                } else {
+                    editor.update(cx, |editor, cx| {
+                        editor.unfold_at(&crate::UnfoldAt { buffer_row }, cx)
+                    });
+                }
+            });
+
+            Some((flap.render_toggle)(
+                buffer_row,
+                folded,
+                toggle_callback,
+                cx,
+            ))
+        } else if folded
+            || (self.starts_indent(buffer_row) && (row_contains_cursor || self.gutter_hovered))
+        {
+            Some(
+                IconButton::new(
+                    ("indent-fold-indicator", buffer_row.0),
+                    ui::IconName::ChevronDown,
+                )
+                .on_click(cx.listener_for(&editor, move |this, _e, cx| {
+                    if folded {
+                        this.unfold_at(&UnfoldAt { buffer_row }, cx);
+                    } else {
+                        this.fold_at(&FoldAt { buffer_row }, cx);
+                    }
+                }))
+                .icon_color(ui::Color::Muted)
+                .icon_size(ui::IconSize::Small)
+                .selected(folded)
+                .selected_icon(ui::IconName::ChevronRight)
+                .size(ui::ButtonSize::None)
+                .into_any_element(),
+            )
+        } else {
+            None
+        }
+    }
+
+    pub fn render_flap_trailer(
+        &self,
+        buffer_row: MultiBufferRow,
+        cx: &mut WindowContext,
+    ) -> Option<AnyElement> {
+        let folded = self.is_line_folded(buffer_row);
+        let flap = self
+            .flap_snapshot
+            .query_row(buffer_row, &self.buffer_snapshot)?;
+        Some((flap.render_trailer)(buffer_row, folded, cx))
     }
 }
 

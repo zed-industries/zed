@@ -494,8 +494,8 @@ fn test_clone(cx: &mut TestAppContext) {
         editor.change_selections(None, cx, |s| s.select_ranges(selection_ranges.clone()));
         editor.fold_ranges(
             [
-                Point::new(1, 0)..Point::new(2, 0),
-                Point::new(3, 0)..Point::new(4, 0),
+                (Point::new(1, 0)..Point::new(2, 0), "⋯"),
+                (Point::new(3, 0)..Point::new(4, 0), "⋯"),
             ],
             true,
             cx,
@@ -903,9 +903,9 @@ fn test_move_cursor_multibyte(cx: &mut TestAppContext) {
     _ = view.update(cx, |view, cx| {
         view.fold_ranges(
             vec![
-                Point::new(0, 6)..Point::new(0, 12),
-                Point::new(1, 2)..Point::new(1, 4),
-                Point::new(2, 4)..Point::new(2, 8),
+                (Point::new(0, 6)..Point::new(0, 12), "⋯"),
+                (Point::new(1, 2)..Point::new(1, 4), "⋯"),
+                (Point::new(2, 4)..Point::new(2, 8), "⋯"),
             ],
             true,
             cx,
@@ -3407,9 +3407,9 @@ fn test_move_line_up_down(cx: &mut TestAppContext) {
     _ = view.update(cx, |view, cx| {
         view.fold_ranges(
             vec![
-                Point::new(0, 2)..Point::new(1, 2),
-                Point::new(2, 3)..Point::new(4, 1),
-                Point::new(7, 0)..Point::new(8, 4),
+                (Point::new(0, 2)..Point::new(1, 2), "⋯"),
+                (Point::new(2, 3)..Point::new(4, 1), "⋯"),
+                (Point::new(7, 0)..Point::new(8, 4), "⋯"),
             ],
             true,
             cx,
@@ -3891,9 +3891,9 @@ fn test_split_selection_into_lines(cx: &mut TestAppContext) {
     _ = view.update(cx, |view, cx| {
         view.fold_ranges(
             vec![
-                Point::new(0, 2)..Point::new(1, 2),
-                Point::new(2, 3)..Point::new(4, 1),
-                Point::new(7, 0)..Point::new(8, 4),
+                (Point::new(0, 2)..Point::new(1, 2), "⋯"),
+                (Point::new(2, 3)..Point::new(4, 1), "⋯"),
+                (Point::new(7, 0)..Point::new(8, 4), "⋯"),
             ],
             true,
             cx,
@@ -4548,8 +4548,8 @@ async fn test_select_larger_smaller_syntax_node(cx: &mut gpui::TestAppContext) {
     _ = view.update(cx, |view, cx| {
         view.fold_ranges(
             vec![
-                Point::new(0, 21)..Point::new(0, 24),
-                Point::new(3, 20)..Point::new(3, 22),
+                (Point::new(0, 21)..Point::new(0, 24), "⋯"),
+                (Point::new(3, 20)..Point::new(3, 22), "⋯"),
             ],
             true,
             cx,
@@ -11446,6 +11446,67 @@ async fn test_multiple_expanded_hunks_merge(
             }"#
         .unindent(),
     );
+}
+
+#[gpui::test]
+fn test_flap_insertion_and_rendering(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let editor = cx.add_window(|cx| {
+        let buffer = MultiBuffer::build_simple("aaaaaa\nbbbbbb\ncccccc\nddddddd\n", cx);
+        build_editor(buffer, cx)
+    });
+
+    let render_args = Arc::new(Mutex::new(None));
+    let snapshot = editor
+        .update(cx, |editor, cx| {
+            let snapshot = editor.buffer().read(cx).snapshot(cx);
+            let range =
+                snapshot.anchor_before(Point::new(1, 0))..snapshot.anchor_after(Point::new(2, 6));
+
+            struct RenderArgs {
+                row: MultiBufferRow,
+                folded: bool,
+                callback: Arc<dyn Fn(bool, &mut WindowContext) + Send + Sync>,
+            }
+
+            let flap = Flap::new(
+                range,
+                {
+                    let toggle_callback = render_args.clone();
+                    move |row, folded, callback, _cx| {
+                        *toggle_callback.lock() = Some(RenderArgs {
+                            row,
+                            folded,
+                            callback,
+                        });
+                        div()
+                    }
+                },
+                |_row, _folded, _cx| div(),
+            );
+
+            editor.insert_flaps(Some(flap), cx);
+            let snapshot = editor.snapshot(cx);
+            let _div = snapshot.render_fold_toggle(MultiBufferRow(1), false, cx.view().clone(), cx);
+            snapshot
+        })
+        .unwrap();
+
+    let render_args = render_args.lock().take().unwrap();
+    assert_eq!(render_args.row, MultiBufferRow(1));
+    assert_eq!(render_args.folded, false);
+    assert!(!snapshot.is_line_folded(MultiBufferRow(1)));
+
+    cx.update_window(*editor, |_, cx| (render_args.callback)(true, cx))
+        .unwrap();
+    let snapshot = editor.update(cx, |editor, cx| editor.snapshot(cx)).unwrap();
+    assert!(snapshot.is_line_folded(MultiBufferRow(1)));
+
+    cx.update_window(*editor, |_, cx| (render_args.callback)(false, cx))
+        .unwrap();
+    let snapshot = editor.update(cx, |editor, cx| editor.snapshot(cx)).unwrap();
+    assert!(!snapshot.is_line_folded(MultiBufferRow(1)));
 }
 
 fn empty_range(row: usize, column: usize) -> Range<DisplayPoint> {

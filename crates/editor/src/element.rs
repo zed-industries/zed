@@ -1,8 +1,7 @@
 use crate::{
     blame_entry_tooltip::{blame_entry_relative_timestamp, BlameEntryTooltip},
     display_map::{
-        BlockContext, BlockStyle, DisplaySnapshot, FoldStatus, HighlightedChunk, ToDisplayPoint,
-        TransformBlock,
+        BlockContext, BlockStyle, DisplaySnapshot, HighlightedChunk, ToDisplayPoint, TransformBlock,
     },
     editor_settings::{
         CurrentLineHighlight, DoubleClickInMultibuffer, MultiCursorModifier, ShowScrollbar,
@@ -51,7 +50,7 @@ use smallvec::SmallVec;
 use std::{
     any::TypeId,
     borrow::Cow,
-    cmp::{self, max, Ordering},
+    cmp::{self, Ordering},
     fmt::Write,
     iter, mem,
     ops::{Deref, Range},
@@ -869,6 +868,11 @@ impl EditorElement {
         snapshot
             .folds_in_range(visible_anchor_range.clone())
             .filter_map(|fold| {
+                // Skip folds that have no text.
+                if fold.text.is_empty() {
+                    return None;
+                }
+
                 let fold_range = fold.range.clone();
                 let display_range = fold.range.start.to_display_point(&snapshot)
                     ..fold.range.end.to_display_point(&snapshot);
@@ -1163,28 +1167,17 @@ impl EditorElement {
     }
 
     #[allow(clippy::too_many_arguments)]
-    fn layout_gutter_fold_indicators(
+    fn prepaint_gutter_fold_toggles(
         &self,
-        fold_statuses: Vec<Option<(FoldStatus, MultiBufferRow, bool)>>,
+        toggles: &mut [Option<AnyElement>],
         line_height: Pixels,
         gutter_dimensions: &GutterDimensions,
         gutter_settings: crate::editor_settings::Gutter,
         scroll_pixel_position: gpui::Point<Pixels>,
         gutter_hitbox: &Hitbox,
         cx: &mut WindowContext,
-    ) -> Vec<Option<AnyElement>> {
-        let mut indicators = self.editor.update(cx, |editor, cx| {
-            editor.render_fold_indicators(
-                fold_statuses,
-                &self.style,
-                editor.gutter_hovered,
-                line_height,
-                gutter_dimensions.margin,
-                cx,
-            )
-        });
-
-        for (ix, fold_indicator) in indicators.iter_mut().enumerate() {
+    ) {
+        for (ix, fold_indicator) in toggles.iter_mut().enumerate() {
             if let Some(fold_indicator) = fold_indicator {
                 debug_assert!(gutter_settings.folds);
                 let available_space = size(
@@ -1207,8 +1200,49 @@ impl EditorElement {
                 fold_indicator.prepaint_as_root(origin, available_space, cx);
             }
         }
+    }
 
-        indicators
+    #[allow(clippy::too_many_arguments)]
+    fn prepaint_flap_trailers(
+        &self,
+        trailers: Vec<Option<AnyElement>>,
+        lines: &[LineWithInvisibles],
+        line_height: Pixels,
+        content_origin: gpui::Point<Pixels>,
+        scroll_pixel_position: gpui::Point<Pixels>,
+        em_width: Pixels,
+        cx: &mut WindowContext,
+    ) -> Vec<Option<FlapTrailerLayout>> {
+        trailers
+            .into_iter()
+            .enumerate()
+            .map(|(ix, element)| {
+                let mut element = element?;
+                let available_space = size(
+                    AvailableSpace::MinContent,
+                    AvailableSpace::Definite(line_height),
+                );
+                let size = element.layout_as_root(available_space, cx);
+
+                let line = &lines[ix].line;
+                let padding = if line.width == Pixels::ZERO {
+                    Pixels::ZERO
+                } else {
+                    4. * em_width
+                };
+                let position = point(
+                    scroll_pixel_position.x + line.width + padding,
+                    ix as f32 * line_height - (scroll_pixel_position.y % line_height),
+                );
+                let centering_offset = point(px(0.), (line_height - size.height) / 2.);
+                let origin = content_origin + position + centering_offset;
+                element.prepaint_as_root(origin, available_space, cx);
+                Some(FlapTrailerLayout {
+                    element,
+                    bounds: Bounds::new(origin, size),
+                })
+            })
+            .collect()
     }
 
     // Folds contained in a hunk are ignored apart from shrinking visual size
@@ -1292,6 +1326,7 @@ impl EditorElement {
         display_row: DisplayRow,
         display_snapshot: &DisplaySnapshot,
         line_layout: &LineWithInvisibles,
+        flap_trailer: Option<&FlapTrailerLayout>,
         em_width: Pixels,
         content_origin: gpui::Point<Pixels>,
         scroll_pixel_position: gpui::Point<Pixels>,
@@ -1331,17 +1366,22 @@ impl EditorElement {
         let start_x = {
             const INLINE_BLAME_PADDING_EM_WIDTHS: f32 = 6.;
 
-            let padded_line_width =
-                line_layout.line.width + (em_width * INLINE_BLAME_PADDING_EM_WIDTHS);
+            let line_end = if let Some(flap_trailer) = flap_trailer {
+                flap_trailer.bounds.right()
+            } else {
+                content_origin.x - scroll_pixel_position.x + line_layout.line.width
+            };
+            let padded_line_end = line_end + em_width * INLINE_BLAME_PADDING_EM_WIDTHS;
 
-            let min_column = ProjectSettings::get_global(cx)
+            let min_column_in_pixels = ProjectSettings::get_global(cx)
                 .git
                 .inline_blame
                 .and_then(|settings| settings.min_column)
                 .map(|col| self.column_pixels(col as usize, cx))
                 .unwrap_or(px(0.));
+            let min_start = content_origin.x - scroll_pixel_position.x + min_column_in_pixels;
 
-            (content_origin.x - scroll_pixel_position.x) + max(padded_line_width, min_column)
+            cmp::max(padded_line_end, min_start)
         };
 
         let absolute_offset = point(start_x, start_y);
@@ -1580,13 +1620,9 @@ impl EditorElement {
         active_rows: &BTreeMap<DisplayRow, bool>,
         newest_selection_head: Option<DisplayPoint>,
         snapshot: &EditorSnapshot,
-        cx: &WindowContext,
-    ) -> (
-        Vec<Option<ShapedLine>>,
-        Vec<Option<(FoldStatus, MultiBufferRow, bool)>>,
-    ) {
+        cx: &mut WindowContext,
+    ) -> Vec<Option<ShapedLine>> {
         let editor = self.editor.read(cx);
-        let is_singleton = editor.is_singleton(cx);
         let newest_selection_head = newest_selection_head.unwrap_or_else(|| {
             let newest = editor.selections.newest::<Point>(cx);
             SelectionLayout::new(
@@ -1603,10 +1639,7 @@ impl EditorElement {
         let font_size = self.style.text.font_size.to_pixels(cx.rem_size());
         let include_line_numbers =
             EditorSettings::get_global(cx).gutter.line_numbers && snapshot.mode == EditorMode::Full;
-        let include_fold_statuses =
-            EditorSettings::get_global(cx).gutter.folds && snapshot.mode == EditorMode::Full;
         let mut shaped_line_numbers = Vec::with_capacity(rows.len());
-        let mut fold_statuses = Vec::with_capacity(rows.len());
         let mut line_number = String::new();
         let is_relative = EditorSettings::get_global(cx).relative_line_numbers;
         let relative_to = if is_relative {
@@ -1619,10 +1652,10 @@ impl EditorElement {
 
         for (ix, row) in buffer_rows.into_iter().enumerate() {
             let display_row = DisplayRow(rows.start.0 + ix as u32);
-            let (active, color) = if active_rows.contains_key(&display_row) {
-                (true, cx.theme().colors().editor_active_line_number)
+            let color = if active_rows.contains_key(&display_row) {
+                cx.theme().colors().editor_active_line_number
             } else {
-                (false, cx.theme().colors().editor_line_number)
+                cx.theme().colors().editor_line_number
             };
             if let Some(multibuffer_row) = row {
                 if include_line_numbers {
@@ -1646,24 +1679,65 @@ impl EditorElement {
                         .unwrap();
                     shaped_line_numbers.push(Some(shaped_line));
                 }
-                if include_fold_statuses {
-                    fold_statuses.push(
-                        is_singleton
-                            .then(|| {
-                                snapshot
-                                    .fold_for_line(multibuffer_row)
-                                    .map(|fold_status| (fold_status, multibuffer_row, active))
-                            })
-                            .flatten(),
-                    )
-                }
             } else {
-                fold_statuses.push(None);
                 shaped_line_numbers.push(None);
             }
         }
 
-        (shaped_line_numbers, fold_statuses)
+        shaped_line_numbers
+    }
+
+    fn layout_gutter_fold_toggles(
+        &self,
+        rows: Range<DisplayRow>,
+        buffer_rows: impl IntoIterator<Item = Option<MultiBufferRow>>,
+        active_rows: &BTreeMap<DisplayRow, bool>,
+        snapshot: &EditorSnapshot,
+        cx: &mut WindowContext,
+    ) -> Vec<Option<AnyElement>> {
+        let include_fold_statuses = EditorSettings::get_global(cx).gutter.folds
+            && snapshot.mode == EditorMode::Full
+            && self.editor.read(cx).is_singleton(cx);
+        if include_fold_statuses {
+            buffer_rows
+                .into_iter()
+                .enumerate()
+                .map(|(ix, row)| {
+                    if let Some(multibuffer_row) = row {
+                        let display_row = DisplayRow(rows.start.0 + ix as u32);
+                        let active = active_rows.contains_key(&display_row);
+                        snapshot.render_fold_toggle(
+                            multibuffer_row,
+                            active,
+                            self.editor.clone(),
+                            cx,
+                        )
+                    } else {
+                        None
+                    }
+                })
+                .collect()
+        } else {
+            Vec::new()
+        }
+    }
+
+    fn layout_flap_trailers(
+        &self,
+        buffer_rows: impl IntoIterator<Item = Option<MultiBufferRow>>,
+        snapshot: &EditorSnapshot,
+        cx: &mut WindowContext,
+    ) -> Vec<Option<AnyElement>> {
+        buffer_rows
+            .into_iter()
+            .map(|row| {
+                if let Some(multibuffer_row) = row {
+                    snapshot.render_flap_trailer(multibuffer_row, cx)
+                } else {
+                    None
+                }
+            })
+            .collect()
     }
 
     fn layout_lines(
@@ -2465,8 +2539,8 @@ impl EditorElement {
         }
 
         cx.paint_layer(layout.gutter_hitbox.bounds, |cx| {
-            cx.with_element_namespace("gutter_fold_indicators", |cx| {
-                for fold_indicator in layout.fold_indicators.iter_mut().flatten() {
+            cx.with_element_namespace("gutter_fold_toggles", |cx| {
+                for fold_indicator in layout.gutter_fold_toggles.iter_mut().flatten() {
                     fold_indicator.paint(cx);
                 }
             });
@@ -2646,6 +2720,11 @@ impl EditorElement {
                 self.paint_redactions(layout, cx);
                 self.paint_cursors(layout, cx);
                 self.paint_inline_blame(layout, cx);
+                cx.with_element_namespace("flap_trailers", |cx| {
+                    for trailer in layout.flap_trailers.iter_mut().flatten() {
+                        trailer.element.paint(cx);
+                    }
+                });
             },
         )
     }
@@ -3992,14 +4071,28 @@ impl Element for EditorElement {
                         cx,
                     );
 
-                    let (line_numbers, fold_statuses) = self.layout_line_numbers(
+                    let line_numbers = self.layout_line_numbers(
                         start_row..end_row,
-                        buffer_rows.clone().into_iter(),
+                        buffer_rows.iter().copied(),
                         &active_rows,
                         newest_selection_head,
                         &snapshot,
                         cx,
                     );
+
+                    let mut gutter_fold_toggles =
+                        cx.with_element_namespace("gutter_fold_toggles", |cx| {
+                            self.layout_gutter_fold_toggles(
+                                start_row..end_row,
+                                buffer_rows.iter().copied(),
+                                &active_rows,
+                                &snapshot,
+                                cx,
+                            )
+                        });
+                    let flap_trailers = cx.with_element_namespace("flap_trailers", |cx| {
+                        self.layout_flap_trailers(buffer_rows.iter().copied(), &snapshot, cx)
+                    });
 
                     let display_hunks = self.layout_git_gutters(
                         line_height,
@@ -4046,15 +4139,30 @@ impl Element for EditorElement {
                         scroll_position.y * line_height,
                     );
 
+                    let flap_trailers = cx.with_element_namespace("flap_trailers", |cx| {
+                        self.prepaint_flap_trailers(
+                            flap_trailers,
+                            &line_layouts,
+                            line_height,
+                            content_origin,
+                            scroll_pixel_position,
+                            em_width,
+                            cx,
+                        )
+                    });
+
                     let mut inline_blame = None;
                     if let Some(newest_selection_head) = newest_selection_head {
                         let display_row = newest_selection_head.row();
                         if (start_row..end_row).contains(&display_row) {
-                            let line_layout = &line_layouts[display_row.minus(start_row) as usize];
+                            let line_ix = display_row.minus(start_row) as usize;
+                            let line_layout = &line_layouts[line_ix];
+                            let flap_trailer_layout = flap_trailers[line_ix].as_ref();
                             inline_blame = self.layout_inline_blame(
                                 display_row,
                                 &snapshot.display_snapshot,
                                 line_layout,
+                                flap_trailer_layout,
                                 em_width,
                                 content_origin,
                                 scroll_pixel_position,
@@ -4226,21 +4334,17 @@ impl Element for EditorElement {
 
                     let mouse_context_menu = self.layout_mouse_context_menu(cx);
 
-                    let fold_indicators = if gutter_settings.folds {
-                        cx.with_element_namespace("gutter_fold_indicators", |cx| {
-                            self.layout_gutter_fold_indicators(
-                                fold_statuses,
-                                line_height,
-                                &gutter_dimensions,
-                                gutter_settings,
-                                scroll_pixel_position,
-                                &gutter_hitbox,
-                                cx,
-                            )
-                        })
-                    } else {
-                        Vec::new()
-                    };
+                    cx.with_element_namespace("gutter_fold_toggles", |cx| {
+                        self.prepaint_gutter_fold_toggles(
+                            &mut gutter_fold_toggles,
+                            line_height,
+                            &gutter_dimensions,
+                            gutter_settings,
+                            scroll_pixel_position,
+                            &gutter_hitbox,
+                            cx,
+                        )
+                    });
 
                     let invisible_symbol_font_size = font_size / 2.;
                     let tab_invisible = cx
@@ -4310,7 +4414,8 @@ impl Element for EditorElement {
                         mouse_context_menu,
                         test_indicators,
                         code_actions_indicator,
-                        fold_indicators,
+                        gutter_fold_toggles,
+                        flap_trailers,
                         tab_invisible,
                         space_invisible,
                     }
@@ -4430,7 +4535,8 @@ pub struct EditorLayout {
     selections: Vec<(PlayerColor, Vec<SelectionLayout>)>,
     code_actions_indicator: Option<AnyElement>,
     test_indicators: Vec<AnyElement>,
-    fold_indicators: Vec<Option<AnyElement>>,
+    gutter_fold_toggles: Vec<Option<AnyElement>>,
+    flap_trailers: Vec<Option<FlapTrailerLayout>>,
     mouse_context_menu: Option<AnyElement>,
     tab_invisible: ShapedLine,
     space_invisible: ShapedLine,
@@ -4552,6 +4658,11 @@ impl ScrollbarLayout {
 
         quads
     }
+}
+
+struct FlapTrailerLayout {
+    element: AnyElement,
+    bounds: Bounds<Pixels>,
 }
 
 struct FoldLayout {
@@ -4972,16 +5083,14 @@ mod tests {
 
         let layouts = cx
             .update_window(*window, |_, cx| {
-                element
-                    .layout_line_numbers(
-                        DisplayRow(0)..DisplayRow(6),
-                        (0..6).map(MultiBufferRow).map(Some),
-                        &Default::default(),
-                        Some(DisplayPoint::new(DisplayRow(0), 0)),
-                        &snapshot,
-                        cx,
-                    )
-                    .0
+                element.layout_line_numbers(
+                    DisplayRow(0)..DisplayRow(6),
+                    (0..6).map(MultiBufferRow).map(Some),
+                    &Default::default(),
+                    Some(DisplayPoint::new(DisplayRow(0), 0)),
+                    &snapshot,
+                    cx,
+                )
             })
             .unwrap();
         assert_eq!(layouts.len(), 6);
