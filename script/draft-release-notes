@@ -13,16 +13,16 @@ async function main() {
     process.argv.length != 4 ||
     parts.length != 3 ||
     parts.find((part) => isNaN(part)) != null ||
-    (channel != "stable" && channel != "preview" && channel != "flatpak")
+    (channel != "stable" && channel != "preview")
   ) {
-    console.log("Usage: draft-release-notes <version> {stable|preview|flatpak}");
+    console.log("Usage: draft-release-notes <version> {stable|preview}");
     process.exit(1);
   }
 
   let priorVersion = [parts[0], parts[1], parts[2] - 1].join(".");
   let suffix = "";
 
-  if (channel == "preview" || channel == "flatpak") {
+  if (channel == "preview") {
     suffix = "-pre";
     if (parts[2] == 0) {
       priorVersion = [parts[0], parts[1] - 1, 0].join(".");
@@ -50,31 +50,6 @@ async function main() {
     let notes = commit.releaseNotes;
     if (commit.pr == "") {
       link = "https://github.com/zed-industries/zed/commits/" + commit.hash;
-    } else if (channel == "flatpak") {
-      const lines = notes.split("\n");
-      for (var i = 0; i < lines.length; i++) {
-        line = lines[i];
-        line = line.replaceAll("<", "&lt;");
-        line = line.replaceAll(">", "&gt;");
-        line = line.replace(/^\s*(-|\*)/, ""); // remove bullet point
-        line = line.replaceAll(/\(\[(#|\d|\s)+\]\((\w|:|\/|\.|-)*\)\)/g, ""); // remove links to issues
-        line = line.replaceAll(/\(#(\d|\s)*\)/g, ""); // remove issue numbers in brackets
-        line = line.replace(/\s+\./, ""); // remove spaces before periods
-        line = "<li>" + line.trim() + "</li>"
-        line = line.replace(/([^.])<\/li>$/, '$1.</li>'); // add missing periods
-
-        if (/#\d*/.test(line)) { // if the notes contain an issue number without brackets or a link, it likely is the low-effort type flathub wants to avoid
-          continue;
-        } else if (line.length > 200) {
-          continue;
-        } else if (line == "<li>N/A.</li>" || line == "<li>.</li>") {
-          continue;
-        }
-
-        releaseNotes.push(" ".repeat(20) + line);
-      }
-
-      continue;
     } else if (!notes.includes("zed-industries/zed/issues")) {
       notes = notes + " ([#" + commit.pr + "](" + link + "))";
     }
@@ -88,33 +63,11 @@ async function main() {
     }
   }
 
-  if (channel == "preview") {
-    console.log(releaseNotes.join("\n") + "\n");
-    console.log("<!-- ");
-    console.log(missing.join("\n"));
-    console.log(skipped.join("\n"));
-    console.log("-->");
-  } else if (channel == "flatpak") {
-    var date = new Date();
-
-    console.log("Add the following to `crates/zed/resources/flatpak/release-info/{channel}`.");
-    console.log("NOTE: Choose the top 5 most important bullet points.\n\n");
-    console.log("-".repeat(process.stdout.columns));
-
-    console.log("        <release version=\"%s\" date=\"%s\">", version, date.toISOString());
-    if (releaseNotes.length != 0) {
-      console.log("            <description>");
-      console.log("                <ul>");
-      console.log(releaseNotes.join("\n"));
-      console.log("                </ul>");
-      console.log("            </description>");
-    }
-    console.log("            <url>https://github.com/zed-industries/zed/releases/tag/%s</url>", tag);
-    console.log("        </release>");
-    console.log("-".repeat(process.stdout.columns));
-    console.log("\n\nAdd the following to `crates/zed/resources/flatpak/release-info/{channel}`.")
-    console.log("NOTE: Choose the top 5 most important bullet points.");
-  }
+  console.log(releaseNotes.join("\n") + "\n");
+  console.log("<!-- ");
+  console.log(missing.join("\n"));
+  console.log(skipped.join("\n"));
+  console.log("-->");
 }
 
 function getCommits(oldTag, newTag) {
