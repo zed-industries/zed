@@ -26,6 +26,7 @@ use rpc::{
 use smol::fs::unix::PermissionsExt;
 use task::RevealStrategy;
 use task::SpawnInTerminal;
+use terminal::terminal_settings::AlternateScroll;
 use terminal_view::terminal_panel::TerminalPanel;
 use ui::CheckboxWithLabel;
 use ui::{prelude::*, Indicator, List, ListHeader, ListItem, ModalContent, ModalHeader, Tooltip};
@@ -307,20 +308,20 @@ impl DevServerProjects {
                         };
 
                         let real_ssh = which::which("ssh")?;
-                        let tmpd = temp_dir();
-                        let path = temp_dir().join("ssh");
+                        let tmp_dir = tempfile::tempdir()?;
+                        let path = tmp_dir.path().join("ssh");
                         dbg!(&path);
                         let mut file = File::create(path.clone())?;
                         write!(&mut file, "#!/bin/bash\nexec {} \"$@\" -R 8080:localhost:8080 sh -c {}", real_ssh.to_string_lossy(), shlex::try_quote(&install_command)?)?;
                         let mut perms = file.metadata()?.permissions();
                         perms.set_mode(0o755); // Set the executable bit
                         std::fs::set_permissions(path, perms)?;
-                        let  path = format!("{}:{}", tmpd.to_string_lossy(), env::var("PATH")?);
+                        let  path = format!("{}:{}", tmp_dir.path().to_string_lossy(), env::var("PATH")?);
 
                         let mut args = shlex::split(&ssh_connection_string).unwrap_or_default();
                         let command = args.drain(0..1).next().unwrap_or("ssh".to_string());
 
-                        terminal_panel.update(&mut cx, |terminal_panel, cx| {
+                        let terminal = terminal_panel.update(&mut cx, |terminal_panel, cx| {
                             terminal_panel.spawn_in_new_terminal(
                                 SpawnInTerminal {
                                     id: task::TaskId("ssh-remote".into()),
@@ -337,8 +338,14 @@ impl DevServerProjects {
                                 },
                                 None,
                                 cx,
-                            );
-                        })?;
+                            )
+                        })?.await?;
+
+                        terminal.update(&mut cx, |terminal, cx| {
+                            terminal.wait_for_completed_task(cx)
+                        })?.await;
+                        dbg!("oops");
+                        drop(tmp_dir);
                     } else {
                         dbg!("noo!");
                     }
