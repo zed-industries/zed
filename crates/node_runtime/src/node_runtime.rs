@@ -232,8 +232,6 @@ impl NodeRuntime for RealNodeRuntime {
                 .expect("invalid node binary path")
                 .to_path_buf();
             let mut env_path = env_path.to_string_lossy().to_string();
-            println!("============================================");
-            println!("  Env path: {}", env_path);
 
             if let Some(existing_path) = std::env::var_os("PATH") {
                 if !existing_path.is_empty() {
@@ -249,8 +247,6 @@ impl NodeRuntime for RealNodeRuntime {
             if smol::fs::metadata(&npm_file).await.is_err() {
                 return Err(anyhow!("missing npm file"));
             }
-            println!("============================================");
-            println!("  Env path: {}", env_path);
 
             let mut command = Command::new(node_binary);
             command.env_clear();
