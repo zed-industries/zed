@@ -628,6 +628,7 @@ impl Element for TerminalElement {
                     underline: None,
                     strikethrough: None,
                     color: theme.colors().text,
+                    fallbacks: settings.buffer_font.fallbacks,
                 };
 
                 let text_system = cx.text_system();
