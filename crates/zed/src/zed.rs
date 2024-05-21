@@ -10,7 +10,7 @@ use client::ZED_URL_SCHEME;
 use collections::VecDeque;
 use editor::{scroll::Autoscroll, Editor, MultiBuffer};
 use gpui::{
-    actions, point, px, AppContext, AsyncAppContext, Context, FocusableView, PromptLevel,
+    actions, point, px, AppContext, AsyncAppContext, Context, FocusableView, MenuItem, PromptLevel,
     TitlebarOptions, View, ViewContext, VisualContext, WindowKind, WindowOptions,
 };
 pub use open_listener::*;
@@ -670,6 +670,7 @@ fn reload_keymaps(cx: &mut AppContext, keymap_content: &KeymapFile) {
     load_default_keymap(cx);
     keymap_content.clone().add_to_cx(cx).log_err();
     cx.set_menus(app_menus());
+    cx.set_dock_menu(vec![MenuItem::action("New Window", workspace::NewWindow)])
 }
 
 pub fn load_default_keymap(cx: &mut AppContext) {

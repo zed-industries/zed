@@ -20,7 +20,7 @@ use cocoa::{
     },
 };
 use core_foundation::{
-    base::{CFType, CFTypeRef, OSStatus, TCFType as _},
+    base::{CFRelease, CFType, CFTypeRef, OSStatus, TCFType as _},
     boolean::CFBoolean,
     data::CFData,
     dictionary::{CFDictionary, CFDictionaryRef, CFMutableDictionary},
@@ -121,6 +121,10 @@ unsafe fn build_classes() {
             menu_will_open as extern "C" fn(&mut Object, Sel, id),
         );
         decl.add_method(
+            sel!(applicationDockMenu:),
+            handle_dock_menu as extern "C" fn(&mut Object, Sel, id) -> id,
+        );
+        decl.add_method(
             sel!(application:openURLs:),
             open_urls as extern "C" fn(&mut Object, Sel, id, id),
         );
@@ -147,6 +151,7 @@ pub(crate) struct MacPlatformState {
     menu_actions: Vec<Box<dyn Action>>,
     open_urls: Option<Box<dyn FnMut(Vec<String>)>>,
     finish_launching: Option<Box<dyn FnOnce()>>,
+    dock_menu: Option<id>,
 }
 
 impl Default for MacPlatform {
@@ -174,6 +179,7 @@ impl MacPlatform {
             menu_actions: Default::default(),
             open_urls: None,
             finish_launching: None,
+            dock_menu: None,
         }))
     }
 
@@ -224,6 +230,27 @@ impl MacPlatform {
         }
 
         application_menu
+    }
+
+    unsafe fn create_dock_menu(
+        &self,
+        menu_items: Vec<MenuItem>,
+        delegate: id,
+        actions: &mut Vec<Box<dyn Action>>,
+        keymap: &Keymap,
+    ) -> id {
+        let dock_menu = NSMenu::new(nil);
+        dock_menu.setDelegate_(delegate);
+        for item_config in menu_items {
+            dock_menu.addItem_(Self::create_menu_item(
+                item_config,
+                delegate,
+                actions,
+                keymap,
+            ));
+        }
+
+        dock_menu
     }
 
     unsafe fn create_menu_item(
@@ -731,6 +758,18 @@ impl Platform for MacPlatform {
         }
     }
 
+    fn set_dock_menu(&self, menu: Vec<MenuItem>, keymap: &Keymap) {
+        unsafe {
+            let app: id = msg_send![APP_CLASS, sharedApplication];
+            let mut state = self.0.lock();
+            let actions = &mut state.menu_actions;
+            let new = self.create_dock_menu(menu, app.delegate(), actions, keymap);
+            if let Some(old) = state.dock_menu.replace(new) {
+                CFRelease(old as _)
+            }
+        }
+    }
+
     fn add_recent_document(&self, path: &Path) {
         if let Some(path_str) = path.to_str() {
             unsafe {
@@ -1124,6 +1163,18 @@ extern "C" fn menu_will_open(this: &mut Object, _: Sel, _: id) {
             drop(lock);
             callback();
             platform.0.lock().will_open_menu.get_or_insert(callback);
+        }
+    }
+}
+
+extern "C" fn handle_dock_menu(this: &mut Object, _: Sel, _: id) -> id {
+    unsafe {
+        let platform = get_mac_platform(this);
+        let mut state = platform.0.lock();
+        if let Some(id) = state.dock_menu {
+            id
+        } else {
+            nil
         }
     }
 }

@@ -4591,6 +4591,12 @@ impl From<(&'static str, u64)> for ElementId {
     }
 }
 
+impl From<(&'static str, u32)> for ElementId {
+    fn from((name, id): (&'static str, u32)) -> Self {
+        ElementId::NamedInteger(name.into(), id as usize)
+    }
+}
+
 /// A rectangle to be rendered in the window at the given position and size.
 /// Passed as an argument [`WindowContext::paint_quad`].
 #[derive(Clone)]
