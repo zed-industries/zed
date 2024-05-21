@@ -1341,6 +1341,7 @@ impl ProjectSearchBar {
             font_size: rems(0.875).into(),
             font_weight: settings.buffer_font.weight,
             line_height: relative(1.3),
+            fallbacks: settings.buffer_font.fallbacks,
             ..Default::default()
         };
 
