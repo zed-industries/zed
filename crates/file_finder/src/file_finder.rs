@@ -263,11 +263,11 @@ impl Matches {
                 Some((i + 1, Match::History(history_item.clone(), query_match)))
             });
 
-        let mut unque_matches = BTreeSet::new();
+        let mut unique_matches = BTreeSet::new();
         self.matches = old_search_matches
             .chain(history_matches)
             .chain(new_search_matches)
-            .filter(|(_, m)| unque_matches.insert(m.clone()))
+            .filter(|(_, m)| unique_matches.insert(m.clone()))
             .sorted_by(|(history_score_a, a), (history_score_b, b)| {
                 match (a, b) {
                     // bubble currently opened files to the top
@@ -752,18 +752,20 @@ impl PickerDelegate for FileFinderDelegate {
 
     fn separators_after_indices(&self) -> Vec<usize> {
         if self.separate_history {
-            return Vec::new();
+            let first_non_history_index = self
+                .matches
+                .matches
+                .iter()
+                .enumerate()
+                .find(|(_, m)| !matches!(m, Match::History(_, _)))
+                .map(|(i, _)| i);
+            if let Some(first_non_history_index) = first_non_history_index {
+                if first_non_history_index > 0 {
+                    return vec![first_non_history_index - 1];
+                }
+            }
         }
-
-        let index = self
-            .matches
-            .matches
-            .iter()
-            .enumerate()
-            .skip_while(|(_, m)| matches!(m, Match::History(_, _)))
-            .next()
-            .map(|(i, _)| i.saturating_sub(1));
-        index.map(|i| vec![i]).unwrap_or_default()
+        Vec::new()
     }
 
     fn update_matches(
