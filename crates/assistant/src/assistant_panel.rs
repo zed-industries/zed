@@ -1763,10 +1763,10 @@ impl Conversation {
                 while let Some(line) = lines.next() {
                     if let Some(call) = parse_slash_command_call(line) {
                         let call = SlashCommandCall {
+                            name: line[call.name].to_string(),
+                            argument: call.argument.map(|range| line[range].to_string()),
                             source_range: buffer.anchor_before(offset)
                                 ..buffer.anchor_before(lines.offset()),
-                            name: call.name.0,
-                            argument: call.argument.map(|e| e.0),
                         };
 
                         let mut is_new = true;
