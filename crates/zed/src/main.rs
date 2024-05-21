@@ -28,7 +28,9 @@ use assets::Assets;
 use node_runtime::RealNodeRuntime;
 use parking_lot::Mutex;
 use release_channel::{AppCommitSha, AppVersion};
-use settings::{handle_settings_file_changes, watch_config_file, Settings, SettingsStore};
+use settings::{
+    handle_settings_file_changes, watch_config_file, FontFallbacks, Settings, SettingsStore,
+};
 use simplelog::ConfigBuilder;
 use smol::process::Command;
 use std::{
@@ -245,6 +247,8 @@ fn init_ui(app_state: Arc<AppState>, cx: &mut AppContext) -> Result<()> {
                     client.reconnect(&cx.to_async());
                 }
             }
+            // let fallbacks = FontFallbacks::get_global(cx);
+            settings::set_font_fallbacks(cx.text_system(), cx);
         }
     })
     .detach();
@@ -394,7 +398,7 @@ fn main() {
         handle_settings_file_changes(user_settings_file_rx, cx);
         handle_keymap_file_changes(user_keymap_file_rx, cx);
 
-        settings::init_font_fallbacks(cx);
+        let _ = settings::init_font_fallbacks(cx);
         client::init_settings(cx);
         let client = Client::production(cx);
         cx.update_http_client(client.http_client().clone());
