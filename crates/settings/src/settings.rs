@@ -65,7 +65,7 @@ pub fn initial_tasks_content() -> Cow<'static, str> {
 }
 
 pub fn init_font_fallbacks(cx: &mut AppContext) {
-    FontFallbacks::register(cx);
+    GlobalFontFallbacks::register(cx);
 }
 
 #[derive(Default, Clone, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
@@ -75,14 +75,14 @@ pub struct FontFallbacksContent {
 }
 
 #[derive(Debug, Clone)]
-pub struct FontFallbacks {
+pub struct GlobalFontFallbacks {
     pub ui_font_family: Vec<String>,
     pub buffer_font_family: Vec<String>,
 }
 
 // impl Global for FontFallbacks {}
 
-impl Settings for FontFallbacks {
+impl Settings for GlobalFontFallbacks {
     const KEY: Option<&'static str> = None;
 
     type FileContent = FontFallbacksContent;

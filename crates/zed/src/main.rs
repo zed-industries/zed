@@ -30,7 +30,7 @@ use parking_lot::Mutex;
 use release_channel::{AppCommitSha, AppVersion};
 use session::Session;
 use settings::{
-    handle_settings_file_changes, watch_config_file, FontFallbacks, Settings, SettingsStore,
+    handle_settings_file_changes, watch_config_file, GlobalFontFallbacks, Settings, SettingsStore,
 };
 use simplelog::ConfigBuilder;
 use smol::process::Command;
