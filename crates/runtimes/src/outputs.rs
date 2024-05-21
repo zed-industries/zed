@@ -1,5 +1,5 @@
 use gpui::{AnyElement, FontWeight, Model, ModelContext, Render};
-use runtimelib::{ErrorOutput, JupyterMessageContent, MimeType};
+use runtimelib::{JupyterMessageContent, MimeType};
 use ui::{div, prelude::*, v_flex, IntoElement, Styled, ViewContext};
 
 use serde_json::Value;
@@ -12,7 +12,11 @@ pub enum OutputType {
     Plain(TerminalOutput),
     Media((MimeType, Value)),
     Stream(TerminalOutput),
-    ErrorOutput(ErrorOutput),
+    ErrorOutput {
+        ename: String,
+        evalue: String,
+        traceback: TerminalOutput,
+    },
 }
 
 const PRIORITY_ORDER: &[MimeType] = &[MimeType::Plain, MimeType::Markdown];
@@ -28,7 +32,11 @@ impl OutputType {
             // Self::Markdown(markdown) => Some(markdown.render(theme)),
             Self::Media((mimetype, value)) => render_rich(mimetype, value),
             Self::Stream(stdio) => Some(stdio.render(theme)),
-            Self::ErrorOutput(error_output) => render_error_output(&error_output, cx),
+            Self::ErrorOutput {
+                ename,
+                evalue,
+                traceback,
+            } => render_error_output(ename, evalue, traceback, cx),
         };
 
         el
@@ -39,13 +47,15 @@ impl OutputType {
             Self::Plain(stdio) => stdio.num_lines(),
             Self::Media((_mimetype, value)) => value.as_str().unwrap_or("").lines().count() as u8,
             Self::Stream(stdio) => stdio.num_lines(),
-            Self::ErrorOutput(error_output) => {
-                let mut height: u8 = 1;
-
-                height = height.saturating_add(error_output.ename.lines().count() as u8);
-                // Note: skipping evalue in error output for now
-                height = height.saturating_add(error_output.traceback.len() as u8);
-
+            Self::ErrorOutput {
+                ename,
+                evalue,
+                traceback,
+            } => {
+                let mut height: u8 = 0;
+                height = height.saturating_add(ename.lines().count() as u8);
+                height = height.saturating_add(evalue.lines().count() as u8);
+                height = height.saturating_add(traceback.num_lines());
                 height
             }
         }
@@ -70,29 +80,28 @@ fn render_rich(mimetype: &MimeType, value: &Value) -> Option<AnyElement> {
 }
 
 fn render_error_output(
-    error_output: &ErrorOutput,
+    ename: &String,
+    evalue: &String,
+    traceback: &TerminalOutput,
     cx: &ViewContext<ExecutionView>,
 ) -> Option<AnyElement> {
-    let status_colors = cx.theme().status();
+    let theme = cx.theme();
+
+    let colors = cx.theme().colors();
 
     Some(
         v_flex()
             .w_full()
-            .bg(status_colors.error_background)
-            .p_2()
-            .border_1()
-            .border_color(status_colors.error_border)
+            .bg(colors.background)
+            .p_4()
+            .border_l_1()
+            .border_color(theme.status().error_border)
             .child(
-                div()
+                h_flex()
                     .font_weight(FontWeight::BOLD)
-                    .child(error_output.ename.clone()),
+                    .child(format!("{}: {}", ename, evalue)),
             )
-            .children(
-                error_output
-                    .traceback
-                    .iter()
-                    .map(|line| div().child(line.clone()).into_any_element()),
-            )
+            .child(traceback.render(theme))
             .into_any_element(),
     )
 }
@@ -163,16 +172,16 @@ impl Execution {
             }
             JupyterMessageContent::ErrorOutput(result) => {
                 let mut terminal = TerminalOutput::new();
-                terminal.append_text(&result.ename);
-                terminal.append_text(": ");
-                terminal.append_text(&result.evalue);
-                terminal.append_text("\n");
 
                 terminal.append_text(&result.traceback.join("\n"));
 
-                OutputType::Plain(terminal)
+                OutputType::ErrorOutput {
+                    ename: result.ename.clone(),
+                    evalue: result.evalue.clone(),
+                    traceback: terminal,
+                }
             }
-            _ => {
+            _msg => {
                 return;
             }
         };
