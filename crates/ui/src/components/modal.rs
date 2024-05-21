@@ -93,8 +93,12 @@ impl ParentElement for ModalContent {
 }
 
 impl RenderOnce for ModalContent {
-    fn render(self, _cx: &mut WindowContext) -> impl IntoElement {
-        h_flex().w_full().px_2().py_1p5().children(self.children)
+    fn render(self, cx: &mut WindowContext) -> impl IntoElement {
+        h_flex()
+            .w_full()
+            .px(Spacing::Large.rems(cx))
+            .py(Spacing::Small.rems(cx))
+            .children(self.children)
     }
 }
 
@@ -120,6 +124,43 @@ impl ParentElement for ModalRow {
 impl RenderOnce for ModalRow {
     fn render(self, _cx: &mut WindowContext) -> impl IntoElement {
         h_flex().w_full().px_2().py_1().children(self.children)
+    }
+}
+
+#[derive(IntoElement)]
+pub struct ModalFooter {
+    start_slot: Option<AnyElement>,
+    end_slot: Option<AnyElement>,
+}
+
+impl ModalFooter {
+    pub fn new() -> Self {
+        Self {
+            start_slot: None,
+            end_slot: None,
+        }
+    }
+
+    pub fn start_slot<E: IntoElement>(mut self, start_slot: impl Into<Option<E>>) -> Self {
+        self.start_slot = start_slot.into().map(IntoElement::into_any_element);
+        self
+    }
+
+    pub fn end_slot<E: IntoElement>(mut self, end_slot: impl Into<Option<E>>) -> Self {
+        self.end_slot = end_slot.into().map(IntoElement::into_any_element);
+        self
+    }
+}
+
+impl RenderOnce for ModalFooter {
+    fn render(self, cx: &mut WindowContext) -> impl IntoElement {
+        h_flex()
+            .w_full()
+            .px(Spacing::Large.rems(cx))
+            .py(Spacing::Small.rems(cx))
+            .justify_between()
+            .child(div().when_some(self.start_slot, |this, start_slot| this.child(start_slot)))
+            .child(div().when_some(self.end_slot, |this, end_slot| this.child(end_slot)))
     }
 }
 
