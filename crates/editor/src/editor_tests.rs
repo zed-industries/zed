@@ -11356,17 +11356,21 @@ fn test_flap_insertion_and_rendering(cx: &mut TestAppContext) {
         }
 
         let render_args = Arc::new(Mutex::new(None));
-        let flap = Flap::new(range, {
-            let toggle_callback = render_args.clone();
-            move |row, folded, callback, _cx| {
-                *toggle_callback.lock() = Some(RenderArgs {
-                    row,
-                    folded,
-                    callback,
-                });
-                div()
-            }
-        });
+        let flap = Flap::new(
+            range,
+            {
+                let toggle_callback = render_args.clone();
+                move |row, folded, callback, _cx| {
+                    *toggle_callback.lock() = Some(RenderArgs {
+                        row,
+                        folded,
+                        callback,
+                    });
+                    div()
+                }
+            },
+            |_row, _folded, _cx| div(),
+        );
 
         editor.insert_flaps(Some(flap), cx);
 

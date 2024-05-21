@@ -11101,6 +11101,18 @@ impl EditorSnapshot {
             None
         }
     }
+
+    pub fn render_flap_trailer(
+        &self,
+        buffer_row: MultiBufferRow,
+        cx: &mut WindowContext,
+    ) -> Option<AnyElement> {
+        let folded = self.is_line_folded(buffer_row);
+        let flap = self
+            .flap_snapshot
+            .query_row(buffer_row, &self.buffer_snapshot)?;
+        Some((flap.render_trailer)(buffer_row, folded, cx))
+    }
 }
 
 impl Deref for EditorSnapshot {

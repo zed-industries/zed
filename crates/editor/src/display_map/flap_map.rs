@@ -60,25 +60,34 @@ impl FlapSnapshot {
     }
 }
 
+type RenderToggleFn = Arc<
+    dyn Send
+        + Sync
+        + Fn(
+            MultiBufferRow,
+            bool,
+            Arc<dyn Send + Sync + Fn(bool, &mut WindowContext)>,
+            &mut WindowContext,
+        ) -> AnyElement,
+>;
+type RenderTrailerFn =
+    Arc<dyn Send + Sync + Fn(MultiBufferRow, bool, &mut WindowContext) -> AnyElement>;
+
 #[derive(Clone)]
 pub struct Flap {
     pub range: Range<Anchor>,
-    pub render_toggle: Arc<
-        dyn Send
-            + Sync
-            + Fn(
-                MultiBufferRow,
-                bool,
-                Arc<dyn Send + Sync + Fn(bool, &mut WindowContext)>,
-                &mut WindowContext,
-            ) -> AnyElement,
-    >,
+    pub render_toggle: RenderToggleFn,
+    pub render_trailer: RenderTrailerFn,
 }
 
 impl Flap {
-    pub fn new<F, E>(range: Range<Anchor>, render_toggle: F) -> Self
+    pub fn new<RenderToggle, ToggleElement, RenderTrailer, TrailerElement>(
+        range: Range<Anchor>,
+        render_toggle: RenderToggle,
+        render_trailer: RenderTrailer,
+    ) -> Self
     where
-        F: 'static
+        RenderToggle: 'static
             + Send
             + Sync
             + Fn(
@@ -86,14 +95,23 @@ impl Flap {
                 bool,
                 Arc<dyn Send + Sync + Fn(bool, &mut WindowContext)>,
                 &mut WindowContext,
-            ) -> E
+            ) -> ToggleElement
             + 'static,
-        E: IntoElement,
+        ToggleElement: IntoElement,
+        RenderTrailer: 'static
+            + Send
+            + Sync
+            + Fn(MultiBufferRow, bool, &mut WindowContext) -> TrailerElement
+            + 'static,
+        TrailerElement: IntoElement,
     {
         Flap {
             range,
             render_toggle: Arc::new(move |row, folded, toggle, cx| {
                 render_toggle(row, folded, toggle, cx).into_any_element()
+            }),
+            render_trailer: Arc::new(move |row, folded, cx| {
+                render_trailer(row, folded, cx).into_any_element()
             }),
         }
     }
@@ -239,10 +257,12 @@ mod test {
             Flap::new(
                 snapshot.anchor_before(Point::new(1, 0))..snapshot.anchor_after(Point::new(1, 5)),
                 |_row, _folded, _toggle, _cx| div(),
+                |_row, _folded, _cx| div(),
             ),
             Flap::new(
                 snapshot.anchor_before(Point::new(3, 0))..snapshot.anchor_after(Point::new(3, 5)),
                 |_row, _folded, _toggle, _cx| div(),
+                |_row, _folded, _cx| div(),
             ),
         ];
         let flap_ids = flap_map.insert(flaps, &snapshot);
