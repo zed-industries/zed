@@ -1792,32 +1792,45 @@ impl Conversation {
                         } else if let Some(command) = this.slash_command_registry.command(&name) {
                             let name = name.to_string();
                             let argument = argument.map(|s| s.to_string());
-                            let start = buffer.anchor_before(offset);
-                            let end = buffer.anchor_before(lines.offset());
+                            let command_start = buffer.anchor_before(offset);
+                            let command_end = buffer.anchor_before(lines.offset());
                             let version = buffer.version().clone();
                             let task = command.run(argument.as_deref(), cx);
 
-                            change_start.get_or_insert(start);
-                            change_end = end;
+                            change_start.get_or_insert(command_start);
+                            change_end = command_end;
 
                             cx.spawn(|this, mut cx| async move {
                                 let result = task.await;
                                 this.update(&mut cx, |this, cx| {
-                                    let buffer = this.buffer.read(cx);
-                                    if !buffer.has_edits_since_in_range(&version, start..end) {
-                                        let call_ix =
-                                            this.slash_command_calls.binary_search_by(|probe| {
-                                                probe.source_range.start.cmp(&start, &buffer)
-                                            });
-                                        if let Ok(ix) = call_ix {
-                                            let call = &mut this.slash_command_calls[ix];
-                                            call.result = Some(result);
+                                    let output_range = this.buffer.update(cx, |buffer, cx| {
+                                        if buffer.has_edits_since_in_range(
+                                            &version,
+                                            command_start..command_end,
+                                        ) {
+                                            return None;
                                         }
-                                        cx.emit(ConversationEvent::SlashCommandsChanged(
-                                            start..end,
-                                        ));
-                                        cx.emit(ConversationEvent::SlashCommandRan(start..end));
+
+                                        let output = result.log_err()?;
+                                        let output_end =
+                                            command_end.to_offset(buffer) + output.len();
+                                        buffer.edit(
+                                            [
+                                                (command_end..command_end, "\n".to_string()),
+                                                (command_end..command_end, output),
+                                            ],
+                                            None,
+                                            cx,
+                                        );
+                                        let output_end = buffer.anchor_after(output_end);
+                                        Some(command_end..output_end)
+                                    });
+                                    if let Some(output_range) = output_range {
+                                        cx.emit(ConversationEvent::SlashCommandRan(output_range));
                                     }
+                                    cx.emit(ConversationEvent::SlashCommandsChanged(
+                                        command_start..command_end,
+                                    ));
                                 })
                                 .ok();
                             })
@@ -1825,8 +1838,7 @@ impl Conversation {
                             new_calls.push(SlashCommandCall {
                                 name,
                                 argument,
-                                source_range: start..end,
-                                result: None,
+                                source_range: command_start..command_end,
                             });
                         }
                     }
@@ -2496,7 +2508,6 @@ struct SlashCommandCall {
     source_range: Range<language::Anchor>,
     name: String,
     argument: Option<String>,
-    result: Option<Result<String>>,
 }
 
 struct PendingCompletion {
@@ -2729,15 +2740,7 @@ impl ConversationEditor {
                                 .unwrap();
                             (
                                 start..=start,
-                                match &call.result {
-                                    Some(Ok(_)) => {
-                                        Some(colors.editor_document_highlight_read_background)
-                                    }
-                                    Some(Err(_)) => {
-                                        Some(colors.editor_document_highlight_write_background)
-                                    }
-                                    None => None,
-                                },
+                                Some(colors.editor_document_highlight_read_background),
                             )
                         })
                         .collect::<Vec<_>>();
@@ -2750,40 +2753,21 @@ impl ConversationEditor {
             }
             ConversationEvent::SlashCommandRan(range) => {
                 self.editor.update(cx, |editor, cx| {
-                    let range = self.conversation.update(cx, |conversation, cx| {
-                        conversation.buffer.update(cx, |buffer, cx| {
-                            let call_ix = conversation
-                                .slash_command_calls
-                                .binary_search_by(|probe| {
-                                    probe.source_range.start.cmp(&range.start, &buffer)
-                                })
-                                .ok()?;
-                            let call = &conversation.slash_command_calls[call_ix];
-                            let offset = call.source_range.end.to_offset(buffer);
-                            let output = call.result.as_ref()?.as_ref().ok()?;
-                            let content = format!("\t\n{output}\n");
-                            buffer.edit([(offset..offset, content)], None, cx);
-                            let start_offset = offset + '\t'.len_utf8();
-                            Some(start_offset..start_offset + output.len())
-                        })
-                    });
-                    if let Some(range) = range {
-                        let multibuffer = editor.buffer().read(cx).snapshot(cx);
-                        let start = multibuffer.anchor_before(range.start);
-                        let end = multibuffer.anchor_after(range.end);
-                        let buffer_row =
-                            MultiBufferRow(multibuffer.offset_to_point(range.start).row);
+                    let buffer = editor.buffer().read(cx).snapshot(cx);
+                    let excerpt_id = *buffer.as_singleton().unwrap().0;
+                    let start = buffer.anchor_in_excerpt(excerpt_id, range.start).unwrap();
+                    let end = buffer.anchor_in_excerpt(excerpt_id, range.end).unwrap();
+                    let buffer_row = MultiBufferRow(start.to_point(&buffer).row);
 
-                        editor.insert_flaps(
-                            [Flap {
-                                range: start..end,
-                                render_toggle: Arc::new(render_slash_command_output_toggle),
-                                render_trailer: Arc::new(render_slash_command_output_trailer),
-                            }],
-                            cx,
-                        );
-                        editor.fold_at(&FoldAt { buffer_row }, cx);
-                    }
+                    editor.insert_flaps(
+                        [Flap {
+                            range: start..end,
+                            render_toggle: Arc::new(render_slash_command_output_toggle),
+                            render_trailer: Arc::new(render_slash_command_output_trailer),
+                        }],
+                        cx,
+                    );
+                    editor.fold_at(&FoldAt { buffer_row }, cx);
                 });
             }
         }

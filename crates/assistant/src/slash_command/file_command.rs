@@ -4,6 +4,7 @@ use fuzzy::PathMatch;
 use gpui::{AppContext, Model, Task};
 use project::{PathMatchCandidateSet, Project};
 use std::{
+    fmt::Write,
     path::Path,
     sync::{atomic::AtomicBool, Arc},
 };
@@ -112,7 +113,14 @@ impl SlashCommand for FileSlashCommand {
         let argument = argument.to_string();
         cx.background_executor().spawn(async move {
             let content = fs.load(&abs_path).await?;
-            Ok(format!("```{argument}\n{content}\n```\n"))
+            let mut output = String::with_capacity(argument.len() + content.len() + 9);
+            writeln!(&mut output, "```{argument}\n")?;
+            output.push_str(&content);
+            if !output.ends_with('\n') {
+                output.push('\n');
+            }
+            output.push_str("```\n");
+            Ok(output)
         })
     }
 }
