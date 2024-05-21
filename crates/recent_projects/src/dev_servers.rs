@@ -1,6 +1,3 @@
-use std::env;
-use std::fs::File;
-use std::io::Write;
 use std::time::Duration;
 
 use anyhow::Context;
@@ -21,9 +18,9 @@ use rpc::{
     proto::{CreateDevServerResponse, DevServerStatus, RegenerateDevServerTokenResponse},
     ErrorCode, ErrorExt,
 };
-use smol::fs::unix::PermissionsExt;
 use task::RevealStrategy;
 use task::SpawnInTerminal;
+use task::TerminalWorkDir;
 use terminal_view::terminal_panel::TerminalPanel;
 use ui::RadioWithLabel;
 use ui::{prelude::*, Indicator, List, ListHeader, ListItem, ModalContent, ModalHeader, Tooltip};
@@ -296,42 +293,25 @@ impl DevServerProjects {
                         .with_context(|| anyhow::anyhow!("No terminal panel"))
                         .log_err()
                     {
-                        let install_command = if env::var("ZED_RPC_URL") == Ok("http://localhost:8080/rpc".to_string()) {
-                            format!(r#"cd; (curl -sSL https://zed.dev/install.sh || wget -qO- https://zed.dev/install.sh) | bash && ZED_RPC_URL=http://localhost:8080/rpc ~/.local/bin/zed --dev-server-token {} && exec $SHELL"#, dev_server.access_token)
-                        } else {
-                            format!(r#"cd; (curl -sSL https://zed.dev/install.sh || wget -qO- https://zed.dev/install.sh) | bash && ~/.local/bin/zed --dev-server-token {}"#, dev_server.access_token)
-                        };
-
-                        let real_ssh = which::which("ssh")?;
-                        let tmp_dir = tempfile::tempdir()?;
-                        let path = tmp_dir.path().join("ssh");
-                        dbg!(&path);
-                        let mut file = File::create(path.clone())?;
-                        write!(&mut file, "#!/bin/bash\nexec {} \"$@\" -R 8080:localhost:8080 sh -c {}", real_ssh.to_string_lossy(), shlex::try_quote(&install_command)?)?;
-                        let mut perms = file.metadata()?.permissions();
-                        perms.set_mode(0o755); // Set the executable bit
-                        std::fs::set_permissions(path, perms)?;
-                        let  path = format!("{}:{}", tmp_dir.path().to_string_lossy(), env::var("PATH")?);
-
-                        let mut args = shlex::split(&ssh_connection_string).unwrap_or_default();
-                        let command = args.drain(0..1).next().unwrap_or("ssh".to_string());
+                        let command = "sh".to_string();
+                        let args = vec!["-c".to_string(), "-x".to_string(),
+                            format!(r#"(curl -sSL https://zed.dev/install.sh || wget -qO- https://zed.dev/install.sh) | bash && ~/.local/bin/zed --dev-server-token {}"#, dev_server.access_token)];
 
                         let terminal = terminal_panel.update(&mut cx, |terminal_panel, cx| {
                             terminal_panel.spawn_in_new_terminal(
                                 SpawnInTerminal {
                                     id: task::TaskId("ssh-remote".into()),
-                                    full_label: "Install Zed over ssh".into(),
-                                    label: "Install Zed over ssh".into(),
+                                    full_label: "Installing zed over ssh".into(),
+                                    label: "Installing Zed over ssh".into(),
                                     command,
                                     args,
-                                    command_label: ssh_connection_string,
-                                    cwd: None,
-                                    env: [("PATH".to_string(), path)].into_iter().collect(),
+                                    command_label: ssh_connection_string.clone(),
+                                    cwd: Some(TerminalWorkDir::Ssh { ssh_command: ssh_connection_string, path: None }),
+                                    env: Default::default(),
                                     use_new_terminal: true,
                                     allow_concurrent_runs: false,
                                     reveal: RevealStrategy::Always,
                                 },
-                                None,
                                 cx,
                             )
                         })?.await?;
@@ -339,7 +319,6 @@ impl DevServerProjects {
                         terminal.update(&mut cx, |terminal, cx| {
                             terminal.wait_for_completed_task(cx)
                         })?.await;
-                        drop(tmp_dir);
                     } else {
                         dbg!("noo!");
                     }
@@ -451,18 +430,27 @@ impl DevServerProjects {
     }
 
     fn delete_dev_server(&mut self, id: DevServerId, cx: &mut ViewContext<Self>) {
-        let answer = cx.prompt(
-            gpui::PromptLevel::Warning,
-            "Are you sure?",
-            Some("This will delete the dev server and all of its remote projects."),
-            &["Delete", "Cancel"],
-        );
+        let store = self.dev_server_store.read(cx);
+        let prompt = if store.projects_for_server(id).is_empty()
+            && store
+                .dev_server(id)
+                .is_some_and(|server| server.status == DevServerStatus::Offline)
+        {
+            None
+        } else {
+            Some(cx.prompt(
+                gpui::PromptLevel::Warning,
+                "Are you sure?",
+                Some("This will delete the dev server and all of its remote projects."),
+                &["Delete", "Cancel"],
+            ))
+        };
 
         cx.spawn(|this, mut cx| async move {
-            let answer = answer.await?;
-
-            if answer != 0 {
-                return Ok(());
+            if let Some(prompt) = prompt {
+                if prompt.await? != 0 {
+                    return Ok(());
+                }
             }
 
             let project_ids: Vec<DevServerProjectId> = this.update(&mut cx, |this, cx| {
@@ -799,27 +787,38 @@ impl DevServerProjects {
                                     div()
                                         .pl_1()
                                         .pb(px(3.))
-                                        // .when(!creating && dev_server.is_none(), |div| {
-                                        //     div
-                                        //         .child(
-                                        //             CheckboxWithLabel::new(
-                                        //                 "use-server-name-in-ssh",
-                                        //                 Label::new("Use name as ssh connection string"),
-                                        //                 self.use_server_name_in_ssh,
-                                        //                 cx.listener(move |this, &new_selection, _| {
-                                        //                     this.mode = Mode::CreateDevServer(CreateDevServer { creating: false, dev_server: None, manual_setup: true });
-                                        //                     this.use_server_name_in_ssh = new_selection;
-                                        //                 })
-                                        //             )
-                                        //         )
-                                        //         .child(
-                                        //             Button::new("create-dev-server", "Create").on_click(
-                                        //                 cx.listener(move |this, _, cx| {
-                                        //                     this.create_dev_server(cx);
-                                        //                 })
-                                        //             )
-                                        //         )
-                                        // })
+                                        .when(!creating && dev_server.is_none(), |div| {
+                                            div
+                                                .child(
+                                                    RadioWithLabel::new(
+                                                        "use-server-name-in-ssh",
+                                                        Label::new("Connect via SSH (default)"),
+                                                        !manual_setup,
+                                                        cx.listener(|this, _, cx| {
+                                                            this.mode = Mode::CreateDevServer(CreateDevServer { creating: false, dev_server: None, manual_setup: false });
+                                                            cx.notify()
+                                                        })
+                                                    )
+                                                )
+                                                .child(
+                                                    RadioWithLabel::new(
+                                                        "use-server-name-in-ssh",
+                                                        Label::new("Manual Setup"),
+                                                        manual_setup,
+                                                        cx.listener(|this, _, cx| {
+                                                            this.mode = Mode::CreateDevServer(CreateDevServer { creating: false, dev_server: None, manual_setup: true });
+                                                            cx.notify()
+                                                        })
+                                                    )
+                                                )
+                                                .child(
+                                                    Button::new("create-dev-server", "Create").on_click(
+                                                        cx.listener(move |this, _, cx| {
+                                                            this.create_dev_server(manual_setup, cx);
+                                                        })
+                                                    )
+                                                )
+                                        })
                                         .when(true, |div| {
                                             div
                                                 .child(

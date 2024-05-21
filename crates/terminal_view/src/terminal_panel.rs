@@ -14,7 +14,7 @@ use project::{Fs, ProjectEntryId};
 use search::{buffer_search::DivRegistrar, BufferSearchBar};
 use serde::{Deserialize, Serialize};
 use settings::Settings;
-use task::{RevealStrategy, SpawnInTerminal, TaskId};
+use task::{RevealStrategy, SpawnInTerminal, TaskId, TerminalWorkDir};
 use terminal::{
     terminal_settings::{Shell, TerminalDockPosition, TerminalSettings},
     Terminal,
@@ -322,14 +322,14 @@ impl TerminalPanel {
             return;
         };
 
+        let terminal_work_dir = workspace
+            .project()
+            .read(cx)
+            .terminal_work_dir_for(Some(&action.working_directory), cx);
+
         terminal_panel
             .update(cx, |panel, cx| {
-                panel.add_terminal(
-                    Some(action.working_directory.clone()),
-                    None,
-                    RevealStrategy::Always,
-                    cx,
-                )
+                panel.add_terminal(terminal_work_dir, None, RevealStrategy::Always, cx)
             })
             .detach_and_log_err(cx);
     }
@@ -360,19 +360,18 @@ impl TerminalPanel {
         let spawn_task = spawn_task;
 
         let reveal = spawn_task.reveal;
-        let working_directory = spawn_in_terminal.cwd.clone();
         let allow_concurrent_runs = spawn_in_terminal.allow_concurrent_runs;
         let use_new_terminal = spawn_in_terminal.use_new_terminal;
 
         if allow_concurrent_runs && use_new_terminal {
-            self.spawn_in_new_terminal(spawn_task, working_directory, cx)
+            self.spawn_in_new_terminal(spawn_task, cx)
                 .detach_and_log_err(cx);
             return;
         }
 
         let terminals_for_task = self.terminals_for_task(&spawn_in_terminal.full_label, cx);
         if terminals_for_task.is_empty() {
-            self.spawn_in_new_terminal(spawn_task, working_directory, cx)
+            self.spawn_in_new_terminal(spawn_task, cx)
                 .detach_and_log_err(cx);
             return;
         }
@@ -385,13 +384,7 @@ impl TerminalPanel {
                 !use_new_terminal,
                 "Should have handled 'allow_concurrent_runs && use_new_terminal' case above"
             );
-            self.replace_terminal(
-                working_directory,
-                spawn_task,
-                existing_item_index,
-                existing_terminal,
-                cx,
-            );
+            self.replace_terminal(spawn_task, existing_item_index, existing_terminal, cx);
         } else {
             self.deferred_tasks.insert(
                 spawn_in_terminal.id.clone(),
@@ -401,11 +394,10 @@ impl TerminalPanel {
                         .update(&mut cx, |terminal_panel, cx| {
                             if use_new_terminal {
                                 terminal_panel
-                                    .spawn_in_new_terminal(spawn_task, working_directory, cx)
+                                    .spawn_in_new_terminal(spawn_task, cx)
                                     .detach_and_log_err(cx);
                             } else {
                                 terminal_panel.replace_terminal(
-                                    working_directory,
                                     spawn_task,
                                     existing_item_index,
                                     existing_terminal,
@@ -436,11 +428,10 @@ impl TerminalPanel {
     pub fn spawn_in_new_terminal(
         &mut self,
         spawn_task: SpawnInTerminal,
-        working_directory: Option<PathBuf>,
         cx: &mut ViewContext<Self>,
     ) -> Task<Result<Model<Terminal>>> {
         let reveal = spawn_task.reveal;
-        self.add_terminal(working_directory, Some(spawn_task), reveal, cx)
+        self.add_terminal(spawn_task.cwd.clone(), Some(spawn_task), reveal, cx)
     }
 
     /// Create a new Terminal in the current working directory or the user's home directory
@@ -489,7 +480,7 @@ impl TerminalPanel {
 
     fn add_terminal(
         &mut self,
-        working_directory: Option<PathBuf>,
+        working_directory: Option<TerminalWorkDir>,
         spawn_task: Option<SpawnInTerminal>,
         reveal_strategy: RevealStrategy,
         cx: &mut ViewContext<Self>,
@@ -584,7 +575,6 @@ impl TerminalPanel {
 
     fn replace_terminal(
         &self,
-        working_directory: Option<PathBuf>,
         spawn_task: SpawnInTerminal,
         terminal_item_index: usize,
         terminal_to_replace: View<TerminalView>,
@@ -599,7 +589,7 @@ impl TerminalPanel {
         let window = cx.window_handle();
         let new_terminal = project.update(cx, |project, cx| {
             project
-                .create_terminal(working_directory, Some(spawn_task), window, cx)
+                .create_terminal(spawn_task.cwd.clone(), Some(spawn_task), window, cx)
                 .log_err()
         })?;
         terminal_to_replace.update(cx, |terminal_to_replace, cx| {
