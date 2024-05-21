@@ -9,26 +9,41 @@ use project::Fs;
 use std::{path::PathBuf, sync::Arc};
 
 use runtimelib::dirs;
-use runtimelib::JupyterKernelspec;
+use runtimelib::{JupyterKernelspec, KernelspecDir};
 
 pub async fn read_kernelspec_at(
     // Path should be a directory to a jupyter kernelspec, as in
     // /usr/local/share/jupyter/kernels/python3
-    path: PathBuf,
+    kernel_dir: PathBuf,
     fs: Arc<dyn Fs>,
-) -> anyhow::Result<JupyterKernelspec> {
+) -> anyhow::Result<KernelspecDir> {
+    let path = kernel_dir;
+    let kernel_name = if let Some(kernel_name) = path.file_name() {
+        kernel_name.to_string_lossy().to_string()
+    } else {
+        return Err(anyhow::anyhow!("Invalid kernelspec directory: {:?}", path));
+    };
+
+    if !fs.is_dir(path.as_path()).await {
+        return Err(anyhow::anyhow!("Not a directory: {:?}", path));
+    }
+
     let expected_kernel_json = path.join("kernel.json");
     let kernelspec = fs.load(expected_kernel_json.as_path()).await?;
     let kernelspec = serde_json::from_str::<JupyterKernelspec>(&kernelspec)?;
 
-    Ok(kernelspec)
+    Ok(KernelspecDir {
+        kernel_name,
+        path,
+        kernelspec,
+    })
 }
 
 /// Read a directory of kernelspec directories
 pub async fn read_kernels_dir(
     path: PathBuf,
     fs: Arc<dyn Fs>,
-) -> anyhow::Result<Vec<JupyterKernelspec>> {
+) -> anyhow::Result<Vec<KernelspecDir>> {
     let mut kernelspec_dirs = fs.read_dir(&path).await?;
 
     let mut valid_kernelspecs = Vec::new();
@@ -51,7 +66,7 @@ pub async fn read_kernels_dir(
     Ok(valid_kernelspecs)
 }
 
-pub async fn get_kernelspecs(fs: Arc<dyn Fs>) -> anyhow::Result<()> {
+pub async fn get_kernelspecs(fs: Arc<dyn Fs>) -> anyhow::Result<Vec<KernelspecDir>> {
     let data_dirs = dirs::data_dirs();
     let kernel_dirs = data_dirs
         .iter()
@@ -60,15 +75,13 @@ pub async fn get_kernelspecs(fs: Arc<dyn Fs>) -> anyhow::Result<()> {
         .collect::<Vec<_>>();
 
     let kernel_dirs = futures::future::join_all(kernel_dirs).await;
+    let kernel_dirs = kernel_dirs
+        .into_iter()
+        .filter_map(Result::ok)
+        .flatten()
+        .collect::<Vec<_>>();
 
-    for kernel_dir in kernel_dirs {
-        match kernel_dir {
-            Ok(kernel_dir) => {}
-            Err(err) => {}
-        }
-    }
-
-    Ok(())
+    Ok(kernel_dirs)
 }
 
 #[cfg(test)]
@@ -77,7 +90,7 @@ mod test {
     use std::path::PathBuf;
 
     use gpui::prelude::*;
-    use gpui::{TestAppContext};
+    use gpui::TestAppContext;
     use project::FakeFs;
     use serde_json::json;
 
@@ -121,14 +134,14 @@ mod test {
             .await
             .unwrap();
 
-        kernels.sort_by(|a, b| a.language.cmp(&b.language));
+        kernels.sort_by(|a, b| a.kernel_name.cmp(&b.kernel_name));
 
         assert_eq!(
             kernels
                 .iter()
-                .map(|c| c.language.clone())
+                .map(|c| c.kernel_name.clone())
                 .collect::<Vec<_>>(),
-            vec!["python", "typescript"]
+            vec!["deno", "python"]
         );
     }
 }
