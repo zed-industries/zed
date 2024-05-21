@@ -532,11 +532,11 @@ impl DirectWriteState {
                         &HSTRING::from(&self.components.locale),
                     )?
                     .cast()?;
-                if is_ui_font {
-                    format.SetFontFallback(&self.ui_font_fallbacks)?;
-                } else {
-                    format.SetFontFallback(&self.buffer_font_fallbacks)?;
-                }
+                // if is_ui_font {
+                // format.SetFontFallback(&self.ui_font_fallbacks)?;
+                // } else {
+                format.SetFontFallback(&self.buffer_font_fallbacks)?;
+                // }
 
                 let layout = self.components.factory.CreateTextLayout(
                     &text_wide,

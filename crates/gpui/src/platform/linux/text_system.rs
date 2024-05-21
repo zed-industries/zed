@@ -183,13 +183,7 @@ impl PlatformTextSystem for CosmicTextSystem {
         self.0.write().rasterize_glyph(params, raster_bounds)
     }
 
-    fn layout_line(
-        &self,
-        text: &str,
-        font_size: Pixels,
-        runs: &[FontRun],
-        _is_ui_font: bool,
-    ) -> LineLayout {
+    fn layout_line(&self, text: &str, font_size: Pixels, runs: &[FontRun]) -> LineLayout {
         self.0.write().layout_line(text, font_size, runs)
     }
 }

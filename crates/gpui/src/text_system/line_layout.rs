@@ -415,7 +415,6 @@ impl LineLayoutCache {
         font_size: Pixels,
         runs: &[FontRun],
         wrap_width: Option<Pixels>,
-        is_ui_font: bool,
     ) -> Arc<WrappedLineLayout> {
         let key = &CacheKeyRef {
             text,
@@ -440,7 +439,7 @@ impl LineLayoutCache {
         } else {
             drop(current_frame);
 
-            let unwrapped_layout = self.layout_line(text, font_size, runs, is_ui_font);
+            let unwrapped_layout = self.layout_line(text, font_size, runs);
             let wrap_boundaries = if let Some(wrap_width) = wrap_width {
                 unwrapped_layout.compute_wrap_boundaries(text.as_ref(), wrap_width)
             } else {
@@ -468,13 +467,7 @@ impl LineLayoutCache {
         }
     }
 
-    pub fn layout_line(
-        &self,
-        text: &str,
-        font_size: Pixels,
-        runs: &[FontRun],
-        is_ui_font: bool,
-    ) -> Arc<LineLayout> {
+    pub fn layout_line(&self, text: &str, font_size: Pixels, runs: &[FontRun]) -> Arc<LineLayout> {
         let key = &CacheKeyRef {
             text,
             font_size,
@@ -493,10 +486,7 @@ impl LineLayoutCache {
             current_frame.used_lines.push(key);
             layout
         } else {
-            let layout = Arc::new(
-                self.platform_text_system
-                    .layout_line(text, font_size, runs, is_ui_font),
-            );
+            let layout = Arc::new(self.platform_text_system.layout_line(text, font_size, runs));
             let key = Arc::new(CacheKey {
                 text: text.into(),
                 font_size,

@@ -407,13 +407,7 @@ pub(crate) trait PlatformTextSystem: Send + Sync {
         params: &RenderGlyphParams,
         raster_bounds: Bounds<DevicePixels>,
     ) -> Result<(Size<DevicePixels>, Vec<u8>)>;
-    fn layout_line(
-        &self,
-        text: &str,
-        font_size: Pixels,
-        runs: &[FontRun],
-        is_ui_font: bool,
-    ) -> LineLayout;
+    fn layout_line(&self, text: &str, font_size: Pixels, runs: &[FontRun]) -> LineLayout;
 }
 
 #[derive(PartialEq, Eq, Hash, Clone)]
