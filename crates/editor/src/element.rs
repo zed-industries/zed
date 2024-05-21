@@ -1568,9 +1568,8 @@ impl EditorElement {
         let font_size = self.style.text.font_size.to_pixels(cx.rem_size());
         let include_line_numbers =
             EditorSettings::get_global(cx).gutter.line_numbers && snapshot.mode == EditorMode::Full;
-        let include_fold_statuses = EditorSettings::get_global(cx).gutter.folds
-            && snapshot.mode == EditorMode::Full
-            && !editor.is_singleton(cx);
+        let include_fold_statuses =
+            EditorSettings::get_global(cx).gutter.folds && snapshot.mode == EditorMode::Full;
         let mut shaped_line_numbers = Vec::with_capacity(rows.len());
         let mut fold_toggles = Vec::with_capacity(rows.len());
         let mut line_number = String::new();
@@ -1626,7 +1625,6 @@ impl EditorElement {
             }
         }
 
-        // todo! return the fold toggles
         (shaped_line_numbers, fold_toggles)
     }
 
