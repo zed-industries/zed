@@ -91,6 +91,10 @@ impl PlatformTextSystem for MacTextSystem {
         self.0.write().add_fonts(fonts)
     }
 
+    fn set_fallbacks(&self, fallbacks: &[String], is_ui_font: bool) -> Result<()> {
+        self.0.write().set_fallbacks(fallbacks, is_ui_font)
+    }
+
     fn all_font_names(&self) -> Vec<String> {
         let collection = core_text::font_collection::create_for_all_families();
         let Some(descriptors) = collection.get_descriptors() else {
@@ -205,6 +209,10 @@ impl MacTextSystemState {
             })
             .collect::<Result<Vec<_>>>()?;
         self.memory_source.add_fonts(fonts.into_iter())?;
+        Ok(())
+    }
+
+    fn set_fallbacks(&self, fallbacks: &[String], is_ui_font: bool) -> Result<()> {
         Ok(())
     }
 
