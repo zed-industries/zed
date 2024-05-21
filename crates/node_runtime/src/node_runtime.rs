@@ -225,7 +225,6 @@ impl NodeRuntime for RealNodeRuntime {
             let installation_path = self.install_if_needed().await?;
 
             let node_binary = installation_path.join(NODE_PATH);
-            // std::env::set_var(key, value);
             let npm_file = installation_path.join(NPM_PATH);
             let env_path = node_binary
                 .parent()
