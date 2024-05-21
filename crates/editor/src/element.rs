@@ -2069,6 +2069,42 @@ impl EditorElement {
     }
 
     #[allow(clippy::too_many_arguments)]
+    fn layout_overlays(
+        &self,
+        snapshot: &EditorSnapshot,
+        content_origin: gpui::Point<Pixels>,
+        line_height: Pixels,
+        visible_display_row_range: Range<DisplayRow>,
+        scroll_pixel_position: gpui::Point<Pixels>,
+        line_layouts: &[LineWithInvisibles],
+        cx: &mut WindowContext,
+    ) -> bool {
+        let overlays = self.editor.update(cx, |editor, cx| {
+            editor.render_overlays(snapshot, visible_display_row_range.clone(), cx)
+        });
+        if overlays.is_empty() {
+            return false;
+        }
+
+        let available_space = size(AvailableSpace::MinContent, AvailableSpace::MinContent);
+
+        for (anchor, mut overlay) in overlays.into_iter().flatten() {
+            let _overlay_size = overlay.layout_as_root(available_space, cx);
+
+            let hovered_row_layout =
+                &line_layouts[anchor.row().minus(visible_display_row_range.start) as usize].line;
+
+            let x =
+                hovered_row_layout.x_for_index(anchor.column() as usize) - scroll_pixel_position.x;
+            let y = anchor.row().as_f32() * line_height - scroll_pixel_position.y;
+            let origin = content_origin + point(x, y);
+
+            cx.defer_draw(overlay, origin, 1);
+        }
+        true
+    }
+
+    #[allow(clippy::too_many_arguments)]
     fn layout_context_menu(
         &self,
         line_height: Pixels,
@@ -4202,6 +4238,16 @@ impl Element for EditorElement {
                             cx,
                         );
                     }
+
+                    let _ = self.layout_overlays(
+                        &snapshot,
+                        content_origin,
+                        line_height,
+                        start_row..end_row,
+                        scroll_pixel_position,
+                        &line_layouts,
+                        cx,
+                    );
 
                     let mouse_context_menu = self.layout_mouse_context_menu(cx);
 

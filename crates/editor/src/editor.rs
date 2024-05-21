@@ -30,6 +30,7 @@ mod inline_completion_provider;
 pub mod items;
 mod mouse_context_menu;
 pub mod movement;
+pub mod overlay;
 mod persistence;
 mod rust_analyzer_ext;
 pub mod scroll;
@@ -88,6 +89,7 @@ use language::{
     Point, Selection, SelectionGoal, TransactionId,
 };
 use language::{BufferRow, Runnable, RunnableRange};
+use overlay::Overlay;
 use task::{ResolvedTask, TaskTemplate, TaskVariables};
 
 use hover_links::{HoverLink, HoveredLinkState, InlayHighlight};
@@ -477,6 +479,7 @@ pub struct Editor {
     leader_peer_id: Option<PeerId>,
     remote_id: Option<ViewId>,
     hover_state: HoverState,
+    overlays: Vec<Overlay>,
     gutter_hovered: bool,
     hovered_link_state: Option<HoveredLinkState>,
     inline_completion_provider: Option<RegisteredInlineCompletionProvider>,
@@ -1599,6 +1602,7 @@ impl Editor {
         cx.on_blur(&focus_handle, Self::handle_blur).detach();
 
         let mut this = Self {
+            overlays: Default::default(),
             focus_handle,
             buffer: buffer.clone(),
             display_map: display_map.clone(),
@@ -4637,6 +4641,22 @@ impl Editor {
                 cx,
             )
         })
+    }
+
+    pub fn render_overlays(
+        &self,
+        snapshot: &EditorSnapshot,
+        visible_display_row_range: Range<DisplayRow>,
+        cx: &mut ViewContext<Editor>,
+    ) -> Vec<Option<(DisplayPoint, AnyElement)>> {
+        let Some(style) = self.style.as_ref() else {
+            return vec![];
+        };
+        let overlays = &self.overlays;
+        overlays
+            .into_iter()
+            .map(|overlay| overlay.render(style, snapshot, visible_display_row_range.clone(), cx))
+            .collect_vec()
     }
 
     fn hide_context_menu(&mut self, cx: &mut ViewContext<Self>) -> Option<ContextMenu> {
@@ -10132,6 +10152,27 @@ impl Editor {
                     ..range.end.to_display_point(display_snapshot)
             })
             .collect()
+    }
+
+    pub fn add_overlay(
+        &mut self,
+        text: String,
+        point: DisplayPoint,
+        highlight: HighlightStyle,
+        cx: &mut ViewContext<Self>,
+    ) {
+        let overlay = Overlay {
+            text,
+            highlight,
+            point,
+        };
+        self.overlays.push(overlay);
+        cx.notify();
+    }
+
+    pub fn clear_overlays(&mut self, cx: &mut ViewContext<Self>) {
+        self.overlays.clear();
+        cx.notify();
     }
 
     pub fn highlight_text<T: 'static>(
