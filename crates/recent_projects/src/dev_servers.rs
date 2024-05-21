@@ -138,7 +138,10 @@ impl DevServerProjects {
             },
             inline_code: Default::default(),
             block_quote: Default::default(),
-            link: Default::default(),
+            link: gpui::TextStyleRefinement {
+                color: Some(Color::Accent.color(cx)),
+                ..Default::default()
+            },
             rule_color: Default::default(),
             block_quote_border_color: Default::default(),
             syntax: cx.theme().syntax().clone(),
@@ -280,7 +283,6 @@ impl DevServerProjects {
     }
 
     pub fn create_dev_server(&mut self, manual_setup: bool, cx: &mut ViewContext<Self>) {
-        dbg!("create");
         let name = get_text(&self.dev_server_name_input, cx);
         if name.is_empty() {
             return;
@@ -306,6 +308,16 @@ impl DevServerProjects {
             match result {
                 Ok(dev_server) => {
                     if let Some(ssh_connection_string) =  ssh_connection_string {
+
+                        this.update(&mut cx, |this, cx| {
+                                this.focus_handle.focus(cx);
+                                this.mode = Mode::CreateDevServer(CreateDevServer {
+                                    creating: true,
+                                    dev_server: Some(dev_server.clone()),
+                                    manual_setup: false,
+                            });
+                                cx.notify();
+                        })?;
                     let terminal_panel = workspace
                         .update(&mut cx, |workspace, cx| workspace.panel::<TerminalPanel>(cx))
                         .ok()
@@ -320,8 +332,8 @@ impl DevServerProjects {
                             terminal_panel.spawn_in_new_terminal(
                                 SpawnInTerminal {
                                     id: task::TaskId("ssh-remote".into()),
-                                    full_label: "Installing zed over ssh".into(),
-                                    label: "Installing Zed over ssh".into(),
+                                    full_label: "Install zed over ssh".into(),
+                                    label: "Install zed over ssh".into(),
                                     command,
                                     args,
                                     command_label: ssh_connection_string.clone(),
@@ -760,7 +772,7 @@ impl DevServerProjects {
             manual_setup,
         } = state;
 
-        let can_submit = creating == false && dev_server.is_none();
+        let can_submit = creating == false;
         let status = dev_server
             .as_ref()
             .and_then(|dev_server| {
@@ -851,13 +863,9 @@ impl DevServerProjects {
                                 }.size(LabelSize::Small).color(Color::Muted))
                             })
                             .when_some(dev_server, |el, dev_server| {
-                                if manual_setup {
-                                    el.child(
-                                        self.render_dev_server_token_instructions(&dev_server.access_token, &dev_server.name, status, cx)
-                                    )
-                                } else {
-                                    el
-                                }
+                                el.child(
+                                    self.render_dev_server_token_creating(&dev_server.access_token, &dev_server.name, manual_setup, status, cx)
+                                )
                             })
                     ),
             )
@@ -884,16 +892,19 @@ impl DevServerProjects {
             ))
     }
 
-    fn render_dev_server_token_instructions(
+    fn render_dev_server_token_creating(
         &self,
         access_token: &str,
         dev_server_name: &str,
+        manual_setup: bool,
         status: DevServerStatus,
         cx: &mut ViewContext<Self>,
     ) -> Div {
         self.markdown.update(cx, |markdown, cx| {
-            if !markdown.source().contains(access_token) {
+            if manual_setup && !markdown.source().contains(access_token) {
                 markdown.reset(format!("Please log into '{}'. If you don't yet have zed installed, run:\n```\ncurl https://zed.dev/install.sh | bash\n```\nThen to start zed in headless mode:\n```\nzed --dev-server-token {}\n```", dev_server_name, access_token), cx);
+            } else if !manual_setup && !markdown.source().contains("Please wait") {
+                markdown.reset("Please wait while we connect over SSH.\n\nIf you run into problems, please [file a bug](https://github.com/zed-industries/zed), and in the meantime try using manual setup.".to_string(), cx);
             }
         });
 
@@ -1011,9 +1022,10 @@ impl DevServerProjects {
                 Self::render_loading_spinner("Generating token...")
             }
             EditDevServerState::RegeneratedToken(response) => self
-                .render_dev_server_token_instructions(
+                .render_dev_server_token_creating(
                     &response.access_token,
                     &dev_server_name,
+                    true,
                     dev_server_status,
                     cx,
                 ),
