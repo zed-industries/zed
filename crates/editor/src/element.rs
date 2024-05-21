@@ -50,7 +50,7 @@ use smallvec::SmallVec;
 use std::{
     any::TypeId,
     borrow::Cow,
-    cmp::{self, max, Ordering},
+    cmp::{self, Ordering},
     fmt::Write,
     iter, mem,
     ops::{Deref, Range},
@@ -1186,30 +1186,44 @@ impl EditorElement {
     #[allow(clippy::too_many_arguments)]
     fn prepaint_flap_trailers(
         &self,
-        trailers: &mut [Option<AnyElement>],
+        trailers: Vec<Option<AnyElement>>,
         lines: &[LineWithInvisibles],
         line_height: Pixels,
         content_origin: gpui::Point<Pixels>,
         scroll_pixel_position: gpui::Point<Pixels>,
+        em_width: Pixels,
         cx: &mut WindowContext,
-    ) {
-        for (ix, trailer) in trailers.iter_mut().enumerate() {
-            if let Some(trailer) = trailer {
+    ) -> Vec<Option<FlapTrailerLayout>> {
+        trailers
+            .into_iter()
+            .enumerate()
+            .map(|(ix, element)| {
+                let mut element = element?;
                 let available_space = size(
                     AvailableSpace::MinContent,
                     AvailableSpace::Definite(line_height),
                 );
-                let trailer_size = trailer.layout_as_root(available_space, cx);
+                let size = element.layout_as_root(available_space, cx);
 
+                let line = &lines[ix].line;
+                let padding = if line.width == Pixels::ZERO {
+                    Pixels::ZERO
+                } else {
+                    4. * em_width
+                };
                 let position = point(
-                    scroll_pixel_position.x + lines[ix].line.width,
+                    scroll_pixel_position.x + line.width + padding,
                     ix as f32 * line_height - (scroll_pixel_position.y % line_height),
                 );
-                let centering_offset = point(px(0.), (line_height - trailer_size.height) / 2.);
+                let centering_offset = point(px(0.), (line_height - size.height) / 2.);
                 let origin = content_origin + position + centering_offset;
-                trailer.prepaint_as_root(origin, available_space, cx);
-            }
-        }
+                element.prepaint_as_root(origin, available_space, cx);
+                Some(FlapTrailerLayout {
+                    element,
+                    bounds: Bounds::new(origin, size),
+                })
+            })
+            .collect()
     }
 
     // Folds contained in a hunk are ignored apart from shrinking visual size
@@ -1293,6 +1307,7 @@ impl EditorElement {
         display_row: DisplayRow,
         display_snapshot: &DisplaySnapshot,
         line_layout: &LineWithInvisibles,
+        flap_trailer: Option<&FlapTrailerLayout>,
         em_width: Pixels,
         content_origin: gpui::Point<Pixels>,
         scroll_pixel_position: gpui::Point<Pixels>,
@@ -1332,17 +1347,22 @@ impl EditorElement {
         let start_x = {
             const INLINE_BLAME_PADDING_EM_WIDTHS: f32 = 6.;
 
-            let padded_line_width =
-                line_layout.line.width + (em_width * INLINE_BLAME_PADDING_EM_WIDTHS);
+            let line_end = if let Some(flap_trailer) = flap_trailer {
+                flap_trailer.bounds.right()
+            } else {
+                content_origin.x - scroll_pixel_position.x + line_layout.line.width
+            };
+            let padded_line_end = line_end + em_width * INLINE_BLAME_PADDING_EM_WIDTHS;
 
-            let min_column = ProjectSettings::get_global(cx)
+            let min_column_in_pixels = ProjectSettings::get_global(cx)
                 .git
                 .inline_blame
                 .and_then(|settings| settings.min_column)
                 .map(|col| self.column_pixels(col as usize, cx))
                 .unwrap_or(px(0.));
+            let min_start = content_origin.x - scroll_pixel_position.x + min_column_in_pixels;
 
-            (content_origin.x - scroll_pixel_position.x) + max(padded_line_width, min_column)
+            cmp::max(padded_line_end, min_start)
         };
 
         let absolute_offset = point(start_x, start_y);
@@ -2680,7 +2700,7 @@ impl EditorElement {
                 self.paint_inline_blame(layout, cx);
                 cx.with_element_namespace("flap_trailers", |cx| {
                     for trailer in layout.flap_trailers.iter_mut().flatten() {
-                        trailer.paint(cx);
+                        trailer.element.paint(cx);
                     }
                 });
             },
@@ -4047,7 +4067,7 @@ impl Element for EditorElement {
                                 cx,
                             )
                         });
-                    let mut flap_trailers = cx.with_element_namespace("flap_trailers", |cx| {
+                    let flap_trailers = cx.with_element_namespace("flap_trailers", |cx| {
                         self.layout_flap_trailers(buffer_rows.iter().copied(), &snapshot, cx)
                     });
 
@@ -4096,15 +4116,30 @@ impl Element for EditorElement {
                         scroll_position.y * line_height,
                     );
 
+                    let flap_trailers = cx.with_element_namespace("flap_trailers", |cx| {
+                        self.prepaint_flap_trailers(
+                            flap_trailers,
+                            &line_layouts,
+                            line_height,
+                            content_origin,
+                            scroll_pixel_position,
+                            em_width,
+                            cx,
+                        )
+                    });
+
                     let mut inline_blame = None;
                     if let Some(newest_selection_head) = newest_selection_head {
                         let display_row = newest_selection_head.row();
                         if (start_row..end_row).contains(&display_row) {
-                            let line_layout = &line_layouts[display_row.minus(start_row) as usize];
+                            let line_ix = display_row.minus(start_row) as usize;
+                            let line_layout = &line_layouts[line_ix];
+                            let flap_trailer_layout = flap_trailers[line_ix].as_ref();
                             inline_blame = self.layout_inline_blame(
                                 display_row,
                                 &snapshot.display_snapshot,
                                 line_layout,
+                                flap_trailer_layout,
                                 em_width,
                                 content_origin,
                                 scroll_pixel_position,
@@ -4284,17 +4319,6 @@ impl Element for EditorElement {
                             gutter_settings,
                             scroll_pixel_position,
                             &gutter_hitbox,
-                            cx,
-                        )
-                    });
-
-                    cx.with_element_namespace("flap_trailers", |cx| {
-                        self.prepaint_flap_trailers(
-                            &mut flap_trailers,
-                            &line_layouts,
-                            line_height,
-                            content_origin,
-                            scroll_pixel_position,
                             cx,
                         )
                     });
@@ -4489,7 +4513,7 @@ pub struct EditorLayout {
     code_actions_indicator: Option<AnyElement>,
     test_indicators: Vec<AnyElement>,
     gutter_fold_toggles: Vec<Option<AnyElement>>,
-    flap_trailers: Vec<Option<AnyElement>>,
+    flap_trailers: Vec<Option<FlapTrailerLayout>>,
     mouse_context_menu: Option<AnyElement>,
     tab_invisible: ShapedLine,
     space_invisible: ShapedLine,
@@ -4611,6 +4635,11 @@ impl ScrollbarLayout {
 
         quads
     }
+}
+
+struct FlapTrailerLayout {
+    element: AnyElement,
+    bounds: Bounds<Pixels>,
 }
 
 struct FoldLayout {
