@@ -704,13 +704,14 @@ pub struct Font {
 }
 
 /// TODO:
-#[derive(Clone, Debug, Eq, PartialEq, Hash)]
+#[derive(Copy, Clone, Debug, Eq, PartialEq, Hash, Default)]
 pub enum FontFallbacks {
     /// TODO:
     UiFontFallbacks,
     /// TODO:
     BufferFontFallbacks,
     /// TODO:
+    #[default]
     None,
 }
 
