@@ -245,6 +245,7 @@ pub struct AppContext {
     pub(crate) layout_id_buffer: Vec<LayoutId>, // We recycle this memory across layout requests.
     pub(crate) propagate_event: bool,
     pub(crate) prompt_builder: Option<PromptBuilder>,
+    _fallbacks_subscription: Option<Subscription>,
 }
 
 impl AppContext {
@@ -300,6 +301,7 @@ impl AppContext {
                 layout_id_buffer: Default::default(),
                 propagate_event: true,
                 prompt_builder: Some(PromptBuilder::Default),
+                _fallbacks_subscription: None,
             }),
         });
 
@@ -1258,11 +1260,6 @@ impl AppContext {
             + 'static,
     ) {
         self.prompt_builder = Some(PromptBuilder::Custom(Box::new(renderer)))
-    }
-
-    /// TODO:
-    pub fn observe_fallbacks_changed(&self) {
-        // self.observe_global::<ThemeSetting>(f)
     }
 }
 
