@@ -1,4 +1,4 @@
-use crate::{settings_store::SettingsStore, FontFallbacks, Settings};
+use crate::{settings_store::SettingsStore, GlobalFontFallbacks, Settings};
 use anyhow::{Context, Result};
 use fs::Fs;
 use futures::{channel::mpsc, StreamExt};
@@ -92,7 +92,7 @@ pub fn handle_settings_file_changes(
 }
 
 pub fn set_font_fallbacks(text_system: &TextSystem, cx: &AppContext) {
-    let fallbacks = FontFallbacks::get_global(cx);
+    let fallbacks = GlobalFontFallbacks::get_global(cx);
     text_system
         .set_fallbacks(&fallbacks.ui_font_family, true)
         .log_err();
