@@ -142,10 +142,10 @@ impl Execution {
 
                 match mimetype {
                     MimeType::Plain => {
-                        let mut terminal = TerminalOutput::new();
-                        terminal.append_text(value.as_str().unwrap_or(""));
-
-                        OutputType::Plain(terminal)
+                        OutputType::Plain(TerminalOutput::from(value.as_str().unwrap_or("")))
+                    }
+                    MimeType::Markdown => {
+                        OutputType::Plain(TerminalOutput::from(value.as_str().unwrap_or("")))
                     }
                     // We don't handle this type, but ok
                     _ => OutputType::Media((mimetype, value)),

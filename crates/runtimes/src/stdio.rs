@@ -22,6 +22,12 @@ impl TerminalOutput {
         }
     }
 
+    pub fn from(text: &str) -> Self {
+        let mut output = Self::new();
+        output.append_text(text);
+        output
+    }
+
     pub fn append_text(&mut self, text: &str) {
         for byte in text.as_bytes() {
             self.parser.advance(&mut self.state.handler, *byte);
