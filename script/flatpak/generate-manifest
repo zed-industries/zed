@@ -1,15 +1,11 @@
 #!/bin/bash
 cd "$(dirname "$0")"
 
-if [ "$#" -ne 2 ]; then
-    echo "Incorrect number of arguments. Expected 2, found $#."
-    echo
-    echo "Usage: generate-manifest [channel] [method]"
-    echo "    [channel]: Release channel to generate the manifest for."
-    echo "               Possible values: [dev, nightly, preview, stable]"
-    echo "    [method]:  Method of creating the binary."
-    echo "                   'build': Build the binary from scratch"
-    echo "                   'copy':  Copy the release binary from 'target'"
+if [[ $1 ]]; then
+    channel=$1
+else
+    echo "Please supply the release channel."
+    echo "Possible values: ['dev', 'nightly', 'preview', 'stable']"
     exit
 fi
 
