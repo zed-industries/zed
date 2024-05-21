@@ -226,10 +226,10 @@ impl NodeRuntime for RealNodeRuntime {
 
             let node_binary = installation_path.join(NODE_PATH);
             let npm_file = installation_path.join(NPM_PATH);
-            let mut env_path = vec![vec![node_binary
+            let mut env_path = vec![node_binary
                 .parent()
                 .expect("invalid node binary path")
-                .to_path_buf()]];
+                .to_path_buf()];
 
             if let Some(existing_path) = std::env::var_os("PATH") {
                 let mut paths = std::env::split_paths(&existing_path).collect::<Vec<_>>();
