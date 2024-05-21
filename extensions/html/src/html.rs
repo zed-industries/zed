@@ -98,10 +98,10 @@ impl zed::Extension for HtmlExtension {
     }
     fn language_server_workspace_configuration(
         &mut self,
-        id: &zed::LanguageServerId,
+        server_id: &zed::LanguageServerId,
         worktree: &zed::Worktree,
     ) -> Result<Option<zed::serde_json::Value>> {
-        let settings = LspSettings::for_worktree("vscode-html-language-server", worktree)
+        let settings = LspSettings::for_worktree(server_id.as_ref(), worktree)
             .ok()
             .and_then(|lsp_settings| lsp_settings.settings.clone())
             .unwrap_or_default();
