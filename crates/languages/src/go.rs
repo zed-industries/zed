@@ -450,20 +450,24 @@ impl ContextProvider for GoContextProvider {
     fn associated_tasks(&self) -> Option<TaskTemplates> {
         Some(TaskTemplates(vec![
             TaskTemplate {
-                label: "Go Run Test Function".into(),
+                label: format!("test {}", VariableName::Symbol.template_value()),
                 command: "go".into(),
                 args: vec![
                     "test".into(),
                     GO_TEST_DIRECTORY_TASK_VARIABLE.template_value(),
                     "-v".into(),
                     "-run".into(),
-                    format!("^{}$", VariableName::Symbol.template_value(),),
+                    format!("^{}$", VariableName::Symbol.template_value()),
                 ],
                 tags: vec!["go-test".to_owned()],
                 ..TaskTemplate::default()
             },
             TaskTemplate {
-                label: "Go Run Subtest Function".into(),
+                label: format!(
+                    "test {}/{}",
+                    VariableName::Symbol.template_value(),
+                    GO_SUBTEST_NAME_TASK_VARIABLE.template_value(),
+                ),
                 command: "go".into(),
                 args: vec![
                     "test".into(),
@@ -480,7 +484,7 @@ impl ContextProvider for GoContextProvider {
                 ..TaskTemplate::default()
             },
             TaskTemplate {
-                label: "Go Run Benchmark Function".into(),
+                label: format!("bench {}", VariableName::Symbol.template_value()),
                 command: "go".into(),
                 args: vec![
                     "test".into(),
@@ -488,13 +492,13 @@ impl ContextProvider for GoContextProvider {
                     "-benchmem".into(),
                     "-run=^$".into(),
                     "-bench".into(),
-                    format!("^{}$", VariableName::Symbol.template_value(),),
+                    format!("^{}$", VariableName::Symbol.template_value()),
                 ],
                 tags: vec!["go-benchmark".to_owned()],
                 ..TaskTemplate::default()
             },
             TaskTemplate {
-                label: "Go Run Main Function".into(),
+                label: format!("run {}", VariableName::Symbol.template_value()),
                 command: "go".into(),
                 args: vec!["run".into(), VariableName::File.template_value()],
                 tags: vec!["go-run".to_owned()],
