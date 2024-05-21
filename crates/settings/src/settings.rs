@@ -66,7 +66,7 @@ pub fn initial_tasks_content() -> Cow<'static, str> {
 
 pub fn init_font_fallbacks(cx: &mut AppContext) -> Subscription {
     FontFallbacks::register(cx);
-    cx.observe_global::<FontFallbacks>(|cx| {
+    cx.observe_global::<SettingsStore>(|cx| {
         let text_system = cx.text_system();
         set_font_fallbacks(text_system, cx);
     })
@@ -84,7 +84,7 @@ pub struct FontFallbacks {
     pub buffer_font_family: Vec<String>,
 }
 
-impl Global for FontFallbacks {}
+// impl Global for FontFallbacks {}
 
 impl Settings for FontFallbacks {
     const KEY: Option<&'static str> = None;
