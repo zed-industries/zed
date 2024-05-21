@@ -17,7 +17,8 @@ use collections::{hash_map, HashMap, HashSet, VecDeque};
 use editor::{
     actions::{FoldAt, MoveDown, MoveUp},
     display_map::{
-        BlockContext, BlockDisposition, BlockId, BlockProperties, BlockStyle, Flap, ToDisplayPoint,
+        BlockContext, BlockDisposition, BlockId, BlockProperties, BlockStyle, Flap, FlapId,
+        ToDisplayPoint,
     },
     scroll::{Autoscroll, AutoscrollStrategy},
     Anchor, Editor, EditorElement, EditorEvent, EditorStyle, MultiBufferSnapshot, RowExt,
@@ -66,6 +67,7 @@ use workspace::{
 use workspace::{notifications::NotificationId, NewFile};
 
 const MAX_RECENT_BUFFERS: usize = 3;
+const SLASH_COMMAND_DEBOUNCE: Duration = Duration::from_millis(200);
 
 pub fn init(cx: &mut AppContext) {
     cx.observe_new_views(
@@ -1390,13 +1392,15 @@ impl FocusableView for AssistantPanel {
     }
 }
 
+#[derive(Clone)]
 enum ConversationEvent {
     MessagesEdited,
     SummaryChanged,
     EditSuggestionsChanged,
     StreamedCompletion,
-    SlashCommandsChanged(Range<language::Anchor>),
-    SlashCommandRan(Range<language::Anchor>),
+    SlashCommandsChanged,
+    SlashCommandOutputAdded(Range<language::Anchor>),
+    SlashCommandOutputRemoved(Range<language::Anchor>),
 }
 
 #[derive(Default)]
@@ -1751,20 +1755,18 @@ impl Conversation {
 
     fn reparse_slash_command_calls(&mut self, cx: &mut ModelContext<Self>) {
         self.pending_command_invocation_parse = Some(cx.spawn(|this, mut cx| async move {
-            cx.background_executor()
-                .timer(Duration::from_millis(200))
-                .await;
+            cx.background_executor().timer(SLASH_COMMAND_DEBOUNCE).await;
 
             this.update(&mut cx, |this, cx| {
                 let buffer = this.buffer.read(cx).snapshot();
 
-                let mut change_start = None;
-                let mut change_end = language::Anchor::MIN;
+                let mut changed = false;
                 let mut new_calls = Vec::new();
                 let mut old_calls = this.slash_command_calls.drain(..).peekable();
                 let mut lines = buffer.as_rope().chunks().lines();
                 let mut offset = 0;
                 while let Some(line) = lines.next() {
+                    let line_end_offset = offset + line.len();
                     if let Some(call) = SlashCommandLine::parse(line) {
                         let name = &line[call.name];
                         let argument = call.argument.map(|range| &line[range]);
@@ -1780,9 +1782,16 @@ impl Conversation {
                                     unchanged_call = old_calls.next();
                                 }
                                 _ => {
-                                    change_start.get_or_insert(old_call.source_range.start);
-                                    change_end = old_call.source_range.end;
-                                    old_calls.next();
+                                    changed = true;
+                                    let old_call = old_calls.next().unwrap();
+                                    if let Some(output_range) = old_call.output_range {
+                                        this.buffer.update(cx, |buffer, cx| {
+                                            buffer.edit([(output_range.clone(), "")], None, cx);
+                                        });
+                                        cx.emit(ConversationEvent::SlashCommandOutputRemoved(
+                                            output_range,
+                                        ))
+                                    }
                                 }
                             }
                         }
@@ -1790,70 +1799,82 @@ impl Conversation {
                         if let Some(call) = unchanged_call {
                             new_calls.push(call);
                         } else if let Some(command) = this.slash_command_registry.command(&name) {
+                            changed = true;
                             let name = name.to_string();
-                            let argument = argument.map(|s| s.to_string());
-                            let command_start = buffer.anchor_before(offset);
-                            let command_end = buffer.anchor_before(lines.offset());
-                            let version = buffer.version().clone();
-                            let task = command.run(argument.as_deref(), cx);
+                            let source_range =
+                                buffer.anchor_after(offset)..buffer.anchor_before(line_end_offset);
+                            new_calls.push(SlashCommandCall {
+                                name,
+                                argument: argument.map(|s| s.to_string()),
+                                source_range: source_range.clone(),
+                                output_range: None,
+                            });
 
-                            change_start.get_or_insert(command_start);
-                            change_end = command_end;
-
+                            let task = command.run(argument, cx);
                             cx.spawn(|this, mut cx| async move {
                                 let result = task.await;
                                 this.update(&mut cx, |this, cx| {
                                     let output_range = this.buffer.update(cx, |buffer, cx| {
-                                        if buffer.has_edits_since_in_range(
-                                            &version,
-                                            command_start..command_end,
-                                        ) {
-                                            return None;
+                                        let call_ix = this
+                                            .slash_command_calls
+                                            .binary_search_by(|probe| {
+                                                probe
+                                                    .source_range
+                                                    .start
+                                                    .cmp(&source_range.start, buffer)
+                                            })
+                                            .ok()?;
+
+                                        let mut output = result.log_err()?;
+                                        if !output.ends_with('\n') {
+                                            output.push('\n');
                                         }
 
-                                        let output = result.log_err()?;
+                                        let output_start = source_range.end.to_offset(buffer);
                                         let output_end =
-                                            command_end.to_offset(buffer) + output.len();
+                                            output_start + '\n'.len_utf8() + output.len();
+
                                         buffer.edit(
                                             [
-                                                (command_end..command_end, "\n".to_string()),
-                                                (command_end..command_end, output),
+                                                (output_start..output_start, "\n".to_string()),
+                                                (output_start..output_start, output),
                                             ],
                                             None,
                                             cx,
                                         );
-                                        let output_end = buffer.anchor_after(output_end);
-                                        Some(command_end..output_end)
+
+                                        let output_start = buffer.anchor_after(output_start);
+                                        let output_end = buffer.anchor_before(output_end);
+                                        this.slash_command_calls[call_ix].output_range =
+                                            Some(output_start..output_end);
+                                        Some(output_start..output_end)
                                     });
                                     if let Some(output_range) = output_range {
-                                        cx.emit(ConversationEvent::SlashCommandRan(output_range));
+                                        cx.emit(ConversationEvent::SlashCommandOutputAdded(
+                                            output_range,
+                                        ));
                                     }
-                                    cx.emit(ConversationEvent::SlashCommandsChanged(
-                                        command_start..command_end,
-                                    ));
                                 })
                                 .ok();
                             })
                             .detach();
-                            new_calls.push(SlashCommandCall {
-                                name,
-                                argument,
-                                source_range: command_start..command_end,
-                            });
                         }
                     }
                     offset = lines.offset();
                 }
 
                 for old_call in old_calls {
-                    change_start.get_or_insert(old_call.source_range.start);
-                    change_end = old_call.source_range.end;
+                    changed = true;
+                    if let Some(output_range) = old_call.output_range.clone() {
+                        this.buffer.update(cx, |buffer, cx| {
+                            buffer.edit([(output_range.clone(), "")], None, cx);
+                        });
+                        cx.emit(ConversationEvent::SlashCommandOutputRemoved(output_range));
+                    }
                 }
 
-                if let Some(change_start) = change_start {
-                    cx.emit(ConversationEvent::SlashCommandsChanged(
-                        change_start..change_end,
-                    ));
+                if changed {
+                    cx.emit(ConversationEvent::SlashCommandsChanged);
                 }
 
                 this.slash_command_calls = new_calls;
@@ -2506,6 +2527,7 @@ fn parse_next_edit_suggestion(lines: &mut rope::Lines) -> Option<ParsedEditSugge
 
 struct SlashCommandCall {
     source_range: Range<language::Anchor>,
+    output_range: Option<Range<language::Anchor>>,
     name: String,
     argument: Option<String>,
 }
@@ -2530,6 +2552,7 @@ struct ConversationEditor {
     fs: Arc<dyn Fs>,
     workspace: WeakView<Workspace>,
     editor: View<Editor>,
+    flap_ids: HashMap<Range<language::Anchor>, FlapId>,
     blocks: HashSet<BlockId>,
     scroll_position: Option<ScrollPosition>,
     _subscriptions: Vec<Subscription>,
@@ -2587,6 +2610,7 @@ impl ConversationEditor {
             editor,
             blocks: Default::default(),
             scroll_position: None,
+            flap_ids: Default::default(),
             fs,
             workspace: workspace.downgrade(),
             _subscriptions,
@@ -2725,7 +2749,7 @@ impl ConversationEditor {
                     }
                 });
             }
-            ConversationEvent::SlashCommandsChanged(_) => {
+            ConversationEvent::SlashCommandsChanged => {
                 self.editor.update(cx, |editor, cx| {
                     let buffer = editor.buffer().read(cx).snapshot(cx);
                     let excerpt_id = *buffer.as_singleton().unwrap().0;
@@ -2751,7 +2775,7 @@ impl ConversationEditor {
                     }
                 });
             }
-            ConversationEvent::SlashCommandRan(range) => {
+            ConversationEvent::SlashCommandOutputAdded(range) => {
                 self.editor.update(cx, |editor, cx| {
                     let buffer = editor.buffer().read(cx).snapshot(cx);
                     let excerpt_id = *buffer.as_singleton().unwrap().0;
@@ -2759,16 +2783,28 @@ impl ConversationEditor {
                     let end = buffer.anchor_in_excerpt(excerpt_id, range.end).unwrap();
                     let buffer_row = MultiBufferRow(start.to_point(&buffer).row);
 
-                    editor.insert_flaps(
-                        [Flap {
-                            range: start..end,
-                            render_toggle: Arc::new(render_slash_command_output_toggle),
-                            render_trailer: Arc::new(render_slash_command_output_trailer),
-                        }],
-                        cx,
-                    );
+                    let flap_id = editor
+                        .insert_flaps(
+                            [Flap {
+                                range: start..end,
+                                render_toggle: Arc::new(render_slash_command_output_toggle),
+                                render_trailer: Arc::new(render_slash_command_output_trailer),
+                            }],
+                            cx,
+                        )
+                        .into_iter()
+                        .next()
+                        .unwrap();
+                    self.flap_ids.insert(range.clone(), flap_id);
                     editor.fold_at(&FoldAt { buffer_row }, cx);
                 });
+            }
+            ConversationEvent::SlashCommandOutputRemoved(range) => {
+                if let Some(flap_id) = self.flap_ids.remove(range) {
+                    self.editor.update(cx, |editor, cx| {
+                        editor.remove_flaps([flap_id], cx);
+                    });
+                }
             }
         }
     }
@@ -3721,14 +3757,17 @@ fn merge_ranges(ranges: &mut Vec<Range<Anchor>>, buffer: &MultiBufferSnapshot) {
 
 #[cfg(test)]
 mod tests {
-    use std::path::Path;
+    use std::{cell::RefCell, path::Path, rc::Rc};
 
     use super::*;
     use crate::{FakeCompletionProvider, MessageId};
+    use fs::FakeFs;
     use gpui::{AppContext, TestAppContext};
     use rope::Rope;
+    use serde_json::json;
     use settings::SettingsStore;
     use unindent::Unindent;
+    use util::test::marked_text_ranges;
 
     #[gpui::test]
     fn test_inserting_and_removing_messages(cx: &mut AppContext) {
@@ -4065,6 +4104,147 @@ mod tests {
                 .into_iter()
                 .map(|message| message.id)
                 .collect()
+        }
+    }
+
+    #[gpui::test]
+    async fn test_slash_commands(cx: &mut TestAppContext) {
+        let settings_store = cx.update(SettingsStore::test);
+        cx.set_global(settings_store);
+        cx.set_global(CompletionProvider::Fake(FakeCompletionProvider::default()));
+        cx.update(Project::init_settings);
+        cx.update(init);
+        let fs = FakeFs::new(cx.background_executor.clone());
+
+        fs.insert_tree(
+            "/test",
+            json!({
+                "src": {
+                    "lib.rs": "fn one() -> usize { 1 }",
+                    "main.rs": "
+                        use crate::one;
+                        fn main() { one(); }
+                    ".unindent(),
+                }
+            }),
+        )
+        .await;
+
+        let project = Project::test(fs.clone(), ["/test".as_ref()], cx).await;
+        let slash_command_registry = SlashCommandRegistry::new(project.clone());
+
+        let registry = Arc::new(LanguageRegistry::test(cx.executor()));
+        let conversation = cx.new_model(|cx| {
+            Conversation::new(
+                LanguageModel::default(),
+                registry.clone(),
+                slash_command_registry,
+                None,
+                cx,
+            )
+        });
+
+        let output_ranges = Rc::new(RefCell::new(HashSet::default()));
+        conversation.update(cx, |_, cx| {
+            cx.subscribe(&conversation, {
+                let ranges = output_ranges.clone();
+                move |_, _, event, _| match event {
+                    ConversationEvent::SlashCommandOutputAdded(range) => {
+                        ranges.borrow_mut().insert(range.clone());
+                    }
+                    ConversationEvent::SlashCommandOutputRemoved(range) => {
+                        ranges.borrow_mut().remove(range);
+                    }
+                    _ => {}
+                }
+            })
+            .detach();
+        });
+
+        let buffer = conversation.read_with(cx, |conversation, _| conversation.buffer.clone());
+
+        // Insert a slash command
+        buffer.update(cx, |buffer, cx| {
+            buffer.edit([(0..0, "/file src/lib.rs")], None, cx);
+        });
+        assert_text_and_output_ranges(
+            &buffer,
+            &*output_ranges.borrow(),
+            &"
+                /file src/lib.rs
+            "
+            .unindent()
+            .trim_end(),
+            cx,
+        );
+
+        // The slash command runs
+        cx.executor().advance_clock(SLASH_COMMAND_DEBOUNCE);
+        assert_text_and_output_ranges(
+            &buffer,
+            &*output_ranges.borrow(),
+            &"
+            /file src/lib.rs«
+            ```src/lib.rs
+            fn one() -> usize { 1 }
+            ```
+            »"
+            .unindent(),
+            cx,
+        );
+
+        // Edit the slash command
+        buffer.update(cx, |buffer, cx| {
+            let edit_offset = buffer.text().find("lib.rs").unwrap();
+            buffer.edit([(edit_offset..edit_offset + "lib".len(), "main")], None, cx);
+        });
+        assert_text_and_output_ranges(
+            &buffer,
+            &*output_ranges.borrow(),
+            &"
+            /file src/main.rs«
+            ```src/lib.rs
+            fn one() -> usize { 1 }
+            ```
+            »"
+            .unindent(),
+            cx,
+        );
+
+        cx.executor().advance_clock(SLASH_COMMAND_DEBOUNCE);
+        assert_text_and_output_ranges(
+            &buffer,
+            &*output_ranges.borrow(),
+            &"
+            /file src/main.rs«
+            ```src/main.rs
+            use crate::one;
+            fn main() { one(); }
+            ```
+            »"
+            .unindent(),
+            cx,
+        );
+
+        #[track_caller]
+        fn assert_text_and_output_ranges(
+            buffer: &Model<Buffer>,
+            ranges: &HashSet<Range<language::Anchor>>,
+            expected_marked_text: &str,
+            cx: &mut TestAppContext,
+        ) {
+            let (expected_text, expected_ranges) = marked_text_ranges(expected_marked_text, false);
+            let (actual_text, actual_ranges) = buffer.update(cx, |buffer, _| {
+                let mut ranges = ranges
+                    .iter()
+                    .map(|range| range.to_offset(buffer))
+                    .collect::<Vec<_>>();
+                ranges.sort_by_key(|a| a.start);
+                (buffer.text(), ranges)
+            });
+
+            assert_eq!(actual_text, expected_text);
+            assert_eq!(actual_ranges, expected_ranges);
         }
     }
 

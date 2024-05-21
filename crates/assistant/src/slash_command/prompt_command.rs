@@ -30,7 +30,7 @@ impl SlashCommand for PromptSlashCommand {
             .spawn(async move { Ok(Vec::new()) })
     }
 
-    fn run(&self, argument: Option<&str>, cx: &mut AppContext) -> Task<Result<String>> {
+    fn run(&self, argument: Option<&str>, _cx: &mut AppContext) -> Task<Result<String>> {
         Task::ready(Ok(format!("inserting prompt {:?}", argument)))
     }
 }
