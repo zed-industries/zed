@@ -30,6 +30,7 @@ struct FontInfo {
     font_family: String,
     font_face: IDWriteFontFace3,
     features: IDWriteTypography,
+    fallbacks: FontFallbacks,
     is_system_font: bool,
     is_emoji: bool,
 }
@@ -370,6 +371,7 @@ impl DirectWriteState {
         font_style: FontStyle,
         font_features: &FontFeatures,
         is_system_font: bool,
+        fallbacks: FontFallbacks,
     ) -> Option<FontId> {
         let collection = if is_system_font {
             &self.system_font_collection
@@ -407,6 +409,7 @@ impl DirectWriteState {
                 is_system_font,
                 features: direct_write_features,
                 is_emoji,
+                fallbacks,
             };
             let font_id = FontId(self.fonts.len());
             self.fonts.push(font_info);
@@ -438,6 +441,7 @@ impl DirectWriteState {
                     target_font.weight,
                     target_font.style,
                     &target_font.features,
+                    target_font.fallbacks,
                 )
                 .unwrap()
             } else {
@@ -446,6 +450,7 @@ impl DirectWriteState {
                     target_font.weight,
                     target_font.style,
                     &target_font.features,
+                    target_font.fallbacks,
                 )
                 .unwrap_or_else(|| {
                     let family = self.system_ui_font_name.clone();
@@ -456,6 +461,7 @@ impl DirectWriteState {
                         target_font.style,
                         &target_font.features,
                         true,
+                        target_font.fallbacks,
                     )
                     .unwrap()
                 })
@@ -469,16 +475,38 @@ impl DirectWriteState {
         weight: FontWeight,
         style: FontStyle,
         features: &FontFeatures,
+        fallbacks: FontFallbacks,
     ) -> Option<FontId> {
         // try to find target font in custom font collection first
-        self.get_font_id_from_font_collection(family_name, weight, style, features, false)
-            .or_else(|| {
-                self.get_font_id_from_font_collection(family_name, weight, style, features, true)
-            })
-            .or_else(|| {
-                self.update_system_font_collection();
-                self.get_font_id_from_font_collection(family_name, weight, style, features, true)
-            })
+        self.get_font_id_from_font_collection(
+            family_name,
+            weight,
+            style,
+            features,
+            false,
+            fallbacks,
+        )
+        .or_else(|| {
+            self.get_font_id_from_font_collection(
+                family_name,
+                weight,
+                style,
+                features,
+                true,
+                fallbacks,
+            )
+        })
+        .or_else(|| {
+            self.update_system_font_collection();
+            self.get_font_id_from_font_collection(
+                family_name,
+                weight,
+                style,
+                features,
+                true,
+                fallbacks,
+            )
+        })
     }
 
     fn layout_line(
@@ -526,11 +554,15 @@ impl DirectWriteState {
                         &HSTRING::from(&self.components.locale),
                     )?
                     .cast()?;
-                // if is_ui_font {
-                // format.SetFontFallback(&self.ui_font_fallbacks)?;
-                // } else {
-                format.SetFontFallback(&self.buffer_font_fallbacks)?;
-                // }
+                match font_info.fallbacks {
+                    FontFallbacks::UiFontFallbacks => {
+                        format.SetFontFallback(&self.ui_font_fallbacks)?
+                    }
+                    FontFallbacks::BufferFontFallbacks => {
+                        format.SetFontFallback(&self.buffer_font_fallbacks)?
+                    }
+                    FontFallbacks::None => {}
+                }
 
                 let layout = self.components.factory.CreateTextLayout(
                     &text_wide,
