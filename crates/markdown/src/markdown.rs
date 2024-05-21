@@ -544,7 +544,9 @@ impl Element for MarkdownElement {
                             })
                         }
                         MarkdownTag::Link { dest_url, .. } => {
-                            builder.push_link(dest_url.clone(), range.clone());
+                            if builder.code_block_stack.is_empty() {
+                                builder.push_link(dest_url.clone(), range.clone());
+                            }
                             builder.push_text_style(self.style.link.clone())
                         }
                         _ => log::error!("unsupported markdown tag {:?}", tag),

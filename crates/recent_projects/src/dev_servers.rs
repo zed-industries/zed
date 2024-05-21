@@ -14,6 +14,7 @@ use gpui::{
 };
 use markdown::Markdown;
 use markdown::MarkdownStyle;
+use rpc::proto;
 use rpc::{
     proto::{CreateDevServerResponse, DevServerStatus, RegenerateDevServerTokenResponse},
     ErrorCode, ErrorExt,
@@ -22,7 +23,6 @@ use task::RevealStrategy;
 use task::SpawnInTerminal;
 use task::TerminalWorkDir;
 use terminal_view::terminal_panel::TerminalPanel;
-use ui::Elevation;
 use ui::ElevationIndex;
 use ui::Section;
 use ui::{
@@ -147,7 +147,17 @@ impl DevServerProjects {
         let markdown = cx.new_view(|cx| Markdown::new("".to_string(), markdown_style, None, cx));
 
         Self {
-            mode: Mode::Default(None),
+            mode: Mode::CreateDevServer(CreateDevServer {
+                creating: false,
+                dev_server: Some(proto::CreateDevServerResponse {
+                    dev_server_id: 75,
+                    access_token:
+                        "75.Xjsz5n5-u-gbs4PnUWYcJB6yaue7n0TjeuTTS56k7yxMqLfTwUSZjeZnQbyXtgXa"
+                            .to_string(),
+                    name: "test".to_string(),
+                }),
+                manual_setup: true,
+            }),
             focus_handle,
             scroll_handle: ScrollHandle::new(),
             dev_server_store,
@@ -270,6 +280,7 @@ impl DevServerProjects {
     }
 
     pub fn create_dev_server(&mut self, manual_setup: bool, cx: &mut ViewContext<Self>) {
+        dbg!("create");
         let name = get_text(&self.dev_server_name_input, cx);
         if name.is_empty() {
             return;
@@ -288,7 +299,9 @@ impl DevServerProjects {
         let workspace = self.workspace.clone();
 
         cx.spawn(|this, mut cx| async move {
+            dbg!("s");
             let result = dev_server.await;
+            dbg!(&result);
 
             match result {
                 Ok(dev_server) => {
@@ -325,6 +338,7 @@ impl DevServerProjects {
                         terminal.update(&mut cx, |terminal, cx| {
                             terminal.wait_for_completed_task(cx)
                         })?.await;
+                    }
 
                     this.update(&mut cx, |this, cx| {
                             this.focus_handle.focus(cx);
@@ -333,13 +347,14 @@ impl DevServerProjects {
                                 dev_server: Some(dev_server.clone()),
                                 manual_setup: false,
                         });
+                            cx.notify();
                     })?;
-                }
                 Ok(())
             }
             Err(e) => {
                 this.update(&mut cx, |this, cx| {
                     this.mode = Mode::CreateDevServer(CreateDevServer { creating:false, dev_server: None, manual_setup });
+                    cx.notify()
                 })
                 .log_err();
 
@@ -745,10 +760,28 @@ impl DevServerProjects {
             manual_setup,
         } = state;
 
-        let can_submit = true;
+        let can_submit = creating == false && dev_server.is_none();
+        let status = dev_server
+            .as_ref()
+            .and_then(|dev_server| {
+                self.dev_server_store
+                    .read(cx)
+                    .dev_server(DevServerId(dev_server.dev_server_id))
+            })
+            .map(|s| s.status)
+            .unwrap_or_default();
 
         self.dev_server_name_input.update(cx, |input, cx| {
             input.set_disabled(creating || dev_server.is_some(), cx);
+            input.editor().update(cx, |editor, cx| {
+                if editor.text(cx).is_empty() {
+                    if manual_setup {
+                        editor.set_placeholder_text("example-server", cx)
+                    } else {
+                        editor.set_placeholder_text("ssh host", cx)
+                    }
+                }
+            })
         });
 
         Modal::new("create-dev-server", Some(self.scroll_handle.clone()))
@@ -759,7 +792,7 @@ impl DevServerProjects {
             )
             .section(
                 Section::new()
-                    .header("Server Name".into())
+                    .header(if manual_setup { "Server Name".into()} else { "SSH arguments".into()})
                     .child(
                         div()
                             .max_w(rems(16.))
@@ -778,60 +811,76 @@ impl DevServerProjects {
                                 "use-server-name-in-ssh",
                                 Label::new("Connect via SSH (default)"),
                                 !manual_setup,
-                                cx.listener(|this, _, cx| {
+                                cx.listener({
+                                    let dev_server = dev_server.clone();
+                                    move |this, _, cx| {
                                     this.mode = Mode::CreateDevServer(CreateDevServer {
-                                        creating: false,
-                                        dev_server: None,
+                                        creating,
+                                        dev_server: dev_server.clone(),
                                         manual_setup: false,
                                     });
                                     cx.notify()
-                                }),
+                                }}),
                             ))
                             .child(RadioWithLabel::new(
                                 "use-server-name-in-ssh",
                                 Label::new("Manual Setup"),
                                 manual_setup,
-                                cx.listener(|this, _, cx| {
+                                cx.listener({
+                                    let dev_server = dev_server.clone();
+                                    move |this, _, cx| {
                                     this.mode = Mode::CreateDevServer(CreateDevServer {
-                                        creating: false,
-                                        dev_server: None,
+                                        creating,
+                                        dev_server: dev_server.clone(),
                                         manual_setup: true,
                                     });
                                     cx.notify()
-                                }),
+                                }}),
                             )))
-                            .when(dev_server.is_none(), |div| {
-                                let server_name = get_text(&self.dev_server_name_input, cx);
-                                let server_name_trimmed = server_name.trim();
-                                let ssh_host_name = if server_name_trimmed.is_empty() {
-                                    "user@host"
-                                } else {
-                                    server_name_trimmed
-                                };
-                                div.child(
+                            .when(dev_server.is_none(), |el| {
+                                el.child(
                                     if manual_setup {
-                                        Label::new(format!(
-                                            "Once you have created a dev server, you will be given a command to run on the server to register it.\n\
-                                            If you enable SSH, then the terminal will automatically `ssh {ssh_host_name}` on open."
-                                        ))
+                                        Label::new(
+                                            "Click create to generate a token for this server. The next step will provide instructions for setting zed up on that machine."
+                                                )
                                     } else {
-                                        Label::new(format!(
-                                            "Once you have created a dev server, you will be given a command to run on the server to register it.\n\
-                                            If you enable SSH, then the terminal will automatically `ssh {ssh_host_name}` on open."
-                                        ))
+                                        Label::new(
+                                            "Enter the command you use to ssh into this server.\n\
+                                            For example: `ssh me@my.server` or `gh cs ssh -c example`."
+                                            )
                                 }.size(LabelSize::Small).color(Color::Muted))
-                            }),
+                            })
+                            .when_some(dev_server, |el, dev_server| {
+                                if manual_setup {
+                                    el.child(
+                                        self.render_dev_server_token_instructions(&dev_server.access_token, &dev_server.name, status, cx)
+                                    )
+                                } else {
+                                    el
+                                }
+                            })
                     ),
             )
             // .child(content)
             .footer(ModalFooter::new().end_slot(
-                Button::new("create-dev-server", "Create")
-                    .style(ButtonStyle::Filled)
-                    .layer(ElevationIndex::ModalSurface)
-                    .disabled(!can_submit)
-                    .on_click(cx.listener(move |this, _, cx| {
-                        this.create_dev_server(manual_setup, cx);
-                    })),
+                if status == DevServerStatus::Online {
+                    Button::new("create-dev-server", "Done")
+                        .style(ButtonStyle::Filled)
+                        .layer(ElevationIndex::ModalSurface)
+                        .on_click(cx.listener(move |this, _, cx| {
+                            cx.focus(&this.focus_handle);
+                            this.mode = Mode::Default(None);
+                            cx.notify();
+                        }))
+                } else {
+                    Button::new("create-dev-server", "Create")
+                        .style(ButtonStyle::Filled)
+                        .layer(ElevationIndex::ModalSurface)
+                        .disabled(!can_submit)
+                        .on_click(cx.listener(move |this, _, cx| {
+                            this.create_dev_server(manual_setup, cx);
+                        }))
+                }
             ))
     }
 
@@ -842,10 +891,9 @@ impl DevServerProjects {
         status: DevServerStatus,
         cx: &mut ViewContext<Self>,
     ) -> Div {
-        let instructions = SharedString::from(format!("zed --dev-server-token {}", access_token));
         self.markdown.update(cx, |markdown, cx| {
             if !markdown.source().contains(access_token) {
-                markdown.reset(format!("```\n{}\n```", instructions), cx);
+                markdown.reset(format!("Please log into '{}'. If you don't yet have zed installed, run:\n```\ncurl https://zed.dev/install.sh | bash\n```\nThen to start zed in headless mode:\n```\nzed --dev-server-token {}\n```", dev_server_name, access_token), cx);
             }
         });
 
@@ -853,40 +901,12 @@ impl DevServerProjects {
             .pl_2()
             .pt_2()
             .gap_2()
-            .child(
-                h_flex()
-                    .justify_between()
-                    .w_full()
-                    .child(Label::new(format!(
-                        "Please log into `{}` and run:",
-                        dev_server_name
-                    )))
-                    .child(
-                        Button::new("copy-access-token", "Copy Instructions")
-                            .icon(Some(IconName::Copy))
-                            .icon_size(IconSize::Small)
-                            .on_click({
-                                let instructions = instructions.clone();
-                                cx.listener(move |_, _, cx| {
-                                    cx.write_to_clipboard(ClipboardItem::new(
-                                        instructions.to_string(),
-                                    ))
-                                })
-                            }),
-                    ),
-            )
-            .child(v_flex().w_full().child(self.markdown.clone()))
+            .child(v_flex().w_full().text_sm().child(self.markdown.clone()))
             .when(status == DevServerStatus::Offline, |this| {
                 this.child(Self::render_loading_spinner("Waiting for connection…"))
             })
             .when(status == DevServerStatus::Online, |this| {
-                this.child(Label::new("🎊 Connection established!")).child(
-                    h_flex()
-                        .justify_end()
-                        .child(Button::new("done", "Done").on_click(
-                            cx.listener(|_, _, cx| cx.dispatch_action(menu::Cancel.boxed_clone())),
-                        )),
-                )
+                this.child(Label::new("🎊 Connection established!"))
             })
     }
 
@@ -1125,7 +1145,6 @@ impl Render for DevServerProjects {
                     cx.stop_propagation()
                 }
             }))
-            .pb_4()
             .w(rems(34.))
             .min_h(rems(20.))
             .max_h(rems(40.))
