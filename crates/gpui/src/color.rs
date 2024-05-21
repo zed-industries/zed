@@ -133,11 +133,11 @@ impl TryFrom<&'_ str> for Rgba {
 
         let (r, g, b, a) = match hex.len() {
             RGB | RGBA => {
-                let r = u8::from_str_radix(&hex[0..1], 16)?;
-                let g = u8::from_str_radix(&hex[1..2], 16)?;
-                let b = u8::from_str_radix(&hex[2..3], 16)?;
+                let r = u8::from_str_radix(hex.get(0..1)?, 16)?;
+                let g = u8::from_str_radix(hex.get(1..2)?, 16)?;
+                let b = u8::from_str_radix(hex.get(2..3)?, 16)?;
                 let a = if hex.len() == RGBA {
-                    u8::from_str_radix(&hex[3..4], 16)?
+                    u8::from_str_radix(hex.get(3..4)?, 16)?
                 } else {
                     0xf
                 };
@@ -151,11 +151,11 @@ impl TryFrom<&'_ str> for Rgba {
                 (duplicate(r), duplicate(g), duplicate(b), duplicate(a))
             }
             RRGGBB | RRGGBBAA => {
-                let r = u8::from_str_radix(&hex[0..2], 16)?;
-                let g = u8::from_str_radix(&hex[2..4], 16)?;
-                let b = u8::from_str_radix(&hex[4..6], 16)?;
+                let r = u8::from_str_radix(hex.get(0..2)?, 16)?;
+                let g = u8::from_str_radix(hex.get(2..4)?, 16)?;
+                let b = u8::from_str_radix(hex.get(4..6)?, 16)?;
                 let a = if hex.len() == RRGGBBAA {
-                    u8::from_str_radix(&hex[6..8], 16)?
+                    u8::from_str_radix(hex.get(6..8)?, 16)?
                 } else {
                     0xff
                 };
