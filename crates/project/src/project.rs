@@ -4283,7 +4283,6 @@ impl Project {
         let Some(watchers) = self
             .language_server_watcher_registrations
             .get(&language_server_id)
-            .map(|registrations| registrations)
         else {
             return;
         };
