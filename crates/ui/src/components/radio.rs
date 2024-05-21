@@ -29,8 +29,8 @@ impl RadioWithLabel {
 
 impl RenderOnce for RadioWithLabel {
     fn render(self, cx: &mut WindowContext) -> impl IntoElement {
-        let inner_diameter = rems_from_px(8.);
-        let outer_diameter = rems_from_px(20.);
+        let inner_diameter = rems_from_px(6.);
+        let outer_diameter = rems_from_px(16.);
         let border_width = rems_from_px(1.);
         h_flex()
             .id(self.id)

@@ -22,8 +22,13 @@ use task::RevealStrategy;
 use task::SpawnInTerminal;
 use task::TerminalWorkDir;
 use terminal_view::terminal_panel::TerminalPanel;
-use ui::RadioWithLabel;
-use ui::{prelude::*, Indicator, List, ListHeader, ListItem, ModalContent, ModalHeader, Tooltip};
+use ui::Elevation;
+use ui::ElevationIndex;
+use ui::Section;
+use ui::{
+    prelude::*, Indicator, List, ListHeader, ListItem, Modal, ModalFooter, ModalHeader,
+    RadioWithLabel, Tooltip,
+};
 use ui_text_field::{FieldLabelLayout, TextField};
 use util::ResultExt;
 use workspace::{notifications::DetachAndPromptErr, AppState, ModalView, Workspace, WORKSPACE_DB};
@@ -110,10 +115,12 @@ impl DevServerProjects {
             editor.set_placeholder_text("Project path (~/work/zed, /workspace/zed, …)", cx);
             editor
         });
-        let dev_server_name_input =
-            cx.new_view(|cx| TextField::new(cx, "Name", "").with_label(FieldLabelLayout::Stacked));
-        let rename_dev_server_input =
-            cx.new_view(|cx| TextField::new(cx, "Name", "").with_label(FieldLabelLayout::Stacked));
+        let dev_server_name_input = cx.new_view(|cx| {
+            TextField::new(cx, "Name", "192.168.0.1").with_label(FieldLabelLayout::Hidden)
+        });
+        let rename_dev_server_input = cx.new_view(|cx| {
+            TextField::new(cx, "Name", "192.168.0.1").with_label(FieldLabelLayout::Hidden)
+        });
 
         let focus_handle = cx.focus_handle();
         let dev_server_store = dev_server_projects::Store::global(cx);
@@ -738,139 +745,94 @@ impl DevServerProjects {
             manual_setup,
         } = state;
 
+        let can_submit = true;
+
         self.dev_server_name_input.update(cx, |input, cx| {
             input.set_disabled(creating || dev_server.is_some(), cx);
         });
 
-        v_flex()
-            .id("scroll-container")
-            .h_full()
-            .overflow_y_scroll()
-            .track_scroll(&self.scroll_handle)
-            .px_1()
-            .pt_0p5()
-            .gap_px()
-            .child(
-                ModalHeader::new("create-dev-server")
-                    .show_back_button(true)
-                    .child(Headline::new("New dev server").size(HeadlineSize::Small)),
+        Modal::new("create-dev-server", Some(self.scroll_handle.clone()))
+            .header(
+                ModalHeader::new()
+                    .headline("Create Dev Server")
+                    .show_back_button(true),
             )
-            .child(
-                ModalContent::new().child(
-                    v_flex()
-                        .w_full()
-                        .child(
-                            v_flex()
-                                .pb_2()
-                                .w_full()
-                                .px_2()
-                                .child(
-                                    div()
-                                        .pl_2()
-                                        .max_w(rems(16.))
-                                        .child(self.dev_server_name_input.clone()),
-                                )
-                        )
-                        .child(
-                            h_flex()
-                                .pb_2()
-                                .items_end()
-                                .w_full()
-                                .px_2()
-                                .border_b_1()
-                                .border_color(cx.theme().colors().border)
-                                .child(
-                                    div()
-                                        .pl_1()
-                                        .pb(px(3.))
-                                        .when(!creating && dev_server.is_none(), |div| {
-                                            div
-                                                .child(
-                                                    RadioWithLabel::new(
-                                                        "use-server-name-in-ssh",
-                                                        Label::new("Connect via SSH (default)"),
-                                                        !manual_setup,
-                                                        cx.listener(|this, _, cx| {
-                                                            this.mode = Mode::CreateDevServer(CreateDevServer { creating: false, dev_server: None, manual_setup: false });
-                                                            cx.notify()
-                                                        })
-                                                    )
-                                                )
-                                                .child(
-                                                    RadioWithLabel::new(
-                                                        "use-server-name-in-ssh",
-                                                        Label::new("Manual Setup"),
-                                                        manual_setup,
-                                                        cx.listener(|this, _, cx| {
-                                                            this.mode = Mode::CreateDevServer(CreateDevServer { creating: false, dev_server: None, manual_setup: true });
-                                                            cx.notify()
-                                                        })
-                                                    )
-                                                )
-                                                .child(
-                                                    Button::new("create-dev-server", "Create").on_click(
-                                                        cx.listener(move |this, _, cx| {
-                                                            this.create_dev_server(manual_setup, cx);
-                                                        })
-                                                    )
-                                                )
-                                        })
-                                        .when(true, |div| {
-                                            div
-                                                .child(
-                                                    RadioWithLabel::new(
-                                                        "use-server-name-in-ssh",
-                                                        Label::new("Connect via SSH (default)"),
-                                                        !manual_setup,
-                                                        cx.listener(|this, _, cx| {
-                                                            this.mode = Mode::CreateDevServer(CreateDevServer { creating: false, dev_server: None, manual_setup: false });
-                                                            cx.notify()
-                                                        })
-                                                    )
-                                                )
-                                                .child(
-                                                    RadioWithLabel::new(
-                                                        "use-server-name-in-ssh",
-                                                        Label::new("Manual Setup"),
-                                                        manual_setup,
-                                                        cx.listener(|this, _, cx| {
-                                                            this.mode = Mode::CreateDevServer(CreateDevServer { creating: false, dev_server: None, manual_setup: true });
-                                                            cx.notify()
-                                                        })
-                                                    )
-                                                )
-                                                .child(
-                                                    Button::new("create-dev-server", "Creating...")
-                                                        .disabled(true),
-                                                )
-                                        }),
-                                )
-                        )
-                        .when(dev_server.is_none(), |div| {
-                            let server_name = get_text(&self.dev_server_name_input, cx);
-                            let server_name_trimmed = server_name.trim();
-                            let ssh_host_name = if server_name_trimmed.is_empty() {
-                                "user@host"
-                            } else {
-                                server_name_trimmed
-                            };
-                            div.px_2().child(Label::new(format!(
-                                "Once you have created a dev server, you will be given a command to run on the server to register it.\n\n\
-                                If you enable SSH, then the terminal will automatically `ssh {ssh_host_name}` on open."
+            .section(
+                Section::new()
+                    .header("Server Name".into())
+                    .child(
+                        div()
+                            .max_w(rems(16.))
+                            .child(self.dev_server_name_input.clone())
+                    ),
+            )
+            .section(
+                Section::new_contained()
+                    .header("Connection Method".into())
+                    // .meta("Select the type of server you want to create.")
+                    .child(
+                        v_flex()
+                            .w_full()
+                            .gap_y(Spacing::Large.rems(cx))
+                            .child(v_flex().child(RadioWithLabel::new(
+                                "use-server-name-in-ssh",
+                                Label::new("Connect via SSH (default)"),
+                                !manual_setup,
+                                cx.listener(|this, _, cx| {
+                                    this.mode = Mode::CreateDevServer(CreateDevServer {
+                                        creating: false,
+                                        dev_server: None,
+                                        manual_setup: false,
+                                    });
+                                    cx.notify()
+                                }),
+                            ))
+                            .child(RadioWithLabel::new(
+                                "use-server-name-in-ssh",
+                                Label::new("Manual Setup"),
+                                manual_setup,
+                                cx.listener(|this, _, cx| {
+                                    this.mode = Mode::CreateDevServer(CreateDevServer {
+                                        creating: false,
+                                        dev_server: None,
+                                        manual_setup: true,
+                                    });
+                                    cx.notify()
+                                }),
                             )))
-                        })
-                        .when_some(dev_server.clone(), |div, dev_server| {
-                            let status = self
-                                .dev_server_store
-                                .read(cx)
-                                .dev_server_status(DevServerId(dev_server.dev_server_id));
-
-                            div.child(
-                                 self.render_dev_server_token_instructions(&dev_server.access_token, &dev_server.name, status, cx)
-                            )
-                        }),
-                )
+                            .when(dev_server.is_none(), |div| {
+                                let server_name = get_text(&self.dev_server_name_input, cx);
+                                let server_name_trimmed = server_name.trim();
+                                let ssh_host_name = if server_name_trimmed.is_empty() {
+                                    "user@host"
+                                } else {
+                                    server_name_trimmed
+                                };
+                                div.child(
+                                    if manual_setup {
+                                        Label::new(format!(
+                                            "Once you have created a dev server, you will be given a command to run on the server to register it.\n\
+                                            If you enable SSH, then the terminal will automatically `ssh {ssh_host_name}` on open."
+                                        ))
+                                    } else {
+                                        Label::new(format!(
+                                            "Once you have created a dev server, you will be given a command to run on the server to register it.\n\
+                                            If you enable SSH, then the terminal will automatically `ssh {ssh_host_name}` on open."
+                                        ))
+                                }.size(LabelSize::Small).color(Color::Muted))
+                            }),
+                    ),
             )
+            // .child(content)
+            .footer(ModalFooter::new().end_slot(
+                Button::new("create-dev-server", "Create")
+                    .style(ButtonStyle::Filled)
+                    .layer(ElevationIndex::ModalSurface)
+                    .disabled(!can_submit)
+                    .on_click(cx.listener(move |this, _, cx| {
+                        this.create_dev_server(manual_setup, cx);
+                    })),
+            ))
     }
 
     fn render_dev_server_token_instructions(
@@ -1053,15 +1015,10 @@ impl DevServerProjects {
             .px_1()
             .pt_0p5()
             .gap_px()
-            .child(
-                ModalHeader::new("edit-dev-server")
-                    .show_back_button(true)
-                    .child(
-                        Headline::new(format!("Edit {}", &dev_server_name))
-                            .size(HeadlineSize::Small),
-                    ),
-            )
-            .child(ModalContent::new().child(v_flex().w_full().child(content)))
+            .child(ModalHeader::new().show_back_button(true).child(
+                Headline::new(format!("Edit {}", &dev_server_name)).size(HeadlineSize::Small),
+            ))
+            .child(div().child(v_flex().w_full().child(content)))
     }
 
     fn render_default(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
@@ -1092,12 +1049,12 @@ impl DevServerProjects {
             .pt_0p5()
             .gap_px()
             .child(
-                ModalHeader::new("remote-projects")
+                ModalHeader::new()
                     .show_dismiss_button(true)
                     .child(Headline::new("Remote Projects").size(HeadlineSize::Small)),
             )
             .child(
-                ModalContent::new().child(
+                div().child(
                     List::new()
                         .empty_message("No dev servers registered.")
                         .header(Some(
