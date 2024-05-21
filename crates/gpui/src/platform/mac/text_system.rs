@@ -147,7 +147,7 @@ impl PlatformTextSystem for MacTextSystem {
 
             let candidate_properties = candidates
                 .iter()
-                .map(|font_id| lock.fonts[font_id.0].properties())
+                .map(|font_id| lock.fonts[font_id.0].font.properties())
                 .collect::<SmallVec<[_; 4]>>();
 
             let ix = font_kit::matching::find_best_match(
@@ -166,11 +166,12 @@ impl PlatformTextSystem for MacTextSystem {
     }
 
     fn font_metrics(&self, font_id: FontId) -> FontMetrics {
-        self.0.read().fonts[font_id.0].metrics().into()
+        self.0.read().fonts[font_id.0].font.metrics().into()
     }
 
     fn typographic_bounds(&self, font_id: FontId, glyph_id: GlyphId) -> Result<Bounds<f32>> {
         Ok(self.0.read().fonts[font_id.0]
+            .font
             .typographic_bounds(glyph_id.0)?
             .into())
     }
@@ -314,17 +315,22 @@ impl MacTextSystemState {
                 .insert(postscript_name.clone(), font_id);
             self.postscript_names_by_font_id
                 .insert(font_id, postscript_name);
-            self.fonts.push(font);
+            let font_info = FontInfo {
+                font,
+                // TODO:
+                fallbacks: FontFallbacks::None,
+            };
+            self.fonts.push(font_info);
         }
         Ok(font_ids)
     }
 
     fn advance(&self, font_id: FontId, glyph_id: GlyphId) -> Result<Size<f32>> {
-        Ok(self.fonts[font_id.0].advance(glyph_id.0)?.into())
+        Ok(self.fonts[font_id.0].font.advance(glyph_id.0)?.into())
     }
 
     fn glyph_for_char(&self, font_id: FontId, ch: char) -> Option<GlyphId> {
-        self.fonts[font_id.0].glyph_for_char(ch).map(GlyphId)
+        self.fonts[font_id.0].font.glyph_for_char(ch).map(GlyphId)
     }
 
     fn id_for_native_font(&mut self, requested_font: CTFont) -> FontId {
@@ -337,10 +343,14 @@ impl MacTextSystemState {
                 .insert(postscript_name.clone(), font_id);
             self.postscript_names_by_font_id
                 .insert(font_id, postscript_name);
-            self.fonts
-                .push(font_kit::font::Font::from_core_graphics_font(
+            let font_info = FontInfo {
+                font: font_kit::font::Font::from_core_graphics_font(
                     requested_font.copy_to_CGFont(),
-                ));
+                ),
+                // TODO:
+                fallbacks: FontFallbacks::None,
+            };
+            self.fonts.push(font_info);
             font_id
         }
     }
@@ -354,7 +364,7 @@ impl MacTextSystemState {
     }
 
     fn raster_bounds(&self, params: &RenderGlyphParams) -> Result<Bounds<DevicePixels>> {
-        let font = &self.fonts[params.font_id.0];
+        let font = &self.fonts[params.font_id.0].font;
         let scale = Transform2F::from_scale(params.scale_factor);
         Ok(font
             .raster_bounds(
@@ -430,6 +440,7 @@ impl MacTextSystemState {
             cx.set_allows_font_subpixel_quantization(false);
             cx.set_should_subpixel_quantize_fonts(false);
             self.fonts[params.font_id.0]
+                .font
                 .native_font()
                 .clone_with_font_size(f32::from(params.font_size) as CGFloat)
                 .draw_glyphs(
@@ -478,7 +489,8 @@ impl MacTextSystemState {
                 let cf_range =
                     CFRange::init(utf16_start as isize, (utf16_end - utf16_start) as isize);
 
-                let font: &FontKitFont = &self.fonts[run.font_id.0];
+                // TODO: apply fallbacks
+                let font: &FontKitFont = &self.fonts[run.font_id.0].font;
                 unsafe {
                     string.set_attribute(
                         cf_range,
