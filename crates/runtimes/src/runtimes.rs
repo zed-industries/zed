@@ -189,22 +189,28 @@ impl RuntimeManager {
         }
     }
 
+    /// Spawn the kernel for the given language and entity ID
+    /// If the kernel is already running, return the existing sender
+    /// Otherwise, spawn a new kernel and return the sender
     pub fn spawn_kernel(
         &mut self,
         language_name: &Arc<str>,
         entity_id: EntityId,
     ) -> Option<mpsc::UnboundedSender<ExecutionRequest>> {
+        let maybe_runtime = self.instances.get(&entity_id);
+        if let Some(runtime) = maybe_runtime {
+            // Runtime instance is up and ready
+            return Some(runtime.execution_request_tx.clone());
+        }
+
+        // N
+
         let kernel_path = match language_name.as_ref() {
             "python" => HARDCODED_PYTHON_KERNEL,
             "typescript" => HARDCODED_DENO_KERNEL,
             // todo!(): don't run any kernel if the language is not supported
             _ => HARDCODED_PYTHON_KERNEL,
         };
-
-        let maybe_runtime = self.instances.get(&entity_id);
-        if let Some(runtime) = maybe_runtime {
-            return Some(runtime.execution_request_tx.clone());
-        }
 
         let (execution_request_tx, execution_request_rx) = mpsc::unbounded::<ExecutionRequest>();
 

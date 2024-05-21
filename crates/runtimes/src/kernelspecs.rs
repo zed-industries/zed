@@ -6,7 +6,10 @@
 
 use futures::StreamExt;
 use project::Fs;
+use std::process::Stdio;
 use std::{path::PathBuf, sync::Arc};
+
+use smol::process::Command;
 
 use runtimelib::dirs;
 use runtimelib::JupyterKernelspec;
@@ -16,6 +19,43 @@ pub struct Runtime {
     pub name: String,
     pub path: PathBuf,
     pub spec: JupyterKernelspec,
+}
+
+impl Runtime {
+    fn command(&self, connection_path: &PathBuf) -> anyhow::Result<Command> {
+        let argv = &self.spec.argv;
+
+        if argv.is_empty() {
+            return Err(anyhow::anyhow!("Empty argv in kernelspec {}", self.name));
+        }
+
+        if argv.len() < 2 {
+            return Err(anyhow::anyhow!("Invalid argv in kernelspec {}", self.name));
+        }
+
+        if !argv.contains(&"{connection_file}".to_string()) {
+            return Err(anyhow::anyhow!(
+                "Missing 'connection_file' in argv in kernelspec {}",
+                self.name
+            ));
+        }
+
+        let mut cmd = Command::new(&argv[0]);
+
+        for arg in &argv[1..] {
+            if arg == "{connection_file}" {
+                cmd.arg(connection_path);
+            } else {
+                cmd.arg(arg);
+            }
+        }
+
+        if let Some(env) = &self.spec.env {
+            cmd.envs(env);
+        }
+
+        Ok(cmd)
+    }
 }
 
 pub async fn read_kernelspec_at(
