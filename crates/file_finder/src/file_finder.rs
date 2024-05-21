@@ -93,7 +93,7 @@ impl FileFinder {
                 currently_opened_path,
                 history_items,
                 // TODO kb add this into the action
-                false,
+                true,
                 cx,
             );
 
