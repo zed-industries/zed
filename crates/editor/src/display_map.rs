@@ -132,14 +132,6 @@ impl DisplayMap {
         let snapshot = buffer.read(cx).read(cx);
         let start = snapshot.anchor_before(0);
         let end = snapshot.anchor_before(snapshot.max_point().min(Point::new(10, 0)));
-        let flap = Flap::new(start..end, |row, folded, toggle, _cx| {
-            gpui::div()
-                .id(("custom-flap-indicator", row.0))
-                .size_full()
-                .on_click(move |_, cx| toggle(!folded, cx))
-                .bg(if folded { gpui::red() } else { gpui::blue() })
-        });
-        flaps.insert(Some(flap), &snapshot);
 
         DisplayMap {
             buffer,
