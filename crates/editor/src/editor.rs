@@ -5751,7 +5751,7 @@ impl Editor {
                         let mut end = fold.range.end.to_point(&buffer);
                         start.row -= row_delta;
                         end.row -= row_delta;
-                        refold_ranges.push(start..end);
+                        refold_ranges.push((start..end, fold.text));
                     }
                 }
             }
@@ -5845,7 +5845,7 @@ impl Editor {
                         let mut end = fold.range.end.to_point(&buffer);
                         start.row += row_delta;
                         end.row += row_delta;
-                        refold_ranges.push(start..end);
+                        refold_ranges.push((start..end, fold.text));
                     }
                 }
             }
@@ -9203,11 +9203,11 @@ impl Editor {
             let buffer_start_row = range.start.row;
 
             for row in (0..=range.end.row).rev() {
-                let fold_range = display_map.foldable_range(MultiBufferRow(row));
-
-                if let Some(fold_range) = fold_range {
-                    if fold_range.end.row >= buffer_start_row {
-                        fold_ranges.push(fold_range);
+                if let Some((foldable_range, fold_text)) =
+                    display_map.foldable_range(MultiBufferRow(row))
+                {
+                    if foldable_range.end.row >= buffer_start_row {
+                        fold_ranges.push((foldable_range, fold_text));
                         if row <= range.start.row {
                             break;
                         }
@@ -9223,14 +9223,14 @@ impl Editor {
         let buffer_row = fold_at.buffer_row;
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
 
-        if let Some(fold_range) = display_map.foldable_range(buffer_row) {
+        if let Some((fold_range, fold_text)) = display_map.foldable_range(buffer_row) {
             let autoscroll = self
                 .selections
                 .all::<Point>(cx)
                 .iter()
                 .any(|selection| fold_range.overlaps(&selection.range()));
 
-            self.fold_ranges(std::iter::once(fold_range), autoscroll, cx);
+            self.fold_ranges([(fold_range, fold_text)], autoscroll, cx);
         }
     }
 
@@ -9284,9 +9284,9 @@ impl Editor {
                         .buffer_snapshot
                         .line_len(MultiBufferRow(s.end.row)),
                 );
-                start..end
+                (start..end, "⋯")
             } else {
-                s.start..s.end
+                (s.start..s.end, "⋯")
             }
         });
         self.fold_ranges(ranges, true, cx);
@@ -9294,18 +9294,20 @@ impl Editor {
 
     pub fn fold_ranges<T: ToOffset + Clone>(
         &mut self,
-        ranges: impl IntoIterator<Item = Range<T>>,
+        ranges: impl IntoIterator<Item = (Range<T>, &'static str)>,
         auto_scroll: bool,
         cx: &mut ViewContext<Self>,
     ) {
         let mut fold_ranges = Vec::new();
         let mut buffers_affected = HashMap::default();
         let multi_buffer = self.buffer().read(cx);
-        for range in ranges {
-            if let Some((_, buffer, _)) = multi_buffer.excerpt_containing(range.start.clone(), cx) {
+        for (fold_range, fold_text) in ranges {
+            if let Some((_, buffer, _)) =
+                multi_buffer.excerpt_containing(fold_range.start.clone(), cx)
+            {
                 buffers_affected.insert(buffer.read(cx).remote_id(), buffer);
             };
-            fold_ranges.push(range);
+            fold_ranges.push((fold_range, fold_text));
         }
 
         let mut ranges = fold_ranges.into_iter().peekable();
@@ -11055,11 +11057,10 @@ impl EditorSnapshot {
             .flap_snapshot
             .query_row(buffer_row, &self.buffer_snapshot)
         {
-            let range = flap.range.clone();
             let toggle_callback = Arc::new(move |folded, cx: &mut WindowContext| {
                 if folded {
                     editor.update(cx, |editor, cx| {
-                        editor.fold_ranges([range.clone()], false, cx)
+                        editor.fold_at(&crate::FoldAt { buffer_row }, cx)
                     });
                 } else {
                     editor.update(cx, |editor, cx| {

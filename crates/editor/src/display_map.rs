@@ -45,7 +45,7 @@ use serde::Deserialize;
 use std::{any::TypeId, borrow::Cow, fmt::Debug, num::NonZeroU32, ops::Range, sync::Arc};
 use sum_tree::{Bias, TreeMap};
 use tab_map::TabMap;
-use ui::{InteractiveElement as _, StatefulInteractiveElement, Styled as _, WindowContext};
+use ui::WindowContext;
 
 use wrap_map::WrapMap;
 
@@ -104,7 +104,7 @@ pub struct DisplayMap {
     /// Regions of inlays that should be highlighted.
     inlay_highlights: InlayHighlights,
     /// A container for explicitly foldable ranges, which supersede indentation based fold range suggestions.
-    flaps: FlapMap,
+    flap_map: FlapMap,
     pub clip_at_line_ends: bool,
 }
 
@@ -126,12 +126,8 @@ impl DisplayMap {
         let (tab_map, snapshot) = TabMap::new(snapshot, tab_size);
         let (wrap_map, snapshot) = WrapMap::new(snapshot, font, font_size, wrap_width, cx);
         let block_map = BlockMap::new(snapshot, buffer_header_height, excerpt_header_height);
+        let flap_map = FlapMap::default();
         cx.observe(&wrap_map, |_, _, cx| cx.notify()).detach();
-
-        let mut flaps = FlapMap::default();
-        let snapshot = buffer.read(cx).read(cx);
-        let start = snapshot.anchor_before(0);
-        let end = snapshot.anchor_before(snapshot.max_point().min(Point::new(10, 0)));
 
         DisplayMap {
             buffer,
@@ -141,9 +137,9 @@ impl DisplayMap {
             tab_map,
             wrap_map,
             block_map,
+            flap_map,
             text_highlights: Default::default(),
             inlay_highlights: Default::default(),
-            flaps,
             clip_at_line_ends: false,
         }
     }
@@ -167,7 +163,7 @@ impl DisplayMap {
             tab_snapshot,
             wrap_snapshot,
             block_snapshot,
-            flap_snapshot: self.flaps.snapshot(),
+            flap_snapshot: self.flap_map.snapshot(),
             text_highlights: self.text_highlights.clone(),
             inlay_highlights: self.inlay_highlights.clone(),
             clip_at_line_ends: self.clip_at_line_ends,
@@ -178,14 +174,14 @@ impl DisplayMap {
         self.fold(
             other
                 .folds_in_range(0..other.buffer_snapshot.len())
-                .map(|fold| fold.range.to_offset(&other.buffer_snapshot)),
+                .map(|fold| (fold.range.to_offset(&other.buffer_snapshot), fold.text)),
             cx,
         );
     }
 
     pub fn fold<T: ToOffset>(
         &mut self,
-        ranges: impl IntoIterator<Item = Range<T>>,
+        ranges: impl IntoIterator<Item = (Range<T>, &'static str)>,
         cx: &mut ModelContext<Self>,
     ) {
         let snapshot = self.buffer.read(cx).snapshot(cx);
@@ -236,7 +232,7 @@ impl DisplayMap {
         cx: &mut ModelContext<Self>,
     ) -> Vec<FlapId> {
         let snapshot = self.buffer.read(cx).snapshot(cx);
-        self.flaps.insert(flaps, &snapshot)
+        self.flap_map.insert(flaps, &snapshot)
     }
 
     pub fn remove_flaps(
@@ -245,7 +241,7 @@ impl DisplayMap {
         cx: &mut ModelContext<Self>,
     ) {
         let snapshot = self.buffer.read(cx).snapshot(cx);
-        self.flaps.remove(flap_ids, &snapshot)
+        self.flap_map.remove(flap_ids, &snapshot)
     }
 
     pub fn insert_blocks(
@@ -873,30 +869,6 @@ impl DisplaySnapshot {
         DisplayRow(self.block_snapshot.longest_row())
     }
 
-    // pub fn fold_indicator(&self, buffer_row: MultiBufferRow) -> Option<FoldIndicator> {
-    //     if let Some(foldable_range) = self
-    //         .foldable_ranges
-    //         .query_row(buffer_row, &self.buffer_snapshot)
-    //     {
-    //         Some(FoldIndicator {
-    //             toggle: foldable_range.toggle.clone(),
-    //             folded: self.is_line_folded(buffer_row),
-    //         })
-    //     } else if self.is_line_folded(buffer_row) {
-    //         Some(FoldIndicator {
-    //             toggle: None,
-    //             folded: true,
-    //         })
-    //     } else if self.is_foldable(buffer_row) {
-    //         Some(FoldIndicator {
-    //             toggle: None,
-    //             folded: false,
-    //         })
-    //     } else {
-    //         None
-    //     }
-    // }
-
     pub fn fold_for_line(&self, buffer_row: MultiBufferRow) -> Option<FoldStatus> {
         if self.is_line_folded(buffer_row) {
             Some(FoldStatus::Folded)
@@ -931,13 +903,16 @@ impl DisplaySnapshot {
         false
     }
 
-    pub fn foldable_range(&self, buffer_row: MultiBufferRow) -> Option<Range<Point>> {
+    pub fn foldable_range(
+        &self,
+        buffer_row: MultiBufferRow,
+    ) -> Option<(Range<Point>, &'static str)> {
         let start = MultiBufferPoint::new(buffer_row.0, self.buffer_snapshot.line_len(buffer_row));
         if let Some(flap) = self
             .flap_snapshot
             .query_row(buffer_row, &self.buffer_snapshot)
         {
-            Some(flap.range.to_point(&self.buffer_snapshot))
+            Some((flap.range.to_point(&self.buffer_snapshot), ""))
         } else if self.starts_indent(MultiBufferRow(start.row))
             && !self.is_line_folded(MultiBufferRow(start.row))
         {
@@ -957,7 +932,7 @@ impl DisplaySnapshot {
                 }
             }
             let end = end.unwrap_or(max_point);
-            Some(start..end)
+            Some((start..end, "⋯"))
         } else {
             None
         }
@@ -1234,7 +1209,7 @@ pub mod tests {
                     } else {
                         log::info!("folding ranges: {:?}", ranges);
                         map.update(cx, |map, cx| {
-                            map.fold(ranges, cx);
+                            map.fold(ranges.into_iter().map(|range| (range, "⋯")), cx);
                         });
                     }
                 }
@@ -1582,7 +1557,10 @@ pub mod tests {
 
         map.update(cx, |map, cx| {
             map.fold(
-                vec![MultiBufferPoint::new(0, 6)..MultiBufferPoint::new(3, 2)],
+                vec![(
+                    MultiBufferPoint::new(0, 6)..MultiBufferPoint::new(3, 2),
+                    "⋯",
+                )],
                 cx,
             )
         });
@@ -1664,7 +1642,10 @@ pub mod tests {
 
         map.update(cx, |map, cx| {
             map.fold(
-                vec![MultiBufferPoint::new(0, 6)..MultiBufferPoint::new(3, 2)],
+                vec![(
+                    MultiBufferPoint::new(0, 6)..MultiBufferPoint::new(3, 2),
+                    "⋯",
+                )],
                 cx,
             )
         });
@@ -1837,7 +1818,7 @@ pub mod tests {
             let range =
                 snapshot.anchor_before(Point::new(2, 0))..snapshot.anchor_after(Point::new(3, 3));
 
-            map.flaps.insert(
+            map.flap_map.insert(
                 [Flap::new(range, |_row, _status, _toggle, _cx| div())],
                 &map.buffer.read(cx).snapshot(cx),
             );
