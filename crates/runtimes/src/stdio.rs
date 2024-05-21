@@ -156,34 +156,35 @@ impl TerminalHandler {
 
         self.current_text_run = text_run;
     }
+
+    fn process_carriage_return(&mut self) {
+        self.buffer.retain(|b| b != '\r');
+        self.add_text('\r');
+    }
 }
 
 impl Perform for TerminalHandler {
     fn print(&mut self, c: char) {
-        // println!("[print] c={:?}", c);
         self.add_text(c);
     }
 
     fn execute(&mut self, byte: u8) {
-        // println!("[execute] {:02x}", byte);
         match byte {
             b'\n' => {
                 self.add_text('\n');
             }
             b'\r' => {
-                // TODO: get rid of text runs up to the cursor position
-                self.buffer.retain(|b| b != '\r');
-                self.add_text('\r');
+                self.process_carriage_return();
             }
             _ => {}
         }
     }
 
-    fn hook(&mut self, params: &Params, intermediates: &[u8], ignore: bool, c: char) {
+    fn hook(&mut self, _params: &Params, _intermediates: &[u8], _ignore: bool, _c: char) {
         // noop
     }
 
-    fn put(&mut self, byte: u8) {
+    fn put(&mut self, _byte: u8) {
         // noop
     }
 
@@ -191,7 +192,7 @@ impl Perform for TerminalHandler {
         // noop
     }
 
-    fn osc_dispatch(&mut self, params: &[&[u8]], bell_terminated: bool) {
+    fn osc_dispatch(&mut self, _params: &[&[u8]], _bell_terminated: bool) {
         // noop
     }
 
@@ -199,7 +200,7 @@ impl Perform for TerminalHandler {
         &mut self,
         params: &alacritty_terminal::vte::Params,
         intermediates: &[u8],
-        ignore: bool,
+        _ignore: bool,
         action: char,
     ) {
         let mut params_iter = params.iter();
@@ -221,11 +222,12 @@ impl Perform for TerminalHandler {
         }
     }
 
-    fn esc_dispatch(&mut self, intermediates: &[u8], ignore: bool, byte: u8) {
+    fn esc_dispatch(&mut self, _intermediates: &[u8], _ignore: bool, _byte: u8) {
         // noop
     }
 }
 
+// The following was pulled from vte::ansi
 #[inline]
 fn attrs_from_sgr_parameters(params: &mut ParamsIter<'_>) -> Vec<Option<Attr>> {
     let mut attrs = Vec::with_capacity(params.size_hint().0);
