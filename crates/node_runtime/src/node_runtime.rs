@@ -225,11 +225,14 @@ impl NodeRuntime for RealNodeRuntime {
             let installation_path = self.install_if_needed().await?;
 
             let node_binary = installation_path.join(NODE_PATH);
+            // std::env::set_var(key, value);
             let npm_file = installation_path.join(NPM_PATH);
             let mut env_path = node_binary
                 .parent()
                 .expect("invalid node binary path")
                 .to_path_buf();
+            println!("============================================");
+            println!("  Env path: {}", env_path.display());
 
             if let Some(existing_path) = std::env::var_os("PATH") {
                 if !existing_path.is_empty() {
@@ -245,6 +248,8 @@ impl NodeRuntime for RealNodeRuntime {
             if smol::fs::metadata(&npm_file).await.is_err() {
                 return Err(anyhow!("missing npm file"));
             }
+            println!("============================================");
+            println!("  Env path: {}", env_path.display());
 
             let mut command = Command::new(node_binary);
             command.env_clear();
