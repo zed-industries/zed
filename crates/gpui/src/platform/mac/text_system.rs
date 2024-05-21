@@ -140,7 +140,7 @@ impl PlatformTextSystem for MacTextSystem {
             let candidates = if let Some(font_ids) = lock.font_ids_by_font_key.get(&font_key) {
                 font_ids.as_slice()
             } else {
-                let font_ids = lock.load_family(&font.family, &font.features)?;
+                let font_ids = lock.load_family(&font.family, &font.features, font.fallbacks)?;
                 lock.font_ids_by_font_key.insert(font_key.clone(), font_ids);
                 lock.font_ids_by_font_key[&font_key].as_ref()
             };
@@ -235,6 +235,7 @@ impl MacTextSystemState {
         &mut self,
         name: &str,
         features: &FontFeatures,
+        fallbacks: FontFallbacks,
     ) -> Result<SmallVec<[FontId; 4]>> {
         let name = if name == ".SystemUIFont" {
             ".AppleSystemUIFont"
@@ -315,11 +316,7 @@ impl MacTextSystemState {
                 .insert(postscript_name.clone(), font_id);
             self.postscript_names_by_font_id
                 .insert(font_id, postscript_name);
-            let font_info = FontInfo {
-                font,
-                // TODO:
-                fallbacks: FontFallbacks::None,
-            };
+            let font_info = FontInfo { font, fallbacks };
             self.fonts.push(font_info);
         }
         Ok(font_ids)
@@ -347,7 +344,7 @@ impl MacTextSystemState {
                 font: font_kit::font::Font::from_core_graphics_font(
                     requested_font.copy_to_CGFont(),
                 ),
-                // TODO:
+                // fallbacks use system font fallbacks
                 fallbacks: FontFallbacks::None,
             };
             self.fonts.push(font_info);
