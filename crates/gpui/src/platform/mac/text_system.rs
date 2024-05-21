@@ -1,6 +1,6 @@
 use crate::{
-    point, px, size, Bounds, DevicePixels, Font, FontFeatures, FontId, FontMetrics, FontRun,
-    FontStyle, FontWeight, GlyphId, LineLayout, Pixels, PlatformTextSystem, Point,
+    point, px, size, Bounds, DevicePixels, Font, FontFallbacks, FontFeatures, FontId, FontMetrics,
+    FontRun, FontStyle, FontWeight, GlyphId, LineLayout, Pixels, PlatformTextSystem, Point,
     RenderGlyphParams, Result, ShapedGlyph, ShapedRun, SharedString, Size, SUBPIXEL_VARIANTS,
 };
 use anyhow::anyhow;
@@ -59,11 +59,18 @@ struct FontKey {
 struct MacTextSystemState {
     memory_source: MemSource,
     system_source: SystemSource,
-    fonts: Vec<FontKitFont>,
+    fonts: Vec<FontInfo>,
+    ui_font_fallbacks: Vec<String>,
+    buffer_font_fallbacks: Vec<String>,
     font_selections: HashMap<Font, FontId>,
     font_ids_by_postscript_name: HashMap<String, FontId>,
     font_ids_by_font_key: HashMap<FontKey, SmallVec<[FontId; 4]>>,
     postscript_names_by_font_id: HashMap<FontId, String>,
+}
+
+struct FontInfo {
+    font: FontKitFont,
+    fallbacks: FontFallbacks,
 }
 
 impl MacTextSystem {
@@ -72,6 +79,8 @@ impl MacTextSystem {
             memory_source: MemSource::empty(),
             system_source: SystemSource::new(),
             fonts: Vec::new(),
+            ui_font_fallbacks: Vec::new(),
+            buffer_font_fallbacks: Vec::new(),
             font_selections: HashMap::default(),
             font_ids_by_postscript_name: HashMap::default(),
             font_ids_by_font_key: HashMap::default(),
@@ -212,7 +221,12 @@ impl MacTextSystemState {
         Ok(())
     }
 
-    fn set_fallbacks(&self, fallbacks: &[String], is_ui_font: bool) -> Result<()> {
+    fn set_fallbacks(&mut self, fallbacks: &[String], is_ui_font: bool) -> Result<()> {
+        if is_ui_font {
+            self.ui_font_fallbacks = fallbacks.to_vec();
+        } else {
+            self.buffer_font_fallbacks = fallbacks.to_vec();
+        }
         Ok(())
     }
 
