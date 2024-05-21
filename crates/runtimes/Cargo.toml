@@ -26,6 +26,7 @@ language.workspace = true
 languages.workspace = true
 log.workspace = true
 postage.workspace = true
+project.workspace = true
 runtimelib = { path = "../../../../runtimed/runtimed/runtimelib"}
 # runtimelib = "0.9.0"
 serde.workspace = true

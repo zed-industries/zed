@@ -17,6 +17,7 @@ use ui::prelude::*;
 use util::ResultExt;
 use workspace::Workspace;
 
+mod kernelspecs;
 mod outputs;
 mod stdio;
 
@@ -138,7 +139,7 @@ impl DocumentClient {
             async move {
                 while let Some(execution) = execution_request_rx.next().await {
                     let mut message: JupyterMessage = execution.request.into();
-                    message.header.msg_id = execution.execution_id.0.clone();
+                    message.header.msg_id.clone_from(&execution.execution_id.0);
 
                     executions
                         .lock()
@@ -282,7 +283,7 @@ impl RuntimeManager {
         let code_snippet = workspace
             .active_item(cx)
             .and_then(|item| item.act_as::<Editor>(cx))
-            .and_then(|editor_view| {
+            .map(|editor_view| {
                 let editor = editor_view.read(cx);
                 let selection = editor.selections.newest::<usize>(cx);
                 let buffer = editor.buffer().read(cx).snapshot(cx);
@@ -331,7 +332,7 @@ impl RuntimeManager {
                     None
                 };
 
-                Some((selected_text, language_name, anchor, editor_view))
+                (selected_text, language_name, anchor, editor_view)
             });
 
         if let Some((code, language_name, anchor, editor)) = code_snippet {
