@@ -151,8 +151,8 @@ pub enum OpenedBufferEvent {
 ///
 /// Can be either local (for the project opened on the same host) or remote.(for collab projects, browsed by multiple remote users).
 pub struct Project {
+    worktrees_reordered: bool,
     worktrees: Vec<WorktreeHandle>,
-    worktree_order: HashMap<WorktreeId, usize>,
     active_entry: Option<ProjectEntryId>,
     buffer_ordered_messages_tx: mpsc::UnboundedSender<BufferOrderedMessage>,
     pending_language_server_update: Option<BufferOrderedMessage>,
@@ -688,7 +688,7 @@ impl Project {
 
             Self {
                 worktrees: Vec::new(),
-                worktree_order: HashMap::default(),
+                worktrees_reordered: false,
                 buffer_ordered_messages_tx: tx,
                 flush_language_server_update: None,
                 pending_language_server_update: None,
@@ -821,7 +821,7 @@ impl Project {
                 .detach();
             let mut this = Self {
                 worktrees: Vec::new(),
-                worktree_order: HashMap::default(),
+                worktrees_reordered: false,
                 buffer_ordered_messages_tx: tx,
                 pending_language_server_update: None,
                 flush_language_server_update: None,
@@ -1292,73 +1292,18 @@ impl Project {
             .filter_map(move |worktree| worktree.upgrade())
     }
 
-    /// Collect all user-visible worktrees, ordered using the worktree_order field,
-    /// the ones that appear in the project panel
+    /// Collect all user-visible worktrees, the ones that appear in the project panel.
     pub fn visible_worktrees<'a>(
         &'a self,
         cx: &'a AppContext,
     ) -> impl 'a + DoubleEndedIterator<Item = Model<Worktree>> {
         self.worktrees()
             .filter(|worktree| worktree.read(cx).is_visible())
-            .sorted_by_key(|worktree| {
-                self.worktree_order
-                    .get(&worktree.read(cx).id())
-                    .unwrap_or(&usize::max_value())
-            })
     }
 
     pub fn worktree_root_names<'a>(&'a self, cx: &'a AppContext) -> impl Iterator<Item = &'a str> {
         self.visible_worktrees(cx)
             .map(|tree| tree.read(cx).root_name())
-    }
-
-    // Returns the indexes of the worktrees in the order they appear in the project panel
-    //
-    // given the local paths [/one, /two, /three]
-    // which map to worktrees with ids [11, 22, 33]
-    // and the order of the worktrees in the project panel is [33, 11, 22]
-    // stored in the hashmap worktree_order as [33, 0], [11, 1], [22, 2]
-    // the function will return [2, 0, 1]
-    // if any worktree is not in the worktree_order hashmap, it will be placed at the end
-    // of the list
-    pub fn worktree_order_indexes<'a>(
-        &'a self,
-        cx: &'a AppContext,
-    ) -> impl 'a + Iterator<Item = usize> {
-        self.worktrees()
-            .enumerate()
-            .sorted_by_key(|(_, worktree)| {
-                self.worktree_order
-                    .get(&worktree.read(cx).id())
-                    .unwrap_or(&usize::max_value())
-            })
-            .map(|(index, _)| index)
-    }
-
-    // reverse of worktree_order_indexes
-    pub fn set_worktree_order_from_indexes(
-        &mut self,
-        indexes: Vec<usize>,
-        cx: &mut ModelContext<Self>,
-    ) {
-        self.worktree_order = indexes
-            .iter()
-            .enumerate()
-            .filter_map(|(pos_in_indexes, pos_in_worktrees)| {
-                let worktree_id = self
-                    .worktrees
-                    .get(*pos_in_worktrees)
-                    .and_then(|wt| wt.upgrade())
-                    .map(|wt| wt.read(cx).id());
-                match worktree_id {
-                    Some(id) => Some((id, pos_in_indexes)),
-                    None => None,
-                }
-            })
-            .collect();
-
-        cx.emit(Event::WorktreeOrderChanged);
-        self.metadata_changed(cx);
     }
 
     pub fn worktree_for_id(&self, id: WorktreeId, cx: &AppContext) -> Option<Model<Worktree>> {
@@ -7132,27 +7077,61 @@ impl Project {
 
     pub fn move_worktree(
         &mut self,
-        worktree: WorktreeId,
+        source: WorktreeId,
         destination: WorktreeId,
         cx: &mut ModelContext<'_, Self>,
-    ) -> Task<Result<()>> {
-        let Some(worktree_idx) = self.worktree_order.get(&worktree).copied() else {
-            return Task::ready(Err(anyhow!("Worktree not found")));
-        };
+    ) -> Result<()> {
+        if source == destination {
+            return Ok(());
+        }
 
-        let Some(destination_idx) = self.worktree_order.get(&destination).copied() else {
-            return Task::ready(Err(anyhow!("Destination worktree not found")));
-        };
+        let mut source_index = None;
+        let mut destination_index = None;
+        for (i, worktree) in self.worktrees.iter().enumerate() {
+            if let Some(worktree) = worktree.upgrade() {
+                let worktree_id = worktree.read(cx).id();
+                if worktree_id == source {
+                    source_index = Some(i);
+                    if destination_index.is_some() {
+                        break;
+                    }
+                } else if worktree_id == destination {
+                    destination_index = Some(i);
+                    if source_index.is_some() {
+                        break;
+                    }
+                }
+            }
+        }
+        let source_index =
+            source_index.with_context(|| format!("Missing worktree for id {source}"))?;
+        let destination_index =
+            destination_index.with_context(|| format!("Missing worktree for id {destination}"))?;
 
-        let mut indexes = self.worktree_order_indexes(cx).collect::<Vec<_>>();
-        let removed = indexes.remove(worktree_idx);
-        indexes.insert(destination_idx, removed);
-        self.set_worktree_order_from_indexes(indexes, cx);
+        match source_index.cmp(&destination_index) {
+            Ordering::Equal => return Ok(()),
+            Ordering::Less => {
+                let worktree_to_move = self.worktrees.remove(source_index);
+                // `destination_index` is offset by one after the removal,
+                // so we insert AFTER the destination element
+                self.worktrees.insert(destination_index, worktree_to_move);
+            }
+            Ordering::Greater => {
+                // replicate the other match arm's behavior and insert the element after the destination
+                let after_destination_index = destination_index + 1;
+                if after_destination_index == source_index {
+                    return Ok(());
+                }
+                let worktree_to_move = self.worktrees.remove(source_index);
+                self.worktrees
+                    .insert(after_destination_index, worktree_to_move);
+            }
+        }
 
+        self.worktrees_reordered = true;
         cx.emit(Event::WorktreeOrderChanged);
         self.metadata_changed(cx);
-
-        Task::ready(Ok(()))
+        Ok(())
     }
 
     pub fn find_or_create_local_worktree(
@@ -7324,8 +7303,6 @@ impl Project {
             }
         });
 
-        self.worktree_order.remove(&id_to_remove);
-
         self.metadata_changed(cx);
     }
 
@@ -7365,22 +7342,24 @@ impl Project {
             let worktree = worktree.read(cx);
             self.is_shared() || worktree.is_visible() || worktree.is_remote()
         };
-        if push_strong_handle {
-            self.worktrees
-                .push(WorktreeHandle::Strong(worktree.clone()));
+        let handle = if push_strong_handle {
+            WorktreeHandle::Strong(worktree.clone())
         } else {
-            self.worktrees
-                .push(WorktreeHandle::Weak(worktree.downgrade()));
+            WorktreeHandle::Weak(worktree.downgrade())
+        };
+        if self.worktrees_reordered {
+            self.worktrees.push(handle);
+        } else {
+            let i = match self
+                .worktrees
+                .binary_search_by_key(&Some(worktree.read(cx).abs_path()), |other| {
+                    other.upgrade().map(|worktree| worktree.read(cx).abs_path())
+                }) {
+                Ok(i) => i,
+                Err(i) => i,
+            };
+            self.worktrees.insert(i, handle);
         }
-
-        self.worktrees.sort_by(|a, b| {
-            a.upgrade()
-                .map(|a| a.read(cx).abs_path())
-                .cmp(&b.upgrade().map(|b| b.read(cx).abs_path()))
-        });
-
-        self.worktree_order
-            .insert(worktree.read(cx).id(), self.worktree_order.len());
 
         let handle_id = worktree.entity_id();
         cx.observe_release(worktree, move |this, worktree, cx| {

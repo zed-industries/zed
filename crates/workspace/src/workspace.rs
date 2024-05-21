@@ -46,13 +46,10 @@ use node_runtime::NodeRuntime;
 use notifications::{simple_message_notification::MessageNotification, NotificationHandle};
 pub use pane::*;
 pub use pane_group::*;
+use persistence::{model::SerializedWorkspace, SerializedWindowBounds, DB};
 pub use persistence::{
     model::{ItemId, LocalPaths, SerializedDevServerProject, SerializedWorkspaceLocation},
     WorkspaceDb, DB as WORKSPACE_DB,
-};
-use persistence::{
-    model::{LocalPathsOrder, SerializedWorkspace},
-    SerializedWindowBounds, DB,
 };
 use postage::stream::Stream;
 use project::{Project, ProjectEntryId, ProjectPath, Worktree, WorktreeId};
@@ -909,18 +906,6 @@ impl Workspace {
 
             let paths_to_open = Arc::new(abs_paths);
 
-            let paths_order = serialized_workspace
-                .as_ref()
-                .map(|ws| ws.location.clone())
-                .and_then(|loc| match loc {
-                    SerializedWorkspaceLocation::Local(_, order) => Some(order),
-                    _ => None,
-                })
-                .unwrap_or(LocalPathsOrder::default_for_length(paths_to_open.len()))
-                .order()
-                .as_ref()
-                .clone();
-
             // Get project paths for all of the abs_paths
             let mut worktree_roots: HashSet<Arc<Path>> = Default::default();
             let mut project_paths: Vec<(PathBuf, Option<ProjectPath>)> =
@@ -1002,12 +987,6 @@ impl Workspace {
                 })?
                 .await
                 .unwrap_or_default();
-
-            project_handle
-                .update(&mut cx, |project, cx| {
-                    project.set_worktree_order_from_indexes(paths_order, cx);
-                })
-                .log_err();
 
             window
                 .update(&mut cx, |_, cx| cx.activate_window())
@@ -3524,16 +3503,6 @@ impl Workspace {
         }
     }
 
-    fn local_paths_order(&self, cx: &AppContext) -> Option<LocalPathsOrder> {
-        let project = self.project().read(cx);
-
-        if project.is_local() {
-            Some(LocalPathsOrder::new(project.worktree_order_indexes(cx)))
-        } else {
-            None
-        }
-    }
-
     fn remove_panes(&mut self, member: Member, cx: &mut ViewContext<Workspace>) {
         match member {
             Member::Axis(PaneAxis { members, .. }) => {
@@ -3672,15 +3641,10 @@ impl Workspace {
         }
 
         let location = if let Some(local_paths) = self.local_paths(cx) {
-            match (local_paths.paths().is_empty(), self.local_paths_order(cx)) {
-                (false, Some(order)) => {
-                    Some(SerializedWorkspaceLocation::Local(local_paths, order))
-                }
-                (false, None) => {
-                    let order = LocalPathsOrder::default_for_paths(&local_paths);
-                    Some(SerializedWorkspaceLocation::Local(local_paths, order))
-                }
-                (true, _) => None,
+            if !local_paths.paths().is_empty() {
+                Some(SerializedWorkspaceLocation::Local(local_paths))
+            } else {
+                None
             }
         } else if let Some(dev_server_project_id) = self.project().read(cx).dev_server_project_id()
         {
