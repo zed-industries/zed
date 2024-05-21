@@ -704,6 +704,20 @@ pub struct Font {
 
     /// The font style.
     pub style: FontStyle,
+
+    /// TODO:
+    pub fallbacks: FontFallbacks,
+}
+
+/// TODO:
+#[derive(Clone, Debug, Eq, PartialEq, Hash)]
+pub enum FontFallbacks {
+    /// TODO:
+    UiFontFallbacks,
+    /// TODO:
+    BufferFontFallbacks,
+    /// TODO:
+    None,
 }
 
 /// Get a [`Font`] for a given name.
@@ -713,6 +727,7 @@ pub fn font(family: impl Into<SharedString>) -> Font {
         features: FontFeatures::default(),
         weight: FontWeight::default(),
         style: FontStyle::default(),
+        fallbacks: FontFallbacks::None,
     }
 }
 
