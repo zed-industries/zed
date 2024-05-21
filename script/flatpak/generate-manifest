@@ -13,34 +13,72 @@ if [ "$#" -ne 2 ]; then
     exit
 fi
 
-channel=$1
-method=$2
-
-declare -A app_id_lookup=( ["dev"]="-Dev" ["nightly"]="-Nightly" ["preview"]="-Preview" ["stable"]="")
-app_id="dev.zed.Zed${app_id_lookup[$channel]}"
-
-if [[ -z "$app_id" ]]; then
-    echo "Invalid release channel: '$channel'"
-    echo "Possible values: [dev, nightly, preview, stable]"
+if [[ $2 ]]; then
+    method=$2
+else
+    echo "Please supply packaging method. See 'docs/src/development/linux.md' for details."
+    echo "Possible values: ['build', 'copy']."
     exit
 fi
 
-manifest_path="../../$app_id.json"
-cp "../../crates/zed/resources/flatpak/manifest-template.json" "$manifest_path"
+if [[ "$channel" == "dev" ]]; then
+    app_id="dev.zed.Zed-Dev"
+    app_name="Zed Devel"
+    icon_name="app-icon-dev.png"
+    branding_light="#99c1f1"
+    branding_dark="#1a5fb4"
+elif [[ "$channel" == "nightly" ]]; then
+    app_id="dev.zed.Zed-Nightly"
+    app_name="Zed Nightly"
+    icon_name="app-icon-nightly.png"
+    branding_light="#e9aa6a"
+    branding_dark="#1a5fb4"
+elif [[ "$channel" == "preview" ]]; then
+    app_id="dev.zed.Zed-Preview"
+    app_name="Zed Preview"
+    icon_name="app-icon-preview.png"
+    branding_light="#99c1f1"
+    branding_dark="#9c6b32"
+elif [[ "$channel" == "stable" ]]; then
+    app_id="dev.zed.Zed"
+    app_name="Zed"
+    icon_name="app-icon.png"
+    branding_light="#99c1f1"
+    branding_dark="#1a5fb4"
+else
+    echo "Invalid channel '$channel'"
+    echo "Possible values: ['dev', 'nightly', 'preview', 'stable']"
+    exit
+fi
 
+indent="                "
 if [[ "$method" == "build" ]]; then
-    copy_build="false"
+    app_bin_cmd="\"cargo --offline fetch --manifest-path Cargo.toml\",\n${indent}\"cargo --offline build --release\",\n${indent}\"install -Dm755 ./target/release/Zed /app/bin/zed-app\""
+    cli_bin_cmd="\"cargo --offline fetch --manifest-path Cargo.toml\",\n${indent}\"cargo --offline build --release --package cli\",\n${indent}\"install -Dm755 ./target/release/cli /app/bin/zed\","
+    extra_srcs=",\n${indent}\"crates/zed/resources/flatpak/flatpak-cargo-sources.json\""
 elif [[ "$method" == "copy" ]]; then
-    copy_build="true"
-    sed -i "s|,\n                \"crates/zed/resources/flatpak/flatpak-cargo-sources.json\"||g" "${manifest_path}"
+    echo "Note: When using copy mode the 'crates/zed/RELEASE_CHANNEL' used to compile to 'target' should be '${channel}' for app-icons to work"
+
+    app_bin_cmd="\"install -Dm755 ./target/release/Zed /app/bin/zed-app\""
+    cli_bin_cmd="\"install -Dm755 ./target/release/cli /app/bin/zed\","
+    extra_srcs=""
 else
     echo "Invalid packaging method '$method'."
     echo "Possible values: ['build', 'copy']."
     exit
 fi
 
-sed -i "s|@app_id@|$app_id|g" "$manifest_path"
-sed -i "s|@channel@|$channel|g" "$manifest_path"
-sed -i "s|@copy_build@|$copy_build|g" "$manifest_path"
+manifest_path="../../${app_id}.json"
+cp "../../crates/zed/resources/flatpak/manifest-template.json" "${manifest_path}"
 
-echo "Generated $app_id.json"
+sed -i "s|@app_id@|$app_id|g" "${manifest_path}"
+sed -i "s|@app_name@|$app_name|g" "${manifest_path}"
+sed -i "s|@channel@|$channel|g" "${manifest_path}"
+
+sed -i "s|@icon_name@|$icon_name|g" "${manifest_path}"
+sed -i "s|@branding_light@|$branding_light|g" "${manifest_path}"
+sed -i "s|@branding_dark@|$branding_dark|g" "${manifest_path}"
+
+sed -i "s|@app_bin_cmd@|$app_bin_cmd|g" "${manifest_path}"
+sed -i "s|@cli_bin_cmd@|$cli_bin_cmd|g" "${manifest_path}"
+sed -i "s|@extra_srcs@|$extra_srcs|g" "${manifest_path}"

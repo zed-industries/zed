@@ -15,27 +15,53 @@
     },
     "modules": [
         {
-            "name": "zed",
-            "buildsystem": "meson",
+            "name": "zed-app",
+            "buildsystem": "simple",
             "build-options": {
                 "env": {
-                    "CARGO_HOME": "/run/build/zed/cargo"
+                    "CARGO_HOME": "/run/build/zed-app/cargo"
                 }
             },
-            "config-opts": [
-                "-Dchannel=@channel@",
-                "-Dcopy_build=@copy_build@"
+            "build-commands": [
+                "echo @channel@ > crates/zed/RELEASE_CHANNEL",
+                @app_bin_cmd@
             ],
             "sources": [
                 {
                     "type": "dir",
                     "path": "."
-                },
+                }@extra_srcs@
+            ]
+        },
+        {
+            "name": "zed",
+            "buildsystem": "simple",
+            "build-options": {
+                "env": {
+                    "CARGO_HOME": "/run/build/zed/cargo"
+                }
+            },
+            "build-commands": [
+                "echo @channel@ > crates/zed/RELEASE_CHANNEL",
+                @cli_bin_cmd@
+                "install -Dm644 crates/zed/resources/zed.desktop /app/share/applications/${FLATPAK_ID}.desktop",
+                "install -Dm644 crates/zed/resources/flatpak/template.metainfo.xml /app/share/metainfo/${FLATPAK_ID}.metainfo.xml",
+                "install -Dm644 crates/zed/resources/@icon_name@ /app/share/icons/hicolor/512x512/apps/${FLATPAK_ID}.png",
+                "sed -i 's|Name=Zed|Name=@app_name@|g' /app/share/applications/${FLATPAK_ID}.desktop",
+                "sed -i 's|^Exec=zed|Exec=zed --foreground|g' /app/share/applications/${FLATPAK_ID}.desktop",
+                "sed -i 's|StartupNotify=true|StartupNotify=false|g' /app/share/applications/${FLATPAK_ID}.desktop",
+                "sed -i 's|Icon=zed|Icon=@app_id@|g' /app/share/applications/${FLATPAK_ID}.desktop",
+                "sed -i 's|app_id|@app_id@|g' /app/share/metainfo/${FLATPAK_ID}.metainfo.xml",
+                "sed -i 's|app_name|@app_name@|g' /app/share/metainfo/${FLATPAK_ID}.metainfo.xml",
+                "sed -i 's|branding_light|@branding_light@|g' /app/share/metainfo/${FLATPAK_ID}.metainfo.xml",
+                "sed -i 's|branding_dark|@branding_dark@|g' /app/share/metainfo/${FLATPAK_ID}.metainfo.xml",
+                "sed -i -e '/release_info/{r crates/zed/resources/flatpak/release-info/@channel@' -e 'd}' /app/share/metainfo/${FLATPAK_ID}.metainfo.xml"
+            ],
+            "sources": [
                 {
                     "type": "dir",
-                    "path": "script/flatpak/build"
-                },
-                "crates/zed/resources/flatpak/flatpak-cargo-sources.json"
+                    "path": "."
+                }@extra_srcs@
             ]
         }
     ]
