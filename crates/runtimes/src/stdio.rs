@@ -158,8 +158,31 @@ impl TerminalHandler {
     }
 
     fn process_carriage_return(&mut self) {
-        self.buffer.retain(|b| b != '\r');
-        self.add_text('\r');
+        // Find last carriage return's position
+        let last_cr = self.buffer.rfind('\r').unwrap_or(0);
+        self.buffer = self.buffer.chars().take(last_cr).collect();
+
+        // First work through our current text run
+        let mut total_len = self.current_text_run.len;
+        if total_len > last_cr {
+            // We are in the current text run
+            self.current_text_run.len = self.current_text_run.len - last_cr;
+        } else {
+            let mut last_cr_run = 0;
+            // Find the last run before the last carriage return
+            for (i, run) in self.text_runs.iter().enumerate() {
+                total_len += run.len;
+                if total_len > last_cr {
+                    last_cr_run = i;
+                    break;
+                }
+            }
+            self.text_runs = self.text_runs[..last_cr_run].to_vec();
+            self.current_text_run = self.text_runs.pop().unwrap_or(AnsiTextRun::default());
+        }
+
+        self.buffer.push('\r');
+        self.current_text_run.len += 1;
     }
 }
 
