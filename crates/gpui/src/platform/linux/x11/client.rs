@@ -1,6 +1,7 @@
 use std::cell::RefCell;
 use std::ops::Deref;
 use std::rc::{Rc, Weak};
+use std::sync::OnceLock;
 use std::time::{Duration, Instant};
 
 use calloop::generic::{FdWrapper, Generic};
@@ -8,6 +9,7 @@ use calloop::{EventLoop, LoopHandle, RegistrationToken};
 use collections::HashMap;
 use copypasta::x11_clipboard::{Clipboard, Primary, X11ClipboardContext};
 use copypasta::ClipboardProvider;
+use parking_lot::Mutex;
 
 use util::ResultExt;
 use x11rb::connection::{Connection, RequestConnection};
@@ -24,12 +26,8 @@ use xkbc::x11::ffi::{XKB_X11_MIN_MAJOR_XKB_VERSION, XKB_X11_MIN_MINOR_XKB_VERSIO
 use xkbcommon::xkb as xkbc;
 
 use crate::platform::linux::LinuxClient;
-use crate::platform::{LinuxCommon, PlatformWindow};
-use crate::{
-    modifiers_from_xinput_info, point, px, AnyWindowHandle, Bounds, CursorStyle, DisplayId,
-    Modifiers, ModifiersChangedEvent, Pixels, PlatformDisplay, PlatformInput, Point, ScrollDelta,
-    Size, TouchPhase, WindowParams, X11Window,
-};
+use crate::platform::{LinuxCommon, PlatformWindow, WaylandClientState};
+use crate::{modifiers_from_xinput_info, point, px, AnyWindowHandle, Bounds, CursorStyle, DisplayId, Modifiers, ModifiersChangedEvent, Pixels, PlatformDisplay, PlatformInput, Point, ScrollDelta, Size, TouchPhase, WindowParams, X11Window, WindowAppearance, ForegroundExecutor};
 
 use super::{
     super::{open_uri_internal, SCROLL_LINES},
@@ -38,6 +36,7 @@ use super::{
 use super::{button_from_mask, button_of_key, modifiers_from_state};
 use crate::platform::linux::is_within_click_distance;
 use crate::platform::linux::platform::DOUBLE_CLICK_INTERVAL;
+use crate::platform::linux::xdg_desktop_portal::init_portal_listener;
 
 pub(crate) struct WindowRef {
     window: X11WindowStatePtr,
@@ -110,7 +109,7 @@ impl X11Client {
     pub(crate) fn new() -> Self {
         let event_loop = EventLoop::try_new().unwrap();
 
-        let (common, main_receiver) = LinuxCommon::new(event_loop.get_signal());
+        let (common, main_receiver, appearance) = LinuxCommon::new(event_loop.get_signal());
 
         let handle = event_loop.handle();
 
@@ -249,7 +248,7 @@ impl X11Client {
             )
             .expect("Failed to initialize x11 event source");
 
-        X11Client(Rc::new(RefCell::new(X11ClientState {
+        let state = Rc::new(RefCell::new(X11ClientState {
             event_loop: Some(event_loop),
             loop_handle: handle,
             common,
@@ -276,7 +275,29 @@ impl X11Client {
 
             clipboard,
             primary,
-        })))
+        }));
+
+        Self::setup_appearance_listener(
+            Rc::downgrade(&state),
+            &state.borrow().common.foreground_executor,
+            appearance
+        );
+
+        X11Client(state)
+    }
+
+    fn setup_appearance_listener(
+        state_ptr: Weak<RefCell<X11ClientState>>,
+        executor: &ForegroundExecutor,
+        appearance: Rc<Mutex<WindowAppearance>>,
+    ) {
+        init_portal_listener(executor, appearance, Box::new(move || {
+            if let Some(state) = state_ptr.upgrade() {
+                for (_, window) in &state.borrow().windows {
+                    window.appearance_changed()
+                }
+            }
+        }));
     }
 
     fn get_window(&self, win: xproto::Window) -> Option<X11WindowStatePtr> {
@@ -606,7 +627,7 @@ impl LinuxClient for X11Client {
             x_window,
             &state.atoms,
             state.scale_factor,
-            state.common.appearance.clone(),
+            self.0.borrow().common.appearance.clone()
         );
 
         let screen_resources = state

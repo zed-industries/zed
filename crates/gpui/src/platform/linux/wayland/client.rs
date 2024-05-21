@@ -14,6 +14,7 @@ use collections::HashMap;
 use copypasta::wayland_clipboard::{create_clipboards_from_external, Clipboard, Primary};
 use copypasta::ClipboardProvider;
 use filedescriptor::Pipe;
+use parking_lot::Mutex;
 use smallvec::SmallVec;
 use util::ResultExt;
 use wayland_backend::client::ObjectId;
@@ -58,9 +59,10 @@ use crate::platform::linux::is_within_click_distance;
 use crate::platform::linux::wayland::cursor::Cursor;
 use crate::platform::linux::wayland::serial::{SerialKind, SerialTracker};
 use crate::platform::linux::wayland::window::WaylandWindow;
+use crate::platform::linux::xdg_desktop_portal::init_portal_listener;
 use crate::platform::linux::LinuxClient;
 use crate::platform::PlatformWindow;
-use crate::{point, px, FileDropEvent, ForegroundExecutor, MouseExitEvent, SCROLL_LINES};
+use crate::{point, px, FileDropEvent, ForegroundExecutor, MouseExitEvent, SCROLL_LINES, WindowAppearance};
 use crate::{
     AnyWindowHandle, CursorStyle, DisplayId, KeyDownEvent, KeyUpEvent, Keystroke, Modifiers,
     ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent,
@@ -301,7 +303,7 @@ impl WaylandClient {
 
         let event_loop = EventLoop::<WaylandClientStatePtr>::try_new().unwrap();
 
-        let (common, main_receiver) = LinuxCommon::new(event_loop.get_signal());
+        let (common, main_receiver, appearance) = LinuxCommon::new(event_loop.get_signal());
 
         let handle = event_loop.handle();
         handle.insert_source(main_receiver, |event, _, _: &mut WaylandClientStatePtr| {
@@ -384,7 +386,27 @@ impl WaylandClient {
 
         WaylandSource::new(conn, event_queue).insert(handle);
 
+        Self::setup_appearance_listener(
+            Rc::downgrade(&state),
+            &state.borrow().common.foreground_executor,
+            appearance,
+        );
+
         Self(state)
+    }
+
+    fn setup_appearance_listener(
+        state_ptr: Weak<RefCell<WaylandClientState>>,
+        executor: &ForegroundExecutor,
+        appearance: Rc<Mutex<WindowAppearance>>,
+    ) {
+        init_portal_listener(executor, appearance, Box::new(move || {
+            if let Some(state) = state_ptr.upgrade() {
+                for (_, window) in &state.borrow().windows {
+                    window.appearance_changed()
+                }
+            }
+        }));
     }
 }
 

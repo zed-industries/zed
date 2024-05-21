@@ -37,6 +37,7 @@ use std::{
     rc::Rc,
     sync::{self, Arc},
 };
+use std::ops::Deref;
 
 use super::X11Display;
 
@@ -164,7 +165,7 @@ pub(crate) struct X11WindowState {
     renderer: BladeRenderer,
     display: Rc<dyn PlatformDisplay>,
     input_handler: Option<PlatformInputHandler>,
-    appearance: Arc<Mutex<WindowAppearance>>,
+    appearance: Rc<Mutex<WindowAppearance>>,
 }
 
 #[derive(Clone)]
@@ -214,7 +215,7 @@ impl X11WindowState {
         x_window: xproto::Window,
         atoms: &XcbAtoms,
         scale_factor: f32,
-        appearance: Arc<Mutex<WindowAppearance>>,
+        appearance: Rc<Mutex<WindowAppearance>>,
     ) -> Self {
         let x_screen_index = params
             .display_id
@@ -417,7 +418,7 @@ impl X11Window {
         x_window: xproto::Window,
         atoms: &XcbAtoms,
         scale_factor: f32,
-        appearance: Arc<Mutex<WindowAppearance>>,
+        appearance: Rc<Mutex<WindowAppearance>>,
     ) -> Self {
         Self(X11WindowStatePtr {
             state: Rc::new(RefCell::new(X11WindowState::new(
@@ -519,6 +520,13 @@ impl X11WindowStatePtr {
             fun(focus);
         }
     }
+
+    pub fn appearance_changed(&self) {
+        let mut callbacks = self.callbacks.borrow_mut();
+        if let Some(ref mut fun) = callbacks.appearance_changed {
+            (fun)()
+        }
+    }
 }
 
 impl PlatformWindow for X11Window {
@@ -549,10 +557,9 @@ impl PlatformWindow for X11Window {
     fn scale_factor(&self) -> f32 {
         self.0.state.borrow().scale_factor
     }
-
-    // todo(linux)
+    
     fn appearance(&self) -> WindowAppearance {
-        self.0.state.borrow().appearance.lock().clone()
+        self.0.state.borrow().appearance.lock().deref().clone()
     }
 
     fn display(&self) -> Rc<dyn PlatformDisplay> {

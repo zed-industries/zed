@@ -2,6 +2,7 @@ use std::any::Any;
 use std::cell::{Ref, RefCell, RefMut};
 use std::ffi::c_void;
 use std::num::NonZeroU32;
+use std::ops::Deref;
 use std::ptr::NonNull;
 use std::rc::{Rc, Weak};
 use std::sync::Arc;
@@ -70,7 +71,7 @@ pub struct WaylandWindowState {
     acknowledged_first_configure: bool,
     pub surface: wl_surface::WlSurface,
     decoration: Option<zxdg_toplevel_decoration_v1::ZxdgToplevelDecorationV1>,
-    appearance: Arc<Mutex<WindowAppearance>>,
+    appearance: Rc<Mutex<WindowAppearance>>,
     blur: Option<org_kde_kwin_blur::OrgKdeKwinBlur>,
     toplevel: xdg_toplevel::XdgToplevel,
     viewport: Option<wp_viewport::WpViewport>,
@@ -101,7 +102,7 @@ impl WaylandWindowState {
         xdg_surface: xdg_surface::XdgSurface,
         toplevel: xdg_toplevel::XdgToplevel,
         decoration: Option<zxdg_toplevel_decoration_v1::ZxdgToplevelDecorationV1>,
-        appearance: Arc<Mutex<WindowAppearance>>,
+        appearance: Rc<Mutex<WindowAppearance>>,
         viewport: Option<wp_viewport::WpViewport>,
         client: WaylandClientStatePtr,
         globals: Globals,
@@ -213,7 +214,7 @@ impl WaylandWindow {
         globals: Globals,
         client: WaylandClientStatePtr,
         params: WindowParams,
-        appearance: Arc<Mutex<WindowAppearance>>,
+        appearance: Rc<Mutex<WindowAppearance>>,
     ) -> (Self, ObjectId) {
         let surface = globals.compositor.create_surface(&globals.qh, ());
         let xdg_surface = globals
@@ -537,6 +538,13 @@ impl WaylandWindowStatePtr {
             fun(focus);
         }
     }
+
+    pub fn appearance_changed(&self) {
+        let mut callbacks = self.callbacks.borrow_mut();
+        if let Some(ref mut fun) = callbacks.appearance_changed {
+            (fun)()
+        }
+    }
 }
 
 impl rwh::HasWindowHandle for WaylandWindow {
@@ -584,9 +592,8 @@ impl PlatformWindow for WaylandWindow {
         self.borrow().scale
     }
 
-    // todo(linux)
     fn appearance(&self) -> WindowAppearance {
-        self.borrow().appearance.lock().clone()
+        self.borrow().appearance.lock().deref().clone()
     }
 
     // todo(linux)
@@ -743,7 +750,7 @@ impl PlatformWindow for WaylandWindow {
     }
 
     fn on_appearance_changed(&self, callback: Box<dyn FnMut()>) {
-        // todo(linux)
+        self.0.callbacks.borrow_mut().appearance_changed = Some(callback);
     }
 
     fn draw(&self, scene: &Scene) {

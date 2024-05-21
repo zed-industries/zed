@@ -40,7 +40,6 @@ use crate::{
     WindowOptions, WindowParams,
 };
 
-use super::window_appearance::spawn_window_appearance_monitor;
 use super::x11::X11Client;
 
 pub(crate) const SCROLL_LINES: f64 = 3.0;
@@ -84,32 +83,30 @@ pub(crate) struct LinuxCommon {
     pub(crate) background_executor: BackgroundExecutor,
     pub(crate) foreground_executor: ForegroundExecutor,
     pub(crate) text_system: Arc<CosmicTextSystem>,
-    pub(crate) appearance: Arc<Mutex<WindowAppearance>>,
+    pub(crate) appearance: Rc<Mutex<WindowAppearance>>,
     pub(crate) callbacks: PlatformHandlers,
     pub(crate) signal: LoopSignal,
 }
 
 impl LinuxCommon {
-    pub fn new(signal: LoopSignal) -> (Self, Channel<Runnable>) {
+    pub fn new(signal: LoopSignal) -> (Self, Channel<Runnable>, Rc<Mutex<WindowAppearance>>) {
         let (main_sender, main_receiver) = calloop::channel::channel::<Runnable>();
         let text_system = Arc::new(CosmicTextSystem::new());
         let callbacks = PlatformHandlers::default();
+        let appearance = Rc::new(Mutex::new(WindowAppearance::Light));
 
-        let dispatcher = Arc::new(LinuxDispatcher::new(main_sender));
-        let background_executor = BackgroundExecutor::new(dispatcher.clone());
-
-        let appearance = spawn_window_appearance_monitor(&background_executor);
+        let dispatcher = Arc::new(LinuxDispatcher::new(main_sender.clone()));
 
         let common = LinuxCommon {
-            background_executor,
+            background_executor: BackgroundExecutor::new(dispatcher.clone()),
             foreground_executor: ForegroundExecutor::new(dispatcher.clone()),
             text_system,
-            appearance,
+            appearance: appearance.clone(),
             callbacks,
             signal,
         };
 
-        (common, main_receiver)
+        (common, main_receiver, appearance)
     }
 }
 
@@ -460,8 +457,8 @@ impl<P: LinuxClient + 'static> Platform for P {
         })
     }
 
-    fn window_appearance(&self) -> crate::WindowAppearance {
-        self.with_common(|common| common.appearance.lock().clone())
+    fn window_appearance(&self) -> WindowAppearance {
+        self.with_common(|common| { common.appearance.lock().deref().clone() })
     }
 
     fn register_url_scheme(&self, _: &str) -> Task<anyhow::Result<()>> {
