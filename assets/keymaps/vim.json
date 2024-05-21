@@ -281,7 +281,13 @@
       "6": ["vim::Number", 6],
       "7": ["vim::Number", 7],
       "8": ["vim::Number", 8],
-      "9": ["vim::Number", 9],
+      "9": [
+        "vim::EasyMotionNChar",
+        {
+          "n": 1,
+          "direction": "biDirectional"
+        }
+      ],
       // window related commands (ctrl-w X)
       "ctrl-w left": ["workspace::ActivatePaneInDirection", "Left"],
       "ctrl-w right": ["workspace::ActivatePaneInDirection", "Right"],

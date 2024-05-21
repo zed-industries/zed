@@ -1,0 +1,46 @@
+[package]
+name = "easy_motion"
+version = "0.1.0"
+edition = "2021"
+publish = false
+license = "GPL-3.0-or-later"
+
+[lints]
+workspace = true
+
+[lib]
+path = "src/easy_motion.rs"
+doctest = false
+
+[features]
+test-support = [
+    "gpui/test-support",
+    "util/test-support"
+]
+
+[dependencies]
+anyhow.workspace = true
+collections.workspace = true
+command_palette_hooks.workspace = true
+editor.workspace = true
+language.workspace = true
+vim.workspace = true
+text.workspace = true
+gpui.workspace = true
+multi_buffer.workspace = true
+serde.workspace = true
+serde_derive.workspace = true
+serde_json.workspace = true
+ui.workspace = true
+workspace.workspace = true
+zed_actions.workspace = true
+
+[dev-dependencies]
+command_palette.workspace = true
+editor = { workspace = true, features = ["test-support"] }
+gpui = { workspace = true, features = ["test-support"] }
+util = { workspace = true, features = ["test-support"] }
+workspace = { workspace = true, features = ["test-support"] }
+project = { workspace = true, features = ["test-support"] }
+theme.workspace = true
+settings = { workspace = true, features = ["test-support"] }

@@ -3422,6 +3422,32 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "23d2f3407d9a573d666de4b5bdf10569d73ca9478087346697dcbae6244bfbcd"
 
 [[package]]
+name = "easy_motion"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "collections",
+ "command_palette",
+ "command_palette_hooks",
+ "editor",
+ "gpui",
+ "language",
+ "multi_buffer",
+ "project",
+ "serde",
+ "serde_derive",
+ "serde_json",
+ "settings",
+ "text",
+ "theme",
+ "ui",
+ "util",
+ "vim",
+ "workspace",
+ "zed_actions",
+]
+
+[[package]]
 name = "ecdsa"
 version = "0.14.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -12953,6 +12979,7 @@ dependencies = [
  "db",
  "dev_server_projects",
  "diagnostics",
+ "easy_motion",
  "editor",
  "env_logger",
  "extension",
