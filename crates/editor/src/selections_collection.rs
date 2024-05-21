@@ -276,7 +276,7 @@ impl SelectionsCollection {
     pub fn disjoint_anchor_ranges(&self) -> Vec<Range<Anchor>> {
         self.disjoint_anchors()
             .iter()
-            .map(|s| s.start.clone()..s.end.clone())
+            .map(|s| s.start..s.end)
             .collect()
     }
 
