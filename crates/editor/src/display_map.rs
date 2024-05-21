@@ -933,7 +933,12 @@ impl DisplaySnapshot {
 
     pub fn foldable_range(&self, buffer_row: MultiBufferRow) -> Option<Range<Point>> {
         let start = MultiBufferPoint::new(buffer_row.0, self.buffer_snapshot.line_len(buffer_row));
-        if self.starts_indent(MultiBufferRow(start.row))
+        if let Some(flap) = self
+            .flap_snapshot
+            .query_row(buffer_row, &self.buffer_snapshot)
+        {
+            Some(flap.range.to_point(&self.buffer_snapshot))
+        } else if self.starts_indent(MultiBufferRow(start.row))
             && !self.is_line_folded(MultiBufferRow(start.row))
         {
             let (start_indent, _) = self.line_indent_for_buffer_row(buffer_row);

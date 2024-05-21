@@ -11059,7 +11059,7 @@ impl EditorSnapshot {
             let toggle_callback = Arc::new(move |folded, cx: &mut WindowContext| {
                 if folded {
                     editor.update(cx, |editor, cx| {
-                        editor.fold_ranges(Some(range.clone()), false, cx)
+                        editor.fold_ranges([range.clone()], false, cx)
                     });
                 } else {
                     editor.update(cx, |editor, cx| {
