@@ -501,7 +501,7 @@ impl WorkspaceDb {
                                 bottom_dock_active_panel = ?10,
                                 bottom_dock_zoom = ?11,
                                 timestamp = CURRENT_TIMESTAMP
-                        ))?((workspace.id, &local_paths, workspace.docks))
+                        ))?((workspace.id, dbg!(&local_paths), workspace.docks))
                         .context("Updating workspace")?;
                     }
                     SerializedWorkspaceLocation::DevServer(dev_server_project) => {

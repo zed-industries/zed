@@ -1297,8 +1297,10 @@ impl Project {
         &'a self,
         cx: &'a AppContext,
     ) -> impl 'a + DoubleEndedIterator<Item = Model<Worktree>> {
-        self.worktrees()
-            .filter(|worktree| worktree.read(cx).is_visible())
+        self.worktrees().filter(|worktree| {
+            dbg!(worktree.read(cx).abs_path());
+            worktree.read(cx).is_visible()
+        })
     }
 
     pub fn worktree_root_names<'a>(&'a self, cx: &'a AppContext) -> impl Iterator<Item = &'a str> {
@@ -7103,11 +7105,16 @@ impl Project {
                 }
             }
         }
+        dbg!(source_index, destination_index);
         let source_index =
             source_index.with_context(|| format!("Missing worktree for id {source}"))?;
         let destination_index =
             destination_index.with_context(|| format!("Missing worktree for id {destination}"))?;
 
+        dbg!(self
+            .worktrees()
+            .map(|w| w.read(cx).abs_path())
+            .collect::<Vec<_>>());
         match source_index.cmp(&destination_index) {
             Ordering::Equal => return Ok(()),
             Ordering::Less => {
@@ -7119,6 +7126,7 @@ impl Project {
             Ordering::Greater => {
                 // replicate the other match arm's behavior and insert the element after the destination
                 let after_destination_index = destination_index + 1;
+                dbg!(after_destination_index);
                 if after_destination_index == source_index {
                     return Ok(());
                 }
@@ -7127,6 +7135,10 @@ impl Project {
                     .insert(after_destination_index, worktree_to_move);
             }
         }
+        dbg!(self
+            .worktrees()
+            .map(|w| w.read(cx).abs_path())
+            .collect::<Vec<_>>());
 
         self.worktrees_reordered = true;
         cx.emit(Event::WorktreeOrderChanged);

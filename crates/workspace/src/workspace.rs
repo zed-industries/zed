@@ -3642,7 +3642,7 @@ impl Workspace {
 
         let location = if let Some(local_paths) = self.local_paths(cx) {
             if !local_paths.paths().is_empty() {
-                Some(SerializedWorkspaceLocation::Local(local_paths))
+                Some(SerializedWorkspaceLocation::Local(dbg!(local_paths)))
             } else {
                 None
             }
