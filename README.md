@@ -8,5 +8,8 @@ Welcome to Zed, a high-performance, multiplayer code editor from the creators of
 
 - [Building Zed for Windows](./docs/src/development/windows.md)
 
+## Some known issues and fixes
+- [Bugs n fixes](./docs/src/bugs-windows.md)
+
 ## Licensing
 [Actual Zed repo.](https://github.com/zed-industries/zed)
