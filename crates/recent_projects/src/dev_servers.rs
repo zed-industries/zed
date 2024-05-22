@@ -154,10 +154,14 @@ impl DevServerProjects {
         dev_server_id: DevServerId,
         cx: &mut ViewContext<Self>,
     ) {
-        let path = self.project_path_input.read(cx).text(cx).trim().to_string();
+        let mut path = self.project_path_input.read(cx).text(cx).trim().to_string();
 
         if path == "" {
             return;
+        }
+
+        if !path.starts_with("/") && !path.starts_with("~") {
+            path = format!("~/{}", path);
         }
 
         if self
