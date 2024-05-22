@@ -6,17 +6,17 @@ use editor::Editor;
 use feature_flags::FeatureFlagAppExt;
 use feature_flags::FeatureFlagViewExt;
 use gpui::Subscription;
+use gpui::Task;
 use gpui::WeakView;
 use gpui::{
-    percentage, Action, Animation, AnimationExt, AnyElement, AppContext, ClipboardItem,
-    DismissEvent, EventEmitter, FocusHandle, FocusableView, Model, ScrollHandle, Transformation,
-    View, ViewContext,
+    percentage, Animation, AnimationExt, AnyElement, AppContext, DismissEvent, EventEmitter,
+    FocusHandle, FocusableView, Model, ScrollHandle, Transformation, View, ViewContext,
 };
 use markdown::Markdown;
 use markdown::MarkdownStyle;
-use rpc::proto;
+use rpc::proto::RegenerateDevServerTokenResponse;
 use rpc::{
-    proto::{CreateDevServerResponse, DevServerStatus, RegenerateDevServerTokenResponse},
+    proto::{CreateDevServerResponse, DevServerStatus},
     ErrorCode, ErrorExt,
 };
 use task::RevealStrategy;
@@ -43,7 +43,6 @@ pub struct DevServerProjects {
     workspace: WeakView<Workspace>,
     project_path_input: View<Editor>,
     dev_server_name_input: View<TextField>,
-    rename_dev_server_input: View<TextField>,
     markdown: View<Markdown>,
     _dev_server_subscription: Subscription,
 }
@@ -51,22 +50,9 @@ pub struct DevServerProjects {
 #[derive(Default, Clone)]
 struct CreateDevServer {
     creating: bool,
-    dev_server: Option<CreateDevServerResponse>,
+    dev_server_id: Option<DevServerId>,
+    access_token: Option<String>,
     manual_setup: bool,
-}
-
-#[derive(Clone)]
-struct EditDevServer {
-    dev_server_id: DevServerId,
-    state: EditDevServerState,
-}
-
-#[derive(Clone, PartialEq)]
-enum EditDevServerState {
-    Default,
-    RenamingDevServer,
-    RegeneratingToken,
-    RegeneratedToken(RegenerateDevServerTokenResponse),
 }
 
 struct CreateDevServerProject {
@@ -78,7 +64,6 @@ struct CreateDevServerProject {
 enum Mode {
     Default(Option<CreateDevServerProject>),
     CreateDevServer(CreateDevServer),
-    EditDevServer(EditDevServer),
 }
 
 impl DevServerProjects {
@@ -118,9 +103,6 @@ impl DevServerProjects {
         let dev_server_name_input = cx.new_view(|cx| {
             TextField::new(cx, "Name", "192.168.0.1").with_label(FieldLabelLayout::Hidden)
         });
-        let rename_dev_server_input = cx.new_view(|cx| {
-            TextField::new(cx, "Name", "192.168.0.1").with_label(FieldLabelLayout::Hidden)
-        });
 
         let focus_handle = cx.focus_handle();
         let dev_server_store = dev_server_projects::Store::global(cx);
@@ -152,7 +134,8 @@ impl DevServerProjects {
         Self {
             mode: Mode::CreateDevServer(CreateDevServer {
                 creating: false,
-                dev_server: None,
+                dev_server_id: None,
+                access_token: None,
                 manual_setup: false,
             }),
             focus_handle,
@@ -160,7 +143,6 @@ impl DevServerProjects {
             dev_server_store,
             project_path_input,
             dev_server_name_input,
-            rename_dev_server_input,
             markdown,
             workspace,
             _dev_server_subscription: subscription,
@@ -276,13 +258,14 @@ impl DevServerProjects {
         }));
     }
 
-    pub fn create_dev_server(
+    pub fn create_or_update_dev_server(
         &mut self,
         manual_setup: bool,
-        existing: Option<CreateDevServerResponse>,
+        existing_id: Option<DevServerId>,
+        access_token: Option<String>,
         cx: &mut ViewContext<Self>,
     ) {
-        let mut name = get_text(&self.dev_server_name_input, cx);
+        let name = get_text(&self.dev_server_name_input, cx);
         if name.is_empty() {
             return;
         }
@@ -295,48 +278,58 @@ impl DevServerProjects {
             Some(format!("ssh {}", name))
         };
 
-        if name.contains("ssh ") {
-            name = name.split_once("ssh ").unwrap().1.to_string()
-        }
-
-        let dev_server = self.dev_server_store.update(cx, |store, cx| {
-            let ssh_connection_string = ssh_connection_string.clone();
-            if let Some(existing) = existing {
-                let rename = store.rename_dev_server(
-                    DevServerId(existing.dev_server_id),
-                    name,
-                    ssh_connection_string,
-                    cx,
-                );
-                cx.spawn(|_, _| async move {
-                    rename.await?;
-                    Ok(CreateDevServerResponse {
-                        dev_server_id: existing.dev_server_id,
-                        name: existing.name,
-                        access_token: existing.access_token,
+        let dev_server = self.dev_server_store.update(cx, {
+            let access_token = access_token.clone();
+            |store, cx| {
+                let ssh_connection_string = ssh_connection_string.clone();
+                if let Some(dev_server_id) = existing_id {
+                    let rename = store.rename_dev_server(
+                        dev_server_id,
+                        name.clone(),
+                        ssh_connection_string,
+                        cx,
+                    );
+                    let token = if let Some(access_token) = access_token {
+                        Task::ready(Ok(RegenerateDevServerTokenResponse {
+                            dev_server_id: dev_server_id.0,
+                            access_token,
+                        }))
+                    } else {
+                        store.regenerate_dev_server_token(dev_server_id, cx)
+                    };
+                    cx.spawn(|_, _| async move {
+                        rename.await?;
+                        let response = token.await?;
+                        Ok(CreateDevServerResponse {
+                            dev_server_id: dev_server_id.0,
+                            name,
+                            access_token: response.access_token,
+                        })
                     })
-                })
-            } else {
-                store.create_dev_server(name, ssh_connection_string.clone(), cx)
+                } else {
+                    store.create_dev_server(name, ssh_connection_string.clone(), cx)
+                }
             }
         });
 
         let workspace = self.workspace.clone();
 
-        cx.spawn(|this, mut cx| async move {
-            dbg!("s");
+        cx.spawn({
+            let access_token = access_token.clone();
+            |this, mut cx| async move {
             let result = dev_server.await;
-            dbg!(&result);
 
             match result {
                 Ok(dev_server) => {
                     if let Some(ssh_connection_string) =  ssh_connection_string {
 
+                        let access_token = access_token.clone();
                         this.update(&mut cx, |this, cx| {
                                 this.focus_handle.focus(cx);
                                 this.mode = Mode::CreateDevServer(CreateDevServer {
                                     creating: true,
-                                    dev_server: Some(dev_server.clone()),
+                                    dev_server_id: Some(DevServerId(dev_server.dev_server_id)),
+                                    access_token: Some(access_token.unwrap_or(dev_server.access_token.clone())),
                                     manual_setup: false,
                             });
                                 cx.notify();
@@ -349,7 +342,7 @@ impl DevServerProjects {
 
                         let command = "sh".to_string();
                         let args = vec!["-x".to_string(),"-c".to_string(),
-                            format!(r#"(curl -sSL https://zed.dev/install.sh || wget -qO- https://zed.dev/install.sh) | bash && ~/.local/bin/zed --dev-server-token {}"#, dev_server.access_token)];
+                            format!(r#"~/.local/bin/zed -v >/dev/stderr || (curl -sSL https://zed.dev/install.sh || wget -qO- https://zed.dev/install.sh) | bash && ~/.local/bin/zed --dev-server-token {}"#, dev_server.access_token)];
 
                         let terminal = terminal_panel.update(&mut cx, |terminal_panel, cx| {
                             terminal_panel.spawn_in_new_terminal(
@@ -386,7 +379,8 @@ impl DevServerProjects {
                             this.focus_handle.focus(cx);
                             this.mode = Mode::CreateDevServer(CreateDevServer {
                                 creating: false,
-                                dev_server: Some(dev_server.clone()),
+                                dev_server_id: Some(DevServerId(dev_server.dev_server_id)),
+                                access_token: Some(dev_server.access_token),
                                 manual_setup: false,
                         });
                             cx.notify();
@@ -395,7 +389,7 @@ impl DevServerProjects {
             }
             Err(e) => {
                 this.update(&mut cx, |this, cx| {
-                    this.mode = Mode::CreateDevServer(CreateDevServer { creating:false, dev_server: None, manual_setup });
+                    this.mode = Mode::CreateDevServer(CreateDevServer { creating:false, dev_server_id: existing_id, access_token: None, manual_setup });
                     cx.notify()
                 })
                 .log_err();
@@ -403,90 +397,16 @@ impl DevServerProjects {
                 return Err(e)
             }
             }
-        })
+        }})
         .detach_and_prompt_err("Failed to create server", cx, |_, _| None);
 
         self.mode = Mode::CreateDevServer(CreateDevServer {
             creating: true,
-            dev_server: None,
+            dev_server_id: existing_id,
+            access_token,
             manual_setup,
         });
         cx.notify()
-    }
-
-    fn rename_dev_server(&mut self, id: DevServerId, cx: &mut ViewContext<Self>) {
-        let name = get_text(&self.rename_dev_server_input, cx);
-
-        let Some(dev_server) = self.dev_server_store.read(cx).dev_server(id) else {
-            return;
-        };
-
-        if name.is_empty() || dev_server.name == name {
-            return;
-        }
-
-        let request = self
-            .dev_server_store
-            .update(cx, |store, cx| store.rename_dev_server(id, name, None, cx));
-
-        self.mode = Mode::EditDevServer(EditDevServer {
-            dev_server_id: id,
-            state: EditDevServerState::RenamingDevServer,
-        });
-
-        cx.spawn(|this, mut cx| async move {
-            request.await?;
-            this.update(&mut cx, move |this, cx| {
-                this.mode = Mode::EditDevServer(EditDevServer {
-                    dev_server_id: id,
-                    state: EditDevServerState::Default,
-                });
-                cx.notify();
-            })
-        })
-        .detach_and_prompt_err("Failed to rename dev server", cx, |_, _| None);
-    }
-
-    fn refresh_dev_server_token(&mut self, id: DevServerId, cx: &mut ViewContext<Self>) {
-        let answer = cx.prompt(
-            gpui::PromptLevel::Warning,
-            "Are you sure?",
-            Some("This will invalidate the existing dev server token."),
-            &["Generate", "Cancel"],
-        );
-        cx.spawn(|this, mut cx| async move {
-            let answer = answer.await?;
-
-            if answer != 0 {
-                return Ok(());
-            }
-
-            let response = this
-                .update(&mut cx, move |this, cx| {
-                    let request = this
-                        .dev_server_store
-                        .update(cx, |store, cx| store.regenerate_dev_server_token(id, cx));
-                    this.mode = Mode::EditDevServer(EditDevServer {
-                        dev_server_id: id,
-                        state: EditDevServerState::RegeneratingToken,
-                    });
-                    cx.notify();
-                    request
-                })?
-                .await?;
-
-            this.update(&mut cx, move |this, cx| {
-                this.mode = Mode::EditDevServer(EditDevServer {
-                    dev_server_id: id,
-                    state: EditDevServerState::RegeneratedToken(response),
-                });
-                cx.notify();
-            })
-            .log_err();
-
-            Ok(())
-        })
-        .detach_and_prompt_err("Failed to delete dev server", cx, |_, _| None);
     }
 
     fn delete_dev_server(&mut self, id: DevServerId, cx: &mut ViewContext<Self>) {
@@ -584,18 +504,12 @@ impl DevServerProjects {
             }
             Mode::CreateDevServer(state) => {
                 if !state.creating {
-                    self.create_dev_server(state.manual_setup, state.dev_server.clone(), cx);
-                }
-            }
-            Mode::EditDevServer(edit_dev_server) => {
-                if self
-                    .rename_dev_server_input
-                    .read(cx)
-                    .editor()
-                    .read(cx)
-                    .is_focused(cx)
-                {
-                    self.rename_dev_server(edit_dev_server.dev_server_id, cx);
+                    self.create_or_update_dev_server(
+                        state.manual_setup,
+                        state.dev_server_id.clone(),
+                        state.access_token.clone(),
+                        cx,
+                    );
                 }
             }
         }
@@ -621,6 +535,7 @@ impl DevServerProjects {
         let dev_server_id = dev_server.id;
         let status = dev_server.status;
         let dev_server_name = dev_server.name.clone();
+        let manual_setup = dev_server.ssh_connection_string.is_none();
 
         v_flex()
             .w_full()
@@ -649,7 +564,13 @@ impl DevServerProjects {
                                     )
                                 }),
                         )
-                        .child(dev_server_name.clone())
+                        .child(
+                            div()
+                                .max_w(rems(26.))
+                                .overflow_hidden()
+                                .whitespace_nowrap()
+                                .child(Label::new(dev_server_name.clone())),
+                        )
                         .child(
                             h_flex()
                                 .visible_on_hover("dev-server")
@@ -657,12 +578,14 @@ impl DevServerProjects {
                                 .child(
                                     IconButton::new("edit-dev-server", IconName::Pencil)
                                         .on_click(cx.listener(move |this, _, cx| {
-                                            this.mode = Mode::EditDevServer(EditDevServer {
-                                                dev_server_id,
-                                                state: EditDevServerState::Default,
+                                            this.mode = Mode::CreateDevServer(CreateDevServer {
+                                                dev_server_id: Some(dev_server_id),
+                                                creating: false,
+                                                access_token: None,
+                                                manual_setup,
                                             });
                                             let dev_server_name = dev_server_name.clone();
-                                            this.rename_dev_server_input.update(
+                                            this.dev_server_name_input.update(
                                                 cx,
                                                 move |input, cx| {
                                                     input.editor().update(cx, move |editor, cx| {
@@ -687,7 +610,7 @@ impl DevServerProjects {
             .child(
                 v_flex()
                     .w_full()
-                    .bg(cx.theme().colors().title_bar_background) // todo: this should be distinct
+                    .bg(cx.theme().colors().background)
                     .border_1()
                     .border_color(cx.theme().colors().border_variant)
                     .rounded_md()
@@ -798,22 +721,17 @@ impl DevServerProjects {
     ) -> impl IntoElement {
         let CreateDevServer {
             creating,
-            dev_server,
+            dev_server_id,
+            access_token,
             manual_setup,
-        } = state;
+        } = state.clone();
 
         let can_submit = creating == false;
-        let status = dev_server
-            .as_ref()
-            .and_then(|dev_server| {
-                self.dev_server_store
-                    .read(cx)
-                    .dev_server(DevServerId(dev_server.dev_server_id))
-            })
-            .map(|s| s.status)
+        let status = dev_server_id
+            .map(|id| self.dev_server_store.read(cx).dev_server_status(id))
             .unwrap_or_default();
 
-        self.dev_server_name_input.update(cx, |input, cx| {
+        let name = self.dev_server_name_input.update(cx, |input, cx| {
             input.editor().update(cx, |editor, cx| {
                 if editor.text(cx).is_empty() {
                     if manual_setup {
@@ -822,6 +740,7 @@ impl DevServerProjects {
                         editor.set_placeholder_text("ssh host", cx)
                     }
                 }
+                editor.text(cx)
             })
         });
 
@@ -852,32 +771,31 @@ impl DevServerProjects {
                                 Label::new("Connect via SSH (default)"),
                                 !manual_setup,
                                 cx.listener({
-                                    let dev_server = dev_server.clone();
+                                    let state = state.clone();
                                     move |this, _, cx| {
                                     this.mode = Mode::CreateDevServer(CreateDevServer {
-                                        creating,
-                                        dev_server: dev_server.clone(),
                                         manual_setup: false,
+                                        ..state.clone()
                                     });
                                     cx.notify()
-                                }}),
+                                    }
+                                }),
                             ))
                             .child(RadioWithLabel::new(
                                 "use-server-name-in-ssh",
                                 Label::new("Manual Setup"),
                                 manual_setup,
                                 cx.listener({
-                                    let dev_server = dev_server.clone();
+                                    let state = state.clone();
                                     move |this, _, cx| {
                                     this.mode = Mode::CreateDevServer(CreateDevServer {
-                                        creating,
-                                        dev_server: dev_server.clone(),
                                         manual_setup: true,
+                                        ..state.clone()
                                     });
                                     cx.notify()
                                 }}),
                             )))
-                            .when(dev_server.is_none(), |el| {
+                            .when(dev_server_id.is_none(), |el| {
                                 el.child(
                                     if manual_setup {
                                         Label::new(
@@ -890,12 +808,26 @@ impl DevServerProjects {
                                             )
                                 }.size(LabelSize::Small).color(Color::Muted))
                             })
-                            .when_some(dev_server.as_ref(), |el, dev_server| {
+                            .when(dev_server_id.is_some() && access_token.is_none(),|el|{
                                 el.child(
-                                    self.render_dev_server_token_creating(&dev_server.access_token, &dev_server.name, manual_setup, status, creating,  cx)
+                                if manual_setup {
+                                    Label::new(
+                                        "Note: updating the dev server generate a new token"
+                                            )
+                                } else {
+                                    Label::new(
+                                        "Enter the command you use to ssh into this server.\n\
+                                        For example: `ssh me@my.server` or `gh cs ssh -c example`."
+                                        )
+                                }.size(LabelSize::Small).color(Color::Muted)
                                 )
                             })
-                    ),
+                            .when_some(access_token.clone(), {
+                                |el, access_token| {
+                                el.child(
+                                    self.render_dev_server_token_creating(access_token, name, manual_setup, status, creating,  cx)
+                                )
+                            }}))
             )
             .footer(ModalFooter::new().end_slot(
                 if status == DevServerStatus::Online {
@@ -908,14 +840,14 @@ impl DevServerProjects {
                             cx.notify();
                         }))
                 } else {
-                    Button::new("create-dev-server", "Create")
+                    Button::new("create-dev-server", if manual_setup { "Create"} else { "Connect"})
                         .style(ButtonStyle::Filled)
                         .layer(ElevationIndex::ModalSurface)
                         .disabled(!can_submit)
                         .on_click(cx.listener({
-                            let dev_server = dev_server.clone();
+                            let access_token = access_token.clone();
                             move |this, _, cx| {
-                            this.create_dev_server(manual_setup, dev_server.clone(), cx);
+                            this.create_or_update_dev_server(manual_setup, dev_server_id, access_token.clone(), cx);
                         }}))
                 }
             ))
@@ -923,17 +855,17 @@ impl DevServerProjects {
 
     fn render_dev_server_token_creating(
         &self,
-        access_token: &str,
-        dev_server_name: &str,
+        access_token: String,
+        dev_server_name: String,
         manual_setup: bool,
         status: DevServerStatus,
         creating: bool,
         cx: &mut ViewContext<Self>,
     ) -> Div {
         self.markdown.update(cx, |markdown, cx| {
-            if manual_setup && !markdown.source().contains(access_token) {
+            if manual_setup {
                 markdown.reset(format!("Please log into '{}'. If you don't yet have zed installed, run:\n```\ncurl https://zed.dev/install.sh | bash\n```\nThen to start zed in headless mode:\n```\nzed --dev-server-token {}\n```", dev_server_name, access_token), cx);
-            } else if !manual_setup && !markdown.source().contains("Please wait") {
+            } else {
                 markdown.reset("Please wait while we connect over SSH.\n\nIf you run into problems, please [file a bug](https://github.com/zed-industries/zed), and in the meantime try using manual setup.".to_string(), cx);
             }
         });
@@ -974,124 +906,6 @@ impl DevServerProjects {
             .child(Label::new(label))
     }
 
-    fn render_edit_dev_server(
-        &mut self,
-        edit_dev_server: EditDevServer,
-        cx: &mut ViewContext<Self>,
-    ) -> impl IntoElement {
-        let dev_server_id = edit_dev_server.dev_server_id;
-        let dev_server = self
-            .dev_server_store
-            .read(cx)
-            .dev_server(dev_server_id)
-            .cloned();
-
-        let dev_server_name = dev_server
-            .as_ref()
-            .map(|dev_server| dev_server.name.clone())
-            .unwrap_or_default();
-
-        let dev_server_status = dev_server
-            .map(|dev_server| dev_server.status)
-            .unwrap_or(DevServerStatus::Offline);
-
-        let disabled = matches!(
-            edit_dev_server.state,
-            EditDevServerState::RenamingDevServer | EditDevServerState::RegeneratingToken
-        );
-        self.rename_dev_server_input.update(cx, |input, cx| {
-            input.set_disabled(disabled, cx);
-        });
-
-        let rename_dev_server_input_text = self
-            .rename_dev_server_input
-            .read(cx)
-            .editor()
-            .read(cx)
-            .text(cx);
-
-        let content = v_flex().w_full().gap_2().child(
-            h_flex()
-                .pb_2()
-                .border_b_1()
-                .border_color(cx.theme().colors().border)
-                .items_end()
-                .w_full()
-                .px_2()
-                .child(
-                    div()
-                        .pl_2()
-                        .max_w(rems(16.))
-                        .child(self.rename_dev_server_input.clone()),
-                )
-                .child(
-                    div()
-                        .pl_1()
-                        .pb(px(3.))
-                        .when(
-                            edit_dev_server.state != EditDevServerState::RenamingDevServer,
-                            |div| {
-                                div.child(
-                                    Button::new("rename-dev-server", "Rename")
-                                        .disabled(
-                                            rename_dev_server_input_text.trim().is_empty()
-                                                || rename_dev_server_input_text == dev_server_name,
-                                        )
-                                        .on_click(cx.listener(move |this, _, cx| {
-                                            this.rename_dev_server(dev_server_id, cx);
-                                            cx.notify();
-                                        })),
-                                )
-                            },
-                        )
-                        .when(
-                            edit_dev_server.state == EditDevServerState::RenamingDevServer,
-                            |div| {
-                                div.child(
-                                    Button::new("rename-dev-server", "Renaming...").disabled(true),
-                                )
-                            },
-                        ),
-                ),
-        );
-
-        let content = content.child(match edit_dev_server.state {
-            EditDevServerState::RegeneratingToken => {
-                Self::render_loading_spinner("Generating token...")
-            }
-            EditDevServerState::RegeneratedToken(response) => self
-                .render_dev_server_token_creating(
-                    &response.access_token,
-                    &dev_server_name,
-                    true,
-                    dev_server_status,
-                    false,
-                    cx,
-                ),
-            _ => h_flex().items_end().w_full().child(
-                Button::new("regenerate-dev-server-token", "Generate new access token")
-                    .icon(IconName::Update)
-                    .on_click(cx.listener(move |this, _, cx| {
-                        this.refresh_dev_server_token(dev_server_id, cx);
-                        cx.notify();
-                    })),
-            ),
-        });
-
-        v_flex()
-            .id("scroll-container")
-            .h_full()
-            .overflow_y_scroll()
-            .track_scroll(&self.scroll_handle)
-            .px_1()
-            .pt_0p5()
-            .gap_px()
-            .child(ModalHeader::new().show_back_button(true).child(
-                Headline::new(format!("Edit {}", &dev_server_name)).size(HeadlineSize::Small),
-            ))
-            .child(div().child(v_flex().w_full().child(content)))
-    }
-
     fn render_default(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         let dev_servers = self.dev_server_store.read(cx).dev_servers();
 
@@ -1111,50 +925,50 @@ impl DevServerProjects {
             creating_dev_server = Some(*dev_server_id);
         };
 
-        v_flex()
-            .id("scroll-container")
-            .h_full()
-            .overflow_y_scroll()
-            .track_scroll(&self.scroll_handle)
-            .px_1()
-            .pt_0p5()
-            .gap_px()
-            .child(
+        Modal::new("remote-projects", Some(self.scroll_handle.clone()))
+            .header(
                 ModalHeader::new()
                     .show_dismiss_button(true)
                     .child(Headline::new("Remote Projects").size(HeadlineSize::Small)),
             )
-            .child(
-                div().child(
-                    List::new()
-                        .empty_message("No dev servers registered.")
-                        .header(Some(
-                            ListHeader::new("Dev Servers").end_slot(
-                                Button::new("register-dev-server-button", "New Server")
-                                    .icon(IconName::Plus)
-                                    .icon_position(IconPosition::Start)
-                                    .tooltip(|cx| Tooltip::text("Register a new dev server", cx))
-                                    .on_click(cx.listener(|this, _, cx| {
-                                        this.mode =
-                                            Mode::CreateDevServer(CreateDevServer::default());
-                                        this.dev_server_name_input.update(cx, |text_field, cx| {
-                                            text_field.editor().update(cx, |editor, cx| {
-                                                editor.set_text("", cx);
-                                            });
-                                        });
-                                        cx.notify();
-                                    })),
-                            ),
-                        ))
-                        .children(dev_servers.iter().map(|dev_server| {
-                            let creating = if creating_dev_server == Some(dev_server.id) {
-                                is_creating
-                            } else {
-                                None
-                            };
-                            self.render_dev_server(dev_server, creating, cx)
-                                .into_any_element()
-                        })),
+            .section(
+                Section::new().child(
+                    div().mb_4().child(
+                        List::new()
+                            .empty_message("No dev servers registered.")
+                            .header(Some(
+                                ListHeader::new("Dev Servers").end_slot(
+                                    Button::new("register-dev-server-button", "New Server")
+                                        .icon(IconName::Plus)
+                                        .icon_position(IconPosition::Start)
+                                        .tooltip(|cx| {
+                                            Tooltip::text("Register a new dev server", cx)
+                                        })
+                                        .on_click(cx.listener(|this, _, cx| {
+                                            this.mode =
+                                                Mode::CreateDevServer(CreateDevServer::default());
+                                            this.dev_server_name_input.update(
+                                                cx,
+                                                |text_field, cx| {
+                                                    text_field.editor().update(cx, |editor, cx| {
+                                                        editor.set_text("", cx);
+                                                    });
+                                                },
+                                            );
+                                            cx.notify();
+                                        })),
+                                ),
+                            ))
+                            .children(dev_servers.iter().map(|dev_server| {
+                                let creating = if creating_dev_server == Some(dev_server.id) {
+                                    is_creating
+                                } else {
+                                    None
+                                };
+                                self.render_dev_server(dev_server, creating, cx)
+                                    .into_any_element()
+                            })),
+                    ),
                 ),
             )
     }
@@ -1188,6 +1002,9 @@ impl Render for DevServerProjects {
             .key_context("DevServerModal")
             .on_action(cx.listener(Self::cancel))
             .on_action(cx.listener(Self::confirm))
+            .capture_any_mouse_down(cx.listener(|this, _, cx| {
+                this.focus_handle(cx).focus(cx);
+            }))
             .on_mouse_down_out(cx.listener(|this, _, cx| {
                 if matches!(this.mode, Mode::Default(None)) {
                     cx.emit(DismissEvent)
@@ -1202,9 +1019,6 @@ impl Render for DevServerProjects {
                 Mode::Default(_) => self.render_default(cx).into_any_element(),
                 Mode::CreateDevServer(state) => self
                     .render_create_dev_server(state.clone(), cx)
-                    .into_any_element(),
-                Mode::EditDevServer(state) => self
-                    .render_edit_dev_server(state.clone(), cx)
                     .into_any_element(),
             })
     }

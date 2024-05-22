@@ -73,6 +73,9 @@ impl Markdown {
     }
 
     pub fn reset(&mut self, source: String, cx: &mut ViewContext<Self>) {
+        if source == self.source() {
+            return;
+        }
         self.source = source;
         self.selection = Selection::default();
         self.autoscroll_request = None;
