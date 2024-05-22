@@ -1,4 +1,4 @@
-use std::{ops::Range, path::Path};
+use std::ops::Range;
 
 use crate::{Location, Runnable};
 
