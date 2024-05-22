@@ -1,17 +1,16 @@
 use crate::Editor;
 
-use std::{path::Path, sync::Arc};
-
 use anyhow::Context;
-use gpui::WindowContext;
-use language::{BasicContextProvider, ContextProvider};
-use project::{Location, WorktreeId};
+use gpui::{Model, WindowContext};
+use language::ContextProvider;
+use project::{BasicContextProvider, Location, Project};
 use task::{TaskContext, TaskVariables, VariableName};
 use text::Point;
 use util::ResultExt;
 use workspace::Workspace;
 
 pub(crate) fn task_context_for_location(
+    captured_variables: TaskVariables,
     workspace: &Workspace,
     location: Location,
     cx: &mut WindowContext<'_>,
@@ -20,31 +19,16 @@ pub(crate) fn task_context_for_location(
         .log_err()
         .flatten();
 
-    let buffer = location.buffer.clone();
-    let language_context_provider = buffer
-        .read(cx)
-        .language()
-        .and_then(|language| language.context_provider())
-        .unwrap_or_else(|| Arc::new(BasicContextProvider));
-
-    let worktree_abs_path = buffer
-        .read(cx)
-        .file()
-        .map(|file| WorktreeId::from_usize(file.worktree_id()))
-        .and_then(|worktree_id| {
-            workspace
-                .project()
-                .read(cx)
-                .worktree_for_id(worktree_id, cx)
-                .map(|worktree| worktree.read(cx).abs_path())
-        });
-    let task_variables = combine_task_variables(
-        worktree_abs_path.as_deref(),
+    let mut task_variables = combine_task_variables(
+        captured_variables,
         location,
-        language_context_provider.as_ref(),
+        workspace.project().clone(),
         cx,
     )
     .log_err()?;
+    // Remove all custom entries starting with _, as they're not intended for use by the end user.
+    task_variables.sweep();
+
     Some(TaskContext {
         cwd,
         task_variables,
@@ -84,21 +68,21 @@ fn task_context_with_editor(
         buffer,
         range: start..end,
     };
-    task_context_for_location(workspace, location.clone(), cx).map(|mut task_context| {
+    let captured_variables = {
+        let mut variables = TaskVariables::default();
         for range in location
             .buffer
             .read(cx)
             .snapshot()
-            .runnable_ranges(location.range)
+            .runnable_ranges(location.range.clone())
         {
             for (capture_name, value) in range.extra_captures {
-                task_context
-                    .task_variables
-                    .insert(VariableName::Custom(capture_name.into()), value);
+                variables.insert(VariableName::Custom(capture_name.into()), value);
             }
         }
-        task_context
-    })
+        variables
+    };
+    task_context_for_location(captured_variables, workspace, location.clone(), cx)
 }
 
 pub fn task_context(workspace: &Workspace, cx: &mut WindowContext<'_>) -> TaskContext {
@@ -114,24 +98,26 @@ pub fn task_context(workspace: &Workspace, cx: &mut WindowContext<'_>) -> TaskCo
 }
 
 fn combine_task_variables(
-    worktree_abs_path: Option<&Path>,
+    mut captured_variables: TaskVariables,
     location: Location,
-    context_provider: &dyn ContextProvider,
+    project: Model<Project>,
     cx: &mut WindowContext<'_>,
 ) -> anyhow::Result<TaskVariables> {
-    if context_provider.is_basic() {
-        context_provider
-            .build_context(worktree_abs_path, &location, cx)
-            .context("building basic provider context")
-    } else {
-        let mut basic_context = BasicContextProvider
-            .build_context(worktree_abs_path, &location, cx)
-            .context("building basic default context")?;
-        basic_context.extend(
-            context_provider
-                .build_context(worktree_abs_path, &location, cx)
+    let language_context_provider = location
+        .buffer
+        .read(cx)
+        .language()
+        .and_then(|language| language.context_provider());
+    let baseline = BasicContextProvider::new(project)
+        .build_context(&captured_variables, &location, cx)
+        .context("building basic default context")?;
+    captured_variables.extend(baseline);
+    if let Some(provider) = language_context_provider {
+        captured_variables.extend(
+            provider
+                .build_context(&captured_variables, &location, cx)
                 .context("building provider context ")?,
         );
-        Ok(basic_context)
     }
+    Ok(captured_variables)
 }

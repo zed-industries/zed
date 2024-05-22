@@ -30,10 +30,10 @@ use gpui::{
 };
 use http::{AsyncBody, HttpClient, HttpClientWithUrl};
 use language::{
-    ContextProviderWithTasks, LanguageConfig, LanguageMatcher, LanguageQueries, LanguageRegistry,
-    QUERY_FILENAME_PREFIXES,
+    LanguageConfig, LanguageMatcher, LanguageQueries, LanguageRegistry, QUERY_FILENAME_PREFIXES,
 };
 use node_runtime::NodeRuntime;
+use project::ContextProviderWithTasks;
 use semantic_version::SemanticVersion;
 use serde::{Deserialize, Serialize};
 use settings::Settings;
