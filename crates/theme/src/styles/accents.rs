@@ -58,13 +58,8 @@ impl AccentColors {
 }
 
 impl AccentColors {
-    pub fn color_for_index(&self, index: u32) -> Option<Hsla> {
-        let len = self.0.len();
-        if len > 0 {
-            self.0.get(index as usize % len).cloned()
-        } else {
-            None
-        }
+    pub fn color_for_index(&self, index: u32) -> Hsla {
+        self.0[index as usize % self.0.len()]
     }
 
     /// Merges the given accent colors into this [`AccentColors`] instance.
@@ -73,17 +68,18 @@ impl AccentColors {
             return;
         }
 
-        for (idx, accent) in accent_colors.iter().enumerate() {
-            let accent = accent
-                .0
-                .as_ref()
-                .and_then(|color| try_parse_color(color).ok());
+        let colors = accent_colors
+            .iter()
+            .filter_map(|accent_color| {
+                accent_color
+                    .0
+                    .as_ref()
+                    .and_then(|color| try_parse_color(color).ok())
+            })
+            .collect::<Vec<_>>();
 
-            if let Some(accent_color) = self.0.get_mut(idx) {
-                *accent_color = accent.unwrap_or(*accent_color);
-            } else {
-                self.0.push(accent.unwrap_or_default())
-            }
+        if !colors.is_empty() {
+            self.0 = colors;
         }
     }
 }

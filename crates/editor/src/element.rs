@@ -2645,25 +2645,24 @@ impl EditorElement {
                 (IndentGuideColoring::Fixed, true) => {
                     Some(cx.theme().colors().editor_indent_guide_active)
                 }
-                (IndentGuideColoring::IndentAware, false) => Some(
-                    indent_accent_colors
-                        .map(|i| faded_color(i, INDENT_AWARE_ALPHA))
-                        .unwrap_or_else(|| cx.theme().colors().editor_indent_guide),
-                ),
-                (IndentGuideColoring::IndentAware, true) => Some(
-                    indent_accent_colors
-                        .map(|i| faded_color(i, INDENT_AWARE_ACTIVE_ALPHA))
-                        .unwrap_or_else(|| cx.theme().colors().editor_indent_guide_active),
-                ),
+                (IndentGuideColoring::IndentAware, false) => {
+                    Some(faded_color(indent_accent_colors, INDENT_AWARE_ALPHA))
+                }
+                (IndentGuideColoring::IndentAware, true) => {
+                    Some(faded_color(indent_accent_colors, INDENT_AWARE_ACTIVE_ALPHA))
+                }
             };
 
             let background_color = match (&settings.background_coloring, indent_guide.active) {
                 (IndentGuideBackgroundColoring::Disabled, _) => None,
-                (IndentGuideBackgroundColoring::IndentAware, false) => {
-                    indent_accent_colors.map(|i| faded_color(i, INDENT_AWARE_BACKGROUND_ALPHA))
-                }
-                (IndentGuideBackgroundColoring::IndentAware, true) => indent_accent_colors
-                    .map(|i| faded_color(i, INDENT_AWARE_BACKGROUND_ACTIVE_ALPHA)),
+                (IndentGuideBackgroundColoring::IndentAware, false) => Some(faded_color(
+                    indent_accent_colors,
+                    INDENT_AWARE_BACKGROUND_ALPHA,
+                )),
+                (IndentGuideBackgroundColoring::IndentAware, true) => Some(faded_color(
+                    indent_accent_colors,
+                    INDENT_AWARE_BACKGROUND_ACTIVE_ALPHA,
+                )),
             };
 
             let requested_line_width = settings.line_width.clamp(1, 10);
