@@ -1,10 +1,12 @@
 use std::time::Duration;
 
+use anyhow::anyhow;
 use anyhow::Context;
 use dev_server_projects::{DevServer, DevServerId, DevServerProject, DevServerProjectId};
 use editor::Editor;
 use feature_flags::FeatureFlagAppExt;
 use feature_flags::FeatureFlagViewExt;
+use gpui::AsyncWindowContext;
 use gpui::Subscription;
 use gpui::Task;
 use gpui::WeakView;
@@ -312,91 +314,58 @@ impl DevServerProjects {
         });
 
         let workspace = self.workspace.clone();
+        let store = dev_server_projects::Store::global(cx);
 
         cx.spawn({
-            let access_token = access_token.clone();
             |this, mut cx| async move {
-            let result = dev_server.await;
+                let result = dev_server.await;
 
-            match result {
-                Ok(dev_server) => {
-                    if let Some(ssh_connection_string) =  ssh_connection_string {
-
-                        let access_token = access_token.clone();
-                        this.update(&mut cx, |this, cx| {
-                                this.focus_handle.focus(cx);
-                                this.mode = Mode::CreateDevServer(CreateDevServer {
-                                    creating: true,
-                                    dev_server_id: Some(DevServerId(dev_server.dev_server_id)),
-                                    access_token: Some(access_token.unwrap_or(dev_server.access_token.clone())),
-                                    manual_setup: false,
-                            });
-                                cx.notify();
-                        })?;
-                    let terminal_panel = workspace
-                        .update(&mut cx, |workspace, cx| workspace.panel::<TerminalPanel>(cx))
-                        .ok()
-                        .flatten()
-                        .with_context(|| anyhow::anyhow!("No terminal panel"))?;
-
-                        let command = "sh".to_string();
-                        let args = vec!["-x".to_string(),"-c".to_string(),
-                            format!(r#"~/.local/bin/zed -v >/dev/stderr || (curl -sSL https://zed.dev/install.sh || wget -qO- https://zed.dev/install.sh) | bash && ~/.local/bin/zed --dev-server-token {}"#, dev_server.access_token)];
-
-                        let terminal = terminal_panel.update(&mut cx, |terminal_panel, cx| {
-                            terminal_panel.spawn_in_new_terminal(
-                                SpawnInTerminal {
-                                    id: task::TaskId("ssh-remote".into()),
-                                    full_label: "Install zed over ssh".into(),
-                                    label: "Install zed over ssh".into(),
-                                    command,
-                                    args,
-                                    command_label: ssh_connection_string.clone(),
-                                    cwd: Some(TerminalWorkDir::Ssh { ssh_command: ssh_connection_string, path: None }),
-                                    env: Default::default(),
-                                    use_new_terminal: true,
-                                    allow_concurrent_runs: false,
-                                    reveal: RevealStrategy::Always,
-                                },
-                                cx,
+                match result {
+                    Ok(dev_server) => {
+                        if let Some(ssh_connection_string) = ssh_connection_string {
+                            spawn_ssh_task(
+                                workspace
+                                    .upgrade()
+                                    .ok_or_else(|| anyhow!("workspace dropped"))?,
+                                store,
+                                DevServerId(dev_server.dev_server_id),
+                                ssh_connection_string,
+                                dev_server.access_token.clone(),
+                                &mut cx,
                             )
-                        })?.await?;
-
-                        terminal.update(&mut cx, |terminal, cx| {
-                            terminal.wait_for_completed_task(cx)
-                        })?.await;
-
-                        // There's a race-condition between the task completing successfully, and the server sending us the online status. Make it less likely we'll show the error state.
-                        if this.update(&mut cx, |this, cx| {
-                            this.dev_server_store.read(cx).dev_server_status(DevServerId(dev_server.dev_server_id))
-                        })? == DevServerStatus::Offline {
-                            cx.background_executor().timer(Duration::from_millis(200)).await
+                            .await
+                            .log_err();
                         }
-                    }
 
-                    this.update(&mut cx, |this, cx| {
+                        this.update(&mut cx, |this, cx| {
                             this.focus_handle.focus(cx);
                             this.mode = Mode::CreateDevServer(CreateDevServer {
                                 creating: false,
                                 dev_server_id: Some(DevServerId(dev_server.dev_server_id)),
                                 access_token: Some(dev_server.access_token),
                                 manual_setup,
-                        });
+                            });
                             cx.notify();
-                    })?;
-                Ok(())
-            }
-            Err(e) => {
-                this.update(&mut cx, |this, cx| {
-                    this.mode = Mode::CreateDevServer(CreateDevServer { creating:false, dev_server_id: existing_id, access_token: None, manual_setup });
-                    cx.notify()
-                })
-                .log_err();
+                        })?;
+                        Ok(())
+                    }
+                    Err(e) => {
+                        this.update(&mut cx, |this, cx| {
+                            this.mode = Mode::CreateDevServer(CreateDevServer {
+                                creating: false,
+                                dev_server_id: existing_id,
+                                access_token: None,
+                                manual_setup,
+                            });
+                            cx.notify()
+                        })
+                        .log_err();
 
-                return Err(e)
+                        return Err(e);
+                    }
+                }
             }
-            }
-        }})
+        })
         .detach_and_prompt_err("Failed to create server", cx, |_, _| None);
 
         self.mode = Mode::CreateDevServer(CreateDevServer {
@@ -1020,4 +989,104 @@ impl Render for DevServerProjects {
                     .into_any_element(),
             })
     }
+}
+
+pub fn reconnect_to_dev_server(
+    workspace: View<Workspace>,
+    dev_server: DevServer,
+    cx: &mut WindowContext,
+) -> Task<anyhow::Result<()>> {
+    let Some(ssh_connection_string) = dev_server.ssh_connection_string else {
+        return Task::ready(Err(anyhow!("can't reconnect, no ssh_connection_string")));
+    };
+    let dev_server_store = dev_server_projects::Store::global(cx);
+    let get_access_token = dev_server_store.update(cx, |store, cx| {
+        store.regenerate_dev_server_token(dev_server.id, cx)
+    });
+
+    cx.spawn(|mut cx| async move {
+        let access_token = get_access_token.await?.access_token;
+
+        spawn_ssh_task(
+            workspace,
+            dev_server_store,
+            dev_server.id,
+            ssh_connection_string.to_string(),
+            access_token,
+            &mut cx,
+        )
+        .await
+    })
+}
+
+pub async fn spawn_ssh_task(
+    workspace: View<Workspace>,
+    dev_server_store: Model<dev_server_projects::Store>,
+    dev_server_id: DevServerId,
+    ssh_connection_string: String,
+    access_token: String,
+    cx: &mut AsyncWindowContext,
+) -> anyhow::Result<()> {
+    let terminal_panel = workspace
+        .update(cx, |workspace, cx| workspace.panel::<TerminalPanel>(cx))
+        .ok()
+        .flatten()
+        .with_context(|| anyhow!("No terminal panel"))?;
+
+    let command = "sh".to_string();
+    let args = vec![
+        "-x".to_string(),
+        "-c".to_string(),
+        format!(
+            r#"~/.local/bin/zed -v >/dev/stderr || (curl -sSL https://zed.dev/install.sh || wget -qO- https://zed.dev/install.sh) | bash && ~/.local/bin/zed --dev-server-token {}"#,
+            access_token
+        ),
+    ];
+
+    let ssh_connection_string = ssh_connection_string.to_string();
+
+    let terminal = terminal_panel
+        .update(cx, |terminal_panel, cx| {
+            terminal_panel.spawn_in_new_terminal(
+                SpawnInTerminal {
+                    id: task::TaskId("ssh-remote".into()),
+                    full_label: "Install zed over ssh".into(),
+                    label: "Install zed over ssh".into(),
+                    command,
+                    args,
+                    command_label: ssh_connection_string.clone(),
+                    cwd: Some(TerminalWorkDir::Ssh {
+                        ssh_command: ssh_connection_string,
+                        path: None,
+                    }),
+                    env: Default::default(),
+                    use_new_terminal: true,
+                    allow_concurrent_runs: false,
+                    reveal: RevealStrategy::Always,
+                },
+                cx,
+            )
+        })?
+        .await?;
+
+    terminal
+        .update(cx, |terminal, cx| terminal.wait_for_completed_task(cx))?
+        .await;
+
+    // There's a race-condition between the task completing successfully, and the server sending us the online status. Make it less likely we'll show the error state.
+    if dev_server_store.update(cx, |this, _| this.dev_server_status(dev_server_id))?
+        == DevServerStatus::Offline
+    {
+        cx.background_executor()
+            .timer(Duration::from_millis(200))
+            .await
+    }
+
+    if dev_server_store.update(cx, |this, _| this.dev_server_status(dev_server_id))?
+        == DevServerStatus::Offline
+    {
+        return Err(anyhow!("couldn't reconnect"))?;
+    }
+
+    Ok(())
 }
