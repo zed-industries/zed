@@ -132,12 +132,7 @@ impl DevServerProjects {
         let markdown = cx.new_view(|cx| Markdown::new("".to_string(), markdown_style, None, cx));
 
         Self {
-            mode: Mode::CreateDevServer(CreateDevServer {
-                creating: false,
-                dev_server_id: None,
-                access_token: None,
-                manual_setup: false,
-            }),
+            mode: Mode::Default(None),
             focus_handle,
             scroll_handle: ScrollHandle::new(),
             dev_server_store,
@@ -160,7 +155,7 @@ impl DevServerProjects {
             return;
         }
 
-        if !path.starts_with("/") && !path.starts_with("~") {
+        if !path.starts_with('/') && !path.starts_with('~') {
             path = format!("~/{}", path);
         }
 
