@@ -5,15 +5,11 @@ use fs::Fs;
 use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
 use smol::stream::StreamExt;
-use std::{path::PathBuf, sync::Arc};
-use ui::WindowContext;
+use std::sync::Arc;
 use util::{paths::PROMPTS_DIR, ResultExt};
 use uuid::Uuid;
 
-use super::{
-    prompt_library::{self, PromptId},
-    prompts2::StaticPrompt2,
-};
+use super::{prompt_library::PromptId, prompts2::StaticPrompt2};
 
 #[derive(Serialize, Deserialize)]
 pub struct PromptLibraryState2 {
@@ -136,6 +132,9 @@ impl PromptLibrary2 {
                 state.prompts.insert(PromptId(id), static_prompt);
             }
         }
+
+        // Write any changes back to the file system
+        self.save(fs.clone()).await?;
 
         Ok(())
     }
