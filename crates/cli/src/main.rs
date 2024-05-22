@@ -62,7 +62,10 @@ fn parse_path_with_position(
 fn main() -> Result<()> {
     // Exit flatpak sandbox if needed
     #[cfg(target_os = "linux")]
-    flatpak::try_restart_to_host();
+    {
+        flatpak::try_restart_to_host();
+        flatpak::ld_extra_libs();
+    }
 
     // Intercept version designators
     #[cfg(target_os = "macos")]
@@ -286,13 +289,37 @@ mod flatpak {
     use std::process::Command;
     use std::{env, process};
 
+    const EXTRA_LIB_ENV_NAME: &'static str = "ZED_FLATPAK_LIB_PATH";
+
+    /// Adds bundled libraries to LD_LIBRARY_PATH if running under flatpak
+    pub fn ld_extra_libs() {
+        let mut paths = if let Ok(paths) = env::var("LD_LIBRARY_PATH") {
+            env::split_paths(&paths).collect()
+        } else {
+            Vec::new()
+        };
+
+        if let Ok(extra_path) = env::var(EXTRA_LIB_ENV_NAME) {
+            paths.push(extra_path.into());
+        }
+
+        env::set_var("LD_LIBRARY_PATH", env::join_paths(paths).unwrap());
+    }
+
     /// Restarts outside of the sandbox if currently running within it
     pub fn try_restart_to_host() {
-        if let Some(bin_dir) = get_flatpak_bin_dir() {
+        if let Some(flatpak_dir) = get_flatpak_dir() {
             let mut args = vec!["/usr/bin/flatpak-spawn".into(), "--host".into()];
             args.append(&mut get_xdg_env_args());
             args.push("--env=ZED_IS_FLATPAK_INSTALL=1".into());
-            args.push(bin_dir.join("zed").into());
+            args.push(
+                format!(
+                    "--env={EXTRA_LIB_ENV_NAME}={}",
+                    flatpak_dir.join("lib").to_str().unwrap()
+                )
+                .into(),
+            );
+            args.push(flatpak_dir.join("bin").join("zed").into());
 
             let mut is_app_location_set = false;
             for arg in &env::args_os().collect::<Vec<_>>()[1..] {
@@ -302,7 +329,7 @@ mod flatpak {
 
             if !is_app_location_set {
                 args.push("--zed".into());
-                args.push(bin_dir.join("zed-app").into());
+                args.push(flatpak_dir.join("bin").join("zed-app").into());
             }
 
             let error = exec::execvp("/usr/bin/flatpak-spawn", args);
@@ -311,7 +338,7 @@ mod flatpak {
         }
     }
 
-    fn get_flatpak_bin_dir() -> Option<PathBuf> {
+    fn get_flatpak_dir() -> Option<PathBuf> {
         if let Ok(flatpak_id) = env::var("FLATPAK_ID") {
             let install_dir = Command::new("/usr/bin/flatpak-spawn")
                 .arg("--host")
@@ -322,7 +349,7 @@ mod flatpak {
                 .output()
                 .unwrap();
             let install_dir = PathBuf::from(String::from_utf8(install_dir.stdout).unwrap().trim());
-            Some(install_dir.join("files").join("bin"))
+            Some(install_dir.join("files"))
         } else {
             None
         }
