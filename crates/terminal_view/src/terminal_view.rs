@@ -889,7 +889,9 @@ impl Item for TerminalView {
                         .as_ref()
                         .is_some_and(|from_db| !from_db.as_os_str().is_empty())
                     {
-                        project.read(cx).terminal_work_dir_for(from_db.as_ref(), cx)
+                        project
+                            .read(cx)
+                            .terminal_work_dir_for(from_db.as_deref(), cx)
                     } else {
                         let strategy = TerminalSettings::get_global(cx).working_directory.clone();
                         workspace.upgrade().and_then(|workspace| {

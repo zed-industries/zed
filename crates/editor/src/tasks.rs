@@ -50,7 +50,7 @@ pub(crate) fn task_context_for_location(
     })
 }
 
-pub(crate) fn task_context_with_editor(
+fn task_context_with_editor(
     workspace: &Workspace,
     editor: &mut Editor,
     cx: &mut WindowContext<'_>,
