@@ -3973,6 +3973,7 @@ dependencies = [
  "menu",
  "picker",
  "project",
+ "serde",
  "serde_json",
  "settings",
  "text",
