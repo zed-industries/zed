@@ -116,16 +116,14 @@ impl HostWorktree for WasmState {
         &mut self,
         delegate: Resource<Arc<dyn LspAdapterDelegate>>,
     ) -> wasmtime::Result<u64> {
-        let delegate = self.table.get(&delegate)?;
-        Ok(delegate.worktree_id())
+        latest::HostWorktree::id(self, delegate).await
     }
 
     async fn root_path(
         &mut self,
         delegate: Resource<Arc<dyn LspAdapterDelegate>>,
     ) -> wasmtime::Result<String> {
-        let delegate = self.table.get(&delegate)?;
-        Ok(delegate.worktree_root_path().to_string_lossy().to_string())
+        latest::HostWorktree::root_path(self, delegate).await
     }
 
     async fn read_text_file(
@@ -133,19 +131,14 @@ impl HostWorktree for WasmState {
         delegate: Resource<Arc<dyn LspAdapterDelegate>>,
         path: String,
     ) -> wasmtime::Result<Result<String, String>> {
-        let delegate = self.table.get(&delegate)?;
-        Ok(delegate
-            .read_text_file(path.into())
-            .await
-            .map_err(|error| error.to_string()))
+        latest::HostWorktree::read_text_file(self, delegate, path).await
     }
 
     async fn shell_env(
         &mut self,
         delegate: Resource<Arc<dyn LspAdapterDelegate>>,
     ) -> wasmtime::Result<EnvVars> {
-        let delegate = self.table.get(&delegate)?;
-        Ok(delegate.shell_env().await.into_iter().collect())
+        latest::HostWorktree::shell_env(self, delegate).await
     }
 
     async fn which(
@@ -153,11 +146,7 @@ impl HostWorktree for WasmState {
         delegate: Resource<Arc<dyn LspAdapterDelegate>>,
         binary_name: String,
     ) -> wasmtime::Result<Option<String>> {
-        let delegate = self.table.get(&delegate)?;
-        Ok(delegate
-            .which(binary_name.as_ref())
-            .await
-            .map(|path| path.to_string_lossy().to_string()))
+        latest::HostWorktree::which(self, delegate, binary_name).await
     }
 
     fn drop(&mut self, _worktree: Resource<Worktree>) -> Result<()> {
