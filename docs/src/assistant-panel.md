@@ -46,7 +46,7 @@ After submitting a message, the assistant's response will be streamed below, in 
 
 The stream can be canceled at any point with `escape`. This is useful if you realize early on that the response is not what you were looking for.
 
-If you want to start a new conversation at any time, you can use the `New Conversation` button located at the top-right corner of the assistant panel.
+If you want to start a new conversation at any time, you can hit `cmd-n` or use the `New Context` menu option in the hamburger menu at the top left of the panel.
 
 Simple back-and-forth conversations work well with the assistant. However, there may come a time when you want to modify the previous text in the conversation and steer it in a different direction.
 
@@ -62,7 +62,7 @@ The assistant gives you the flexibility to have control over the conversation. Y
 6. Add additional context to your original message
 7. Submit the message with `cmd-enter`
 
-Being able to edit previous messages gives you control over how tokens are used. You don't need to start up a new conversation to correct a mistake or to add additional context and you don't have to waste tokens by submitting follow-up corrections.
+Being able to edit previous messages gives you control over how tokens are used. You don't need to start up a new context to correct a mistake or to add additional context and you don't have to waste tokens by submitting follow-up corrections.
 
 Some additional points to keep in mind:
 

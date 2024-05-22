@@ -3135,7 +3135,7 @@ impl ConversationEditor {
             .summary
             .as_ref()
             .map(|summary| summary.text.clone())
-            .unwrap_or_else(|| "New Conversation".into())
+            .unwrap_or_else(|| "New Context".into())
     }
 }
 
