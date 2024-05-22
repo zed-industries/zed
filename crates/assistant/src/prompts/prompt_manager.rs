@@ -13,13 +13,13 @@ use util::TryFutureExt;
 use workspace::ModalView;
 
 use super::{
-    prompt_library::{PromptId, PromptLibrary},
-    prompts::StaticPrompt,
+    prompt_library2::{PromptId, PromptLibrary2},
+    StaticPrompt2,
 };
 
 pub struct PromptManager {
     focus_handle: FocusHandle,
-    prompt_library: Arc<PromptLibrary>,
+    prompt_library: Arc<PromptLibrary2>,
     language_registry: Arc<LanguageRegistry>,
     fs: Arc<dyn Fs>,
     picker: View<Picker<PromptManagerDelegate>>,
@@ -29,18 +29,12 @@ pub struct PromptManager {
 
 impl PromptManager {
     pub fn new(
-        prompt_library: Arc<PromptLibrary>,
+        prompt_library: Arc<PromptLibrary2>,
         language_registry: Arc<LanguageRegistry>,
         fs: Arc<dyn Fs>,
         cx: &mut ViewContext<Self>,
     ) -> Self {
-        let focus_handle = cx.focus_handle();
         let prompt_manager = cx.view().downgrade();
-        let active_prompt_id = if prompt_library.prompts().is_empty() {
-            None
-        } else {
-            Some(prompt_library.prompts_with_ids()[0].0)
-        };
         let picker = cx.new_view(|cx| {
             Picker::uniform_list(
                 PromptManagerDelegate {
@@ -56,15 +50,21 @@ impl PromptManager {
             .modal(false)
         });
 
-        Self {
+        let focus_handle = picker.focus_handle(cx);
+
+        let mut manager = Self {
             focus_handle,
             prompt_library,
             language_registry,
             fs,
             picker,
             prompt_editors: HashMap::default(),
-            active_prompt_id,
-        }
+            active_prompt_id: None,
+        };
+
+        manager.active_prompt_id = manager.prompt_library.first_prompt_id();
+
+        manager
     }
 
     pub fn set_active_prompt(&mut self, prompt_id: Option<PromptId>, cx: &mut ViewContext<Self>) {
@@ -141,8 +141,8 @@ impl PromptManager {
 
         let editor_for_prompt = self.prompt_editors.entry(prompt_id).or_insert_with(|| {
             cx.new_view(|cx| {
-                let text = if let Some(prompt_text) = prompt_library.prompt_str_for_id(prompt_id) {
-                    prompt_text
+                let text = if let Some(prompt) = prompt_library.prompt(prompt_id) {
+                    prompt.content().to_owned()
                 } else {
                     "".to_string()
                 };
@@ -231,9 +231,9 @@ impl FocusableView for PromptManager {
 
 pub struct PromptManagerDelegate {
     prompt_manager: WeakView<PromptManager>,
-    matching_prompts: Vec<Arc<StaticPrompt>>,
+    matching_prompts: Vec<Arc<StaticPrompt2>>,
     matching_prompt_ids: Vec<PromptId>,
-    prompt_library: Arc<PromptLibrary>,
+    prompt_library: Arc<PromptLibrary2>,
     selected_index: usize,
 }
 
@@ -275,11 +275,14 @@ impl PickerDelegate for PromptManagerDelegate {
         let prompt_library = self.prompt_library.clone();
         cx.spawn(|picker, mut cx| async move {
             async {
-                let prompts = prompt_library.prompts_with_ids();
+                let prompts = prompt_library.prompts();
                 let matching_prompts = prompts
                     .into_iter()
                     .filter(|(_, prompt)| {
-                        prompt.title.to_lowercase().contains(&query.to_lowercase())
+                        prompt
+                            .content()
+                            .to_lowercase()
+                            .contains(&query.to_lowercase())
                     })
                     .collect::<Vec<_>>();
                 picker.update(&mut cx, |picker, cx| {
@@ -325,7 +328,7 @@ impl PickerDelegate for PromptManagerDelegate {
                 .inset(true)
                 .spacing(ListItemSpacing::Sparse)
                 .selected(selected)
-                .child(Label::new(prompt.title.clone())),
+                .child(Label::new(prompt.title().unwrap_or_default().clone())),
         )
     }
 }

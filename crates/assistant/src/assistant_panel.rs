@@ -1,5 +1,4 @@
 use crate::ambient_context::{AmbientContext, ContextUpdated, RecentBuffer};
-use crate::prompts::prompt_library::PromptLibrary;
 use crate::prompts::prompt_library2::PromptLibrary2;
 use crate::prompts::prompt_manager::PromptManager;
 use crate::InsertActivePrompt;
@@ -83,7 +82,7 @@ pub fn init(cx: &mut AppContext) {
                 })
                 .register_action(AssistantPanel::inline_assist)
                 .register_action(AssistantPanel::cancel_last_inline_assist)
-                .register_action(ConversationEditor::insert_active_prompt)
+                // .register_action(ConversationEditor::insert_active_prompt)
                 .register_action(ConversationEditor::quote_selection);
         },
     )
@@ -102,8 +101,7 @@ pub struct AssistantPanel {
     focus_handle: FocusHandle,
     toolbar: View<Toolbar>,
     languages: Arc<LanguageRegistry>,
-    prompt_library: Arc<PromptLibrary>,
-    prompt_library2: Arc<PromptLibrary2>,
+    prompt_library: Arc<PromptLibrary2>,
     fs: Arc<dyn Fs>,
     telemetry: Arc<Telemetry>,
     _subscriptions: Vec<Subscription>,
@@ -137,19 +135,10 @@ impl AssistantPanel {
                 .unwrap_or_default();
 
             let prompt_library = Arc::new(
-                PromptLibrary::init(fs.clone())
-                    .await
-                    .log_err()
-                    .unwrap_or_default(),
-            );
-
-            let prompt_library2 = Arc::new(
                 PromptLibrary2::init(fs.clone())
                     .log_err()
                     .unwrap_or_default(),
             );
-
-            prompt_library2.clone().save(fs.clone()).await.log_err();
 
             // TODO: deserialize state.
             let workspace_handle = workspace.clone();
@@ -214,7 +203,6 @@ impl AssistantPanel {
                         toolbar,
                         languages: workspace.app_state().languages.clone(),
                         prompt_library,
-                        prompt_library2,
                         fs: workspace.app_state().fs.clone(),
                         telemetry: workspace.client().telemetry().clone(),
                         width: None,
@@ -1034,20 +1022,20 @@ impl AssistantPanel {
                                 .ok();
                         }
                     })
-                    .entry("Insert Active Prompt", None, {
-                        let workspace = workspace.clone();
-                        move |cx| {
-                            workspace
-                                .update(cx, |workspace, cx| {
-                                    ConversationEditor::insert_active_prompt(
-                                        workspace,
-                                        &Default::default(),
-                                        cx,
-                                    )
-                                })
-                                .ok();
-                        }
-                    })
+                    // .entry("Insert Active Prompt", None, {
+                    //     let workspace = workspace.clone();
+                    //     move |cx| {
+                    //         workspace
+                    //             .update(cx, |workspace, cx| {
+                    //                 ConversationEditor::insert_active_prompt(
+                    //                     workspace,
+                    //                     &Default::default(),
+                    //                     cx,
+                    //                 )
+                    //             })
+                    //             .ok();
+                    //     }
+                    // })
                 })
                 .into()
             })
@@ -2915,35 +2903,35 @@ impl ConversationEditor {
         }
     }
 
-    fn insert_active_prompt(
-        workspace: &mut Workspace,
-        _: &InsertActivePrompt,
-        cx: &mut ViewContext<Workspace>,
-    ) {
-        let Some(panel) = workspace.panel::<AssistantPanel>(cx) else {
-            return;
-        };
+    // fn insert_active_prompt(
+    //     workspace: &mut Workspace,
+    //     _: &InsertActivePrompt,
+    //     cx: &mut ViewContext<Workspace>,
+    // ) {
+    //     let Some(panel) = workspace.panel::<AssistantPanel>(cx) else {
+    //         return;
+    //     };
 
-        if !panel.focus_handle(cx).contains_focused(cx) {
-            workspace.toggle_panel_focus::<AssistantPanel>(cx);
-        }
+    //     if !panel.focus_handle(cx).contains_focused(cx) {
+    //         workspace.toggle_panel_focus::<AssistantPanel>(cx);
+    //     }
 
-        if let Some(default_prompt) = panel.read(cx).prompt_library.clone().default_prompt() {
-            panel.update(cx, |panel, cx| {
-                if let Some(conversation) = panel
-                    .active_conversation_editor()
-                    .cloned()
-                    .or_else(|| panel.new_conversation(cx))
-                {
-                    conversation.update(cx, |conversation, cx| {
-                        conversation
-                            .editor
-                            .update(cx, |editor, cx| editor.insert(&default_prompt, cx))
-                    });
-                };
-            });
-        };
-    }
+    //     if let Some(default_prompt) = panel.read(cx).prompt_library.clone().default_prompt() {
+    //         panel.update(cx, |panel, cx| {
+    //             if let Some(conversation) = panel
+    //                 .active_conversation_editor()
+    //                 .cloned()
+    //                 .or_else(|| panel.new_conversation(cx))
+    //             {
+    //                 conversation.update(cx, |conversation, cx| {
+    //                     conversation
+    //                         .editor
+    //                         .update(cx, |editor, cx| editor.insert(&default_prompt, cx))
+    //                 });
+    //             };
+    //         });
+    //     };
+    // }
 
     fn copy(&mut self, _: &editor::actions::Copy, cx: &mut ViewContext<Self>) {
         let editor = self.editor.read(cx);

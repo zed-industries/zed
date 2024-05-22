@@ -9,7 +9,10 @@ use std::sync::Arc;
 use util::{paths::PROMPTS_DIR, ResultExt};
 use uuid::Uuid;
 
-use super::{prompt_library::PromptId, prompts2::StaticPrompt2};
+use super::prompts2::StaticPrompt2;
+
+#[derive(Debug, Clone, Copy, Eq, PartialEq, Hash, Serialize, Deserialize)]
+pub struct PromptId(pub Uuid);
 
 #[derive(Serialize, Deserialize)]
 pub struct PromptLibraryState2 {
@@ -63,6 +66,25 @@ impl PromptLibrary2 {
             .values()
             .map(|prompt| prompt.content().clone())
             .collect()
+    }
+
+    pub fn prompts(&self) -> Vec<(PromptId, StaticPrompt2)> {
+        let state = self.state.read();
+        state
+            .prompts
+            .iter()
+            .map(|(id, prompt)| (*id, prompt.clone()))
+            .collect()
+    }
+
+    pub fn first_prompt_id(&self) -> Option<PromptId> {
+        let state = self.state.read();
+        state.default_prompt.first().copied()
+    }
+
+    pub fn prompt(&self, id: PromptId) -> Option<StaticPrompt2> {
+        let state = self.state.read();
+        state.prompts.get(&id).cloned()
     }
 
     /// Save the current state of the prompt library to the
