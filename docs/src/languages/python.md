@@ -54,7 +54,7 @@ A common tool for formatting python code is [Black](https://black.readthedocs.io
 
 ```json
 {
-  "language_overrides": {
+  "languages": {
     "Python": {
       "format_on_save": {
         "external": {
