@@ -23,6 +23,8 @@ use text::{Point, ToPoint};
 use util::{post_inc, NumericPrefixWithSuffix};
 use worktree::WorktreeId;
 
+use crate::Project;
+
 /// Inventory tracks available tasks for a given project.
 pub struct Inventory {
     sources: Vec<SourceInInventory>,
@@ -496,12 +498,20 @@ mod test_inventory {
 
 /// A context provided that tries to provide values for all non-custom [`VariableName`] variants for a currently opened file.
 /// Applied as a base for every custom [`ContextProvider`] unless explicitly oped out.
-pub struct BasicContextProvider;
+pub struct BasicContextProvider {
+    project: Model<Project>,
+}
+
+impl BasicContextProvider {
+    pub fn new(project: Model<Project>) -> Self {
+        Self { project }
+    }
+}
 
 impl ContextProvider for BasicContextProvider {
     fn build_context(
         &self,
-        worktree_abs_path: Option<&Path>,
+        _: &TaskVariables,
         location: &Location,
         cx: &mut AppContext,
     ) -> Result<TaskVariables> {
@@ -542,6 +552,16 @@ impl ContextProvider for BasicContextProvider {
         if let Some(path) = current_file {
             task_variables.insert(VariableName::File, path);
         }
+
+        let worktree_abs_path = buffer
+            .file()
+            .map(|file| WorktreeId::from_usize(file.worktree_id()))
+            .and_then(|worktree_id| {
+                self.project
+                    .read(cx)
+                    .worktree_for_id(worktree_id, cx)
+                    .map(|worktree| worktree.read(cx).abs_path())
+            });
         if let Some(worktree_path) = worktree_abs_path {
             task_variables.insert(
                 VariableName::WorktreeRoot,
@@ -569,15 +589,6 @@ impl ContextProviderWithTasks {
 impl ContextProvider for ContextProviderWithTasks {
     fn associated_tasks(&self) -> Option<TaskTemplates> {
         Some(self.templates.clone())
-    }
-
-    fn build_context(
-        &self,
-        worktree_abs_path: Option<&Path>,
-        location: &Location,
-        cx: &mut AppContext,
-    ) -> Result<TaskVariables> {
-        BasicContextProvider.build_context(worktree_abs_path, location, cx)
     }
 }
 

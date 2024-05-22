@@ -1,11 +1,9 @@
 use crate::Editor;
 
-use std::path::Path;
-
 use anyhow::Context;
-use gpui::WindowContext;
+use gpui::{Model, WindowContext};
 use language::ContextProvider;
-use project::{BasicContextProvider, Location, WorktreeId};
+use project::{BasicContextProvider, Location, Project};
 use task::{TaskContext, TaskVariables, VariableName};
 use util::ResultExt;
 use workspace::Workspace;
@@ -19,30 +17,8 @@ pub(crate) fn task_context_for_location(
         .log_err()
         .flatten();
 
-    let buffer = location.buffer.clone();
-    let language_context_provider = buffer
-        .read(cx)
-        .language()
-        .and_then(|language| language.context_provider());
-
-    let worktree_abs_path = buffer
-        .read(cx)
-        .file()
-        .map(|file| WorktreeId::from_usize(file.worktree_id()))
-        .and_then(|worktree_id| {
-            workspace
-                .project()
-                .read(cx)
-                .worktree_for_id(worktree_id, cx)
-                .map(|worktree| worktree.read(cx).abs_path())
-        });
-    let task_variables = combine_task_variables(
-        worktree_abs_path.as_deref(),
-        location,
-        language_context_provider.as_deref(),
-        cx,
-    )
-    .log_err()?;
+    let task_variables =
+        combine_task_variables(location, workspace.project().clone(), cx).log_err()?;
     Some(TaskContext {
         cwd,
         task_variables,
@@ -108,24 +84,28 @@ pub fn task_context(workspace: &Workspace, cx: &mut WindowContext<'_>) -> TaskCo
 }
 
 fn combine_task_variables(
-    worktree_abs_path: Option<&Path>,
     location: Location,
-    context_provider: Option<&dyn ContextProvider>,
+    project: Model<Project>,
     cx: &mut WindowContext<'_>,
 ) -> anyhow::Result<TaskVariables> {
-    if let Some(provider) = context_provider {
-        let mut basic_context = BasicContextProvider
-            .build_context(worktree_abs_path, &location, cx)
+    let language_context_provider = location
+        .buffer
+        .read(cx)
+        .language()
+        .and_then(|language| language.context_provider());
+    if let Some(provider) = language_context_provider {
+        let mut basic_context = BasicContextProvider::new(project)
+            .build_context(&Default::default(), &location, cx)
             .context("building basic default context")?;
         basic_context.extend(
             provider
-                .build_context(worktree_abs_path, &location, cx)
+                .build_context(&basic_context, &location, cx)
                 .context("building provider context ")?,
         );
         Ok(basic_context)
     } else {
-        BasicContextProvider
-            .build_context(worktree_abs_path, &location, cx)
+        BasicContextProvider::new(project)
+            .build_context(&Default::default(), &location, cx)
             .context("building basic provider context")
     }
 }

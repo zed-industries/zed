@@ -185,6 +185,10 @@ impl TaskVariables {
     pub fn extend(&mut self, other: Self) {
         self.0.extend(other.0);
     }
+    /// Get the value associated with given variable name, if there is one.
+    pub fn get(&self, key: &VariableName) -> Option<&str> {
+        self.0.get(key).map(|s| s.as_str())
+    }
 }
 
 impl FromIterator<(VariableName, String)> for TaskVariables {
