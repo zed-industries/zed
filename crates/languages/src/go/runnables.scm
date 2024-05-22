@@ -16,12 +16,6 @@
         (#match? @_name "^Benchmark.+"))
 ) @go-benchmark
 
-; `t.Run`
-(
-    (call_expression function: (_) @run
-        (#match? @run "^t.Run.*"))
-) @go-subtest
-
 ; go run
 (
     (function_declaration name: (_) @run @_name

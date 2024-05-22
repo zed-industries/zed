@@ -402,128 +402,6 @@ impl super::LspAdapter for GoLspAdapter {
     }
 }
 
-pub(crate) struct GoContextProvider;
-
-const GO_TEST_DIRECTORY_TASK_VARIABLE: VariableName =
-    VariableName::Custom(Cow::Borrowed("GO_TEST_DIRECTORY"));
-const GO_SUBTEST_NAME_TASK_VARIABLE: VariableName =
-    VariableName::Custom(Cow::Borrowed("GO_SUBTEST_NAME"));
-
-impl ContextProvider for GoContextProvider {
-    fn build_context(
-        &self,
-        _: Option<&Path>,
-        location: &Location,
-        cx: &mut gpui::AppContext,
-    ) -> Result<TaskVariables> {
-        let local_abs_path = location
-            .buffer
-            .read(cx)
-            .file()
-            .and_then(|file| Some(file.as_local()?.abs_path(cx)));
-
-        let test_folder = local_abs_path
-            .as_deref()
-            .and_then(|local_abs_path| local_abs_path.parent())
-            .and_then(|parent| parent.to_string_lossy().into());
-
-        let snapshot = location.buffer.read(cx).snapshot();
-        let point_range = location.range.to_point(&snapshot);
-        let end = Point::new(point_range.start.row + 1, 0);
-        let line = snapshot.text_for_range(point_range.start..end).peek();
-
-        let subtest_name = extract_subtest_name(line.unwrap_or(""));
-
-        Ok(match (subtest_name, test_folder) {
-            (Some(subtest), Some(folder)) => TaskVariables::from_iter([
-                (GO_TEST_DIRECTORY_TASK_VARIABLE.clone(), folder.to_string()),
-                (GO_SUBTEST_NAME_TASK_VARIABLE.clone(), subtest),
-            ]),
-            (None, Some(folder)) => TaskVariables::from_iter(Some((
-                GO_TEST_DIRECTORY_TASK_VARIABLE.clone(),
-                folder.to_string(),
-            ))),
-            _ => TaskVariables::default(),
-        })
-    }
-
-    fn associated_tasks(&self) -> Option<TaskTemplates> {
-        Some(TaskTemplates(vec![
-            TaskTemplate {
-                label: format!("test {}", VariableName::Symbol.template_value()),
-                command: "go".into(),
-                args: vec![
-                    "test".into(),
-                    GO_TEST_DIRECTORY_TASK_VARIABLE.template_value(),
-                    "-v".into(),
-                    "-run".into(),
-                    format!("^{}$", VariableName::Symbol.template_value()),
-                ],
-                tags: vec!["go-test".to_owned()],
-                ..TaskTemplate::default()
-            },
-            TaskTemplate {
-                label: format!(
-                    "test {}/{}",
-                    VariableName::Symbol.template_value(),
-                    GO_SUBTEST_NAME_TASK_VARIABLE.template_value(),
-                ),
-                command: "go".into(),
-                args: vec![
-                    "test".into(),
-                    GO_TEST_DIRECTORY_TASK_VARIABLE.template_value(),
-                    "-v".into(),
-                    "-run".into(),
-                    format!(
-                        "^{}$/^{}$",
-                        VariableName::Symbol.template_value(),
-                        GO_SUBTEST_NAME_TASK_VARIABLE.template_value(),
-                    ),
-                ],
-                tags: vec!["go-subtest".to_owned()],
-                ..TaskTemplate::default()
-            },
-            TaskTemplate {
-                label: format!("bench {}", VariableName::Symbol.template_value()),
-                command: "go".into(),
-                args: vec![
-                    "test".into(),
-                    GO_TEST_DIRECTORY_TASK_VARIABLE.template_value(),
-                    "-benchmem".into(),
-                    "-run=^$".into(),
-                    "-bench".into(),
-                    format!("^{}$", VariableName::Symbol.template_value()),
-                ],
-                tags: vec!["go-benchmark".to_owned()],
-                ..TaskTemplate::default()
-            },
-            TaskTemplate {
-                label: format!("run {}", VariableName::Symbol.template_value()),
-                command: "go".into(),
-                args: vec!["run".into(), VariableName::File.template_value()],
-                tags: vec!["go-run".to_owned()],
-                ..TaskTemplate::default()
-            },
-        ]))
-    }
-}
-
-fn extract_subtest_name(input: &str) -> Option<String> {
-    GO_EXTRACT_SUBTEST_NAME_REGEX
-        .captures(input)
-        .map(|captures| {
-            let subtest_name = captures
-                .get(1)
-                .map(|matched| matched.as_str().replace(' ', "_"))
-                .unwrap_or_default();
-            GO_ESCAPE_SUBTEST_NAME_REGEX
-                .replace_all(&subtest_name, |caps: &regex::Captures| {
-                    format!("\\{}", &caps[0])
-                })
-                .to_string()
-        })
-}
-
 async fn get_cached_server_binary(container_dir: PathBuf) -> Option<LanguageServerBinary> {
     maybe!(async {
         let mut last_binary_path = None;
@@ -568,6 +446,8 @@ fn adjust_runs(
 pub(crate) struct GoContextProvider;
 
 const GO_PACKAGE_TASK_VARIABLE: VariableName = VariableName::Custom(Cow::Borrowed("GO_PACKAGE"));
+const GO_SUBTEST_NAME_TASK_VARIABLE: VariableName =
+    VariableName::Custom(Cow::Borrowed("GO_SUBTEST_NAME"));
 
 impl ContextProvider for GoContextProvider {
     fn build_context(
@@ -582,11 +462,10 @@ impl ContextProvider for GoContextProvider {
             .file()
             .and_then(|file| Some(file.as_local()?.abs_path(cx)));
 
-        Ok(
-            if let Some(buffer_dir) = local_abs_path
-                .as_deref()
-                .and_then(|local_abs_path| local_abs_path.parent())
-            {
+        let go_package_variable = local_abs_path
+            .as_deref()
+            .and_then(|local_abs_path| local_abs_path.parent())
+            .map(|buffer_dir| {
                 // Prefer the relative form `./my-nested-package/is-here` over
                 // absolute path, because it's more readable in the modal, but
                 // the absolute path also works.
@@ -601,14 +480,22 @@ impl ContextProvider for GoContextProvider {
                     })
                     .unwrap_or_else(|| format!("{}", buffer_dir.to_string_lossy()));
 
-                TaskVariables::from_iter(Some((
-                    GO_PACKAGE_TASK_VARIABLE.clone(),
-                    package_name.to_string(),
-                )))
-            } else {
-                TaskVariables::default()
-            },
-        )
+                (GO_PACKAGE_TASK_VARIABLE.clone(), package_name.to_string())
+            });
+
+        let snapshot = location.buffer.read(cx).snapshot();
+        let point_range = location.range.to_point(&snapshot);
+        let end = Point::new(point_range.start.row + 1, 0);
+        let line = snapshot.text_for_range(point_range.start..end).peek();
+
+        let go_subtest_variable = extract_subtest_name(line.unwrap_or(""))
+            .map(|subtest_name| (GO_SUBTEST_NAME_TASK_VARIABLE.clone(), subtest_name));
+
+        Ok(TaskVariables::from_iter(
+            [go_package_variable, go_subtest_variable]
+                .into_iter()
+                .flat_map(|var| var),
+        ))
     }
 
     fn associated_tasks(&self) -> Option<TaskTemplates> {
@@ -642,6 +529,46 @@ impl ContextProvider for GoContextProvider {
                 ..TaskTemplate::default()
             },
             TaskTemplate {
+                label: format!(
+                    "go test {} -run {} {}",
+                    GO_PACKAGE_TASK_VARIABLE.template_value(),
+                    VariableName::Symbol.template_value(),
+                    GO_SUBTEST_NAME_TASK_VARIABLE.template_value(),
+                ),
+                command: "go".into(),
+                args: vec![
+                    "test".into(),
+                    GO_PACKAGE_TASK_VARIABLE.template_value(),
+                    "-v".into(),
+                    "-run".into(),
+                    format!(
+                        "^{}$/^{}$",
+                        VariableName::Symbol.template_value(),
+                        GO_SUBTEST_NAME_TASK_VARIABLE.template_value(),
+                    ),
+                ],
+                tags: vec!["go-subtest".to_owned()],
+                ..TaskTemplate::default()
+            },
+            TaskTemplate {
+                label: format!(
+                    "go test {} -bench {}",
+                    GO_PACKAGE_TASK_VARIABLE.template_value(),
+                    VariableName::Symbol.template_value()
+                ),
+                command: "go".into(),
+                args: vec![
+                    "test".into(),
+                    GO_PACKAGE_TASK_VARIABLE.template_value(),
+                    "-benchmem".into(),
+                    "-run=^$".into(),
+                    "-bench".into(),
+                    format!("^{}$", VariableName::Symbol.template_value()),
+                ],
+                tags: vec!["go-benchmark".to_owned()],
+                ..TaskTemplate::default()
+            },
+            TaskTemplate {
                 label: format!("go run {}", GO_PACKAGE_TASK_VARIABLE.template_value(),),
                 command: "go".into(),
                 args: vec!["run".into(), GO_PACKAGE_TASK_VARIABLE.template_value()],
@@ -650,6 +577,22 @@ impl ContextProvider for GoContextProvider {
             },
         ]))
     }
+}
+
+fn extract_subtest_name(input: &str) -> Option<String> {
+    GO_EXTRACT_SUBTEST_NAME_REGEX
+        .captures(input)
+        .map(|captures| {
+            let subtest_name = captures
+                .get(1)
+                .map(|matched| matched.as_str().replace(' ', "_"))
+                .unwrap_or_default();
+            GO_ESCAPE_SUBTEST_NAME_REGEX
+                .replace_all(&subtest_name, |caps: &regex::Captures| {
+                    format!("\\{}", &caps[0])
+                })
+                .to_string()
+        })
 }
 
 #[cfg(test)]
