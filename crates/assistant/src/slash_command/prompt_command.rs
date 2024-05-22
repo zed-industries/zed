@@ -1,5 +1,5 @@
 use super::{SlashCommand, SlashCommandCleanup, SlashCommandInvocation};
-use crate::PromptLibrary;
+use crate::prompts::prompt_library::PromptLibrary;
 use anyhow::{anyhow, Context, Result};
 use futures::channel::oneshot;
 use fuzzy::StringMatchCandidate;
@@ -42,7 +42,12 @@ impl SlashCommand for PromptSlashCommand {
                 .prompts()
                 .into_iter()
                 .enumerate()
-                .map(|(ix, prompt)| StringMatchCandidate::new(ix, prompt.title))
+                .filter_map(|(ix, prompt)| {
+                    prompt
+                        .1
+                        .title()
+                        .map(|title| StringMatchCandidate::new(ix, title.into()))
+                })
                 .collect::<Vec<_>>();
             let matches = fuzzy::match_strings(
                 &candidates,
@@ -75,9 +80,11 @@ impl SlashCommand for PromptSlashCommand {
             let prompt = library
                 .prompts()
                 .into_iter()
-                .find(|prompt| prompt.title == title)
-                .with_context(|| format!("no prompt found with title {:?}", title))?;
-            Ok(prompt.prompt)
+                .filter_map(|prompt| prompt.1.title().map(|title| (title, prompt)))
+                .find(|(t, _)| t == &title)
+                .with_context(|| format!("no prompt found with title {:?}", title))?
+                .1;
+            Ok(prompt.1.content().to_owned())
         });
         SlashCommandInvocation {
             output,
