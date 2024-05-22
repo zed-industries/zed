@@ -9,7 +9,7 @@ use language::{
 use picker::{Picker, PickerDelegate};
 use std::sync::Arc;
 use ui::{prelude::*, IconButtonShape, ListItem, ListItemSpacing};
-use util::TryFutureExt;
+use util::{ResultExt, TryFutureExt};
 use workspace::ModalView;
 
 use super::prompt_library::{PromptId, PromptLibrary};
@@ -81,19 +81,6 @@ impl PromptManager {
         }
     }
 
-    fn load_language(&self, name: &str) -> Option<Arc<Language>> {
-        let language = self
-            .language_registry
-            .language_for_name(name)
-            .map(|language| language.ok())
-            .shared();
-
-        match language.clone().now_or_never() {
-            Some(language) => language,
-            None => None,
-        }
-    }
-
     fn dismiss(&mut self, _: &menu::Cancel, cx: &mut ViewContext<Self>) {
         cx.emit(DismissEvent);
     }
@@ -126,15 +113,12 @@ impl PromptManager {
             )
     }
 
-    fn render_editor_for_prompt(
+    fn set_editor_for_prompt(
         &mut self,
         prompt_id: PromptId,
         cx: &mut ViewContext<Self>,
     ) -> impl IntoElement {
         let prompt_library = self.prompt_library.clone();
-        let markdown_lang = self
-            .load_language("markdown")
-            .unwrap_or(Arc::new(fallback_markdown_lang()));
 
         let editor_for_prompt = self.prompt_editors.entry(prompt_id).or_insert_with(|| {
             cx.new_view(|cx| {
@@ -145,12 +129,20 @@ impl PromptManager {
                 };
 
                 let buffer = cx.new_model(|cx| {
-                    Buffer::local(text.clone(), cx).with_language(markdown_lang, cx)
+                    let mut buffer = Buffer::local(text, cx);
+                    let markdown = self.language_registry.language_for_name("Markdown");
+                    cx.spawn(|buffer, mut cx| async move {
+                        if let Some(markdown) = markdown.await.log_err() {
+                            _ = buffer.update(&mut cx, |buffer, cx| {
+                                buffer.set_language(Some(markdown), cx);
+                            });
+                        }
+                    })
+                    .detach();
+                    buffer.set_language_registry(self.language_registry.clone());
+                    buffer
                 });
                 let mut editor = Editor::for_buffer(buffer, None, cx);
-
-                editor.set_text(text, cx);
-
                 editor.set_soft_wrap_mode(language_settings::SoftWrap::EditorWidth, cx);
                 editor.set_show_gutter(false, cx);
                 editor
@@ -166,6 +158,7 @@ impl Render for PromptManager {
             .key_context("PromptManager")
             .track_focus(&self.focus_handle)
             .on_action(cx.listener(Self::dismiss))
+            // .on_action(cx.listener(Self::save_active_prompt))
             .elevation_3(cx)
             .size_full()
             .flex_none()
@@ -209,7 +202,7 @@ impl Render for PromptManager {
                                     .w_full()
                                     .py(Spacing::Large.rems(cx))
                                     .px(Spacing::XLarge.rems(cx))
-                                    .child(self.render_editor_for_prompt(active_prompt_id, cx)),
+                                    .child(self.set_editor_for_prompt(active_prompt_id, cx)),
                             )
                         }),
                 ),
@@ -301,6 +294,10 @@ impl PickerDelegate for PromptManagerDelegate {
     fn confirm(&mut self, _: bool, cx: &mut ViewContext<Picker<Self>>) {
         let prompt_manager = self.prompt_manager.upgrade().unwrap();
         prompt_manager.update(cx, move |manager, cx| manager.focus_active_editor(cx));
+    }
+
+    fn should_dismiss(&self) -> bool {
+        false
     }
 
     fn dismissed(&mut self, cx: &mut ViewContext<Picker<Self>>) {

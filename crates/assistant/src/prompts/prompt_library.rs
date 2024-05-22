@@ -37,11 +37,6 @@ impl Default for PromptLibrary {
 }
 
 impl PromptLibrary {
-    pub fn init(fs: Arc<dyn Fs>) -> anyhow::Result<Self> {
-        let prompt_library = futures::executor::block_on(Self::load(fs))?;
-        Ok(prompt_library)
-    }
-
     fn new() -> Self {
         Self {
             state: RwLock::new(PromptLibraryState::default()),
