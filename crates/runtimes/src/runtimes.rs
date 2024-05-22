@@ -32,8 +32,6 @@ pub struct RuntimeGlobal(Model<RuntimeManager>);
 
 impl Global for RuntimeGlobal {}
 
-/** On startup, we will look for all available kernels, or so I expect */
-
 pub fn init(fs: Arc<dyn Fs>, cx: &mut AppContext) {
     let runtime_manager = cx.new_model(|cx| RuntimeManager::new(cx));
     RuntimeManager::set_global(runtime_manager.clone(), cx);
@@ -217,8 +215,15 @@ impl RuntimeManager {
         let _runtime_handle = std::thread::spawn(|| {
             let runtime = tokio::runtime::Builder::new_current_thread()
                 .enable_all()
-                .build()
-                .expect("tokio failed to start");
+                .build();
+
+            let runtime = match runtime {
+                Ok(runtime) => runtime,
+                Err(e) => {
+                    log::error!("Failed to create tokio runtime for jupyter kernel: {e:?}");
+                    return;
+                }
+            };
 
             // TODO: Will need a signal handler to shutdown the runtime
             runtime
