@@ -107,8 +107,12 @@ pub fn init(
         vec![Arc::new(css::CssLspAdapter::new(node_runtime.clone())),]
     );
     language!("go", vec![Arc::new(go::GoLspAdapter)], GoContextProvider);
-    language!("gomod");
-    language!("gowork");
+    language!("gomod", vec![Arc::new(go::GoLspAdapter)], GoContextProvider);
+    language!(
+        "gowork",
+        vec![Arc::new(go::GoLspAdapter)],
+        GoContextProvider
+    );
     language!(
         "json",
         vec![Arc::new(json::JsonLspAdapter::new(
