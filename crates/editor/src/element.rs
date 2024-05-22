@@ -4265,11 +4265,11 @@ impl Element for EditorElement {
 
                     let gutter_settings = EditorSettings::get_global(cx).gutter;
 
-                    let mut context_menu_visible = false;
+                    let mut _context_menu_visible = false;
                     let mut code_actions_indicator = None;
                     if let Some(newest_selection_head) = newest_selection_head {
                         if (start_row..end_row).contains(&newest_selection_head.row()) {
-                            context_menu_visible = self.layout_context_menu(
+                            _context_menu_visible = self.layout_context_menu(
                                 line_height,
                                 &hitbox,
                                 &text_hitbox,
