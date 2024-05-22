@@ -2,7 +2,9 @@
 
 set -euo pipefail
 cd "$(dirname "$0")/../.."
+shopt -s extglob
 
+rm -f target/release/zed-+([-a-zA-Z0-9])-linux-x86_64.tar.gz
 script/bundle-linux
 archive=$(ls "target/release" | grep -E 'zed(-[a-zA-Z0-9]+)?-linux-x86_64\.tar\.gz')
 channel=$(<crates/zed/RELEASE_CHANNEL)
