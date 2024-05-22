@@ -3255,7 +3255,7 @@ impl BufferSnapshot {
         &self,
         buffer_row: u32,
     ) -> (Option<(u32, u32)>, Option<(u32, u32)>) {
-        const MAX_SEARCH_ROWS: u32 = 100;
+        const MAX_SEARCH_ROWS: u32 = 10000;
 
         let start = buffer_row.saturating_sub(MAX_SEARCH_ROWS);
         let upwards_range = start..buffer_row;
@@ -3291,7 +3291,7 @@ impl BufferSnapshot {
         buffer_row: u32,
         target_indent_size: Option<u32>,
     ) -> (u32, Option<u32>) {
-        const MAX_SEARCH_ROWS: u32 = 100;
+        const MAX_SEARCH_ROWS: u32 = 10000;
 
         let end = (self.max_point().row + 1).min(buffer_row + MAX_SEARCH_ROWS);
         let range = buffer_row..end;
@@ -3311,7 +3311,7 @@ impl BufferSnapshot {
         buffer_row: u32,
         target_indent_size: Option<u32>,
     ) -> Option<(u32, u32)> {
-        const MAX_SEARCH_ROWS: u32 = 100;
+        const MAX_SEARCH_ROWS: u32 = 10000;
 
         let start = buffer_row.saturating_sub(MAX_SEARCH_ROWS);
         let range = start..buffer_row;

@@ -1437,15 +1437,13 @@ impl EditorElement {
         }
 
         let indent_guides =
-            self.editor
-                .read(cx)
-                .indent_guides_in_range(visible_buffer_range, snapshot, cx);
+            crate::indent_guides::indent_guides_in_range(visible_buffer_range, snapshot, cx);
 
-        let active_indent_guide_indices = self
-            .editor
-            .read(cx)
-            .find_active_indent_guide_indices(&indent_guides, snapshot, cx)
-            .unwrap_or_default();
+        let active_indent_guide_indices = self.editor.update(cx, |editor, cx| {
+            editor
+                .find_active_indent_guide_indices(&indent_guides, snapshot, cx)
+                .unwrap_or_default()
+        });
 
         Some(
             indent_guides

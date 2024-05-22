@@ -77,6 +77,7 @@ use highlight_matching_bracket::refresh_matching_bracket_highlights;
 use hover_popover::{hide_hover, HoverState};
 use hunk_diff::ExpandedHunks;
 pub(crate) use hunk_diff::HunkToExpand;
+use indent_guides::ActiveIndentGuideState;
 use inlay_hint_cache::{InlayHintCache, InlaySplice, InvalidationStrategy};
 pub use inline_completion_provider::*;
 pub use items::MAX_TAB_TITLE_LEN;
@@ -455,6 +456,7 @@ pub struct Editor {
     highlighted_rows: HashMap<TypeId, Vec<RowHighlight>>,
     background_highlights: TreeMap<TypeId, BackgroundHighlight>,
     scrollbar_marker_state: ScrollbarMarkerState,
+    active_indent_guides_state: ActiveIndentGuideState,
     nav_history: Option<ItemNavHistory>,
     context_menu: RwLock<Option<ContextMenu>>,
     mouse_context_menu: Option<MouseContextMenu>,
@@ -1638,6 +1640,7 @@ impl Editor {
             highlighted_rows: HashMap::default(),
             background_highlights: Default::default(),
             scrollbar_marker_state: ScrollbarMarkerState::default(),
+            active_indent_guides_state: ActiveIndentGuideState::default(),
             nav_history: None,
             context_menu: RwLock::new(None),
             mouse_context_menu: None,
@@ -9436,6 +9439,7 @@ impl Editor {
 
             cx.notify();
             self.scrollbar_marker_state.dirty = true;
+            self.active_indent_guides_state.dirty = true;
         }
     }
 
@@ -10258,6 +10262,7 @@ impl Editor {
                 singleton_buffer_edited,
             } => {
                 self.scrollbar_marker_state.dirty = true;
+                self.active_indent_guides_state.dirty = true;
                 self.refresh_active_diagnostics(cx);
                 self.refresh_code_actions(cx);
                 if self.has_active_inline_completion(cx) {
