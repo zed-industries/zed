@@ -19,7 +19,8 @@ pub enum OutputType {
     },
 }
 
-const PRIORITY_ORDER: &[MimeType] = &[MimeType::Plain, MimeType::Markdown];
+// Priority order goes from highest to lowest (plaintext is the common fallback)
+const PRIORITY_ORDER: &[MimeType] = &[MimeType::Markdown, MimeType::Plain];
 
 impl OutputType {
     fn render(&self, cx: &ViewContext<ExecutionView>) -> Option<AnyElement> {
@@ -42,6 +43,7 @@ impl OutputType {
         el
     }
 
+    /// Calculates the expected number of lines
     fn num_lines(&self) -> u8 {
         match self {
             Self::Plain(stdio) => stdio.num_lines(),
