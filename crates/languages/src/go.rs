@@ -13,15 +13,17 @@ use settings::Settings;
 use smol::{fs, process};
 use std::{
     any::Any,
+    borrow::Cow,
     ffi::{OsStr, OsString},
     ops::Range,
-    path::PathBuf,
+    path::{Path, PathBuf},
     str,
     sync::{
         atomic::{AtomicBool, Ordering::SeqCst},
         Arc,
     },
 };
+use task::{TaskTemplate, TaskTemplates, TaskVariables, VariableName};
 use util::{fs::remove_matching, maybe, ResultExt};
 
 fn server_binary_arguments() -> Vec<OsString> {
@@ -436,6 +438,93 @@ fn adjust_runs(
         range.end += delta;
     }
     runs
+}
+
+pub(crate) struct GoContextProvider;
+
+const GO_PACKAGE_TASK_VARIABLE: VariableName = VariableName::Custom(Cow::Borrowed("GO_PACKAGE"));
+
+impl ContextProvider for GoContextProvider {
+    fn build_context(
+        &self,
+        worktree_abs_path: Option<&Path>,
+        location: &Location,
+        cx: &mut gpui::AppContext,
+    ) -> Result<TaskVariables> {
+        let local_abs_path = location
+            .buffer
+            .read(cx)
+            .file()
+            .and_then(|file| Some(file.as_local()?.abs_path(cx)));
+
+        Ok(
+            if let Some(buffer_dir) = local_abs_path
+                .as_deref()
+                .and_then(|local_abs_path| local_abs_path.parent())
+            {
+                // Prefer the relative form `./my-nested-package/is-here` over
+                // absolute path, because it's more readable in the modal, but
+                // the absolute path also works.
+                let package_name = worktree_abs_path
+                    .and_then(|worktree_abs_path| buffer_dir.strip_prefix(worktree_abs_path).ok())
+                    .map(|relative_pkg_dir| {
+                        if relative_pkg_dir.as_os_str().is_empty() {
+                            ".".into()
+                        } else {
+                            format!("./{}", relative_pkg_dir.to_string_lossy())
+                        }
+                    })
+                    .unwrap_or_else(|| format!("{}", buffer_dir.to_string_lossy()));
+
+                TaskVariables::from_iter(Some((
+                    GO_PACKAGE_TASK_VARIABLE.clone(),
+                    package_name.to_string(),
+                )))
+            } else {
+                TaskVariables::default()
+            },
+        )
+    }
+
+    fn associated_tasks(&self) -> Option<TaskTemplates> {
+        Some(TaskTemplates(vec![
+            TaskTemplate {
+                label: format!(
+                    "go test {} -run {}",
+                    GO_PACKAGE_TASK_VARIABLE.template_value(),
+                    VariableName::Symbol.template_value(),
+                ),
+                command: "go".into(),
+                args: vec![
+                    "test".into(),
+                    GO_PACKAGE_TASK_VARIABLE.template_value(),
+                    "-run".into(),
+                    VariableName::Symbol.template_value(),
+                ],
+                tags: vec!["go-test".to_owned()],
+                ..TaskTemplate::default()
+            },
+            TaskTemplate {
+                label: format!("go test {}", GO_PACKAGE_TASK_VARIABLE.template_value()),
+                command: "go".into(),
+                args: vec!["test".into(), GO_PACKAGE_TASK_VARIABLE.template_value()],
+                ..TaskTemplate::default()
+            },
+            TaskTemplate {
+                label: "go test ./...".into(),
+                command: "go".into(),
+                args: vec!["test".into(), "./...".into()],
+                ..TaskTemplate::default()
+            },
+            TaskTemplate {
+                label: format!("go run {}", GO_PACKAGE_TASK_VARIABLE.template_value(),),
+                command: "go".into(),
+                args: vec!["run".into(), GO_PACKAGE_TASK_VARIABLE.template_value()],
+                tags: vec!["go-main".to_owned()],
+                ..TaskTemplate::default()
+            },
+        ]))
+    }
 }
 
 #[cfg(test)]

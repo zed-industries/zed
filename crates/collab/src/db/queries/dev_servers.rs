@@ -137,6 +137,7 @@ impl Database {
         &self,
         id: DevServerId,
         name: &str,
+        ssh_connection_string: &Option<String>,
         user_id: UserId,
     ) -> crate::Result<proto::DevServerProjectsUpdate> {
         self.transaction(|tx| async move {
@@ -149,6 +150,7 @@ impl Database {
 
             dev_server::Entity::update(dev_server::ActiveModel {
                 name: ActiveValue::Set(name.trim().to_string()),
+                ssh_connection_string: ActiveValue::Set(ssh_connection_string.clone()),
                 ..dev_server.clone().into_active_model()
             })
             .exec(&*tx)

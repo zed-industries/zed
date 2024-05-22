@@ -18,6 +18,7 @@
 //! [EditorElement]: crate::element::EditorElement
 
 mod block_map;
+mod flap_map;
 mod fold_map;
 mod inlay_map;
 mod tab_map;
@@ -28,7 +29,9 @@ use crate::{EditorStyle, RowExt};
 pub use block_map::{BlockMap, BlockPoint};
 use collections::{HashMap, HashSet};
 use fold_map::FoldMap;
-use gpui::{Font, HighlightStyle, Hsla, LineLayout, Model, ModelContext, Pixels, UnderlineStyle};
+use gpui::{
+    AnyElement, Font, HighlightStyle, Hsla, LineLayout, Model, ModelContext, Pixels, UnderlineStyle,
+};
 use inlay_map::InlayMap;
 use language::{
     language_settings::language_settings, OffsetUtf16, Point, Subscription as BufferSubscription,
@@ -42,6 +45,7 @@ use serde::Deserialize;
 use std::{any::TypeId, borrow::Cow, fmt::Debug, num::NonZeroU32, ops::Range, sync::Arc};
 use sum_tree::{Bias, TreeMap};
 use tab_map::TabMap;
+use ui::WindowContext;
 
 use wrap_map::WrapMap;
 
@@ -49,10 +53,15 @@ pub use block_map::{
     BlockBufferRows, BlockChunks as DisplayChunks, BlockContext, BlockDisposition, BlockId,
     BlockProperties, BlockStyle, RenderBlock, TransformBlock,
 };
+pub use flap_map::*;
 
-use self::block_map::BlockRow;
+use self::block_map::{BlockRow, BlockSnapshot};
+use self::fold_map::FoldSnapshot;
 pub use self::fold_map::{Fold, FoldId, FoldPoint};
+use self::inlay_map::InlaySnapshot;
 pub use self::inlay_map::{InlayOffset, InlayPoint};
+use self::tab_map::TabSnapshot;
+use self::wrap_map::WrapSnapshot;
 pub(crate) use inlay_map::Inlay;
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -60,6 +69,8 @@ pub enum FoldStatus {
     Folded,
     Foldable,
 }
+
+pub type RenderFoldToggle = Arc<dyn Fn(FoldStatus, &mut WindowContext) -> AnyElement>;
 
 const UNNECESSARY_CODE_FADE: f32 = 0.3;
 
@@ -92,6 +103,8 @@ pub struct DisplayMap {
     text_highlights: TextHighlights,
     /// Regions of inlays that should be highlighted.
     inlay_highlights: InlayHighlights,
+    /// A container for explicitly foldable ranges, which supersede indentation based fold range suggestions.
+    flap_map: FlapMap,
     pub clip_at_line_ends: bool,
 }
 
@@ -113,7 +126,9 @@ impl DisplayMap {
         let (tab_map, snapshot) = TabMap::new(snapshot, tab_size);
         let (wrap_map, snapshot) = WrapMap::new(snapshot, font, font_size, wrap_width, cx);
         let block_map = BlockMap::new(snapshot, buffer_header_height, excerpt_header_height);
+        let flap_map = FlapMap::default();
         cx.observe(&wrap_map, |_, _, cx| cx.notify()).detach();
+
         DisplayMap {
             buffer,
             buffer_subscription,
@@ -122,6 +137,7 @@ impl DisplayMap {
             tab_map,
             wrap_map,
             block_map,
+            flap_map,
             text_highlights: Default::default(),
             inlay_highlights: Default::default(),
             clip_at_line_ends: false,
@@ -147,6 +163,7 @@ impl DisplayMap {
             tab_snapshot,
             wrap_snapshot,
             block_snapshot,
+            flap_snapshot: self.flap_map.snapshot(),
             text_highlights: self.text_highlights.clone(),
             inlay_highlights: self.inlay_highlights.clone(),
             clip_at_line_ends: self.clip_at_line_ends,
@@ -157,14 +174,14 @@ impl DisplayMap {
         self.fold(
             other
                 .folds_in_range(0..other.buffer_snapshot.len())
-                .map(|fold| fold.range.to_offset(&other.buffer_snapshot)),
+                .map(|fold| (fold.range.to_offset(&other.buffer_snapshot), fold.text)),
             cx,
         );
     }
 
     pub fn fold<T: ToOffset>(
         &mut self,
-        ranges: impl IntoIterator<Item = Range<T>>,
+        ranges: impl IntoIterator<Item = (Range<T>, &'static str)>,
         cx: &mut ModelContext<Self>,
     ) {
         let snapshot = self.buffer.read(cx).snapshot(cx);
@@ -207,6 +224,24 @@ impl DisplayMap {
             .wrap_map
             .update(cx, |map, cx| map.sync(snapshot, edits, cx));
         self.block_map.read(snapshot, edits);
+    }
+
+    pub fn insert_flaps(
+        &mut self,
+        flaps: impl IntoIterator<Item = Flap>,
+        cx: &mut ModelContext<Self>,
+    ) -> Vec<FlapId> {
+        let snapshot = self.buffer.read(cx).snapshot(cx);
+        self.flap_map.insert(flaps, &snapshot)
+    }
+
+    pub fn remove_flaps(
+        &mut self,
+        flap_ids: impl IntoIterator<Item = FlapId>,
+        cx: &mut ModelContext<Self>,
+    ) {
+        let snapshot = self.buffer.read(cx).snapshot(cx);
+        self.flap_map.remove(flap_ids, &snapshot)
     }
 
     pub fn insert_blocks(
@@ -367,11 +402,12 @@ pub struct HighlightedChunk<'a> {
 #[derive(Clone)]
 pub struct DisplaySnapshot {
     pub buffer_snapshot: MultiBufferSnapshot,
-    pub fold_snapshot: fold_map::FoldSnapshot,
-    inlay_snapshot: inlay_map::InlaySnapshot,
-    tab_snapshot: tab_map::TabSnapshot,
-    wrap_snapshot: wrap_map::WrapSnapshot,
-    block_snapshot: block_map::BlockSnapshot,
+    pub fold_snapshot: FoldSnapshot,
+    pub flap_snapshot: FlapSnapshot,
+    inlay_snapshot: InlaySnapshot,
+    tab_snapshot: TabSnapshot,
+    wrap_snapshot: WrapSnapshot,
+    block_snapshot: BlockSnapshot,
     text_highlights: TextHighlights,
     inlay_highlights: InlayHighlights,
     clip_at_line_ends: bool,
@@ -833,17 +869,7 @@ impl DisplaySnapshot {
         DisplayRow(self.block_snapshot.longest_row())
     }
 
-    pub fn fold_for_line(&self, buffer_row: MultiBufferRow) -> Option<FoldStatus> {
-        if self.is_line_folded(buffer_row) {
-            Some(FoldStatus::Folded)
-        } else if self.is_foldable(buffer_row) {
-            Some(FoldStatus::Foldable)
-        } else {
-            None
-        }
-    }
-
-    pub fn is_foldable(&self, buffer_row: MultiBufferRow) -> bool {
+    pub fn starts_indent(&self, buffer_row: MultiBufferRow) -> bool {
         let max_row = self.buffer_snapshot.max_buffer_row();
         if buffer_row >= max_row {
             return false;
@@ -867,9 +893,17 @@ impl DisplaySnapshot {
         false
     }
 
-    pub fn foldable_range(&self, buffer_row: MultiBufferRow) -> Option<Range<Point>> {
+    pub fn foldable_range(
+        &self,
+        buffer_row: MultiBufferRow,
+    ) -> Option<(Range<Point>, &'static str)> {
         let start = MultiBufferPoint::new(buffer_row.0, self.buffer_snapshot.line_len(buffer_row));
-        if self.is_foldable(MultiBufferRow(start.row))
+        if let Some(flap) = self
+            .flap_snapshot
+            .query_row(buffer_row, &self.buffer_snapshot)
+        {
+            Some((flap.range.to_point(&self.buffer_snapshot), ""))
+        } else if self.starts_indent(MultiBufferRow(start.row))
             && !self.is_line_folded(MultiBufferRow(start.row))
         {
             let (start_indent, _) = self.line_indent_for_buffer_row(buffer_row);
@@ -888,7 +922,7 @@ impl DisplaySnapshot {
                 }
             }
             let end = end.unwrap_or(max_point);
-            Some(start..end)
+            Some((start..end, "⋯"))
         } else {
             None
         }
@@ -1165,7 +1199,7 @@ pub mod tests {
                     } else {
                         log::info!("folding ranges: {:?}", ranges);
                         map.update(cx, |map, cx| {
-                            map.fold(ranges, cx);
+                            map.fold(ranges.into_iter().map(|range| (range, "⋯")), cx);
                         });
                     }
                 }
@@ -1513,7 +1547,10 @@ pub mod tests {
 
         map.update(cx, |map, cx| {
             map.fold(
-                vec![MultiBufferPoint::new(0, 6)..MultiBufferPoint::new(3, 2)],
+                vec![(
+                    MultiBufferPoint::new(0, 6)..MultiBufferPoint::new(3, 2),
+                    "⋯",
+                )],
                 cx,
             )
         });
@@ -1595,7 +1632,10 @@ pub mod tests {
 
         map.update(cx, |map, cx| {
             map.fold(
-                vec![MultiBufferPoint::new(0, 6)..MultiBufferPoint::new(3, 2)],
+                vec![(
+                    MultiBufferPoint::new(0, 6)..MultiBufferPoint::new(3, 2),
+                    "⋯",
+                )],
                 cx,
             )
         });
@@ -1752,6 +1792,33 @@ pub mod tests {
         assert("ˇaˇ", cx);
         assert("aˇbˇ", cx);
         assert("aˇαˇ", cx);
+    }
+
+    #[gpui::test]
+    fn test_flaps(cx: &mut gpui::AppContext) {
+        init_test(cx, |_| {});
+
+        let text = "aaa\nbbb\nccc\nddd\neee\nfff\nggg\nhhh\niii\njjj\nkkk\nlll";
+        let buffer = MultiBuffer::build_simple(text, cx);
+        let font_size = px(14.0);
+        cx.new_model(|cx| {
+            let mut map =
+                DisplayMap::new(buffer.clone(), font("Helvetica"), font_size, None, 1, 1, cx);
+            let snapshot = map.buffer.read(cx).snapshot(cx);
+            let range =
+                snapshot.anchor_before(Point::new(2, 0))..snapshot.anchor_after(Point::new(3, 3));
+
+            map.flap_map.insert(
+                [Flap::new(
+                    range,
+                    |_row, _status, _toggle, _cx| div(),
+                    |_row, _status, _cx| div(),
+                )],
+                &map.buffer.read(cx).snapshot(cx),
+            );
+
+            map
+        });
     }
 
     #[gpui::test]

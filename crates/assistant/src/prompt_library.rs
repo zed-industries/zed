@@ -251,8 +251,8 @@ impl Render for PromptManager {
             .h(rems(40.))
             .overflow_hidden()
             .child(
-                ModalHeader::new("prompt-manager-header")
-                    .child(Headline::new("Prompt Library").size(HeadlineSize::Small))
+                ModalHeader::new()
+                    .headline("Prompt Library")
                     .show_dismiss_button(true),
             )
             .child(

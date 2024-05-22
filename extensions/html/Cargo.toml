@@ -1,6 +1,6 @@
 [package]
 name = "zed_html"
-version = "0.0.2"
+version = "0.1.1"
 edition = "2021"
 publish = false
 license = "Apache-2.0"

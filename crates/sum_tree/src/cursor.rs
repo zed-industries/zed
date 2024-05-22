@@ -49,6 +49,7 @@ where
         &self.position
     }
 
+    #[track_caller]
     pub fn end(&self, cx: &<T::Summary as Summary>::Context) -> D {
         if let Some(item_summary) = self.item_summary() {
             let mut end = self.start().clone();
@@ -59,6 +60,7 @@ where
         }
     }
 
+    #[track_caller]
     pub fn item(&self) -> Option<&'a T> {
         self.assert_did_seek();
         if let Some(entry) = self.stack.last() {
@@ -77,6 +79,7 @@ where
         }
     }
 
+    #[track_caller]
     pub fn item_summary(&self) -> Option<&'a T::Summary> {
         self.assert_did_seek();
         if let Some(entry) = self.stack.last() {
@@ -97,6 +100,7 @@ where
         }
     }
 
+    #[track_caller]
     pub fn next_item(&self) -> Option<&'a T> {
         self.assert_did_seek();
         if let Some(entry) = self.stack.last() {
@@ -119,6 +123,7 @@ where
         }
     }
 
+    #[track_caller]
     fn next_leaf(&self) -> Option<&'a SumTree<T>> {
         for entry in self.stack.iter().rev().skip(1) {
             if entry.index < entry.tree.0.child_trees().len() - 1 {
@@ -133,6 +138,7 @@ where
         None
     }
 
+    #[track_caller]
     pub fn prev_item(&self) -> Option<&'a T> {
         self.assert_did_seek();
         if let Some(entry) = self.stack.last() {
@@ -155,6 +161,7 @@ where
         }
     }
 
+    #[track_caller]
     fn prev_leaf(&self) -> Option<&'a SumTree<T>> {
         for entry in self.stack.iter().rev().skip(1) {
             if entry.index != 0 {
@@ -169,10 +176,12 @@ where
         None
     }
 
+    #[track_caller]
     pub fn prev(&mut self, cx: &<T::Summary as Summary>::Context) {
         self.prev_internal(|_| true, cx)
     }
 
+    #[track_caller]
     fn prev_internal<F>(&mut self, mut filter_node: F, cx: &<T::Summary as Summary>::Context)
     where
         F: FnMut(&T::Summary) -> bool,
@@ -238,10 +247,12 @@ where
         }
     }
 
+    #[track_caller]
     pub fn next(&mut self, cx: &<T::Summary as Summary>::Context) {
         self.next_internal(|_| true, cx)
     }
 
+    #[track_caller]
     fn next_internal<F>(&mut self, mut filter_node: F, cx: &<T::Summary as Summary>::Context)
     where
         F: FnMut(&T::Summary) -> bool,
@@ -329,6 +340,7 @@ where
         debug_assert!(self.stack.is_empty() || self.stack.last().unwrap().tree.0.is_leaf());
     }
 
+    #[track_caller]
     fn assert_did_seek(&self) {
         assert!(
             self.did_seek,
@@ -342,6 +354,7 @@ where
     T: Item,
     D: Dimension<'a, T::Summary>,
 {
+    #[track_caller]
     pub fn seek<Target>(
         &mut self,
         pos: &Target,
@@ -355,6 +368,7 @@ where
         self.seek_internal(pos, bias, &mut (), cx)
     }
 
+    #[track_caller]
     pub fn seek_forward<Target>(
         &mut self,
         pos: &Target,
@@ -367,6 +381,7 @@ where
         self.seek_internal(pos, bias, &mut (), cx)
     }
 
+    #[track_caller]
     pub fn slice<Target>(
         &mut self,
         end: &Target,
@@ -386,10 +401,12 @@ where
         slice.tree
     }
 
+    #[track_caller]
     pub fn suffix(&mut self, cx: &<T::Summary as Summary>::Context) -> SumTree<T> {
         self.slice(&End::new(), Bias::Right, cx)
     }
 
+    #[track_caller]
     pub fn summary<Target, Output>(
         &mut self,
         end: &Target,
@@ -406,6 +423,7 @@ where
     }
 
     /// Returns whether we found the item you where seeking for
+    #[track_caller]
     fn seek_internal(
         &mut self,
         target: &dyn SeekTarget<'a, T::Summary, D>,

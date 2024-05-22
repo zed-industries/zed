@@ -328,7 +328,8 @@ impl PickerDelegate for RecentProjectsDelegate {
                                             ).await?;
                                         if response == 1 {
                                             workspace.update(&mut cx, |workspace, cx| {
-                                                workspace.toggle_modal(cx, |cx| DevServerProjects::new(cx))
+                                                let handle = cx.view().downgrade();
+                                                workspace.toggle_modal(cx, |cx| DevServerProjects::new(cx, handle))
                                             })?;
                                         } else {
                                             workspace.update(&mut cx, |workspace, cx| {
