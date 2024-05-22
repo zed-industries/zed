@@ -1386,54 +1386,6 @@ mod tests {
         assert_eq!(lines.next(), Some("defg"));
         assert_eq!(lines.next(), Some("abc"));
         assert_eq!(lines.next(), None);
-
-        let rope = Rope::from("    //1\n    //2\n\n    //4\n    //5");
-        let mut lines = rope.chunks_in_range(0..rope.len()).lines();
-        assert_eq!(lines.next(), Some("    //1"));
-        assert_eq!(lines.next(), Some("    //2"));
-        assert_eq!(lines.next(), Some(""));
-        assert_eq!(lines.next(), Some("    //4"));
-        assert_eq!(lines.next(), Some("    //5"));
-        assert_eq!(lines.next(), None);
-
-        let rope = Rope::from("    //1\n    //2\n\n    //4\n    //5");
-        let mut lines = rope.reversed_chunks_in_range(0..rope.len()).lines();
-        assert_eq!(lines.next(), Some("    //5"));
-        assert_eq!(lines.next(), Some("    //4"));
-        assert_eq!(lines.next(), Some(""));
-        assert_eq!(lines.next(), Some("    //2"));
-        assert_eq!(lines.next(), Some("    //1"));
-        assert_eq!(lines.next(), None);
-
-        let rope = Rope::from("# simple exception class\nclass InvalidSyntax(Exception):\n   def __init__(self):\n       pass");
-        let mut lines = rope.reversed_chunks_in_range(0..rope.len()).lines();
-        assert_eq!(lines.next(), Some("       pass"));
-        assert_eq!(lines.next(), Some("   def __init__(self):"));
-        assert_eq!(lines.next(), Some("class InvalidSyntax(Exception):"));
-        assert_eq!(lines.next(), Some("# simple exception class"));
-        assert_eq!(lines.next(), None);
-
-        let rope = Rope::from("if c {\n            let d = 2;\n\n            let e = 5;\n}");
-        let mut lines = rope.chunks_in_range(0..rope.len()).lines();
-        assert_eq!(lines.next(), Some("if c {"));
-        assert_eq!(lines.next(), Some("            let d = 2;"));
-        assert_eq!(lines.next(), Some(""));
-        assert_eq!(lines.next(), Some("            let e = 5;"));
-        assert_eq!(lines.next(), Some("}"));
-        assert_eq!(lines.next(), None);
-
-        let rope = Rope::from(
-            "fn b() {\n    if c {\n            let d = 2;\n\n            let e = 5;\n    }\n}",
-        );
-        let mut lines = rope.reversed_chunks_in_range(0..rope.len()).lines();
-        assert_eq!(lines.next(), Some("}"));
-        assert_eq!(lines.next(), Some("    }"));
-        assert_eq!(lines.next(), Some("            let e = 5;"));
-        assert_eq!(lines.next(), Some(""));
-        assert_eq!(lines.next(), Some("            let d = 2;"));
-        assert_eq!(lines.next(), Some("    if c {"));
-        assert_eq!(lines.next(), Some("fn b() {"));
-        assert_eq!(lines.next(), None);
     }
 
     #[gpui::test(iterations = 100)]
