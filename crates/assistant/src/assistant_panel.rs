@@ -1,5 +1,6 @@
 use crate::ambient_context::{AmbientContext, ContextUpdated, RecentBuffer};
-use crate::prompts::prompt_library::{PromptLibrary, PromptManager};
+use crate::prompts::prompt_library::PromptLibrary;
+use crate::prompts::prompt_manager::PromptManager;
 use crate::InsertActivePrompt;
 use crate::{
     ambient_context::*,
@@ -1118,7 +1119,12 @@ impl AssistantPanel {
         if let Some(workspace) = self.workspace.upgrade() {
             workspace.update(cx, |workspace, cx| {
                 workspace.toggle_modal(cx, |cx| {
-                    PromptManager::new(self.prompt_library.clone(), self.languages.clone(), cx)
+                    PromptManager::new(
+                        self.prompt_library.clone(),
+                        self.languages.clone(),
+                        self.fs.clone(),
+                        cx,
+                    )
                 })
             })
         }
