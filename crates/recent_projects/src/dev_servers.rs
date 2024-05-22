@@ -385,7 +385,7 @@ impl DevServerProjects {
                                 creating: false,
                                 dev_server_id: Some(DevServerId(dev_server.dev_server_id)),
                                 access_token: Some(dev_server.access_token),
-                                manual_setup: false,
+                                manual_setup,
                         });
                             cx.notify();
                     })?;
