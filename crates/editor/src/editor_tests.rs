@@ -11938,6 +11938,7 @@ async fn test_active_indent_guides_non_matching_indent(cx: &mut gpui::TestAppCon
         Some(vec![0]),
         &mut cx,
     );
+}
 
 #[gpui::test]
 fn test_flap_insertion_and_rendering(cx: &mut TestAppContext) {
