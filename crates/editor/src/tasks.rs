@@ -1,6 +1,6 @@
 use crate::Editor;
 
-use std::{path::Path, sync::Arc};
+use std::path::Path;
 
 use anyhow::Context;
 use gpui::WindowContext;
@@ -23,8 +23,7 @@ pub(crate) fn task_context_for_location(
     let language_context_provider = buffer
         .read(cx)
         .language()
-        .and_then(|language| language.context_provider())
-        .unwrap_or_else(|| Arc::new(BasicContextProvider));
+        .and_then(|language| language.context_provider());
 
     let worktree_abs_path = buffer
         .read(cx)
@@ -40,7 +39,7 @@ pub(crate) fn task_context_for_location(
     let task_variables = combine_task_variables(
         worktree_abs_path.as_deref(),
         location,
-        language_context_provider.as_ref(),
+        language_context_provider.as_deref(),
         cx,
     )
     .log_err()?;
@@ -111,22 +110,22 @@ pub fn task_context(workspace: &Workspace, cx: &mut WindowContext<'_>) -> TaskCo
 fn combine_task_variables(
     worktree_abs_path: Option<&Path>,
     location: Location,
-    context_provider: &dyn ContextProvider,
+    context_provider: Option<&dyn ContextProvider>,
     cx: &mut WindowContext<'_>,
 ) -> anyhow::Result<TaskVariables> {
-    if context_provider.is_basic() {
-        context_provider
-            .build_context(worktree_abs_path, &location, cx)
-            .context("building basic provider context")
-    } else {
+    if let Some(provider) = context_provider {
         let mut basic_context = BasicContextProvider
             .build_context(worktree_abs_path, &location, cx)
             .context("building basic default context")?;
         basic_context.extend(
-            context_provider
+            provider
                 .build_context(worktree_abs_path, &location, cx)
                 .context("building provider context ")?,
         );
         Ok(basic_context)
+    } else {
+        BasicContextProvider
+            .build_context(worktree_abs_path, &location, cx)
+            .context("building basic provider context")
     }
 }

@@ -499,10 +499,6 @@ mod test_inventory {
 pub struct BasicContextProvider;
 
 impl ContextProvider for BasicContextProvider {
-    fn is_basic(&self) -> bool {
-        true
-    }
-
     fn build_context(
         &self,
         worktree_abs_path: Option<&Path>,

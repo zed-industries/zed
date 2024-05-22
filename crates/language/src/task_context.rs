@@ -33,9 +33,4 @@ pub trait ContextProvider: Send + Sync {
     fn associated_tasks(&self) -> Option<TaskTemplates> {
         None
     }
-
-    // Determines whether the [`BasicContextProvider`] variables should be filled too (if `false`), or omitted (if `true`).
-    fn is_basic(&self) -> bool {
-        false
-    }
 }
