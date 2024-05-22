@@ -3005,8 +3005,9 @@ impl BufferSnapshot {
             .map(|grammar| grammar.runnable_config.as_ref())
             .collect::<Vec<_>>();
 
-        iter::from_fn(move || {
-            let test_range = syntax_matches.peek().and_then(|mat| {
+        iter::from_fn(move || loop {
+            let mat = syntax_matches.peek()?;
+            let test_range = (|| {
                 test_configs[mat.grammar_index].and_then(|test_configs| {
                     let mut tags: SmallVec<[(Range<usize>, RunnableTag); 1]> =
                         SmallVec::from_iter(mat.captures.iter().filter_map(|capture| {
@@ -3048,9 +3049,14 @@ impl BufferSnapshot {
                         buffer_id: self.remote_id(),
                     })
                 })
-            });
+            })();
+
             syntax_matches.advance();
-            test_range
+            if test_range.is_some() {
+                // It's fine for us to short-circuit on .peek()? returning None. We don't want to return None from this iter if we
+                // had a capture that did not contain a run marker, hence we'll just loop around for the next capture.
+                return test_range;
+            }
         })
     }
 
