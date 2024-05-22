@@ -1901,7 +1901,9 @@ impl BufferSnapshot {
         row_range: Range<u32>,
     ) -> impl Iterator<Item = (u32, u32, bool)> + '_ {
         let start = Point::new(row_range.start, 0).to_offset(self);
-        let end = Point::new(row_range.end, 0).to_offset(self);
+        let end = Point::new(row_range.end, 0)
+            .to_offset(self)
+            .saturating_sub(1);
 
         let mut lines = self.as_rope().reversed_chunks_in_range(start..end).lines();
         let mut row = row_range.end;

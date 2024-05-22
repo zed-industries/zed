@@ -3214,22 +3214,14 @@ impl BufferSnapshot {
             }
         }
 
-        const MAX_SEARCH_ROWS: u32 = 100;
-
-        let start = buffer_row.saturating_sub(MAX_SEARCH_ROWS);
-        let end = (max_row + 1).min(buffer_row + MAX_SEARCH_ROWS);
-
-        let upwards_range = start..buffer_row;
-        let downwards_range = (buffer_row + 1)..end;
-
         // If there is a blank line at the current row, search for the next non indented lines
         if is_blank {
-            let non_empty_row_above = self.find_indented_row(upwards_range.clone(), true, None);
-            let non_empty_row_below = self.find_indented_row(downwards_range.clone(), false, None);
+            let (non_empty_row_above, non_empty_row_below) =
+                self.find_next_non_empty_lines(buffer_row);
 
             let (row, indent_size) = match (non_empty_row_above, non_empty_row_below) {
                 (Some((above_row, above_indent)), Some((below_row, below_indent))) => {
-                    if above_indent < below_indent {
+                    if above_indent >= below_indent {
                         (above_row, above_indent)
                     } else {
                         (below_row, below_indent)
@@ -3244,50 +3236,91 @@ impl BufferSnapshot {
             buffer_row = row;
         }
 
-        let start = buffer_row.saturating_sub(MAX_SEARCH_ROWS);
-        let end = (max_row + 1).min(buffer_row + MAX_SEARCH_ROWS);
-
-        let upwards_range = start..buffer_row;
-        let downwards_range = (buffer_row + 1)..end;
-
         let (start_row, start_indent_size) =
-            self.find_indented_row(upwards_range, true, Some(target_indent_size))?;
+            self.find_indent_above(buffer_row, Some(target_indent_size))?;
 
         let (end_row, end_indent_size) =
-            self.find_indented_row(downwards_range, false, Some(target_indent_size))?;
+            self.find_indent_below(buffer_row + 1, Some(target_indent_size));
 
-        println!(
-            "{}..{} {} {}",
-            start_row, end_row, start_indent_size, end_indent_size,
-        );
+        let indent_size = if let Some(end_indent_size) = end_indent_size {
+            start_indent_size.max(end_indent_size)
+        } else {
+            start_indent_size
+        };
 
-        Some((start_row..end_row, start_indent_size.max(end_indent_size)))
+        Some((start_row..end_row, indent_size))
     }
 
-    fn find_indented_row(
+    pub fn find_next_non_empty_lines(
         &self,
-        range: Range<u32>,
-        reversed: bool,
+        buffer_row: u32,
+    ) -> (Option<(u32, u32)>, Option<(u32, u32)>) {
+        const MAX_SEARCH_ROWS: u32 = 100;
+
+        let start = buffer_row.saturating_sub(MAX_SEARCH_ROWS);
+        let upwards_range = start..buffer_row;
+
+        let mut non_empty_line_above = None;
+        for (row, indent_size, is_blank) in
+            self.text.reversed_line_indents_in_row_range(upwards_range)
+        {
+            // every 1000 ticks, yield_now().await
+            if !is_blank {
+                non_empty_line_above = Some((row, indent_size));
+                break;
+            }
+        }
+
+        let end = (self.max_point().row + 1).min(buffer_row + MAX_SEARCH_ROWS);
+        let downwards_range = (buffer_row + 1)..end;
+
+        let mut non_empty_line_below = None;
+        for (row, indent_size, is_blank) in self.text.line_indents_in_row_range(downwards_range) {
+            // every 1000 ticks, yield_now().await
+            if !is_blank {
+                non_empty_line_below = Some((row, indent_size));
+                break;
+            }
+        }
+
+        (non_empty_line_above, non_empty_line_below)
+    }
+
+    fn find_indent_below(
+        &self,
+        buffer_row: u32,
+        target_indent_size: Option<u32>,
+    ) -> (u32, Option<u32>) {
+        const MAX_SEARCH_ROWS: u32 = 100;
+
+        let end = (self.max_point().row + 1).min(buffer_row + MAX_SEARCH_ROWS);
+        let range = buffer_row..end;
+
+        for (row, indent_size, is_blank) in self.text.line_indents_in_row_range(range) {
+            // every 1000 ticks, yield_now().await
+            if !is_blank && (target_indent_size.is_none() || Some(indent_size) < target_indent_size)
+            {
+                return (row.saturating_sub(1), Some(indent_size));
+            }
+        }
+        (end, None)
+    }
+
+    fn find_indent_above(
+        &self,
+        buffer_row: u32,
         target_indent_size: Option<u32>,
     ) -> Option<(u32, u32)> {
-        if reversed {
-            for (row, indent_size, is_blank) in self.text.reversed_line_indents_in_row_range(range)
+        const MAX_SEARCH_ROWS: u32 = 100;
+
+        let start = buffer_row.saturating_sub(MAX_SEARCH_ROWS);
+        let range = start..buffer_row;
+
+        for (row, indent_size, is_blank) in self.text.reversed_line_indents_in_row_range(range) {
+            // every 1000 ticks, yield_now().await
+            if !is_blank && (target_indent_size.is_none() || Some(indent_size) < target_indent_size)
             {
-                // every 1000 ticks, yield_now().await
-                if !is_blank && target_indent_size.is_none()
-                    || Some(indent_size) < target_indent_size
-                {
-                    return Some((row, indent_size));
-                }
-            }
-        } else {
-            for (row, indent_size, is_blank) in self.text.line_indents_in_row_range(range) {
-                // every 1000 ticks, yield_now().await
-                if !is_blank && target_indent_size.is_none()
-                    || Some(indent_size) < target_indent_size
-                {
-                    return Some((row, indent_size));
-                }
+                return Some((row, indent_size));
             }
         }
         None
