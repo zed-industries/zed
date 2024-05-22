@@ -26,7 +26,7 @@ use core_text::{
     font::{cascade_list_for_languages, new_from_name, CTFont},
     font_descriptor::{
         kCTFontCascadeListAttribute, kCTFontSlantTrait, kCTFontSymbolicTrait, kCTFontWeightTrait,
-        kCTFontWidthTrait, CTFontDescriptorCreateWithAttributes,
+        kCTFontWidthTrait, CTFontDescriptor, CTFontDescriptorCreateWithAttributes,
     },
     line::CTLine,
     string_attributes::kCTFontAttributeName,
@@ -51,7 +51,7 @@ use smallvec::SmallVec;
 use std::{borrow::Cow, char, cmp, convert::TryFrom, sync::Arc};
 use util::ResultExt;
 
-use super::open_type;
+use super::open_type::{self, CTFontCreateCopyWithAttributes};
 
 #[allow(non_upper_case_globals)]
 const kCGImageAlphaOnly: u32 = 7;
@@ -311,13 +311,16 @@ impl MacTextSystemState {
             };
             let new_descriptor =
                 unsafe { CTFontDescriptorCreateWithAttributes(font_desc.as_concrete_TypeRef()) };
-            let new_descriptor = CTFontDescriptor::wrap_under_create_rule(new_descriptor);
-            let new_font = CTFontCreateCopyWithAttributes(
-                font.native_font().as_concrete_TypeRef(),
-                0.0,
-                ptr::null(),
-                new_descriptor.as_concrete_TypeRef(),
-            );
+            let new_descriptor =
+                unsafe { CTFontDescriptor::wrap_under_create_rule(new_descriptor) };
+            let new_font = unsafe {
+                CTFontCreateCopyWithAttributes(
+                    ctfont.as_concrete_TypeRef(),
+                    0.0,
+                    std::ptr::null(),
+                    new_descriptor.as_concrete_TypeRef(),
+                )
+            };
             let new_font = unsafe { CTFont::wrap_under_create_rule(new_font) };
             font.font = Font::from_native_font(&new_font);
         }
