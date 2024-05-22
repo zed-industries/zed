@@ -81,7 +81,7 @@ impl Global for EasyMotion {}
 
 pub fn init(cx: &mut AppContext) {
     cx.set_global(EasyMotion::default());
-    cx.observe_keystrokes(observe_keystrokes);
+    cx.observe_keystrokes(observe_keystrokes).detach();
     cx.observe_new_views(|editor: &mut Editor, cx| register(editor, cx))
         .detach();
 }
@@ -182,7 +182,7 @@ fn observe_keystrokes(keystroke_event: &KeystrokeEvent, cx: &mut WindowContext) 
 }
 
 impl EasyMotion {
-    fn update<F, S>(cx: &mut WindowContext, update: F) -> S
+    fn update_global<F, S>(cx: &mut WindowContext, update: F) -> S
     where
         F: FnOnce(&mut Self, &mut WindowContext) -> S,
     {

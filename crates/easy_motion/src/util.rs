@@ -1,16 +1,9 @@
 use editor::{
     display_map::DisplaySnapshot,
     movement::{find_boundary, FindRange},
-    Anchor, DisplayPoint, Editor, RowExt,
+    DisplayPoint, RowExt,
 };
-use gpui::{
-    impl_actions, AppContext, EntityId, FocusableView, Global, HighlightStyle, KeyContext,
-    KeystrokeEvent, Subscription, ViewContext, WeakView,
-};
-use language::{char_kind, CharKind, SelectionGoal};
-use serde::Deserialize;
-use text::Point;
-use ui::{BorrowAppContext, WindowContext};
+use language::{char_kind, CharKind};
 use vim::utils::coerce_punctuation;
 
 pub(crate) fn manh_distance(point_1: &DisplayPoint, point_2: &DisplayPoint, x_bias: f32) -> f32 {
@@ -52,15 +45,10 @@ pub(crate) fn word_starts(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use editor::{
-        display_map::{DisplayMap, DisplayRow},
-        test::marked_display_snapshot,
-    };
-    use gpui::{font, px};
-    use multi_buffer::MultiBuffer;
+    use editor::{display_map::DisplayRow, test::marked_display_snapshot};
+    use gpui::AppContext;
     use project::Project;
     use settings::SettingsStore;
-    use ui::Context;
 
     fn display_point(x: u32, y: u32) -> DisplayPoint {
         DisplayPoint::new(DisplayRow(y), x)
