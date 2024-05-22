@@ -5,6 +5,7 @@ use crate::{
     ambient_context::*,
     assistant_settings::{AssistantDockPosition, AssistantSettings, ZedDotDevModel},
     codegen::{self, Codegen, CodegenKind},
+    omit_ranges::text_in_range_omitting_ranges,
     prompts::prompt::generate_content_prompt,
     search::*,
     slash_command::{
@@ -3556,38 +3557,15 @@ pub struct Message {
 
 impl Message {
     fn to_request_message(&self, buffer: &Buffer) -> LanguageModelRequestMessage {
-        let mut slash_command_ranges = self.slash_command_ranges.iter().peekable();
-        let mut content = String::with_capacity(self.offset_range.len());
-        let mut offset = self.offset_range.start;
-        let mut chunks = buffer.text_for_range(self.offset_range.clone());
-        while let Some(chunk) = chunks.next() {
-            if let Some(slash_command_range) = slash_command_ranges.peek() {
-                match offset.cmp(&slash_command_range.start) {
-                    Ordering::Less => {
-                        let max_len = slash_command_range.start - offset;
-                        if chunk.len() < max_len {
-                            content.push_str(chunk);
-                            offset += chunk.len();
-                        } else {
-                            content.push_str(&chunk[..max_len]);
-                            offset += max_len;
-                            chunks.seek(slash_command_range.end);
-                            slash_command_ranges.next();
-                        }
-                    }
-                    Ordering::Equal | Ordering::Greater => {
-                        chunks.seek(slash_command_range.end);
-                        offset = slash_command_range.end;
-                        slash_command_ranges.next();
-                    }
-                }
-            } else {
-                content.push_str(chunk);
-            }
-        }
+        let mut content = text_in_range_omitting_ranges(
+            buffer.as_rope(),
+            self.offset_range.clone(),
+            &self.slash_command_ranges,
+        );
+        content.truncate(content.trim_end().len());
         LanguageModelRequestMessage {
             role: self.role,
-            content: content.trim_end().into(),
+            content,
         }
     }
 }
