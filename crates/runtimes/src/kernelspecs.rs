@@ -4,15 +4,17 @@
 // Since runtimelib uses tokio, we'll only use `runtimelib::dirs` for paths and reimplement
 // the rest using `project::Fs`.
 
+use anyhow::Result;
 use futures::StreamExt;
 use project::Fs;
-use std::process::Stdio;
+use std::net::{IpAddr, SocketAddr};
 use std::{path::PathBuf, sync::Arc};
+
+use smol::net::TcpListener;
 
 use smol::process::Command;
 
-use runtimelib::dirs;
-use runtimelib::JupyterKernelspec;
+use runtimelib::{dirs, ConnectionInfo, JupyterKernelspec};
 
 #[derive(Debug)]
 pub struct Runtime {
@@ -22,7 +24,7 @@ pub struct Runtime {
 }
 
 impl Runtime {
-    fn command(&self, connection_path: &PathBuf) -> anyhow::Result<Command> {
+    pub fn command(&self, connection_path: &PathBuf) -> Result<Command> {
         let argv = &self.spec.argv;
 
         if argv.is_empty() {
@@ -55,6 +57,52 @@ impl Runtime {
         }
 
         Ok(cmd)
+    }
+}
+
+// Find a set of open ports. This creates a listener with port set to 0. The listener will be closed at the end when it goes out of scope.
+// There's a race condition between closing the ports and usage by a kernel, but it's inherent to the Jupyter protocol.
+async fn peek_ports(ip: IpAddr, num: usize) -> anyhow::Result<Vec<u16>> {
+    let mut addr_zeroport: SocketAddr = SocketAddr::new(ip, 0);
+    addr_zeroport.set_port(0);
+    let mut ports: Vec<u16> = Vec::new();
+    for _ in 0..num {
+        let listener = TcpListener::bind(addr_zeroport).await?;
+        let addr = listener.local_addr()?;
+        ports.push(addr.port());
+    }
+    Ok(ports)
+}
+
+async fn from_peeking_ports(ip: IpAddr, kernel_name: &str) -> Result<ConnectionInfo> {
+    let transport = "tcp".to_string();
+    let ports = peek_ports(ip, 5).await?;
+
+    Ok(ConnectionInfo {
+        transport,
+        ip: ip.to_string(),
+        stdin_port: ports[0],
+        control_port: ports[1],
+        hb_port: ports[2],
+        shell_port: ports[3],
+        iopub_port: ports[4],
+        signature_scheme: "hmac-sha256".to_string(),
+        key: uuid::Uuid::new_v4().to_string(),
+        kernel_name: Some(kernel_name.to_string()),
+    })
+}
+
+struct RuntimeInstance {
+    runtime: Runtime,
+    process: smol::process::Child,
+}
+
+impl RuntimeInstance {
+    pub async fn new(runtime: Runtime, connection_path: PathBuf) -> anyhow::Result<Self> {
+        let mut cmd = runtime.command(&connection_path)?;
+        let process = cmd.spawn()?;
+
+        Ok(Self { runtime, process })
     }
 }
 

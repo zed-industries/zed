@@ -194,7 +194,7 @@ impl RuntimeManager {
     /// Otherwise, spawn a new kernel and return the sender
     pub fn spawn_kernel(
         &mut self,
-        language_name: &Arc<str>,
+        language_name: Arc<str>,
         entity_id: EntityId,
     ) -> Option<mpsc::UnboundedSender<ExecutionRequest>> {
         let maybe_runtime = self.instances.get(&entity_id);
@@ -202,8 +202,6 @@ impl RuntimeManager {
             // Runtime instance is up and ready
             return Some(runtime.execution_request_tx.clone());
         }
-
-        // N
 
         let kernel_path = match language_name.as_ref() {
             "python" => HARDCODED_PYTHON_KERNEL,
@@ -262,7 +260,7 @@ impl RuntimeManager {
     fn execute_code(
         &mut self,
         entity_id: EntityId,
-        language_name: &Arc<str>,
+        language_name: Arc<str>,
         execution_id: ExecutionId,
         code: String,
     ) -> Result<mpsc::UnboundedReceiver<ExecutionUpdate>> {
@@ -374,12 +372,7 @@ impl RuntimeManager {
                 let execution_id = ExecutionId::new();
 
                 let receiver = model.update(cx, |model, _| {
-                    model.execute_code(
-                        entity_id,
-                        &language_name,
-                        execution_id.clone(),
-                        code.clone(),
-                    )
+                    model.execute_code(entity_id, language_name, execution_id.clone(), code.clone())
                 });
 
                 let mut receiver = match receiver {
