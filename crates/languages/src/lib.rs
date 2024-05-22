@@ -8,7 +8,10 @@ use smol::stream::StreamExt;
 use std::{str, sync::Arc};
 use util::{asset_str, ResultExt};
 
-use crate::{bash::bash_task_context, python::python_task_context, rust::RustContextProvider};
+use crate::{
+    bash::bash_task_context, go::GoContextProvider, python::python_task_context,
+    rust::RustContextProvider,
+};
 
 mod bash;
 mod c;
@@ -103,7 +106,7 @@ pub fn init(
         "css",
         vec![Arc::new(css::CssLspAdapter::new(node_runtime.clone())),]
     );
-    language!("go", vec![Arc::new(go::GoLspAdapter)]);
+    language!("go", vec![Arc::new(go::GoLspAdapter)], GoContextProvider);
     language!("gomod");
     language!("gowork");
     language!(
