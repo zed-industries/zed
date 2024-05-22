@@ -9,6 +9,7 @@ use util::ResultExt;
 use workspace::Workspace;
 
 pub(crate) fn task_context_for_location(
+    captured_variables: TaskVariables,
     workspace: &Workspace,
     location: Location,
     cx: &mut WindowContext<'_>,
@@ -17,8 +18,16 @@ pub(crate) fn task_context_for_location(
         .log_err()
         .flatten();
 
-    let task_variables =
-        combine_task_variables(location, workspace.project().clone(), cx).log_err()?;
+    let mut task_variables = combine_task_variables(
+        captured_variables,
+        location,
+        workspace.project().clone(),
+        cx,
+    )
+    .log_err()?;
+    // Remove all custom entries starting with _, as they're not intended for use by the end user.
+    task_variables.sweep();
+
     Some(TaskContext {
         cwd,
         task_variables,
@@ -54,21 +63,21 @@ pub(crate) fn task_context_with_editor(
         buffer,
         range: start..end,
     };
-    task_context_for_location(workspace, location.clone(), cx).map(|mut task_context| {
+    let captured_variables = {
+        let mut variables = TaskVariables::default();
         for range in location
             .buffer
             .read(cx)
             .snapshot()
-            .runnable_ranges(location.range)
+            .runnable_ranges(location.range.clone())
         {
             for (capture_name, value) in range.extra_captures {
-                task_context
-                    .task_variables
-                    .insert(VariableName::Custom(capture_name.into()), value);
+                variables.insert(VariableName::Custom(capture_name.into()), value);
             }
         }
-        task_context
-    })
+        variables
+    };
+    task_context_for_location(captured_variables, workspace, location.clone(), cx)
 }
 
 pub fn task_context(workspace: &Workspace, cx: &mut WindowContext<'_>) -> TaskContext {
@@ -84,6 +93,7 @@ pub fn task_context(workspace: &Workspace, cx: &mut WindowContext<'_>) -> TaskCo
 }
 
 fn combine_task_variables(
+    mut captured_variables: TaskVariables,
     location: Location,
     project: Model<Project>,
     cx: &mut WindowContext<'_>,
@@ -93,19 +103,16 @@ fn combine_task_variables(
         .read(cx)
         .language()
         .and_then(|language| language.context_provider());
+    let baseline = BasicContextProvider::new(project)
+        .build_context(&captured_variables, &location, cx)
+        .context("building basic default context")?;
+    captured_variables.extend(baseline);
     if let Some(provider) = language_context_provider {
-        let mut basic_context = BasicContextProvider::new(project)
-            .build_context(&Default::default(), &location, cx)
-            .context("building basic default context")?;
-        basic_context.extend(
+        captured_variables.extend(
             provider
-                .build_context(&basic_context, &location, cx)
+                .build_context(&captured_variables, &location, cx)
                 .context("building provider context ")?,
         );
-        Ok(basic_context)
-    } else {
-        BasicContextProvider::new(project)
-            .build_context(&Default::default(), &location, cx)
-            .context("building basic provider context")
     }
+    Ok(captured_variables)
 }

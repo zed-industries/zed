@@ -1014,7 +1014,7 @@ impl Language {
         for (ix, name) in query.capture_names().iter().enumerate() {
             if *name == "run" {
                 run_capture_index = Some(ix as u32);
-            } else if !name.starts_with('_') {
+            } else {
                 runnable_tags.insert(ix as u32, RunnableTag(name.to_string().into()));
             }
         }
