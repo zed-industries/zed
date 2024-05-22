@@ -3024,6 +3024,7 @@ impl BufferSnapshot {
                 tags.sort_by_key(|(range, _)| range == &maximum_range);
                 let split_point = tags.partition_point(|(range, _)| range != &maximum_range);
                 let (extra_captures, tags) = tags.split_at(split_point);
+
                 let extra_captures = extra_captures
                     .into_iter()
                     .map(|(range, name)| {

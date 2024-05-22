@@ -328,7 +328,7 @@ const RUST_PACKAGE_TASK_VARIABLE: VariableName =
 impl ContextProvider for RustContextProvider {
     fn build_context(
         &self,
-        _: Option<&Path>,
+        _: &TaskVariables,
         location: &Location,
         cx: &mut gpui::AppContext,
     ) -> Result<TaskVariables> {
