@@ -42,13 +42,11 @@ impl SlashCommand for PromptSlashCommand {
                 .prompts()
                 .into_iter()
                 .enumerate()
-                .filter_map(|(ix, (_, prompt))| {
-                    let title = prompt.title();
-                    if let Some(title) = title {
-                        Some(StringMatchCandidate::new(ix, title.into()))
-                    } else {
-                        None
-                    }
+                .filter_map(|(ix, prompt)| {
+                    prompt
+                        .1
+                        .title()
+                        .map(|title| StringMatchCandidate::new(ix, title.into()))
                 })
                 .collect::<Vec<_>>();
             let matches = fuzzy::match_strings(
