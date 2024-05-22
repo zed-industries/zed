@@ -1804,7 +1804,7 @@ impl Conversation {
 
                         if let Some(call) = unchanged_call {
                             new_calls.push(call);
-                        } else if let Some(command) = this.slash_command_registry.command(&name) {
+                        } else if let Some(command) = this.slash_command_registry.command(name) {
                             changed = true;
                             let name = name.to_string();
                             let source_range =
@@ -3745,10 +3745,12 @@ struct PendingInlineAssist {
     project: WeakModel<Project>,
 }
 
+type ToggleFold = Arc<dyn Fn(bool, &mut WindowContext) + Send + Sync>;
+
 fn render_slash_command_output_toggle(
     row: MultiBufferRow,
     is_folded: bool,
-    fold: Arc<dyn Fn(bool, &mut WindowContext) + Send + Sync>,
+    fold: ToggleFold,
     _cx: &mut WindowContext,
 ) -> AnyElement {
     IconButton::new(

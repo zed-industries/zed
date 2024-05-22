@@ -180,7 +180,7 @@ impl SlashCommandCompletionProvider {
         flag.store(true, SeqCst);
         *flag = new_cancel_flag.clone();
 
-        if let Some(command) = self.commands.command(&command_name) {
+        if let Some(command) = self.commands.command(command_name) {
             let completions = command.complete_argument(argument, new_cancel_flag.clone(), cx);
             cx.background_executor().spawn(async move {
                 Ok(completions
@@ -287,7 +287,7 @@ impl SlashCommandLine {
                     argument.end = next_ix;
                 }
                 // The command name ends at the first whitespace character.
-                else if call.name.len() > 0 {
+                else if !call.name.is_empty() {
                     if c.is_whitespace() {
                         call.argument = Some(next_ix..next_ix);
                     } else {
@@ -295,12 +295,10 @@ impl SlashCommandLine {
                     }
                 }
                 // The command name must begin with a letter.
-                else {
-                    if c.is_alphabetic() {
-                        call.name.end = next_ix;
-                    } else {
-                        return None;
-                    }
+                else if c.is_alphabetic() {
+                    call.name.end = next_ix;
+                } else {
+                    return None;
                 }
             }
             // Commands start with a slash.
