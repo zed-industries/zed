@@ -3007,49 +3007,47 @@ impl BufferSnapshot {
 
         iter::from_fn(move || loop {
             let mat = syntax_matches.peek()?;
-            let test_range = (|| {
-                test_configs[mat.grammar_index].and_then(|test_configs| {
-                    let mut tags: SmallVec<[(Range<usize>, RunnableTag); 1]> =
-                        SmallVec::from_iter(mat.captures.iter().filter_map(|capture| {
-                            test_configs
-                                .runnable_tags
-                                .get(&capture.index)
-                                .cloned()
-                                .map(|tag_name| (capture.node.byte_range(), tag_name))
-                        }));
-                    let maximum_range = tags
-                        .iter()
-                        .max_by_key(|(byte_range, _)| byte_range.len())
-                        .map(|(range, _)| range)?
-                        .clone();
-                    tags.sort_by_key(|(range, _)| range == &maximum_range);
-                    let split_point = tags.partition_point(|(range, _)| range != &maximum_range);
-                    let (extra_captures, tags) = tags.split_at(split_point);
-                    let extra_captures = extra_captures
-                        .into_iter()
-                        .map(|(range, name)| {
-                            (
-                                name.0.to_string(),
-                                self.text_for_range(range.clone()).collect::<String>(),
-                            )
-                        })
-                        .collect();
-                    Some(RunnableRange {
-                        run_range: mat
-                            .captures
-                            .iter()
-                            .find(|capture| capture.index == test_configs.run_capture_ix)
-                            .map(|mat| mat.node.byte_range())?,
-                        runnable: Runnable {
-                            tags: tags.into_iter().cloned().map(|(_, tag)| tag).collect(),
-                            language: mat.language,
-                            buffer: self.remote_id(),
-                        },
-                        extra_captures,
-                        buffer_id: self.remote_id(),
+            let test_range = test_configs[mat.grammar_index].and_then(|test_configs| {
+                let mut tags: SmallVec<[(Range<usize>, RunnableTag); 1]> =
+                    SmallVec::from_iter(mat.captures.iter().filter_map(|capture| {
+                        test_configs
+                            .runnable_tags
+                            .get(&capture.index)
+                            .cloned()
+                            .map(|tag_name| (capture.node.byte_range(), tag_name))
+                    }));
+                let maximum_range = tags
+                    .iter()
+                    .max_by_key(|(byte_range, _)| byte_range.len())
+                    .map(|(range, _)| range)?
+                    .clone();
+                tags.sort_by_key(|(range, _)| range == &maximum_range);
+                let split_point = tags.partition_point(|(range, _)| range != &maximum_range);
+                let (extra_captures, tags) = tags.split_at(split_point);
+                let extra_captures = extra_captures
+                    .into_iter()
+                    .map(|(range, name)| {
+                        (
+                            name.0.to_string(),
+                            self.text_for_range(range.clone()).collect::<String>(),
+                        )
                     })
+                    .collect();
+                Some(RunnableRange {
+                    run_range: mat
+                        .captures
+                        .iter()
+                        .find(|capture| capture.index == test_configs.run_capture_ix)
+                        .map(|mat| mat.node.byte_range())?,
+                    runnable: Runnable {
+                        tags: tags.into_iter().cloned().map(|(_, tag)| tag).collect(),
+                        language: mat.language,
+                        buffer: self.remote_id(),
+                    },
+                    extra_captures,
+                    buffer_id: self.remote_id(),
                 })
-            })();
+            });
 
             syntax_matches.advance();
             if test_range.is_some() {
