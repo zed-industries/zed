@@ -34,6 +34,7 @@ use language::{
 };
 use node_runtime::NodeRuntime;
 use project::ContextProviderWithTasks;
+use release_channel::ReleaseChannel;
 use semantic_version::SemanticVersion;
 use serde::{Deserialize, Serialize};
 use settings::Settings;
@@ -70,7 +71,10 @@ pub fn schema_version_range() -> RangeInclusive<SchemaVersion> {
 }
 
 /// Returns whether the given extension version is compatible with this version of Zed.
-pub fn is_version_compatible(extension_version: &ExtensionMetadata) -> bool {
+pub fn is_version_compatible(
+    release_channel: ReleaseChannel,
+    extension_version: &ExtensionMetadata,
+) -> bool {
     let schema_version = extension_version.manifest.schema_version.unwrap_or(0);
     if CURRENT_SCHEMA_VERSION.0 < schema_version {
         return false;
@@ -82,7 +86,7 @@ pub fn is_version_compatible(extension_version: &ExtensionMetadata) -> bool {
         .as_ref()
         .and_then(|wasm_api_version| SemanticVersion::from_str(wasm_api_version).ok())
     {
-        if !is_supported_wasm_api_version(wasm_api_version) {
+        if !is_supported_wasm_api_version(release_channel, wasm_api_version) {
             return false;
         }
     }
@@ -428,7 +432,7 @@ impl ExtensionStore {
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<Vec<ExtensionMetadata>>> {
         let schema_versions = schema_version_range();
-        let wasm_api_versions = wasm_api_version_range();
+        let wasm_api_versions = wasm_api_version_range(ReleaseChannel::global(cx));
         let extension_settings = ExtensionSettings::get_global(cx);
         let extension_ids = self
             .extension_index
@@ -681,7 +685,7 @@ impl ExtensionStore {
         log::info!("installing extension {extension_id} latest version");
 
         let schema_versions = schema_version_range();
-        let wasm_api_versions = wasm_api_version_range();
+        let wasm_api_versions = wasm_api_version_range(ReleaseChannel::global(cx));
 
         let Some(url) = self
             .http_client

@@ -2,6 +2,7 @@ mod since_v0_0_1;
 mod since_v0_0_4;
 mod since_v0_0_6;
 mod since_v0_0_7;
+use release_channel::ReleaseChannel;
 use since_v0_0_7 as latest;
 
 use super::{wasm_engine, WasmState};
@@ -36,14 +37,23 @@ fn wasi_view(state: &mut WasmState) -> &mut WasmState {
 }
 
 /// Returns whether the given Wasm API version is supported by the Wasm host.
-pub fn is_supported_wasm_api_version(version: SemanticVersion) -> bool {
-    wasm_api_version_range().contains(&version)
+pub fn is_supported_wasm_api_version(
+    release_channel: ReleaseChannel,
+    version: SemanticVersion,
+) -> bool {
+    wasm_api_version_range(release_channel).contains(&version)
 }
 
 /// Returns the Wasm API version range that is supported by the Wasm host.
 #[inline(always)]
-pub fn wasm_api_version_range() -> RangeInclusive<SemanticVersion> {
-    since_v0_0_1::MIN_VERSION..=latest::MAX_VERSION
+pub fn wasm_api_version_range(release_channel: ReleaseChannel) -> RangeInclusive<SemanticVersion> {
+    let max_version = if release_channel == ReleaseChannel::Dev {
+        latest::MAX_VERSION
+    } else {
+        since_v0_0_6::MAX_VERSION
+    };
+
+    since_v0_0_1::MIN_VERSION..=max_version
 }
 
 pub enum Extension {
@@ -56,10 +66,11 @@ pub enum Extension {
 impl Extension {
     pub async fn instantiate_async(
         store: &mut Store<WasmState>,
+        release_channel: ReleaseChannel,
         version: SemanticVersion,
         component: &Component,
     ) -> Result<(Self, Instance)> {
-        if version >= latest::MIN_VERSION {
+        if release_channel == ReleaseChannel::Dev && version >= latest::MIN_VERSION {
             let (extension, instance) =
                 latest::Extension::instantiate_async(store, &component, latest::linker())
                     .await
