@@ -1,5 +1,5 @@
 {
-    "id": "@app_id@",
+    "id": "$APP_ID",
     "runtime": "org.freedesktop.Platform",
     "runtime-version": "23.08",
     "sdk": "org.freedesktop.Sdk",
@@ -15,53 +15,36 @@
     },
     "modules": [
         {
-            "name": "zed-app",
-            "buildsystem": "simple",
-            "build-options": {
-                "env": {
-                    "CARGO_HOME": "/run/build/zed-app/cargo"
-                }
-            },
-            "build-commands": [
-                "echo @channel@ > crates/zed/RELEASE_CHANNEL",
-                @app_bin_cmd@
-            ],
-            "sources": [
-                {
-                    "type": "dir",
-                    "path": "."
-                }@extra_srcs@
-            ]
-        },
-        {
             "name": "zed",
             "buildsystem": "simple",
             "build-options": {
                 "env": {
-                    "CARGO_HOME": "/run/build/zed/cargo"
+                    "APP_ID": "$APP_ID",
+                    "APP_ICON": "$APP_ID",
+                    "APP_NAME": "$APP_NAME",
+                    "BRANDING_LIGHT": "$BRANDING_LIGHT",
+                    "BRANDING_DARK": "$BRANDING_DARK",
+                    "APP_ARGS": "--foreground",
+                    "DO_STARTUP_NOTIFY": "false"
                 }
             },
             "build-commands": [
-                "echo @channel@ > crates/zed/RELEASE_CHANNEL",
-                @cli_bin_cmd@
-                "install -Dm644 crates/zed/resources/zed.desktop /app/share/applications/${FLATPAK_ID}.desktop",
-                "install -Dm644 crates/zed/resources/flatpak/zed.metainfo.xml /app/share/metainfo/${FLATPAK_ID}.metainfo.xml",
-                "install -Dm644 crates/zed/resources/@icon_name@ /app/share/icons/hicolor/512x512/apps/${FLATPAK_ID}.png",
-                "sed -i 's|Name=Zed|Name=@app_name@|g' /app/share/applications/${FLATPAK_ID}.desktop",
-                "sed -i 's|^Exec=zed|Exec=zed --foreground|g' /app/share/applications/${FLATPAK_ID}.desktop",
-                "sed -i 's|StartupNotify=true|StartupNotify=false|g' /app/share/applications/${FLATPAK_ID}.desktop",
-                "sed -i 's|Icon=zed|Icon=@app_id@|g' /app/share/applications/${FLATPAK_ID}.desktop",
-                "sed -i 's|app_id|@app_id@|g' /app/share/metainfo/${FLATPAK_ID}.metainfo.xml",
-                "sed -i 's|app_name|@app_name@|g' /app/share/metainfo/${FLATPAK_ID}.metainfo.xml",
-                "sed -i 's|branding_light|@branding_light@|g' /app/share/metainfo/${FLATPAK_ID}.metainfo.xml",
-                "sed -i 's|branding_dark|@branding_dark@|g' /app/share/metainfo/${FLATPAK_ID}.metainfo.xml",
-                "sed -i -e '/release_info/{r crates/zed/resources/flatpak/release-info/@channel@' -e 'd}' /app/share/metainfo/${FLATPAK_ID}.metainfo.xml"
+                "install -Dm644 $ICON_FILE.png /app/share/icons/hicolor/512x512/apps/$APP_ID.png",
+                "envsubst < zed.desktop.in > zed.desktop && install -Dm644 zed.desktop /app/share/applications/$APP_ID.desktop",
+                "envsubst < flatpak/zed.metainfo.xml.in > zed.metainfo.xml && install -Dm644 zed.metainfo.xml /app/share/metainfo/$APP_ID.metainfo.xml",
+                "sed -i -e '/@release_info@/{r flatpak/release-info/$CHANNEL' -e 'd}' /app/share/metainfo/$APP_ID.metainfo.xml",
+                "install -Dm755 bin/cli /app/bin/zed",
+                "install -Dm755 bin/zed /app/bin/zed-app"
             ],
             "sources": [
                 {
+                    "type": "archive",
+                    "path": "./target/release/$ARCHIVE"
+                },
+                {
                     "type": "dir",
-                    "path": "."
-                }@extra_srcs@
+                    "path": "./crates/zed/resources"
+                }
             ]
         }
     ]
