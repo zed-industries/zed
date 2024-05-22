@@ -6,8 +6,8 @@ use language::language_settings;
 use parking_lot::RwLock;
 use picker::{Picker, PickerDelegate};
 use std::sync::Arc;
-use ui::{prelude::*, Checkbox, IconButtonShape, ListItem, ListItemSpacing};
-use util::{ResultExt, TryFutureExt};
+use ui::{prelude::*, IconButtonShape, ListItem, ListItemSpacing};
+use util::TryFutureExt;
 use uuid::Uuid;
 use workspace::ModalView;
 
@@ -87,25 +87,6 @@ impl PromptLibrary {
         }
     }
 
-    pub fn add_prompt_to_default(&self, prompt_id: PromptId) -> anyhow::Result<()> {
-        let mut state = self.state.write();
-
-        if !state.default_prompts.contains(&prompt_id) && state.prompts.contains_key(&prompt_id) {
-            state.default_prompts.push(prompt_id);
-            state.version += 1;
-        }
-
-        Ok(())
-    }
-
-    pub fn remove_prompt_from_default(&self, prompt_id: PromptId) -> anyhow::Result<()> {
-        let mut state = self.state.write();
-
-        state.default_prompts.retain(|id| id != &prompt_id);
-        state.version += 1;
-        Ok(())
-    }
-
     fn join_default_prompts(&self) -> String {
         let state = self.state.read();
         let active_prompt_ids = state.default_prompts.to_vec();
@@ -147,11 +128,6 @@ impl PromptLibrary {
             .iter()
             .filter_map(|id| state.prompts.get(id).cloned())
             .collect()
-    }
-
-    pub fn default_prompt_ids(&self) -> Vec<PromptId> {
-        let state = self.state.read();
-        state.default_prompts.clone()
     }
 }
 
@@ -204,23 +180,8 @@ impl PromptManager {
         cx.notify();
     }
 
-    pub fn selected_index(&self, cx: &ViewContext<Self>) -> usize {
-        self.picker.read(cx).delegate.selected_index
-    }
-
     fn dismiss(&mut self, _: &menu::Cancel, cx: &mut ViewContext<Self>) {
         cx.emit(DismissEvent);
-    }
-
-    fn render_no_prompts_state(&self, _cx: &mut ViewContext<Self>) -> impl IntoElement {
-        h_flex()
-            .size_full()
-            .child(Label::new("No prompts in library"))
-            .child(
-                Label::new("Add prompts to the prompts folder to get started.").color(Color::Muted),
-            )
-            // TODO: Add a button to open the prompts folder
-            .child(Button::new("open-prompts-folder", "Open Prompts Folder"))
     }
 
     fn render_prompt_list(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
@@ -248,59 +209,6 @@ impl PromptManager {
                     .flex_grow()
                     .justify_start()
                     .child(self.picker.clone()),
-            )
-    }
-
-    fn render_prompt_item(
-        &mut self,
-        id: PromptId,
-        prompt: StaticPrompt,
-        cx: &mut ViewContext<Self>,
-    ) -> impl IntoElement {
-        let prompt_library = self.prompt_library.clone();
-        let prompt = prompt.clone();
-        let prompt_id = id.clone();
-
-        let default_prompt_ids = prompt_library.clone().default_prompt_ids();
-        let is_default = default_prompt_ids.contains(&id);
-        // We'll use this for conditionally enabled prompts
-        // like those loaded only for certain languages
-        let is_conditional = false;
-        let selection = match (is_default, is_conditional) {
-            (_, true) => Selection::Indeterminate,
-            (true, _) => Selection::Selected,
-            (false, _) => Selection::Unselected,
-        };
-
-        v_flex()
-            .id(ElementId::Name(format!("prompt-{:?}", prompt_id,).into()))
-            .p(Spacing::Small.rems(cx))
-            .child(
-                h_flex()
-                    .justify_between()
-                    .child(
-                        h_flex()
-                            .gap(Spacing::Large.rems(cx))
-                            .child(
-                                Checkbox::new(ElementId::from(prompt_id.0), selection).on_click(
-                                    move |_, _cx| {
-                                        if is_default {
-                                            prompt_library
-                                                .clone()
-                                                .remove_prompt_from_default(prompt_id.clone())
-                                                .log_err();
-                                        } else {
-                                            prompt_library
-                                                .clone()
-                                                .add_prompt_to_default(prompt_id.clone())
-                                                .log_err();
-                                        }
-                                    },
-                                ),
-                            )
-                            .child(Label::new(prompt.title)),
-                    )
-                    .child(div()),
             )
     }
 
@@ -389,7 +297,6 @@ pub struct PromptManagerDelegate {
     matching_prompt_ids: Vec<PromptId>,
     prompt_library: Arc<PromptLibrary>,
     selected_index: usize,
-    // match_candidates: Vec<StringMatchCandidate>,
 }
 
 impl PickerDelegate for PromptManagerDelegate {
@@ -486,15 +393,5 @@ impl PickerDelegate for PromptManagerDelegate {
                 .selected(selected)
                 .child(Label::new(prompt.title.clone())),
         )
-    }
-}
-
-impl PromptManagerDelegate {
-    fn prompt_for_index(
-        &mut self,
-        index: usize,
-        _cx: &mut ViewContext<Picker<Self>>,
-    ) -> Option<Arc<StaticPrompt>> {
-        self.matching_prompts.get(index).cloned()
     }
 }
