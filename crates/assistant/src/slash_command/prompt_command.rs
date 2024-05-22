@@ -20,6 +20,10 @@ impl SlashCommand for PromptSlashCommand {
         "insert a prompt from the library".into()
     }
 
+    fn requires_argument(&self) -> bool {
+        true
+    }
+
     fn complete_argument(
         &self,
         _query: String,

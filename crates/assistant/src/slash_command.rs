@@ -37,6 +37,7 @@ pub(crate) trait SlashCommand: 'static + Send + Sync {
         cancel: Arc<AtomicBool>,
         cx: &mut AppContext,
     ) -> Task<Result<Vec<String>>>;
+    fn requires_argument(&self) -> bool;
     fn run(&self, argument: Option<&str>, cx: &mut AppContext) -> Task<Result<String>>;
 }
 
@@ -112,15 +113,21 @@ impl SlashCommandCompletionProvider {
 
             Ok(matches
                 .into_iter()
-                .map(|mat| project::Completion {
-                    old_range: range.clone(),
-                    label: CodeLabel::plain(mat.string.clone(), None),
-                    new_text: mat.string.clone(),
-                    documentation: commands
-                        .command(&mat.string)
-                        .map(|command| Documentation::SingleLine(command.description())),
-                    server_id: LanguageServerId(0),
-                    lsp_completion: Default::default(),
+                .filter_map(|mat| {
+                    let command = commands.command(&mat.string)?;
+                    let mut new_text = mat.string.clone();
+                    if command.requires_argument() {
+                        new_text.push(' ');
+                    }
+
+                    Some(project::Completion {
+                        old_range: range.clone(),
+                        documentation: Some(Documentation::SingleLine(command.description())),
+                        new_text,
+                        label: CodeLabel::plain(mat.string, None),
+                        server_id: LanguageServerId(0),
+                        lsp_completion: Default::default(),
+                    })
                 })
                 .collect())
         })

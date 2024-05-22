@@ -69,6 +69,10 @@ impl SlashCommand for FileSlashCommand {
         "insert an entire file".into()
     }
 
+    fn requires_argument(&self) -> bool {
+        true
+    }
+
     fn complete_argument(
         &self,
         query: String,
