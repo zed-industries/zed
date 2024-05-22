@@ -73,6 +73,7 @@ impl Database {
     pub async fn create_dev_server(
         &self,
         name: &str,
+        ssh_connection_string: Option<&str>,
         hashed_access_token: &str,
         user_id: UserId,
     ) -> crate::Result<(dev_server::Model, proto::DevServerProjectsUpdate)> {
@@ -86,6 +87,9 @@ impl Database {
                 hashed_token: ActiveValue::Set(hashed_access_token.to_string()),
                 name: ActiveValue::Set(name.trim().to_string()),
                 user_id: ActiveValue::Set(user_id),
+                ssh_connection_string: ActiveValue::Set(
+                    ssh_connection_string.map(ToOwned::to_owned),
+                ),
             })
             .exec_with_returning(&*tx)
             .await?;
@@ -133,6 +137,7 @@ impl Database {
         &self,
         id: DevServerId,
         name: &str,
+        ssh_connection_string: &Option<String>,
         user_id: UserId,
     ) -> crate::Result<proto::DevServerProjectsUpdate> {
         self.transaction(|tx| async move {
@@ -145,6 +150,7 @@ impl Database {
 
             dev_server::Entity::update(dev_server::ActiveModel {
                 name: ActiveValue::Set(name.trim().to_string()),
+                ssh_connection_string: ActiveValue::Set(ssh_connection_string.clone()),
                 ..dev_server.clone().into_active_model()
             })
             .exec(&*tx)

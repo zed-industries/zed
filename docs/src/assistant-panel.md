@@ -133,3 +133,47 @@ You can use Ollama with the Zed assistant by making Ollama appear as an OpenAPI 
   ollama
   ```
 5. Restart Zed
+
+## Prompt Manager
+
+Zed has a prompt manager for enabling and disabling custom prompts.
+
+These are useful for:
+
+- Creating a "default prompt" - a super prompt that includes a collection of things you want the assistant to know in every conversation.
+- Adding single prompts to your current context to help guide the assistant's responses.
+- (In the future) dynamically adding certain prompts to the assistant based on the current context, such as the presence of Rust code or a specific async runtime you want to work with.
+
+You can access the prompt manager by selecting `Prompt Library...` from the assistant panel's more menu.
+
+By default when opening the assistant, the prompt manager will load any custom prompts present in your `~/.config/zed/prompts` directory.
+
+Checked prompts are included in your "default prompt", which can be inserted into the assistant by running `assistant: insert default prompt` or clicking the `Insert Default Prompt` button in the assistant panel's more menu.
+
+### Creating a custom prompt
+
+Prompts have a simple format:
+
+```json
+{
+  // ~/.config/zed/prompts/no-comments.json
+  "title": "No comments in code",
+  "version": "1.0",
+  "author": "Nate Butler <iamnbutler@gmail.com>",
+  "languages": ["*"],
+  "prompt": "Do not add inline or doc comments to any returned code. Avoid removing existing comments unless they are no longer accurate due to changes in the code."
+}
+```
+
+Ensure you properly escape your prompt string when creating a new prompt file.
+
+Example:
+
+```json
+{
+  // ...
+  "prompt": "This project using the gpui crate as it's UI framework for building UI in Rust. When working in Rust files with gpui components, import it's dependencies using `use gpui::{*, prelude::*}`.\n\nWhen a struct has a `#[derive(IntoElement)]` attribute, it is a UI component that must implement `RenderOnce`. Example:\n\n```rust\n#[derive(IntoElement)]\nstruct MyComponent {\n    id: ElementId,\n}\n\nimpl MyComponent {\n    pub fn new(id: impl Into<ElementId>) -> Self {\n        Self { id.into() }\n    }\n}\n\nimpl RenderOnce for MyComponent {\n    fn render(self, cx: &mut WindowContext) -> impl IntoElement {\n        div().id(self.id.clone()).child(text(\"Hello, world!\"))\n    }\n}\n```"
+}
+```
+
+In the future we'll allow creating and editing prompts directly in the prompt manager, reducing the need to do this by hand.

@@ -13,7 +13,6 @@ path = "src/outline.rs"
 doctest = false
 
 [dependencies]
-collections.workspace = true
 editor.workspace = true
 fuzzy.workspace = true
 gpui.workspace = true

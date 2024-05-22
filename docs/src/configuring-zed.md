@@ -651,18 +651,19 @@ The result is still `)))` and not `))))))`, which is what it would be by default
 ## File Types
 
 - Setting: `file_types`
-- Description: Configure how Zed selects a language for a file based on its filename or extension.
+- Description: Configure how Zed selects a language for a file based on its filename or extension. Supports glob entries.
 - Default: `{}`
 
 **Examples**
 
-To interpret all `.c` files as C++, and files called `MyLockFile` as TOML:
+To interpret all `.c` files as C++, files called `MyLockFile` as TOML and files starting with `Dockerfile` as Dockerfile:
 
 ```json
 {
   "file_types": {
     "C++": ["c"],
-    "TOML": ["MyLockFile"]
+    "TOML": ["MyLockFile"],
+    "Dockerfile": ["Dockerfile*"]
   }
 }
 ```

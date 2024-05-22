@@ -42,6 +42,40 @@ impl LspAdapter for TailwindLspAdapter {
         LanguageServerName(Self::SERVER_NAME.into())
     }
 
+    async fn check_if_user_installed(
+        &self,
+        _delegate: &dyn LspAdapterDelegate,
+        cx: &AsyncAppContext,
+    ) -> Option<LanguageServerBinary> {
+        let configured_binary = cx
+            .update(|cx| {
+                ProjectSettings::get_global(cx)
+                    .lsp
+                    .get(Self::SERVER_NAME)
+                    .and_then(|s| s.binary.clone())
+            })
+            .ok()??;
+
+        let path = if let Some(configured_path) = configured_binary.path.map(PathBuf::from) {
+            configured_path
+        } else {
+            self.node.binary_path().await.ok()?
+        };
+
+        let arguments = configured_binary
+            .arguments
+            .unwrap_or_default()
+            .iter()
+            .map(|arg| arg.into())
+            .collect();
+
+        Some(LanguageServerBinary {
+            path,
+            arguments,
+            env: None,
+        })
+    }
+
     async fn fetch_latest_server_version(
         &self,
         _: &dyn LspAdapterDelegate,

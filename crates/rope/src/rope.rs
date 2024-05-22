@@ -617,6 +617,14 @@ impl<'a> Chunks<'a> {
         let end = self.range.end - chunk_start;
         Some(&chunk.0[start..chunk.0.len().min(end)])
     }
+
+    pub fn lines(self) -> Lines<'a> {
+        Lines {
+            chunks: self,
+            current_line: String::new(),
+            done: false,
+        }
+    }
 }
 
 impl<'a> Iterator for Chunks<'a> {
@@ -711,6 +719,49 @@ impl<'a> io::Read for Bytes<'a> {
         } else {
             Ok(0)
         }
+    }
+}
+
+pub struct Lines<'a> {
+    chunks: Chunks<'a>,
+    current_line: String,
+    done: bool,
+}
+
+impl<'a> Lines<'a> {
+    pub fn next(&mut self) -> Option<&str> {
+        if self.done {
+            return None;
+        }
+
+        self.current_line.clear();
+
+        while let Some(chunk) = self.chunks.peek() {
+            let mut lines = chunk.split('\n').peekable();
+            while let Some(line) = lines.next() {
+                self.current_line.push_str(line);
+                if lines.peek().is_some() {
+                    self.chunks
+                        .seek(self.chunks.offset() + line.len() + "\n".len());
+                    return Some(&self.current_line);
+                }
+            }
+
+            self.chunks.next();
+        }
+
+        self.done = true;
+        Some(&self.current_line)
+    }
+
+    pub fn seek(&mut self, offset: usize) {
+        self.chunks.seek(offset);
+        self.current_line.clear();
+        self.done = false;
+    }
+
+    pub fn offset(&self) -> usize {
+        self.chunks.offset()
     }
 }
 
@@ -1286,6 +1337,24 @@ mod tests {
             rope.clip_offset_utf16(OffsetUtf16(3), Bias::Right),
             OffsetUtf16(2)
         );
+    }
+
+    #[test]
+    fn test_lines() {
+        let rope = Rope::from("abc\ndefg\nhi");
+        let mut lines = rope.chunks().lines();
+        assert_eq!(lines.next(), Some("abc"));
+        assert_eq!(lines.next(), Some("defg"));
+        assert_eq!(lines.next(), Some("hi"));
+        assert_eq!(lines.next(), None);
+
+        let rope = Rope::from("abc\ndefg\nhi\n");
+        let mut lines = rope.chunks().lines();
+        assert_eq!(lines.next(), Some("abc"));
+        assert_eq!(lines.next(), Some("defg"));
+        assert_eq!(lines.next(), Some("hi"));
+        assert_eq!(lines.next(), Some(""));
+        assert_eq!(lines.next(), None);
     }
 
     #[gpui::test(iterations = 100)]

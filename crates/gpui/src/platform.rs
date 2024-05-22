@@ -108,6 +108,9 @@ pub(crate) trait Platform: 'static {
     fn displays(&self) -> Vec<Rc<dyn PlatformDisplay>>;
     fn primary_display(&self) -> Option<Rc<dyn PlatformDisplay>>;
     fn active_window(&self) -> Option<AnyWindowHandle>;
+    fn can_open_windows(&self) -> anyhow::Result<()> {
+        Ok(())
+    }
     fn open_window(
         &self,
         handle: AnyWindowHandle,
@@ -132,6 +135,7 @@ pub(crate) trait Platform: 'static {
     fn on_reopen(&self, callback: Box<dyn FnMut()>);
 
     fn set_menus(&self, menus: Vec<Menu>, keymap: &Keymap);
+    fn set_dock_menu(&self, menu: Vec<MenuItem>, keymap: &Keymap);
     fn add_recent_document(&self, _path: &Path) {}
     fn on_app_menu_action(&self, callback: Box<dyn FnMut(&dyn Action)>);
     fn on_will_open_app_menu(&self, callback: Box<dyn FnMut()>);

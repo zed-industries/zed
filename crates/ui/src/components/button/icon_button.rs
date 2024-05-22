@@ -1,6 +1,6 @@
 use gpui::{AnyView, DefiniteLength};
 
-use crate::{prelude::*, SelectableButton, Spacing};
+use crate::{prelude::*, ElevationIndex, SelectableButton, Spacing};
 use crate::{ButtonCommon, ButtonLike, ButtonSize, ButtonStyle, IconName, IconSize};
 
 use super::button_icon::ButtonIcon;
@@ -117,6 +117,11 @@ impl ButtonCommon for IconButton {
 
     fn tooltip(mut self, tooltip: impl Fn(&mut WindowContext) -> AnyView + 'static) -> Self {
         self.base = self.base.tooltip(tooltip);
+        self
+    }
+
+    fn layer(mut self, elevation: ElevationIndex) -> Self {
+        self.base = self.base.layer(elevation);
         self
     }
 }

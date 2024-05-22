@@ -2365,7 +2365,12 @@ async fn create_dev_server(
     let (dev_server, status) = session
         .db()
         .await
-        .create_dev_server(&request.name, &hashed_access_token, session.user_id())
+        .create_dev_server(
+            &request.name,
+            request.ssh_connection_string.as_deref(),
+            &hashed_access_token,
+            session.user_id(),
+        )
         .await?;
 
     send_dev_server_projects_update(session.user_id(), status, &session).await;
@@ -2373,7 +2378,7 @@ async fn create_dev_server(
     response.send(proto::CreateDevServerResponse {
         dev_server_id: dev_server.id.0 as u64,
         access_token: auth::generate_dev_server_token(dev_server.id.0 as usize, access_token),
-        name: request.name.clone(),
+        name: request.name,
     })?;
     Ok(())
 }
@@ -2434,7 +2439,12 @@ async fn rename_dev_server(
     let status = session
         .db()
         .await
-        .rename_dev_server(dev_server_id, &request.name, session.user_id())
+        .rename_dev_server(
+            dev_server_id,
+            &request.name,
+            &request.ssh_connection_string,
+            session.user_id(),
+        )
         .await?;
 
     send_dev_server_projects_update(session.user_id(), status, &session).await;
@@ -3683,10 +3693,15 @@ async fn get_channel_members(
 ) -> Result<()> {
     let db = session.db().await;
     let channel_id = ChannelId::from_proto(request.channel_id);
-    let members = db
-        .get_channel_participant_details(channel_id, session.user_id())
+    let limit = if request.limit == 0 {
+        u16::MAX as u64
+    } else {
+        request.limit
+    };
+    let (members, users) = db
+        .get_channel_participant_details(channel_id, &request.query, limit, session.user_id())
         .await?;
-    response.send(proto::GetChannelMembersResponse { members })?;
+    response.send(proto::GetChannelMembersResponse { members, users })?;
     Ok(())
 }
 
@@ -3886,13 +3901,13 @@ async fn update_channel_buffer(
     let db = session.db().await;
     let channel_id = ChannelId::from_proto(request.channel_id);
 
-    let (collaborators, non_collaborators, epoch, version) = db
+    let (collaborators, epoch, version) = db
         .update_channel_buffer(channel_id, session.user_id(), &request.operations)
         .await?;
 
     channel_buffer_updated(
         session.connection_id,
-        collaborators,
+        collaborators.clone(),
         &proto::UpdateChannelBuffer {
             channel_id: channel_id.to_proto(),
             operations: request.operations,
@@ -3902,25 +3917,29 @@ async fn update_channel_buffer(
 
     let pool = &*session.connection_pool().await;
 
-    broadcast(
-        None,
-        non_collaborators
-            .iter()
-            .flat_map(|user_id| pool.user_connection_ids(*user_id)),
-        |peer_id| {
-            session.peer.send(
-                peer_id,
-                proto::UpdateChannels {
-                    latest_channel_buffer_versions: vec![proto::ChannelBufferVersion {
-                        channel_id: channel_id.to_proto(),
-                        epoch: epoch as u64,
-                        version: version.clone(),
-                    }],
-                    ..Default::default()
-                },
-            )
-        },
-    );
+    let non_collaborators =
+        pool.channel_connection_ids(channel_id)
+            .filter_map(|(connection_id, _)| {
+                if collaborators.contains(&connection_id) {
+                    None
+                } else {
+                    Some(connection_id)
+                }
+            });
+
+    broadcast(None, non_collaborators, |peer_id| {
+        session.peer.send(
+            peer_id,
+            proto::UpdateChannels {
+                latest_channel_buffer_versions: vec![proto::ChannelBufferVersion {
+                    channel_id: channel_id.to_proto(),
+                    epoch: epoch as u64,
+                    version: version.clone(),
+                }],
+                ..Default::default()
+            },
+        )
+    });
 
     Ok(())
 }
@@ -4048,7 +4067,6 @@ async fn send_channel_message(
     let CreatedChannelMessage {
         message_id,
         participant_connection_ids,
-        channel_members,
         notifications,
     } = session
         .db()
@@ -4079,7 +4097,7 @@ async fn send_channel_message(
     };
     broadcast(
         Some(session.connection_id),
-        participant_connection_ids,
+        participant_connection_ids.clone(),
         |connection| {
             session.peer.send(
                 connection,
@@ -4095,24 +4113,27 @@ async fn send_channel_message(
     })?;
 
     let pool = &*session.connection_pool().await;
-    broadcast(
-        None,
-        channel_members
-            .iter()
-            .flat_map(|user_id| pool.user_connection_ids(*user_id)),
-        |peer_id| {
-            session.peer.send(
-                peer_id,
-                proto::UpdateChannels {
-                    latest_channel_message_ids: vec![proto::ChannelMessageId {
-                        channel_id: channel_id.to_proto(),
-                        message_id: message_id.to_proto(),
-                    }],
-                    ..Default::default()
-                },
-            )
-        },
-    );
+    let non_participants =
+        pool.channel_connection_ids(channel_id)
+            .filter_map(|(connection_id, _)| {
+                if participant_connection_ids.contains(&connection_id) {
+                    None
+                } else {
+                    Some(connection_id)
+                }
+            });
+    broadcast(None, non_participants, |peer_id| {
+        session.peer.send(
+            peer_id,
+            proto::UpdateChannels {
+                latest_channel_message_ids: vec![proto::ChannelMessageId {
+                    channel_id: channel_id.to_proto(),
+                    message_id: message_id.to_proto(),
+                }],
+                ..Default::default()
+            },
+        )
+    });
     send_notifications(pool, &session.peer, notifications);
 
     Ok(())
