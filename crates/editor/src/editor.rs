@@ -10998,6 +10998,10 @@ impl CompletionProvider for Model<Project> {
         trigger_in_words: bool,
         cx: &mut ViewContext<Editor>,
     ) -> bool {
+        if !EditorSettings::get_global(cx).show_completions_on_input {
+            return false;
+        }
+
         let mut chars = text.chars();
         let char = if let Some(char) = chars.next() {
             char
@@ -11012,10 +11016,6 @@ impl CompletionProvider for Model<Project> {
         let scope = buffer.snapshot().language_scope_at(position);
         if trigger_in_words && char_kind(&scope, char) == CharKind::Word {
             return true;
-        }
-
-        if !EditorSettings::get_global(cx).show_completions_on_input {
-            return false;
         }
 
         buffer
