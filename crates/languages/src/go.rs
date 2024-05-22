@@ -485,8 +485,9 @@ impl ContextProvider for GoContextProvider {
 
         let snapshot = location.buffer.read(cx).snapshot();
         let point_range = location.range.to_point(&snapshot);
+        let start = Point::new(point_range.start.row, 0);
         let end = Point::new(point_range.start.row + 1, 0);
-        let line = snapshot.text_for_range(point_range.start..end).peek();
+        let line = snapshot.text_for_range(start..end).peek();
 
         let go_subtest_variable = extract_subtest_name(line.unwrap_or(""))
             .map(|subtest_name| (GO_SUBTEST_NAME_TASK_VARIABLE.clone(), subtest_name));
@@ -530,7 +531,7 @@ impl ContextProvider for GoContextProvider {
             },
             TaskTemplate {
                 label: format!(
-                    "go test {} -run {} {}",
+                    "go test {} -run {}/{}",
                     GO_PACKAGE_TASK_VARIABLE.template_value(),
                     VariableName::Symbol.template_value(),
                     GO_SUBTEST_NAME_TASK_VARIABLE.template_value(),
