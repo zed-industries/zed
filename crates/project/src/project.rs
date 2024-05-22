@@ -4626,11 +4626,11 @@ impl Project {
         if self.is_local() {
             let buffers_with_paths = buffers
                 .into_iter()
-                .filter_map(|buffer_handle| {
+                .map(|buffer_handle| {
                     let buffer = buffer_handle.read(cx);
                     let buffer_abs_path = File::from_dyn(buffer.file())
                         .and_then(|file| file.as_local().map(|f| f.abs_path(cx)));
-                    Some((buffer_handle, buffer_abs_path))
+                    (buffer_handle, buffer_abs_path)
                 })
                 .collect::<Vec<_>>();
 
