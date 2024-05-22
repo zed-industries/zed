@@ -4,12 +4,13 @@
 // Since runtimelib uses tokio, we'll only use `runtimelib::dirs` for paths and reimplement
 // the rest using `project::Fs`.
 
-use anyhow::Result;
+use anyhow::{Context as _, Result};
 use futures::channel::mpsc;
-use futures::StreamExt;
+use futures::{io::BufReader, AsyncBufReadExt, StreamExt};
 use gpui::EntityId;
 use project::Fs;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+use std::process::Stdio;
 use std::{path::PathBuf, sync::Arc};
 use util::ResultExt as _;
 
@@ -117,18 +118,38 @@ impl RunningKernel {
         )
         .await?;
 
-        let connection_path =
-            dirs::runtime_dir().join(format!("kernel-zed-{}", entity_id));
-
+        let connection_path = dirs::runtime_dir().join(format!("kernel-zed-{}.json", entity_id));
         let content = serde_json::to_string(&connection_info)?;
-
         // write out file to disk for kernel
         fs.atomic_write(connection_path.clone(), content).await?;
 
         let mut cmd = runtime.command(&connection_path)?;
-        let process = cmd.spawn()?;
+        let mut process = cmd
+            .stdout(Stdio::piped())
+            // .stderr(Stdio::piped())
+            .kill_on_drop(true)
+            .spawn()
+            .context("failed to start the kernel process")?;
 
-        let (execution_request_tx, _runtime_handle) = connect_kernel(connection_info)?;
+        let stdout = process
+            .stdout
+            .take()
+            .context("failed to get stdout for process")?;
+
+        // let stderr = process
+        //     .stderr
+        //     .take()
+        //     .context("failed to get stderr for process")?;
+
+        // Wait for at least one line from stdout
+        let stdout = BufReader::new(stdout);
+        let mut lines = stdout.lines();
+        let line = lines.next().await;
+        println!("READ: {:?}", line);
+
+        let (execution_request_tx, _runtime_handle) = connect_kernel(connection_info.clone())?;
+        // Drop the connection info so the kernel will bind
+        drop(connection_info);
 
         Ok(Self {
             runtime,
