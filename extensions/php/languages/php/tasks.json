@@ -10,5 +10,10 @@
     "command": "./vendor/bin/pest",
     "args": ["--filter \"$ZED_SYMBOL\" $ZED_FILE"],
     "tags": ["pest-test"]
+  },
+  {
+    "label": "execute selection $ZED_SELECTED_TEXT",
+    "command": "php",
+    "args": ["-r", "$ZED_SELECTED_TEXT"]
   }
 ]
