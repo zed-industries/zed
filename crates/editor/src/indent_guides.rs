@@ -16,6 +16,7 @@ struct ActiveIndentedRange {
     indent: u32,
 }
 
+#[derive(Default)]
 pub struct ActiveIndentGuidesState {
     pub dirty: bool,
     cursor_row: u32,
@@ -26,17 +27,6 @@ pub struct ActiveIndentGuidesState {
 impl ActiveIndentGuidesState {
     pub fn should_refresh(&self, cursor_row: u32) -> bool {
         self.pending_refresh.is_none() && (self.cursor_row != cursor_row || self.dirty)
-    }
-}
-
-impl Default for ActiveIndentGuidesState {
-    fn default() -> Self {
-        Self {
-            cursor_row: 0,
-            dirty: false,
-            pending_refresh: None,
-            active_indent_range: None,
-        }
     }
 }
 
