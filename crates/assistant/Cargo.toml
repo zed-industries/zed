@@ -50,6 +50,8 @@ ui.workspace = true
 util.workspace = true
 uuid.workspace = true
 workspace.workspace = true
+picker.workspace = true
+gray_matter = "0.2.7"
 
 [dev-dependencies]
 ctor.workspace = true

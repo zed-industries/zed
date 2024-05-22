@@ -1,17 +1,19 @@
+use crate::ambient_context::{AmbientContext, ContextUpdated, RecentBuffer};
+use crate::prompts::prompt_library::PromptLibrary;
+use crate::prompts::prompt_manager::PromptManager;
 use crate::{
     ambient_context::*,
     assistant_settings::{AssistantDockPosition, AssistantSettings, ZedDotDevModel},
     codegen::{self, Codegen, CodegenKind},
-    prompt_library::{PromptLibrary, PromptManager},
-    prompts::generate_content_prompt,
+    prompts::prompt::generate_content_prompt,
     search::*,
     slash_command::{
         SlashCommandCleanup, SlashCommandCompletionProvider, SlashCommandLine, SlashCommandRegistry,
     },
-    ApplyEdit, Assist, CompletionProvider, CycleMessageRole, InlineAssist, InsertActivePrompt,
-    LanguageModel, LanguageModelRequest, LanguageModelRequestMessage, MessageId, MessageMetadata,
-    MessageStatus, QuoteSelection, ResetKey, Role, SavedConversation, SavedConversationMetadata,
-    SavedMessage, Split, ToggleFocus, ToggleHistory, ToggleIncludeConversation,
+    ApplyEdit, Assist, CompletionProvider, CycleMessageRole, InlineAssist, LanguageModel,
+    LanguageModelRequest, LanguageModelRequestMessage, MessageId, MessageMetadata, MessageStatus,
+    QuoteSelection, ResetKey, Role, SavedConversation, SavedConversationMetadata, SavedMessage,
+    Split, ToggleFocus, ToggleHistory, ToggleIncludeConversation,
 };
 use anyhow::{anyhow, Result};
 use client::telemetry::Telemetry;
@@ -85,7 +87,7 @@ pub fn init(cx: &mut AppContext) {
                 })
                 .register_action(AssistantPanel::inline_assist)
                 .register_action(AssistantPanel::cancel_last_inline_assist)
-                .register_action(ConversationEditor::insert_active_prompt)
+                // .register_action(ConversationEditor::insert_active_prompt)
                 .register_action(ConversationEditor::quote_selection);
         },
     )
@@ -139,7 +141,7 @@ impl AssistantPanel {
                 .unwrap_or_default();
 
             let prompt_library = Arc::new(
-                PromptLibrary::init(fs.clone())
+                PromptLibrary::load(fs.clone())
                     .await
                     .log_err()
                     .unwrap_or_default(),
@@ -1035,20 +1037,20 @@ impl AssistantPanel {
                                 .ok();
                         }
                     })
-                    .entry("Insert Active Prompt", None, {
-                        let workspace = workspace.clone();
-                        move |cx| {
-                            workspace
-                                .update(cx, |workspace, cx| {
-                                    ConversationEditor::insert_active_prompt(
-                                        workspace,
-                                        &Default::default(),
-                                        cx,
-                                    )
-                                })
-                                .ok();
-                        }
-                    })
+                    // .entry("Insert Active Prompt", None, {
+                    //     let workspace = workspace.clone();
+                    //     move |cx| {
+                    //         workspace
+                    //             .update(cx, |workspace, cx| {
+                    //                 ConversationEditor::insert_active_prompt(
+                    //                     workspace,
+                    //                     &Default::default(),
+                    //                     cx,
+                    //                 )
+                    //             })
+                    //             .ok();
+                    //     }
+                    // })
                 })
                 .into()
             })
@@ -1132,7 +1134,14 @@ impl AssistantPanel {
     fn show_prompt_manager(&mut self, cx: &mut ViewContext<Self>) {
         if let Some(workspace) = self.workspace.upgrade() {
             workspace.update(cx, |workspace, cx| {
-                workspace.toggle_modal(cx, |cx| PromptManager::new(self.prompt_library.clone(), cx))
+                workspace.toggle_modal(cx, |cx| {
+                    PromptManager::new(
+                        self.prompt_library.clone(),
+                        self.languages.clone(),
+                        self.fs.clone(),
+                        cx,
+                    )
+                })
             })
         }
     }
@@ -3252,35 +3261,35 @@ impl ConversationEditor {
         }
     }
 
-    fn insert_active_prompt(
-        workspace: &mut Workspace,
-        _: &InsertActivePrompt,
-        cx: &mut ViewContext<Workspace>,
-    ) {
-        let Some(panel) = workspace.panel::<AssistantPanel>(cx) else {
-            return;
-        };
+    // fn insert_active_prompt(
+    //     workspace: &mut Workspace,
+    //     _: &InsertActivePrompt,
+    //     cx: &mut ViewContext<Workspace>,
+    // ) {
+    //     let Some(panel) = workspace.panel::<AssistantPanel>(cx) else {
+    //         return;
+    //     };
 
-        if !panel.focus_handle(cx).contains_focused(cx) {
-            workspace.toggle_panel_focus::<AssistantPanel>(cx);
-        }
+    //     if !panel.focus_handle(cx).contains_focused(cx) {
+    //         workspace.toggle_panel_focus::<AssistantPanel>(cx);
+    //     }
 
-        if let Some(default_prompt) = panel.read(cx).prompt_library.clone().default_prompt() {
-            panel.update(cx, |panel, cx| {
-                if let Some(conversation) = panel
-                    .active_conversation_editor()
-                    .cloned()
-                    .or_else(|| panel.new_conversation(cx))
-                {
-                    conversation.update(cx, |conversation, cx| {
-                        conversation
-                            .editor
-                            .update(cx, |editor, cx| editor.insert(&default_prompt, cx))
-                    });
-                };
-            });
-        };
-    }
+    //     if let Some(default_prompt) = panel.read(cx).prompt_library.clone().default_prompt() {
+    //         panel.update(cx, |panel, cx| {
+    //             if let Some(conversation) = panel
+    //                 .active_conversation_editor()
+    //                 .cloned()
+    //                 .or_else(|| panel.new_conversation(cx))
+    //             {
+    //                 conversation.update(cx, |conversation, cx| {
+    //                     conversation
+    //                         .editor
+    //                         .update(cx, |editor, cx| editor.insert(&default_prompt, cx))
+    //                 });
+    //             };
+    //         });
+    //     };
+    // }
 
     fn copy(&mut self, _: &editor::actions::Copy, cx: &mut ViewContext<Self>) {
         let editor = self.editor.read(cx);
