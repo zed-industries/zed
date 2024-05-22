@@ -4450,23 +4450,25 @@ impl Editor {
         }
     }
 
-    fn accept_inline_completion(&mut self, cx: &mut ViewContext<Self>) -> bool {
-        if let Some(completion) = self.take_active_inline_completion(cx) {
-            if let Some(provider) = self.inline_completion_provider() {
-                provider.accept(cx);
-            }
-
-            cx.emit(EditorEvent::InputHandled {
-                utf16_range_to_replace: None,
-                text: completion.text.to_string().into(),
-            });
-            self.insert_with_autoindent_mode(&completion.text.to_string(), None, cx);
-            self.refresh_inline_completion(true, cx);
-            cx.notify();
-            true
-        } else {
-            false
+    pub fn accept_inline_completion(
+        &mut self,
+        _: &AcceptInlineCompletion,
+        cx: &mut ViewContext<Self>,
+    ) {
+        let Some(completion) = self.take_active_inline_completion(cx) else {
+            return;
+        };
+        if let Some(provider) = self.inline_completion_provider() {
+            provider.accept(cx);
         }
+
+        cx.emit(EditorEvent::InputHandled {
+            utf16_range_to_replace: None,
+            text: completion.text.to_string().into(),
+        });
+        self.insert_with_autoindent_mode(&completion.text.to_string(), None, cx);
+        self.refresh_inline_completion(true, cx);
+        cx.notify();
     }
 
     pub fn accept_partial_inline_completion(
@@ -4964,16 +4966,6 @@ impl Editor {
                     }
                     continue;
                 }
-            }
-
-            // Accept copilot completion if there is only one selection and the cursor is not
-            // in the leading whitespace.
-            if self.selections.count() == 1
-                && cursor.column >= current_indent.len
-                && self.has_active_inline_completion(cx)
-            {
-                self.accept_inline_completion(cx);
-                return;
             }
 
             // Otherwise, insert a hard or soft tab.
