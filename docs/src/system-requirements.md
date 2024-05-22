@@ -12,7 +12,7 @@ Not yet available as an official download. Can be built [from source](./developm
 
 ## Windows
 
-Not yet available as an official download. Can be built [from source](./development/windows.md).
+Not yet available as an official download, only built from this by me. Can be built [from source](./development/windows.md).
 
 ## Web
 
