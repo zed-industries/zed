@@ -7,6 +7,7 @@ mod prompt_library;
 mod prompts;
 mod saved_conversation;
 mod search;
+mod slash_command;
 mod streaming_diff;
 
 use ambient_context::AmbientContextSnapshot;
@@ -16,6 +17,7 @@ use client::{proto, Client};
 use command_palette_hooks::CommandPaletteFilter;
 pub(crate) use completion_provider::*;
 use gpui::{actions, AppContext, Global, SharedString, UpdateGlobal};
+pub(crate) use prompt_library::*;
 pub(crate) use saved_conversation::*;
 use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsStore};

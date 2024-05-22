@@ -233,7 +233,7 @@ impl CompletionProvider {
             CompletionProvider::Anthropic(provider) => provider.count_tokens(request, cx),
             CompletionProvider::ZedDotDev(provider) => provider.count_tokens(request, cx),
             #[cfg(test)]
-            CompletionProvider::Fake(_) => unimplemented!(),
+            CompletionProvider::Fake(_) => futures::FutureExt::boxed(futures::future::ready(Ok(0))),
         }
     }
 

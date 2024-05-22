@@ -5,6 +5,9 @@ use crate::{
     prompt_library::{PromptLibrary, PromptManager},
     prompts::generate_content_prompt,
     search::*,
+    slash_command::{
+        SlashCommandCleanup, SlashCommandCompletionProvider, SlashCommandLine, SlashCommandRegistry,
+    },
     ApplyEdit, Assist, CompletionProvider, CycleMessageRole, InlineAssist, InsertActivePrompt,
     LanguageModel, LanguageModelRequest, LanguageModelRequestMessage, MessageId, MessageMetadata,
     MessageStatus, QuoteSelection, ResetKey, Role, SavedConversation, SavedConversationMetadata,
@@ -14,9 +17,10 @@ use anyhow::{anyhow, Result};
 use client::telemetry::Telemetry;
 use collections::{hash_map, HashMap, HashSet, VecDeque};
 use editor::{
-    actions::{MoveDown, MoveUp},
+    actions::{FoldAt, MoveDown, MoveUp},
     display_map::{
-        BlockContext, BlockDisposition, BlockId, BlockProperties, BlockStyle, ToDisplayPoint,
+        BlockContext, BlockDisposition, BlockId, BlockProperties, BlockStyle, Flap, FlapId,
+        ToDisplayPoint,
     },
     scroll::{Autoscroll, AutoscrollStrategy},
     Anchor, Editor, EditorElement, EditorEvent, EditorStyle, MultiBufferSnapshot, RowExt,
@@ -26,16 +30,17 @@ use file_icons::FileIcons;
 use fs::Fs;
 use futures::StreamExt;
 use gpui::{
-    canvas, div, point, relative, rems, uniform_list, Action, AnyView, AppContext, AsyncAppContext,
-    AsyncWindowContext, AvailableSpace, ClipboardItem, Context, Entity, EventEmitter, FocusHandle,
-    FocusableView, FontStyle, FontWeight, HighlightStyle, InteractiveElement, IntoElement, Model,
-    ModelContext, ParentElement, Pixels, Render, SharedString, StatefulInteractiveElement, Styled,
-    Subscription, Task, TextStyle, UniformListScrollHandle, View, ViewContext, VisualContext,
-    WeakModel, WeakView, WhiteSpace, WindowContext,
+    canvas, div, point, relative, rems, uniform_list, Action, AnyElement, AnyView, AppContext,
+    AsyncAppContext, AsyncWindowContext, AvailableSpace, ClipboardItem, Context, Entity,
+    EventEmitter, FocusHandle, FocusableView, FontStyle, FontWeight, HighlightStyle,
+    InteractiveElement, IntoElement, Model, ModelContext, ParentElement, Pixels, Render,
+    SharedString, StatefulInteractiveElement, Styled, Subscription, Task, TextStyle,
+    UniformListScrollHandle, View, ViewContext, VisualContext, WeakModel, WeakView, WhiteSpace,
+    WindowContext,
 };
 use language::{
     language_settings::SoftWrap, AutoindentMode, Buffer, BufferSnapshot, LanguageRegistry,
-    OffsetRangeExt as _, Point, ToOffset as _,
+    OffsetRangeExt as _, Point, ToOffset as _, ToPoint as _,
 };
 use multi_buffer::MultiBufferRow;
 use parking_lot::Mutex;
@@ -45,7 +50,7 @@ use settings::Settings;
 use std::{
     cmp::{self, Ordering},
     fmt::Write,
-    iter,
+    iter, mem,
     ops::Range,
     path::PathBuf,
     sync::Arc,
@@ -64,6 +69,7 @@ use workspace::{
 use workspace::{notifications::NotificationId, NewFile};
 
 const MAX_RECENT_BUFFERS: usize = 3;
+const SLASH_COMMAND_DEBOUNCE: Duration = Duration::from_millis(200);
 
 pub fn init(cx: &mut AppContext) {
     cx.observe_new_views(
@@ -98,6 +104,7 @@ pub struct AssistantPanel {
     focus_handle: FocusHandle,
     toolbar: View<Toolbar>,
     languages: Arc<LanguageRegistry>,
+    slash_commands: Arc<SlashCommandRegistry>,
     prompt_library: Arc<PromptLibrary>,
     fs: Arc<dyn Fs>,
     telemetry: Arc<Telemetry>,
@@ -190,6 +197,12 @@ impl AssistantPanel {
                     })
                     .detach();
 
+                    let slash_command_registry = SlashCommandRegistry::new(
+                        workspace.project().clone(),
+                        prompt_library.clone(),
+                        cx.window_handle().downcast::<Workspace>(),
+                    );
+
                     Self {
                         workspace: workspace_handle,
                         active_conversation_editor: None,
@@ -200,6 +213,7 @@ impl AssistantPanel {
                         focus_handle,
                         toolbar,
                         languages: workspace.app_state().languages.clone(),
+                        slash_commands: slash_command_registry,
                         prompt_library,
                         fs: workspace.app_state().fs.clone(),
                         telemetry: workspace.client().telemetry().clone(),
@@ -785,6 +799,7 @@ impl AssistantPanel {
             ConversationEditor::new(
                 self.model.clone(),
                 self.languages.clone(),
+                self.slash_commands.clone(),
                 self.fs.clone(),
                 workspace,
                 cx,
@@ -1083,6 +1098,7 @@ impl AssistantPanel {
 
         let fs = self.fs.clone();
         let workspace = self.workspace.clone();
+        let slash_commands = self.slash_commands.clone();
         let languages = self.languages.clone();
         let telemetry = self.telemetry.clone();
         cx.spawn(|this, mut cx| async move {
@@ -1093,6 +1109,7 @@ impl AssistantPanel {
                 model,
                 path.clone(),
                 languages,
+                slash_commands,
                 Some(telemetry),
                 &mut cx,
             )
@@ -1380,11 +1397,15 @@ impl FocusableView for AssistantPanel {
     }
 }
 
+#[derive(Clone)]
 enum ConversationEvent {
     MessagesEdited,
     SummaryChanged,
     EditSuggestionsChanged,
     StreamedCompletion,
+    SlashCommandsChanged,
+    SlashCommandOutputAdded(Range<language::Anchor>),
+    SlashCommandOutputRemoved(Range<language::Anchor>),
 }
 
 #[derive(Default)]
@@ -1398,6 +1419,7 @@ pub struct Conversation {
     buffer: Model<Buffer>,
     pub(crate) ambient_context: AmbientContext,
     edit_suggestions: Vec<EditSuggestion>,
+    slash_command_calls: Vec<SlashCommandCall>,
     message_anchors: Vec<MessageAnchor>,
     messages_metadata: HashMap<MessageId, MessageMetadata>,
     next_message_id: MessageId,
@@ -1409,10 +1431,12 @@ pub struct Conversation {
     token_count: Option<usize>,
     pending_token_count: Task<Option<()>>,
     pending_edit_suggestion_parse: Option<Task<()>>,
+    pending_command_invocation_parse: Option<Task<()>>,
     pending_save: Task<Result<()>>,
     path: Option<PathBuf>,
     _subscriptions: Vec<Subscription>,
     telemetry: Option<Arc<Telemetry>>,
+    slash_command_registry: Arc<SlashCommandRegistry>,
     language_registry: Arc<LanguageRegistry>,
 }
 
@@ -1422,6 +1446,7 @@ impl Conversation {
     fn new(
         model: LanguageModel,
         language_registry: Arc<LanguageRegistry>,
+        slash_command_registry: Arc<SlashCommandRegistry>,
         telemetry: Option<Arc<Telemetry>>,
         cx: &mut ModelContext<Self>,
     ) -> Self {
@@ -1438,6 +1463,7 @@ impl Conversation {
             next_message_id: Default::default(),
             ambient_context: AmbientContext::default(),
             edit_suggestions: Vec::new(),
+            slash_command_calls: Vec::new(),
             summary: None,
             pending_summary: Task::ready(None),
             completion_count: Default::default(),
@@ -1445,12 +1471,14 @@ impl Conversation {
             token_count: None,
             pending_token_count: Task::ready(None),
             pending_edit_suggestion_parse: None,
+            pending_command_invocation_parse: None,
             model,
             _subscriptions: vec![cx.subscribe(&buffer, Self::handle_buffer_event)],
             pending_save: Task::ready(Ok(())),
             path: None,
             buffer,
             telemetry,
+            slash_command_registry,
             language_registry,
         };
 
@@ -1500,6 +1528,7 @@ impl Conversation {
         model: LanguageModel,
         path: PathBuf,
         language_registry: Arc<LanguageRegistry>,
+        slash_command_registry: Arc<SlashCommandRegistry>,
         telemetry: Option<Arc<Telemetry>>,
         cx: &mut AsyncAppContext,
     ) -> Result<Model<Self>> {
@@ -1540,6 +1569,7 @@ impl Conversation {
                 next_message_id,
                 ambient_context: AmbientContext::default(),
                 edit_suggestions: Vec::new(),
+                slash_command_calls: Vec::new(),
                 summary: Some(Summary {
                     text: saved_conversation.summary,
                     done: true,
@@ -1549,6 +1579,7 @@ impl Conversation {
                 pending_completions: Default::default(),
                 token_count: None,
                 pending_edit_suggestion_parse: None,
+                pending_command_invocation_parse: None,
                 pending_token_count: Task::ready(None),
                 model,
                 _subscriptions: vec![cx.subscribe(&buffer, Self::handle_buffer_event)],
@@ -1557,6 +1588,7 @@ impl Conversation {
                 buffer,
                 telemetry,
                 language_registry,
+                slash_command_registry,
             };
             this.set_language(cx);
             this.reparse_edit_suggestions(cx);
@@ -1640,6 +1672,7 @@ impl Conversation {
         if *event == language::Event::Edited {
             self.count_remaining_tokens(cx);
             self.reparse_edit_suggestions(cx);
+            self.reparse_slash_command_calls(cx);
             cx.emit(ConversationEvent::MessagesEdited);
         }
     }
@@ -1723,6 +1756,220 @@ impl Conversation {
         });
         cx.emit(ConversationEvent::EditSuggestionsChanged);
         cx.notify();
+    }
+
+    fn reparse_slash_command_calls(&mut self, cx: &mut ModelContext<Self>) {
+        self.pending_command_invocation_parse = Some(cx.spawn(|this, mut cx| async move {
+            cx.background_executor().timer(SLASH_COMMAND_DEBOUNCE).await;
+
+            this.update(&mut cx, |this, cx| {
+                let buffer = this.buffer.read(cx).snapshot();
+
+                let mut changed = false;
+                let mut new_calls = Vec::new();
+                let mut old_calls = mem::take(&mut this.slash_command_calls)
+                    .into_iter()
+                    .peekable();
+                let mut lines = buffer.as_rope().chunks().lines();
+                let mut offset = 0;
+                while let Some(line) = lines.next() {
+                    let line_end_offset = offset + line.len();
+                    if let Some(call) = SlashCommandLine::parse(line) {
+                        let mut unchanged_call = None;
+                        while let Some(old_call) = old_calls.peek() {
+                            match old_call.source_range.start.to_offset(&buffer).cmp(&offset) {
+                                Ordering::Greater => break,
+                                Ordering::Equal
+                                    if this.slash_command_is_unchanged(
+                                        old_call, &call, line, &buffer,
+                                    ) =>
+                                {
+                                    unchanged_call = old_calls.next();
+                                }
+                                _ => {
+                                    changed = true;
+                                    let old_call = old_calls.next().unwrap();
+                                    this.slash_command_call_removed(old_call, cx);
+                                }
+                            }
+                        }
+
+                        let name = &line[call.name];
+                        if let Some(call) = unchanged_call {
+                            new_calls.push(call);
+                        } else if let Some(command) = this.slash_command_registry.command(name) {
+                            changed = true;
+                            let name = name.to_string();
+                            let source_range =
+                                buffer.anchor_after(offset)..buffer.anchor_before(line_end_offset);
+
+                            let argument = call.argument.map(|range| &line[range]);
+                            let invocation = command.run(argument, cx);
+
+                            new_calls.push(SlashCommandCall {
+                                name,
+                                argument: argument.map(|s| s.to_string()),
+                                source_range: source_range.clone(),
+                                output_range: None,
+                                should_rerun: false,
+                                _invalidate: cx.spawn(|this, mut cx| {
+                                    let source_range = source_range.clone();
+                                    let invalidated = invocation.invalidated;
+                                    async move {
+                                        if invalidated.await.is_ok() {
+                                            _ = this.update(&mut cx, |this, cx| {
+                                                let buffer = this.buffer.read(cx);
+                                                let call_ix = this
+                                                    .slash_command_calls
+                                                    .binary_search_by(|probe| {
+                                                        probe
+                                                            .source_range
+                                                            .start
+                                                            .cmp(&source_range.start, buffer)
+                                                    });
+                                                if let Ok(call_ix) = call_ix {
+                                                    this.slash_command_calls[call_ix]
+                                                        .should_rerun = true;
+                                                    this.reparse_slash_command_calls(cx);
+                                                }
+                                            });
+                                        }
+                                    }
+                                }),
+                                _command_cleanup: invocation.cleanup,
+                            });
+
+                            cx.spawn(|this, mut cx| async move {
+                                let output = invocation.output.await;
+                                this.update(&mut cx, |this, cx| {
+                                    let output_range = this.buffer.update(cx, |buffer, cx| {
+                                        let call_ix = this
+                                            .slash_command_calls
+                                            .binary_search_by(|probe| {
+                                                probe
+                                                    .source_range
+                                                    .start
+                                                    .cmp(&source_range.start, buffer)
+                                            })
+                                            .ok()?;
+
+                                        let mut output = output.log_err()?;
+                                        output.truncate(output.trim_end().len());
+
+                                        let source_end = source_range.end.to_offset(buffer);
+                                        let output_start = source_end + '\n'.len_utf8();
+                                        let output_end = output_start + output.len();
+
+                                        if buffer
+                                            .chars_at(source_end)
+                                            .next()
+                                            .map_or(false, |c| c != '\n')
+                                        {
+                                            output.push('\n');
+                                        }
+
+                                        buffer.edit(
+                                            [
+                                                (source_end..source_end, "\n".to_string()),
+                                                (source_end..source_end, output),
+                                            ],
+                                            None,
+                                            cx,
+                                        );
+
+                                        let output_start = buffer.anchor_after(output_start);
+                                        let output_end = buffer.anchor_before(output_end);
+                                        this.slash_command_calls[call_ix].output_range =
+                                            Some(output_start..output_end);
+                                        Some(source_range.end..output_end)
+                                    });
+                                    if let Some(output_range) = output_range {
+                                        cx.emit(ConversationEvent::SlashCommandOutputAdded(
+                                            output_range,
+                                        ));
+                                        cx.emit(ConversationEvent::SlashCommandsChanged);
+                                    }
+                                })
+                                .ok();
+                            })
+                            .detach();
+                        }
+                    }
+                    offset = lines.offset();
+                }
+
+                for old_call in old_calls {
+                    changed = true;
+                    this.slash_command_call_removed(old_call, cx);
+                }
+
+                if changed {
+                    cx.emit(ConversationEvent::SlashCommandsChanged);
+                }
+
+                this.slash_command_calls = new_calls;
+            })
+            .ok();
+        }));
+    }
+
+    fn slash_command_is_unchanged(
+        &self,
+        old_call: &SlashCommandCall,
+        new_call: &SlashCommandLine,
+        new_text: &str,
+        buffer: &BufferSnapshot,
+    ) -> bool {
+        if old_call.name != new_text[new_call.name.clone()] {
+            return false;
+        }
+
+        if old_call.argument.as_deref() != new_call.argument.clone().map(|range| &new_text[range]) {
+            return false;
+        }
+
+        if old_call.should_rerun {
+            return false;
+        }
+
+        if let Some(output_range) = &old_call.output_range {
+            let source_range = old_call.source_range.to_point(buffer);
+            let output_start = output_range.start.to_point(buffer);
+            if source_range.start.column != 0 {
+                return false;
+            }
+            if source_range.end.column != new_text.len() as u32 {
+                return false;
+            }
+            if output_start != Point::new(source_range.end.row + 1, 0) {
+                return false;
+            }
+            if let Some(next_char) = buffer.chars_at(output_range.end).next() {
+                if next_char != '\n' {
+                    return false;
+                }
+            }
+        }
+        true
+    }
+
+    fn slash_command_call_removed(
+        &self,
+        old_call: SlashCommandCall,
+        cx: &mut ModelContext<Conversation>,
+    ) {
+        if let Some(output_range) = old_call.output_range {
+            self.buffer.update(cx, |buffer, cx| {
+                buffer.edit(
+                    [(old_call.source_range.end..output_range.end, "")],
+                    None,
+                    cx,
+                );
+            });
+            cx.emit(ConversationEvent::SlashCommandOutputRemoved(
+                old_call.source_range.end..output_range.end,
+            ))
+        }
     }
 
     fn remaining_tokens(&self) -> Option<isize> {
@@ -2183,6 +2430,17 @@ impl Conversation {
 
     fn messages<'a>(&'a self, cx: &'a AppContext) -> impl 'a + Iterator<Item = Message> {
         let buffer = self.buffer.read(cx);
+        let mut slash_command_calls = self
+            .slash_command_calls
+            .iter()
+            .map(|call| {
+                if let Some(output) = &call.output_range {
+                    call.source_range.start.to_offset(buffer)..output.start.to_offset(buffer)
+                } else {
+                    call.source_range.to_offset(buffer)
+                }
+            })
+            .peekable();
         let mut message_anchors = self.message_anchors.iter().enumerate().peekable();
         iter::from_fn(move || {
             if let Some((start_ix, message_anchor)) = message_anchors.next() {
@@ -2202,6 +2460,16 @@ impl Conversation {
                 let message_end = message_end
                     .unwrap_or(language::Anchor::MAX)
                     .to_offset(buffer);
+
+                let mut slash_command_ranges = Vec::new();
+                while let Some(call_range) = slash_command_calls.peek() {
+                    if call_range.end <= message_end {
+                        slash_command_ranges.push(slash_command_calls.next().unwrap());
+                    } else {
+                        break;
+                    }
+                }
+
                 return Some(Message {
                     index_range: start_ix..end_ix,
                     offset_range: message_start..message_end,
@@ -2209,6 +2477,7 @@ impl Conversation {
                     anchor: message_anchor.start,
                     role: metadata.role,
                     status: metadata.status.clone(),
+                    slash_command_ranges,
                     ambient_context: metadata.ambient_context.clone(),
                 });
             }
@@ -2367,6 +2636,16 @@ fn parse_next_edit_suggestion(lines: &mut rope::Lines) -> Option<ParsedEditSugge
     }
 }
 
+struct SlashCommandCall {
+    source_range: Range<language::Anchor>,
+    output_range: Option<Range<language::Anchor>>,
+    name: String,
+    argument: Option<String>,
+    should_rerun: bool,
+    _invalidate: Task<()>,
+    _command_cleanup: SlashCommandCleanup,
+}
+
 struct PendingCompletion {
     id: usize,
     _task: Task<()>,
@@ -2387,6 +2666,7 @@ struct ConversationEditor {
     fs: Arc<dyn Fs>,
     workspace: WeakView<Workspace>,
     editor: View<Editor>,
+    flap_ids: HashMap<Range<language::Anchor>, FlapId>,
     blocks: HashSet<BlockId>,
     scroll_position: Option<ScrollPosition>,
     _subscriptions: Vec<Subscription>,
@@ -2396,13 +2676,21 @@ impl ConversationEditor {
     fn new(
         model: LanguageModel,
         language_registry: Arc<LanguageRegistry>,
+        slash_command_registry: Arc<SlashCommandRegistry>,
         fs: Arc<dyn Fs>,
         workspace: View<Workspace>,
         cx: &mut ViewContext<Self>,
     ) -> Self {
         let telemetry = workspace.read(cx).client().telemetry().clone();
-        let conversation =
-            cx.new_model(|cx| Conversation::new(model, language_registry, Some(telemetry), cx));
+        let conversation = cx.new_model(|cx| {
+            Conversation::new(
+                model,
+                language_registry,
+                slash_command_registry,
+                Some(telemetry),
+                cx,
+            )
+        });
         Self::for_conversation(conversation, fs, workspace, cx)
     }
 
@@ -2412,11 +2700,17 @@ impl ConversationEditor {
         workspace: View<Workspace>,
         cx: &mut ViewContext<Self>,
     ) -> Self {
+        let command_registry = conversation.read(cx).slash_command_registry.clone();
+        let completion_provider = SlashCommandCompletionProvider::new(command_registry);
+
         let editor = cx.new_view(|cx| {
             let mut editor = Editor::for_buffer(conversation.read(cx).buffer.clone(), None, cx);
             editor.set_soft_wrap_mode(SoftWrap::EditorWidth, cx);
-            editor.set_show_gutter(false, cx);
+            editor.set_show_line_numbers(false, cx);
+            editor.set_show_git_diff_gutter(false, cx);
+            editor.set_show_code_actions(false, cx);
             editor.set_show_wrap_guides(false, cx);
+            editor.set_completion_provider(Box::new(completion_provider));
             editor
         });
 
@@ -2432,6 +2726,7 @@ impl ConversationEditor {
             editor,
             blocks: Default::default(),
             scroll_position: None,
+            flap_ids: Default::default(),
             fs,
             workspace: workspace.downgrade(),
             _subscriptions,
@@ -2569,6 +2864,68 @@ impl ConversationEditor {
                         );
                     }
                 });
+            }
+            ConversationEvent::SlashCommandsChanged => {
+                self.editor.update(cx, |editor, cx| {
+                    let buffer = editor.buffer().read(cx).snapshot(cx);
+                    let excerpt_id = *buffer.as_singleton().unwrap().0;
+                    let conversation = self.conversation.read(cx);
+                    let colors = cx.theme().colors();
+                    let highlighted_rows = conversation
+                        .slash_command_calls
+                        .iter()
+                        .map(|call| {
+                            let start = call.source_range.start;
+                            let end = if let Some(output) = &call.output_range {
+                                output.end
+                            } else {
+                                call.source_range.end
+                            };
+                            let start = buffer.anchor_in_excerpt(excerpt_id, start).unwrap();
+                            let end = buffer.anchor_in_excerpt(excerpt_id, end).unwrap();
+                            (
+                                start..=end,
+                                Some(colors.editor_document_highlight_read_background),
+                            )
+                        })
+                        .collect::<Vec<_>>();
+
+                    editor.clear_row_highlights::<SlashCommandCall>();
+                    for (range, color) in highlighted_rows {
+                        editor.highlight_rows::<SlashCommandCall>(range, color, false, cx);
+                    }
+                });
+            }
+            ConversationEvent::SlashCommandOutputAdded(range) => {
+                self.editor.update(cx, |editor, cx| {
+                    let buffer = editor.buffer().read(cx).snapshot(cx);
+                    let excerpt_id = *buffer.as_singleton().unwrap().0;
+                    let start = buffer.anchor_in_excerpt(excerpt_id, range.start).unwrap();
+                    let end = buffer.anchor_in_excerpt(excerpt_id, range.end).unwrap();
+                    let buffer_row = MultiBufferRow(start.to_point(&buffer).row);
+
+                    let flap_id = editor
+                        .insert_flaps(
+                            [Flap::new(
+                                start..end,
+                                render_slash_command_output_toggle,
+                                render_slash_command_output_trailer,
+                            )],
+                            cx,
+                        )
+                        .into_iter()
+                        .next()
+                        .unwrap();
+                    self.flap_ids.insert(range.clone(), flap_id);
+                    editor.fold_at(&FoldAt { buffer_row }, cx);
+                });
+            }
+            ConversationEvent::SlashCommandOutputRemoved(range) => {
+                if let Some(flap_id) = self.flap_ids.remove(range) {
+                    self.editor.update(cx, |editor, cx| {
+                        editor.remove_flaps([flap_id], cx);
+                    });
+                }
             }
         }
     }
@@ -2732,6 +3089,7 @@ impl ConversationEditor {
 
                             h_flex()
                                 .id(("message_header", message_id.0))
+                                .pl(cx.gutter_dimensions.width)
                                 .h_11()
                                 .w_full()
                                 .relative()
@@ -3157,7 +3515,6 @@ impl Render for ConversationEditor {
             .child(
                 div()
                     .flex_grow()
-                    .pl_4()
                     .bg(cx.theme().colors().editor_background)
                     .child(self.editor.clone()),
             )
@@ -3184,14 +3541,41 @@ pub struct Message {
     anchor: language::Anchor,
     role: Role,
     status: MessageStatus,
+    slash_command_ranges: Vec<Range<usize>>,
     ambient_context: AmbientContextSnapshot,
 }
 
 impl Message {
     fn to_request_message(&self, buffer: &Buffer) -> LanguageModelRequestMessage {
-        let content = buffer
-            .text_for_range(self.offset_range.clone())
-            .collect::<String>();
+        let mut slash_command_ranges = self.slash_command_ranges.iter().peekable();
+        let mut content = String::with_capacity(self.offset_range.len());
+        let mut offset = self.offset_range.start;
+        let mut chunks = buffer.text_for_range(self.offset_range.clone());
+        while let Some(chunk) = chunks.next() {
+            if let Some(slash_command_range) = slash_command_ranges.peek() {
+                match offset.cmp(&slash_command_range.start) {
+                    Ordering::Less => {
+                        let max_len = slash_command_range.start - offset;
+                        if chunk.len() < max_len {
+                            content.push_str(chunk);
+                            offset += chunk.len();
+                        } else {
+                            content.push_str(&chunk[..max_len]);
+                            offset += max_len;
+                            chunks.seek(slash_command_range.end);
+                            slash_command_ranges.next();
+                        }
+                    }
+                    Ordering::Equal | Ordering::Greater => {
+                        chunks.seek(slash_command_range.end);
+                        offset = slash_command_range.end;
+                        slash_command_ranges.next();
+                    }
+                }
+            } else {
+                content.push_str(chunk);
+            }
+        }
         LanguageModelRequestMessage {
             role: self.role,
             content: content.trim_end().into(),
@@ -3470,6 +3854,35 @@ struct PendingInlineAssist {
     project: WeakModel<Project>,
 }
 
+type ToggleFold = Arc<dyn Fn(bool, &mut WindowContext) + Send + Sync>;
+
+fn render_slash_command_output_toggle(
+    row: MultiBufferRow,
+    is_folded: bool,
+    fold: ToggleFold,
+    _cx: &mut WindowContext,
+) -> AnyElement {
+    IconButton::new(
+        ("slash-command-output-fold-indicator", row.0),
+        ui::IconName::ChevronDown,
+    )
+    .on_click(move |_e, cx| fold(!is_folded, cx))
+    .icon_color(ui::Color::Muted)
+    .icon_size(ui::IconSize::Small)
+    .selected(is_folded)
+    .selected_icon(ui::IconName::ChevronRight)
+    .size(ui::ButtonSize::None)
+    .into_any_element()
+}
+
+fn render_slash_command_output_trailer(
+    _row: MultiBufferRow,
+    _is_folded: bool,
+    _cx: &mut WindowContext,
+) -> AnyElement {
+    div().into_any_element()
+}
+
 fn merge_ranges(ranges: &mut Vec<Range<Anchor>>, buffer: &MultiBufferSnapshot) {
     ranges.sort_unstable_by(|a, b| {
         a.start
@@ -3494,14 +3907,17 @@ fn merge_ranges(ranges: &mut Vec<Range<Anchor>>, buffer: &MultiBufferSnapshot) {
 
 #[cfg(test)]
 mod tests {
-    use std::path::Path;
+    use std::{cell::RefCell, path::Path, rc::Rc};
 
     use super::*;
     use crate::{FakeCompletionProvider, MessageId};
+    use fs::FakeFs;
     use gpui::{AppContext, TestAppContext};
     use rope::Rope;
+    use serde_json::json;
     use settings::SettingsStore;
     use unindent::Unindent;
+    use util::test::marked_text_ranges;
 
     #[gpui::test]
     fn test_inserting_and_removing_messages(cx: &mut AppContext) {
@@ -3511,8 +3927,15 @@ mod tests {
         init(cx);
         let registry = Arc::new(LanguageRegistry::test(cx.background_executor().clone()));
 
-        let conversation =
-            cx.new_model(|cx| Conversation::new(LanguageModel::default(), registry, None, cx));
+        let conversation = cx.new_model(|cx| {
+            Conversation::new(
+                LanguageModel::default(),
+                registry,
+                Default::default(),
+                None,
+                cx,
+            )
+        });
         let buffer = conversation.read(cx).buffer.clone();
 
         let message_1 = conversation.read(cx).message_anchors[0].clone();
@@ -3643,8 +4066,15 @@ mod tests {
         init(cx);
         let registry = Arc::new(LanguageRegistry::test(cx.background_executor().clone()));
 
-        let conversation =
-            cx.new_model(|cx| Conversation::new(LanguageModel::default(), registry, None, cx));
+        let conversation = cx.new_model(|cx| {
+            Conversation::new(
+                LanguageModel::default(),
+                registry,
+                Default::default(),
+                None,
+                cx,
+            )
+        });
         let buffer = conversation.read(cx).buffer.clone();
 
         let message_1 = conversation.read(cx).message_anchors[0].clone();
@@ -3742,8 +4172,15 @@ mod tests {
         cx.set_global(settings_store);
         init(cx);
         let registry = Arc::new(LanguageRegistry::test(cx.background_executor().clone()));
-        let conversation =
-            cx.new_model(|cx| Conversation::new(LanguageModel::default(), registry, None, cx));
+        let conversation = cx.new_model(|cx| {
+            Conversation::new(
+                LanguageModel::default(),
+                registry,
+                Default::default(),
+                None,
+                cx,
+            )
+        });
         let buffer = conversation.read(cx).buffer.clone();
 
         let message_1 = conversation.read(cx).message_anchors[0].clone();
@@ -3817,6 +4254,258 @@ mod tests {
                 .into_iter()
                 .map(|message| message.id)
                 .collect()
+        }
+    }
+
+    #[gpui::test]
+    async fn test_slash_commands(cx: &mut TestAppContext) {
+        let settings_store = cx.update(SettingsStore::test);
+        cx.set_global(settings_store);
+        cx.set_global(CompletionProvider::Fake(FakeCompletionProvider::default()));
+        cx.update(Project::init_settings);
+        cx.update(init);
+        let fs = FakeFs::new(cx.background_executor.clone());
+
+        fs.insert_tree(
+            "/test",
+            json!({
+                "src": {
+                    "lib.rs": "fn one() -> usize { 1 }",
+                    "main.rs": "
+                        use crate::one;
+                        fn main() { one(); }
+                    ".unindent(),
+                }
+            }),
+        )
+        .await;
+
+        let project = Project::test(fs.clone(), ["/test".as_ref()], cx).await;
+        let prompt_library = Arc::new(PromptLibrary::default());
+        let slash_command_registry =
+            SlashCommandRegistry::new(project.clone(), prompt_library, None);
+
+        let registry = Arc::new(LanguageRegistry::test(cx.executor()));
+        let conversation = cx.new_model(|cx| {
+            Conversation::new(
+                LanguageModel::default(),
+                registry.clone(),
+                slash_command_registry,
+                None,
+                cx,
+            )
+        });
+
+        let output_ranges = Rc::new(RefCell::new(HashSet::default()));
+        conversation.update(cx, |_, cx| {
+            cx.subscribe(&conversation, {
+                let ranges = output_ranges.clone();
+                move |_, _, event, _| match event {
+                    ConversationEvent::SlashCommandOutputAdded(range) => {
+                        ranges.borrow_mut().insert(range.clone());
+                    }
+                    ConversationEvent::SlashCommandOutputRemoved(range) => {
+                        ranges.borrow_mut().remove(range);
+                    }
+                    _ => {}
+                }
+            })
+            .detach();
+        });
+
+        let buffer = conversation.read_with(cx, |conversation, _| conversation.buffer.clone());
+
+        // Insert a slash command
+        buffer.update(cx, |buffer, cx| {
+            buffer.edit([(0..0, "/file src/lib.rs")], None, cx);
+        });
+        assert_text_and_output_ranges(
+            &buffer,
+            &output_ranges.borrow(),
+            "
+            /file src/lib.rs
+            "
+            .unindent()
+            .trim_end(),
+            cx,
+        );
+
+        // The slash command runs
+        cx.executor().advance_clock(SLASH_COMMAND_DEBOUNCE);
+        assert_text_and_output_ranges(
+            &buffer,
+            &output_ranges.borrow(),
+            &"
+            /file src/lib.rs«
+            ```src/lib.rs
+            fn one() -> usize { 1 }
+            ```»"
+                .unindent(),
+            cx,
+        );
+
+        // Edit the slash command
+        buffer.update(cx, |buffer, cx| {
+            let edit_offset = buffer.text().find("lib.rs").unwrap();
+            buffer.edit([(edit_offset..edit_offset + "lib".len(), "main")], None, cx);
+        });
+        assert_text_and_output_ranges(
+            &buffer,
+            &output_ranges.borrow(),
+            &"
+            /file src/main.rs«
+            ```src/lib.rs
+            fn one() -> usize { 1 }
+            ```»"
+                .unindent(),
+            cx,
+        );
+
+        cx.executor().advance_clock(SLASH_COMMAND_DEBOUNCE);
+        assert_text_and_output_ranges(
+            &buffer,
+            &output_ranges.borrow(),
+            &"
+            /file src/main.rs«
+            ```src/main.rs
+            use crate::one;
+            fn main() { one(); }
+            ```»"
+                .unindent(),
+            cx,
+        );
+
+        // Insert newlines between the slash command and its output
+        buffer.update(cx, |buffer, cx| {
+            let edit_offset = buffer.text().find("\n```src/main.rs").unwrap();
+            buffer.edit([(edit_offset..edit_offset, "\n")], None, cx);
+        });
+        assert_text_and_output_ranges(
+            &buffer,
+            &output_ranges.borrow(),
+            &"
+            /file src/main.rs«
+
+            ```src/main.rs
+            use crate::one;
+            fn main() { one(); }
+            ```»"
+                .unindent(),
+            cx,
+        );
+
+        cx.executor().advance_clock(SLASH_COMMAND_DEBOUNCE);
+        assert_text_and_output_ranges(
+            &buffer,
+            &output_ranges.borrow(),
+            &"
+            /file src/main.rs«
+            ```src/main.rs
+            use crate::one;
+            fn main() { one(); }
+            ```»"
+                .unindent(),
+            cx,
+        );
+
+        // Insert text at the beginning of the output
+        buffer.update(cx, |buffer, cx| {
+            let edit_offset = buffer.text().find("```src/main.rs").unwrap();
+            buffer.edit([(edit_offset..edit_offset, "!")], None, cx);
+        });
+        assert_text_and_output_ranges(
+            &buffer,
+            &output_ranges.borrow(),
+            &"
+            /file src/main.rs«
+            !```src/main.rs
+            use crate::one;
+            fn main() { one(); }
+            ```»"
+                .unindent(),
+            cx,
+        );
+
+        cx.executor().advance_clock(SLASH_COMMAND_DEBOUNCE);
+        assert_text_and_output_ranges(
+            &buffer,
+            &output_ranges.borrow(),
+            &"
+            /file src/main.rs«
+            ```src/main.rs
+            use crate::one;
+            fn main() { one(); }
+            ```»"
+                .unindent(),
+            cx,
+        );
+
+        // Slash commands are omitted from completion requests. Only their
+        // output is included.
+        let request = conversation.update(cx, |conversation, cx| {
+            conversation.to_completion_request(cx)
+        });
+        assert_eq!(
+            &request.messages[1..],
+            &[LanguageModelRequestMessage {
+                role: Role::User,
+                content: "
+                ```src/main.rs
+                use crate::one;
+                fn main() { one(); }
+                ```"
+                .unindent()
+            }]
+        );
+
+        buffer.update(cx, |buffer, cx| {
+            buffer.edit([(0..0, "hello\n")], None, cx);
+        });
+        buffer.update(cx, |buffer, cx| {
+            buffer.edit(
+                [(buffer.len()..buffer.len(), "\ngoodbye\nfarewell\n")],
+                None,
+                cx,
+            );
+        });
+        let request = conversation.update(cx, |conversation, cx| {
+            conversation.to_completion_request(cx)
+        });
+        assert_eq!(
+            &request.messages[1..],
+            &[LanguageModelRequestMessage {
+                role: Role::User,
+                content: "
+                hello
+                ```src/main.rs
+                use crate::one;
+                fn main() { one(); }
+                ```
+                goodbye
+                farewell"
+                    .unindent()
+            }]
+        );
+
+        #[track_caller]
+        fn assert_text_and_output_ranges(
+            buffer: &Model<Buffer>,
+            ranges: &HashSet<Range<language::Anchor>>,
+            expected_marked_text: &str,
+            cx: &mut TestAppContext,
+        ) {
+            let (expected_text, expected_ranges) = marked_text_ranges(expected_marked_text, false);
+            let (actual_text, actual_ranges) = buffer.update(cx, |buffer, _| {
+                let mut ranges = ranges
+                    .iter()
+                    .map(|range| range.to_offset(buffer))
+                    .collect::<Vec<_>>();
+                ranges.sort_by_key(|a| a.start);
+                (buffer.text(), ranges)
+            });
+
+            assert_eq!(actual_text, expected_text);
+            assert_eq!(actual_ranges, expected_ranges);
         }
     }
 
@@ -3898,7 +4587,13 @@ mod tests {
         cx.update(init);
         let registry = Arc::new(LanguageRegistry::test(cx.executor()));
         let conversation = cx.new_model(|cx| {
-            Conversation::new(LanguageModel::default(), registry.clone(), None, cx)
+            Conversation::new(
+                LanguageModel::default(),
+                registry.clone(),
+                Default::default(),
+                None,
+                cx,
+            )
         });
         let buffer = conversation.read_with(cx, |conversation, _| conversation.buffer.clone());
         let message_0 =
@@ -3938,6 +4633,7 @@ mod tests {
             LanguageModel::default(),
             Default::default(),
             registry.clone(),
+            Default::default(),
             None,
             &mut cx.to_async(),
         )

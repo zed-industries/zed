@@ -449,6 +449,9 @@ pub struct Editor {
     mode: EditorMode,
     show_breadcrumbs: bool,
     show_gutter: bool,
+    show_line_numbers: Option<bool>,
+    show_git_diff_gutter: Option<bool>,
+    show_code_actions: Option<bool>,
     show_wrap_guides: Option<bool>,
     placeholder_text: Option<Arc<str>>,
     highlight_order: usize,
@@ -517,6 +520,9 @@ pub struct Editor {
 pub struct EditorSnapshot {
     pub mode: EditorMode,
     show_gutter: bool,
+    show_line_numbers: Option<bool>,
+    show_git_diff_gutter: Option<bool>,
+    show_code_actions: Option<bool>,
     render_git_blame_gutter: bool,
     pub display_snapshot: DisplaySnapshot,
     pub placeholder_text: Option<Arc<str>>,
@@ -1646,6 +1652,9 @@ impl Editor {
             mode,
             show_breadcrumbs: EditorSettings::get_global(cx).toolbar.breadcrumbs,
             show_gutter: mode == EditorMode::Full,
+            show_line_numbers: None,
+            show_git_diff_gutter: None,
+            show_code_actions: None,
             show_wrap_guides: None,
             placeholder_text: None,
             highlight_order: 0,
@@ -1881,6 +1890,9 @@ impl Editor {
         EditorSnapshot {
             mode: self.mode,
             show_gutter: self.show_gutter,
+            show_line_numbers: self.show_line_numbers,
+            show_git_diff_gutter: self.show_git_diff_gutter,
+            show_code_actions: self.show_code_actions,
             render_git_blame_gutter: self.render_git_blame_gutter(cx),
             display_snapshot: self.display_map.update(cx, |map, cx| map.snapshot(cx)),
             scroll_anchor: self.scroll_manager.anchor(),
@@ -1933,8 +1945,8 @@ impl Editor {
         self.custom_context_menu = Some(Box::new(f))
     }
 
-    pub fn set_completion_provider(&mut self, hub: Box<dyn CompletionProvider>) {
-        self.completion_provider = Some(hub);
+    pub fn set_completion_provider(&mut self, provider: Box<dyn CompletionProvider>) {
+        self.completion_provider = Some(provider);
     }
 
     pub fn set_inline_completion_provider<T>(
@@ -3280,19 +3292,38 @@ impl Editor {
         trigger_in_words: bool,
         cx: &mut ViewContext<Self>,
     ) {
-        if !EditorSettings::get_global(cx).show_completions_on_input {
-            return;
-        }
-
-        let selection = self.selections.newest_anchor();
-        if self
-            .buffer
-            .read(cx)
-            .is_completion_trigger(selection.head(), text, trigger_in_words, cx)
-        {
+        if self.is_completion_trigger(text, trigger_in_words, cx) {
             self.show_completions(&ShowCompletions, cx);
         } else {
             self.hide_context_menu(cx);
+        }
+    }
+
+    fn is_completion_trigger(
+        &self,
+        text: &str,
+        trigger_in_words: bool,
+        cx: &mut ViewContext<Self>,
+    ) -> bool {
+        let position = self.selections.newest_anchor().head();
+        let multibuffer = self.buffer.read(cx);
+        let Some(buffer) = position
+            .buffer_id
+            .and_then(|buffer_id| multibuffer.buffer(buffer_id).clone())
+        else {
+            return false;
+        };
+
+        if let Some(completion_provider) = &self.completion_provider {
+            completion_provider.is_completion_trigger(
+                &buffer,
+                position.text_anchor,
+                text,
+                trigger_in_words,
+                cx,
+            )
+        } else {
+            false
         }
     }
 
@@ -9613,8 +9644,27 @@ impl Editor {
         cx.notify();
     }
 
-    pub fn set_show_wrap_guides(&mut self, show_gutter: bool, cx: &mut ViewContext<Self>) {
-        self.show_wrap_guides = Some(show_gutter);
+    pub fn set_show_line_numbers(&mut self, show_line_numbers: bool, cx: &mut ViewContext<Self>) {
+        self.show_line_numbers = Some(show_line_numbers);
+        cx.notify();
+    }
+
+    pub fn set_show_git_diff_gutter(
+        &mut self,
+        show_git_diff_gutter: bool,
+        cx: &mut ViewContext<Self>,
+    ) {
+        self.show_git_diff_gutter = Some(show_git_diff_gutter);
+        cx.notify();
+    }
+
+    pub fn set_show_code_actions(&mut self, show_code_actions: bool, cx: &mut ViewContext<Self>) {
+        self.show_code_actions = Some(show_code_actions);
+        cx.notify();
+    }
+
+    pub fn set_show_wrap_guides(&mut self, show_wrap_guides: bool, cx: &mut ViewContext<Self>) {
+        self.show_wrap_guides = Some(show_wrap_guides);
         cx.notify();
     }
 
@@ -10888,6 +10938,15 @@ pub trait CompletionProvider {
         push_to_history: bool,
         cx: &mut ViewContext<Editor>,
     ) -> Task<Result<Option<language::Transaction>>>;
+
+    fn is_completion_trigger(
+        &self,
+        buffer: &Model<Buffer>,
+        position: language::Anchor,
+        text: &str,
+        trigger_in_words: bool,
+        cx: &mut ViewContext<Editor>,
+    ) -> bool;
 }
 
 impl CompletionProvider for Model<Project> {
@@ -10924,6 +10983,40 @@ impl CompletionProvider for Model<Project> {
         self.update(cx, |project, cx| {
             project.apply_additional_edits_for_completion(buffer, completion, push_to_history, cx)
         })
+    }
+
+    fn is_completion_trigger(
+        &self,
+        buffer: &Model<Buffer>,
+        position: language::Anchor,
+        text: &str,
+        trigger_in_words: bool,
+        cx: &mut ViewContext<Editor>,
+    ) -> bool {
+        if !EditorSettings::get_global(cx).show_completions_on_input {
+            return false;
+        }
+
+        let mut chars = text.chars();
+        let char = if let Some(char) = chars.next() {
+            char
+        } else {
+            return false;
+        };
+        if chars.next().is_some() {
+            return false;
+        }
+
+        let buffer = buffer.read(cx);
+        let scope = buffer.snapshot().language_scope_at(position);
+        if trigger_in_words && char_kind(&scope, char) == CharKind::Word {
+            return true;
+        }
+
+        buffer
+            .completion_triggers()
+            .iter()
+            .any(|string| string == text)
     }
 }
 
@@ -11030,13 +11123,17 @@ impl EditorSnapshot {
         }
         let descent = cx.text_system().descent(font_id, font_size);
 
-        let show_git_gutter = matches!(
-            ProjectSettings::get_global(cx).git.git_gutter,
-            Some(GitGutterSetting::TrackedFiles)
-        );
+        let show_git_gutter = self.show_git_diff_gutter.unwrap_or_else(|| {
+            matches!(
+                ProjectSettings::get_global(cx).git.git_gutter,
+                Some(GitGutterSetting::TrackedFiles)
+            )
+        });
         let gutter_settings = EditorSettings::get_global(cx).gutter;
-        let gutter_lines_enabled = gutter_settings.line_numbers;
-        let line_gutter_width = if gutter_lines_enabled {
+        let show_line_numbers = self
+            .show_line_numbers
+            .unwrap_or_else(|| gutter_settings.line_numbers);
+        let line_gutter_width = if show_line_numbers {
             // Avoid flicker-like gutter resizes when the line number gains another digit and only resize the gutter on files with N*10^5 lines.
             let min_width_for_number_on_gutter = em_width * 4.0;
             max_line_number_width.max(min_width_for_number_on_gutter)
@@ -11044,26 +11141,30 @@ impl EditorSnapshot {
             0.0.into()
         };
 
+        let show_code_actions = self
+            .show_code_actions
+            .unwrap_or_else(|| gutter_settings.code_actions);
+
         let git_blame_entries_width = self
             .render_git_blame_gutter
             .then_some(em_width * GIT_BLAME_GUTTER_WIDTH_CHARS);
 
         let mut left_padding = git_blame_entries_width.unwrap_or(Pixels::ZERO);
-        left_padding += if gutter_settings.code_actions {
+        left_padding += if show_code_actions {
             em_width * 3.0
-        } else if show_git_gutter && gutter_lines_enabled {
+        } else if show_git_gutter && show_line_numbers {
             em_width * 2.0
-        } else if show_git_gutter || gutter_lines_enabled {
+        } else if show_git_gutter || show_line_numbers {
             em_width
         } else {
             px(0.)
         };
 
-        let right_padding = if gutter_settings.folds && gutter_lines_enabled {
+        let right_padding = if gutter_settings.folds && show_line_numbers {
             em_width * 4.0
         } else if gutter_settings.folds {
             em_width * 3.0
-        } else if gutter_lines_enabled {
+        } else if show_line_numbers {
             em_width
         } else {
             px(0.)
