@@ -1,5 +1,6 @@
-use super::SlashCommand;
+use super::{SlashCommand, SlashCommandInvocation};
 use anyhow::Result;
+use futures::channel::oneshot;
 use fuzzy::PathMatch;
 use gpui::{AppContext, Model, Task};
 use project::{PathMatchCandidateSet, Project};
@@ -95,10 +96,13 @@ impl SlashCommand for FileSlashCommand {
         })
     }
 
-    fn run(&self, argument: Option<&str>, cx: &mut AppContext) -> Task<Result<String>> {
+    fn run(&self, argument: Option<&str>, cx: &mut AppContext) -> SlashCommandInvocation {
         let project = self.project.read(cx);
         let Some(argument) = argument else {
-            return Task::ready(Err(anyhow::anyhow!("missing path")));
+            return SlashCommandInvocation {
+                output: Task::ready(Err(anyhow::anyhow!("missing path"))),
+                invalidated: oneshot::channel().1,
+            };
         };
 
         let path = Path::new(argument);
@@ -109,12 +113,15 @@ impl SlashCommand for FileSlashCommand {
         });
 
         let Some(abs_path) = abs_path else {
-            return Task::ready(Err(anyhow::anyhow!("missing path")));
+            return SlashCommandInvocation {
+                output: Task::ready(Err(anyhow::anyhow!("missing path"))),
+                invalidated: oneshot::channel().1,
+            };
         };
 
         let fs = project.fs().clone();
         let argument = argument.to_string();
-        cx.background_executor().spawn(async move {
+        let output = cx.background_executor().spawn(async move {
             let content = fs.load(&abs_path).await?;
             let mut output = String::with_capacity(argument.len() + content.len() + 9);
             output.push_str("```");
@@ -126,6 +133,10 @@ impl SlashCommand for FileSlashCommand {
             }
             output.push_str("```");
             Ok(output)
-        })
+        });
+        SlashCommandInvocation {
+            output,
+            invalidated: oneshot::channel().1,
+        }
     }
 }

@@ -1779,7 +1779,8 @@ impl Conversation {
                                 Ordering::Greater => break,
                                 Ordering::Equal
                                     if old_call.name == name
-                                        && old_call.argument.as_deref() == argument =>
+                                        && old_call.argument.as_deref() == argument
+                                        && !old_call.should_rerun =>
                                 {
                                     unchanged_call = old_calls.next();
                                 }
@@ -1805,16 +1806,42 @@ impl Conversation {
                             let name = name.to_string();
                             let source_range =
                                 buffer.anchor_after(offset)..buffer.anchor_before(line_end_offset);
+
+                            let invocation = command.run(argument, cx);
+
                             new_calls.push(SlashCommandCall {
                                 name,
                                 argument: argument.map(|s| s.to_string()),
                                 source_range: source_range.clone(),
                                 output_range: None,
+                                should_rerun: false,
+                                _observe_update: cx.spawn(|this, mut cx| {
+                                    let source_range = source_range.clone();
+                                    async move {
+                                        if invocation.invalidated.await.is_ok() {
+                                            _ = this.update(&mut cx, |this, cx| {
+                                                let buffer = this.buffer.read(cx);
+                                                let call_ix = this
+                                                    .slash_command_calls
+                                                    .binary_search_by(|probe| {
+                                                        probe
+                                                            .source_range
+                                                            .start
+                                                            .cmp(&source_range.start, buffer)
+                                                    });
+                                                if let Ok(call_ix) = call_ix {
+                                                    this.slash_command_calls[call_ix]
+                                                        .should_rerun = true;
+                                                    this.reparse_slash_command_calls(cx);
+                                                }
+                                            });
+                                        }
+                                    }
+                                }),
                             });
 
-                            let task = command.run(argument, cx);
                             cx.spawn(|this, mut cx| async move {
-                                let result = task.await;
+                                let output = invocation.output.await;
                                 this.update(&mut cx, |this, cx| {
                                     let output_range = this.buffer.update(cx, |buffer, cx| {
                                         let call_ix = this
@@ -1827,7 +1854,7 @@ impl Conversation {
                                             })
                                             .ok()?;
 
-                                        let mut output = result.log_err()?;
+                                        let mut output = output.log_err()?;
                                         if !output.ends_with('\n') {
                                             output.push('\n');
                                         }
@@ -2532,6 +2559,8 @@ struct SlashCommandCall {
     output_range: Option<Range<language::Anchor>>,
     name: String,
     argument: Option<String>,
+    should_rerun: bool,
+    _observe_update: Task<()>,
 }
 
 struct PendingCompletion {

@@ -1,6 +1,7 @@
 use anyhow::Result;
 use collections::HashMap;
 use editor::{CompletionProvider, Editor};
+use futures::channel::oneshot;
 use fuzzy::{match_strings, StringMatchCandidate};
 use gpui::{AppContext, Model, Task, ViewContext};
 use language::{Anchor, Buffer, CodeLabel, Documentation, LanguageServerId, ToPoint};
@@ -40,7 +41,12 @@ pub(crate) trait SlashCommand: 'static + Send + Sync {
         cx: &mut AppContext,
     ) -> Task<Result<Vec<String>>>;
     fn requires_argument(&self) -> bool;
-    fn run(&self, argument: Option<&str>, cx: &mut AppContext) -> Task<Result<String>>;
+    fn run(&self, argument: Option<&str>, cx: &mut AppContext) -> SlashCommandInvocation;
+}
+
+pub(crate) struct SlashCommandInvocation {
+    pub output: Task<Result<String>>,
+    pub invalidated: oneshot::Receiver<()>,
 }
 
 pub(crate) struct SlashCommandLine {

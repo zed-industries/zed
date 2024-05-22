@@ -1,6 +1,7 @@
-use super::SlashCommand;
+use super::{SlashCommand, SlashCommandInvocation};
 use crate::PromptLibrary;
 use anyhow::{anyhow, Context, Result};
+use futures::channel::oneshot;
 use fuzzy::StringMatchCandidate;
 use gpui::{AppContext, Task};
 use std::sync::{atomic::AtomicBool, Arc};
@@ -59,20 +60,27 @@ impl SlashCommand for PromptSlashCommand {
         })
     }
 
-    fn run(&self, title: Option<&str>, cx: &mut AppContext) -> Task<Result<String>> {
+    fn run(&self, title: Option<&str>, cx: &mut AppContext) -> SlashCommandInvocation {
         let Some(title) = title else {
-            return Task::ready(Err(anyhow!("missing prompt name")));
+            return SlashCommandInvocation {
+                output: Task::ready(Err(anyhow!("missing prompt name"))),
+                invalidated: oneshot::channel().1,
+            };
         };
 
         let library = self.library.clone();
         let title = title.to_string();
-        cx.background_executor().spawn(async move {
+        let output = cx.background_executor().spawn(async move {
             let prompt = library
                 .prompts()
                 .into_iter()
                 .find(|prompt| prompt.title == title)
                 .with_context(|| format!("no prompt found with title {:?}", title))?;
             Ok(prompt.prompt)
-        })
+        });
+        SlashCommandInvocation {
+            output,
+            invalidated: oneshot::channel().1,
+        }
     }
 }
