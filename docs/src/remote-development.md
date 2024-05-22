@@ -16,7 +16,9 @@ Currently the two instances connect via Zed's servers, but we intend to build pe
 
 1. Open the remote projects dialogue with `cmd-shift-p remote`
 2. Click "Add Server"
-3. Follow the instructions given.
+3. Choose whether to setup via SSH, or to follow the manual setup.
+   > NOTE: With both options your laptop and the remote machine will communicate
+     via https://collab.zed.dev/, so you will need outbound internet access on the remote.
 4. On the remote machine, install Zed
    ```
    curl https://zed.dev/install.sh | bash
@@ -30,9 +32,30 @@ Currently the two instances connect via Zed's servers, but we intend to build pe
 
 ### SSH connections
 
-If you chose to connect via SSH, zed will run the command you provide to connect, and intercept any calls to `ssh` to run our installer. Your remote machine will still need access to the internet to work in this way, as after setup is complete, we communicate through https://collab.zed.dev/
+If you chose to connect via SSH, the command you specify will be run in a zed terminal. Once a connection is established (you may need to type your password, or
+your key passphrase) we will download and install zed to `~/.local/bin/zed` on the
+remote machine and boot it in headless mode.
 
+If you don't see any output from the zed command, it is likely that zed is crashing
+on startup. You can troubleshoot this switching to manual mode. Please file a bug for
+any issues you encouter.
 
+### Tested ssh formats
+
+Because of the way we control the ssh session, we are able to support most "ssh wrappers". We also pull in your existing ssh config if you have options set there then they will apply to the zed connection too. For example:
+
+* `user@host` will assume you meant `ssh user@host`
+* `gh cs ssh -c example-codespace` to connect to a github codespace
+* `ssh -J` to connect via a jump-host
+* `doctl compute ssh example-droplet` to connect to
+
+### In either mode:
+
+There are a few likely causes of failure
+
+* `zed --dev-server-token` runs but outputs nothing. This is probably because the zed background process is crashing on startup. Try running `zed --dev-server-token XX --foreground` to see any output, and [file a bug](https://github.com/zed-industries/zed) so we can debug it together.
+* `zed --dev-server-token` outputs something like "Connection refused" or "Unauthorized" and immediately exits. This is likely due to issues making outbound HTTP requests from the box.
+* `zed --dev-server-token` outputs "Zed is already running". If you are editing an existing server, it is possible that clicking "Connect" a second time will work, but if not you will have to manually log into the server and kill the zed process.
 
 
 ## Supported platforms

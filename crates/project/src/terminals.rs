@@ -109,7 +109,10 @@ impl Project {
             .clone();
 
         let (spawn_task, shell) = match working_directory.as_ref() {
-            Some(TerminalWorkDir::Ssh { ssh_command, path }) => {
+            Some(TerminalWorkDir::Ssh { ssh_command, path })
+            // todo(windows)
+                if cfg!(not(target_os = "windows")) =>
+            {
                 log::debug!("Connecting to a remote server: {ssh_command:?}");
                 // Alacritty sets its terminfo to `alacritty`, this requiring hosts to have it installed
                 // to properly display colors.
