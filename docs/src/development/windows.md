@@ -55,7 +55,7 @@ cargo run
 For a release build:
 
 ```
-cargo run --release
+cargo build --release
 ```
 
 And to run the tests:
