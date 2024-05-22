@@ -2430,6 +2430,17 @@ impl Conversation {
 
     fn messages<'a>(&'a self, cx: &'a AppContext) -> impl 'a + Iterator<Item = Message> {
         let buffer = self.buffer.read(cx);
+        let mut slash_command_calls = self
+            .slash_command_calls
+            .iter()
+            .map(|call| {
+                if let Some(output) = &call.output_range {
+                    call.source_range.start.to_offset(buffer)..output.start.to_offset(buffer)
+                } else {
+                    call.source_range.to_offset(buffer)
+                }
+            })
+            .peekable();
         let mut message_anchors = self.message_anchors.iter().enumerate().peekable();
         iter::from_fn(move || {
             if let Some((start_ix, message_anchor)) = message_anchors.next() {
@@ -2449,6 +2460,16 @@ impl Conversation {
                 let message_end = message_end
                     .unwrap_or(language::Anchor::MAX)
                     .to_offset(buffer);
+
+                let mut slash_command_ranges = Vec::new();
+                while let Some(call_range) = slash_command_calls.peek() {
+                    if call_range.end <= message_end {
+                        slash_command_ranges.push(slash_command_calls.next().unwrap());
+                    } else {
+                        break;
+                    }
+                }
+
                 return Some(Message {
                     index_range: start_ix..end_ix,
                     offset_range: message_start..message_end,
@@ -2456,6 +2477,7 @@ impl Conversation {
                     anchor: message_anchor.start,
                     role: metadata.role,
                     status: metadata.status.clone(),
+                    slash_command_ranges,
                     ambient_context: metadata.ambient_context.clone(),
                 });
             }
@@ -3519,14 +3541,41 @@ pub struct Message {
     anchor: language::Anchor,
     role: Role,
     status: MessageStatus,
+    slash_command_ranges: Vec<Range<usize>>,
     ambient_context: AmbientContextSnapshot,
 }
 
 impl Message {
     fn to_request_message(&self, buffer: &Buffer) -> LanguageModelRequestMessage {
-        let content = buffer
-            .text_for_range(self.offset_range.clone())
-            .collect::<String>();
+        let mut slash_command_ranges = self.slash_command_ranges.iter().peekable();
+        let mut content = String::with_capacity(self.offset_range.len());
+        let mut offset = self.offset_range.start;
+        let mut chunks = buffer.text_for_range(self.offset_range.clone());
+        while let Some(chunk) = chunks.next() {
+            if let Some(slash_command_range) = slash_command_ranges.peek() {
+                match offset.cmp(&slash_command_range.start) {
+                    Ordering::Less => {
+                        let max_len = slash_command_range.start - offset;
+                        if chunk.len() < max_len {
+                            content.push_str(chunk);
+                            offset += chunk.len();
+                        } else {
+                            content.push_str(&chunk[..max_len]);
+                            offset += max_len;
+                            chunks.seek(slash_command_range.end);
+                            slash_command_ranges.next();
+                        }
+                    }
+                    Ordering::Equal | Ordering::Greater => {
+                        chunks.seek(slash_command_range.end);
+                        offset = slash_command_range.end;
+                        slash_command_ranges.next();
+                    }
+                }
+            } else {
+                content.push_str(chunk);
+            }
+        }
         LanguageModelRequestMessage {
             role: self.role,
             content: content.trim_end().into(),
@@ -4389,6 +4438,53 @@ mod tests {
             ```»"
                 .unindent(),
             cx,
+        );
+
+        // Slash commands are omitted from completion requests. Only their
+        // output is included.
+        let request = conversation.update(cx, |conversation, cx| {
+            conversation.to_completion_request(cx)
+        });
+        assert_eq!(
+            &request.messages[1..],
+            &[LanguageModelRequestMessage {
+                role: Role::User,
+                content: "
+                ```src/main.rs
+                use crate::one;
+                fn main() { one(); }
+                ```"
+                .unindent()
+            }]
+        );
+
+        buffer.update(cx, |buffer, cx| {
+            buffer.edit([(0..0, "hello\n")], None, cx);
+        });
+        buffer.update(cx, |buffer, cx| {
+            buffer.edit(
+                [(buffer.len()..buffer.len(), "\ngoodbye\nfarewell\n")],
+                None,
+                cx,
+            );
+        });
+        let request = conversation.update(cx, |conversation, cx| {
+            conversation.to_completion_request(cx)
+        });
+        assert_eq!(
+            &request.messages[1..],
+            &[LanguageModelRequestMessage {
+                role: Role::User,
+                content: "
+                hello
+                ```src/main.rs
+                use crate::one;
+                fn main() { one(); }
+                ```
+                goodbye
+                farewell"
+                    .unindent()
+            }]
         );
 
         #[track_caller]
