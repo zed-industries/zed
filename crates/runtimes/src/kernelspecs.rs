@@ -112,6 +112,8 @@ impl RunningKernel {
         entity_id: &EntityId,
         fs: Arc<dyn Fs>,
     ) -> anyhow::Result<Self> {
+        dbg!("Starting kernel for {}", &runtime.spec.language);
+
         let connection_info = from_peeking_ports(
             IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)),
             &format!("zed-{}", runtime.name),
@@ -124,32 +126,15 @@ impl RunningKernel {
         fs.atomic_write(connection_path.clone(), content).await?;
 
         let mut cmd = runtime.command(&connection_path)?;
-        let mut process = cmd
-            .stdout(Stdio::piped())
-            // .stderr(Stdio::piped())
+        let (execution_request_tx, _runtime_handle) = connect_kernel(connection_info.clone())?;
+        // Drop the connection info so the kernel can bind to the allocated ports
+        drop(connection_info);
+        let process = cmd
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
             .kill_on_drop(true)
             .spawn()
             .context("failed to start the kernel process")?;
-
-        let stdout = process
-            .stdout
-            .take()
-            .context("failed to get stdout for process")?;
-
-        // let stderr = process
-        //     .stderr
-        //     .take()
-        //     .context("failed to get stderr for process")?;
-
-        // Wait for at least one line from stdout
-        let stdout = BufReader::new(stdout);
-        let mut lines = stdout.lines();
-        let line = lines.next().await;
-        println!("READ: {:?}", line);
-
-        let (execution_request_tx, _runtime_handle) = connect_kernel(connection_info.clone())?;
-        // Drop the connection info so the kernel will bind
-        drop(connection_info);
 
         Ok(Self {
             runtime,

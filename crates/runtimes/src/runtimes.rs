@@ -15,7 +15,7 @@ use language::Point;
 use outputs::ExecutionView;
 use project::Fs;
 use settings::Settings as _;
-use std::{sync::Arc};
+use std::sync::Arc;
 use ui::prelude::*;
 use workspace::Workspace;
 
@@ -86,6 +86,7 @@ impl RuntimeManager {
         if let Some(running_kernel) = running_kernel {
             return Task::ready(anyhow::Ok(running_kernel.execution_request_tx.clone()));
         }
+        // TODO: Track that a kernel is (possibly) starting up so we don't relaunch without tearing down the old one
 
         // Get first runtime that matches the language name (for now)
         let runtime = self
