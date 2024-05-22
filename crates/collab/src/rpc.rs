@@ -2439,7 +2439,12 @@ async fn rename_dev_server(
     let status = session
         .db()
         .await
-        .rename_dev_server(dev_server_id, &request.name, session.user_id())
+        .rename_dev_server(
+            dev_server_id,
+            &request.name,
+            &request.ssh_connection_string,
+            session.user_id(),
+        )
         .await?;
 
     send_dev_server_projects_update(session.user_id(), status, &session).await;

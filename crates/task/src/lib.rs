@@ -19,6 +19,38 @@ pub use vscode_format::VsCodeTaskFile;
 #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct TaskId(pub String);
 
+/// TerminalWorkDir describes where a task should be run
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum TerminalWorkDir {
+    /// Local is on this machine
+    Local(PathBuf),
+    /// SSH runs the terminal over ssh
+    Ssh {
+        /// The command to run to connect
+        ssh_command: String,
+        /// The path on the remote server
+        path: Option<String>,
+    },
+}
+
+impl TerminalWorkDir {
+    /// is_local
+    pub fn is_local(&self) -> bool {
+        match self {
+            TerminalWorkDir::Local(_) => true,
+            TerminalWorkDir::Ssh { .. } => false,
+        }
+    }
+
+    /// local_path
+    pub fn local_path(&self) -> Option<PathBuf> {
+        match self {
+            TerminalWorkDir::Local(path) => Some(path.clone()),
+            TerminalWorkDir::Ssh { .. } => None,
+        }
+    }
+}
+
 /// Contains all information needed by Zed to spawn a new terminal tab for the given task.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SpawnInTerminal {
@@ -36,7 +68,7 @@ pub struct SpawnInTerminal {
     /// A human-readable label, containing command and all of its arguments, joined and substituted.
     pub command_label: String,
     /// Current working directory to spawn the command into.
-    pub cwd: Option<PathBuf>,
+    pub cwd: Option<TerminalWorkDir>,
     /// Env overrides for the command, will be appended to the terminal's environment from the settings.
     pub env: HashMap<String, String>,
     /// Whether to use a new terminal tab or reuse the existing one to spawn the process.

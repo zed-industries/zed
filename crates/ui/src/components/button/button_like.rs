@@ -2,7 +2,7 @@ use gpui::{relative, DefiniteLength, MouseButton};
 use gpui::{transparent_black, AnyElement, AnyView, ClickEvent, Hsla, Rems};
 use smallvec::SmallVec;
 
-use crate::{prelude::*, Spacing};
+use crate::{prelude::*, Elevation, ElevationIndex, Spacing};
 
 /// A trait for buttons that can be Selected. Enables setting the [`ButtonStyle`] of a button when it is selected.
 pub trait SelectableButton: Selectable {
@@ -33,6 +33,8 @@ pub trait ButtonCommon: Clickable + Disableable {
     /// Nearly all interactable elements should have a tooltip. Some example
     /// exceptions might a scroll bar, or a slider.
     fn tooltip(self, tooltip: impl Fn(&mut WindowContext) -> AnyView + 'static) -> Self;
+
+    fn layer(self, elevation: ElevationIndex) -> Self;
 }
 
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Copy, Default)]
@@ -135,11 +137,35 @@ pub(crate) struct ButtonLikeStyles {
     pub icon_color: Hsla,
 }
 
+fn element_bg_from_elevation(elevation: Option<Elevation>, cx: &mut WindowContext) -> Hsla {
+    match elevation {
+        Some(Elevation::ElevationIndex(ElevationIndex::Background)) => {
+            cx.theme().colors().element_background
+        }
+        Some(Elevation::ElevationIndex(ElevationIndex::ElevatedSurface)) => {
+            cx.theme().colors().surface_background
+        }
+        Some(Elevation::ElevationIndex(ElevationIndex::Surface)) => {
+            cx.theme().colors().elevated_surface_background
+        }
+        Some(Elevation::ElevationIndex(ElevationIndex::ModalSurface)) => {
+            cx.theme().colors().background
+        }
+        _ => cx.theme().colors().element_background,
+    }
+}
+
 impl ButtonStyle {
-    pub(crate) fn enabled(self, cx: &mut WindowContext) -> ButtonLikeStyles {
+    pub(crate) fn enabled(
+        self,
+        elevation: Option<Elevation>,
+        cx: &mut WindowContext,
+    ) -> ButtonLikeStyles {
+        let filled_background = element_bg_from_elevation(elevation, cx);
+
         match self {
             ButtonStyle::Filled => ButtonLikeStyles {
-                background: cx.theme().colors().element_background,
+                background: filled_background,
                 border_color: transparent_black(),
                 label_color: Color::Default.color(cx),
                 icon_color: Color::Default.color(cx),
@@ -160,10 +186,17 @@ impl ButtonStyle {
         }
     }
 
-    pub(crate) fn hovered(self, cx: &mut WindowContext) -> ButtonLikeStyles {
+    pub(crate) fn hovered(
+        self,
+        elevation: Option<Elevation>,
+        cx: &mut WindowContext,
+    ) -> ButtonLikeStyles {
+        let mut filled_background = element_bg_from_elevation(elevation, cx);
+        filled_background.fade_out(0.92);
+
         match self {
             ButtonStyle::Filled => ButtonLikeStyles {
-                background: cx.theme().colors().element_hover,
+                background: filled_background,
                 border_color: transparent_black(),
                 label_color: Color::Default.color(cx),
                 icon_color: Color::Default.color(cx),
@@ -238,7 +271,13 @@ impl ButtonStyle {
     }
 
     #[allow(unused)]
-    pub(crate) fn disabled(self, cx: &mut WindowContext) -> ButtonLikeStyles {
+    pub(crate) fn disabled(
+        self,
+        elevation: Option<Elevation>,
+        cx: &mut WindowContext,
+    ) -> ButtonLikeStyles {
+        let filled_background = element_bg_from_elevation(elevation, cx).fade_out(0.82);
+
         match self {
             ButtonStyle::Filled => ButtonLikeStyles {
                 background: cx.theme().colors().element_disabled,
@@ -301,6 +340,7 @@ pub struct ButtonLike {
     pub(super) selected_style: Option<ButtonStyle>,
     pub(super) width: Option<DefiniteLength>,
     pub(super) height: Option<DefiniteLength>,
+    pub(super) layer: Option<Elevation>,
     size: ButtonSize,
     rounding: Option<ButtonLikeRounding>,
     tooltip: Option<Box<dyn Fn(&mut WindowContext) -> AnyView>>,
@@ -324,6 +364,7 @@ impl ButtonLike {
             tooltip: None,
             children: SmallVec::new(),
             on_click: None,
+            layer: None,
         }
     }
 
@@ -397,6 +438,11 @@ impl ButtonCommon for ButtonLike {
         self.tooltip = Some(Box::new(tooltip));
         self
     }
+
+    fn layer(mut self, elevation: ElevationIndex) -> Self {
+        self.layer = Some(elevation.into());
+        self
+    }
 }
 
 impl VisibleOnHover for ButtonLike {
@@ -437,11 +483,11 @@ impl RenderOnce for ButtonLike {
                 ButtonSize::Default | ButtonSize::Compact => this.px(Spacing::Small.rems(cx)),
                 ButtonSize::None => this,
             })
-            .bg(style.enabled(cx).background)
+            .bg(style.enabled(self.layer, cx).background)
             .when(self.disabled, |this| this.cursor_not_allowed())
             .when(!self.disabled, |this| {
                 this.cursor_pointer()
-                    .hover(|hover| hover.bg(style.hovered(cx).background))
+                    .hover(|hover| hover.bg(style.hovered(self.layer, cx).background))
                     .active(|active| active.bg(style.active(cx).background))
             })
             .when_some(
