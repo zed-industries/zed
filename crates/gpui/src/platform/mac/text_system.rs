@@ -317,15 +317,17 @@ impl MacTextSystemState {
                 println!("Create new desc");
                 let new_descriptor = CTFontDescriptorCreateWithAttributes(attrs);
                 CFRelease(attrs as _);
-                let new_descriptor = CTFontDescriptor::wrap_under_create_rule(new_descriptor);
+                // let new_descriptor = CTFontDescriptor::wrap_under_create_rule(new_descriptor);
                 println!("Create new font");
                 let new_font = CTFontCreateCopyWithAttributes(
                     font.font.native_font().as_concrete_TypeRef(),
                     0.0,
                     std::ptr::null(),
-                    new_descriptor.as_concrete_TypeRef(),
+                    new_descriptor,
                 );
+                CFRelease(new_descriptor as _);
                 let new_font = CTFont::wrap_under_create_rule(new_font);
+                CFRelease(font.font.native_font().as_concrete_TypeRef() as _);
                 font.font = font_kit::font::Font::from_native_font(&new_font);
             }
             Ok(())
