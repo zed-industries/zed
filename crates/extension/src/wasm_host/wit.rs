@@ -1,7 +1,8 @@
 mod since_v0_0_1;
 mod since_v0_0_4;
 mod since_v0_0_6;
-use since_v0_0_6 as latest;
+mod since_v0_0_7;
+use since_v0_0_7 as latest;
 
 use super::{wasm_engine, WasmState};
 use anyhow::{Context, Result};
@@ -46,6 +47,7 @@ pub fn wasm_api_version_range() -> RangeInclusive<SemanticVersion> {
 }
 
 pub enum Extension {
+    V007(since_v0_0_7::Extension),
     V006(since_v0_0_6::Extension),
     V004(since_v0_0_4::Extension),
     V001(since_v0_0_1::Extension),
@@ -62,6 +64,15 @@ impl Extension {
                 latest::Extension::instantiate_async(store, &component, latest::linker())
                     .await
                     .context("failed to instantiate wasm extension")?;
+            Ok((Self::V007(extension), instance))
+        } else if version >= since_v0_0_6::MIN_VERSION {
+            let (extension, instance) = since_v0_0_6::Extension::instantiate_async(
+                store,
+                &component,
+                since_v0_0_6::linker(),
+            )
+            .await
+            .context("failed to instantiate wasm extension")?;
             Ok((Self::V006(extension), instance))
         } else if version >= since_v0_0_4::MIN_VERSION {
             let (extension, instance) = since_v0_0_4::Extension::instantiate_async(
@@ -86,6 +97,7 @@ impl Extension {
 
     pub async fn call_init_extension(&self, store: &mut Store<WasmState>) -> Result<()> {
         match self {
+            Extension::V007(ext) => ext.call_init_extension(store).await,
             Extension::V006(ext) => ext.call_init_extension(store).await,
             Extension::V004(ext) => ext.call_init_extension(store).await,
             Extension::V001(ext) => ext.call_init_extension(store).await,
@@ -100,10 +112,14 @@ impl Extension {
         resource: Resource<Arc<dyn LspAdapterDelegate>>,
     ) -> Result<Result<Command, String>> {
         match self {
-            Extension::V006(ext) => {
+            Extension::V007(ext) => {
                 ext.call_language_server_command(store, &language_server_id.0, resource)
                     .await
             }
+            Extension::V006(ext) => Ok(ext
+                .call_language_server_command(store, &language_server_id.0, resource)
+                .await?
+                .map(|command| command.into())),
             Extension::V004(ext) => Ok(ext
                 .call_language_server_command(store, config, resource)
                 .await?
@@ -123,6 +139,14 @@ impl Extension {
         resource: Resource<Arc<dyn LspAdapterDelegate>>,
     ) -> Result<Result<Option<String>, String>> {
         match self {
+            Extension::V007(ext) => {
+                ext.call_language_server_initialization_options(
+                    store,
+                    &language_server_id.0,
+                    resource,
+                )
+                .await
+            }
             Extension::V006(ext) => {
                 ext.call_language_server_initialization_options(
                     store,
@@ -153,6 +177,14 @@ impl Extension {
         resource: Resource<Arc<dyn LspAdapterDelegate>>,
     ) -> Result<Result<Option<String>, String>> {
         match self {
+            Extension::V007(ext) => {
+                ext.call_language_server_workspace_configuration(
+                    store,
+                    &language_server_id.0,
+                    resource,
+                )
+                .await
+            }
             Extension::V006(ext) => {
                 ext.call_language_server_workspace_configuration(
                     store,
@@ -172,11 +204,20 @@ impl Extension {
         completions: Vec<latest::Completion>,
     ) -> Result<Result<Vec<Option<CodeLabel>>, String>> {
         match self {
-            Extension::V001(_) | Extension::V004(_) => Ok(Ok(Vec::new())),
-            Extension::V006(ext) => {
+            Extension::V007(ext) => {
                 ext.call_labels_for_completions(store, &language_server_id.0, &completions)
                     .await
             }
+            Extension::V006(ext) => Ok(ext
+                .call_labels_for_completions(store, &language_server_id.0, &completions)
+                .await?
+                .map(|labels| {
+                    labels
+                        .into_iter()
+                        .map(|label| label.map(Into::into))
+                        .collect()
+                })),
+            Extension::V001(_) | Extension::V004(_) => Ok(Ok(Vec::new())),
         }
     }
 
@@ -187,11 +228,20 @@ impl Extension {
         symbols: Vec<latest::Symbol>,
     ) -> Result<Result<Vec<Option<CodeLabel>>, String>> {
         match self {
-            Extension::V001(_) | Extension::V004(_) => Ok(Ok(Vec::new())),
-            Extension::V006(ext) => {
+            Extension::V007(ext) => {
                 ext.call_labels_for_symbols(store, &language_server_id.0, &symbols)
                     .await
             }
+            Extension::V006(ext) => Ok(ext
+                .call_labels_for_symbols(store, &language_server_id.0, &symbols)
+                .await?
+                .map(|labels| {
+                    labels
+                        .into_iter()
+                        .map(|label| label.map(Into::into))
+                        .collect()
+                })),
+            Extension::V001(_) | Extension::V004(_) => Ok(Ok(Vec::new())),
         }
     }
 }
