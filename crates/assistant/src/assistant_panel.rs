@@ -4169,9 +4169,9 @@ mod tests {
         });
         assert_text_and_output_ranges(
             &buffer,
-            &*output_ranges.borrow(),
-            &"
-                /file src/lib.rs
+            &output_ranges.borrow(),
+            "
+            /file src/lib.rs
             "
             .unindent()
             .trim_end(),
@@ -4182,7 +4182,7 @@ mod tests {
         cx.executor().advance_clock(SLASH_COMMAND_DEBOUNCE);
         assert_text_and_output_ranges(
             &buffer,
-            &*output_ranges.borrow(),
+            &output_ranges.borrow(),
             &"
             /file src/lib.rs«
             ```src/lib.rs
@@ -4200,7 +4200,7 @@ mod tests {
         });
         assert_text_and_output_ranges(
             &buffer,
-            &*output_ranges.borrow(),
+            &output_ranges.borrow(),
             &"
             /file src/main.rs«
             ```src/lib.rs
@@ -4214,7 +4214,7 @@ mod tests {
         cx.executor().advance_clock(SLASH_COMMAND_DEBOUNCE);
         assert_text_and_output_ranges(
             &buffer,
-            &*output_ranges.borrow(),
+            &output_ranges.borrow(),
             &"
             /file src/main.rs«
             ```src/main.rs

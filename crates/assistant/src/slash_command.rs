@@ -215,6 +215,25 @@ impl CompletionProvider for SlashCommandCompletionProvider {
     ) -> Task<Result<Option<language::Transaction>>> {
         Task::ready(Ok(None))
     }
+
+    fn is_completion_trigger(
+        &self,
+        buffer: &Model<Buffer>,
+        position: language::Anchor,
+        _text: &str,
+        _trigger_in_words: bool,
+        cx: &mut ViewContext<Editor>,
+    ) -> bool {
+        let buffer = buffer.read(cx);
+        let position = position.to_point(buffer);
+        let line_start = Point::new(position.row, 0);
+        let mut lines = buffer.text_for_range(line_start..position).lines();
+        if let Some(line) = lines.next() {
+            SlashCommandLine::parse(line).is_some()
+        } else {
+            false
+        }
+    }
 }
 
 impl SlashCommandLine {

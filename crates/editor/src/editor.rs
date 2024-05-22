@@ -3279,19 +3279,38 @@ impl Editor {
         trigger_in_words: bool,
         cx: &mut ViewContext<Self>,
     ) {
-        if !EditorSettings::get_global(cx).show_completions_on_input {
-            return;
-        }
-
-        let selection = self.selections.newest_anchor();
-        if self
-            .buffer
-            .read(cx)
-            .is_completion_trigger(selection.head(), text, trigger_in_words, cx)
-        {
+        if self.is_completion_trigger(text, trigger_in_words, cx) {
             self.show_completions(&ShowCompletions, cx);
         } else {
             self.hide_context_menu(cx);
+        }
+    }
+
+    fn is_completion_trigger(
+        &self,
+        text: &str,
+        trigger_in_words: bool,
+        cx: &mut ViewContext<Self>,
+    ) -> bool {
+        let position = self.selections.newest_anchor().head();
+        let multibuffer = self.buffer.read(cx);
+        let Some(buffer) = position
+            .buffer_id
+            .and_then(|buffer_id| multibuffer.buffer(buffer_id).clone())
+        else {
+            return false;
+        };
+
+        if let Some(completion_provider) = &self.completion_provider {
+            completion_provider.is_completion_trigger(
+                &buffer,
+                position.text_anchor,
+                text,
+                trigger_in_words,
+                cx,
+            )
+        } else {
+            false
         }
     }
 
@@ -10893,6 +10912,15 @@ pub trait CompletionProvider {
         push_to_history: bool,
         cx: &mut ViewContext<Editor>,
     ) -> Task<Result<Option<language::Transaction>>>;
+
+    fn is_completion_trigger(
+        &self,
+        buffer: &Model<Buffer>,
+        position: language::Anchor,
+        text: &str,
+        trigger_in_words: bool,
+        cx: &mut ViewContext<Editor>,
+    ) -> bool;
 }
 
 impl CompletionProvider for Model<Project> {
@@ -10929,6 +10957,40 @@ impl CompletionProvider for Model<Project> {
         self.update(cx, |project, cx| {
             project.apply_additional_edits_for_completion(buffer, completion, push_to_history, cx)
         })
+    }
+
+    fn is_completion_trigger(
+        &self,
+        buffer: &Model<Buffer>,
+        position: language::Anchor,
+        text: &str,
+        trigger_in_words: bool,
+        cx: &mut ViewContext<Editor>,
+    ) -> bool {
+        let mut chars = text.chars();
+        let char = if let Some(char) = chars.next() {
+            char
+        } else {
+            return false;
+        };
+        if chars.next().is_some() {
+            return false;
+        }
+
+        let buffer = buffer.read(cx);
+        let scope = buffer.snapshot().language_scope_at(position);
+        if trigger_in_words && char_kind(&scope, char) == CharKind::Word {
+            return true;
+        }
+
+        if !EditorSettings::get_global(cx).show_completions_on_input {
+            return false;
+        }
+
+        buffer
+            .completion_triggers()
+            .iter()
+            .any(|string| string == text)
     }
 }
 

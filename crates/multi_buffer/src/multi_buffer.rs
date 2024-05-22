@@ -1532,46 +1532,6 @@ impl MultiBuffer {
             .map(|state| state.buffer.clone())
     }
 
-    pub fn is_completion_trigger(
-        &self,
-        position: Anchor,
-        text: &str,
-        trigger_in_words: bool,
-        cx: &AppContext,
-    ) -> bool {
-        let mut chars = text.chars();
-        let char = if let Some(char) = chars.next() {
-            char
-        } else {
-            return false;
-        };
-        if chars.next().is_some() {
-            return false;
-        }
-
-        let snapshot = self.snapshot(cx);
-        let position = position.to_offset(&snapshot);
-        let scope = snapshot.language_scope_at(position);
-        if trigger_in_words && char_kind(&scope, char) == CharKind::Word {
-            return true;
-        }
-
-        let anchor = snapshot.anchor_before(position);
-        anchor
-            .buffer_id
-            .and_then(|buffer_id| {
-                let buffer = self.buffers.borrow().get(&buffer_id)?.buffer.clone();
-                Some(
-                    buffer
-                        .read(cx)
-                        .completion_triggers()
-                        .iter()
-                        .any(|string| string == text),
-                )
-            })
-            .unwrap_or(false)
-    }
-
     pub fn language_at<T: ToOffset>(&self, point: T, cx: &AppContext) -> Option<Arc<Language>> {
         self.point_to_buffer_offset(point, cx)
             .and_then(|(buffer, offset, _)| buffer.read(cx).language_at(offset))
