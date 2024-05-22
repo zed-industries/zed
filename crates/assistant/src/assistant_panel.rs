@@ -2592,7 +2592,9 @@ impl ConversationEditor {
         let editor = cx.new_view(|cx| {
             let mut editor = Editor::for_buffer(conversation.read(cx).buffer.clone(), None, cx);
             editor.set_soft_wrap_mode(SoftWrap::EditorWidth, cx);
-            // editor.set_show_gutter(false, cx);
+            editor.set_show_line_numbers(false, cx);
+            editor.set_show_git_diff_gutter(false, cx);
+            editor.set_show_code_actions(false, cx);
             editor.set_show_wrap_guides(false, cx);
             editor.set_completion_provider(Box::new(completion_provider));
             editor
@@ -2968,6 +2970,7 @@ impl ConversationEditor {
 
                             h_flex()
                                 .id(("message_header", message_id.0))
+                                .pl(cx.gutter_dimensions.width)
                                 .h_11()
                                 .w_full()
                                 .relative()
@@ -3393,7 +3396,6 @@ impl Render for ConversationEditor {
             .child(
                 div()
                     .flex_grow()
-                    .pl_4()
                     .bg(cx.theme().colors().editor_background)
                     .child(self.editor.clone()),
             )

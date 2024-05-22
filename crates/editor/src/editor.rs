@@ -448,6 +448,9 @@ pub struct Editor {
     mode: EditorMode,
     show_breadcrumbs: bool,
     show_gutter: bool,
+    show_line_numbers: Option<bool>,
+    show_git_diff_gutter: Option<bool>,
+    show_code_actions: Option<bool>,
     show_wrap_guides: Option<bool>,
     placeholder_text: Option<Arc<str>>,
     highlight_order: usize,
@@ -516,6 +519,9 @@ pub struct Editor {
 pub struct EditorSnapshot {
     pub mode: EditorMode,
     show_gutter: bool,
+    show_line_numbers: Option<bool>,
+    show_git_diff_gutter: Option<bool>,
+    show_code_actions: Option<bool>,
     render_git_blame_gutter: bool,
     pub display_snapshot: DisplaySnapshot,
     pub placeholder_text: Option<Arc<str>>,
@@ -1645,6 +1651,9 @@ impl Editor {
             mode,
             show_breadcrumbs: EditorSettings::get_global(cx).toolbar.breadcrumbs,
             show_gutter: mode == EditorMode::Full,
+            show_line_numbers: None,
+            show_git_diff_gutter: None,
+            show_code_actions: None,
             show_wrap_guides: None,
             placeholder_text: None,
             highlight_order: 0,
@@ -1880,6 +1889,9 @@ impl Editor {
         EditorSnapshot {
             mode: self.mode,
             show_gutter: self.show_gutter,
+            show_line_numbers: self.show_line_numbers,
+            show_git_diff_gutter: self.show_git_diff_gutter,
+            show_code_actions: self.show_code_actions,
             render_git_blame_gutter: self.render_git_blame_gutter(cx),
             display_snapshot: self.display_map.update(cx, |map, cx| map.snapshot(cx)),
             scroll_anchor: self.scroll_manager.anchor(),
@@ -9637,8 +9649,27 @@ impl Editor {
         cx.notify();
     }
 
-    pub fn set_show_wrap_guides(&mut self, show_gutter: bool, cx: &mut ViewContext<Self>) {
-        self.show_wrap_guides = Some(show_gutter);
+    pub fn set_show_line_numbers(&mut self, show_line_numbers: bool, cx: &mut ViewContext<Self>) {
+        self.show_line_numbers = Some(show_line_numbers);
+        cx.notify();
+    }
+
+    pub fn set_show_git_diff_gutter(
+        &mut self,
+        show_git_diff_gutter: bool,
+        cx: &mut ViewContext<Self>,
+    ) {
+        self.show_git_diff_gutter = Some(show_git_diff_gutter);
+        cx.notify();
+    }
+
+    pub fn set_show_code_actions(&mut self, show_code_actions: bool, cx: &mut ViewContext<Self>) {
+        self.show_code_actions = Some(show_code_actions);
+        cx.notify();
+    }
+
+    pub fn set_show_wrap_guides(&mut self, show_wrap_guides: bool, cx: &mut ViewContext<Self>) {
+        self.show_wrap_guides = Some(show_wrap_guides);
         cx.notify();
     }
 
@@ -11097,13 +11128,17 @@ impl EditorSnapshot {
         }
         let descent = cx.text_system().descent(font_id, font_size);
 
-        let show_git_gutter = matches!(
-            ProjectSettings::get_global(cx).git.git_gutter,
-            Some(GitGutterSetting::TrackedFiles)
-        );
+        let show_git_gutter = self.show_git_diff_gutter.unwrap_or_else(|| {
+            matches!(
+                ProjectSettings::get_global(cx).git.git_gutter,
+                Some(GitGutterSetting::TrackedFiles)
+            )
+        });
         let gutter_settings = EditorSettings::get_global(cx).gutter;
-        let gutter_lines_enabled = gutter_settings.line_numbers;
-        let line_gutter_width = if gutter_lines_enabled {
+        let show_line_numbers = self
+            .show_line_numbers
+            .unwrap_or_else(|| gutter_settings.line_numbers);
+        let line_gutter_width = if show_line_numbers {
             // Avoid flicker-like gutter resizes when the line number gains another digit and only resize the gutter on files with N*10^5 lines.
             let min_width_for_number_on_gutter = em_width * 4.0;
             max_line_number_width.max(min_width_for_number_on_gutter)
@@ -11111,26 +11146,30 @@ impl EditorSnapshot {
             0.0.into()
         };
 
+        let show_code_actions = self
+            .show_code_actions
+            .unwrap_or_else(|| gutter_settings.code_actions);
+
         let git_blame_entries_width = self
             .render_git_blame_gutter
             .then_some(em_width * GIT_BLAME_GUTTER_WIDTH_CHARS);
 
         let mut left_padding = git_blame_entries_width.unwrap_or(Pixels::ZERO);
-        left_padding += if gutter_settings.code_actions {
+        left_padding += if show_code_actions {
             em_width * 3.0
-        } else if show_git_gutter && gutter_lines_enabled {
+        } else if show_git_gutter && show_line_numbers {
             em_width * 2.0
-        } else if show_git_gutter || gutter_lines_enabled {
+        } else if show_git_gutter || show_line_numbers {
             em_width
         } else {
             px(0.)
         };
 
-        let right_padding = if gutter_settings.folds && gutter_lines_enabled {
+        let right_padding = if gutter_settings.folds && show_line_numbers {
             em_width * 4.0
         } else if gutter_settings.folds {
             em_width * 3.0
-        } else if gutter_lines_enabled {
+        } else if show_line_numbers {
             em_width
         } else {
             px(0.)
