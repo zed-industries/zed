@@ -62,7 +62,9 @@ use crate::platform::linux::wayland::window::WaylandWindow;
 use crate::platform::linux::xdg_desktop_portal::init_portal_listener;
 use crate::platform::linux::LinuxClient;
 use crate::platform::PlatformWindow;
-use crate::{point, px, FileDropEvent, ForegroundExecutor, MouseExitEvent, SCROLL_LINES, WindowAppearance};
+use crate::{
+    point, px, FileDropEvent, ForegroundExecutor, MouseExitEvent, WindowAppearance, SCROLL_LINES,
+};
 use crate::{
     AnyWindowHandle, CursorStyle, DisplayId, KeyDownEvent, KeyUpEvent, Keystroke, Modifiers,
     ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent,
@@ -400,13 +402,17 @@ impl WaylandClient {
         executor: &ForegroundExecutor,
         appearance: Weak<Mutex<WindowAppearance>>,
     ) {
-        init_portal_listener(executor, appearance, Box::new(move || {
-            if let Some(state) = state_ptr.upgrade() {
-                for (_, window) in &state.borrow().windows {
-                    window.appearance_changed()
+        init_portal_listener(
+            executor,
+            appearance,
+            Box::new(move || {
+                if let Some(state) = state_ptr.upgrade() {
+                    for (_, window) in &state.borrow().windows {
+                        window.appearance_changed()
+                    }
                 }
-            }
-        }));
+            }),
+        );
     }
 }
 

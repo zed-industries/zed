@@ -1,10 +1,10 @@
 //! Provides a [calloop] event source from [XDG Desktop Portal] events
 //!
 //! This module uses the [ashpd] crate and handles many async loop
-use std::rc::{Weak, Rc};
 use ashpd::desktop::settings::{ColorScheme, Settings};
 use parking_lot::Mutex;
 use smol::stream::StreamExt;
+use std::rc::{Rc, Weak};
 
 use crate::{BackgroundExecutor, ForegroundExecutor, WindowAppearance};
 
@@ -12,7 +12,11 @@ pub enum Event {
     WindowAppearance(WindowAppearance),
 }
 
-pub fn init_portal_listener(executor: &ForegroundExecutor, appearance: Weak<Mutex<WindowAppearance>>, appearance_changed_cb : Box<dyn FnMut()>) {
+pub fn init_portal_listener(
+    executor: &ForegroundExecutor,
+    appearance: Weak<Mutex<WindowAppearance>>,
+    appearance_changed_cb: Box<dyn FnMut()>,
+) {
     executor
         .spawn(async move {
             if let Err(e) = observe_appearance(appearance, appearance_changed_cb).await {
@@ -22,7 +26,10 @@ pub fn init_portal_listener(executor: &ForegroundExecutor, appearance: Weak<Mute
         .detach();
 }
 
-async fn observe_appearance(appearance: Weak<Mutex<WindowAppearance>>, mut appearance_changed_cb : Box<dyn FnMut()>) -> Result<(), anyhow::Error> {
+async fn observe_appearance(
+    appearance: Weak<Mutex<WindowAppearance>>,
+    mut appearance_changed_cb: Box<dyn FnMut()>,
+) -> Result<(), anyhow::Error> {
     let settings = Settings::new().await?;
 
     // We get the color set before the initialization of the application

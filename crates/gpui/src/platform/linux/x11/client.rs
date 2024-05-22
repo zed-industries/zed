@@ -27,7 +27,11 @@ use xkbcommon::xkb as xkbc;
 
 use crate::platform::linux::LinuxClient;
 use crate::platform::{LinuxCommon, PlatformWindow, WaylandClientState};
-use crate::{modifiers_from_xinput_info, point, px, AnyWindowHandle, Bounds, CursorStyle, DisplayId, Modifiers, ModifiersChangedEvent, Pixels, PlatformDisplay, PlatformInput, Point, ScrollDelta, Size, TouchPhase, WindowParams, X11Window, WindowAppearance, ForegroundExecutor};
+use crate::{
+    modifiers_from_xinput_info, point, px, AnyWindowHandle, Bounds, CursorStyle, DisplayId,
+    ForegroundExecutor, Modifiers, ModifiersChangedEvent, Pixels, PlatformDisplay, PlatformInput,
+    Point, ScrollDelta, Size, TouchPhase, WindowAppearance, WindowParams, X11Window,
+};
 
 use super::{
     super::{open_uri_internal, SCROLL_LINES},
@@ -280,7 +284,7 @@ impl X11Client {
         Self::setup_appearance_listener(
             Rc::downgrade(&state),
             &state.borrow().common.foreground_executor,
-            appearance
+            appearance,
         );
 
         X11Client(state)
@@ -291,13 +295,17 @@ impl X11Client {
         executor: &ForegroundExecutor,
         appearance: Weak<Mutex<WindowAppearance>>,
     ) {
-        init_portal_listener(executor, appearance, Box::new(move || {
-            if let Some(state) = state_ptr.upgrade() {
-                for (_, window) in &state.borrow().windows {
-                    window.appearance_changed()
+        init_portal_listener(
+            executor,
+            appearance,
+            Box::new(move || {
+                if let Some(state) = state_ptr.upgrade() {
+                    for (_, window) in &state.borrow().windows {
+                        window.appearance_changed()
+                    }
                 }
-            }
-        }));
+            }),
+        );
     }
 
     fn get_window(&self, win: xproto::Window) -> Option<X11WindowStatePtr> {
@@ -627,7 +635,7 @@ impl LinuxClient for X11Client {
             x_window,
             &state.atoms,
             state.scale_factor,
-            self.0.borrow().common.appearance.clone()
+            self.0.borrow().common.appearance.clone(),
         );
 
         let screen_resources = state

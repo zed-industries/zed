@@ -25,6 +25,7 @@ use x11rb::{
     xcb_ffi::XCBConnection,
 };
 
+use std::ops::Deref;
 use std::{
     cell::{Ref, RefCell, RefMut},
     collections::HashMap,
@@ -37,7 +38,6 @@ use std::{
     rc::Rc,
     sync::{self, Arc},
 };
-use std::ops::Deref;
 
 use super::X11Display;
 
@@ -557,7 +557,7 @@ impl PlatformWindow for X11Window {
     fn scale_factor(&self) -> f32 {
         self.0.state.borrow().scale_factor
     }
-    
+
     fn appearance(&self) -> WindowAppearance {
         self.0.state.borrow().appearance.lock().deref().clone()
     }

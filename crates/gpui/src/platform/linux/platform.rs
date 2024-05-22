@@ -460,7 +460,7 @@ impl<P: LinuxClient + 'static> Platform for P {
     }
 
     fn window_appearance(&self) -> WindowAppearance {
-        self.with_common(|common| { common.appearance.lock().deref().clone() })
+        self.with_common(|common| common.appearance.lock().deref().clone())
     }
 
     fn register_url_scheme(&self, _: &str) -> Task<anyhow::Result<()>> {
