@@ -54,7 +54,7 @@ impl PromptLibrary {
 
     pub fn first_prompt_id(&self) -> Option<PromptId> {
         let state = self.state.read();
-        state.default_prompt.first().copied()
+        state.prompts.keys().next().cloned()
     }
 
     pub fn prompt(&self, id: PromptId) -> Option<StaticPrompt> {
