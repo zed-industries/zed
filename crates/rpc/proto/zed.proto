@@ -515,6 +515,7 @@ message ShutdownDevServer {
 message RenameDevServer {
     uint64 dev_server_id = 1;
     string name = 2;
+    optional string ssh_connection_string = 3;
 }
 
 message DeleteDevServer {

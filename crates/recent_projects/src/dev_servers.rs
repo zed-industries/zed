@@ -152,14 +152,8 @@ impl DevServerProjects {
         Self {
             mode: Mode::CreateDevServer(CreateDevServer {
                 creating: false,
-                dev_server: Some(proto::CreateDevServerResponse {
-                    dev_server_id: 75,
-                    access_token:
-                        "75.Xjsz5n5-u-gbs4PnUWYcJB6yaue7n0TjeuTTS56k7yxMqLfTwUSZjeZnQbyXtgXa"
-                            .to_string(),
-                    name: "test".to_string(),
-                }),
-                manual_setup: true,
+                dev_server: None,
+                manual_setup: false,
             }),
             focus_handle,
             scroll_handle: ScrollHandle::new(),
@@ -282,20 +276,49 @@ impl DevServerProjects {
         }));
     }
 
-    pub fn create_dev_server(&mut self, manual_setup: bool, cx: &mut ViewContext<Self>) {
-        let name = get_text(&self.dev_server_name_input, cx);
+    pub fn create_dev_server(
+        &mut self,
+        manual_setup: bool,
+        existing: Option<CreateDevServerResponse>,
+        cx: &mut ViewContext<Self>,
+    ) {
+        let mut name = get_text(&self.dev_server_name_input, cx);
         if name.is_empty() {
             return;
         }
 
         let ssh_connection_string = if manual_setup {
             None
-        } else {
+        } else if name.contains(" ") {
             Some(name.clone())
+        } else {
+            Some(format!("ssh {}", name))
         };
 
+        if name.contains("ssh ") {
+            name = name.split_once("ssh ").unwrap().1.to_string()
+        }
+
         let dev_server = self.dev_server_store.update(cx, |store, cx| {
-            store.create_dev_server(name, ssh_connection_string.clone(), cx)
+            let ssh_connection_string = ssh_connection_string.clone();
+            if let Some(existing) = existing {
+                let rename = store.rename_dev_server(
+                    DevServerId(existing.dev_server_id),
+                    name,
+                    ssh_connection_string,
+                    cx,
+                );
+                cx.spawn(|_, _| async move {
+                    rename.await?;
+                    Ok(CreateDevServerResponse {
+                        dev_server_id: existing.dev_server_id,
+                        name: existing.name,
+                        access_token: existing.access_token,
+                    })
+                })
+            } else {
+                store.create_dev_server(name, ssh_connection_string.clone(), cx)
+            }
         });
 
         let workspace = self.workspace.clone();
@@ -325,7 +348,7 @@ impl DevServerProjects {
                         .with_context(|| anyhow::anyhow!("No terminal panel"))?;
 
                         let command = "sh".to_string();
-                        let args = vec!["-c".to_string(), "-x".to_string(),
+                        let args = vec!["-x".to_string(),"-c".to_string(),
                             format!(r#"(curl -sSL https://zed.dev/install.sh || wget -qO- https://zed.dev/install.sh) | bash && ~/.local/bin/zed --dev-server-token {}"#, dev_server.access_token)];
 
                         let terminal = terminal_panel.update(&mut cx, |terminal_panel, cx| {
@@ -350,6 +373,13 @@ impl DevServerProjects {
                         terminal.update(&mut cx, |terminal, cx| {
                             terminal.wait_for_completed_task(cx)
                         })?.await;
+
+                        // There's a race-condition between the task completing successfully, and the server sending us the online status. Make it less likely we'll show the error state.
+                        if this.update(&mut cx, |this, cx| {
+                            this.dev_server_store.read(cx).dev_server_status(DevServerId(dev_server.dev_server_id))
+                        })? == DevServerStatus::Offline {
+                            cx.background_executor().timer(Duration::from_millis(200)).await
+                        }
                     }
 
                     this.update(&mut cx, |this, cx| {
@@ -397,7 +427,7 @@ impl DevServerProjects {
 
         let request = self
             .dev_server_store
-            .update(cx, |store, cx| store.rename_dev_server(id, name, cx));
+            .update(cx, |store, cx| store.rename_dev_server(id, name, None, cx));
 
         self.mode = Mode::EditDevServer(EditDevServer {
             dev_server_id: id,
@@ -553,8 +583,8 @@ impl DevServerProjects {
                 self.create_dev_server_project(create_project.dev_server_id, cx);
             }
             Mode::CreateDevServer(state) => {
-                if !state.creating && state.dev_server.is_none() {
-                    self.create_dev_server(state.manual_setup, cx);
+                if !state.creating {
+                    self.create_dev_server(state.manual_setup, state.dev_server.clone(), cx);
                 }
             }
             Mode::EditDevServer(edit_dev_server) => {
@@ -784,7 +814,6 @@ impl DevServerProjects {
             .unwrap_or_default();
 
         self.dev_server_name_input.update(cx, |input, cx| {
-            input.set_disabled(creating || dev_server.is_some(), cx);
             input.editor().update(cx, |editor, cx| {
                 if editor.text(cx).is_empty() {
                     if manual_setup {
@@ -814,7 +843,6 @@ impl DevServerProjects {
             .section(
                 Section::new_contained()
                     .header("Connection Method".into())
-                    // .meta("Select the type of server you want to create.")
                     .child(
                         v_flex()
                             .w_full()
@@ -862,14 +890,13 @@ impl DevServerProjects {
                                             )
                                 }.size(LabelSize::Small).color(Color::Muted))
                             })
-                            .when_some(dev_server, |el, dev_server| {
+                            .when_some(dev_server.as_ref(), |el, dev_server| {
                                 el.child(
-                                    self.render_dev_server_token_creating(&dev_server.access_token, &dev_server.name, manual_setup, status, cx)
+                                    self.render_dev_server_token_creating(&dev_server.access_token, &dev_server.name, manual_setup, status, creating,  cx)
                                 )
                             })
                     ),
             )
-            // .child(content)
             .footer(ModalFooter::new().end_slot(
                 if status == DevServerStatus::Online {
                     Button::new("create-dev-server", "Done")
@@ -885,9 +912,11 @@ impl DevServerProjects {
                         .style(ButtonStyle::Filled)
                         .layer(ElevationIndex::ModalSurface)
                         .disabled(!can_submit)
-                        .on_click(cx.listener(move |this, _, cx| {
-                            this.create_dev_server(manual_setup, cx);
-                        }))
+                        .on_click(cx.listener({
+                            let dev_server = dev_server.clone();
+                            move |this, _, cx| {
+                            this.create_dev_server(manual_setup, dev_server.clone(), cx);
+                        }}))
                 }
             ))
     }
@@ -898,6 +927,7 @@ impl DevServerProjects {
         dev_server_name: &str,
         manual_setup: bool,
         status: DevServerStatus,
+        creating: bool,
         cx: &mut ViewContext<Self>,
     ) -> Div {
         self.markdown.update(cx, |markdown, cx| {
@@ -913,11 +943,19 @@ impl DevServerProjects {
             .pt_2()
             .gap_2()
             .child(v_flex().w_full().text_sm().child(self.markdown.clone()))
-            .when(status == DevServerStatus::Offline, |this| {
-                this.child(Self::render_loading_spinner("Waiting for connection…"))
-            })
-            .when(status == DevServerStatus::Online, |this| {
-                this.child(Label::new("🎊 Connection established!"))
+            .map(|el| {
+                if status == DevServerStatus::Offline && !manual_setup && !creating {
+                    el.child(
+                        h_flex()
+                            .gap_2()
+                            .child(Icon::new(IconName::Disconnected).size(IconSize::Medium))
+                            .child(Label::new("Not connected")),
+                    )
+                } else if status == DevServerStatus::Offline {
+                    el.child(Self::render_loading_spinner("Waiting for connection…"))
+                } else {
+                    el.child(Label::new("🎊 Connection established!"))
+                }
             })
     }
 
@@ -1027,6 +1065,7 @@ impl DevServerProjects {
                     &dev_server_name,
                     true,
                     dev_server_status,
+                    false,
                     cx,
                 ),
             _ => h_flex().items_end().w_full().child(
@@ -1158,7 +1197,6 @@ impl Render for DevServerProjects {
                 }
             }))
             .w(rems(34.))
-            .min_h(rems(20.))
             .max_h(rems(40.))
             .child(match &self.mode {
                 Mode::Default(_) => self.render_default(cx).into_any_element(),
