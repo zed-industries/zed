@@ -61,7 +61,8 @@ pub(super) async fn format_with_prettier(
                 .update(cx, |buffer, cx| {
                     File::from_dyn(buffer.file()).map(|file| file.abs_path(cx))
                 })
-                .ok()?;
+                .ok()
+                .flatten();
 
             let format_result = prettier
                 .format(buffer, buffer_path, cx)

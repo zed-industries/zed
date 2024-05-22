@@ -7,6 +7,7 @@ use gpui::WindowContext;
 use language::{BasicContextProvider, ContextProvider};
 use project::{Location, WorktreeId};
 use task::{TaskContext, TaskVariables, VariableName};
+use text::Point;
 use util::ResultExt;
 use workspace::Workspace;
 
@@ -50,13 +51,17 @@ pub(crate) fn task_context_for_location(
     })
 }
 
-pub(crate) fn task_context_with_editor(
+fn task_context_with_editor(
     workspace: &Workspace,
     editor: &mut Editor,
     cx: &mut WindowContext<'_>,
 ) -> Option<TaskContext> {
     let (selection, buffer, editor_snapshot) = {
-        let selection = editor.selections.newest::<usize>(cx);
+        let mut selection = editor.selections.newest::<Point>(cx);
+        if editor.selections.line_mode {
+            selection.start = Point::new(selection.start.row, 0);
+            selection.end = Point::new(selection.end.row + 1, 0);
+        }
         let (buffer, _, _) = editor
             .buffer()
             .read(cx)

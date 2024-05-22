@@ -352,6 +352,7 @@ async fn test_dev_server_rename(
             store.rename_dev_server(
                 store.dev_servers().first().unwrap().id,
                 "name-edited".to_string(),
+                None,
                 cx,
             )
         })
