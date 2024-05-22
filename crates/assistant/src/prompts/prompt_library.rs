@@ -159,7 +159,6 @@ impl PromptManager {
                     matching_prompt_ids: vec![],
                     prompt_library: prompt_library.clone(),
                     selected_index: 0,
-                    // match_candidates: vec![],
                 },
                 cx,
             )
@@ -178,6 +177,16 @@ impl PromptManager {
     pub fn set_active_prompt(&mut self, prompt_id: Option<PromptId>, cx: &mut ViewContext<Self>) {
         self.active_prompt_id = prompt_id;
         cx.notify();
+    }
+
+    pub fn focus_active_editor(&self, cx: &mut ViewContext<Self>) {
+        if let Some(active_prompt_id) = self.active_prompt_id {
+            if let Some(editor) = self.prompt_editors.get(&active_prompt_id) {
+                let focus_handle = editor.focus_handle(cx);
+
+                cx.focus(&focus_handle)
+            }
+        }
     }
 
     fn dismiss(&mut self, _: &menu::Cancel, cx: &mut ViewContext<Self>) {
@@ -361,12 +370,8 @@ impl PickerDelegate for PromptManagerDelegate {
     }
 
     fn confirm(&mut self, _: bool, cx: &mut ViewContext<Picker<Self>>) {
-        if let Some(prompt_id) = self.matching_prompt_ids.get(self.selected_index) {
-            let prompt_manager = self.prompt_manager.upgrade().unwrap();
-            prompt_manager.update(cx, move |manager, cx| {
-                manager.set_active_prompt(Some(*prompt_id), cx);
-            });
-        }
+        let prompt_manager = self.prompt_manager.upgrade().unwrap();
+        prompt_manager.update(cx, move |manager, cx| manager.focus_active_editor(cx));
     }
 
     fn dismissed(&mut self, cx: &mut ViewContext<Picker<Self>>) {
