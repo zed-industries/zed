@@ -105,7 +105,7 @@ impl ButtonCommon for ToggleButton {
     }
 
     fn layer(mut self, elevation: ElevationIndex) -> Self {
-        self.base = self.base.layer(elevation.into());
+        self.base = self.base.layer(elevation);
         self
     }
 }

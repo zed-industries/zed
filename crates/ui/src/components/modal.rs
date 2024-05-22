@@ -22,7 +22,7 @@ impl Modal {
 
         let container_id = ElementId::Name(format!("{}_container", id.clone()).into());
         Self {
-            id: ElementId::Name(id.into()),
+            id: ElementId::Name(id),
             header: ModalHeader::new(),
             children: SmallVec::new(),
             footer: None,
@@ -85,7 +85,7 @@ impl RenderOnce for Modal {
                     )
                     .children(self.children),
             )
-            .children(self.footer.map(|footer| footer))
+            .children(self.footer)
     }
 }
 
@@ -321,7 +321,7 @@ impl RenderOnce for Section {
                 v_flex()
                     .flex_none()
                     .px(Spacing::XLarge.rems(cx))
-                    .children(self.header.map(|header| header))
+                    .children(self.header)
                     .when_some(self.meta, |this, meta| {
                         this.child(Label::new(meta).size(LabelSize::Small).color(Color::Muted))
                     }),

@@ -8056,16 +8056,12 @@ dependencies = [
  "rpc",
  "serde",
  "serde_json",
- "shlex",
  "smol",
  "task",
- "tempfile",
- "terminal",
  "terminal_view",
  "ui",
  "ui_text_field",
  "util",
- "which 6.0.0",
  "workspace",
 ]
 

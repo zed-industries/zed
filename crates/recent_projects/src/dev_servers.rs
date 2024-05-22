@@ -272,7 +272,7 @@ impl DevServerProjects {
 
         let ssh_connection_string = if manual_setup {
             None
-        } else if name.contains(" ") {
+        } else if name.contains(' ') {
             Some(name.clone())
         } else {
             Some(format!("ssh {}", name))
@@ -506,7 +506,7 @@ impl DevServerProjects {
                 if !state.creating {
                     self.create_or_update_dev_server(
                         state.manual_setup,
-                        state.dev_server_id.clone(),
+                        state.dev_server_id,
                         state.access_token.clone(),
                         cx,
                     );
@@ -726,7 +726,6 @@ impl DevServerProjects {
             manual_setup,
         } = state.clone();
 
-        let can_submit = creating == false;
         let status = dev_server_id
             .map(|id| self.dev_server_store.read(cx).dev_server_status(id))
             .unwrap_or_default();
@@ -843,7 +842,7 @@ impl DevServerProjects {
                     Button::new("create-dev-server", if manual_setup { "Create"} else { "Connect"})
                         .style(ButtonStyle::Filled)
                         .layer(ElevationIndex::ModalSurface)
-                        .disabled(!can_submit)
+                        .disabled(creating)
                         .on_click(cx.listener({
                             let access_token = access_token.clone();
                             move |this, _, cx| {

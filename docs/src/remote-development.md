@@ -14,9 +14,9 @@ Currently the two instances connect via Zed's servers, but we intend to build pe
 
 > NOTE: You must be in the alpha program to see this UI. The instructions will likely change as the feature gets closer to launch.
 
-1. Open the projects dialog with `cmd-option-o` and then click "Connect…".
+1. Open the remote projects dialogue with `cmd-shift-p remote`
 2. Click "Add Server"
-3. Give it a name, and copy the instructions given.
+3. Follow the instructions given.
 4. On the remote machine, install Zed
    ```
    curl https://zed.dev/install.sh | bash
@@ -25,6 +25,15 @@ Currently the two instances connect via Zed's servers, but we intend to build pe
    > NOTE: If this command runs but doesn't output anything, try running `zed --foreground --dev-server-token YY.XXX`. It is possible that the zed background process is crashing on startup.
 6. On your laptop you can now open folders on the remote machine.
    > NOTE: Zed does not currently handle opening very large directories (e.g. `/` or `~` that may have >100,000 files) very well. We are working on improving this, but suggest in the meantime opening only specific projects, or subfolders of very large mono-repos.
+
+## Toubleshooting
+
+### SSH connections
+
+If you chose to connect via SSH, zed will run the command you provide to connect, and intercept any calls to `ssh` to run our installer. Your remote machine will still need access to the internet to work in this way, as after setup is complete, we communicate through https://collab.zed.dev/
+
+
+
 
 ## Supported platforms
 

@@ -483,7 +483,7 @@ impl RenderOnce for ButtonLike {
                 ButtonSize::Default | ButtonSize::Compact => this.px(Spacing::Small.rems(cx)),
                 ButtonSize::None => this,
             })
-            .bg(style.enabled(self.layer.clone(), cx).background)
+            .bg(style.enabled(self.layer, cx).background)
             .when(self.disabled, |this| this.cursor_not_allowed())
             .when(!self.disabled, |this| {
                 this.cursor_pointer()
