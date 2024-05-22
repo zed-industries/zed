@@ -72,9 +72,7 @@ impl Project {
     ) -> anyhow::Result<Model<Terminal>> {
         // used only for TerminalSettings::get
         let worktree = {
-            let terminal_cwd = working_directory
-                .as_ref()
-                .and_then(|cwd| cwd.local_path().clone());
+            let terminal_cwd = working_directory.as_ref().and_then(|cwd| cwd.local_path());
             let task_cwd = spawn_task
                 .as_ref()
                 .and_then(|spawn_task| spawn_task.cwd.as_ref())
@@ -104,9 +102,8 @@ impl Project {
 
         let venv_base_directory = working_directory
             .as_ref()
-            .and_then(|cwd| cwd.local_path().map(|path| path.clone()))
-            .unwrap_or_else(|| PathBuf::new())
-            .clone();
+            .and_then(|cwd| cwd.local_path())
+            .unwrap_or_else(|| Path::new(""));
 
         let (spawn_task, shell) = match working_directory.as_ref() {
             Some(TerminalWorkDir::Ssh { ssh_command, path }) => {
@@ -231,7 +228,10 @@ impl Project {
         };
 
         let terminal = TerminalBuilder::new(
-            working_directory.and_then(|cwd| cwd.local_path()).clone(),
+            working_directory
+                .as_ref()
+                .and_then(|cwd| cwd.local_path())
+                .map(ToOwned::to_owned),
             spawn_task,
             shell,
             env,
