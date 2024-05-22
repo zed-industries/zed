@@ -5,7 +5,7 @@
 
 ## Repository
 
-Clone down the [Zed repository](https://github.com/zed-industries/zed).
+Clone down [this repo](https://github.com/superboxes/zed-windows.git) or [official Zed repository](https://github.com/zed-industries/zed).
 
 ## Dependencies
 
