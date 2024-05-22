@@ -6,27 +6,27 @@ use editor::{
 };
 use futures::{
     channel::mpsc::{self, UnboundedSender},
-    Future, SinkExt as _, StreamExt as _,
+    Future, StreamExt as _,
 };
 use gpui::{actions, AppContext, Context, EntityId, Global, Model, ModelContext, Task};
 use gpui::{Entity, View};
-use kernelspecs::{get_runtimes, Runtime};
+use kernelspecs::{get_runtimes, RunningKernel, Runtime};
 use language::Point;
 use outputs::ExecutionView;
 use project::Fs;
-use runtimelib::{JupyterMessage, JupyterMessageContent};
 use settings::Settings as _;
-use std::path::PathBuf;
-use std::sync::Arc;
+use std::{sync::Arc};
 use ui::prelude::*;
-use util::ResultExt;
 use workspace::Workspace;
 
 mod kernelspecs;
 mod outputs;
 mod stdio;
+mod tokio_kernel;
 
 use theme::{ActiveTheme, ThemeSettings};
+
+use tokio_kernel::{ExecutionId, ExecutionRequest, ExecutionUpdate};
 
 actions!(runtimes, [Run]);
 
@@ -36,7 +36,7 @@ pub struct RuntimeGlobal(Model<RuntimeManager>);
 impl Global for RuntimeGlobal {}
 
 pub fn init(fs: Arc<dyn Fs>, cx: &mut AppContext) {
-    let runtime_manager = cx.new_model(|cx| RuntimeManager::new(cx));
+    let runtime_manager = cx.new_model(|cx| RuntimeManager::new(fs.clone(), cx));
     RuntimeManager::set_global(runtime_manager.clone(), cx);
 
     cx.spawn(|mut cx| async move {
@@ -61,197 +61,19 @@ pub fn init(fs: Arc<dyn Fs>, cx: &mut AppContext) {
     .detach();
 }
 
-#[derive(Debug)]
-pub struct ExecutionRequest {
-    execution_id: ExecutionId,
-    request: runtimelib::ExecuteRequest,
-    response_sender: mpsc::UnboundedSender<ExecutionUpdate>,
-}
-
-#[derive(Debug)]
-pub struct RuntimeInstance {
-    execution_request_tx: mpsc::UnboundedSender<ExecutionRequest>,
-    _runtime_handle: std::thread::JoinHandle<()>,
-}
-
 pub struct RuntimeManager {
+    fs: Arc<dyn Fs>,
     runtimes: Vec<Runtime>,
-    instances: HashMap<EntityId, RuntimeInstance>,
-}
-
-static HARDCODED_DENO_KERNEL: &str =
-    "/Users/kylekelley/Library/Jupyter/runtime/kernel-c00837a1-3403-4a53-abae-426498cdddd1.json";
-
-static HARDCODED_PYTHON_KERNEL: &str =
-    "/Users/kylekelley/Library/Jupyter/runtime/kernel-09c799c6-7d73-4800-b887-ae902c2573b6.json";
-
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
-struct ExecutionId(String);
-
-impl ExecutionId {
-    fn new() -> Self {
-        ExecutionId(uuid::Uuid::new_v4().to_string())
-    }
-}
-
-impl From<String> for ExecutionId {
-    fn from(id: String) -> Self {
-        ExecutionId(id)
-    }
-}
-
-#[derive(Debug)]
-struct ExecutionUpdate {
-    #[allow(dead_code)]
-    execution_id: ExecutionId,
-    update: JupyterMessageContent,
-}
-
-// Associates execution IDs with outputs and other messages
-struct DocumentClient {
-    iopub_handle: tokio::task::JoinHandle<anyhow::Result<()>>,
-    shell_handle: tokio::task::JoinHandle<anyhow::Result<()>>,
-    _executions:
-        Arc<tokio::sync::Mutex<HashMap<ExecutionId, mpsc::UnboundedSender<ExecutionUpdate>>>>,
-}
-
-impl DocumentClient {
-    async fn new(
-        kernel_path: &PathBuf,
-        mut execution_request_rx: mpsc::UnboundedReceiver<ExecutionRequest>,
-    ) -> Result<Self> {
-        let connection_info = runtimelib::ConnectionInfo::from_path(kernel_path).await?;
-
-        let mut iopub = connection_info.create_client_iopub_connection("").await?;
-        let mut shell = connection_info.create_client_shell_connection().await?;
-
-        let executions: Arc<
-            tokio::sync::Mutex<HashMap<ExecutionId, mpsc::UnboundedSender<ExecutionUpdate>>>,
-        > = Default::default();
-
-        let iopub_handle = tokio::spawn({
-            let executions = executions.clone();
-            async move {
-                loop {
-                    let message = iopub.read().await?;
-
-                    if let Some(parent_header) = message.parent_header {
-                        let execution_id = ExecutionId::from(parent_header.msg_id);
-
-                        if let Some(mut execution) = executions.lock().await.get(&execution_id) {
-                            execution
-                                .send(ExecutionUpdate {
-                                    execution_id,
-                                    update: message.content,
-                                })
-                                .await
-                                .ok();
-                        }
-                    }
-                }
-            }
-        });
-
-        let shell_handle = tokio::spawn({
-            let executions = executions.clone();
-            async move {
-                while let Some(execution) = execution_request_rx.next().await {
-                    let mut message: JupyterMessage = execution.request.into();
-                    message.header.msg_id.clone_from(&execution.execution_id.0);
-
-                    executions
-                        .lock()
-                        .await
-                        .insert(execution.execution_id, execution.response_sender);
-
-                    shell
-                        .send(message)
-                        .await
-                        .map_err(|e| anyhow::anyhow!("Failed to send execute request: {e:?}"))?;
-                }
-                anyhow::Ok(())
-            }
-        });
-
-        let document_client = Self {
-            iopub_handle,
-            shell_handle,
-            _executions: executions,
-        };
-
-        Ok(document_client)
-    }
+    instances: HashMap<EntityId, RunningKernel>,
 }
 
 impl RuntimeManager {
-    pub fn new(_cx: &mut AppContext) -> Self {
+    pub fn new(fs: Arc<dyn Fs>, _cx: &mut AppContext) -> Self {
         Self {
+            fs,
             runtimes: Default::default(),
             instances: Default::default(),
         }
-    }
-
-    /// Spawn the kernel for the given language and entity ID
-    /// If the kernel is already running, return the existing sender
-    /// Otherwise, spawn a new kernel and return the sender
-    pub fn spawn_kernel(language_name: Arc<str>) -> Result<RuntimeInstance> {
-        let kernel_path = match language_name.as_ref() {
-            "python" => HARDCODED_PYTHON_KERNEL,
-            "typescript" => HARDCODED_DENO_KERNEL,
-            // todo!(): don't run any kernel if the language is not supported
-            _ => HARDCODED_PYTHON_KERNEL,
-        };
-
-        let (execution_request_tx, execution_request_rx) = mpsc::unbounded::<ExecutionRequest>();
-
-        let kernel_path = std::path::PathBuf::from(kernel_path);
-
-        let _runtime_handle = std::thread::spawn(|| {
-            let tokio_runtime = tokio::runtime::Builder::new_current_thread()
-                .enable_all()
-                .build();
-
-            let tokio_runtime = match tokio_runtime {
-                Ok(tokio_runtime) => tokio_runtime,
-                Err(e) => {
-                    log::error!("Failed to create tokio runtime for jupyter kernel: {e:?}");
-                    return;
-                }
-            };
-
-            // TODO: Will need a signal handler to shutdown the runtime
-            tokio_runtime
-                .block_on(async move {
-                    // Set up the kernel client here as our prototype
-                    let kernel_path = kernel_path.clone();
-                    let document_client =
-                        DocumentClient::new(&kernel_path, execution_request_rx).await?;
-
-                    let join_fut = futures::future::try_join(
-                        document_client.iopub_handle,
-                        document_client.shell_handle,
-                    );
-
-                    let results = join_fut.await?;
-
-                    if let Err(e) = results.0 {
-                        log::error!("iopub error: {e:?}");
-                    }
-                    if let Err(e) = results.1 {
-                        log::error!("shell error: {e:?}");
-                    }
-
-                    anyhow::Ok(())
-                })
-                .log_err();
-        });
-
-        let runtime = RuntimeInstance {
-            execution_request_tx: execution_request_tx.clone(),
-            _runtime_handle,
-        };
-
-        Ok(runtime)
     }
 
     fn acquire_execution_request_tx(
@@ -260,17 +82,38 @@ impl RuntimeManager {
         language_name: Arc<str>,
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<UnboundedSender<ExecutionRequest>>> {
-        let maybe_runtime = self.instances.get(&entity_id);
-        if let Some(runtime) = maybe_runtime {
-            return Task::ready(anyhow::Ok(runtime.execution_request_tx.clone()));
+        let running_kernel = self.instances.get(&entity_id);
+        if let Some(running_kernel) = running_kernel {
+            return Task::ready(anyhow::Ok(running_kernel.execution_request_tx.clone()));
         }
 
+        // Get first runtime that matches the language name (for now)
+        let runtime = self
+            .runtimes
+            .iter()
+            .find(|runtime| runtime.spec.language == language_name.to_string());
+
+        let runtime = match runtime {
+            Some(runtime) => runtime,
+            None => {
+                return Task::ready(Err(anyhow::anyhow!(
+                    "No runtime found for language {}",
+                    language_name
+                )));
+            }
+        };
+
+        let runtime = runtime.clone();
+
+        let fs = self.fs.clone();
+
         cx.spawn(|this, mut cx| async move {
-            let runtime = Self::spawn_kernel(language_name)?;
-            let execution_request_tx = runtime.execution_request_tx.clone();
+            let running_kernel = RunningKernel::new(runtime, &entity_id, fs.clone()).await?;
+
+            let execution_request_tx = running_kernel.execution_request_tx.clone();
             this.update(&mut cx, |this, _cx| {
                 this.instances
-                    .insert(entity_id, runtime)
+                    .insert(entity_id, running_kernel)
                     .ok_or(anyhow::anyhow!("Failed to insert runtime"))?;
                 anyhow::Ok(())
             })??;
@@ -327,7 +170,7 @@ impl RuntimeManager {
         let code_snippet = workspace
             .active_item(cx)
             .and_then(|item| item.act_as::<Editor>(cx))
-            .map(|editor_view| {
+            .and_then(|editor_view| {
                 let editor = editor_view.read(cx);
                 let selection = editor.selections.newest::<usize>(cx);
                 let buffer = editor.buffer().read(cx).snapshot(cx);
@@ -381,8 +224,7 @@ impl RuntimeManager {
 
                 language_name
                     .map(|language_name| (selected_text, language_name, anchor, editor_view))
-            })
-            .flatten();
+            });
 
         let code_snippet = if let Some(code_snippet) = code_snippet {
             code_snippet

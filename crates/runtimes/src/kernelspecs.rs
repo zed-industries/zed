@@ -5,10 +5,13 @@
 // the rest using `project::Fs`.
 
 use anyhow::Result;
+use futures::channel::mpsc;
 use futures::StreamExt;
+use gpui::EntityId;
 use project::Fs;
-use std::net::{IpAddr, SocketAddr};
+use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::{path::PathBuf, sync::Arc};
+use util::ResultExt as _;
 
 use smol::net::TcpListener;
 
@@ -16,7 +19,9 @@ use smol::process::Command;
 
 use runtimelib::{dirs, ConnectionInfo, JupyterKernelspec};
 
-#[derive(Debug)]
+use crate::tokio_kernel::{connect_tokio_kernel_interface, ExecutionRequest};
+
+#[derive(Debug, Clone)]
 pub struct Runtime {
     pub name: String,
     pub path: PathBuf,
@@ -24,6 +29,7 @@ pub struct Runtime {
 }
 
 impl Runtime {
+    #[must_use]
     pub fn command(&self, connection_path: &PathBuf) -> Result<Command> {
         let argv = &self.spec.argv;
 
@@ -74,7 +80,7 @@ async fn peek_ports(ip: IpAddr, num: usize) -> anyhow::Result<Vec<u16>> {
     Ok(ports)
 }
 
-async fn from_peeking_ports(ip: IpAddr, kernel_name: &str) -> Result<ConnectionInfo> {
+pub async fn from_peeking_ports(ip: IpAddr, kernel_name: &str) -> Result<ConnectionInfo> {
     let transport = "tcp".to_string();
     let ports = peek_ports(ip, 5).await?;
 
@@ -92,18 +98,77 @@ async fn from_peeking_ports(ip: IpAddr, kernel_name: &str) -> Result<ConnectionI
     })
 }
 
-struct RuntimeInstance {
+pub struct RunningKernel {
     runtime: Runtime,
     process: smol::process::Child,
+    pub execution_request_tx: mpsc::UnboundedSender<ExecutionRequest>,
+    _runtime_handle: std::thread::JoinHandle<()>,
 }
 
-impl RuntimeInstance {
-    pub async fn new(runtime: Runtime, connection_path: PathBuf) -> anyhow::Result<Self> {
+impl RunningKernel {
+    pub async fn new(
+        runtime: Runtime,
+        entity_id: &EntityId,
+        fs: Arc<dyn Fs>,
+    ) -> anyhow::Result<Self> {
+        let connection_info = from_peeking_ports(
+            IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)),
+            &format!("zed-{}", runtime.name),
+        )
+        .await?;
+
+        let connection_path =
+            dirs::runtime_dir().join(format!("kernel-zed-{}", entity_id));
+
+        let content = serde_json::to_string(&connection_info)?;
+
+        // write out file to disk for kernel
+        fs.atomic_write(connection_path.clone(), content).await?;
+
         let mut cmd = runtime.command(&connection_path)?;
         let process = cmd.spawn()?;
 
-        Ok(Self { runtime, process })
+        let (execution_request_tx, _runtime_handle) = connect_kernel(connection_info)?;
+
+        Ok(Self {
+            runtime,
+            process,
+            execution_request_tx,
+            _runtime_handle,
+        })
     }
+}
+
+pub fn connect_kernel(
+    connection_info: ConnectionInfo,
+) -> Result<(
+    mpsc::UnboundedSender<ExecutionRequest>,
+    std::thread::JoinHandle<()>,
+)> {
+    let (execution_request_tx, execution_request_rx) = mpsc::unbounded::<ExecutionRequest>();
+
+    let _runtime_handle = std::thread::spawn(|| {
+        let tokio_runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build();
+
+        let tokio_runtime = match tokio_runtime {
+            Ok(tokio_runtime) => tokio_runtime,
+            Err(e) => {
+                log::error!("Failed to create tokio runtime for jupyter kernel: {e:?}");
+                return;
+            }
+        };
+
+        // TODO: Will need a signal handler to shutdown the runtime
+        tokio_runtime
+            .block_on(async move {
+                connect_tokio_kernel_interface(&connection_info, execution_request_rx).await
+            })
+            .log_err();
+    });
+
+    Ok((execution_request_tx.clone(), _runtime_handle))
 }
 
 pub async fn read_kernelspec_at(
