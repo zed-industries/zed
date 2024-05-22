@@ -40,7 +40,7 @@ use gpui::{
 };
 use language::{
     language_settings::SoftWrap, AutoindentMode, Buffer, BufferSnapshot, LanguageRegistry,
-    OffsetRangeExt as _, Point, ToOffset as _,
+    OffsetRangeExt as _, Point, ToOffset as _, ToPoint as _,
 };
 use multi_buffer::MultiBufferRow;
 use parking_lot::Mutex;
@@ -50,7 +50,7 @@ use settings::Settings;
 use std::{
     cmp::{self, Ordering},
     fmt::Write,
-    iter,
+    iter, mem,
     ops::Range,
     path::PathBuf,
     sync::Arc,
@@ -1767,41 +1767,34 @@ impl Conversation {
 
                 let mut changed = false;
                 let mut new_calls = Vec::new();
-                let mut old_calls = this.slash_command_calls.drain(..).peekable();
+                let mut old_calls = mem::take(&mut this.slash_command_calls)
+                    .into_iter()
+                    .peekable();
                 let mut lines = buffer.as_rope().chunks().lines();
                 let mut offset = 0;
                 while let Some(line) = lines.next() {
                     let line_end_offset = offset + line.len();
                     if let Some(call) = SlashCommandLine::parse(line) {
-                        let name = &line[call.name];
-                        let argument = call.argument.map(|range| &line[range]);
-
                         let mut unchanged_call = None;
                         while let Some(old_call) = old_calls.peek() {
                             match old_call.source_range.start.to_offset(&buffer).cmp(&offset) {
                                 Ordering::Greater => break,
                                 Ordering::Equal
-                                    if old_call.name == name
-                                        && old_call.argument.as_deref() == argument
-                                        && !old_call.should_rerun =>
+                                    if this.slash_command_is_unchanged(
+                                        old_call, &call, line, &buffer,
+                                    ) =>
                                 {
                                     unchanged_call = old_calls.next();
                                 }
                                 _ => {
                                     changed = true;
                                     let old_call = old_calls.next().unwrap();
-                                    if let Some(output_range) = old_call.output_range {
-                                        this.buffer.update(cx, |buffer, cx| {
-                                            buffer.edit([(output_range.clone(), "")], None, cx);
-                                        });
-                                        cx.emit(ConversationEvent::SlashCommandOutputRemoved(
-                                            output_range,
-                                        ))
-                                    }
+                                    this.slash_command_call_removed(old_call, cx);
                                 }
                             }
                         }
 
+                        let name = &line[call.name];
                         if let Some(call) = unchanged_call {
                             new_calls.push(call);
                         } else if let Some(command) = this.slash_command_registry.command(name) {
@@ -1810,6 +1803,7 @@ impl Conversation {
                             let source_range =
                                 buffer.anchor_after(offset)..buffer.anchor_before(line_end_offset);
 
+                            let argument = call.argument.map(|range| &line[range]);
                             let invocation = command.run(argument, cx);
 
                             new_calls.push(SlashCommandCall {
@@ -1864,14 +1858,22 @@ impl Conversation {
                                             output.push('\n');
                                         }
 
-                                        let output_start = source_range.end.to_offset(buffer);
-                                        let output_end =
-                                            output_start + '\n'.len_utf8() + output.len();
+                                        let source_end = source_range.end.to_offset(buffer);
+                                        let output_start = source_end + '\n'.len_utf8();
+                                        let output_end = output_start + output.len();
+
+                                        if buffer
+                                            .chars_at(source_end)
+                                            .next()
+                                            .map_or(false, |c| c != '\n')
+                                        {
+                                            output.push('\n');
+                                        }
 
                                         buffer.edit(
                                             [
-                                                (output_start..output_start, "\n".to_string()),
-                                                (output_start..output_start, output),
+                                                (source_end..source_end, "\n".to_string()),
+                                                (source_end..source_end, output),
                                             ],
                                             None,
                                             cx,
@@ -1881,12 +1883,13 @@ impl Conversation {
                                         let output_end = buffer.anchor_before(output_end);
                                         this.slash_command_calls[call_ix].output_range =
                                             Some(output_start..output_end);
-                                        Some(output_start..output_end)
+                                        Some(source_range.end..output_end)
                                     });
                                     if let Some(output_range) = output_range {
                                         cx.emit(ConversationEvent::SlashCommandOutputAdded(
                                             output_range,
                                         ));
+                                        cx.emit(ConversationEvent::SlashCommandsChanged);
                                     }
                                 })
                                 .ok();
@@ -1899,12 +1902,7 @@ impl Conversation {
 
                 for old_call in old_calls {
                     changed = true;
-                    if let Some(output_range) = old_call.output_range.clone() {
-                        this.buffer.update(cx, |buffer, cx| {
-                            buffer.edit([(output_range.clone(), "")], None, cx);
-                        });
-                        cx.emit(ConversationEvent::SlashCommandOutputRemoved(output_range));
-                    }
+                    this.slash_command_call_removed(old_call, cx);
                 }
 
                 if changed {
@@ -1915,6 +1913,65 @@ impl Conversation {
             })
             .ok();
         }));
+    }
+
+    fn slash_command_is_unchanged(
+        &self,
+        old_call: &SlashCommandCall,
+        new_call: &SlashCommandLine,
+        new_text: &str,
+        buffer: &BufferSnapshot,
+    ) -> bool {
+        if old_call.name != new_text[new_call.name.clone()] {
+            return false;
+        }
+
+        if old_call.argument.as_deref() != new_call.argument.clone().map(|range| &new_text[range]) {
+            return false;
+        }
+
+        if old_call.should_rerun {
+            return false;
+        }
+
+        if let Some(output_range) = &old_call.output_range {
+            let source_range = old_call.source_range.to_point(buffer);
+            let output_start = output_range.start.to_point(buffer);
+            if source_range.start.column != 0 {
+                return false;
+            }
+            if source_range.end.column != new_text.len() as u32 {
+                return false;
+            }
+            if output_start != Point::new(source_range.end.row + 1, 0) {
+                return false;
+            }
+            if let Some(next_char) = buffer.chars_at(output_range.end).next() {
+                if next_char != '\n' {
+                    return false;
+                }
+            }
+        }
+        true
+    }
+
+    fn slash_command_call_removed(
+        &self,
+        old_call: SlashCommandCall,
+        cx: &mut ModelContext<Conversation>,
+    ) {
+        if let Some(output_range) = old_call.output_range {
+            self.buffer.update(cx, |buffer, cx| {
+                buffer.edit(
+                    [(old_call.source_range.end..output_range.end, "")],
+                    None,
+                    cx,
+                );
+            });
+            cx.emit(ConversationEvent::SlashCommandOutputRemoved(
+                old_call.source_range.end..output_range.end,
+            ))
+        }
     }
 
     fn remaining_tokens(&self) -> Option<isize> {
@@ -2798,11 +2855,16 @@ impl ConversationEditor {
                         .slash_command_calls
                         .iter()
                         .map(|call| {
-                            let start = buffer
-                                .anchor_in_excerpt(excerpt_id, call.source_range.start)
-                                .unwrap();
+                            let start = call.source_range.start;
+                            let end = if let Some(output) = &call.output_range {
+                                output.end
+                            } else {
+                                call.source_range.end
+                            };
+                            let start = buffer.anchor_in_excerpt(excerpt_id, start).unwrap();
+                            let end = buffer.anchor_in_excerpt(excerpt_id, end).unwrap();
                             (
-                                start..=start,
+                                start..=end,
                                 Some(colors.editor_document_highlight_read_background),
                             )
                         })
@@ -4248,6 +4310,75 @@ mod tests {
             /file src/main.rs«
             ```src/lib.rs
             fn one() -> usize { 1 }
+            ```
+            »"
+            .unindent(),
+            cx,
+        );
+
+        cx.executor().advance_clock(SLASH_COMMAND_DEBOUNCE);
+        assert_text_and_output_ranges(
+            &buffer,
+            &output_ranges.borrow(),
+            &"
+            /file src/main.rs«
+            ```src/main.rs
+            use crate::one;
+            fn main() { one(); }
+            ```
+            »"
+            .unindent(),
+            cx,
+        );
+
+        // Insert newlines between the slash command and its output
+        buffer.update(cx, |buffer, cx| {
+            let edit_offset = buffer.text().find("\n```src/main.rs").unwrap();
+            buffer.edit([(edit_offset..edit_offset, "\n")], None, cx);
+        });
+        assert_text_and_output_ranges(
+            &buffer,
+            &output_ranges.borrow(),
+            &"
+            /file src/main.rs«
+
+            ```src/main.rs
+            use crate::one;
+            fn main() { one(); }
+            ```
+            »"
+            .unindent(),
+            cx,
+        );
+
+        cx.executor().advance_clock(SLASH_COMMAND_DEBOUNCE);
+        assert_text_and_output_ranges(
+            &buffer,
+            &output_ranges.borrow(),
+            &"
+            /file src/main.rs«
+            ```src/main.rs
+            use crate::one;
+            fn main() { one(); }
+            ```
+            »"
+            .unindent(),
+            cx,
+        );
+
+        // Insert text at the beginning of the output
+        buffer.update(cx, |buffer, cx| {
+            let edit_offset = buffer.text().find("```src/main.rs").unwrap();
+            buffer.edit([(edit_offset..edit_offset, "!")], None, cx);
+        });
+        assert_text_and_output_ranges(
+            &buffer,
+            &output_ranges.borrow(),
+            &"
+            /file src/main.rs«
+            !```src/main.rs
+            use crate::one;
+            fn main() { one(); }
             ```
             »"
             .unindent(),
