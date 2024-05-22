@@ -8,7 +8,8 @@ use sha2::{Digest, Sha256};
 use util::{truncate_and_remove_front, ResultExt};
 
 use crate::{
-    ResolvedTask, SpawnInTerminal, TaskContext, TaskId, VariableName, ZED_VARIABLE_NAME_PREFIX,
+    ResolvedTask, SpawnInTerminal, TaskContext, TaskId, TerminalWorkDir, VariableName,
+    ZED_VARIABLE_NAME_PREFIX,
 };
 
 /// A template definition of a Zed task to run.
@@ -112,12 +113,14 @@ impl TaskTemplate {
                     &variable_names,
                     &mut substituted_variables,
                 )?;
-                Some(substitured_cwd)
+                Some(TerminalWorkDir::Local(PathBuf::from(substitured_cwd)))
             }
             None => None,
         }
-        .map(PathBuf::from)
-        .or(cx.cwd.clone());
+        .or(cx
+            .cwd
+            .as_ref()
+            .map(|cwd| TerminalWorkDir::Local(cwd.clone())));
         let human_readable_label = substitute_all_template_variables_in_str(
             &self.label,
             &truncated_variables,
@@ -379,8 +382,10 @@ mod tests {
             task_variables: TaskVariables::default(),
         };
         assert_eq!(
-            resolved_task(&task_without_cwd, &cx).cwd.as_deref(),
-            Some(context_cwd.as_path()),
+            resolved_task(&task_without_cwd, &cx)
+                .cwd
+                .and_then(|cwd| cwd.local_path()),
+            Some(context_cwd.clone()),
             "TaskContext's cwd should be taken on resolve if task's cwd is None"
         );
 
@@ -394,8 +399,10 @@ mod tests {
             task_variables: TaskVariables::default(),
         };
         assert_eq!(
-            resolved_task(&task_with_cwd, &cx).cwd.as_deref(),
-            Some(task_cwd.as_path()),
+            resolved_task(&task_with_cwd, &cx)
+                .cwd
+                .and_then(|cwd| cwd.local_path()),
+            Some(task_cwd.clone()),
             "TaskTemplate's cwd should be taken on resolve if TaskContext's cwd is None"
         );
 
@@ -404,8 +411,10 @@ mod tests {
             task_variables: TaskVariables::default(),
         };
         assert_eq!(
-            resolved_task(&task_with_cwd, &cx).cwd.as_deref(),
-            Some(task_cwd.as_path()),
+            resolved_task(&task_with_cwd, &cx)
+                .cwd
+                .and_then(|cwd| cwd.local_path()),
+            Some(task_cwd.clone()),
             "TaskTemplate's cwd should be taken on resolve if TaskContext's cwd is not None"
         );
     }
