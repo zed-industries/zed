@@ -1,4 +1,5 @@
 use std::cell::RefCell;
+use std::ffi::OsString;
 use std::ops::Deref;
 use std::rc::{Rc, Weak};
 use std::time::{Duration, Instant};
@@ -29,8 +30,8 @@ use crate::platform::linux::LinuxClient;
 use crate::platform::{LinuxCommon, PlatformWindow};
 use crate::{
     modifiers_from_xinput_info, point, px, AnyWindowHandle, Bounds, CursorStyle, DisplayId,
-    Modifiers, ModifiersChangedEvent, Pixels, PlatformDisplay, PlatformInput, Point, ScrollDelta,
-    Size, TouchPhase, WindowParams, X11Window,
+    Keystroke, Modifiers, ModifiersChangedEvent, Pixels, PlatformDisplay, PlatformInput, Point,
+    ScrollDelta, Size, TouchPhase, WindowParams, X11Window,
 };
 
 use super::{
@@ -105,6 +106,8 @@ pub struct X11ClientState {
     pub(crate) ximc: Option<X11rbClient<Rc<XCBConnection>>>,
     pub(crate) xim_handler: Option<XimHandler>,
 
+    pub(crate) compose_state: xkbc::compose::State,
+    pub(crate) pre_edit_text: Option<String>,
     pub(crate) cursor_handle: cursor::Handle,
     pub(crate) cursor_styles: HashMap<xproto::Window, CursorStyle>,
     pub(crate) cursor_cache: HashMap<CursorStyle, xproto::Cursor>,
@@ -215,8 +218,8 @@ impl X11Client {
             .unwrap();
         assert!(xkb.supported);
 
+        let xkb_context = xkbc::Context::new(xkbc::CONTEXT_NO_FLAGS);
         let xkb_state = {
-            let xkb_context = xkbc::Context::new(xkbc::CONTEXT_NO_FLAGS);
             let xkb_device_id = xkbc::x11::get_core_keyboard_device_id(&xcb_connection);
             let xkb_keymap = xkbc::x11::keymap_new_from_device(
                 &xkb_context,
@@ -225,6 +228,17 @@ impl X11Client {
                 xkbc::KEYMAP_COMPILE_NO_FLAGS,
             );
             xkbc::x11::state_new_from_device(&xkb_keymap, &xcb_connection, xkb_device_id)
+        };
+        let compose_state = {
+            let locale = std::env::var_os("LC_CTYPE").unwrap_or(OsString::from("C"));
+            let table = xkbc::compose::Table::new_from_locale(
+                &xkb_context,
+                &locale,
+                xkbc::compose::COMPILE_NO_FLAGS,
+            )
+            .log_err()
+            .unwrap();
+            xkbc::compose::State::new(&table, xkbc::compose::STATE_NO_FLAGS)
         };
 
         let screen = xcb_connection.setup().roots.get(x_root_index).unwrap();
@@ -361,6 +375,9 @@ impl X11Client {
             ximc,
             xim_handler,
 
+            compose_state: compose_state,
+            pre_edit_text: None,
+
             cursor_handle,
             cursor_styles: HashMap::default(),
             cursor_cache: HashMap::default(),
@@ -452,11 +469,43 @@ impl X11Client {
                 let modifiers = modifiers_from_state(event.state);
                 let keystroke = {
                     let code = event.detail.into();
-                    let keystroke = crate::Keystroke::from_xkb(&state.xkb, modifiers, code);
+                    let mut keystroke = crate::Keystroke::from_xkb(&state.xkb, modifiers, code);
                     state.xkb.update_key(code, xkbc::KeyDirection::Down);
                     let keysym = state.xkb.key_get_one_sym(code);
                     if keysym.is_modifier_key() {
                         return Some(());
+                    }
+                    state.compose_state.feed(keysym);
+                    match state.compose_state.status() {
+                        xkbc::Status::Composed => {
+                            state.pre_edit_text.take();
+                            keystroke.ime_key = state.compose_state.utf8();
+                            keystroke.key =
+                                xkbc::keysym_get_name(state.compose_state.keysym().unwrap());
+                        }
+                        xkbc::Status::Composing => {
+                            state.pre_edit_text = state
+                                .compose_state
+                                .utf8()
+                                .or(crate::Keystroke::underlying_dead_key(keysym));
+                            let pre_edit = state.pre_edit_text.clone().unwrap_or(String::default());
+                            drop(state);
+                            window.handle_ime_preedit(pre_edit);
+                            state = self.0.borrow_mut();
+                        }
+                        xkbc::Status::Cancelled => {
+                            let pre_edit = state.pre_edit_text.take();
+                            drop(state);
+                            if let Some(pre_edit) = pre_edit {
+                                window.handle_ime_commit(pre_edit);
+                            }
+                            if let Some(current_key) = Keystroke::underlying_dead_key(keysym) {
+                                window.handle_ime_preedit(current_key);
+                            }
+                            state = self.0.borrow_mut();
+                            state.compose_state.feed(keysym);
+                        }
+                        _ => {}
                     }
                     keystroke
                 };
