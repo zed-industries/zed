@@ -4,8 +4,8 @@ use crate::active_item_selection_properties;
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{
     impl_actions, rems, Action, AnyElement, AppContext, DismissEvent, EventEmitter, FocusableView,
-    InteractiveElement, Model, ParentElement, Render, SharedString, Styled, Subscription, View,
-    ViewContext, VisualContext, WeakView,
+    InteractiveElement, Model, ParentElement, Render, SharedString, Styled, Subscription, Task,
+    View, ViewContext, VisualContext, WeakView,
 };
 use picker::{highlighted_match_with_paths::HighlightedText, Picker, PickerDelegate};
 use project::{Inventory, TaskSourceKind};
@@ -197,50 +197,59 @@ impl PickerDelegate for TasksModalDelegate {
         &mut self,
         query: String,
         cx: &mut ViewContext<picker::Picker<Self>>,
-    ) -> gpui::Task<()> {
+    ) -> Task<()> {
         cx.spawn(move |picker, mut cx| async move {
-            let Some(candidates) = picker
+            let Some(candidates_task) = picker
                 .update(&mut cx, |picker, cx| {
-                    let candidates = match &mut picker.delegate.candidates {
-                        Some(candidates) => candidates,
+                    match &mut picker.delegate.candidates {
+                        Some(candidates) => {
+                            Task::ready(Ok(string_match_candidates(candidates.iter())))
+                        }
                         None => {
-                            let Ok((worktree, language)) =
+                            let Ok(Some((worktree, location))) =
                                 picker.delegate.workspace.update(cx, |workspace, cx| {
                                     active_item_selection_properties(workspace, cx)
                                 })
                             else {
-                                return Vec::new();
+                                return Task::ready(Ok(Vec::new()));
                             };
-                            let (used, current) =
-                                picker.delegate.inventory.update(cx, |inventory, _| {
+
+                            let resolved_task =
+                                picker.delegate.inventory.update(cx, |inventory, cx| {
+                                    let language =
+                                        location.buffer.read(cx).language_at(location.range.start);
                                     inventory.used_and_current_resolved_tasks(
                                         language,
-                                        worktree,
+                                        Some(worktree),
                                         &picker.delegate.task_context,
                                     )
                                 });
-                            picker.delegate.last_used_candidate_index = if used.is_empty() {
-                                None
-                            } else {
-                                Some(used.len() - 1)
-                            };
+                            cx.spawn(|picker, mut cx| async move {
+                                let (used, current) = resolved_task.await;
+                                picker.update(&mut cx, |picker, _| {
+                                    picker.delegate.last_used_candidate_index = if used.is_empty() {
+                                        None
+                                    } else {
+                                        Some(used.len() - 1)
+                                    };
 
-                            let mut new_candidates = used;
-                            new_candidates.extend(current);
-                            picker.delegate.candidates.insert(new_candidates)
+                                    let mut new_candidates = used;
+                                    new_candidates.extend(current);
+                                    let match_candidates =
+                                        string_match_candidates(new_candidates.iter());
+                                    let _ = picker.delegate.candidates.insert(new_candidates);
+                                    match_candidates
+                                })
+                            })
                         }
-                    };
-                    candidates
-                        .iter()
-                        .enumerate()
-                        .map(|(index, (_, candidate))| StringMatchCandidate {
-                            id: index,
-                            char_bag: candidate.resolved_label.chars().collect(),
-                            string: candidate.display_label().to_owned(),
-                        })
-                        .collect::<Vec<_>>()
+                    }
                 })
                 .ok()
+            else {
+                return;
+            };
+            let Some(candidates): Option<Vec<StringMatchCandidate>> =
+                candidates_task.await.log_err()
             else {
                 return;
             };
@@ -532,6 +541,19 @@ impl PickerDelegate for TasksModalDelegate {
                 .into_any_element(),
         )
     }
+}
+
+fn string_match_candidates<'a>(
+    candidates: impl Iterator<Item = &'a (TaskSourceKind, ResolvedTask)> + 'a,
+) -> Vec<StringMatchCandidate> {
+    candidates
+        .enumerate()
+        .map(|(index, (_, candidate))| StringMatchCandidate {
+            id: index,
+            char_bag: candidate.resolved_label.chars().collect(),
+            string: candidate.display_label().to_owned(),
+        })
+        .collect()
 }
 
 #[cfg(test)]

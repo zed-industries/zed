@@ -1101,6 +1101,36 @@ impl Database {
         .map(|guard| guard.into_inner())
     }
 
+    /// Returns the host connection for a request to join a shared project.
+    pub async fn host_for_owner_project_request(
+        &self,
+        project_id: ProjectId,
+        _connection_id: ConnectionId,
+        user_id: UserId,
+    ) -> Result<ConnectionId> {
+        self.project_transaction(project_id, |tx| async move {
+            let (project, dev_server_project) = project::Entity::find_by_id(project_id)
+                .find_also_related(dev_server_project::Entity)
+                .one(&*tx)
+                .await?
+                .ok_or_else(|| anyhow!("no such project"))?;
+
+            let Some(dev_server_project) = dev_server_project else {
+                return Err(anyhow!("not a dev server project"))?;
+            };
+            let dev_server = dev_server::Entity::find_by_id(dev_server_project.dev_server_id)
+                .one(&*tx)
+                .await?
+                .ok_or_else(|| anyhow!("no such dev server"))?;
+            if dev_server.user_id != user_id {
+                return Err(anyhow!("not your project"))?;
+            }
+            project.host_connection()
+        })
+        .await
+        .map(|guard| guard.into_inner())
+    }
+
     pub async fn connections_for_buffer_update(
         &self,
         project_id: ProjectId,

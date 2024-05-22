@@ -194,10 +194,11 @@ impl Inventory {
         language: Option<Arc<Language>>,
         worktree: Option<WorktreeId>,
         task_context: &TaskContext,
-    ) -> (
+    ) -> Task<(
         Vec<(TaskSourceKind, ResolvedTask)>,
         Vec<(TaskSourceKind, ResolvedTask)>,
-    ) {
+    )> {
+        // TODO kb proxy that through the project's list_task analogue so it requests collab for remote projects + merge it with the local tasks
         let task_source_kind = language.as_ref().map(|language| TaskSourceKind::Language {
             name: language.name(),
         });
@@ -309,16 +310,17 @@ impl Inventory {
                     None
                 }
             })
-            .collect();
+            .collect::<Vec<_>>();
 
-        (
-            resolved,
-            currently_resolved_tasks
-                .into_iter()
-                .sorted_unstable_by(task_lru_comparator)
-                .map(|(kind, task, _)| (kind, task))
-                .collect(),
-        )
+        // (
+        //     resolved,
+        //     currently_resolved_tasks
+        //         .into_iter()
+        //         .sorted_unstable_by(task_lru_comparator)
+        //         .map(|(kind, task, _)| (kind, task))
+        //         .collect(),
+        // )
+        todo!("TODO kb")
     }
 
     /// Returns the last scheduled task, if any of the sources contains one with the matching id.
@@ -443,21 +445,6 @@ mod test_inventory {
         })
     }
 
-    pub(super) fn resolved_task_names(
-        inventory: &Model<Inventory>,
-        worktree: Option<WorktreeId>,
-        cx: &mut TestAppContext,
-    ) -> Vec<String> {
-        inventory.update(cx, |inventory, _| {
-            let (used, current) =
-                inventory.used_and_current_resolved_tasks(None, worktree, &TaskContext::default());
-            used.into_iter()
-                .chain(current)
-                .map(|(_, task)| task.original_task().label.clone())
-                .collect()
-        })
-    }
-
     pub(super) fn register_task_used(
         inventory: &Model<Inventory>,
         task_name: &str,
@@ -478,21 +465,22 @@ mod test_inventory {
         });
     }
 
-    pub(super) fn list_tasks(
+    pub(super) async fn list_tasks(
         inventory: &Model<Inventory>,
         worktree: Option<WorktreeId>,
         cx: &mut TestAppContext,
     ) -> Vec<(TaskSourceKind, String)> {
-        inventory.update(cx, |inventory, _| {
-            let (used, current) =
-                inventory.used_and_current_resolved_tasks(None, worktree, &TaskContext::default());
-            let mut all = used;
-            all.extend(current);
-            all.into_iter()
-                .map(|(source_kind, task)| (source_kind, task.resolved_label))
-                .sorted_by_key(|(kind, label)| (task_source_kind_preference(kind), label.clone()))
-                .collect()
-        })
+        let (used, current) = inventory
+            .update(cx, |inventory, _| {
+                inventory.used_and_current_resolved_tasks(None, worktree, &TaskContext::default())
+            })
+            .await;
+        let mut all = used;
+        all.extend(current);
+        all.into_iter()
+            .map(|(source_kind, task)| (source_kind, task.resolved_label))
+            .sorted_by_key(|(kind, label)| (task_source_kind_preference(kind), label.clone()))
+            .collect()
     }
 }
 
@@ -622,9 +610,9 @@ mod tests {
     use super::*;
 
     #[gpui::test]
-    fn test_task_list_sorting(cx: &mut TestAppContext) {
+    async fn test_task_list_sorting(cx: &mut TestAppContext) {
         let inventory = cx.update(Inventory::new);
-        let initial_tasks = resolved_task_names(&inventory, None, cx);
+        let initial_tasks = resolved_task_names(&inventory, None, cx).await;
         assert!(
             initial_tasks.is_empty(),
             "No tasks expected for empty inventory, but got {initial_tasks:?}"
@@ -671,7 +659,7 @@ mod tests {
             &expected_initial_state,
         );
         assert_eq!(
-            resolved_task_names(&inventory, None, cx),
+            resolved_task_names(&inventory, None, cx).await,
             &expected_initial_state,
             "Tasks with equal amount of usages should be sorted alphanumerically"
         );
@@ -682,7 +670,7 @@ mod tests {
             &expected_initial_state,
         );
         assert_eq!(
-            resolved_task_names(&inventory, None, cx),
+            resolved_task_names(&inventory, None, cx).await,
             vec![
                 "2_task".to_string(),
                 "2_task".to_string(),
@@ -701,7 +689,7 @@ mod tests {
             &expected_initial_state,
         );
         assert_eq!(
-            resolved_task_names(&inventory, None, cx),
+            resolved_task_names(&inventory, None, cx).await,
             vec![
                 "3_task".to_string(),
                 "1_task".to_string(),
@@ -736,7 +724,7 @@ mod tests {
             &expected_updated_state,
         );
         assert_eq!(
-            resolved_task_names(&inventory, None, cx),
+            resolved_task_names(&inventory, None, cx).await,
             vec![
                 "3_task".to_string(),
                 "1_task".to_string(),
@@ -756,7 +744,7 @@ mod tests {
             &expected_updated_state,
         );
         assert_eq!(
-            resolved_task_names(&inventory, None, cx),
+            resolved_task_names(&inventory, None, cx).await,
             vec![
                 "11_hello".to_string(),
                 "3_task".to_string(),
@@ -773,7 +761,7 @@ mod tests {
     }
 
     #[gpui::test]
-    fn test_inventory_static_task_filters(cx: &mut TestAppContext) {
+    async fn test_inventory_static_task_filters(cx: &mut TestAppContext) {
         let inventory_with_statics = cx.update(Inventory::new);
         let common_name = "common_task_name";
         let path_1 = Path::new("path_1");
@@ -933,9 +921,12 @@ mod tests {
             .sorted_by_key(|(kind, label)| (task_source_kind_preference(kind), label.clone()))
             .collect::<Vec<_>>();
 
-        assert_eq!(list_tasks(&inventory_with_statics, None, cx), all_tasks);
         assert_eq!(
-            list_tasks(&inventory_with_statics, Some(worktree_1), cx),
+            list_tasks(&inventory_with_statics, None, cx).await,
+            all_tasks
+        );
+        assert_eq!(
+            list_tasks(&inventory_with_statics, Some(worktree_1), cx).await,
             worktree_1_tasks
                 .iter()
                 .chain(worktree_independent_tasks.iter())
@@ -944,7 +935,7 @@ mod tests {
                 .collect::<Vec<_>>(),
         );
         assert_eq!(
-            list_tasks(&inventory_with_statics, Some(worktree_2), cx),
+            list_tasks(&inventory_with_statics, Some(worktree_2), cx).await,
             worktree_2_tasks
                 .iter()
                 .chain(worktree_independent_tasks.iter())
@@ -952,5 +943,21 @@ mod tests {
                 .sorted_by_key(|(kind, label)| (task_source_kind_preference(kind), label.clone()))
                 .collect::<Vec<_>>(),
         );
+    }
+
+    pub(super) async fn resolved_task_names(
+        inventory: &Model<Inventory>,
+        worktree: Option<WorktreeId>,
+        cx: &mut TestAppContext,
+    ) -> Vec<String> {
+        let (used, current) = inventory
+            .update(cx, |inventory, _| {
+                inventory.used_and_current_resolved_tasks(None, worktree, &TaskContext::default())
+            })
+            .await;
+        used.into_iter()
+            .chain(current)
+            .map(|(_, task)| task.original_task().label.clone())
+            .collect()
     }
 }

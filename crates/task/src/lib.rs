@@ -5,7 +5,7 @@ pub mod static_source;
 mod task_template;
 mod vscode_format;
 
-use collections::{HashMap, HashSet};
+use collections::{hash_map, HashMap, HashSet};
 use gpui::SharedString;
 use serde::Serialize;
 use std::path::PathBuf;
@@ -159,6 +159,32 @@ impl VariableName {
             format!("${self}")
         }
     }
+
+    /// Tries to derive a variable name from the string given, or returns that string back as an error.
+    pub fn from_string(s: String) -> Result<Self, String> {
+        if s == format!("{ZED_VARIABLE_NAME_PREFIX}FILE") {
+            Ok(Self::File)
+        } else if s == format!("{ZED_VARIABLE_NAME_PREFIX}WORKTREE_ROOT") {
+            Ok(Self::WorktreeRoot)
+        } else if s == format!("{ZED_VARIABLE_NAME_PREFIX}SYMBOL") {
+            Ok(Self::Symbol)
+        } else if s == format!("{ZED_VARIABLE_NAME_PREFIX}ROW") {
+            Ok(Self::Row)
+        } else if s == format!("{ZED_VARIABLE_NAME_PREFIX}COLUMN") {
+            Ok(Self::Column)
+        } else if s == format!("{ZED_VARIABLE_NAME_PREFIX}SELECTED_TEXT") {
+            Ok(Self::SelectedText)
+        } else if s == format!("{ZED_VARIABLE_NAME_PREFIX}RUNNABLE_SYMBOL") {
+            Ok(Self::RunnableSymbol)
+        } else {
+            let custom_prefix = format!("{ZED_VARIABLE_NAME_PREFIX}CUSTOM_");
+            if s.starts_with(&custom_prefix) {
+                Ok(Self::Custom(Cow::Owned(s)))
+            } else {
+                Err(s)
+            }
+        }
+    }
 }
 
 /// A prefix that all [`VariableName`] variants are prefixed with when used in environment variables and similar template contexts.
@@ -216,6 +242,16 @@ impl TaskVariables {
 impl FromIterator<(VariableName, String)> for TaskVariables {
     fn from_iter<T: IntoIterator<Item = (VariableName, String)>>(iter: T) -> Self {
         Self(HashMap::from_iter(iter))
+    }
+}
+
+impl IntoIterator for TaskVariables {
+    type Item = (VariableName, String);
+
+    type IntoIter = hash_map::IntoIter<VariableName, String>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.0.into_iter()
     }
 }
 

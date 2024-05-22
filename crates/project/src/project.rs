@@ -47,10 +47,10 @@ use language::{
         serialize_version, split_operations,
     },
     range_from_lsp, Bias, Buffer, BufferSnapshot, CachedLspAdapter, Capability, CodeLabel,
-    Diagnostic, DiagnosticEntry, DiagnosticSet, Diff, Documentation, Event as BufferEvent,
-    File as _, Language, LanguageRegistry, LanguageServerName, LocalFile, LspAdapterDelegate,
-    Operation, Patch, PendingLanguageServer, PointUtf16, TextBufferSnapshot, ToOffset,
-    ToPointUtf16, Transaction, Unclipped,
+    ContextProvider, Diagnostic, DiagnosticEntry, DiagnosticSet, Diff, Documentation,
+    Event as BufferEvent, File as _, Language, LanguageRegistry, LanguageServerName, LocalFile,
+    LspAdapterDelegate, Operation, Patch, PendingLanguageServer, PointUtf16, TextBufferSnapshot,
+    ToOffset, ToPointUtf16, Transaction, Unclipped,
 };
 use log::error;
 use lsp::{
@@ -97,7 +97,10 @@ use std::{
     },
     time::{Duration, Instant},
 };
-use task::static_source::{StaticSource, TrackedFile};
+use task::{
+    static_source::{StaticSource, TrackedFile},
+    TaskContext, TaskTemplate, TaskVariables, VariableName,
+};
 use terminals::Terminals;
 use text::{Anchor, BufferId, LineEnding};
 use util::{
@@ -676,6 +679,8 @@ impl Project {
         client.add_model_request_handler(Self::handle_lsp_command::<lsp_ext_command::ExpandMacro>);
         client.add_model_request_handler(Self::handle_blame_buffer);
         client.add_model_request_handler(Self::handle_multi_lsp_query);
+        client.add_model_request_handler(Self::handle_task_context_for_location);
+        client.add_model_request_handler(Self::handle_task_templates);
     }
 
     pub fn local(
@@ -9424,6 +9429,76 @@ impl Project {
         })
     }
 
+    async fn handle_task_context_for_location(
+        project: Model<Self>,
+        envelope: TypedEnvelope<proto::TaskContextForLocation>,
+        _: Arc<Client>,
+        mut cx: AsyncAppContext,
+    ) -> Result<proto::TaskContext> {
+        let location = envelope
+            .payload
+            .location
+            .context("no location given for task context handling")?;
+        // TODO kb extract it into a function
+        let buffer_id = BufferId::new(location.buffer_id)?;
+        let buffer = project
+            .update(&mut cx, |project, cx| {
+                project.wait_for_remote_buffer(buffer_id, cx)
+            })?
+            .await?;
+        let start = location
+            .start
+            .and_then(deserialize_anchor)
+            .context("missing task context location start")?;
+        let end = location
+            .end
+            .and_then(deserialize_anchor)
+            .context("missing task context location end")?;
+        let location = Location {
+            buffer,
+            range: start..end,
+        };
+        let context_task = project.update(&mut cx, |project, cx| {
+            let captured_variables = {
+                let mut variables = TaskVariables::default();
+                for range in location
+                    .buffer
+                    .read(cx)
+                    .snapshot()
+                    .runnable_ranges(location.range.clone())
+                {
+                    for (capture_name, value) in range.extra_captures {
+                        variables.insert(VariableName::Custom(capture_name.into()), value);
+                    }
+                }
+                variables
+            };
+            project.task_context_for_location(captured_variables, location, cx)
+        })?;
+        let task_context = context_task.await.unwrap_or_default();
+        Ok(proto::TaskContext {
+            cwd: task_context
+                .cwd
+                .map(|cwd| cwd.to_string_lossy().to_string()),
+            task_variables: task_context
+                .task_variables
+                .into_iter()
+                .map(|(variable_name, variable_value)| (variable_name.to_string(), variable_value))
+                .collect(),
+        })
+    }
+
+    async fn handle_task_templates(
+        project: Model<Self>,
+        envelope: TypedEnvelope<proto::TaskTemplates>,
+        _: Arc<Client>,
+        mut cx: AsyncAppContext,
+    ) -> Result<proto::TaskTemplatesResponse> {
+        // todo!("TODO kb")
+
+        Ok(proto::TaskTemplatesResponse { templates: vec![] })
+    }
+
     async fn try_resolve_code_action(
         lang_server: &LanguageServer,
         action: &mut CodeAction,
@@ -10410,6 +10485,158 @@ impl Project {
             Vec::new()
         }
     }
+
+    pub fn task_context_for_location(
+        &self,
+        captured_variables: TaskVariables,
+        location: Location,
+        cx: &mut ModelContext<'_, Project>,
+    ) -> Task<Option<TaskContext>> {
+        if self.is_local() {
+            let cwd = self.task_cwd(cx).log_err().flatten();
+
+            cx.spawn(|project, cx| async move {
+                let mut task_variables = cx
+                    .update(|cx| {
+                        combine_task_variables(
+                            captured_variables,
+                            location,
+                            BasicContextProvider::new(project.upgrade()?),
+                            cx,
+                        )
+                        .log_err()
+                    })
+                    .ok()
+                    .flatten()?;
+                // Remove all custom entries starting with _, as they're not intended for use by the end user.
+                task_variables.sweep();
+                Some(TaskContext {
+                    cwd,
+                    task_variables,
+                })
+            })
+        } else if let Some(project_id) = self.remote_id() {
+            let task_context = self.client().request(proto::TaskContextForLocation {
+                project_id,
+                location: Some(proto::Location {
+                    buffer_id: location.buffer.read(cx).remote_id().into(),
+                    start: Some(serialize_anchor(&location.range.start)),
+                    end: Some(serialize_anchor(&location.range.end)),
+                }),
+            });
+            cx.background_executor().spawn(async move {
+                let task_context = task_context.await.log_err()?;
+                Some(TaskContext {
+                    cwd: task_context.cwd.map(PathBuf::from),
+                    task_variables: task_context
+                        .task_variables
+                        .into_iter()
+                        .filter_map(|(variable_name, variable_value)| {
+                            match VariableName::from_string(variable_name) {
+                                Ok(variable_name) => Some((variable_name, variable_value)),
+                                Err(wrong_variable_name) => {
+                                    log::error!("Unknown variable name: {wrong_variable_name}");
+                                    None
+                                }
+                            }
+                        })
+                        .collect(),
+                })
+            })
+        } else {
+            Task::ready(None)
+        }
+    }
+
+    pub fn task_templates(
+        &self,
+        location: Location,
+        worktree: WorktreeId,
+        cx: &mut AppContext,
+    ) -> Task<Result<Vec<(TaskSourceKind, TaskTemplate)>>> {
+        // if self.is_local() {
+        //     let language = buffer.read(cx).language();
+        //     Task::ready(Ok(self
+        //         .task_inventory()
+        //         .read(cx)
+        //         .list_tasks(language.cloned(), worktree)))
+        // } else if let Some(project_id) = self.remote_id() {
+        //     let task_templates = self.client().request(proto::TaskTemplates {
+        //         project_id,
+        //         buffer_id: buffer.read(cx).remote_id().into(),
+        //     });
+        //     cx.background_executor().spawn(async move {
+        //         let response = task_templates.await.log_err()?;
+        //         // Ok(response.templates
+        //         //     .into_iter()
+        //         //     .map(|template| (template.task_context, template.task)
+        //         //     .collect())
+        //         todo!("TODO kb")
+        //     })
+        // } else {
+        //     Task::ready(Ok(Vec::new()))
+        // }
+        todo!()
+    }
+
+    fn task_cwd(&self, cx: &AppContext) -> anyhow::Result<Option<PathBuf>> {
+        let available_worktrees = self
+            .worktrees()
+            .filter(|worktree| {
+                let worktree = worktree.read(cx);
+                worktree.is_visible()
+                    && worktree.is_local()
+                    && worktree.root_entry().map_or(false, |e| e.is_dir())
+            })
+            .collect::<Vec<_>>();
+        let cwd = match available_worktrees.len() {
+            0 => None,
+            1 => Some(available_worktrees[0].read(cx).abs_path()),
+            _ => {
+                let cwd_for_active_entry = self.active_entry().and_then(|entry_id| {
+                    available_worktrees.into_iter().find_map(|worktree| {
+                        let worktree = worktree.read(cx);
+                        if worktree.contains_entry(entry_id) {
+                            Some(worktree.abs_path())
+                        } else {
+                            None
+                        }
+                    })
+                });
+                anyhow::ensure!(
+                    cwd_for_active_entry.is_some(),
+                    "Cannot determine task cwd for multiple worktrees"
+                );
+                cwd_for_active_entry
+            }
+        };
+        Ok(cwd.map(|path| path.to_path_buf()))
+    }
+}
+
+fn combine_task_variables(
+    mut captured_variables: TaskVariables,
+    location: Location,
+    baseline: BasicContextProvider,
+    cx: &mut AppContext,
+) -> anyhow::Result<TaskVariables> {
+    let language_context_provider = location
+        .buffer
+        .read(cx)
+        .language()
+        .and_then(|language| language.context_provider());
+    let baseline = baseline
+        .build_context(&captured_variables, &location, cx)
+        .context("building basic default context")?;
+    captured_variables.extend(baseline);
+    if let Some(provider) = language_context_provider {
+        captured_variables.extend(
+            provider
+                .build_context(&captured_variables, &location, cx)
+                .context("building provider context")?,
+        );
+    }
+    Ok(captured_variables)
 }
 
 async fn populate_labels_for_symbols(
