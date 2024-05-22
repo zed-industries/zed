@@ -60,3 +60,14 @@
         (accessibility_modifier)
     ]* @context
     name: (_) @name) @item
+
+; Add support for Jest runnable
+(call_expression
+    function: (_) @context
+    (#any-of? @context "it" "test" "describe")
+    arguments: (
+        arguments . (string
+            (string_fragment) @name
+        )
+    )
+) @item
