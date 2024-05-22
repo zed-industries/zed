@@ -13,5 +13,5 @@ These are some fixes to bugs found in the Windows version of Zed.
 - **Solution**: Solution was to use a [PR](https://github.com/zed-industries/zed/pull/12036) created by [d1y](https://github.com/d1y), but is not approved by the Zed team yet, though it works for me. This PR is already merged to this repo.
 
 ## `Zed white window flash on startup`
-- **Issue**: On Zed startup, a white window flashes for a ~400ms and then disappears, does not cause any issues but is aesthetically annoying.
+- **Issue**: On Zed startup, a white window flashes for a ~400ms and then disappears, does not cause any hindering in development but is aesthetically annoying.
 - **Solution**: Unknown. If you know the solution, feel free to create a PR to add it here.
