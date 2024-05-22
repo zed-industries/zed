@@ -9,13 +9,13 @@ use std::sync::Arc;
 use util::paths::PROMPTS_DIR;
 use uuid::Uuid;
 
-use super::prompts::StaticPrompt;
+use super::prompt::StaticPrompt;
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq, Hash, Serialize, Deserialize)]
 pub struct PromptId(pub Uuid);
 
-#[derive(Serialize, Deserialize)]
-pub struct PromptLibraryState2 {
+#[derive(Default, Serialize, Deserialize)]
+pub struct PromptLibraryState {
     /// A set of prompts that all assistant contexts will start with
     default_prompt: Vec<PromptId>,
     /// All [Prompt]s loaded into the library
@@ -26,28 +26,17 @@ pub struct PromptLibraryState2 {
     version: usize,
 }
 
-impl Default for PromptLibraryState2 {
-    fn default() -> Self {
-        Self {
-            default_prompt: Vec::new(),
-            prompts: HashMap::default(),
-            dirty_prompts: Vec::new(),
-            version: 0,
-        }
-    }
+pub struct PromptLibrary {
+    state: RwLock<PromptLibraryState>,
 }
 
-pub struct PromptLibrary2 {
-    state: RwLock<PromptLibraryState2>,
-}
-
-impl Default for PromptLibrary2 {
+impl Default for PromptLibrary {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl PromptLibrary2 {
+impl PromptLibrary {
     pub fn init(fs: Arc<dyn Fs>) -> anyhow::Result<Self> {
         let prompt_library = futures::executor::block_on(Self::load(fs))?;
         Ok(prompt_library)
@@ -55,7 +44,7 @@ impl PromptLibrary2 {
 
     fn new() -> Self {
         Self {
-            state: RwLock::new(PromptLibraryState2::default()),
+            state: RwLock::new(PromptLibraryState::default()),
         }
     }
 
@@ -85,8 +74,10 @@ impl PromptLibrary2 {
 
         let path = PROMPTS_DIR.join("index.json");
 
-        let state = self.state.read();
-        let json = serde_json::to_string(&*state)?;
+        let json = {
+            let state = self.state.read();
+            serde_json::to_string(&*state)?
+        };
 
         fs.atomic_write(path, json).await?;
 
@@ -102,7 +93,7 @@ impl PromptLibrary2 {
             let json = fs.load(&path).await?;
             serde_json::from_str(&json)?
         } else {
-            PromptLibraryState2::default()
+            PromptLibraryState::default()
         };
 
         let mut prompt_library = Self {

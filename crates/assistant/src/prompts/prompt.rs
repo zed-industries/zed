@@ -166,7 +166,7 @@ impl StaticPrompt {
     }
     fn parse(&self) -> anyhow::Result<(StaticPromptFrontmatter, String)> {
         let matter = Matter::<YAML>::new();
-        let result = matter.parse(&self.content.as_str());
+        let result = matter.parse(self.content.as_str());
         match result.data {
             Some(data) => {
                 let front_matter: StaticPromptFrontmatter = data.deserialize()?;

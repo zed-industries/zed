@@ -12,12 +12,12 @@ use ui::{prelude::*, IconButtonShape, ListItem, ListItemSpacing};
 use util::TryFutureExt;
 use workspace::ModalView;
 
-use super::prompt_library::{PromptId, PromptLibrary2};
-use crate::prompts::prompts::StaticPrompt;
+use super::prompt_library::{PromptId, PromptLibrary};
+use crate::prompts::prompt::StaticPrompt;
 
 pub struct PromptManager {
     focus_handle: FocusHandle,
-    prompt_library: Arc<PromptLibrary2>,
+    prompt_library: Arc<PromptLibrary>,
     language_registry: Arc<LanguageRegistry>,
     #[allow(dead_code)]
     fs: Arc<dyn Fs>,
@@ -28,7 +28,7 @@ pub struct PromptManager {
 
 impl PromptManager {
     pub fn new(
-        prompt_library: Arc<PromptLibrary2>,
+        prompt_library: Arc<PromptLibrary>,
         language_registry: Arc<LanguageRegistry>,
         fs: Arc<dyn Fs>,
         cx: &mut ViewContext<Self>,
@@ -132,11 +132,9 @@ impl PromptManager {
         cx: &mut ViewContext<Self>,
     ) -> impl IntoElement {
         let prompt_library = self.prompt_library.clone();
-        let markdown_lang = self.load_language("markdown").unwrap_or({
-            let lang = Arc::new(fallback_markdown_lang());
-            // println!("Failed to load markdown language: {:?}", lang);
-            lang
-        });
+        let markdown_lang = self
+            .load_language("markdown")
+            .unwrap_or(Arc::new(fallback_markdown_lang()));
 
         let editor_for_prompt = self.prompt_editors.entry(prompt_id).or_insert_with(|| {
             cx.new_view(|cx| {
@@ -232,7 +230,7 @@ pub struct PromptManagerDelegate {
     prompt_manager: WeakView<PromptManager>,
     matching_prompts: Vec<Arc<StaticPrompt>>,
     matching_prompt_ids: Vec<PromptId>,
-    prompt_library: Arc<PromptLibrary2>,
+    prompt_library: Arc<PromptLibrary>,
     selected_index: usize,
 }
 

@@ -1,11 +1,11 @@
 use crate::ambient_context::{AmbientContext, ContextUpdated, RecentBuffer};
-use crate::prompts::prompt_library::PromptLibrary2;
+use crate::prompts::prompt_library::PromptLibrary;
 use crate::prompts::prompt_manager::PromptManager;
 use crate::{
     ambient_context::*,
     assistant_settings::{AssistantDockPosition, AssistantSettings, ZedDotDevModel},
     codegen::{self, Codegen, CodegenKind},
-    prompts::prompts::generate_content_prompt,
+    prompts::prompt::generate_content_prompt,
     search::*,
     ApplyEdit, Assist, CompletionProvider, CycleMessageRole, InlineAssist, LanguageModel,
     LanguageModelRequest, LanguageModelRequestMessage, MessageId, MessageMetadata, MessageStatus,
@@ -100,7 +100,7 @@ pub struct AssistantPanel {
     focus_handle: FocusHandle,
     toolbar: View<Toolbar>,
     languages: Arc<LanguageRegistry>,
-    prompt_library: Arc<PromptLibrary2>,
+    prompt_library: Arc<PromptLibrary>,
     fs: Arc<dyn Fs>,
     telemetry: Arc<Telemetry>,
     _subscriptions: Vec<Subscription>,
@@ -134,7 +134,7 @@ impl AssistantPanel {
                 .unwrap_or_default();
 
             let prompt_library = Arc::new(
-                PromptLibrary2::init(fs.clone())
+                PromptLibrary::init(fs.clone())
                     .log_err()
                     .unwrap_or_default(),
             );
