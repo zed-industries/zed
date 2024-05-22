@@ -8,6 +8,7 @@ use std::io::Read;
 use std::ops::{Deref, DerefMut};
 use std::os::fd::{AsRawFd, FromRawFd};
 use std::panic::Location;
+use std::rc::Weak;
 use std::{
     path::{Path, PathBuf},
     process::Command,
@@ -89,11 +90,12 @@ pub(crate) struct LinuxCommon {
 }
 
 impl LinuxCommon {
-    pub fn new(signal: LoopSignal) -> (Self, Channel<Runnable>, Rc<Mutex<WindowAppearance>>) {
+    pub fn new(signal: LoopSignal) -> (Self, Channel<Runnable>, Weak<Mutex<WindowAppearance>>) {
         let (main_sender, main_receiver) = calloop::channel::channel::<Runnable>();
         let text_system = Arc::new(CosmicTextSystem::new());
         let callbacks = PlatformHandlers::default();
         let appearance = Rc::new(Mutex::new(WindowAppearance::Light));
+        let appearance_ptr = Rc::downgrade(&appearance);
 
         let dispatcher = Arc::new(LinuxDispatcher::new(main_sender.clone()));
 
@@ -101,12 +103,12 @@ impl LinuxCommon {
             background_executor: BackgroundExecutor::new(dispatcher.clone()),
             foreground_executor: ForegroundExecutor::new(dispatcher.clone()),
             text_system,
-            appearance: appearance.clone(),
+            appearance,
             callbacks,
             signal,
         };
 
-        (common, main_receiver, appearance)
+        (common, main_receiver, appearance_ptr)
     }
 }
 

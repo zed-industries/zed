@@ -398,7 +398,7 @@ impl WaylandClient {
     fn setup_appearance_listener(
         state_ptr: Weak<RefCell<WaylandClientState>>,
         executor: &ForegroundExecutor,
-        appearance: Rc<Mutex<WindowAppearance>>,
+        appearance: Weak<Mutex<WindowAppearance>>,
     ) {
         init_portal_listener(executor, appearance, Box::new(move || {
             if let Some(state) = state_ptr.upgrade() {

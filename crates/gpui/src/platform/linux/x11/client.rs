@@ -289,7 +289,7 @@ impl X11Client {
     fn setup_appearance_listener(
         state_ptr: Weak<RefCell<X11ClientState>>,
         executor: &ForegroundExecutor,
-        appearance: Rc<Mutex<WindowAppearance>>,
+        appearance: Weak<Mutex<WindowAppearance>>,
     ) {
         init_portal_listener(executor, appearance, Box::new(move || {
             if let Some(state) = state_ptr.upgrade() {
