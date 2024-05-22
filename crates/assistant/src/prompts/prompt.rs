@@ -10,7 +10,9 @@ pub struct StaticPromptFrontmatter {
     title: String,
     version: String,
     author: String,
+    #[serde(default)]
     languages: Vec<String>,
+    #[serde(default)]
     dependencies: Vec<String>,
 }
 
