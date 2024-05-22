@@ -4,8 +4,11 @@ use editor::{
     display_map::{BlockContext, BlockDisposition, BlockProperties, BlockStyle, RenderBlock},
     Editor,
 };
-use futures::{channel::mpsc, SinkExt as _, StreamExt as _};
-use gpui::{actions, AppContext, Context, EntityId, Global, Model};
+use futures::{
+    channel::mpsc::{self, UnboundedSender},
+    Future, SinkExt as _, StreamExt as _,
+};
+use gpui::{actions, AppContext, Context, EntityId, Global, Model, ModelContext, Task};
 use gpui::{Entity, View};
 use kernelspecs::{get_runtimes, Runtime};
 use language::Point;
@@ -65,6 +68,7 @@ pub struct ExecutionRequest {
     response_sender: mpsc::UnboundedSender<ExecutionUpdate>,
 }
 
+#[derive(Debug)]
 pub struct RuntimeInstance {
     execution_request_tx: mpsc::UnboundedSender<ExecutionRequest>,
     _runtime_handle: std::thread::JoinHandle<()>,
@@ -76,10 +80,10 @@ pub struct RuntimeManager {
 }
 
 static HARDCODED_DENO_KERNEL: &str =
-    "/Users/kylekelley/Library/Jupyter/runtime/kernel-c4579ffe-82a7-4a82-bf70-41af60dc39ec.json";
+    "/Users/kylekelley/Library/Jupyter/runtime/kernel-c00837a1-3403-4a53-abae-426498cdddd1.json";
 
 static HARDCODED_PYTHON_KERNEL: &str =
-    "/Users/kylekelley/Library/Jupyter/runtime/kernel-890afee2-2367-4dc2-b6f6-1dede4493f82.json";
+    "/Users/kylekelley/Library/Jupyter/runtime/kernel-09c799c6-7d73-4800-b887-ae902c2573b6.json";
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 struct ExecutionId(String);
@@ -190,17 +194,7 @@ impl RuntimeManager {
     /// Spawn the kernel for the given language and entity ID
     /// If the kernel is already running, return the existing sender
     /// Otherwise, spawn a new kernel and return the sender
-    pub fn spawn_kernel(
-        &mut self,
-        language_name: Arc<str>,
-        entity_id: EntityId,
-    ) -> Option<mpsc::UnboundedSender<ExecutionRequest>> {
-        let maybe_runtime = self.instances.get(&entity_id);
-        if let Some(runtime) = maybe_runtime {
-            // Runtime instance is up and ready
-            return Some(runtime.execution_request_tx.clone());
-        }
-
+    pub fn spawn_kernel(language_name: Arc<str>) -> Result<RuntimeInstance> {
         let kernel_path = match language_name.as_ref() {
             "python" => HARDCODED_PYTHON_KERNEL,
             "typescript" => HARDCODED_DENO_KERNEL,
@@ -213,12 +207,12 @@ impl RuntimeManager {
         let kernel_path = std::path::PathBuf::from(kernel_path);
 
         let _runtime_handle = std::thread::spawn(|| {
-            let runtime = tokio::runtime::Builder::new_current_thread()
+            let tokio_runtime = tokio::runtime::Builder::new_current_thread()
                 .enable_all()
                 .build();
 
-            let runtime = match runtime {
-                Ok(runtime) => runtime,
+            let tokio_runtime = match tokio_runtime {
+                Ok(tokio_runtime) => tokio_runtime,
                 Err(e) => {
                     log::error!("Failed to create tokio runtime for jupyter kernel: {e:?}");
                     return;
@@ -226,7 +220,7 @@ impl RuntimeManager {
             };
 
             // TODO: Will need a signal handler to shutdown the runtime
-            runtime
+            tokio_runtime
                 .block_on(async move {
                     // Set up the kernel client here as our prototype
                     let kernel_path = kernel_path.clone();
@@ -257,9 +251,31 @@ impl RuntimeManager {
             _runtime_handle,
         };
 
-        self.instances.insert(entity_id, runtime);
+        Ok(runtime)
+    }
 
-        Some(execution_request_tx)
+    fn acquire_execution_request_tx(
+        &mut self,
+        entity_id: EntityId,
+        language_name: Arc<str>,
+        cx: &mut ModelContext<Self>,
+    ) -> Task<Result<UnboundedSender<ExecutionRequest>>> {
+        let maybe_runtime = self.instances.get(&entity_id);
+        if let Some(runtime) = maybe_runtime {
+            return Task::ready(anyhow::Ok(runtime.execution_request_tx.clone()));
+        }
+
+        cx.spawn(|this, mut cx| async move {
+            let runtime = Self::spawn_kernel(language_name)?;
+            let execution_request_tx = runtime.execution_request_tx.clone();
+            this.update(&mut cx, |this, _cx| {
+                this.instances
+                    .insert(entity_id, runtime)
+                    .ok_or(anyhow::anyhow!("Failed to insert runtime"))?;
+                anyhow::Ok(())
+            })??;
+            anyhow::Ok(execution_request_tx)
+        })
     }
 
     fn execute_code(
@@ -268,32 +284,34 @@ impl RuntimeManager {
         language_name: Arc<str>,
         execution_id: ExecutionId,
         code: String,
-    ) -> Result<mpsc::UnboundedReceiver<ExecutionUpdate>> {
+        cx: &mut ModelContext<Self>,
+    ) -> impl Future<Output = Result<mpsc::UnboundedReceiver<ExecutionUpdate>>> {
         let (tx, rx) = mpsc::unbounded();
 
-        let execution_request_tx = match self.spawn_kernel(language_name, entity_id) {
-            Some(execution_request_tx) => execution_request_tx,
-            None => return Err(anyhow::anyhow!("Could not spawn kernel")),
-        };
+        let execution_request_tx = self.acquire_execution_request_tx(entity_id, language_name, cx);
 
-        execution_request_tx
-            .unbounded_send(ExecutionRequest {
-                execution_id,
-                request: runtimelib::ExecuteRequest {
-                    code,
-                    allow_stdin: false,
-                    silent: false,
-                    store_history: true,
-                    user_expressions: None,
-                    stop_on_error: false,
-                    // TODO(runtimelib): set up Default::default() for the rest of the fields
-                    // ..Default::default()
-                },
-                response_sender: tx,
-            })
-            .context("Failed to send execution request")?;
+        async move {
+            let execution_request_tx = execution_request_tx.await?;
 
-        Ok(rx)
+            execution_request_tx
+                .unbounded_send(ExecutionRequest {
+                    execution_id,
+                    request: runtimelib::ExecuteRequest {
+                        code,
+                        allow_stdin: false,
+                        silent: false,
+                        store_history: true,
+                        user_expressions: None,
+                        stop_on_error: false,
+                        // TODO(runtimelib): set up Default::default() for the rest of the fields
+                        // ..Default::default()
+                    },
+                    response_sender: tx,
+                })
+                .context("Failed to send execution request")?;
+
+            Ok(rx)
+        }
     }
 
     pub fn global(cx: &AppContext) -> Option<Model<Self>> {
@@ -384,31 +402,13 @@ impl RuntimeManager {
         let entity_id = editor.entity_id();
         let execution_id = ExecutionId::new();
 
-        let receiver = runtime_manager.update(cx, |runtime_manager, _| {
-            runtime_manager.execute_code(
-                entity_id,
-                language_name,
-                execution_id.clone(),
-                code.clone(),
-            )
-        });
-
-        let mut receiver = match receiver {
-            Ok(receiver) => receiver,
-            Err(e) => {
-                log::error!("Failed to execute code: {e:?}");
-                return;
-            }
-        };
-
-        let execution_view = cx.new_view(|cx| ExecutionView::new(execution_id.clone(), cx));
-
         // Since we don't know the height, in editor terms, we have to calculate it over time
         // and just create a new block, replacing the old. It would be better if we could
         // just rely on the view updating and for the height to be calculated automatically.
         //
         // We will just handle text for the moment to keep this accurate.
         // Plots and other images will have to wait.
+        let execution_view = cx.new_view(|cx| ExecutionView::new(execution_id.clone(), cx));
 
         let mut block_id = editor.update(cx, |editor, cx| {
             let block = BlockProperties {
@@ -422,7 +422,19 @@ impl RuntimeManager {
             editor.insert_blocks([block], None, cx)[0]
         });
 
+        let receiver = runtime_manager.update(cx, |runtime_manager, cx| {
+            runtime_manager.execute_code(
+                entity_id,
+                language_name,
+                execution_id.clone(),
+                code.clone(),
+                cx,
+            )
+        });
+
         cx.spawn(|_this, mut cx| async move {
+            let mut receiver = receiver.await?;
+
             let execution_view = execution_view.clone();
             while let Some(update) = receiver.next().await {
                 execution_view.update(&mut cx, |execution_view, cx| {
