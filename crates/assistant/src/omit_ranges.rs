@@ -8,7 +8,7 @@ pub(crate) fn text_in_range_omitting_ranges(
 ) -> String {
     let mut content = String::with_capacity(range.len());
     let mut omit_ranges = omit_ranges
-        .into_iter()
+        .iter()
         .skip_while(|omit_range| omit_range.end <= range.start)
         .peekable();
     let mut offset = range.start;
