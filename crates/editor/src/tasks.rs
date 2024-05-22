@@ -4,8 +4,8 @@ use std::{path::Path, sync::Arc};
 
 use anyhow::Context;
 use gpui::WindowContext;
-use language::{BasicContextProvider, ContextProvider};
-use project::{Location, WorktreeId};
+use language::ContextProvider;
+use project::{BasicContextProvider, Location, WorktreeId};
 use task::{TaskContext, TaskVariables, VariableName};
 use util::ResultExt;
 use workspace::Workspace;

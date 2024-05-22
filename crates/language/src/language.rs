@@ -58,9 +58,7 @@ use std::{
 };
 use syntax_map::{QueryCursorHandle, SyntaxSnapshot};
 use task::RunnableTag;
-pub use task_context::{
-    BasicContextProvider, ContextProvider, ContextProviderWithTasks, RunnableRange,
-};
+pub use task_context::{ContextProvider, RunnableRange};
 use theme::SyntaxTheme;
 use tree_sitter::{self, wasmtime, Query, QueryCursor, WasmStore};
 

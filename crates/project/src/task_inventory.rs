@@ -6,6 +6,7 @@ use std::{
     sync::Arc,
 };
 
+use anyhow::Result;
 use collections::{btree_map, BTreeMap, VecDeque};
 use futures::{
     channel::mpsc::{unbounded, UnboundedSender},
@@ -13,10 +14,12 @@ use futures::{
 };
 use gpui::{AppContext, Context, Model, ModelContext, Task};
 use itertools::Itertools;
-use language::Language;
+use language::{ContextProvider, Language, Location};
 use task::{
-    static_source::StaticSource, ResolvedTask, TaskContext, TaskId, TaskTemplate, VariableName,
+    static_source::StaticSource, ResolvedTask, TaskContext, TaskId, TaskTemplate, TaskTemplates,
+    TaskVariables, VariableName,
 };
+use text::{Point, ToPoint};
 use util::{post_inc, NumericPrefixWithSuffix};
 use worktree::WorktreeId;
 
@@ -488,6 +491,97 @@ mod test_inventory {
                 .sorted_by_key(|(kind, label)| (task_source_kind_preference(kind), label.clone()))
                 .collect()
         })
+    }
+}
+
+/// A context provided that tries to provide values for all non-custom [`VariableName`] variants for a currently opened file.
+/// Applied as a base for every custom [`ContextProvider`] unless explicitly oped out.
+pub struct BasicContextProvider;
+
+impl ContextProvider for BasicContextProvider {
+    fn is_basic(&self) -> bool {
+        true
+    }
+
+    fn build_context(
+        &self,
+        worktree_abs_path: Option<&Path>,
+        location: &Location,
+        cx: &mut AppContext,
+    ) -> Result<TaskVariables> {
+        let buffer = location.buffer.read(cx);
+        let buffer_snapshot = buffer.snapshot();
+        let symbols = buffer_snapshot.symbols_containing(location.range.start, None);
+        let symbol = symbols.unwrap_or_default().last().map(|symbol| {
+            let range = symbol
+                .name_ranges
+                .last()
+                .cloned()
+                .unwrap_or(0..symbol.text.len());
+            symbol.text[range].to_string()
+        });
+
+        let current_file = buffer
+            .file()
+            .and_then(|file| file.as_local())
+            .map(|file| file.abs_path(cx).to_string_lossy().to_string());
+        let Point { row, column } = location.range.start.to_point(&buffer_snapshot);
+        let row = row + 1;
+        let column = column + 1;
+        let selected_text = buffer
+            .chars_for_range(location.range.clone())
+            .collect::<String>();
+
+        let mut task_variables = TaskVariables::from_iter([
+            (VariableName::Row, row.to_string()),
+            (VariableName::Column, column.to_string()),
+        ]);
+
+        if let Some(symbol) = symbol {
+            task_variables.insert(VariableName::Symbol, symbol);
+        }
+        if !selected_text.trim().is_empty() {
+            task_variables.insert(VariableName::SelectedText, selected_text);
+        }
+        if let Some(path) = current_file {
+            task_variables.insert(VariableName::File, path);
+        }
+        if let Some(worktree_path) = worktree_abs_path {
+            task_variables.insert(
+                VariableName::WorktreeRoot,
+                worktree_path.to_string_lossy().to_string(),
+            );
+        }
+
+        Ok(task_variables)
+    }
+}
+
+/// A ContextProvider that doesn't provide any task variables on it's own, though it has some associated tasks.
+pub struct ContextProviderWithTasks {
+    templates: TaskTemplates,
+}
+
+impl ContextProviderWithTasks {
+    pub fn new(definitions: TaskTemplates) -> Self {
+        Self {
+            templates: definitions,
+        }
+    }
+}
+
+impl ContextProvider for ContextProviderWithTasks {
+    fn associated_tasks(&self) -> Option<TaskTemplates> {
+        Some(self.templates.clone())
+    }
+
+    fn build_context(
+        &self,
+        worktree_abs_path: Option<&Path>,
+        location: &Location,
+        cx: &mut AppContext,
+    ) -> Result<TaskVariables> {
+        BasicContextProvider.build_context(worktree_abs_path, location, cx)
     }
 }
 
