@@ -1,8 +1,11 @@
 use collections::HashMap;
 use editor::Editor;
 use fs::Fs;
+use futures::FutureExt;
 use gpui::{prelude::FluentBuilder, *};
-use language::language_settings;
+use language::{
+    language_settings, Buffer, Language, LanguageConfig, LanguageMatcher, LanguageRegistry,
+};
 use parking_lot::RwLock;
 use picker::{Picker, PickerDelegate};
 use std::sync::Arc;
@@ -14,6 +17,29 @@ use workspace::ModalView;
 // actions!(prompt_manager, [NewPrompt, EditPrompt, SavePrompt]);
 
 use super::custom_prompts::StaticPrompt;
+
+fn fallback_markdown_lang() -> Language {
+    Language::new(
+        LanguageConfig {
+            name: "Markdown".into(),
+            matcher: LanguageMatcher {
+                path_suffixes: vec!["md".into()],
+                ..Default::default()
+            },
+            ..Default::default()
+        },
+        Some(tree_sitter_markdown::language()),
+    )
+    .with_injection_query(
+        r#"
+            (fenced_code_block
+                (info_string
+                    (language) @language)
+                (code_fence_content) @content)
+        "#,
+    )
+    .unwrap()
+}
 
 pub struct PromptLibraryState {
     /// The default prompt all assistant contexts will start with
@@ -137,13 +163,18 @@ pub struct PromptId(Uuid);
 pub struct PromptManager {
     focus_handle: FocusHandle,
     prompt_library: Arc<PromptLibrary>,
+    language_registry: Arc<LanguageRegistry>,
     picker: View<Picker<PromptManagerDelegate>>,
     prompt_editors: HashMap<PromptId, View<Editor>>,
     active_prompt_id: Option<PromptId>,
 }
 
 impl PromptManager {
-    pub fn new(prompt_library: Arc<PromptLibrary>, cx: &mut ViewContext<Self>) -> Self {
+    pub fn new(
+        prompt_library: Arc<PromptLibrary>,
+        language_registry: Arc<LanguageRegistry>,
+        cx: &mut ViewContext<Self>,
+    ) -> Self {
         let focus_handle = cx.focus_handle();
         let prompt_manager = cx.view().downgrade();
         let active_prompt_id = if prompt_library.prompts().is_empty() {
@@ -162,12 +193,14 @@ impl PromptManager {
                 },
                 cx,
             )
+            .max_height(rems(35.75))
             .modal(false)
         });
 
         Self {
             focus_handle,
             prompt_library,
+            language_registry,
             picker,
             prompt_editors: HashMap::default(),
             active_prompt_id,
@@ -189,6 +222,19 @@ impl PromptManager {
         }
     }
 
+    fn load_language(&self, name: &str) -> Option<Arc<Language>> {
+        let language = self
+            .language_registry
+            .language_for_name(name)
+            .map(|language| language.ok())
+            .shared();
+
+        match language.clone().now_or_never() {
+            Some(language) => language,
+            None => None,
+        }
+    }
+
     fn dismiss(&mut self, _: &menu::Cancel, cx: &mut ViewContext<Self>) {
         cx.emit(DismissEvent);
     }
@@ -205,16 +251,16 @@ impl PromptManager {
                     .p(Spacing::Small.rems(cx))
                     .border_b_1()
                     .border_color(cx.theme().colors().border)
-                    .h_7()
+                    .h(rems(1.75))
                     .w_full()
                     .flex_none()
                     .justify_between()
                     .child(Label::new("Prompt Library").size(LabelSize::Small))
-                    .child(IconButton::new("new-prompt", IconName::AtSign).disabled(true)),
+                    .child(IconButton::new("new-prompt", IconName::Plus).disabled(true)),
             )
             .child(
                 v_flex()
-                    .h_full()
+                    .h(rems(38.25))
                     .flex_grow()
                     .justify_start()
                     .child(self.picker.clone()),
@@ -227,12 +273,27 @@ impl PromptManager {
         cx: &mut ViewContext<Self>,
     ) -> impl IntoElement {
         let prompt_library = self.prompt_library.clone();
+        let markdown_lang = self.load_language("markdown").unwrap_or({
+            let lang = Arc::new(fallback_markdown_lang());
+            println!("Failed to load markdown language: {:?}", lang);
+            lang
+        });
+
         let editor_for_prompt = self.prompt_editors.entry(prompt_id).or_insert_with(|| {
             cx.new_view(|cx| {
-                let mut editor = Editor::multi_line(cx);
-                if let Some(prompt_text) = prompt_library.prompt_for_id(prompt_id) {
-                    editor.set_text(prompt_text, cx);
-                }
+                let text = if let Some(prompt_text) = prompt_library.prompt_for_id(prompt_id) {
+                    prompt_text
+                } else {
+                    "".to_string()
+                };
+
+                let buffer = cx.new_model(|cx| {
+                    Buffer::local(text.clone(), cx).with_language(markdown_lang, cx)
+                });
+                let mut editor = Editor::for_buffer(buffer, None, cx);
+
+                editor.set_text(text, cx);
+
                 editor.set_soft_wrap_mode(language_settings::SoftWrap::EditorWidth, cx);
                 editor.set_show_gutter(false, cx);
                 editor
@@ -261,6 +322,7 @@ impl Render for PromptManager {
                         .id("prompt-editor")
                         .border_l_1()
                         .border_color(cx.theme().colors().border)
+                        .bg(cx.theme().colors().editor_background)
                         .size_full()
                         .flex_none()
                         .min_w_64()
@@ -284,7 +346,14 @@ impl Render for PromptManager {
                                 ),
                         )
                         .when_some(self.active_prompt_id, |this, active_prompt_id| {
-                            this.child(self.render_editor_for_prompt(active_prompt_id, cx))
+                            this.child(
+                                h_flex()
+                                    .flex_1()
+                                    .w_full()
+                                    .py(Spacing::Large.rems(cx))
+                                    .px(Spacing::XLarge.rems(cx))
+                                    .child(self.render_editor_for_prompt(active_prompt_id, cx)),
+                            )
                         }),
                 ),
             )

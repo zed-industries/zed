@@ -1117,7 +1117,9 @@ impl AssistantPanel {
     fn show_prompt_manager(&mut self, cx: &mut ViewContext<Self>) {
         if let Some(workspace) = self.workspace.upgrade() {
             workspace.update(cx, |workspace, cx| {
-                workspace.toggle_modal(cx, |cx| PromptManager::new(self.prompt_library.clone(), cx))
+                workspace.toggle_modal(cx, |cx| {
+                    PromptManager::new(self.prompt_library.clone(), self.languages.clone(), cx)
+                })
             })
         }
     }
