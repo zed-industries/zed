@@ -3224,10 +3224,10 @@ impl BufferSnapshot {
         const SEARCH_WHITESPACE_ROW_LIMIT: u32 = 2500;
         const YIELD_INTERVAL: u32 = 100;
 
+        let mut accessed_row_counter = 0;
+
         // If there is a blank line at the current row, search for the next non indented lines
         if is_blank {
-            let mut counter = 0;
-
             let start = buffer_row.saturating_sub(SEARCH_WHITESPACE_ROW_LIMIT);
             let end = (max_row + 1).min(buffer_row + SEARCH_WHITESPACE_ROW_LIMIT);
 
@@ -3236,8 +3236,9 @@ impl BufferSnapshot {
                 .text
                 .reversed_line_indents_in_row_range(start..buffer_row)
             {
-                counter += 1;
-                if counter % YIELD_INTERVAL == 0 {
+                accessed_row_counter += 1;
+                if accessed_row_counter == YIELD_INTERVAL {
+                    accessed_row_counter = 0;
                     yield_now().await;
                 }
                 if !is_blank {
@@ -3250,8 +3251,9 @@ impl BufferSnapshot {
             for (row, indent_size, is_blank) in
                 self.text.line_indents_in_row_range((buffer_row + 1)..end)
             {
-                counter += 1;
-                if counter % YIELD_INTERVAL == 0 {
+                accessed_row_counter += 1;
+                if accessed_row_counter == YIELD_INTERVAL {
+                    accessed_row_counter = 0;
                     yield_now().await;
                 }
                 if !is_blank {
@@ -3281,13 +3283,13 @@ impl BufferSnapshot {
         let end = (max_row + 1).min(buffer_row + SEARCH_ROW_LIMIT);
 
         let mut start_indent = None;
-        let mut counter = 0;
         for (row, indent_size, is_blank) in self
             .text
             .reversed_line_indents_in_row_range(start..buffer_row)
         {
-            counter += 1;
-            if counter % YIELD_INTERVAL == 0 {
+            accessed_row_counter += 1;
+            if accessed_row_counter == YIELD_INTERVAL {
+                accessed_row_counter = 0;
                 yield_now().await;
             }
             if !is_blank && indent_size < target_indent_size {
@@ -3301,8 +3303,9 @@ impl BufferSnapshot {
         for (row, indent_size, is_blank) in
             self.text.line_indents_in_row_range((buffer_row + 1)..end)
         {
-            counter += 1;
-            if counter % YIELD_INTERVAL == 0 {
+            accessed_row_counter += 1;
+            if accessed_row_counter == YIELD_INTERVAL {
+                accessed_row_counter = 0;
                 yield_now().await;
             }
             if !is_blank && indent_size < target_indent_size {
