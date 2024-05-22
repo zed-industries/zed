@@ -1,7 +1,6 @@
 use crate::ambient_context::{AmbientContext, ContextUpdated, RecentBuffer};
-use crate::prompts::prompt_library2::PromptLibrary2;
+use crate::prompts::prompt_library::PromptLibrary2;
 use crate::prompts::prompt_manager::PromptManager;
-use crate::InsertActivePrompt;
 use crate::{
     ambient_context::*,
     assistant_settings::{AssistantDockPosition, AssistantSettings, ZedDotDevModel},

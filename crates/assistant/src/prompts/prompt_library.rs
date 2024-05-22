@@ -6,10 +6,10 @@ use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
 use smol::stream::StreamExt;
 use std::sync::Arc;
-use util::{paths::PROMPTS_DIR, ResultExt};
+use util::paths::PROMPTS_DIR;
 use uuid::Uuid;
 
-use super::prompts2::StaticPrompt2;
+use super::prompts::StaticPrompt;
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq, Hash, Serialize, Deserialize)]
 pub struct PromptId(pub Uuid);
@@ -19,7 +19,7 @@ pub struct PromptLibraryState2 {
     /// A set of prompts that all assistant contexts will start with
     default_prompt: Vec<PromptId>,
     /// All [Prompt]s loaded into the library
-    prompts: HashMap<PromptId, StaticPrompt2>,
+    prompts: HashMap<PromptId, StaticPrompt>,
     /// Prompts that have been changed but haven't been
     /// saved back to the file system
     dirty_prompts: Vec<PromptId>,
@@ -59,16 +59,7 @@ impl PromptLibrary2 {
         }
     }
 
-    fn all_prompt_contents(&self) -> Vec<String> {
-        let state = self.state.read();
-        state
-            .prompts
-            .values()
-            .map(|prompt| prompt.content().clone())
-            .collect()
-    }
-
-    pub fn prompts(&self) -> Vec<(PromptId, StaticPrompt2)> {
+    pub fn prompts(&self) -> Vec<(PromptId, StaticPrompt)> {
         let state = self.state.read();
         state
             .prompts
@@ -82,7 +73,7 @@ impl PromptLibrary2 {
         state.default_prompt.first().copied()
     }
 
-    pub fn prompt(&self, id: PromptId) -> Option<StaticPrompt2> {
+    pub fn prompt(&self, id: PromptId) -> Option<StaticPrompt> {
         let state = self.state.read();
         state.prompts.get(&id).cloned()
     }
@@ -126,13 +117,19 @@ impl PromptLibrary2 {
     /// Load all prompts from the file system
     /// adding them to the library if they don't already exist
     pub async fn load_prompts(&mut self, fs: Arc<dyn Fs>) -> anyhow::Result<()> {
-        let current_prompts = self.all_prompt_contents().clone();
+        // let current_prompts = self.all_prompt_contents().clone();
+
+        // For now, we'll just clear the prompts and reload them all
+        self.state.get_mut().prompts.clear();
+
         let mut prompt_paths = fs.read_dir(&PROMPTS_DIR).await?;
 
         while let Some(prompt_path) = prompt_paths.next().await {
             let prompt_path = prompt_path.with_context(|| "Failed to read prompt path")?;
 
-            if !fs.is_file(&prompt_path).await {
+            if !fs.is_file(&prompt_path).await
+                || prompt_path.extension().and_then(|ext| ext.to_str()) != Some("md")
+            {
                 continue;
             }
 
@@ -140,7 +137,7 @@ impl PromptLibrary2 {
                 .load(&prompt_path)
                 .await
                 .with_context(|| format!("Failed to load prompt {:?}", prompt_path))?;
-            let mut static_prompt = StaticPrompt2::new(json);
+            let mut static_prompt = StaticPrompt::new(json);
 
             if let Some(file_name) = prompt_path.file_name() {
                 let file_name = file_name.to_string_lossy().into_owned();
@@ -149,10 +146,9 @@ impl PromptLibrary2 {
 
             let state = self.state.get_mut();
 
-            if !current_prompts.contains(&static_prompt.content()) {
-                let id = Uuid::new_v4();
-                state.prompts.insert(PromptId(id), static_prompt);
-            }
+            let id = Uuid::new_v4();
+            state.prompts.insert(PromptId(id), static_prompt);
+            state.version += 1;
         }
 
         // Write any changes back to the file system

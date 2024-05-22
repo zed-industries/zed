@@ -12,15 +12,14 @@ use ui::{prelude::*, IconButtonShape, ListItem, ListItemSpacing};
 use util::TryFutureExt;
 use workspace::ModalView;
 
-use super::{
-    prompt_library2::{PromptId, PromptLibrary2},
-    StaticPrompt2,
-};
+use super::prompt_library::{PromptId, PromptLibrary2};
+use crate::prompts::prompts::StaticPrompt;
 
 pub struct PromptManager {
     focus_handle: FocusHandle,
     prompt_library: Arc<PromptLibrary2>,
     language_registry: Arc<LanguageRegistry>,
+    #[allow(dead_code)]
     fs: Arc<dyn Fs>,
     picker: View<Picker<PromptManagerDelegate>>,
     prompt_editors: HashMap<PromptId, View<Editor>>,
@@ -231,7 +230,7 @@ impl FocusableView for PromptManager {
 
 pub struct PromptManagerDelegate {
     prompt_manager: WeakView<PromptManager>,
-    matching_prompts: Vec<Arc<StaticPrompt2>>,
+    matching_prompts: Vec<Arc<StaticPrompt>>,
     matching_prompt_ids: Vec<PromptId>,
     prompt_library: Arc<PromptLibrary2>,
     selected_index: usize,
