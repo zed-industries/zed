@@ -18,6 +18,7 @@ use std::{
 
 use crate::PromptLibrary;
 
+mod current_file_command;
 mod file_command;
 mod prompt_command;
 
@@ -47,6 +48,15 @@ pub(crate) trait SlashCommand: 'static + Send + Sync {
 pub(crate) struct SlashCommandInvocation {
     pub output: Task<Result<String>>,
     pub invalidated: oneshot::Receiver<()>,
+    pub drop: Option<Box<dyn FnOnce()>>,
+}
+
+impl Drop for SlashCommandInvocation {
+    fn drop(&mut self) {
+        if let Some(drop) = self.drop.take() {
+            drop();
+        }
+    }
 }
 
 pub(crate) struct SlashCommandLine {
