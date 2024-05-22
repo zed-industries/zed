@@ -156,10 +156,10 @@ impl PromptLibrary {
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub struct UserPrompt {
     version: String,
-    title: String,
+    pub title: String,
     author: String,
     languages: Vec<String>,
-    prompt: String,
+    pub prompt: String,
 }
 
 impl UserPrompt {

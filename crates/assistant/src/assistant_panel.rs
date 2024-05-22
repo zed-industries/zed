@@ -195,8 +195,10 @@ impl AssistantPanel {
                     })
                     .detach();
 
-                    let slash_command_registry =
-                        SlashCommandRegistry::new(workspace.project().clone());
+                    let slash_command_registry = SlashCommandRegistry::new(
+                        workspace.project().clone(),
+                        prompt_library.clone(),
+                    );
 
                     Self {
                         workspace: workspace_handle,
@@ -2787,11 +2789,11 @@ impl ConversationEditor {
 
                     let flap_id = editor
                         .insert_flaps(
-                            [Flap {
-                                range: start..end,
-                                render_toggle: Arc::new(render_slash_command_output_toggle),
-                                render_trailer: Arc::new(render_slash_command_output_trailer),
-                            }],
+                            [Flap::new(
+                                start..end,
+                                render_slash_command_output_toggle,
+                                render_slash_command_output_trailer,
+                            )],
                             cx,
                         )
                         .into_iter()
@@ -4133,7 +4135,8 @@ mod tests {
         .await;
 
         let project = Project::test(fs.clone(), ["/test".as_ref()], cx).await;
-        let slash_command_registry = SlashCommandRegistry::new(project.clone());
+        let prompt_library = Arc::new(PromptLibrary::default());
+        let slash_command_registry = SlashCommandRegistry::new(project.clone(), prompt_library);
 
         let registry = Arc::new(LanguageRegistry::test(cx.executor()));
         let conversation = cx.new_model(|cx| {

@@ -1,13 +1,17 @@
 use super::SlashCommand;
-use anyhow::Result;
+use crate::PromptLibrary;
+use anyhow::{anyhow, Context, Result};
+use fuzzy::StringMatchCandidate;
 use gpui::{AppContext, Task};
 use std::sync::{atomic::AtomicBool, Arc};
 
-pub(crate) struct PromptSlashCommand {}
+pub(crate) struct PromptSlashCommand {
+    library: Arc<PromptLibrary>,
+}
 
 impl PromptSlashCommand {
-    pub fn new() -> Self {
-        Self {}
+    pub fn new(library: Arc<PromptLibrary>) -> Self {
+        Self { library }
     }
 }
 
@@ -26,15 +30,49 @@ impl SlashCommand for PromptSlashCommand {
 
     fn complete_argument(
         &self,
-        _query: String,
-        _cancellation_flag: Arc<AtomicBool>,
+        query: String,
+        cancellation_flag: Arc<AtomicBool>,
         cx: &mut AppContext,
-    ) -> Task<http::Result<Vec<String>>> {
-        cx.background_executor()
-            .spawn(async move { Ok(Vec::new()) })
+    ) -> Task<Result<Vec<String>>> {
+        let library = self.library.clone();
+        let executor = cx.background_executor().clone();
+        cx.background_executor().spawn(async move {
+            let candidates = library
+                .prompts()
+                .into_iter()
+                .enumerate()
+                .map(|(ix, prompt)| StringMatchCandidate::new(ix, prompt.title))
+                .collect::<Vec<_>>();
+            let matches = fuzzy::match_strings(
+                &candidates,
+                &query,
+                false,
+                100,
+                &cancellation_flag,
+                executor,
+            )
+            .await;
+            Ok(matches
+                .into_iter()
+                .map(|mat| candidates[mat.candidate_id].string.clone())
+                .collect())
+        })
     }
 
-    fn run(&self, argument: Option<&str>, _cx: &mut AppContext) -> Task<Result<String>> {
-        Task::ready(Ok(format!("inserting prompt {:?}", argument)))
+    fn run(&self, title: Option<&str>, cx: &mut AppContext) -> Task<Result<String>> {
+        let Some(title) = title else {
+            return Task::ready(Err(anyhow!("missing prompt name")));
+        };
+
+        let library = self.library.clone();
+        let title = title.to_string();
+        cx.background_executor().spawn(async move {
+            let prompt = library
+                .prompts()
+                .into_iter()
+                .find(|prompt| prompt.title == title)
+                .with_context(|| format!("no prompt found with title {:?}", title))?;
+            Ok(prompt.prompt)
+        })
     }
 }

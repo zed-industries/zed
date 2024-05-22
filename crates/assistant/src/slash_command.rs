@@ -15,6 +15,8 @@ use std::{
     },
 };
 
+use crate::PromptLibrary;
+
 mod file_command;
 mod prompt_command;
 
@@ -49,13 +51,13 @@ pub(crate) struct SlashCommandLine {
 }
 
 impl SlashCommandRegistry {
-    pub fn new(project: Model<Project>) -> Arc<Self> {
+    pub fn new(project: Model<Project>, prompt_library: Arc<PromptLibrary>) -> Arc<Self> {
         let mut this = Self {
             commands: HashMap::default(),
         };
 
-        this.register_command(file_command::FileSlashCommand::new(project.clone()));
-        this.register_command(prompt_command::PromptSlashCommand::new());
+        this.register_command(file_command::FileSlashCommand::new(project));
+        this.register_command(prompt_command::PromptSlashCommand::new(prompt_library));
 
         Arc::new(this)
     }
