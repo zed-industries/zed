@@ -1,4 +1,4 @@
-; Add support for Jest runnable
+; Add support for (node:test, bun:test and Jest) runnable
 ; Function expression that has `it`, `test` or `describe` as the function name
 (call_expression
     function: (_) @_name
@@ -8,4 +8,4 @@
             (string_fragment) @run
         )
     )
-) @jest-test
+) @js-test

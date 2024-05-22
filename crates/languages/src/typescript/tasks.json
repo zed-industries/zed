@@ -3,13 +3,13 @@
     "label": "jest file test",
     "command": "npx jest",
     "args": ["$ZED_FILE"],
-    "tags": ["jest-test"]
+    "tags": ["ts-test"]
   },
   {
     "label": "jest test $ZED_SYMBOL",
     "command": "npx jest",
     "args": ["\"$ZED_SYMBOL\" $ZED_FILE"],
-    "tags": ["jest-test"]
+    "tags": ["ts-test"]
   },
   {
     "label": "execute selection $ZED_SELECTED_TEXT",

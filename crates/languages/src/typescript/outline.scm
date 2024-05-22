@@ -64,7 +64,7 @@
     ]* @context
     name: (_) @name) @item
 
-; Add support for Jest runnable
+; Add support for (node:test, bun:test and Jest) runnable
 (call_expression
     function: (_) @context
     (#any-of? @context "it" "test" "describe")
