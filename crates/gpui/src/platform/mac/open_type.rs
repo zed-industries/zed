@@ -28,26 +28,7 @@ use std::ptr;
 pub fn apply_features(font: &mut Font, features: &FontFeatures) {
     unsafe {
         let native_font = font.native_font();
-        let mut feature_array =
-            CFArrayCreateMutable(kCFAllocatorDefault, 0, &kCFTypeArrayCallBacks);
-        for (tag, value) in features.tag_value_list() {
-            let keys = [kCTFontOpenTypeFeatureTag, kCTFontOpenTypeFeatureValue];
-            let values = [
-                CFString::new(&tag).as_CFTypeRef(),
-                CFNumber::from(*value as i32).as_CFTypeRef(),
-            ];
-            let dict = CFDictionaryCreate(
-                kCFAllocatorDefault,
-                &keys as *const _ as _,
-                &values as *const _ as _,
-                2,
-                &kCFTypeDictionaryKeyCallBacks,
-                &kCFTypeDictionaryValueCallBacks,
-            );
-            values.into_iter().for_each(|value| CFRelease(value));
-            CFArrayAppendValue(feature_array, dict as _);
-            CFRelease(dict as _);
-        }
+        let feature_array = generate_feature_array(features);
         let attrs = CFDictionaryCreate(
             kCFAllocatorDefault,
             &kCTFontFeatureSettingsAttribute as *const _ as _,
@@ -68,6 +49,32 @@ pub fn apply_features(font: &mut Font, features: &FontFeatures) {
         );
         let new_font = CTFont::wrap_under_create_rule(new_font);
         *font = Font::from_native_font(&new_font);
+    }
+}
+
+pub fn generate_feature_array(features: &FontFeatures) -> CFMutableArrayRef {
+    unsafe {
+        let mut feature_array =
+            CFArrayCreateMutable(kCFAllocatorDefault, 0, &kCFTypeArrayCallBacks);
+        for (tag, value) in features.tag_value_list() {
+            let keys = [kCTFontOpenTypeFeatureTag, kCTFontOpenTypeFeatureValue];
+            let values = [
+                CFString::new(&tag).as_CFTypeRef(),
+                CFNumber::from(*value as i32).as_CFTypeRef(),
+            ];
+            let dict = CFDictionaryCreate(
+                kCFAllocatorDefault,
+                &keys as *const _ as _,
+                &values as *const _ as _,
+                2,
+                &kCFTypeDictionaryKeyCallBacks,
+                &kCFTypeDictionaryValueCallBacks,
+            );
+            values.into_iter().for_each(|value| CFRelease(value));
+            CFArrayAppendValue(feature_array, dict as _);
+            CFRelease(dict as _);
+        }
+        feature_array
     }
 }
 
