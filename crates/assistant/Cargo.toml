@@ -21,6 +21,7 @@ editor.workspace = true
 file_icons.workspace = true
 fs.workspace = true
 futures.workspace = true
+fuzzy.workspace = true
 gpui.workspace = true
 http.workspace = true
 indoc.workspace = true

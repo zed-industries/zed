@@ -2166,6 +2166,31 @@ impl BufferSnapshot {
         }
     }
 
+    pub fn has_edits_since_in_range(&self, since: &clock::Global, range: Range<Anchor>) -> bool {
+        if *since != self.version {
+            let start_fragment_id = self.fragment_id_for_anchor(&range.start);
+            let end_fragment_id = self.fragment_id_for_anchor(&range.end);
+            let mut cursor = self
+                .fragments
+                .filter::<_, usize>(move |summary| !since.observed_all(&summary.max_version));
+            cursor.next(&None);
+            while let Some(fragment) = cursor.item() {
+                if fragment.id > *end_fragment_id {
+                    break;
+                }
+                if fragment.id > *start_fragment_id {
+                    let was_visible = fragment.was_visible(since, &self.undo_map);
+                    let is_visible = fragment.visible;
+                    if was_visible != is_visible {
+                        return true;
+                    }
+                }
+                cursor.next(&None);
+            }
+        }
+        false
+    }
+
     pub fn has_edits_since(&self, since: &clock::Global) -> bool {
         if *since != self.version {
             let mut cursor = self
