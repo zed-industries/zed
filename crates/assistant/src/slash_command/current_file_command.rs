@@ -1,16 +1,22 @@
-use std::borrow::Cow;
+use std::{borrow::Cow, cell::Cell, rc::Rc};
 
 use anyhow::{anyhow, Result};
 use collections::HashMap;
 use editor::Editor;
 use futures::channel::oneshot;
-use gpui::{AppContext, Entity, Subscription, Task, WeakView, WindowHandle};
-use workspace::Workspace;
+use gpui::{AppContext, Entity, Subscription, Task, WindowHandle};
+use workspace::{Event as WorkspaceEvent, Workspace};
 
-use super::{SlashCommand, SlashCommandInvocation};
+use super::{SlashCommand, SlashCommandCleanup, SlashCommandInvocation};
 
 pub(crate) struct CurrentFileSlashCommand {
     workspace: WindowHandle<Workspace>,
+}
+
+impl CurrentFileSlashCommand {
+    pub fn new(workspace: WindowHandle<Workspace>) -> Self {
+        Self { workspace }
+    }
 }
 
 impl SlashCommand for CurrentFileSlashCommand {
@@ -24,9 +30,9 @@ impl SlashCommand for CurrentFileSlashCommand {
 
     fn complete_argument(
         &self,
-        query: String,
-        cancel: std::sync::Arc<std::sync::atomic::AtomicBool>,
-        cx: &mut AppContext,
+        _query: String,
+        _cancel: std::sync::Arc<std::sync::atomic::AtomicBool>,
+        _cx: &mut AppContext,
     ) -> Task<Result<Vec<String>>> {
         Task::ready(Err(anyhow!("this command does not require argument")))
     }
@@ -35,8 +41,9 @@ impl SlashCommand for CurrentFileSlashCommand {
         false
     }
 
-    fn run(&self, argument: Option<&str>, cx: &mut AppContext) -> SlashCommandInvocation {
+    fn run(&self, _argument: Option<&str>, cx: &mut AppContext) -> SlashCommandInvocation {
         let (invalidate_tx, invalidate_rx) = oneshot::channel();
+        let invalidate_tx = Rc::new(Cell::new(Some(invalidate_tx)));
         let mut subscriptions: Vec<Subscription> = Vec::new();
         let output = self.workspace.update(cx, |workspace, cx| {
             let mut timestamps_by_entity_id = HashMap::default();
@@ -65,12 +72,34 @@ impl SlashCommand for CurrentFileSlashCommand {
                 }
             }
 
-            // let workspace_view = cx.view().clone();
-            // cx.window_context().subscribe(&workspace_view, move |workspace, event, cx| {
-
-            // });
+            subscriptions.push({
+                let workspace_view = cx.view().clone();
+                let invalidate_tx = invalidate_tx.clone();
+                cx.window_context()
+                    .subscribe(&workspace_view, move |_workspace, event, _cx| match event {
+                        WorkspaceEvent::ActiveItemChanged
+                        | WorkspaceEvent::ItemAdded
+                        | WorkspaceEvent::ItemRemoved
+                        | WorkspaceEvent::PaneAdded(_)
+                        | WorkspaceEvent::PaneRemoved => {
+                            if let Some(invalidate_tx) = invalidate_tx.take() {
+                                _ = invalidate_tx.send(());
+                            }
+                        }
+                        _ => {}
+                    })
+            });
 
             if let Some((buffer, _)) = most_recent_buffer {
+                subscriptions.push({
+                    let invalidate_tx = invalidate_tx.clone();
+                    cx.window_context().observe(&buffer, move |_buffer, _cx| {
+                        if let Some(invalidate_tx) = invalidate_tx.take() {
+                            _ = invalidate_tx.send(());
+                        }
+                    })
+                });
+
                 let snapshot = buffer.read(cx).snapshot();
                 let path = snapshot.resolve_file_path(cx, true);
                 cx.background_executor().spawn(async move {
@@ -100,7 +129,7 @@ impl SlashCommand for CurrentFileSlashCommand {
         SlashCommandInvocation {
             output: output.unwrap_or_else(|error| Task::ready(Err(error))),
             invalidated: invalidate_rx,
-            drop: move || drop(subscriptions),
+            cleanup: SlashCommandCleanup::new(move || drop(subscriptions)),
         }
     }
 }

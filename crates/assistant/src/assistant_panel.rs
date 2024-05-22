@@ -5,7 +5,9 @@ use crate::{
     prompt_library::{PromptLibrary, PromptManager},
     prompts::generate_content_prompt,
     search::*,
-    slash_command::{SlashCommandCompletionProvider, SlashCommandLine, SlashCommandRegistry},
+    slash_command::{
+        SlashCommandCleanup, SlashCommandCompletionProvider, SlashCommandLine, SlashCommandRegistry,
+    },
     ApplyEdit, Assist, CompletionProvider, CycleMessageRole, InlineAssist, InsertActivePrompt,
     LanguageModel, LanguageModelRequest, LanguageModelRequestMessage, MessageId, MessageMetadata,
     MessageStatus, QuoteSelection, ResetKey, Role, SavedConversation, SavedConversationMetadata,
@@ -198,6 +200,7 @@ impl AssistantPanel {
                     let slash_command_registry = SlashCommandRegistry::new(
                         workspace.project().clone(),
                         prompt_library.clone(),
+                        cx.window_handle().downcast::<Workspace>(),
                     );
 
                     Self {
@@ -1815,10 +1818,11 @@ impl Conversation {
                                 source_range: source_range.clone(),
                                 output_range: None,
                                 should_rerun: false,
-                                _observe_update: cx.spawn(|this, mut cx| {
+                                _invalidate: cx.spawn(|this, mut cx| {
                                     let source_range = source_range.clone();
+                                    let invalidated = invocation.invalidated;
                                     async move {
-                                        if invocation.invalidated.await.is_ok() {
+                                        if invalidated.await.is_ok() {
                                             _ = this.update(&mut cx, |this, cx| {
                                                 let buffer = this.buffer.read(cx);
                                                 let call_ix = this
@@ -1838,6 +1842,7 @@ impl Conversation {
                                         }
                                     }
                                 }),
+                                _command_cleanup: invocation.cleanup,
                             });
 
                             cx.spawn(|this, mut cx| async move {
@@ -2560,7 +2565,8 @@ struct SlashCommandCall {
     name: String,
     argument: Option<String>,
     should_rerun: bool,
-    _observe_update: Task<()>,
+    _invalidate: Task<()>,
+    _command_cleanup: SlashCommandCleanup,
 }
 
 struct PendingCompletion {
@@ -4165,7 +4171,8 @@ mod tests {
 
         let project = Project::test(fs.clone(), ["/test".as_ref()], cx).await;
         let prompt_library = Arc::new(PromptLibrary::default());
-        let slash_command_registry = SlashCommandRegistry::new(project.clone(), prompt_library);
+        let slash_command_registry =
+            SlashCommandRegistry::new(project.clone(), prompt_library, None);
 
         let registry = Arc::new(LanguageRegistry::test(cx.executor()));
         let conversation = cx.new_model(|cx| {

@@ -3,7 +3,7 @@ use collections::HashMap;
 use editor::{CompletionProvider, Editor};
 use futures::channel::oneshot;
 use fuzzy::{match_strings, StringMatchCandidate};
-use gpui::{AppContext, Model, Task, ViewContext};
+use gpui::{AppContext, Model, Task, ViewContext, WindowHandle};
 use language::{Anchor, Buffer, CodeLabel, Documentation, LanguageServerId, ToPoint};
 use parking_lot::{Mutex, RwLock};
 use project::Project;
@@ -15,6 +15,7 @@ use std::{
         Arc,
     },
 };
+use workspace::Workspace;
 
 use crate::PromptLibrary;
 
@@ -48,13 +49,22 @@ pub(crate) trait SlashCommand: 'static + Send + Sync {
 pub(crate) struct SlashCommandInvocation {
     pub output: Task<Result<String>>,
     pub invalidated: oneshot::Receiver<()>,
-    pub drop: Option<Box<dyn FnOnce()>>,
+    pub cleanup: SlashCommandCleanup,
 }
 
-impl Drop for SlashCommandInvocation {
+#[derive(Default)]
+pub(crate) struct SlashCommandCleanup(Option<Box<dyn FnOnce()>>);
+
+impl SlashCommandCleanup {
+    pub fn new(cleanup: impl FnOnce() + 'static) -> Self {
+        Self(Some(Box::new(cleanup)))
+    }
+}
+
+impl Drop for SlashCommandCleanup {
     fn drop(&mut self) {
-        if let Some(drop) = self.drop.take() {
-            drop();
+        if let Some(cleanup) = self.0.take() {
+            cleanup();
         }
     }
 }
@@ -67,13 +77,20 @@ pub(crate) struct SlashCommandLine {
 }
 
 impl SlashCommandRegistry {
-    pub fn new(project: Model<Project>, prompt_library: Arc<PromptLibrary>) -> Arc<Self> {
+    pub fn new(
+        project: Model<Project>,
+        prompt_library: Arc<PromptLibrary>,
+        window: Option<WindowHandle<Workspace>>,
+    ) -> Arc<Self> {
         let mut this = Self {
             commands: HashMap::default(),
         };
 
         this.register_command(file_command::FileSlashCommand::new(project));
         this.register_command(prompt_command::PromptSlashCommand::new(prompt_library));
+        if let Some(window) = window {
+            this.register_command(current_file_command::CurrentFileSlashCommand::new(window));
+        }
 
         Arc::new(this)
     }

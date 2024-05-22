@@ -1,4 +1,4 @@
-use super::{SlashCommand, SlashCommandInvocation};
+use super::{SlashCommand, SlashCommandCleanup, SlashCommandInvocation};
 use crate::PromptLibrary;
 use anyhow::{anyhow, Context, Result};
 use futures::channel::oneshot;
@@ -65,6 +65,7 @@ impl SlashCommand for PromptSlashCommand {
             return SlashCommandInvocation {
                 output: Task::ready(Err(anyhow!("missing prompt name"))),
                 invalidated: oneshot::channel().1,
+                cleanup: SlashCommandCleanup::default(),
             };
         };
 
@@ -81,6 +82,7 @@ impl SlashCommand for PromptSlashCommand {
         SlashCommandInvocation {
             output,
             invalidated: oneshot::channel().1,
+            cleanup: SlashCommandCleanup::default(),
         }
     }
 }

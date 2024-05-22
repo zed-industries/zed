@@ -1,4 +1,4 @@
-use super::{SlashCommand, SlashCommandInvocation};
+use super::{SlashCommand, SlashCommandCleanup, SlashCommandInvocation};
 use anyhow::Result;
 use futures::channel::oneshot;
 use fuzzy::PathMatch;
@@ -102,6 +102,7 @@ impl SlashCommand for FileSlashCommand {
             return SlashCommandInvocation {
                 output: Task::ready(Err(anyhow::anyhow!("missing path"))),
                 invalidated: oneshot::channel().1,
+                cleanup: SlashCommandCleanup::default(),
             };
         };
 
@@ -116,6 +117,7 @@ impl SlashCommand for FileSlashCommand {
             return SlashCommandInvocation {
                 output: Task::ready(Err(anyhow::anyhow!("missing path"))),
                 invalidated: oneshot::channel().1,
+                cleanup: SlashCommandCleanup::default(),
             };
         };
 
@@ -137,6 +139,7 @@ impl SlashCommand for FileSlashCommand {
         SlashCommandInvocation {
             output,
             invalidated: oneshot::channel().1,
+            cleanup: SlashCommandCleanup::default(),
         }
     }
 }
