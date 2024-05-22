@@ -50,8 +50,6 @@ util.workspace = true
 uuid.workspace = true
 workspace.workspace = true
 picker.workspace = true
-fuzzy.workspace = true
-tree-sitter-markdown.workspace = true
 gray_matter = "0.2.7"
 
 [dev-dependencies]
