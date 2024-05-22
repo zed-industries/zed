@@ -4,8 +4,8 @@ use crate::{
         BlockContext, BlockStyle, DisplaySnapshot, HighlightedChunk, ToDisplayPoint, TransformBlock,
     },
     editor_settings::{
-        CurrentLineHighlight, DoubleClickInMultibuffer, IndentGuideBackgroundColorMode,
-        IndentGuideColorMode, MultiCursorModifier, ShowScrollbar,
+        CurrentLineHighlight, DoubleClickInMultibuffer, IndentGuideBackgroundColoring,
+        IndentGuideColoring, MultiCursorModifier, ShowScrollbar,
     },
     git::{
         blame::{CommitDetails, GitBlame},
@@ -2637,45 +2637,46 @@ impl EditorElement {
             const INDENT_AWARE_BACKGROUND_ALPHA: f32 = 0.1;
             const INDENT_AWARE_BACKGROUND_ACTIVE_ALPHA: f32 = 0.2;
 
-            let line_color = match (&settings.color_mode, indent_guide.active) {
-                (IndentGuideColorMode::Disabled, _) => None,
-                (IndentGuideColorMode::Fixed, false) => {
+            let line_color = match (&settings.coloring, indent_guide.active) {
+                (IndentGuideColoring::Disabled, _) => None,
+                (IndentGuideColoring::Fixed, false) => {
                     Some(cx.theme().colors().editor_indent_guide)
                 }
-                (IndentGuideColorMode::Fixed, true) => {
+                (IndentGuideColoring::Fixed, true) => {
                     Some(cx.theme().colors().editor_indent_guide_active)
                 }
-                (IndentGuideColorMode::IndentAware, false) => Some(
+                (IndentGuideColoring::IndentAware, false) => Some(
                     indent_accent_colors
                         .map(|i| faded_color(i, INDENT_AWARE_ALPHA))
                         .unwrap_or_else(|| cx.theme().colors().editor_indent_guide),
                 ),
-                (IndentGuideColorMode::IndentAware, true) => Some(
+                (IndentGuideColoring::IndentAware, true) => Some(
                     indent_accent_colors
                         .map(|i| faded_color(i, INDENT_AWARE_ACTIVE_ALPHA))
                         .unwrap_or_else(|| cx.theme().colors().editor_indent_guide_active),
                 ),
             };
 
-            let background_color = match (&settings.background_color_mode, indent_guide.active) {
-                (IndentGuideBackgroundColorMode::Disabled, _) => None,
-                (IndentGuideBackgroundColorMode::IndentAware, false) => {
+            let background_color = match (&settings.background_coloring, indent_guide.active) {
+                (IndentGuideBackgroundColoring::Disabled, _) => None,
+                (IndentGuideBackgroundColoring::IndentAware, false) => {
                     indent_accent_colors.map(|i| faded_color(i, INDENT_AWARE_BACKGROUND_ALPHA))
                 }
-                (IndentGuideBackgroundColorMode::IndentAware, true) => indent_accent_colors
+                (IndentGuideBackgroundColoring::IndentAware, true) => indent_accent_colors
                     .map(|i| faded_color(i, INDENT_AWARE_BACKGROUND_ACTIVE_ALPHA)),
             };
 
+            let requested_line_width = settings.line_width.clamp(1, 10);
             let mut line_indicator_width = 0.;
             if let Some(color) = line_color {
                 cx.paint_quad(fill(
                     Bounds {
                         origin: indent_guide.origin,
-                        size: size(px(settings.line_width as f32), indent_guide.length),
+                        size: size(px(requested_line_width as f32), indent_guide.length),
                     },
                     color,
                 ));
-                line_indicator_width = settings.line_width as f32;
+                line_indicator_width = requested_line_width as f32;
             }
 
             if let Some(color) = background_color {
