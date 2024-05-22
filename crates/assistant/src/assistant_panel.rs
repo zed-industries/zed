@@ -1,5 +1,6 @@
 use crate::ambient_context::{AmbientContext, ContextUpdated, RecentBuffer};
 use crate::prompts::prompt_library::PromptLibrary;
+use crate::prompts::prompt_library2::PromptLibrary2;
 use crate::prompts::prompt_manager::PromptManager;
 use crate::InsertActivePrompt;
 use crate::{
@@ -102,6 +103,7 @@ pub struct AssistantPanel {
     toolbar: View<Toolbar>,
     languages: Arc<LanguageRegistry>,
     prompt_library: Arc<PromptLibrary>,
+    prompt_library2: Arc<PromptLibrary2>,
     fs: Arc<dyn Fs>,
     telemetry: Arc<Telemetry>,
     _subscriptions: Vec<Subscription>,
@@ -140,6 +142,14 @@ impl AssistantPanel {
                     .log_err()
                     .unwrap_or_default(),
             );
+
+            let prompt_library2 = Arc::new(
+                PromptLibrary2::init(fs.clone())
+                    .log_err()
+                    .unwrap_or_default(),
+            );
+
+            prompt_library2.clone().save(fs.clone()).await.log_err();
 
             // TODO: deserialize state.
             let workspace_handle = workspace.clone();
@@ -204,6 +214,7 @@ impl AssistantPanel {
                         toolbar,
                         languages: workspace.app_state().languages.clone(),
                         prompt_library,
+                        prompt_library2,
                         fs: workspace.app_state().fs.clone(),
                         telemetry: workspace.client().telemetry().clone(),
                         width: None,

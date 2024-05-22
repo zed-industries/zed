@@ -2,6 +2,7 @@ use collections::HashMap;
 use fs::Fs;
 
 use parking_lot::RwLock;
+use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use uuid::Uuid;
 
@@ -133,5 +134,5 @@ impl PromptLibrary {
     }
 }
 
-#[derive(Debug, Clone, Copy, Eq, PartialEq, Hash)]
-pub struct PromptId(Uuid);
+#[derive(Debug, Clone, Copy, Eq, PartialEq, Hash, Serialize, Deserialize)]
+pub struct PromptId(pub Uuid);

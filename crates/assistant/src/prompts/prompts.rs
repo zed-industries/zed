@@ -1,5 +1,4 @@
 use language::BufferSnapshot;
-use rope::Rope;
 use std::{fmt::Write, ops::Range};
 
 use fs::{CreateOptions, Fs};

@@ -165,13 +165,6 @@ impl PromptManager {
 
 impl Render for PromptManager {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
-        let active_prompt = self.active_prompt_id.and_then(|id| {
-            self.prompt_library
-                .prompts_with_ids()
-                .into_iter()
-                .find(|(prompt_id, _)| *prompt_id == id)
-        });
-
         h_flex()
             .key_context("PromptManager")
             .track_focus(&self.focus_handle)
