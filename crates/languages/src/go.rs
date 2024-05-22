@@ -511,7 +511,7 @@ impl ContextProvider for GoContextProvider {
                 ..TaskTemplate::default()
             },
             TaskTemplate {
-                label: format!("go test ./..."),
+                label: "go test ./...".into(),
                 command: "go".into(),
                 args: vec!["test".into(), "./...".into()],
                 ..TaskTemplate::default()
