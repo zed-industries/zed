@@ -153,7 +153,7 @@ mod tests {
 
     use editor::Editor;
     use gpui::{Entity, TestAppContext};
-    use language::{BasicContextProvider, Language, LanguageConfig};
+    use language::{Language, LanguageConfig};
     use project::{FakeFs, Project};
     use serde_json::json;
     use task::{TaskContext, TaskVariables, VariableName};
