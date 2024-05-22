@@ -4,11 +4,16 @@ use crate::{
     RenderGlyphParams, Result, ShapedGlyph, ShapedRun, SharedString, Size, SUBPIXEL_VARIANTS,
 };
 use anyhow::anyhow;
-use cocoa::appkit::{CGFloat, CGPoint};
+use cocoa::{
+    appkit::{CGFloat, CGPoint},
+    base::id,
+    foundation::{NSArray, NSUserDefaults},
+};
 use collections::{BTreeSet, HashMap};
 use core_foundation::{
+    array::{kCFTypeArrayCallBacks, CFArray, CFArrayAppendValue, CFArrayCreateMutable, CFArrayRef},
     attributed_string::CFMutableAttributedString,
-    base::{CFRange, TCFType},
+    base::{kCFAllocatorDefault, CFRange, TCFType},
     number::CFNumber,
     string::CFString,
 };
@@ -18,10 +23,10 @@ use core_graphics::{
     context::CGContext,
 };
 use core_text::{
-    font::CTFont,
+    font::{cascade_list_for_languages, new_from_name, CTFont},
     font_descriptor::{
         kCTFontCascadeListAttribute, kCTFontSlantTrait, kCTFontSymbolicTrait, kCTFontWeightTrait,
-        kCTFontWidthTrait,
+        kCTFontWidthTrait, CTFontDescriptorCreateWithAttributes,
     },
     line::CTLine,
     string_attributes::kCTFontAttributeName,
@@ -35,6 +40,7 @@ use font_kit::{
     source::SystemSource,
     sources::mem::MemSource,
 };
+use objc::{class, msg_send, sel, sel_impl};
 use parking_lot::{RwLock, RwLockUpgradableReadGuard};
 use pathfinder_geometry::{
     rect::{RectF, RectI},
@@ -43,6 +49,7 @@ use pathfinder_geometry::{
 };
 use smallvec::SmallVec;
 use std::{borrow::Cow, char, cmp, convert::TryFrom, sync::Arc};
+use util::ResultExt;
 
 use super::open_type;
 
@@ -224,10 +231,95 @@ impl MacTextSystemState {
     }
 
     fn set_fallbacks(&mut self, fallbacks: &[String], is_ui_font: bool) -> Result<()> {
-        if is_ui_font {
-            self.ui_font_fallbacks = fallbacks.to_vec();
-        } else {
-            self.buffer_font_fallbacks = fallbacks.to_vec();
+        let user_defaults: id = unsafe { msg_send![class!(NSUserDefaults), standardUserDefaults] };
+        let key = CFString::from_static_string("AppleLanguages");
+        let pref_langs: CFArray<CFString> =
+            unsafe { msg_send![user_defaults, stringArrayForKey: key] };
+        for font in self.fonts.iter_mut() {
+            let ctfont = font.font.native_font();
+            let mut fallback_array =
+                unsafe { CFArrayCreateMutable(kCFAllocatorDefault, 0, &kCFTypeArrayCallBacks) };
+
+            match font.fallbacks {
+                FontFallbacks::UiFontFallbacks => {
+                    if is_ui_font {
+                        for user_fallback in fallbacks {
+                            let Some(user_fallback_font) =
+                                new_from_name(user_fallback, 0.0).log_err()
+                            else {
+                                continue;
+                            };
+                            unsafe {
+                                CFArrayAppendValue(
+                                    fallback_array,
+                                    user_fallback_font.as_concrete_TypeRef() as _,
+                                )
+                            };
+                        }
+                    }
+                }
+                FontFallbacks::BufferFontFallbacks => {
+                    if !is_ui_font {
+                        for user_fallback in fallbacks {
+                            let Some(user_fallback_font) =
+                                new_from_name(user_fallback, 0.0).log_err()
+                            else {
+                                continue;
+                            };
+                            unsafe {
+                                CFArrayAppendValue(
+                                    fallback_array,
+                                    user_fallback_font.as_concrete_TypeRef() as _,
+                                )
+                            };
+                        }
+                    }
+                }
+                FontFallbacks::None => {}
+            }
+
+            cascade_list_for_languages(&ctfont, &pref_langs)
+                .into_iter()
+                .filter(|desc| desc.font_path().is_some())
+                .map(|desc| {
+                    let new_font = unsafe {
+                        open_type::CTFontCreateCopyWithAttributes(
+                            ctfont.as_concrete_TypeRef(),
+                            0.0,
+                            std::ptr::null(),
+                            desc.as_concrete_TypeRef(),
+                        )
+                    };
+                    unsafe { CTFont::wrap_under_create_rule(new_font) }
+                })
+                .for_each(|user_fallback_font| unsafe {
+                    CFArrayAppendValue(
+                        fallback_array,
+                        user_fallback_font.as_concrete_TypeRef() as _,
+                    );
+                });
+
+            let fallback_array: CFArray<CTFont> =
+                unsafe { CFArray::wrap_under_create_rule(fallback_array) };
+            let mut font_desc = unsafe { ctfont.all_traits().to_mutable() };
+            // let x = CFString::wrap_under_create_rule(kCTFontCascadeListAttribute);
+            unsafe {
+                font_desc.set(
+                    CFString::wrap_under_create_rule(kCTFontCascadeListAttribute),
+                    fallback_array.as_CFType(),
+                )
+            };
+            let new_descriptor =
+                unsafe { CTFontDescriptorCreateWithAttributes(font_desc.as_concrete_TypeRef()) };
+            let new_descriptor = CTFontDescriptor::wrap_under_create_rule(new_descriptor);
+            let new_font = CTFontCreateCopyWithAttributes(
+                font.native_font().as_concrete_TypeRef(),
+                0.0,
+                ptr::null(),
+                new_descriptor.as_concrete_TypeRef(),
+            );
+            let new_font = unsafe { CTFont::wrap_under_create_rule(new_font) };
+            font.font = Font::from_native_font(&new_font);
         }
         Ok(())
     }
@@ -489,10 +581,7 @@ impl MacTextSystemState {
 
                 // TODO: apply fallbacks
                 let font: &FontKitFont = &self.fonts[run.font_id.0].font;
-                let desc = font.native_font().copy_descriptor();
-                let x = desc.attributes();
-                let y = unsafe { x.get(kCTFontCascadeListAttribute) };
-                println!("  => list: {:#?}", y);
+
                 unsafe {
                     string.set_attribute(
                         cf_range,

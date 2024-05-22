@@ -76,7 +76,7 @@ extern "C" {
     static kCTFontOpenTypeFeatureTag: CFStringRef;
     static kCTFontOpenTypeFeatureValue: CFStringRef;
 
-    fn CTFontCreateCopyWithAttributes(
+    pub fn CTFontCreateCopyWithAttributes(
         font: CTFontRef,
         size: CGFloat,
         matrix: *const CGAffineTransform,
