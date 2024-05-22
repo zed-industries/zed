@@ -134,9 +134,11 @@ You can use Ollama with the Zed assistant by making Ollama appear as an OpenAPI 
   ```
 5. Restart Zed
 
-## Prompt Manager
+## Prompt Library
 
-Zed has a prompt manager for enabling and disabling custom prompts.
+**Warning: This feature is experimental and the format of prompts is _highly_ likely to change. Use at your own risk!**
+
+Zed has a prompt library that allows you to manage prompts.
 
 These are useful for:
 
@@ -154,26 +156,16 @@ Checked prompts are included in your "default prompt", which can be inserted int
 
 Prompts have a simple format:
 
-```json
-{
-  // ~/.config/zed/prompts/no-comments.json
-  "title": "No comments in code",
-  "version": "1.0",
-  "author": "Nate Butler <iamnbutler@gmail.com>",
-  "languages": ["*"],
-  "prompt": "Do not add inline or doc comments to any returned code. Avoid removing existing comments unless they are no longer accurate due to changes in the code."
-}
+```md
+---
+title: Foo
+version: 1.0
+author: Jane Kim <jane@kim.com
+languages: ["*"]
+dependencies: []
+---
+
+Foo and bar are terms used in programming to describe generic concepts.
 ```
 
-Ensure you properly escape your prompt string when creating a new prompt file.
-
-Example:
-
-```json
-{
-  // ...
-  "prompt": "This project using the gpui crate as it's UI framework for building UI in Rust. When working in Rust files with gpui components, import it's dependencies using `use gpui::{*, prelude::*}`.\n\nWhen a struct has a `#[derive(IntoElement)]` attribute, it is a UI component that must implement `RenderOnce`. Example:\n\n```rust\n#[derive(IntoElement)]\nstruct MyComponent {\n    id: ElementId,\n}\n\nimpl MyComponent {\n    pub fn new(id: impl Into<ElementId>) -> Self {\n        Self { id.into() }\n    }\n}\n\nimpl RenderOnce for MyComponent {\n    fn render(self, cx: &mut WindowContext) -> impl IntoElement {\n        div().id(self.id.clone()).child(text(\"Hello, world!\"))\n    }\n}\n```"
-}
-```
-
-In the future we'll allow creating and editing prompts directly in the prompt manager, reducing the need to do this by hand.
+In the future we'll allow creating and editing prompts directly in the prompt manager.

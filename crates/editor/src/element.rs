@@ -1623,6 +1623,13 @@ impl EditorElement {
         snapshot: &EditorSnapshot,
         cx: &mut WindowContext,
     ) -> Vec<Option<ShapedLine>> {
+        let include_line_numbers = snapshot.show_line_numbers.unwrap_or_else(|| {
+            EditorSettings::get_global(cx).gutter.line_numbers && snapshot.mode == EditorMode::Full
+        });
+        if !include_line_numbers {
+            return Vec::new();
+        }
+
         let editor = self.editor.read(cx);
         let newest_selection_head = newest_selection_head.unwrap_or_else(|| {
             let newest = editor.selections.newest::<Point>(cx);
@@ -1638,54 +1645,47 @@ impl EditorElement {
             .head
         });
         let font_size = self.style.text.font_size.to_pixels(cx.rem_size());
-        let include_line_numbers =
-            EditorSettings::get_global(cx).gutter.line_numbers && snapshot.mode == EditorMode::Full;
-        let mut shaped_line_numbers = Vec::with_capacity(rows.len());
-        let mut line_number = String::new();
+
         let is_relative = EditorSettings::get_global(cx).relative_line_numbers;
         let relative_to = if is_relative {
             Some(newest_selection_head.row())
         } else {
             None
         };
-
         let relative_rows = self.calculate_relative_line_numbers(snapshot, &rows, relative_to);
-
-        for (ix, row) in buffer_rows.into_iter().enumerate() {
-            let display_row = DisplayRow(rows.start.0 + ix as u32);
-            let color = if active_rows.contains_key(&display_row) {
-                cx.theme().colors().editor_active_line_number
-            } else {
-                cx.theme().colors().editor_line_number
-            };
-            if let Some(multibuffer_row) = row {
-                if include_line_numbers {
-                    line_number.clear();
-                    let default_number = multibuffer_row.0 + 1;
-                    let number = relative_rows
-                        .get(&DisplayRow(ix as u32 + rows.start.0))
-                        .unwrap_or(&default_number);
-                    write!(&mut line_number, "{number}").unwrap();
-                    let run = TextRun {
-                        len: line_number.len(),
-                        font: self.style.text.font(),
-                        color,
-                        background_color: None,
-                        underline: None,
-                        strikethrough: None,
-                    };
-                    let shaped_line = cx
-                        .text_system()
-                        .shape_line(line_number.clone().into(), font_size, &[run])
-                        .unwrap();
-                    shaped_line_numbers.push(Some(shaped_line));
-                }
-            } else {
-                shaped_line_numbers.push(None);
-            }
-        }
-
-        shaped_line_numbers
+        let mut line_number = String::new();
+        buffer_rows
+            .into_iter()
+            .enumerate()
+            .map(|(ix, multibuffer_row)| {
+                let multibuffer_row = multibuffer_row?;
+                let display_row = DisplayRow(rows.start.0 + ix as u32);
+                let color = if active_rows.contains_key(&display_row) {
+                    cx.theme().colors().editor_active_line_number
+                } else {
+                    cx.theme().colors().editor_line_number
+                };
+                line_number.clear();
+                let default_number = multibuffer_row.0 + 1;
+                let number = relative_rows
+                    .get(&DisplayRow(ix as u32 + rows.start.0))
+                    .unwrap_or(&default_number);
+                write!(&mut line_number, "{number}").unwrap();
+                let run = TextRun {
+                    len: line_number.len(),
+                    font: self.style.text.font(),
+                    color,
+                    background_color: None,
+                    underline: None,
+                    strikethrough: None,
+                };
+                let shaped_line = cx
+                    .text_system()
+                    .shape_line(line_number.clone().into(), font_size, &[run])
+                    .unwrap();
+                Some(shaped_line)
+            })
+            .collect()
     }
 
     fn layout_gutter_fold_toggles(
@@ -2513,10 +2513,16 @@ impl EditorElement {
             }
         }
 
-        let show_git_gutter = matches!(
-            ProjectSettings::get_global(cx).git.git_gutter,
-            Some(GitGutterSetting::TrackedFiles)
-        );
+        let show_git_gutter = layout
+            .position_map
+            .snapshot
+            .show_git_diff_gutter
+            .unwrap_or_else(|| {
+                matches!(
+                    ProjectSettings::get_global(cx).git.git_gutter,
+                    Some(GitGutterSetting::TrackedFiles)
+                )
+            });
         if show_git_gutter {
             Self::paint_diff_hunks(layout.gutter_hitbox.bounds, layout, cx)
         }
@@ -4281,7 +4287,11 @@ impl Element for EditorElement {
                                 gutter_dimensions.width - gutter_dimensions.left_padding,
                                 cx,
                             );
-                            if gutter_settings.code_actions {
+
+                            let show_code_actions = snapshot
+                                .show_code_actions
+                                .unwrap_or_else(|| gutter_settings.code_actions);
+                            if show_code_actions {
                                 let newest_selection_point =
                                     newest_selection_head.to_point(&snapshot.display_snapshot);
                                 let buffer = snapshot.buffer_snapshot.buffer_line_for_row(
