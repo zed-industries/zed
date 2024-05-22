@@ -1,4 +1,4 @@
-use anyhow::Result;
+use anyhow::{Context as _, Result};
 use collections::{HashMap, HashSet};
 use editor::{
     display_map::{BlockContext, BlockDisposition, BlockProperties, BlockStyle, RenderBlock},
@@ -286,7 +286,7 @@ impl RuntimeManager {
                 },
                 response_sender: tx,
             })
-            .expect("Failed to send execution request");
+            .context("Failed to send execution request")?;
 
         Ok(rx)
     }
@@ -347,92 +347,103 @@ impl RuntimeManager {
 
                 let start_language = buffer.language_at(range.start);
                 let end_language = buffer.language_at(range.end);
+
                 let language_name = if start_language == end_language {
-                    start_language.map(|language| language.code_fence_block_name())
+                    start_language
+                        .map(|language| language.code_fence_block_name())
+                        .filter(|lang| **lang != *"markdown")
                 } else {
                     None
                 };
 
-                (selected_text, language_name, anchor, editor_view)
-            });
-
-        if let Some((code, language_name, anchor, editor)) = code_snippet {
-            let language_name = if let Some(language_name) = language_name {
                 language_name
-            } else {
-                return;
-            };
+                    .map(|language_name| (selected_text, language_name, anchor, editor_view))
+            })
+            .flatten();
 
-            if language_name.as_ref() == "markdown" {
+        let code_snippet = if let Some(code_snippet) = code_snippet {
+            code_snippet
+        } else {
+            return;
+        };
+
+        let (code, language_name, anchor, editor) = code_snippet;
+
+        let runtime_manager = if let Some(runtime_manager) = RuntimeManager::global(cx) {
+            runtime_manager
+        } else {
+            log::error!("No runtime manager found");
+            return;
+        };
+
+        let entity_id = editor.entity_id();
+        let execution_id = ExecutionId::new();
+
+        let receiver = runtime_manager.update(cx, |runtime_manager, _| {
+            runtime_manager.execute_code(
+                entity_id,
+                language_name,
+                execution_id.clone(),
+                code.clone(),
+            )
+        });
+
+        let mut receiver = match receiver {
+            Ok(receiver) => receiver,
+            Err(e) => {
+                log::error!("Failed to execute code: {e:?}");
                 return;
             }
+        };
 
-            if let Some(model) = RuntimeManager::global(cx) {
-                let entity_id = editor.entity_id();
-                let execution_id = ExecutionId::new();
+        let execution_view = cx.new_view(|cx| ExecutionView::new(execution_id.clone(), cx));
 
-                let receiver = model.update(cx, |model, _| {
-                    model.execute_code(entity_id, language_name, execution_id.clone(), code.clone())
-                });
+        // Since we don't know the height, in editor terms, we have to calculate it over time
+        // and just create a new block, replacing the old. It would be better if we could
+        // just rely on the view updating and for the height to be calculated automatically.
+        //
+        // We will just handle text for the moment to keep this accurate.
+        // Plots and other images will have to wait.
 
-                let mut receiver = match receiver {
-                    Ok(receiver) => receiver,
-                    Err(e) => {
-                        log::error!("Failed to execute code: {e:?}");
-                        return;
-                    }
-                };
+        let mut block_id = editor.update(cx, |editor, cx| {
+            let block = BlockProperties {
+                position: anchor,
+                height: 1,
+                style: BlockStyle::Sticky,
+                render: create_output_area_render(execution_view.clone()),
+                disposition: BlockDisposition::Below,
+            };
 
-                let execution_view = cx.new_view(|cx| ExecutionView::new(execution_id.clone(), cx));
+            editor.insert_blocks([block], None, cx)[0]
+        });
 
-                // Since we don't know the height, in editor terms, we have to calculate it over time
-                // and just create a new block, replacing the old. It would be better if we could
-                // just rely on the view updating and for the height to be calculated automatically.
-                //
-                // We will just handle text for the moment to keep this accurate.
-                // Plots and other images will have to wait.
+        cx.spawn(|_this, mut cx| async move {
+            let execution_view = execution_view.clone();
+            while let Some(update) = receiver.next().await {
+                execution_view.update(&mut cx, |execution_view, cx| {
+                    execution_view.push_message(&update.update, cx)
+                })?;
 
-                let mut block_id = editor.update(cx, |editor, cx| {
+                editor.update(&mut cx, |editor, cx| {
+                    let mut blocks_to_remove = HashSet::default();
+                    blocks_to_remove.insert(block_id);
+
+                    editor.remove_blocks(blocks_to_remove, None, cx);
+
                     let block = BlockProperties {
                         position: anchor,
-                        height: 1,
+                        height: 1 + execution_view.read(cx).execution.read(cx).num_lines(),
                         style: BlockStyle::Sticky,
                         render: create_output_area_render(execution_view.clone()),
                         disposition: BlockDisposition::Below,
                     };
 
-                    editor.insert_blocks([block], None, cx)[0]
-                });
-
-                cx.spawn(|_this, mut cx| async move {
-                    let execution_view = execution_view.clone();
-                    while let Some(update) = receiver.next().await {
-                        execution_view.update(&mut cx, |execution_view, cx| {
-                            execution_view.push_message(&update.update, cx)
-                        })?;
-
-                        editor.update(&mut cx, |editor, cx| {
-                            let mut blocks_to_remove = HashSet::default();
-                            blocks_to_remove.insert(block_id);
-
-                            editor.remove_blocks(blocks_to_remove, None, cx);
-
-                            let block = BlockProperties {
-                                position: anchor,
-                                height: 1 + execution_view.read(cx).execution.read(cx).num_lines(),
-                                style: BlockStyle::Sticky,
-                                render: create_output_area_render(execution_view.clone()),
-                                disposition: BlockDisposition::Below,
-                            };
-
-                            block_id = editor.insert_blocks([block], None, cx)[0];
-                        })?;
-                    }
-                    anyhow::Ok(())
-                })
-                .detach();
+                    block_id = editor.insert_blocks([block], None, cx)[0];
+                })?;
             }
-        }
+            anyhow::Ok(())
+        })
+        .detach();
     }
 }
 
