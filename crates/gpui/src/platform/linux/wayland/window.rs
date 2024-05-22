@@ -71,7 +71,7 @@ pub struct WaylandWindowState {
     acknowledged_first_configure: bool,
     pub surface: wl_surface::WlSurface,
     decoration: Option<zxdg_toplevel_decoration_v1::ZxdgToplevelDecorationV1>,
-    appearance: Rc<Mutex<WindowAppearance>>,
+    appearance: Weak<Mutex<WindowAppearance>>,
     blur: Option<org_kde_kwin_blur::OrgKdeKwinBlur>,
     toplevel: xdg_toplevel::XdgToplevel,
     viewport: Option<wp_viewport::WpViewport>,
@@ -102,7 +102,7 @@ impl WaylandWindowState {
         xdg_surface: xdg_surface::XdgSurface,
         toplevel: xdg_toplevel::XdgToplevel,
         decoration: Option<zxdg_toplevel_decoration_v1::ZxdgToplevelDecorationV1>,
-        appearance: Rc<Mutex<WindowAppearance>>,
+        appearance: Weak<Mutex<WindowAppearance>>,
         viewport: Option<wp_viewport::WpViewport>,
         client: WaylandClientStatePtr,
         globals: Globals,
@@ -219,7 +219,7 @@ impl WaylandWindow {
         globals: Globals,
         client: WaylandClientStatePtr,
         params: WindowParams,
-        appearance: Rc<Mutex<WindowAppearance>>,
+        appearance: Weak<Mutex<WindowAppearance>>,
     ) -> (Self, ObjectId) {
         let surface = globals.compositor.create_surface(&globals.qh, ());
         let xdg_surface = globals
@@ -632,7 +632,9 @@ impl PlatformWindow for WaylandWindow {
     }
 
     fn appearance(&self) -> WindowAppearance {
-        self.borrow().appearance.lock().deref().clone()
+        self.borrow().appearance.upgrade()
+            .map(|v| v.lock().deref().clone())
+            .unwrap_or(WindowAppearance::Light)
     }
 
     // todo(linux)

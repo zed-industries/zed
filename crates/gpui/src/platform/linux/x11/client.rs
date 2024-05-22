@@ -803,7 +803,7 @@ impl LinuxClient for X11Client {
             x_window,
             &state.atoms,
             state.scale_factor,
-            self.0.borrow().common.appearance.clone(),
+            Rc::downgrade(&self.0.borrow().common.appearance),
         );
 
         let screen_resources = state

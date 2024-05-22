@@ -38,6 +38,7 @@ use std::{
     rc::Rc,
     sync::{self, Arc},
 };
+use std::rc::Weak;
 
 use super::X11Display;
 
@@ -165,7 +166,7 @@ pub(crate) struct X11WindowState {
     renderer: BladeRenderer,
     display: Rc<dyn PlatformDisplay>,
     input_handler: Option<PlatformInputHandler>,
-    appearance: Rc<Mutex<WindowAppearance>>,
+    appearance: Weak<Mutex<WindowAppearance>>,
 }
 
 #[derive(Clone)]
@@ -215,7 +216,7 @@ impl X11WindowState {
         x_window: xproto::Window,
         atoms: &XcbAtoms,
         scale_factor: f32,
-        appearance: Rc<Mutex<WindowAppearance>>,
+        appearance: Weak<Mutex<WindowAppearance>>,
     ) -> Self {
         let x_screen_index = params
             .display_id
@@ -418,7 +419,7 @@ impl X11Window {
         x_window: xproto::Window,
         atoms: &XcbAtoms,
         scale_factor: f32,
-        appearance: Rc<Mutex<WindowAppearance>>,
+        appearance: Weak<Mutex<WindowAppearance>>,
     ) -> Self {
         Self(X11WindowStatePtr {
             state: Rc::new(RefCell::new(X11WindowState::new(
@@ -593,7 +594,9 @@ impl PlatformWindow for X11Window {
     }
 
     fn appearance(&self) -> WindowAppearance {
-        self.0.state.borrow().appearance.lock().deref().clone()
+        self.0.state.borrow().appearance.upgrade()
+            .map(|v| v.lock().deref().clone())
+            .unwrap_or(WindowAppearance::Light)
     }
 
     fn display(&self) -> Rc<dyn PlatformDisplay> {

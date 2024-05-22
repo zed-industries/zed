@@ -458,7 +458,7 @@ impl LinuxClient for WaylandClient {
             state.globals.clone(),
             WaylandClientStatePtr(Rc::downgrade(&self.0)),
             params,
-            state.common.appearance.clone(),
+            Rc::downgrade(&state.common.appearance),
         );
         state.windows.insert(surface_id, window.0.clone());
 
