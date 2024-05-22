@@ -3218,12 +3218,47 @@ impl BufferSnapshot {
             }
         }
 
+        const SEARCH_ROW_LIMIT: u32 = 25000;
+        const SEARCH_WHITESPACE_ROW_LIMIT: u32 = 2500;
+        const YIELD_INTERVAL: u32 = 100;
+
         // If there is a blank line at the current row, search for the next non indented lines
         if is_blank {
-            let (non_empty_row_above, non_empty_row_below) =
-                self.find_next_non_empty_lines(buffer_row);
+            let mut counter = 0;
 
-            let (row, indent_size) = match (non_empty_row_above, non_empty_row_below) {
+            let start = buffer_row.saturating_sub(SEARCH_WHITESPACE_ROW_LIMIT);
+            let end = (max_row + 1).min(buffer_row + SEARCH_WHITESPACE_ROW_LIMIT);
+
+            let mut non_empty_line_above = None;
+            for (row, indent_size, is_blank) in self
+                .text
+                .reversed_line_indents_in_row_range(start..buffer_row)
+            {
+                counter += 1;
+                if counter % YIELD_INTERVAL == 0 {
+                    yield_now().await;
+                }
+                if !is_blank {
+                    non_empty_line_above = Some((row, indent_size));
+                    break;
+                }
+            }
+
+            let mut non_empty_line_below = None;
+            for (row, indent_size, is_blank) in
+                self.text.line_indents_in_row_range((buffer_row + 1)..end)
+            {
+                counter += 1;
+                if counter % YIELD_INTERVAL == 0 {
+                    yield_now().await;
+                }
+                if !is_blank {
+                    non_empty_line_below = Some((row, indent_size));
+                    break;
+                }
+            }
+
+            let (row, indent_size) = match (non_empty_line_above, non_empty_line_below) {
                 (Some((above_row, above_indent)), Some((below_row, below_indent))) => {
                     if above_indent >= below_indent {
                         (above_row, above_indent)
@@ -3240,11 +3275,8 @@ impl BufferSnapshot {
             buffer_row = row;
         }
 
-        const MAX_SEARCH_ROWS: u32 = 1000000;
-        const YIELD_INTERVAL: u32 = 100;
-
-        let start = buffer_row.saturating_sub(MAX_SEARCH_ROWS);
-        let end = (max_row + 1).min(buffer_row + MAX_SEARCH_ROWS);
+        let start = buffer_row.saturating_sub(SEARCH_ROW_LIMIT);
+        let end = (max_row + 1).min(buffer_row + SEARCH_ROW_LIMIT);
 
         let mut start_indent = None;
         let mut counter = 0;
@@ -3264,7 +3296,9 @@ impl BufferSnapshot {
         let (start_row, start_indent_size) = start_indent?;
 
         let mut end_indent = (end, None);
-        for (row, indent_size, is_blank) in self.text.line_indents_in_row_range(buffer_row..end) {
+        for (row, indent_size, is_blank) in
+            self.text.line_indents_in_row_range((buffer_row + 1)..end)
+        {
             counter += 1;
             if counter % YIELD_INTERVAL == 0 {
                 yield_now().await;
@@ -3283,41 +3317,6 @@ impl BufferSnapshot {
         };
 
         Some((start_row..end_row, indent_size))
-    }
-
-    pub fn find_next_non_empty_lines(
-        &self,
-        buffer_row: u32,
-    ) -> (Option<(u32, u32)>, Option<(u32, u32)>) {
-        const MAX_SEARCH_ROWS: u32 = 10000;
-
-        let start = buffer_row.saturating_sub(MAX_SEARCH_ROWS);
-        let upwards_range = start..buffer_row;
-
-        let mut non_empty_line_above = None;
-        for (row, indent_size, is_blank) in
-            self.text.reversed_line_indents_in_row_range(upwards_range)
-        {
-            // every 1000 ticks, yield_now().await
-            if !is_blank {
-                non_empty_line_above = Some((row, indent_size));
-                break;
-            }
-        }
-
-        let end = (self.max_point().row + 1).min(buffer_row + MAX_SEARCH_ROWS);
-        let downwards_range = (buffer_row + 1)..end;
-
-        let mut non_empty_line_below = None;
-        for (row, indent_size, is_blank) in self.text.line_indents_in_row_range(downwards_range) {
-            // every 1000 ticks, yield_now().await
-            if !is_blank {
-                non_empty_line_below = Some((row, indent_size));
-                break;
-            }
-        }
-
-        (non_empty_line_above, non_empty_line_below)
     }
 
     /// Returns selections for remote peers intersecting the given range.
