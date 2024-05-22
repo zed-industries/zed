@@ -2442,7 +2442,7 @@ async fn rename_dev_server(
         .rename_dev_server(
             dev_server_id,
             &request.name,
-            &request.ssh_connection_string,
+            request.ssh_connection_string.as_deref(),
             session.user_id(),
         )
         .await?;
