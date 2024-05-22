@@ -322,7 +322,7 @@ impl MacTextSystemState {
                 )
             };
             let new_font = unsafe { CTFont::wrap_under_create_rule(new_font) };
-            font.font = Font::from_native_font(&new_font);
+            font.font = unsafe { font_kit::font::Font::from_native_font(&new_font) };
         }
         Ok(())
     }
