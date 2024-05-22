@@ -2,13 +2,11 @@ use anyhow::Context;
 use collections::HashMap;
 use fs::Fs;
 
-use anyhow::{anyhow, Result};
-use gpui::{AppContext, Task};
 use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
 use smol::stream::StreamExt;
 use std::sync::Arc;
-use util::{paths::PROMPTS_DIR, ResultExt};
+use util::paths::PROMPTS_DIR;
 use uuid::Uuid;
 
 use super::prompt::StaticPrompt;
@@ -16,6 +14,7 @@ use super::prompt::StaticPrompt;
 #[derive(Debug, Clone, Copy, Eq, PartialEq, Hash, Serialize, Deserialize)]
 pub struct PromptId(pub Uuid);
 
+#[allow(unused)]
 impl PromptId {
     pub fn new() -> Self {
         Self(Uuid::new_v4())
@@ -58,30 +57,6 @@ impl PromptLibrary {
             .iter()
             .map(|(id, prompt)| (*id, prompt.clone()))
             .collect()
-    }
-
-    async fn update_prompts(
-        &self,
-        prompts: HashMap<PromptId, StaticPrompt>,
-        fs: Arc<dyn Fs>,
-    ) -> anyhow::Result<(), anyhow::Error> {
-        let mut state = self.state.write();
-        state.prompts = prompts;
-
-        self.save(fs).await.log_err();
-
-        Ok(())
-    }
-
-    pub async fn add_prompt(&self, id: PromptId, prompt: StaticPrompt, fs: Arc<dyn Fs>) {
-        let new_prompts = {
-            let mut state = self.state.write();
-            state.prompts.insert(id, prompt.clone());
-            state.version += 1;
-            state.prompts.clone()
-        };
-
-        self.update_prompts(new_prompts, fs.clone()).await.log_err();
     }
 
     pub fn first_prompt_id(&self) -> Option<PromptId> {

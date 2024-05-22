@@ -1,7 +1,6 @@
 use collections::HashMap;
 use editor::Editor;
 use fs::Fs;
-use futures::FutureExt;
 use gpui::{prelude::FluentBuilder, *};
 use language::{language_settings, Buffer, LanguageRegistry};
 use picker::{Picker, PickerDelegate};
@@ -64,25 +63,6 @@ impl PromptManager {
         manager
     }
 
-    pub fn create_new_prompt(
-        &mut self,
-        title: Option<String>,
-        fs: Arc<dyn Fs>,
-        cx: &mut ViewContext<Self>,
-    ) {
-        let title = title.unwrap_or_else(|| "Untitled Prompt".to_string());
-        let prompt = StaticPrompt::new(title);
-        let id = PromptId::new();
-        let prompt_library = self.prompt_library.clone();
-
-        cx.spawn(|_, _cx| async move {
-            prompt_library.add_prompt(id, prompt, fs.clone()).await;
-        })
-        .detach();
-
-        cx.notify();
-    }
-
     pub fn set_active_prompt(&mut self, prompt_id: Option<PromptId>, cx: &mut ViewContext<Self>) {
         self.active_prompt_id = prompt_id;
         cx.notify();
@@ -103,7 +83,6 @@ impl PromptManager {
     }
 
     fn render_prompt_list(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
-        let fs = self.fs.clone();
         let picker = self.picker.clone();
 
         v_flex()
@@ -122,11 +101,7 @@ impl PromptManager {
                     .flex_none()
                     .justify_between()
                     .child(Label::new("Prompt Library").size(LabelSize::Small))
-                    .child(
-                        IconButton::new("new-prompt", IconName::Plus).on_click(cx.listener(
-                            move |this, _event, cx| this.create_new_prompt(None, fs.clone(), cx),
-                        )),
-                    ),
+                    .child(IconButton::new("new-prompt", IconName::Plus).disabled(true)),
             )
             .child(
                 v_flex()
