@@ -1,8 +1,9 @@
 use anyhow::Result;
 use async_trait::async_trait;
-use language::{ContextProviderWithTasks, LanguageServerName, LspAdapter, LspAdapterDelegate};
+use language::{LanguageServerName, LspAdapter, LspAdapterDelegate};
 use lsp::LanguageServerBinary;
 use node_runtime::NodeRuntime;
+use project::ContextProviderWithTasks;
 use std::{
     any::Any,
     ffi::OsString,

@@ -406,6 +406,7 @@ struct RunnableTasks {
     templates: Vec<(TaskSourceKind, TaskTemplate)>,
     // We need the column at which the task context evaluation should take place.
     column: u32,
+    // Values of all named captures, including those starting with '_'
     extra_variables: HashMap<String, String>,
 }
 
@@ -3973,7 +3974,7 @@ impl Editor {
 
                     this.completion_tasks.clear();
                     this.discard_inline_completion(false, cx);
-                    let task_context = tasks.as_ref().zip(this.workspace.clone()).and_then(
+                    let tasks = tasks.as_ref().zip(this.workspace.clone()).and_then(
                         |(tasks, (workspace, _))| {
                             let position = Point::new(buffer_row, tasks.1.column);
                             let range_start = buffer.read(cx).anchor_at(position, Bias::Right);
@@ -3981,43 +3982,45 @@ impl Editor {
                                 buffer: buffer.clone(),
                                 range: range_start..range_start,
                             };
+                            // Fill in the environmental variables from the tree-sitter captures
+                            let mut captured_task_variables = TaskVariables::default();
+                            for (capture_name, value) in tasks.1.extra_variables.clone() {
+                                captured_task_variables.insert(
+                                    task::VariableName::Custom(capture_name.into()),
+                                    value.clone(),
+                                );
+                            }
+
                             workspace
                                 .update(cx, |workspace, cx| {
-                                    tasks::task_context_for_location(workspace, location, cx)
+                                    tasks::task_context_for_location(
+                                        captured_task_variables,
+                                        workspace,
+                                        location,
+                                        cx,
+                                    )
                                 })
                                 .ok()
                                 .flatten()
+                                .map(|task_context| {
+                                    Arc::new(ResolvedTasks {
+                                        templates: tasks
+                                            .1
+                                            .templates
+                                            .iter()
+                                            .filter_map(|(kind, template)| {
+                                                template
+                                                    .resolve_task(&kind.to_id_base(), &task_context)
+                                                    .map(|task| (kind.clone(), task))
+                                            })
+                                            .collect(),
+                                        position: snapshot.buffer_snapshot.anchor_before(
+                                            Point::new(multibuffer_point.row, tasks.1.column),
+                                        ),
+                                    })
+                                })
                         },
                     );
-                    let tasks = tasks.zip(task_context).map(|(tasks, mut task_context)| {
-                        // Fill in the environmental variables from the tree-sitter captures
-                        let mut additional_task_variables = TaskVariables::default();
-                        for (capture_name, value) in tasks.1.extra_variables.clone() {
-                            additional_task_variables.insert(
-                                task::VariableName::Custom(capture_name.into()),
-                                value.clone(),
-                            );
-                        }
-                        task_context
-                            .task_variables
-                            .extend(additional_task_variables);
-
-                        Arc::new(ResolvedTasks {
-                            templates: tasks
-                                .1
-                                .templates
-                                .iter()
-                                .filter_map(|(kind, template)| {
-                                    template
-                                        .resolve_task(&kind.to_id_base(), &task_context)
-                                        .map(|task| (kind.clone(), task))
-                                })
-                                .collect(),
-                            position: snapshot
-                                .buffer_snapshot
-                                .anchor_before(Point::new(multibuffer_point.row, tasks.1.column)),
-                        })
-                    });
                     let spawn_straight_away = tasks
                         .as_ref()
                         .map_or(false, |tasks| tasks.templates.len() == 1)
@@ -4450,23 +4453,25 @@ impl Editor {
         }
     }
 
-    fn accept_inline_completion(&mut self, cx: &mut ViewContext<Self>) -> bool {
-        if let Some(completion) = self.take_active_inline_completion(cx) {
-            if let Some(provider) = self.inline_completion_provider() {
-                provider.accept(cx);
-            }
-
-            cx.emit(EditorEvent::InputHandled {
-                utf16_range_to_replace: None,
-                text: completion.text.to_string().into(),
-            });
-            self.insert_with_autoindent_mode(&completion.text.to_string(), None, cx);
-            self.refresh_inline_completion(true, cx);
-            cx.notify();
-            true
-        } else {
-            false
+    pub fn accept_inline_completion(
+        &mut self,
+        _: &AcceptInlineCompletion,
+        cx: &mut ViewContext<Self>,
+    ) {
+        let Some(completion) = self.take_active_inline_completion(cx) else {
+            return;
+        };
+        if let Some(provider) = self.inline_completion_provider() {
+            provider.accept(cx);
         }
+
+        cx.emit(EditorEvent::InputHandled {
+            utf16_range_to_replace: None,
+            text: completion.text.to_string().into(),
+        });
+        self.insert_with_autoindent_mode(&completion.text.to_string(), None, cx);
+        self.refresh_inline_completion(true, cx);
+        cx.notify();
     }
 
     pub fn accept_partial_inline_completion(
@@ -4964,16 +4969,6 @@ impl Editor {
                     }
                     continue;
                 }
-            }
-
-            // Accept copilot completion if there is only one selection and the cursor is not
-            // in the leading whitespace.
-            if self.selections.count() == 1
-                && cursor.column >= current_indent.len
-                && self.has_active_inline_completion(cx)
-            {
-                self.accept_inline_completion(cx);
-                return;
             }
 
             // Otherwise, insert a hard or soft tab.

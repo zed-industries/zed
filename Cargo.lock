@@ -3978,6 +3978,7 @@ dependencies = [
  "menu",
  "picker",
  "project",
+ "serde",
  "serde_json",
  "settings",
  "text",
@@ -7705,10 +7706,12 @@ dependencies = [
  "serde_json",
  "settings",
  "sha2 0.10.7",
+ "shlex",
  "similar",
  "smol",
  "snippet",
  "task",
+ "tempfile",
  "terminal",
  "text",
  "unindent",
@@ -8078,6 +8081,8 @@ dependencies = [
  "serde",
  "serde_json",
  "smol",
+ "task",
+ "terminal_view",
  "ui",
  "ui_text_field",
  "util",
@@ -13033,7 +13038,7 @@ dependencies = [
 
 [[package]]
 name = "zed"
-version = "0.137.0"
+version = "0.138.0"
 dependencies = [
  "activity_indicator",
  "anyhow",
@@ -13267,7 +13272,7 @@ dependencies = [
 
 [[package]]
 name = "zed_php"
-version = "0.0.3"
+version = "0.0.4"
 dependencies = [
  "zed_extension_api 0.0.4",
 ]
