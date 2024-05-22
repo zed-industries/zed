@@ -383,6 +383,7 @@ impl EditorElement {
         register_action(view, cx, Editor::unique_lines_case_insensitive);
         register_action(view, cx, Editor::unique_lines_case_sensitive);
         register_action(view, cx, Editor::accept_partial_inline_completion);
+        register_action(view, cx, Editor::accept_inline_completion);
         register_action(view, cx, Editor::revert_selected_hunks);
         register_action(view, cx, Editor::open_active_item_in_terminal)
     }

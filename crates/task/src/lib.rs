@@ -8,8 +8,8 @@ mod vscode_format;
 use collections::{HashMap, HashSet};
 use gpui::SharedString;
 use serde::Serialize;
-use std::borrow::Cow;
 use std::path::PathBuf;
+use std::{borrow::Cow, path::Path};
 
 pub use task_template::{RevealStrategy, TaskTemplate, TaskTemplates};
 pub use vscode_format::VsCodeTaskFile;
@@ -34,19 +34,19 @@ pub enum TerminalWorkDir {
 }
 
 impl TerminalWorkDir {
-    /// is_local
+    /// Returns whether the terminal task is supposed to be spawned on a local machine or not.
     pub fn is_local(&self) -> bool {
         match self {
-            TerminalWorkDir::Local(_) => true,
-            TerminalWorkDir::Ssh { .. } => false,
+            Self::Local(_) => true,
+            Self::Ssh { .. } => false,
         }
     }
 
-    /// local_path
-    pub fn local_path(&self) -> Option<PathBuf> {
+    /// Returns a local CWD if the terminal is local, None otherwise.
+    pub fn local_path(&self) -> Option<&Path> {
         match self {
-            TerminalWorkDir::Local(path) => Some(path.clone()),
-            TerminalWorkDir::Ssh { .. } => None,
+            Self::Local(path) => Some(path),
+            Self::Ssh { .. } => None,
         }
     }
 }
