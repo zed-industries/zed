@@ -1854,9 +1854,7 @@ impl Conversation {
                                             .ok()?;
 
                                         let mut output = output.log_err()?;
-                                        if !output.ends_with('\n') {
-                                            output.push('\n');
-                                        }
+                                        output.truncate(output.trim_end().len());
 
                                         let source_end = source_range.end.to_offset(buffer);
                                         let output_start = source_end + '\n'.len_utf8();
@@ -4292,9 +4290,8 @@ mod tests {
             /file src/lib.rs«
             ```src/lib.rs
             fn one() -> usize { 1 }
-            ```
-            »"
-            .unindent(),
+            ```»"
+                .unindent(),
             cx,
         );
 
@@ -4310,9 +4307,8 @@ mod tests {
             /file src/main.rs«
             ```src/lib.rs
             fn one() -> usize { 1 }
-            ```
-            »"
-            .unindent(),
+            ```»"
+                .unindent(),
             cx,
         );
 
@@ -4325,9 +4321,8 @@ mod tests {
             ```src/main.rs
             use crate::one;
             fn main() { one(); }
-            ```
-            »"
-            .unindent(),
+            ```»"
+                .unindent(),
             cx,
         );
 
@@ -4345,9 +4340,8 @@ mod tests {
             ```src/main.rs
             use crate::one;
             fn main() { one(); }
-            ```
-            »"
-            .unindent(),
+            ```»"
+                .unindent(),
             cx,
         );
 
@@ -4360,9 +4354,8 @@ mod tests {
             ```src/main.rs
             use crate::one;
             fn main() { one(); }
-            ```
-            »"
-            .unindent(),
+            ```»"
+                .unindent(),
             cx,
         );
 
@@ -4379,9 +4372,8 @@ mod tests {
             !```src/main.rs
             use crate::one;
             fn main() { one(); }
-            ```
-            »"
-            .unindent(),
+            ```»"
+                .unindent(),
             cx,
         );
 
@@ -4394,9 +4386,8 @@ mod tests {
             ```src/main.rs
             use crate::one;
             fn main() { one(); }
-            ```
-            »"
-            .unindent(),
+            ```»"
+                .unindent(),
             cx,
         );
 
