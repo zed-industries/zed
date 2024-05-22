@@ -1,11 +1,8 @@
 use collections::HashMap;
 use editor::Editor;
 use fs::Fs;
-use futures::FutureExt;
 use gpui::{prelude::FluentBuilder, *};
-use language::{
-    language_settings, Buffer, Language, LanguageConfig, LanguageMatcher, LanguageRegistry,
-};
+use language::{language_settings, Buffer, LanguageRegistry};
 use picker::{Picker, PickerDelegate};
 use std::sync::Arc;
 use ui::{prelude::*, IconButtonShape, ListItem, ListItemSpacing};
@@ -325,27 +322,4 @@ impl PickerDelegate for PromptManagerDelegate {
                 .child(Label::new(prompt.title().unwrap_or_default().clone())),
         )
     }
-}
-
-fn fallback_markdown_lang() -> Language {
-    Language::new(
-        LanguageConfig {
-            name: "Markdown".into(),
-            matcher: LanguageMatcher {
-                path_suffixes: vec!["md".into()],
-                ..Default::default()
-            },
-            ..Default::default()
-        },
-        Some(tree_sitter_markdown::language()),
-    )
-    .with_injection_query(
-        r#"
-            (fenced_code_block
-                (info_string
-                    (language) @language)
-                (code_fence_content) @content)
-        "#,
-    )
-    .unwrap()
 }
