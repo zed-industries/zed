@@ -9,6 +9,12 @@ pub enum Elevation {
     ElementIndex(ElementIndex),
 }
 
+impl Into<Elevation> for ElevationIndex {
+    fn into(self) -> Elevation {
+        Elevation::ElevationIndex(self)
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ElevationIndex {
     Background,

@@ -75,12 +75,12 @@ pub(crate) struct FoldMapWriter<'a>(&'a mut FoldMap);
 impl<'a> FoldMapWriter<'a> {
     pub(crate) fn fold<T: ToOffset>(
         &mut self,
-        ranges: impl IntoIterator<Item = Range<T>>,
+        ranges: impl IntoIterator<Item = (Range<T>, &'static str)>,
     ) -> (FoldSnapshot, Vec<FoldEdit>) {
         let mut edits = Vec::new();
         let mut folds = Vec::new();
         let snapshot = self.0.snapshot.inlay_snapshot.clone();
-        for range in ranges.into_iter() {
+        for (range, fold_text) in ranges.into_iter() {
             let buffer = &snapshot.buffer;
             let range = range.start.to_offset(&buffer)..range.end.to_offset(&buffer);
 
@@ -99,6 +99,7 @@ impl<'a> FoldMapWriter<'a> {
             folds.push(Fold {
                 id: FoldId(post_inc(&mut self.0.next_fold_id.0)),
                 range: fold_range,
+                text: fold_text,
             });
 
             let inlay_range =
@@ -324,11 +325,14 @@ impl FoldMap {
                 let mut folds = iter::from_fn({
                     let inlay_snapshot = &inlay_snapshot;
                     move || {
-                        let item = folds_cursor.item().map(|f| {
-                            let buffer_start = f.range.start.to_offset(&inlay_snapshot.buffer);
-                            let buffer_end = f.range.end.to_offset(&inlay_snapshot.buffer);
-                            inlay_snapshot.to_inlay_offset(buffer_start)
-                                ..inlay_snapshot.to_inlay_offset(buffer_end)
+                        let item = folds_cursor.item().map(|fold| {
+                            let buffer_start = fold.range.start.to_offset(&inlay_snapshot.buffer);
+                            let buffer_end = fold.range.end.to_offset(&inlay_snapshot.buffer);
+                            (
+                                inlay_snapshot.to_inlay_offset(buffer_start)
+                                    ..inlay_snapshot.to_inlay_offset(buffer_end),
+                                fold.text,
+                            )
                         });
                         folds_cursor.next(&inlay_snapshot.buffer);
                         item
@@ -336,25 +340,27 @@ impl FoldMap {
                 })
                 .peekable();
 
-                while folds.peek().map_or(false, |fold| fold.start < edit.new.end) {
-                    let mut fold = folds.next().unwrap();
+                while folds
+                    .peek()
+                    .map_or(false, |(fold_range, _)| fold_range.start < edit.new.end)
+                {
+                    let (mut fold_range, fold_text) = folds.next().unwrap();
                     let sum = new_transforms.summary();
 
-                    assert!(fold.start.0 >= sum.input.len);
+                    assert!(fold_range.start.0 >= sum.input.len);
 
-                    while folds
-                        .peek()
-                        .map_or(false, |next_fold| next_fold.start <= fold.end)
-                    {
-                        let next_fold = folds.next().unwrap();
-                        if next_fold.end > fold.end {
-                            fold.end = next_fold.end;
+                    while folds.peek().map_or(false, |(next_fold_range, _)| {
+                        next_fold_range.start <= fold_range.end
+                    }) {
+                        let (next_fold_range, _) = folds.next().unwrap();
+                        if next_fold_range.end > fold_range.end {
+                            fold_range.end = next_fold_range.end;
                         }
                     }
 
-                    if fold.start.0 > sum.input.len {
+                    if fold_range.start.0 > sum.input.len {
                         let text_summary = inlay_snapshot
-                            .text_summary_for_range(InlayOffset(sum.input.len)..fold.start);
+                            .text_summary_for_range(InlayOffset(sum.input.len)..fold_range.start);
                         new_transforms.push(
                             Transform {
                                 summary: TransformSummary {
@@ -367,16 +373,15 @@ impl FoldMap {
                         );
                     }
 
-                    if fold.end > fold.start {
-                        let output_text = "⋯";
+                    if fold_range.end > fold_range.start {
                         new_transforms.push(
                             Transform {
                                 summary: TransformSummary {
-                                    output: TextSummary::from(output_text),
+                                    output: TextSummary::from(fold_text),
                                     input: inlay_snapshot
-                                        .text_summary_for_range(fold.start..fold.end),
+                                        .text_summary_for_range(fold_range.start..fold_range.end),
                                 },
-                                output_text: Some(output_text),
+                                output_text: Some(fold_text),
                             },
                             &(),
                         );
@@ -853,6 +858,7 @@ impl Into<ElementId> for FoldId {
 pub struct Fold {
     pub id: FoldId,
     pub range: FoldRange,
+    pub text: &'static str,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -948,7 +954,7 @@ impl<'a> sum_tree::Dimension<'a, FoldSummary> for FoldRange {
 
 impl<'a> sum_tree::SeekTarget<'a, FoldSummary, FoldRange> for FoldRange {
     fn cmp(&self, other: &Self, buffer: &MultiBufferSnapshot) -> Ordering {
-        self.0.cmp(&other.0, buffer)
+        AnchorRangeExt::cmp(&self.0, &other.0, buffer)
     }
 }
 
@@ -1159,8 +1165,8 @@ mod tests {
 
         let (mut writer, _, _) = map.write(inlay_snapshot, vec![]);
         let (snapshot2, edits) = writer.fold(vec![
-            Point::new(0, 2)..Point::new(2, 2),
-            Point::new(2, 4)..Point::new(4, 1),
+            (Point::new(0, 2)..Point::new(2, 2), "⋯"),
+            (Point::new(2, 4)..Point::new(4, 1), "⋯"),
         ]);
         assert_eq!(snapshot2.text(), "aa⋯cc⋯eeeee");
         assert_eq!(
@@ -1239,19 +1245,19 @@ mod tests {
             let mut map = FoldMap::new(inlay_snapshot.clone()).0;
 
             let (mut writer, _, _) = map.write(inlay_snapshot.clone(), vec![]);
-            writer.fold(vec![5..8]);
+            writer.fold(vec![(5..8, "⋯")]);
             let (snapshot, _) = map.read(inlay_snapshot.clone(), vec![]);
             assert_eq!(snapshot.text(), "abcde⋯ijkl");
 
             // Create an fold adjacent to the start of the first fold.
             let (mut writer, _, _) = map.write(inlay_snapshot.clone(), vec![]);
-            writer.fold(vec![0..1, 2..5]);
+            writer.fold(vec![(0..1, "⋯"), (2..5, "⋯")]);
             let (snapshot, _) = map.read(inlay_snapshot.clone(), vec![]);
             assert_eq!(snapshot.text(), "⋯b⋯ijkl");
 
             // Create an fold adjacent to the end of the first fold.
             let (mut writer, _, _) = map.write(inlay_snapshot.clone(), vec![]);
-            writer.fold(vec![11..11, 8..10]);
+            writer.fold(vec![(11..11, "⋯"), (8..10, "⋯")]);
             let (snapshot, _) = map.read(inlay_snapshot.clone(), vec![]);
             assert_eq!(snapshot.text(), "⋯b⋯kl");
         }
@@ -1261,7 +1267,7 @@ mod tests {
 
             // Create two adjacent folds.
             let (mut writer, _, _) = map.write(inlay_snapshot.clone(), vec![]);
-            writer.fold(vec![0..2, 2..5]);
+            writer.fold(vec![(0..2, "⋯"), (2..5, "⋯")]);
             let (snapshot, _) = map.read(inlay_snapshot, vec![]);
             assert_eq!(snapshot.text(), "⋯fghijkl");
 
@@ -1285,10 +1291,10 @@ mod tests {
         let mut map = FoldMap::new(inlay_snapshot.clone()).0;
         let (mut writer, _, _) = map.write(inlay_snapshot.clone(), vec![]);
         writer.fold(vec![
-            Point::new(0, 2)..Point::new(2, 2),
-            Point::new(0, 4)..Point::new(1, 0),
-            Point::new(1, 2)..Point::new(3, 2),
-            Point::new(3, 1)..Point::new(4, 1),
+            (Point::new(0, 2)..Point::new(2, 2), "⋯"),
+            (Point::new(0, 4)..Point::new(1, 0), "⋯"),
+            (Point::new(1, 2)..Point::new(3, 2), "⋯"),
+            (Point::new(3, 1)..Point::new(4, 1), "⋯"),
         ]);
         let (snapshot, _) = map.read(inlay_snapshot, vec![]);
         assert_eq!(snapshot.text(), "aa⋯eeeee");
@@ -1305,8 +1311,8 @@ mod tests {
 
         let (mut writer, _, _) = map.write(inlay_snapshot.clone(), vec![]);
         writer.fold(vec![
-            Point::new(0, 2)..Point::new(2, 2),
-            Point::new(3, 1)..Point::new(4, 1),
+            (Point::new(0, 2)..Point::new(2, 2), "⋯"),
+            (Point::new(3, 1)..Point::new(4, 1), "⋯"),
         ]);
         let (snapshot, _) = map.read(inlay_snapshot.clone(), vec![]);
         assert_eq!(snapshot.text(), "aa⋯cccc\nd⋯eeeee");
@@ -1330,10 +1336,10 @@ mod tests {
 
         let (mut writer, _, _) = map.write(inlay_snapshot.clone(), vec![]);
         writer.fold(vec![
-            Point::new(0, 2)..Point::new(2, 2),
-            Point::new(0, 4)..Point::new(1, 0),
-            Point::new(1, 2)..Point::new(3, 2),
-            Point::new(3, 1)..Point::new(4, 1),
+            (Point::new(0, 2)..Point::new(2, 2), "⋯"),
+            (Point::new(0, 4)..Point::new(1, 0), "⋯"),
+            (Point::new(1, 2)..Point::new(3, 2), "⋯"),
+            (Point::new(3, 1)..Point::new(4, 1), "⋯"),
         ]);
         let (snapshot, _) = map.read(inlay_snapshot.clone(), vec![]);
         let fold_ranges = snapshot
@@ -1408,10 +1414,10 @@ mod tests {
             snapshot_edits.push((snapshot.clone(), edits));
 
             let mut expected_text: String = inlay_snapshot.text().to_string();
-            for fold_range in map.merged_fold_ranges().into_iter().rev() {
+            for (fold_range, fold_text) in map.merged_folds().into_iter().rev() {
                 let fold_inlay_start = inlay_snapshot.to_inlay_offset(fold_range.start);
                 let fold_inlay_end = inlay_snapshot.to_inlay_offset(fold_range.end);
-                expected_text.replace_range(fold_inlay_start.0..fold_inlay_end.0, "⋯");
+                expected_text.replace_range(fold_inlay_start.0..fold_inlay_end.0, fold_text);
             }
 
             assert_eq!(snapshot.text(), expected_text);
@@ -1423,7 +1429,7 @@ mod tests {
 
             let mut prev_row = 0;
             let mut expected_buffer_rows = Vec::new();
-            for fold_range in map.merged_fold_ranges().into_iter() {
+            for (fold_range, _fold_text) in map.merged_folds().into_iter() {
                 let fold_start = inlay_snapshot
                     .to_point(inlay_snapshot.to_inlay_offset(fold_range.start))
                     .row();
@@ -1535,11 +1541,11 @@ mod tests {
             }
 
             let folded_buffer_rows = map
-                .merged_fold_ranges()
+                .merged_folds()
                 .iter()
-                .flat_map(|range| {
-                    let start_row = range.start.to_point(&buffer_snapshot).row;
-                    let end = range.end.to_point(&buffer_snapshot);
+                .flat_map(|(fold_range, _)| {
+                    let start_row = fold_range.start.to_point(&buffer_snapshot).row;
+                    let end = fold_range.end.to_point(&buffer_snapshot);
                     if end.column == 0 {
                         start_row..end.row
                     } else {
@@ -1634,8 +1640,8 @@ mod tests {
 
         let (mut writer, _, _) = map.write(inlay_snapshot.clone(), vec![]);
         writer.fold(vec![
-            Point::new(0, 2)..Point::new(2, 2),
-            Point::new(3, 1)..Point::new(4, 1),
+            (Point::new(0, 2)..Point::new(2, 2), "⋯"),
+            (Point::new(3, 1)..Point::new(4, 1), "⋯"),
         ]);
 
         let (snapshot, _) = map.read(inlay_snapshot, vec![]);
@@ -1653,34 +1659,39 @@ mod tests {
     }
 
     impl FoldMap {
-        fn merged_fold_ranges(&self) -> Vec<Range<usize>> {
+        fn merged_folds(&self) -> Vec<(Range<usize>, &'static str)> {
             let inlay_snapshot = self.snapshot.inlay_snapshot.clone();
             let buffer = &inlay_snapshot.buffer;
             let mut folds = self.snapshot.folds.items(buffer);
             // Ensure sorting doesn't change how folds get merged and displayed.
             folds.sort_by(|a, b| a.range.cmp(&b.range, buffer));
-            let mut fold_ranges = folds
+            let mut folds = folds
                 .iter()
-                .map(|fold| fold.range.start.to_offset(buffer)..fold.range.end.to_offset(buffer))
+                .map(|fold| {
+                    (
+                        fold.range.start.to_offset(buffer)..fold.range.end.to_offset(buffer),
+                        fold.text,
+                    )
+                })
                 .peekable();
 
-            let mut merged_ranges = Vec::new();
-            while let Some(mut fold_range) = fold_ranges.next() {
-                while let Some(next_range) = fold_ranges.peek() {
+            let mut merged_folds = Vec::new();
+            while let Some((mut fold_range, fold_text)) = folds.next() {
+                while let Some((next_range, _)) = folds.peek() {
                     if fold_range.end >= next_range.start {
                         if next_range.end > fold_range.end {
                             fold_range.end = next_range.end;
                         }
-                        fold_ranges.next();
+                        folds.next();
                     } else {
                         break;
                     }
                 }
                 if fold_range.end > fold_range.start {
-                    merged_ranges.push(fold_range);
+                    merged_folds.push((fold_range, fold_text));
                 }
             }
-            merged_ranges
+            merged_folds
         }
 
         pub fn randomly_mutate(
@@ -1698,10 +1709,11 @@ mod tests {
                         let start = buffer.clip_offset(rng.gen_range(0..=end), Left);
                         to_unfold.push(start..end);
                     }
-                    log::info!("unfolding {:?}", to_unfold);
+                    let inclusive = rng.gen();
+                    log::info!("unfolding {:?} (inclusive: {})", to_unfold, inclusive);
                     let (mut writer, snapshot, edits) = self.write(inlay_snapshot, vec![]);
                     snapshot_edits.push((snapshot, edits));
-                    let (snapshot, edits) = writer.fold(to_unfold);
+                    let (snapshot, edits) = writer.unfold(to_unfold, inclusive);
                     snapshot_edits.push((snapshot, edits));
                 }
                 _ => {
@@ -1711,7 +1723,8 @@ mod tests {
                     for _ in 0..rng.gen_range(1..=2) {
                         let end = buffer.clip_offset(rng.gen_range(0..=buffer.len()), Right);
                         let start = buffer.clip_offset(rng.gen_range(0..=end), Left);
-                        to_fold.push(start..end);
+                        let text = if rng.gen() { "⋯" } else { "" };
+                        to_fold.push((start..end, text));
                     }
                     log::info!("folding {:?}", to_fold);
                     let (mut writer, snapshot, edits) = self.write(inlay_snapshot, vec![]);

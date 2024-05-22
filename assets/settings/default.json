@@ -836,7 +836,7 @@
   // environment variables.
   //
   // Examples:
-  //   - "proxy" = "socks5://localhost:10808"
-  //   - "proxy" = "http://127.0.0.1:10809"
+  //   - "proxy": "socks5://localhost:10808"
+  //   - "proxy": "http://127.0.0.1:10809"
   "proxy": null
 }
