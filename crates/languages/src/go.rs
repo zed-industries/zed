@@ -494,7 +494,7 @@ impl ContextProvider for GoContextProvider {
         Ok(TaskVariables::from_iter(
             [go_package_variable, go_subtest_variable]
                 .into_iter()
-                .flat_map(|var| var),
+                .flatten(),
         ))
     }
 
