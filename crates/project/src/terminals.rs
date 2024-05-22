@@ -4,7 +4,7 @@ use gpui::{
     AnyWindowHandle, AppContext, Context, Entity, Model, ModelContext, SharedString, WeakModel,
 };
 use settings::{Settings, SettingsLocation};
-use smol::{channel::bounded, fs::unix::PermissionsExt};
+use smol::channel::bounded;
 use std::{
     env,
     fs::File,
@@ -109,10 +109,7 @@ impl Project {
             .clone();
 
         let (spawn_task, shell) = match working_directory.as_ref() {
-            Some(TerminalWorkDir::Ssh { ssh_command, path })
-            // todo(windows)
-                if cfg!(not(target_os = "windows")) =>
-            {
+            Some(TerminalWorkDir::Ssh { ssh_command, path }) => {
                 log::debug!("Connecting to a remote server: {ssh_command:?}");
                 // Alacritty sets its terminfo to `alacritty`, this requiring hosts to have it installed
                 // to properly display colors.
@@ -169,9 +166,12 @@ impl Project {
                     port_forward,
                     shlex::try_quote(shell_invocation)?,
                 )?;
-                let mut perms = ssh_file.metadata()?.permissions();
-                perms.set_mode(0o755); // Set the executable bit
-                std::fs::set_permissions(ssh_path, perms)?;
+                // todo(windows)
+                #[cfg(not(target_os = "windows"))]
+                std::fs::set_permissions(
+                    ssh_path,
+                    smol::fs::unix::PermissionsExt::from_mode(0o755),
+                )?;
                 let path = format!(
                     "{}:{}",
                     tmp_dir.path().to_string_lossy(),
