@@ -2036,16 +2036,17 @@ fn test_serialization(cx: &mut gpui::AppContext) {
 }
 
 #[gpui::test]
-fn test_find_matching_indent(cx: &mut AppContext) {
-    init_settings(cx, |_| {});
+async fn test_find_matching_indent(cx: &mut TestAppContext) {
+    cx.update(|cx| init_settings(cx, |_| {}));
 
-    fn enclosing_indent(
+    async fn enclosing_indent(
         text: impl Into<String>,
         buffer_row: u32,
-        cx: &mut AppContext,
+        cx: &mut TestAppContext,
     ) -> Option<(Range<u32>, u32)> {
         let buffer = cx.new_model(|cx| Buffer::local(text, cx));
-        buffer.read(cx).snapshot().enclosing_indent(buffer_row)
+        let snapshot = cx.read(|cx| buffer.read(cx).snapshot());
+        snapshot.enclosing_indent(buffer_row).await
     }
 
     assert_eq!(
@@ -2059,7 +2060,8 @@ fn test_find_matching_indent(cx: &mut AppContext) {
             .unindent(),
             1,
             cx,
-        ),
+        )
+        .await,
         Some((1..2, 4))
     );
 
@@ -2074,7 +2076,8 @@ fn test_find_matching_indent(cx: &mut AppContext) {
             .unindent(),
             2,
             cx,
-        ),
+        )
+        .await,
         Some((1..2, 4))
     );
 
@@ -2091,7 +2094,8 @@ fn test_find_matching_indent(cx: &mut AppContext) {
             .unindent(),
             3,
             cx,
-        ),
+        )
+        .await,
         Some((1..4, 4))
     );
 }

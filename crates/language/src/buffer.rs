@@ -3196,7 +3196,7 @@ impl BufferSnapshot {
         result_vec
     }
 
-    pub fn enclosing_indent(&self, mut buffer_row: u32) -> Option<(Range<u32>, u32)> {
+    pub async fn enclosing_indent(&self, mut buffer_row: u32) -> Option<(Range<u32>, u32)> {
         let max_row = self.max_point().row;
         if buffer_row >= max_row {
             return None;
@@ -3236,11 +3236,41 @@ impl BufferSnapshot {
             buffer_row = row;
         }
 
-        let (start_row, start_indent_size) =
-            self.find_indent_above(buffer_row, Some(target_indent_size))?;
+        const MAX_SEARCH_ROWS: u32 = 1000000;
+        const YIELD_INTERVAL: u32 = 100;
 
-        let (end_row, end_indent_size) =
-            self.find_indent_below(buffer_row + 1, Some(target_indent_size));
+        let start = buffer_row.saturating_sub(MAX_SEARCH_ROWS);
+        let end = (max_row + 1).min(buffer_row + MAX_SEARCH_ROWS);
+
+        let mut start_indent = None;
+        let mut counter = 0;
+        for (row, indent_size, is_blank) in self
+            .text
+            .reversed_line_indents_in_row_range(start..buffer_row)
+        {
+            counter += 1;
+            if counter % YIELD_INTERVAL == 0 {
+                yield_now().await;
+            }
+            if !is_blank && indent_size < target_indent_size {
+                start_indent = Some((row, indent_size));
+                break;
+            }
+        }
+        let (start_row, start_indent_size) = start_indent?;
+
+        let mut end_indent = (end, None);
+        for (row, indent_size, is_blank) in self.text.line_indents_in_row_range(buffer_row..end) {
+            counter += 1;
+            if counter % YIELD_INTERVAL == 0 {
+                yield_now().await;
+            }
+            if !is_blank && indent_size < target_indent_size {
+                end_indent = (row.saturating_sub(1), Some(indent_size));
+                break;
+            }
+        }
+        let (end_row, end_indent_size) = end_indent;
 
         let indent_size = if let Some(end_indent_size) = end_indent_size {
             start_indent_size.max(end_indent_size)
@@ -3284,46 +3314,6 @@ impl BufferSnapshot {
         }
 
         (non_empty_line_above, non_empty_line_below)
-    }
-
-    fn find_indent_below(
-        &self,
-        buffer_row: u32,
-        target_indent_size: Option<u32>,
-    ) -> (u32, Option<u32>) {
-        const MAX_SEARCH_ROWS: u32 = 10000;
-
-        let end = (self.max_point().row + 1).min(buffer_row + MAX_SEARCH_ROWS);
-        let range = buffer_row..end;
-
-        for (row, indent_size, is_blank) in self.text.line_indents_in_row_range(range) {
-            // every 1000 ticks, yield_now().await
-            if !is_blank && (target_indent_size.is_none() || Some(indent_size) < target_indent_size)
-            {
-                return (row.saturating_sub(1), Some(indent_size));
-            }
-        }
-        (end, None)
-    }
-
-    fn find_indent_above(
-        &self,
-        buffer_row: u32,
-        target_indent_size: Option<u32>,
-    ) -> Option<(u32, u32)> {
-        const MAX_SEARCH_ROWS: u32 = 10000;
-
-        let start = buffer_row.saturating_sub(MAX_SEARCH_ROWS);
-        let range = start..buffer_row;
-
-        for (row, indent_size, is_blank) in self.text.reversed_line_indents_in_row_range(range) {
-            // every 1000 ticks, yield_now().await
-            if !is_blank && (target_indent_size.is_none() || Some(indent_size) < target_indent_size)
-            {
-                return Some((row, indent_size));
-            }
-        }
-        None
     }
 
     /// Returns selections for remote peers intersecting the given range.

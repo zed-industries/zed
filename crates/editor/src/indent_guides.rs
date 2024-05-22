@@ -1,36 +1,35 @@
-use std::ops::Range;
+use std::{ops::Range, time::Duration};
 
-use anyhow::Result;
 use collections::HashSet;
 use gpui::{AppContext, Task};
 use language::IndentGuide;
 use multi_buffer::MultiBufferRow;
 use text::{BufferId, Point};
 use ui::ViewContext;
+use util::ResultExt;
 
 use crate::{DisplaySnapshot, Editor};
 
-#[derive(Debug)]
 struct ActiveIndentedRange {
     buffer_id: BufferId,
     row_range: Range<u32>,
     indent: u32,
 }
 
-pub struct ActiveIndentGuideState {
+pub struct ActiveIndentGuidesState {
     pub dirty: bool,
     cursor_row: u32,
-    pending_refresh: Option<Task<Result<()>>>,
+    pending_refresh: Option<Task<()>>,
     active_indent_range: Option<ActiveIndentedRange>,
 }
 
-impl ActiveIndentGuideState {
+impl ActiveIndentGuidesState {
     pub fn should_refresh(&self, cursor_row: u32) -> bool {
         self.pending_refresh.is_none() && (self.cursor_row != cursor_row || self.dirty)
     }
 }
 
-impl Default for ActiveIndentGuideState {
+impl Default for ActiveIndentGuidesState {
     fn default() -> Self {
         Self {
             cursor_row: 0,
@@ -39,33 +38,6 @@ impl Default for ActiveIndentGuideState {
             active_indent_range: None,
         }
     }
-}
-
-fn resolve_indented_range(
-    snapshot: &DisplaySnapshot,
-    buffer_row: u32,
-) -> Option<ActiveIndentedRange> {
-    let (buffer_row, buffer_snapshot, buffer_id) =
-        if let Some((_, buffer_id, snapshot)) = snapshot.buffer_snapshot.as_singleton() {
-            (buffer_row, snapshot, buffer_id)
-        } else {
-            let (snapshot, point) = snapshot
-                .buffer_snapshot
-                .buffer_line_for_row(MultiBufferRow(buffer_row))?;
-
-            let buffer_id = snapshot.remote_id();
-            (point.start.row, snapshot, buffer_id)
-        };
-
-    buffer_snapshot
-        .enclosing_indent(buffer_row)
-        .and_then(|(row_range, indent)| {
-            Some(ActiveIndentedRange {
-                buffer_id,
-                row_range,
-                indent,
-            })
-        })
 }
 
 impl Editor {
@@ -87,18 +59,30 @@ impl Editor {
         if state.should_refresh(cursor_row) {
             let snapshot = snapshot.clone();
             state.dirty = false;
-            state.pending_refresh = Some(cx.spawn(|editor, mut cx| async move {
-                let result = cx
-                    .background_executor()
-                    .spawn(async move { resolve_indented_range(&snapshot, cursor_row) })
-                    .await;
 
-                editor.update(&mut cx, |editor, _| {
-                    editor.active_indent_guides_state.active_indent_range = result;
-                    editor.active_indent_guides_state.pending_refresh = None;
-                })
-            }));
-            return None;
+            let task = cx
+                .background_executor()
+                .spawn(resolve_indented_range(snapshot, cursor_row));
+
+            // Try to resolve the indent in a short amount of time, otherwise move it to a background task.
+            match cx
+                .background_executor()
+                .block_with_timeout(Duration::from_micros(200), task)
+            {
+                Ok(result) => state.active_indent_range = result,
+                Err(future) => {
+                    state.pending_refresh = Some(cx.spawn(|editor, mut cx| async move {
+                        let result = cx.background_executor().spawn(future).await;
+                        editor
+                            .update(&mut cx, |editor, _| {
+                                editor.active_indent_guides_state.active_indent_range = result;
+                                editor.active_indent_guides_state.pending_refresh = None;
+                            })
+                            .log_err();
+                    }));
+                    return None;
+                }
+            }
         }
 
         let active_indent_range = state.active_indent_range.as_ref()?;
@@ -145,4 +129,30 @@ pub fn indent_guides_in_range(
             !snapshot.is_line_folded(MultiBufferRow(indent_guide.start_row))
         })
         .collect()
+}
+
+async fn resolve_indented_range(
+    snapshot: DisplaySnapshot,
+    buffer_row: u32,
+) -> Option<ActiveIndentedRange> {
+    let (buffer_row, buffer_snapshot, buffer_id) =
+        if let Some((_, buffer_id, snapshot)) = snapshot.buffer_snapshot.as_singleton() {
+            (buffer_row, snapshot, buffer_id)
+        } else {
+            let (snapshot, point) = snapshot
+                .buffer_snapshot
+                .buffer_line_for_row(MultiBufferRow(buffer_row))?;
+
+            let buffer_id = snapshot.remote_id();
+            (point.start.row, snapshot, buffer_id)
+        };
+
+    buffer_snapshot
+        .enclosing_indent(buffer_row)
+        .await
+        .map(|(row_range, indent)| ActiveIndentedRange {
+            row_range,
+            indent,
+            buffer_id,
+        })
 }
