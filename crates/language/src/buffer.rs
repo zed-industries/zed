@@ -3108,9 +3108,11 @@ impl BufferSnapshot {
         let mut result_vec = Vec::new();
         let mut indent_stack = SmallVec::<[(Range<usize>, IndentGuide); 8]>::new();
 
+        // TODO: This should be calculated for every row but it is pretty expensive
+        let indent_size = indent_size_for_row(self, start_row, cx);
+
         while let Some((first_row, mut line_indent, empty)) = row_indents.next() {
             let current_depth = indent_stack.len() as u32;
-            let indent_size = indent_size_for_row(self, first_row, cx);
 
             // When encountering empty, continue until found useful line indent
             // then add to the indent stack with the depth found
