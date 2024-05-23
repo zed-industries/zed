@@ -35,17 +35,6 @@ use std::{
 #[repr(C)]
 pub struct FontId(pub usize);
 
-// TODO: make this more general
-/// Used with `set_fallbacks`, to indicate what font type
-/// the fallbacks is going to set
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum FontUsage {
-    /// Set fallback fonts to UI font
-    UIFont,
-    /// Set fallback fonts to buffer font
-    BufferFont,
-}
-
 /// An opaque identifier for a specific font family.
 #[derive(Hash, PartialEq, Eq, Clone, Copy, Debug)]
 pub struct FontFamilyId(pub usize);
@@ -705,21 +694,6 @@ pub struct Font {
 
     /// The font style.
     pub style: FontStyle,
-
-    /// The font fallbacks to use.
-    pub fallbacks: FontFallbacks,
-}
-
-/// Indicate that what kind of fallbacks to use
-#[derive(Copy, Clone, Debug, Eq, PartialEq, Hash, Default)]
-pub enum FontFallbacks {
-    /// Use ui font fallbacks
-    UiFontFallbacks,
-    /// Use buffer font fallbacks
-    BufferFontFallbacks,
-    /// Use system font fallbacks
-    #[default]
-    None,
 }
 
 /// Get a [`Font`] for a given name.
@@ -729,7 +703,6 @@ pub fn font(family: impl Into<SharedString>) -> Font {
         features: FontFeatures::default(),
         weight: FontWeight::default(),
         style: FontStyle::default(),
-        fallbacks: FontFallbacks::None,
     }
 }
 
