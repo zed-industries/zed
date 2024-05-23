@@ -75,7 +75,7 @@ if __name__ == "__main__":
 
     release_info = get_release_info(tag)
     body = convert_body(release_info["body"])
-    version = tag.removeprefix("v")
+    version = tag.removeprefix("v").removesuffix("-pre")
     date = release_info["published_at"]
 
     release_info_str = f"<release version=\"{version}\" date=\"{date}\">\n"
