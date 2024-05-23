@@ -6,9 +6,9 @@ use std::{
 
 use crate::{
     black, phi, point, quad, rems, AbsoluteLength, Bounds, ContentMask, Corners, CornersRefinement,
-    CursorStyle, DefiniteLength, Edges, EdgesRefinement, Font, FontFallbacks, FontFeatures,
-    FontStyle, FontWeight, Hsla, Length, Pixels, Point, PointRefinement, Rgba, SharedString, Size,
-    SizeRefinement, Styled, TextRun, WindowContext,
+    CursorStyle, DefiniteLength, Edges, EdgesRefinement, Font, FontFeatures, FontStyle, FontWeight,
+    Hsla, Length, Pixels, Point, PointRefinement, Rgba, SharedString, Size, SizeRefinement, Styled,
+    TextRun, WindowContext,
 };
 use collections::HashSet;
 use refineable::Refineable;
@@ -203,9 +203,6 @@ pub struct TextStyle {
 
     /// How to handle whitespace in the text
     pub white_space: WhiteSpace,
-
-    /// TODO:
-    pub fallbacks: FontFallbacks,
 }
 
 impl Default for TextStyle {
@@ -229,7 +226,6 @@ impl Default for TextStyle {
             underline: None,
             strikethrough: None,
             white_space: WhiteSpace::Normal,
-            fallbacks: FontFallbacks::None,
         }
     }
 }
@@ -275,7 +271,6 @@ impl TextStyle {
             features: self.font_features.clone(),
             weight: self.font_weight,
             style: self.font_style,
-            fallbacks: self.fallbacks,
         }
     }
 
@@ -293,7 +288,6 @@ impl TextStyle {
                 features: Default::default(),
                 weight: self.font_weight,
                 style: self.font_style,
-                fallbacks: self.fallbacks,
             },
             color: self.color,
             background_color: self.background_color,
