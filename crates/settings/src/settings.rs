@@ -74,7 +74,7 @@ pub struct FontFamiliesContent {
     buffer_font_family: Option<Vec<String>>,
 }
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, serde::Deserialize)]
 pub struct FontFamilies {
     pub ui_font_family: Vec<String>,
     pub buffer_font_family: Vec<String>,
@@ -96,12 +96,12 @@ impl Settings for FontFamilies {
             ui_font_family: sources
                 .user
                 .and_then(|fallbacks| fallbacks.ui_font_family.clone())
-                .or_else(|| sources.default.ui_font_family.clone())
+                .or(sources.default.ui_font_family.clone())
                 .unwrap_or_default(),
             buffer_font_family: sources
                 .user
                 .and_then(|fallbacks| fallbacks.buffer_font_family.clone())
-                .or_else(|| sources.default.buffer_font_family.clone())
+                .or(sources.default.buffer_font_family.clone())
                 .unwrap_or_default(),
         })
     }
