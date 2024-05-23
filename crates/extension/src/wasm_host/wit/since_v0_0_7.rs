@@ -147,6 +147,24 @@ impl nodejs::Host for WasmState {
 #[async_trait]
 impl lsp::Host for WasmState {}
 
+impl From<http::github::GithubRelease> for github::GithubRelease {
+    fn from(value: http::github::GithubRelease) -> Self {
+        Self {
+            version: value.tag_name,
+            assets: value.assets.into_iter().map(Into::into).collect(),
+        }
+    }
+}
+
+impl From<http::github::GithubReleaseAsset> for github::GithubReleaseAsset {
+    fn from(value: http::github::GithubReleaseAsset) -> Self {
+        Self {
+            name: value.name,
+            download_url: value.browser_download_url,
+        }
+    }
+}
+
 #[async_trait]
 impl github::Host for WasmState {
     async fn latest_github_release(
@@ -162,17 +180,22 @@ impl github::Host for WasmState {
                 self.host.http_client.clone(),
             )
             .await?;
-            Ok(github::GithubRelease {
-                version: release.tag_name,
-                assets: release
-                    .assets
-                    .into_iter()
-                    .map(|asset| github::GithubReleaseAsset {
-                        name: asset.name,
-                        download_url: asset.browser_download_url,
-                    })
-                    .collect(),
-            })
+            Ok(release.into())
+        })
+        .await
+        .to_wasmtime_result()
+    }
+
+    async fn github_release_by_tag_name(
+        &mut self,
+        repo: String,
+        tag: String,
+    ) -> wasmtime::Result<Result<github::GithubRelease, String>> {
+        maybe!(async {
+            let release =
+                http::github::get_release_by_tag_name(&repo, &tag, self.host.http_client.clone())
+                    .await?;
+            Ok(release.into())
         })
         .await
         .to_wasmtime_result()
