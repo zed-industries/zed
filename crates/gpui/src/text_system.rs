@@ -35,6 +35,12 @@ use std::{
 #[repr(C)]
 pub struct FontId(pub usize);
 
+#[derive(Clone, Copy, Debug)]
+pub enum FontUsage {
+    UIFont,
+    BufferFont,
+}
+
 /// An opaque identifier for a specific font family.
 #[derive(Hash, PartialEq, Eq, Clone, Copy, Debug)]
 pub struct FontFamilyId(pub usize);
@@ -97,9 +103,9 @@ impl TextSystem {
     }
 
     /// Set fallbacks fonts to target font type
-    pub fn set_fallbacks(&self, fallbacks: &[String], is_ui_font: bool) -> Result<()> {
+    pub fn set_fallbacks(&self, fallbacks: &[String], font_usage: FontUsage) -> Result<()> {
         self.platform_text_system
-            .set_fallbacks(fallbacks, is_ui_font)
+            .set_fallbacks(fallbacks, font_usage)
     }
 
     /// Get the FontId for the configure font family and style.

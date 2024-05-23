@@ -24,9 +24,9 @@ mod windows;
 
 use crate::{
     point, Action, AnyWindowHandle, AsyncWindowContext, BackgroundExecutor, Bounds, DevicePixels,
-    DispatchEventResult, Font, FontId, FontMetrics, FontRun, ForegroundExecutor, GPUSpecs, GlyphId,
-    Keymap, LineLayout, Pixels, PlatformInput, Point, RenderGlyphParams, RenderImageParams,
-    RenderSvgParams, Scene, SharedString, Size, Task, TaskLabel, WindowContext,
+    DispatchEventResult, Font, FontId, FontMetrics, FontRun, FontUsage, ForegroundExecutor,
+    GPUSpecs, GlyphId, Keymap, LineLayout, Pixels, PlatformInput, Point, RenderGlyphParams,
+    RenderImageParams, RenderSvgParams, Scene, SharedString, Size, Task, TaskLabel, WindowContext,
     DEFAULT_WINDOW_SIZE,
 };
 use anyhow::Result;
@@ -399,7 +399,7 @@ pub trait PlatformDispatcher: Send + Sync {
 
 pub(crate) trait PlatformTextSystem: Send + Sync {
     fn add_fonts(&self, fonts: Vec<Cow<'static, [u8]>>) -> Result<()>;
-    fn set_fallbacks(&self, fallbacks: &[String], is_ui_font: bool) -> Result<()>;
+    fn set_fallbacks(&self, fallbacks: &[String], font_usage: FontUsage) -> Result<()>;
     fn all_font_names(&self) -> Vec<String>;
     fn all_font_families(&self) -> Vec<String>;
     fn font_id(&self, descriptor: &Font) -> Result<FontId>;
