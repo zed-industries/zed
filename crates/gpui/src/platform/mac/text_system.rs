@@ -1,8 +1,7 @@
 use crate::{
-    point, px, size, Bounds, DevicePixels, Font, FontFallbacks, FontFeatures, FontId, FontMetrics,
-    FontRun, FontStyle, FontUsage, FontWeight, GlyphId, LineLayout, Pixels, PlatformTextSystem,
-    Point, RenderGlyphParams, Result, ShapedGlyph, ShapedRun, SharedString, Size,
-    SUBPIXEL_VARIANTS,
+    point, px, size, Bounds, DevicePixels, Font, FontFeatures, FontId, FontMetrics, FontRun,
+    FontStyle, FontWeight, GlyphId, LineLayout, Pixels, PlatformTextSystem, Point,
+    RenderGlyphParams, Result, ShapedGlyph, ShapedRun, SharedString, Size, SUBPIXEL_VARIANTS,
 };
 use anyhow::anyhow;
 use cocoa::{
@@ -84,8 +83,8 @@ unsafe impl Sync for MacTextSystemState {}
 #[derive(Debug)]
 struct FontInfo {
     font: FontKitFont,
-    fallbacks: FontFallbacks,
     font_features: FontFeatures,
+    family_name: String,
 }
 
 impl MacTextSystem {
@@ -120,8 +119,8 @@ impl PlatformTextSystem for MacTextSystem {
         self.0.write().add_fonts(fonts)
     }
 
-    fn set_fallbacks(&self, fallbacks: &[String], font_usage: FontUsage) -> Result<()> {
-        self.0.write().set_fallbacks(fallbacks, font_usage)
+    fn set_fallbacks(&self, fallbacks: Option<&[String]>, target_family: &str) -> Result<()> {
+        self.0.write().set_fallbacks(fallbacks, target_family)
     }
 
     fn all_font_names(&self) -> Vec<String> {
@@ -160,7 +159,7 @@ impl PlatformTextSystem for MacTextSystem {
             let candidates = if let Some(font_ids) = lock.font_ids_by_font_key.get(&font_key) {
                 font_ids.as_slice()
             } else {
-                let font_ids = lock.load_family(&font.family, &font.features, font.fallbacks)?;
+                let font_ids = lock.load_family(&font.family, &font.features)?;
                 lock.font_ids_by_font_key.insert(font_key.clone(), font_ids);
                 lock.font_ids_by_font_key[&font_key].as_ref()
             };
@@ -242,56 +241,33 @@ impl MacTextSystemState {
         Ok(())
     }
 
-    fn set_fallbacks(&mut self, fallbacks: &[String], font_usage: FontUsage) -> Result<()> {
+    fn set_fallbacks(&mut self, fallbacks: Option<&[String]>, target_family: &str) -> Result<()> {
         if self.fonts.is_empty() {
             return Ok(());
         }
         unsafe {
             let pref_langs = CFArray::wrap_under_get_rule(self.pref_langs.as_concrete_TypeRef());
             for font in self.fonts.iter_mut() {
+                if font.family_name != target_family {
+                    continue;
+                }
                 let mut fallback_array =
                     CFArrayCreateMutable(kCFAllocatorDefault, 0, &kCFTypeArrayCallBacks);
 
-                match font.fallbacks {
-                    FontFallbacks::UiFontFallbacks => {
-                        if font_usage == FontUsage::UIFont {
-                            for user_fallback in fallbacks {
-                                let name = CFString::from(user_fallback.as_str());
-                                let fallback_desc = {
-                                    let desc = CTFontDescriptorCreateWithNameAndSize(
-                                        name.as_concrete_TypeRef(),
-                                        0.0,
-                                    );
-                                    CTFontDescriptor::wrap_under_create_rule(desc)
-                                };
-                                CFArrayAppendValue(
-                                    fallback_array,
-                                    fallback_desc.as_concrete_TypeRef() as _,
-                                );
-                            }
-                        }
-                    }
-                    FontFallbacks::BufferFontFallbacks => {
-                        if font_usage == FontUsage::BufferFont {
-                            for user_fallback in fallbacks {
-                                let name = CFString::from(user_fallback.as_str());
-                                let fallback_desc = {
-                                    let desc = CTFontDescriptorCreateWithNameAndSize(
-                                        name.as_concrete_TypeRef(),
-                                        0.0,
-                                    );
-                                    CTFontDescriptor::wrap_under_create_rule(desc)
-                                };
-                                CFArrayAppendValue(
-                                    fallback_array,
-                                    fallback_desc.as_concrete_TypeRef() as _,
-                                );
-                            }
-                        }
-                    }
-                    FontFallbacks::None => {
-                        CFRelease(fallback_array as _);
-                        continue;
+                if let Some(fallbacks) = fallbacks {
+                    for user_fallback in fallbacks {
+                        let name = CFString::from(user_fallback.as_str());
+                        let fallback_desc = {
+                            let desc = CTFontDescriptorCreateWithNameAndSize(
+                                name.as_concrete_TypeRef(),
+                                0.0,
+                            );
+                            CTFontDescriptor::wrap_under_create_rule(desc)
+                        };
+                        CFArrayAppendValue(
+                            fallback_array,
+                            fallback_desc.as_concrete_TypeRef() as _,
+                        );
                     }
                 }
 
@@ -338,7 +314,6 @@ impl MacTextSystemState {
         &mut self,
         name: &str,
         features: &FontFeatures,
-        fallbacks: FontFallbacks,
     ) -> Result<SmallVec<[FontId; 4]>> {
         let name = if name == ".SystemUIFont" {
             ".AppleSystemUIFont"
@@ -419,8 +394,8 @@ impl MacTextSystemState {
                 .insert(font_id, postscript_name);
             let font_info = FontInfo {
                 font,
-                fallbacks,
                 font_features: features.clone(),
+                family_name: name.to_string(),
             };
             self.fonts.push(font_info);
         }
@@ -449,9 +424,8 @@ impl MacTextSystemState {
                 font: font_kit::font::Font::from_core_graphics_font(
                     requested_font.copy_to_CGFont(),
                 ),
-                // fallbacks use system font fallbacks
-                fallbacks: FontFallbacks::None,
                 font_features: FontFeatures::default(),
+                family_name: requested_font.family_name(),
             };
             self.fonts.push(font_info);
             font_id
