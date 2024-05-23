@@ -512,6 +512,13 @@ where
 }
 
 pub trait DetachAndPromptErr {
+    fn prompt_err(
+        self,
+        msg: &str,
+        cx: &mut WindowContext,
+        f: impl FnOnce(&anyhow::Error, &mut WindowContext) -> Option<String> + 'static,
+    ) -> Task<()>;
+
     fn detach_and_prompt_err(
         self,
         msg: &str,
@@ -524,12 +531,12 @@ impl<R> DetachAndPromptErr for Task<anyhow::Result<R>>
 where
     R: 'static,
 {
-    fn detach_and_prompt_err(
+    fn prompt_err(
         self,
         msg: &str,
         cx: &mut WindowContext,
         f: impl FnOnce(&anyhow::Error, &mut WindowContext) -> Option<String> + 'static,
-    ) {
+    ) -> Task<()> {
         let msg = msg.to_owned();
         cx.spawn(|mut cx| async move {
             if let Err(err) = self.await {
@@ -543,6 +550,14 @@ where
                 }
             }
         })
-        .detach();
+    }
+
+    fn detach_and_prompt_err(
+        self,
+        msg: &str,
+        cx: &mut WindowContext,
+        f: impl FnOnce(&anyhow::Error, &mut WindowContext) -> Option<String> + 'static,
+    ) {
+        self.prompt_err(msg, cx, f).detach();
     }
 }
