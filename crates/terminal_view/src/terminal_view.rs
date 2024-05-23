@@ -283,7 +283,7 @@ impl TerminalView {
             cx.spawn(|this, mut cx| async move {
                 Timer::after(CURSOR_BLINK_INTERVAL).await;
                 this.update(&mut cx, |this, cx| this.blink_cursors(epoch, cx))
-                    .log_err();
+                    .ok();
             })
             .detach();
         }

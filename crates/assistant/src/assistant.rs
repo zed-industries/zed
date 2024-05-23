@@ -3,6 +3,7 @@ pub mod assistant_panel;
 pub mod assistant_settings;
 mod codegen;
 mod completion_provider;
+mod omit_ranges;
 mod prompts;
 mod saved_conversation;
 mod search;

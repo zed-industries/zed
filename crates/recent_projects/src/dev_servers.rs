@@ -1,10 +1,12 @@
 use std::time::Duration;
 
+use anyhow::anyhow;
 use anyhow::Context;
 use dev_server_projects::{DevServer, DevServerId, DevServerProject, DevServerProjectId};
 use editor::Editor;
 use feature_flags::FeatureFlagAppExt;
 use feature_flags::FeatureFlagViewExt;
+use gpui::AsyncWindowContext;
 use gpui::Subscription;
 use gpui::Task;
 use gpui::WeakView;
@@ -47,9 +49,9 @@ pub struct DevServerProjects {
     _dev_server_subscription: Subscription,
 }
 
-#[derive(Default, Clone)]
+#[derive(Default)]
 struct CreateDevServer {
-    creating: bool,
+    creating: Option<Task<()>>,
     dev_server_id: Option<DevServerId>,
     access_token: Option<String>,
     manual_setup: bool,
@@ -312,95 +314,77 @@ impl DevServerProjects {
         });
 
         let workspace = self.workspace.clone();
+        let store = dev_server_projects::Store::global(cx);
 
-        cx.spawn({
-            let access_token = access_token.clone();
-            |this, mut cx| async move {
-            let result = dev_server.await;
+        let task = cx
+            .spawn({
+                |this, mut cx| async move {
+                    let result = dev_server.await;
 
-            match result {
-                Ok(dev_server) => {
-                    if let Some(ssh_connection_string) =  ssh_connection_string {
+                    match result {
+                        Ok(dev_server) => {
+                            if let Some(ssh_connection_string) = ssh_connection_string {
+                                this.update(&mut cx, |this, cx| {
+                                    if let Mode::CreateDevServer(CreateDevServer {
+                                        access_token,
+                                        dev_server_id,
+                                        ..
+                                    }) = &mut this.mode
+                                    {
+                                        access_token.replace(dev_server.access_token.clone());
+                                        dev_server_id
+                                            .replace(DevServerId(dev_server.dev_server_id));
+                                    }
+                                    cx.notify();
+                                })?;
 
-                        let access_token = access_token.clone();
-                        this.update(&mut cx, |this, cx| {
+                                spawn_ssh_task(
+                                    workspace
+                                        .upgrade()
+                                        .ok_or_else(|| anyhow!("workspace dropped"))?,
+                                    store,
+                                    DevServerId(dev_server.dev_server_id),
+                                    ssh_connection_string,
+                                    dev_server.access_token.clone(),
+                                    &mut cx,
+                                )
+                                .await
+                                .log_err();
+                            }
+
+                            this.update(&mut cx, |this, cx| {
                                 this.focus_handle.focus(cx);
                                 this.mode = Mode::CreateDevServer(CreateDevServer {
-                                    creating: true,
+                                    creating: None,
                                     dev_server_id: Some(DevServerId(dev_server.dev_server_id)),
-                                    access_token: Some(access_token.unwrap_or(dev_server.access_token.clone())),
-                                    manual_setup: false,
-                            });
+                                    access_token: Some(dev_server.access_token),
+                                    manual_setup,
+                                });
                                 cx.notify();
-                        })?;
-                    let terminal_panel = workspace
-                        .update(&mut cx, |workspace, cx| workspace.panel::<TerminalPanel>(cx))
-                        .ok()
-                        .flatten()
-                        .with_context(|| anyhow::anyhow!("No terminal panel"))?;
+                            })?;
+                            Ok(())
+                        }
+                        Err(e) => {
+                            this.update(&mut cx, |this, cx| {
+                                this.mode = Mode::CreateDevServer(CreateDevServer {
+                                    creating: None,
+                                    dev_server_id: existing_id,
+                                    access_token: None,
+                                    manual_setup,
+                                });
+                                cx.notify()
+                            })
+                            .log_err();
 
-                        let command = "sh".to_string();
-                        let args = vec!["-x".to_string(),"-c".to_string(),
-                            format!(r#"~/.local/bin/zed -v >/dev/stderr || (curl -sSL https://zed.dev/install.sh || wget -qO- https://zed.dev/install.sh) | bash && ~/.local/bin/zed --dev-server-token {}"#, dev_server.access_token)];
-
-                        let terminal = terminal_panel.update(&mut cx, |terminal_panel, cx| {
-                            terminal_panel.spawn_in_new_terminal(
-                                SpawnInTerminal {
-                                    id: task::TaskId("ssh-remote".into()),
-                                    full_label: "Install zed over ssh".into(),
-                                    label: "Install zed over ssh".into(),
-                                    command,
-                                    args,
-                                    command_label: ssh_connection_string.clone(),
-                                    cwd: Some(TerminalWorkDir::Ssh { ssh_command: ssh_connection_string, path: None }),
-                                    env: Default::default(),
-                                    use_new_terminal: true,
-                                    allow_concurrent_runs: false,
-                                    reveal: RevealStrategy::Always,
-                                },
-                                cx,
-                            )
-                        })?.await?;
-
-                        terminal.update(&mut cx, |terminal, cx| {
-                            terminal.wait_for_completed_task(cx)
-                        })?.await;
-
-                        // There's a race-condition between the task completing successfully, and the server sending us the online status. Make it less likely we'll show the error state.
-                        if this.update(&mut cx, |this, cx| {
-                            this.dev_server_store.read(cx).dev_server_status(DevServerId(dev_server.dev_server_id))
-                        })? == DevServerStatus::Offline {
-                            cx.background_executor().timer(Duration::from_millis(200)).await
+                            return Err(e);
                         }
                     }
-
-                    this.update(&mut cx, |this, cx| {
-                            this.focus_handle.focus(cx);
-                            this.mode = Mode::CreateDevServer(CreateDevServer {
-                                creating: false,
-                                dev_server_id: Some(DevServerId(dev_server.dev_server_id)),
-                                access_token: Some(dev_server.access_token),
-                                manual_setup,
-                        });
-                            cx.notify();
-                    })?;
-                Ok(())
-            }
-            Err(e) => {
-                this.update(&mut cx, |this, cx| {
-                    this.mode = Mode::CreateDevServer(CreateDevServer { creating:false, dev_server_id: existing_id, access_token: None, manual_setup });
-                    cx.notify()
-                })
-                .log_err();
-
-                return Err(e)
-            }
-            }
-        }})
-        .detach_and_prompt_err("Failed to create server", cx, |_, _| None);
+                }
+            })
+            .prompt_err("Failed to create server", cx, |_, _| None);
 
         self.mode = Mode::CreateDevServer(CreateDevServer {
-            creating: true,
+            creating: Some(task),
             dev_server_id: existing_id,
             access_token,
             manual_setup,
@@ -502,7 +486,7 @@ impl DevServerProjects {
                 self.create_dev_server_project(create_project.dev_server_id, cx);
             }
             Mode::CreateDevServer(state) => {
-                if !state.creating {
+                if state.creating.is_none() || state.dev_server_id.is_some() {
                     self.create_or_update_dev_server(
                         state.manual_setup,
                         state.dev_server_id,
@@ -579,7 +563,7 @@ impl DevServerProjects {
                                         .on_click(cx.listener(move |this, _, cx| {
                                             this.mode = Mode::CreateDevServer(CreateDevServer {
                                                 dev_server_id: Some(dev_server_id),
-                                                creating: false,
+                                                creating: None,
                                                 access_token: None,
                                                 manual_setup,
                                             });
@@ -714,16 +698,14 @@ impl DevServerProjects {
     }
 
     fn render_create_dev_server(
-        &mut self,
-        state: CreateDevServer,
+        &self,
+        state: &CreateDevServer,
         cx: &mut ViewContext<Self>,
     ) -> impl IntoElement {
-        let CreateDevServer {
-            creating,
-            dev_server_id,
-            access_token,
-            manual_setup,
-        } = state.clone();
+        let creating = state.creating.is_some();
+        let dev_server_id = state.dev_server_id;
+        let access_token = state.access_token.clone();
+        let manual_setup = state.manual_setup;
 
         let status = dev_server_id
             .map(|id| self.dev_server_store.read(cx).dev_server_status(id))
@@ -742,6 +724,9 @@ impl DevServerProjects {
             })
         });
 
+        const MANUAL_SETUP_MESSAGE: &str = "Click create to generate a token for this server. The next step will provide instructions for setting zed up on that machine.";
+        const SSH_SETUP_MESSAGE: &str = "Enter the command you use to ssh into this server.\nFor example: `ssh me@my.server` or `gh cs ssh -c example`.";
+
         Modal::new("create-dev-server", Some(self.scroll_handle.clone()))
             .header(
                 ModalHeader::new()
@@ -750,11 +735,15 @@ impl DevServerProjects {
             )
             .section(
                 Section::new()
-                    .header(if manual_setup { "Server Name".into()} else { "SSH arguments".into()})
+                    .header(if manual_setup {
+                        "Server Name".into()
+                    } else {
+                        "SSH arguments".into()
+                    })
                     .child(
                         div()
                             .max_w(rems(16.))
-                            .child(self.dev_server_name_input.clone())
+                            .child(self.dev_server_name_input.clone()),
                     ),
             )
             .section(
@@ -764,71 +753,86 @@ impl DevServerProjects {
                         v_flex()
                             .w_full()
                             .gap_y(Spacing::Large.rems(cx))
-                            .child(v_flex().child(RadioWithLabel::new(
-                                "use-server-name-in-ssh",
-                                Label::new("Connect via SSH (default)"),
-                                !manual_setup,
-                                cx.listener({
-                                    let state = state.clone();
-                                    move |this, _, cx| {
-                                    this.mode = Mode::CreateDevServer(CreateDevServer {
-                                        manual_setup: false,
-                                        ..state.clone()
-                                    });
-                                    cx.notify()
-                                    }
-                                }),
-                            ))
-                            .child(RadioWithLabel::new(
-                                "use-server-name-in-ssh",
-                                Label::new("Manual Setup"),
-                                manual_setup,
-                                cx.listener({
-                                    let state = state.clone();
-                                    move |this, _, cx| {
-                                    this.mode = Mode::CreateDevServer(CreateDevServer {
-                                        manual_setup: true,
-                                        ..state.clone()
-                                    });
-                                    cx.notify()
-                                }}),
-                            )))
+                            .child(
+                                v_flex()
+                                    .child(RadioWithLabel::new(
+                                        "use-server-name-in-ssh",
+                                        Label::new("Connect via SSH (default)"),
+                                        !manual_setup,
+                                        cx.listener({
+                                            move |this, _, cx| {
+                                                if let Mode::CreateDevServer(CreateDevServer {
+                                                    manual_setup,
+                                                    ..
+                                                }) = &mut this.mode
+                                                {
+                                                    *manual_setup = false;
+                                                }
+                                                cx.notify()
+                                            }
+                                        }),
+                                    ))
+                                    .child(RadioWithLabel::new(
+                                        "use-server-name-in-ssh",
+                                        Label::new("Manual Setup"),
+                                        manual_setup,
+                                        cx.listener({
+                                            move |this, _, cx| {
+                                                if let Mode::CreateDevServer(CreateDevServer {
+                                                    manual_setup,
+                                                    ..
+                                                }) = &mut this.mode
+                                                {
+                                                    *manual_setup = true;
+                                                }
+                                                cx.notify()
+                                            }
+                                        }),
+                                    )),
+                            )
                             .when(dev_server_id.is_none(), |el| {
                                 el.child(
                                     if manual_setup {
+                                        Label::new(MANUAL_SETUP_MESSAGE)
+                                    } else {
+                                        Label::new(SSH_SETUP_MESSAGE)
+                                    }
+                                    .size(LabelSize::Small)
+                                    .color(Color::Muted),
+                                )
+                            })
+                            .when(dev_server_id.is_some() && access_token.is_none(), |el| {
+                                el.child(
+                                    if manual_setup {
                                         Label::new(
-                                            "Click create to generate a token for this server. The next step will provide instructions for setting zed up on that machine."
-                                                )
+                                            "Note: updating the dev server generate a new token",
+                                        )
                                     } else {
                                         Label::new(
                                             "Enter the command you use to ssh into this server.\n\
-                                            For example: `ssh me@my.server` or `gh cs ssh -c example`."
-                                            )
-                                }.size(LabelSize::Small).color(Color::Muted))
-                            })
-                            .when(dev_server_id.is_some() && access_token.is_none(),|el|{
-                                el.child(
-                                if manual_setup {
-                                    Label::new(
-                                        "Note: updating the dev server generate a new token"
-                                            )
-                                } else {
-                                    Label::new(
-                                        "Enter the command you use to ssh into this server.\n\
-                                        For example: `ssh me@my.server` or `gh cs ssh -c example`."
+                                        For example: `ssh me@my.server` or `gh cs ssh -c example`.",
                                         )
-                                }.size(LabelSize::Small).color(Color::Muted)
+                                    }
+                                    .size(LabelSize::Small)
+                                    .color(Color::Muted),
                                 )
                             })
                             .when_some(access_token.clone(), {
                                 |el, access_token| {
-                                el.child(
-                                    self.render_dev_server_token_creating(access_token, name, manual_setup, status, creating,  cx)
-                                )
-                            }}))
+                                    el.child(self.render_dev_server_token_creating(
+                                        access_token,
+                                        name,
+                                        manual_setup,
+                                        status,
+                                        creating,
+                                        cx,
+                                    ))
+                                }
+                            }),
+                    ),
             )
-            .footer(ModalFooter::new().end_slot(
-                if status == DevServerStatus::Online {
+            .footer(
+                ModalFooter::new().end_slot(if status == DevServerStatus::Online {
                     Button::new("create-dev-server", "Done")
                         .style(ButtonStyle::Filled)
                         .layer(ElevationIndex::ModalSurface)
@@ -838,17 +842,38 @@ impl DevServerProjects {
                             cx.notify();
                         }))
                 } else {
-                    Button::new("create-dev-server", if manual_setup { "Create"} else { "Connect"})
-                        .style(ButtonStyle::Filled)
-                        .layer(ElevationIndex::ModalSurface)
-                        .disabled(creating)
-                        .on_click(cx.listener({
-                            let access_token = access_token.clone();
-                            move |this, _, cx| {
-                            this.create_or_update_dev_server(manual_setup, dev_server_id, access_token.clone(), cx);
-                        }}))
-                }
-            ))
+                    Button::new(
+                        "create-dev-server",
+                        if manual_setup {
+                            if dev_server_id.is_some() {
+                                "Update"
+                            } else {
+                                "Create"
+                            }
+                        } else {
+                            if dev_server_id.is_some() {
+                                "Reconnect"
+                            } else {
+                                "Connect"
+                            }
+                        },
+                    )
+                    .style(ButtonStyle::Filled)
+                    .layer(ElevationIndex::ModalSurface)
+                    .disabled(creating && dev_server_id.is_none())
+                    .on_click(cx.listener({
+                        let access_token = access_token.clone();
+                        move |this, _, cx| {
+                            this.create_or_update_dev_server(
+                                manual_setup,
+                                dev_server_id,
+                                access_token.clone(),
+                                cx,
+                            );
+                        }
+                    }))
+                }),
+            )
     }
 
     fn render_dev_server_token_creating(
@@ -1006,18 +1031,115 @@ impl Render for DevServerProjects {
             .on_mouse_down_out(cx.listener(|this, _, cx| {
                 if matches!(this.mode, Mode::Default(None)) {
                     cx.emit(DismissEvent)
-                } else {
-                    this.focus_handle(cx).focus(cx);
-                    cx.stop_propagation()
                 }
             }))
             .w(rems(34.))
             .max_h(rems(40.))
             .child(match &self.mode {
                 Mode::Default(_) => self.render_default(cx).into_any_element(),
-                Mode::CreateDevServer(state) => self
-                    .render_create_dev_server(state.clone(), cx)
-                    .into_any_element(),
+                Mode::CreateDevServer(state) => {
+                    self.render_create_dev_server(state, cx).into_any_element()
+                }
             })
     }
+}
+
+pub fn reconnect_to_dev_server(
+    workspace: View<Workspace>,
+    dev_server: DevServer,
+    cx: &mut WindowContext,
+) -> Task<anyhow::Result<()>> {
+    let Some(ssh_connection_string) = dev_server.ssh_connection_string else {
+        return Task::ready(Err(anyhow!("can't reconnect, no ssh_connection_string")));
+    };
+    let dev_server_store = dev_server_projects::Store::global(cx);
+    let get_access_token = dev_server_store.update(cx, |store, cx| {
+        store.regenerate_dev_server_token(dev_server.id, cx)
+    });
+
+    cx.spawn(|mut cx| async move {
+        let access_token = get_access_token.await?.access_token;
+
+        spawn_ssh_task(
+            workspace,
+            dev_server_store,
+            dev_server.id,
+            ssh_connection_string.to_string(),
+            access_token,
+            &mut cx,
+        )
+        .await
+    })
+}
+
+pub async fn spawn_ssh_task(
+    workspace: View<Workspace>,
+    dev_server_store: Model<dev_server_projects::Store>,
+    dev_server_id: DevServerId,
+    ssh_connection_string: String,
+    access_token: String,
+    cx: &mut AsyncWindowContext,
+) -> anyhow::Result<()> {
+    let terminal_panel = workspace
+        .update(cx, |workspace, cx| workspace.panel::<TerminalPanel>(cx))
+        .ok()
+        .flatten()
+        .with_context(|| anyhow!("No terminal panel"))?;
+
+    let command = "sh".to_string();
+    let args = vec![
+        "-x".to_string(),
+        "-c".to_string(),
+        format!(
+            r#"~/.local/bin/zed -v >/dev/stderr || (curl -sSL https://zed.dev/install.sh || wget -qO- https://zed.dev/install.sh) | bash && ~/.local/bin/zed --dev-server-token {}"#,
+            access_token
+        ),
+    ];
+
+    let ssh_connection_string = ssh_connection_string.to_string();
+
+    let terminal = terminal_panel
+        .update(cx, |terminal_panel, cx| {
+            terminal_panel.spawn_in_new_terminal(
+                SpawnInTerminal {
+                    id: task::TaskId("ssh-remote".into()),
+                    full_label: "Install zed over ssh".into(),
+                    label: "Install zed over ssh".into(),
+                    command,
+                    args,
+                    command_label: ssh_connection_string.clone(),
+                    cwd: Some(TerminalWorkDir::Ssh {
+                        ssh_command: ssh_connection_string,
+                        path: None,
+                    }),
+                    env: Default::default(),
+                    use_new_terminal: true,
+                    allow_concurrent_runs: false,
+                    reveal: RevealStrategy::Always,
+                },
+                cx,
+            )
+        })?
+        .await?;
+
+    terminal
+        .update(cx, |terminal, cx| terminal.wait_for_completed_task(cx))?
+        .await;
+
+    // There's a race-condition between the task completing successfully, and the server sending us the online status. Make it less likely we'll show the error state.
+    if dev_server_store.update(cx, |this, _| this.dev_server_status(dev_server_id))?
+        == DevServerStatus::Offline
+    {
+        cx.background_executor()
+            .timer(Duration::from_millis(200))
+            .await
+    }
+
+    if dev_server_store.update(cx, |this, _| this.dev_server_status(dev_server_id))?
+        == DevServerStatus::Offline
+    {
+        return Err(anyhow!("couldn't reconnect"))?;
+    }
+
+    Ok(())
 }

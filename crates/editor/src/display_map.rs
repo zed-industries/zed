@@ -845,20 +845,7 @@ impl DisplaySnapshot {
             .buffer_line_for_row(buffer_row)
             .unwrap();
 
-        let mut indent_size = 0;
-        let mut is_blank = false;
-        for c in buffer.chars_at(Point::new(range.start.row, 0)) {
-            if c == ' ' || c == '\t' {
-                indent_size += 1;
-            } else {
-                if c == '\n' {
-                    is_blank = true;
-                }
-                break;
-            }
-        }
-
-        (indent_size, is_blank)
+        buffer.line_indent_for_row(range.start.row)
     }
 
     pub fn line_len(&self, row: DisplayRow) -> u32 {

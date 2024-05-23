@@ -5,6 +5,7 @@ use crate::{
     ambient_context::*,
     assistant_settings::{AssistantDockPosition, AssistantSettings, ZedDotDevModel},
     codegen::{self, Codegen, CodegenKind},
+    omit_ranges::text_in_range_omitting_ranges,
     prompts::prompt::generate_content_prompt,
     search::*,
     slash_command::{
@@ -60,7 +61,10 @@ use std::{
 };
 use telemetry_events::AssistantKind;
 use theme::ThemeSettings;
-use ui::{popover_menu, prelude::*, ButtonLike, ContextMenu, Tab, TabBar, Tooltip};
+use ui::{
+    popover_menu, prelude::*, ButtonLike, ContextMenu, ElevationIndex, KeyBinding, Tab, TabBar,
+    Tooltip,
+};
 use util::{paths::CONVERSATIONS_DIR, post_inc, ResultExt, TryFutureExt};
 use uuid::Uuid;
 use workspace::{
@@ -1056,15 +1060,25 @@ impl AssistantPanel {
             })
     }
 
-    fn render_assist_button(cx: &mut ViewContext<Self>) -> impl IntoElement {
-        IconButton::new("assist_button", IconName::MagicWand)
-            .on_click(cx.listener(|this, _event, cx| {
-                if let Some(active_editor) = this.active_conversation_editor() {
-                    active_editor.update(cx, |editor, cx| editor.assist(&Default::default(), cx));
-                }
-            }))
-            .icon_size(IconSize::Small)
-            .tooltip(|cx| Tooltip::for_action("Assist", &Assist, cx))
+    fn render_send_button(&self, cx: &mut ViewContext<Self>) -> Option<impl IntoElement> {
+        self.active_conversation_editor
+            .as_ref()
+            .map(|conversation| {
+                let focus_handle = conversation.editor.focus_handle(cx);
+                ButtonLike::new("send_button")
+                    .style(ButtonStyle::Filled)
+                    .layer(ElevationIndex::ModalSurface)
+                    .children(
+                        KeyBinding::for_action_in(&Assist, &focus_handle, cx)
+                            .map(|binding| binding.into_any_element()),
+                    )
+                    .child(Label::new("Send"))
+                    .on_click(cx.listener(|this, _event, cx| {
+                        if let Some(active_editor) = this.active_conversation_editor() {
+                            active_editor.update(cx, |editor, cx| editor.assist(&Assist, cx));
+                        }
+                    }))
+            })
     }
 
     fn render_saved_conversation(
@@ -1193,8 +1207,7 @@ impl AssistantPanel {
                                             this.show_prompt_manager(cx)
                                         }))
                                         .tooltip(|cx| Tooltip::text("Prompt Library…", cx)),
-                                )
-                                .child(Self::render_assist_button(cx)),
+                                ),
                         ),
                 );
 
@@ -1261,7 +1274,19 @@ impl AssistantPanel {
                     .into_any_element()
                 } else if let Some(editor) = self.active_conversation_editor() {
                     let editor = editor.clone();
-                    div().size_full().child(editor.clone()).into_any_element()
+                    div()
+                        .size_full()
+                        .child(editor.clone())
+                        .child(
+                            h_flex()
+                                .w_full()
+                                .absolute()
+                                .bottom_0()
+                                .p_4()
+                                .justify_end()
+                                .children(self.render_send_button(cx)),
+                        )
+                        .into_any_element()
                 } else {
                     div().into_any_element()
                 },
@@ -2719,6 +2744,7 @@ impl ConversationEditor {
             editor.set_show_git_diff_gutter(false, cx);
             editor.set_show_code_actions(false, cx);
             editor.set_show_wrap_guides(false, cx);
+            editor.set_show_indent_guides(false, cx);
             editor.set_completion_provider(Box::new(completion_provider));
             editor
         });
@@ -3245,51 +3271,25 @@ impl ConversationEditor {
         }
 
         if let Some(text) = text {
-            panel.update(cx, |panel, cx| {
-                if let Some(conversation) = panel
-                    .active_conversation_editor()
-                    .cloned()
-                    .or_else(|| panel.new_conversation(cx))
-                {
-                    conversation.update(cx, |conversation, cx| {
-                        conversation
-                            .editor
-                            .update(cx, |editor, cx| editor.insert(&text, cx))
-                    });
-                };
+            panel.update(cx, |_, cx| {
+                // Wait to create a new conversation until the workspace is no longer
+                // being updated.
+                cx.defer(move |panel, cx| {
+                    if let Some(conversation) = panel
+                        .active_conversation_editor()
+                        .cloned()
+                        .or_else(|| panel.new_conversation(cx))
+                    {
+                        conversation.update(cx, |conversation, cx| {
+                            conversation
+                                .editor
+                                .update(cx, |editor, cx| editor.insert(&text, cx))
+                        });
+                    };
+                });
             });
         }
     }
-
-    // fn insert_active_prompt(
-    //     workspace: &mut Workspace,
-    //     _: &InsertActivePrompt,
-    //     cx: &mut ViewContext<Workspace>,
-    // ) {
-    //     let Some(panel) = workspace.panel::<AssistantPanel>(cx) else {
-    //         return;
-    //     };
-
-    //     if !panel.focus_handle(cx).contains_focused(cx) {
-    //         workspace.toggle_panel_focus::<AssistantPanel>(cx);
-    //     }
-
-    //     if let Some(default_prompt) = panel.read(cx).prompt_library.clone().default_prompt() {
-    //         panel.update(cx, |panel, cx| {
-    //             if let Some(conversation) = panel
-    //                 .active_conversation_editor()
-    //                 .cloned()
-    //                 .or_else(|| panel.new_conversation(cx))
-    //             {
-    //                 conversation.update(cx, |conversation, cx| {
-    //                     conversation
-    //                         .editor
-    //                         .update(cx, |editor, cx| editor.insert(&default_prompt, cx))
-    //                 });
-    //             };
-    //         });
-    //     };
-    // }
 
     fn copy(&mut self, _: &editor::actions::Copy, cx: &mut ViewContext<Self>) {
         let editor = self.editor.read(cx);
@@ -3502,7 +3502,7 @@ impl ConversationEditor {
             .summary
             .as_ref()
             .map(|summary| summary.text.clone())
-            .unwrap_or_else(|| "New Conversation".into())
+            .unwrap_or_else(|| "New Context".into())
     }
 }
 
@@ -3556,38 +3556,15 @@ pub struct Message {
 
 impl Message {
     fn to_request_message(&self, buffer: &Buffer) -> LanguageModelRequestMessage {
-        let mut slash_command_ranges = self.slash_command_ranges.iter().peekable();
-        let mut content = String::with_capacity(self.offset_range.len());
-        let mut offset = self.offset_range.start;
-        let mut chunks = buffer.text_for_range(self.offset_range.clone());
-        while let Some(chunk) = chunks.next() {
-            if let Some(slash_command_range) = slash_command_ranges.peek() {
-                match offset.cmp(&slash_command_range.start) {
-                    Ordering::Less => {
-                        let max_len = slash_command_range.start - offset;
-                        if chunk.len() < max_len {
-                            content.push_str(chunk);
-                            offset += chunk.len();
-                        } else {
-                            content.push_str(&chunk[..max_len]);
-                            offset += max_len;
-                            chunks.seek(slash_command_range.end);
-                            slash_command_ranges.next();
-                        }
-                    }
-                    Ordering::Equal | Ordering::Greater => {
-                        chunks.seek(slash_command_range.end);
-                        offset = slash_command_range.end;
-                        slash_command_ranges.next();
-                    }
-                }
-            } else {
-                content.push_str(chunk);
-            }
-        }
+        let mut content = text_in_range_omitting_ranges(
+            buffer.as_rope(),
+            self.offset_range.clone(),
+            &self.slash_command_ranges,
+        );
+        content.truncate(content.trim_end().len());
         LanguageModelRequestMessage {
             role: self.role,
-            content: content.trim_end().into(),
+            content,
         }
     }
 }
