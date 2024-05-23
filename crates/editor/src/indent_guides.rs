@@ -35,14 +35,11 @@ impl Editor {
         &self,
         visible_buffer_range: Range<MultiBufferRow>,
         snapshot: &DisplaySnapshot,
-        cx: &AppContext,
+        cx: &mut ViewContext<Editor>,
     ) -> Option<Vec<MultiBufferIndentGuide>> {
-        if self.show_indent_guides == Some(false) {
-            return None;
-        }
+        let enabled = self.should_show_indent_guides(cx);
 
-        let settings = self.buffer.read(cx).settings_at(0, cx);
-        if settings.indent_guides.enabled {
+        if enabled {
             Some(indent_guides_in_range(visible_buffer_range, snapshot, cx))
         } else {
             None

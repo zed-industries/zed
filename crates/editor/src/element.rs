@@ -318,6 +318,7 @@ impl EditorElement {
         register_action(view, cx, Editor::open_excerpts_in_split);
         register_action(view, cx, Editor::toggle_soft_wrap);
         register_action(view, cx, Editor::toggle_line_numbers);
+        register_action(view, cx, Editor::toggle_indent_guides);
         register_action(view, cx, Editor::toggle_inlay_hints);
         register_action(view, cx, hover_popover::hover);
         register_action(view, cx, Editor::reveal_in_finder);
@@ -1473,10 +1474,9 @@ impl EditorElement {
         snapshot: &DisplaySnapshot,
         cx: &mut WindowContext,
     ) -> Option<Vec<IndentGuideLayout>> {
-        let indent_guides =
-            self.editor
-                .read(cx)
-                .indent_guides(visible_buffer_range, snapshot, cx)?;
+        let indent_guides = self.editor.update(cx, |editor, cx| {
+            editor.indent_guides(visible_buffer_range, snapshot, cx)
+        })?;
 
         let active_indent_guide_indices = self.editor.update(cx, |editor, cx| {
             editor

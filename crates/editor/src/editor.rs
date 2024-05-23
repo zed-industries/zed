@@ -9640,6 +9640,22 @@ impl Editor {
         cx.notify();
     }
 
+    pub fn toggle_indent_guides(&mut self, _: &ToggleIndentGuides, cx: &mut ViewContext<Self>) {
+        let currently_enabled = self.should_show_indent_guides(cx);
+        self.show_indent_guides = Some(!currently_enabled);
+        cx.notify();
+    }
+
+    fn should_show_indent_guides(&self, cx: &mut ViewContext<Self>) -> bool {
+        self.show_indent_guides.unwrap_or_else(|| {
+            self.buffer
+                .read(cx)
+                .settings_at(0, cx)
+                .indent_guides
+                .enabled
+        })
+    }
+
     pub fn toggle_line_numbers(&mut self, _: &ToggleLineNumbers, cx: &mut ViewContext<Self>) {
         let mut editor_settings = EditorSettings::get_global(cx).clone();
         editor_settings.gutter.line_numbers = !editor_settings.gutter.line_numbers;
