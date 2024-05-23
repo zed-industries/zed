@@ -99,9 +99,6 @@ impl TextSystem {
     /// TODO:
     pub fn set_fallbacks(&self, fallbacks: &[String], is_ui_font: bool) -> Result<()> {
         println!("Setting fallbacks {}: {:#?}", is_ui_font, fallbacks);
-        if fallbacks.is_empty() {
-            return Ok(());
-        }
         self.platform_text_system
             .set_fallbacks(fallbacks, is_ui_font)
     }

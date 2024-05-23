@@ -7,7 +7,7 @@ use crate::{
 use anyhow::anyhow;
 use cocoa::{
     appkit::{CGFloat, CGPoint},
-    base::id,
+    base::{id, YES},
     foundation::{NSArray, NSUserDefaults},
 };
 use collections::{BTreeSet, HashMap};
@@ -17,7 +17,7 @@ use core_foundation::{
     base::{kCFAllocatorDefault, CFRange, CFRelease, TCFType, TCFTypeRef},
     dictionary::{
         kCFTypeDictionaryKeyCallBacks, kCFTypeDictionaryValueCallBacks, CFDictionaryAddValue,
-        CFDictionaryCreate, CFDictionaryReplaceValue,
+        CFDictionaryContainsKey, CFDictionaryCreate, CFDictionaryReplaceValue,
     },
     number::CFNumber,
     string::CFString,
@@ -72,6 +72,7 @@ struct FontKey {
 }
 
 struct MacTextSystemState {
+    pref_langs: CFArray<CFString>,
     memory_source: MemSource,
     system_source: SystemSource,
     fonts: Vec<FontInfo>,
@@ -83,6 +84,9 @@ struct MacTextSystemState {
     postscript_names_by_font_id: HashMap<FontId, String>,
 }
 
+unsafe impl Send for MacTextSystemState {}
+unsafe impl Sync for MacTextSystemState {}
+
 #[derive(Debug)]
 struct FontInfo {
     font: FontKitFont,
@@ -92,7 +96,14 @@ struct FontInfo {
 
 impl MacTextSystem {
     pub(crate) fn new() -> Self {
+        let pref_langs: CFArray<CFString> = unsafe {
+            let user_defaults: id = msg_send![class!(NSUserDefaults), standardUserDefaults];
+            let key = CFString::from_static_string("AppleLanguages");
+            let ret: CFArray<CFString> = msg_send![user_defaults, stringArrayForKey: key];
+            ret
+        };
         Self(RwLock::new(MacTextSystemState {
+            pref_langs,
             memory_source: MemSource::empty(),
             system_source: SystemSource::new(),
             fonts: Vec::new(),
@@ -240,15 +251,13 @@ impl MacTextSystemState {
     }
 
     fn set_fallbacks(&mut self, fallbacks: &[String], is_ui_font: bool) -> Result<()> {
-        if fallbacks.is_empty() || self.fonts.is_empty() {
+        if self.fonts.is_empty() {
             return Ok(());
         }
-        println!("====================== Setting fallbacks");
+        println!("====================== Setting fallbacks ======================");
         println!("{:#?}<->{:#?}", fallbacks, is_ui_font);
         unsafe {
-            let user_defaults: id = msg_send![class!(NSUserDefaults), standardUserDefaults];
-            let key = CFString::from_static_string("AppleLanguages");
-            let pref_langs: CFArray<CFString> = msg_send![user_defaults, stringArrayForKey: key];
+            let pref_langs = CFArray::wrap_under_get_rule(self.pref_langs.as_concrete_TypeRef());
             let mut count = 0;
             for font in self.fonts.iter_mut() {
                 println!("==> Font count: {}, {:#?}", count, font);
@@ -277,6 +286,7 @@ impl MacTextSystemState {
                     }
                     FontFallbacks::BufferFontFallbacks => {
                         if !is_ui_font {
+                            println!("Adding fallbacks");
                             for user_fallback in fallbacks {
                                 let name = CFString::from(user_fallback.as_str());
                                 let fallback_desc = {
@@ -303,6 +313,10 @@ impl MacTextSystemState {
                     .into_iter()
                     .filter(|desc| desc.font_path().is_some())
                     .for_each(|user_fallback_desc| {
+                        println!(
+                            "      => Sys fallback: {}",
+                            user_fallback_desc.display_name()
+                        );
                         CFArrayAppendValue(
                             fallback_array,
                             user_fallback_desc.as_concrete_TypeRef() as _,
