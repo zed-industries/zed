@@ -84,9 +84,7 @@ impl Into<String> for UiDensity {
 pub struct ThemeSettings {
     pub ui_font_size: Pixels,
     pub ui_font: Font,
-    pub ui_font_fallbacks: Arc<Vec<String>>,
     pub buffer_font: Font,
-    pub buffer_font_fallbacks: Arc<Vec<String>>,
     pub buffer_font_size: Pixels,
     pub buffer_line_height: BufferLineHeight,
     pub theme_selection: Option<ThemeSelection>,
@@ -517,7 +515,6 @@ impl settings::Settings for ThemeSettings {
                 weight: defaults.ui_font_weight.map(FontWeight).unwrap(),
                 style: Default::default(),
             },
-            ui_font_fallbacks: get_fallbacks(&defaults.ui_font_family.as_ref().unwrap()),
             buffer_font: Font {
                 family: defaults.buffer_font_family.as_ref().unwrap()[0]
                     .clone()
@@ -526,7 +523,6 @@ impl settings::Settings for ThemeSettings {
                 weight: defaults.buffer_font_weight.map(FontWeight).unwrap(),
                 style: FontStyle::default(),
             },
-            buffer_font_fallbacks: get_fallbacks(&defaults.buffer_font_family.as_ref().unwrap()),
             buffer_font_size: defaults.buffer_font_size.unwrap().into(),
             buffer_line_height: defaults.buffer_line_height.unwrap(),
             theme_selection: defaults.theme.clone(),
@@ -545,7 +541,6 @@ impl settings::Settings for ThemeSettings {
 
             if let Some(value) = value.buffer_font_family.clone() {
                 this.buffer_font.family = value[0].clone().into();
-                this.buffer_font_fallbacks = get_fallbacks(&value);
             }
             if let Some(value) = value.buffer_font_features.clone() {
                 this.buffer_font.features = value;
@@ -557,7 +552,6 @@ impl settings::Settings for ThemeSettings {
 
             if let Some(value) = value.ui_font_family.clone() {
                 this.ui_font.family = value[0].clone().into();
-                this.ui_font_fallbacks = get_fallbacks(&value);
             }
             if let Some(value) = value.ui_font_features.clone() {
                 this.ui_font.features = value;
@@ -655,13 +649,5 @@ impl settings::Settings for ThemeSettings {
 fn merge<T: Copy>(target: &mut T, value: Option<T>) {
     if let Some(value) = value {
         *target = value;
-    }
-}
-
-fn get_fallbacks(list: &[String]) -> Arc<Vec<String>> {
-    if list.len() == 1 {
-        Arc::new(vec![])
-    } else {
-        Arc::new(list[1..].to_vec())
     }
 }
