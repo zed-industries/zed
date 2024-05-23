@@ -4,8 +4,7 @@ use crate::{
         BlockContext, BlockStyle, DisplaySnapshot, HighlightedChunk, ToDisplayPoint, TransformBlock,
     },
     editor_settings::{
-        CurrentLineHighlight, DoubleClickInMultibuffer, IndentGuideBackgroundColoring,
-        IndentGuideColoring, MultiCursorModifier, ShowScrollbar,
+        CurrentLineHighlight, DoubleClickInMultibuffer, MultiCursorModifier, ShowScrollbar,
     },
     git::{
         blame::{CommitDetails, GitBlame},
@@ -39,7 +38,9 @@ use gpui::{
     ViewContext, WeakView, WindowContext,
 };
 use itertools::Itertools;
-use language::language_settings::ShowWhitespaceSetting;
+use language::language_settings::{
+    IndentGuideBackgroundColoring, IndentGuideColoring, ShowWhitespaceSetting,
+};
 use lsp::DiagnosticSeverity;
 use multi_buffer::{Anchor, MultiBufferPoint, MultiBufferRow};
 use project::{
@@ -1472,13 +1473,10 @@ impl EditorElement {
         snapshot: &DisplaySnapshot,
         cx: &mut WindowContext,
     ) -> Option<Vec<IndentGuideLayout>> {
-        let settings = EditorSettings::get_global(cx).indent_guides;
-        if !settings.enabled {
-            return None;
-        }
-
         let indent_guides =
-            crate::indent_guides::indent_guides_in_range(visible_buffer_range, snapshot, cx);
+            self.editor
+                .read(cx)
+                .indent_guides(visible_buffer_range, snapshot, cx)?;
 
         let active_indent_guide_indices = self.editor.update(cx, |editor, cx| {
             editor
@@ -2621,7 +2619,13 @@ impl EditorElement {
             return;
         };
 
-        let settings = EditorSettings::get_global(cx).indent_guides;
+        let settings = self
+            .editor
+            .read(cx)
+            .buffer()
+            .read(cx)
+            .settings_at(0, cx)
+            .indent_guides;
 
         let faded_color = |color: Hsla, alpha: f32| {
             let mut faded = color;

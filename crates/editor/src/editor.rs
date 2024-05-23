@@ -451,6 +451,7 @@ pub struct Editor {
     show_breadcrumbs: bool,
     show_gutter: bool,
     show_wrap_guides: Option<bool>,
+    show_indent_guides: Option<bool>,
     placeholder_text: Option<Arc<str>>,
     highlight_order: usize,
     highlighted_rows: HashMap<TypeId, Vec<RowHighlight>>,
@@ -1649,6 +1650,7 @@ impl Editor {
             show_breadcrumbs: EditorSettings::get_global(cx).toolbar.breadcrumbs,
             show_gutter: mode == EditorMode::Full,
             show_wrap_guides: None,
+            show_indent_guides: None,
             placeholder_text: None,
             highlight_order: 0,
             highlighted_rows: HashMap::default(),
@@ -9617,6 +9619,11 @@ impl Editor {
 
     pub fn set_show_wrap_guides(&mut self, show_gutter: bool, cx: &mut ViewContext<Self>) {
         self.show_wrap_guides = Some(show_gutter);
+        cx.notify();
+    }
+
+    pub fn set_show_indent_guides(&mut self, show_indent_guides: bool, cx: &mut ViewContext<Self>) {
+        self.show_indent_guides = Some(show_indent_guides);
         cx.notify();
     }
 

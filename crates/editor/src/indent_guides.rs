@@ -30,6 +30,24 @@ impl ActiveIndentGuidesState {
 }
 
 impl Editor {
+    pub fn indent_guides(
+        &self,
+        visible_buffer_range: Range<u32>,
+        snapshot: &DisplaySnapshot,
+        cx: &AppContext,
+    ) -> Option<Vec<MultiBufferIndentGuide>> {
+        if self.show_indent_guides == Some(false) {
+            return None;
+        }
+
+        let settings = self.buffer.read(cx).settings_at(0, cx);
+        if settings.indent_guides.enabled {
+            Some(indent_guides_in_range(visible_buffer_range, snapshot, cx))
+        } else {
+            None
+        }
+    }
+
     pub fn find_active_indent_guide_indices(
         &mut self,
         indent_guides: &[MultiBufferIndentGuide],

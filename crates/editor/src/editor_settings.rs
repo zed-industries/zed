@@ -15,7 +15,6 @@ pub struct EditorSettings {
     pub toolbar: Toolbar,
     pub scrollbar: Scrollbar,
     pub gutter: Gutter,
-    pub indent_guides: IndentGuides,
     pub vertical_scroll_margin: f32,
     pub scroll_sensitivity: f32,
     pub relative_line_numbers: bool,
@@ -84,40 +83,6 @@ pub struct Gutter {
     pub line_numbers: bool,
     pub code_actions: bool,
     pub folds: bool,
-}
-
-#[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
-pub struct IndentGuides {
-    pub enabled: bool,
-    pub line_width: u32,
-    pub coloring: IndentGuideColoring,
-    pub background_coloring: IndentGuideBackgroundColoring,
-}
-
-/// Determines how indent guides are colored.
-///
-/// Default: off
-#[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
-#[serde(rename_all = "snake_case")]
-pub enum IndentGuideColoring {
-    /// Do not render any lines for indent guides.
-    Disabled,
-    /// Use the same color for all indentation levels.
-    Fixed,
-    /// Use a different color for each indentation level.
-    IndentAware,
-}
-
-/// Determines how indent guide backgrounds are colored.
-///
-/// Default: off
-#[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
-#[serde(rename_all = "snake_case")]
-pub enum IndentGuideBackgroundColoring {
-    /// Do not render any background for indent guides.
-    Disabled,
-    /// Use a different color for each indentation level.
-    IndentAware,
 }
 
 /// When to show the scrollbar in the editor.
@@ -189,8 +154,6 @@ pub struct EditorSettingsContent {
     pub scrollbar: Option<ScrollbarContent>,
     /// Gutter related settings
     pub gutter: Option<GutterContent>,
-    /// Indent guide related settings
-    pub indent_guides: Option<IndentGuidesContent>,
     /// The number of lines to keep above/below the cursor when auto-scrolling.
     ///
     /// Default: 3.
@@ -283,26 +246,6 @@ pub struct GutterContent {
     ///
     /// Default: true
     pub folds: Option<bool>,
-}
-
-#[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
-pub struct IndentGuidesContent {
-    /// Whether to display indent guides in the editor.
-    ///
-    /// Default: true
-    pub enabled: Option<bool>,
-    /// The width of the indent guides (in pixels, between 1 and 10).
-    ///
-    /// Default: 1
-    pub line_width: Option<u32>,
-    /// Determines the coloring mode for indent guides.
-    ///
-    /// Default: Fixed
-    pub coloring: Option<IndentGuideColoring>,
-    /// Determines the background coloring mode for indent guides.
-    ///
-    /// Default: Disabled
-    pub background_coloring: Option<IndentGuideBackgroundColoring>,
 }
 
 impl Settings for EditorSettings {
