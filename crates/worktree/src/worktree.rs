@@ -1461,6 +1461,10 @@ impl LocalWorktree {
                 && abs_old_path != abs_new_path
                 && abs_old_path_lower == abs_new_path_lower;
 
+            if let Some(parent) = abs_new_path.parent() {
+                fs.create_dir(parent).await?;
+            }
+
             fs.rename(
                 &abs_old_path,
                 &abs_new_path,
