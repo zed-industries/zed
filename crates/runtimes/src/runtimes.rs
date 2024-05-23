@@ -12,7 +12,7 @@ use gpui::{actions, AppContext, Context, EntityId, Global, Model, ModelContext, 
 use gpui::{Entity, View};
 use kernelspecs::{get_runtimes, RunningKernel, Runtime};
 use language::Point;
-use outputs::ExecutionView;
+use outputs::{ExecutionStatus, ExecutionView};
 use project::Fs;
 use settings::Settings as _;
 use std::sync::Arc;
@@ -299,6 +299,9 @@ impl RuntimeManager {
         let editor = active_code.editor.clone();
 
         cx.spawn(|_this, mut cx| async move {
+            execution_view.update(&mut cx, |execution_view, cx| {
+                execution_view.set_status(ExecutionStatus::ConnectingToKernel, cx);
+            })?;
             let mut receiver = receiver.await?;
 
             let execution_view = execution_view.clone();

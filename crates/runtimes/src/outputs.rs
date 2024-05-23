@@ -255,6 +255,13 @@ impl ExecutionView {
 
         cx.notify();
     }
+
+    pub fn set_status(&mut self, status: ExecutionStatus, cx: &mut ViewContext<Self>) {
+        self.execution
+            .update(cx, |execution, _cx| execution.status = status);
+
+        cx.notify();
+    }
 }
 
 impl Render for ExecutionView {
@@ -274,7 +281,7 @@ impl Render for ExecutionView {
                 ExecutionStatus::Finished => {
                     return div().child(Icon::new(IconName::Check)).into_any_element()
                 }
-                _ => {}
+                ExecutionStatus::Unknown => return div().child("...").into_any_element(),
             }
         }
 
