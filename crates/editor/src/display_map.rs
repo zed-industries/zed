@@ -105,6 +105,7 @@ pub struct DisplayMap {
 }
 
 impl DisplayMap {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         buffer: Model<MultiBuffer>,
         font: Font,
