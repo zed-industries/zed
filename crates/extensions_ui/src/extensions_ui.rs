@@ -819,7 +819,6 @@ impl ExtensionsPage {
             font_size: rems(0.875).into(),
             font_weight: settings.ui_font.weight,
             line_height: relative(1.3),
-            fallbacks: settings.ui_font.fallbacks,
             ..Default::default()
         };
 
