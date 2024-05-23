@@ -534,7 +534,7 @@ impl ChatPanel {
                         el.child(
                             v_flex()
                                 .w_full()
-                                .text_ui_sm(cx)
+                                .text_size(cx.rem_size())
                                 .id(element_id)
                                 .child(text.element("body".into(), cx)),
                         )
