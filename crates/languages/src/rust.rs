@@ -402,7 +402,7 @@ impl ContextProvider for RustContextProvider {
                     RUST_PACKAGE_TASK_VARIABLE.template_value(),
                     VariableName::Stem.template_value(),
                 ],
-                tags: vec!["rust-file-test".to_owned()],
+                tags: vec!["rust-mod-test".to_owned()],
                 ..TaskTemplate::default()
             },
             TaskTemplate {

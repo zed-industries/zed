@@ -1,22 +1,7 @@
-(
-    (attribute_item (attribute
-            (identifier) @_attribute
-            (#eq? @_attribute "cfg")
-
-            arguments: (token_tree (
-                (identifier) @_argument
-                (#eq? @_argument "test")
-            ))
-        )
-    )
-    .
-    (attribute_item) *
-    .
-    (mod_item
-        name: (_) @run
-        (#eq? @run "tests")
-    ) @rust-file-test
-)
+(mod_item
+    name: (_) @run
+    (#eq? @run "tests")
+) @rust-mod-test
 
 (
     (attribute_item (attribute
