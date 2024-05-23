@@ -35,9 +35,14 @@ use std::{
 #[repr(C)]
 pub struct FontId(pub usize);
 
+// TODO: make this more general
+/// Used with `set_fallbacks`, to indicate what font type
+/// the fallbacks is going to set
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum FontUsage {
+    /// Set fallback fonts to UI font
     UIFont,
+    /// Set fallback fonts to buffer font
     BufferFont,
 }
 
