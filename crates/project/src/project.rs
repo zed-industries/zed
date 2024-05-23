@@ -10578,15 +10578,15 @@ impl Project {
                     task_variables: task_context
                         .task_variables
                         .into_iter()
-                        .filter_map(|(variable_name, variable_value)| {
-                            match VariableName::from_string(variable_name) {
+                        .filter_map(
+                            |(variable_name, variable_value)| match variable_name.parse() {
                                 Ok(variable_name) => Some((variable_name, variable_value)),
-                                Err(wrong_variable_name) => {
-                                    log::error!("Unknown variable name: {wrong_variable_name}");
+                                Err(()) => {
+                                    log::error!("Unknown variable name: {variable_name}");
                                     None
                                 }
-                            }
-                        })
+                            },
+                        )
                         .collect(),
                 })
             })
