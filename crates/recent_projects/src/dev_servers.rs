@@ -324,6 +324,20 @@ impl DevServerProjects {
                     match result {
                         Ok(dev_server) => {
                             if let Some(ssh_connection_string) = ssh_connection_string {
+                                this.update(&mut cx, |this, cx| {
+                                    if let Mode::CreateDevServer(CreateDevServer {
+                                        access_token,
+                                        dev_server_id,
+                                        ..
+                                    }) = &mut this.mode
+                                    {
+                                        access_token.replace(dev_server.access_token.clone());
+                                        dev_server_id
+                                            .replace(DevServerId(dev_server.dev_server_id));
+                                    }
+                                    cx.notify();
+                                })?;
+
                                 spawn_ssh_task(
                                     workspace
                                         .upgrade()
@@ -970,9 +984,6 @@ impl Render for DevServerProjects {
             .on_mouse_down_out(cx.listener(|this, _, cx| {
                 if matches!(this.mode, Mode::Default(None)) {
                     cx.emit(DismissEvent)
-                } else {
-                    this.focus_handle(cx).focus(cx);
-                    cx.stop_propagation()
                 }
             }))
             .w(rems(34.))
