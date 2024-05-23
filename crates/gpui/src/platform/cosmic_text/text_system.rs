@@ -1,7 +1,7 @@
 use crate::{
     point, size, Bounds, DevicePixels, Font, FontFeatures, FontId, FontMetrics, FontRun, FontStyle,
-    FontWeight, GlyphId, LineLayout, Pixels, PlatformTextSystem, Point, RenderGlyphParams,
-    ShapedGlyph, SharedString, Size,
+    FontUsage, FontWeight, GlyphId, LineLayout, Pixels, PlatformTextSystem, Point,
+    RenderGlyphParams, ShapedGlyph, SharedString, Size,
 };
 use anyhow::{anyhow, Context, Ok, Result};
 use collections::HashMap;
@@ -64,7 +64,7 @@ impl PlatformTextSystem for CosmicTextSystem {
     }
 
     // todo(linux)
-    fn set_fallbacks(&self, _fallbacks: &[String], _is_ui_font: bool) -> Result<()> {
+    fn set_fallbacks(&self, _fallbacks: &[String], _font_usage: FontUsage) -> Result<()> {
         Ok(())
     }
 
