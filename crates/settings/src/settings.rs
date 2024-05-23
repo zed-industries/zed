@@ -74,7 +74,7 @@ pub struct FontFamiliesContent {
     buffer_font_family: Option<Vec<String>>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct FontFamilies {
     pub ui_font_family: Vec<String>,
     pub buffer_font_family: Vec<String>,
