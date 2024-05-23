@@ -250,7 +250,7 @@ impl Inventory {
                     .into_iter()
                     .map(|task| (&source.kind, task))
             })
-            .chain(language_tasks)
+            .chain(language_tasks.filter(|_| remote_templates_task.is_none()))
             .filter_map(|(kind, task)| {
                 let id_base = kind.to_id_base();
                 Some((kind, task.resolve_task(&id_base, task_context)?))

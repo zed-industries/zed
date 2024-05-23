@@ -163,7 +163,9 @@ pub fn initialize_workspace(app_state: Arc<AppState>, cx: &mut AppContext) {
         });
 
         let project = workspace.project().clone();
-        if project.read(cx).is_local() {
+        if project.update(cx, |project, cx| {
+            project.is_local() || project.ssh_connection_string(cx).is_some()
+        }) {
             project.update(cx, |project, cx| {
                 let fs = app_state.fs.clone();
                 project.task_inventory().update(cx, |inventory, cx| {
