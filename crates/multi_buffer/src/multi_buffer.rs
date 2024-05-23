@@ -280,6 +280,20 @@ struct ExcerptBytes<'a> {
     reversed: bool,
 }
 
+#[derive(Clone, Debug, PartialEq)]
+pub struct MultiBufferIndentGuide {
+    pub multibuffer_row_range: Range<MultiBufferRow>,
+    pub buffer: IndentGuide,
+}
+
+impl std::ops::Deref for MultiBufferIndentGuide {
+    type Target = IndentGuide;
+
+    fn deref(&self) -> &Self::Target {
+        &self.buffer
+    }
+}
+
 impl MultiBuffer {
     pub fn new(replica_id: ReplicaId, capability: Capability) -> Self {
         Self {
@@ -3234,30 +3248,43 @@ impl MultiBufferSnapshot {
         &self,
         range: Range<Anchor>,
         cx: &AppContext,
-    ) -> Vec<(Range<usize>, IndentGuide)> {
+    ) -> Vec<MultiBufferIndentGuide> {
         // Fast path for singleton buffers, we can skip the conversion between offsets.
         if let Some((_, _, snapshot)) = self.as_singleton() {
             return snapshot
-                .indent_guides_in_range(range.start.text_anchor..range.end.text_anchor, cx);
+                .indent_guides_in_range(range.start.text_anchor..range.end.text_anchor, cx)
+                .into_iter()
+                .map(|guide| MultiBufferIndentGuide {
+                    multibuffer_row_range: MultiBufferRow(guide.start_row)
+                        ..MultiBufferRow(guide.end_row),
+                    buffer: guide,
+                })
+                .collect();
         }
 
         let range = range.start.to_offset(self)..range.end.to_offset(self);
 
         self.excerpts_for_range(range.clone())
             .flat_map(move |(excerpt, excerpt_offset)| {
-                let excerpt_buffer_start = excerpt.range.context.start.to_offset(&excerpt.buffer);
+                let excerpt_buffer_start_row =
+                    excerpt.range.context.start.to_point(&excerpt.buffer).row;
+                let excerpt_offset_row = crate::ToPoint::to_point(&excerpt_offset, self).row;
 
                 excerpt
                     .buffer
                     .indent_guides_in_range(excerpt.range.context.clone(), cx)
                     .into_iter()
-                    .map(move |(mut match_range, indent_guide)| {
-                        // Re-base onto the excerpts coordinates in the multibuffer
-                        match_range.start =
-                            excerpt_offset + (match_range.start - excerpt_buffer_start);
-                        match_range.end = excerpt_offset + (match_range.end - excerpt_buffer_start);
+                    .map(move |indent_guide| {
+                        let start_row = excerpt_offset_row
+                            + (indent_guide.start_row - excerpt_buffer_start_row);
+                        let end_row =
+                            excerpt_offset_row + (indent_guide.end_row - excerpt_buffer_start_row);
 
-                        (match_range, indent_guide)
+                        MultiBufferIndentGuide {
+                            multibuffer_row_range: MultiBufferRow(start_row)
+                                ..MultiBufferRow(end_row),
+                            buffer: indent_guide,
+                        }
                     })
             })
             .collect()

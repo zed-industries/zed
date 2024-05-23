@@ -20,6 +20,7 @@ use language::{
     FakeLspAdapter, IndentGuide, LanguageConfig, LanguageConfigOverride, LanguageMatcher, Override,
     Point,
 };
+use multi_buffer::MultiBufferIndentGuide;
 use parking_lot::Mutex;
 use project::project_settings::{LspSettings, ProjectSettings};
 use project::FakeFs;
@@ -11475,8 +11476,10 @@ fn assert_indent_guides(
 ) {
     let indent_guides = cx.update_editor(|editor, cx| {
         let snapshot = editor.snapshot(cx).display_snapshot;
-        let mut indent_guides = crate::indent_guides::indent_guides_in_range(range, &snapshot, cx);
-        indent_guides.sort_by(|(_, a), (_, b)| {
+        let mut indent_guides: Vec<_> =
+            crate::indent_guides::indent_guides_in_range(range, &snapshot, cx);
+
+        indent_guides.sort_by(|a, b| {
             a.depth.cmp(&b.depth).then(
                 a.start_row
                     .cmp(&b.start_row)
@@ -11499,12 +11502,15 @@ fn assert_indent_guides(
         );
     }
 
-    let indent_guides_only = indent_guides
+    let expected: Vec<_> = expected
         .into_iter()
-        .map(|(_, i)| i)
-        .collect::<Vec<_>>();
+        .map(|guide| MultiBufferIndentGuide {
+            multibuffer_row_range: MultiBufferRow(guide.start_row)..MultiBufferRow(guide.end_row),
+            buffer: guide,
+        })
+        .collect();
 
-    assert_eq!(indent_guides_only, expected, "Indent guides do not match");
+    assert_eq!(indent_guides, expected, "Indent guides do not match");
 }
 
 #[gpui::test]

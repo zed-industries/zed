@@ -1490,18 +1490,14 @@ impl EditorElement {
             indent_guides
                 .into_iter()
                 .enumerate()
-                .filter_map(|(i, (multi_buffer_range, indent_guide))| {
+                .filter_map(|(i, indent_guide)| {
                     let indent_size = self.column_pixels(indent_guide.indent_size as usize, cx);
                     let total_width = indent_size * px(indent_guide.depth as f32);
 
                     let start_x = content_origin.x + total_width - scroll_pixel_position.x;
                     if start_x >= text_origin.x {
-                        let start_row = multi_buffer_range.start.to_display_point(snapshot).row();
-                        let end_row = multi_buffer_range.end.to_display_point(snapshot).row();
-
                         let (offset_y, length) = Self::calculate_indent_guide_bounds(
-                            multi_buffer_range.clone(),
-                            start_row..end_row,
+                            indent_guide.multibuffer_row_range.clone(),
                             line_height,
                             snapshot,
                         );
@@ -1524,16 +1520,21 @@ impl EditorElement {
     }
 
     fn calculate_indent_guide_bounds(
-        multi_buffer_range: Range<usize>,
-        row_range: Range<DisplayRow>,
+        row_range: Range<MultiBufferRow>,
         line_height: Pixels,
         snapshot: &DisplaySnapshot,
     ) -> (gpui::Pixels, gpui::Pixels) {
-        let mut prev_line = multi_buffer_range.start.to_point(&snapshot.buffer_snapshot);
+        let start_point = Point::new(row_range.start.0, 0);
+        let end_point = Point::new(row_range.end.0, 0);
+
+        let row_range = start_point.to_display_point(snapshot).row()
+            ..end_point.to_display_point(snapshot).row();
+
+        let mut prev_line = start_point;
         prev_line.row = prev_line.row.saturating_sub(1);
         let prev_line = prev_line.to_display_point(snapshot).row();
 
-        let mut cons_line = multi_buffer_range.end.to_point(&snapshot.buffer_snapshot);
+        let mut cons_line = end_point;
         cons_line.row += 1;
         let cons_line = cons_line.to_display_point(snapshot).row();
 

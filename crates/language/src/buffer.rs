@@ -515,8 +515,8 @@ pub struct Runnable {
 #[derive(Clone, Debug, PartialEq)]
 pub struct IndentGuide {
     pub buffer_id: BufferId,
-    pub start_row: u32,
-    pub end_row: u32,
+    pub start_row: BufferRow,
+    pub end_row: BufferRow,
     pub depth: u32,
     pub indent_size: u32,
 }
@@ -524,8 +524,8 @@ pub struct IndentGuide {
 impl IndentGuide {
     pub fn new(
         buffer_id: BufferId,
-        start_row: u32,
-        end_row: u32,
+        start_row: BufferRow,
+        end_row: BufferRow,
         depth: u32,
         indent_size: u32,
     ) -> Self {
@@ -3093,8 +3093,8 @@ impl BufferSnapshot {
         &self,
         range: Range<Anchor>,
         cx: &AppContext,
-    ) -> Vec<(Range<usize>, IndentGuide)> {
-        fn indent_size_for_row(this: &BufferSnapshot, row: u32, cx: &AppContext) -> u32 {
+    ) -> Vec<IndentGuide> {
+        fn indent_size_for_row(this: &BufferSnapshot, row: BufferRow, cx: &AppContext) -> u32 {
             let language = this.language_at(Point::new(row, 0));
             language_settings(language, None, cx).tab_size.get() as u32
         }
@@ -3106,7 +3106,7 @@ impl BufferSnapshot {
         let mut row_indents = self.line_indents_in_row_range(row_range.clone());
 
         let mut result_vec = Vec::new();
-        let mut indent_stack = SmallVec::<[(Range<usize>, IndentGuide); 8]>::new();
+        let mut indent_stack = SmallVec::<[IndentGuide; 8]>::new();
 
         // TODO: This should be calculated for every row but it is pretty expensive
         let indent_size = indent_size_for_row(self, start_row, cx);
@@ -3160,7 +3160,7 @@ impl BufferSnapshot {
 
             if depth < current_depth {
                 for _ in 0..(current_depth - depth) {
-                    let (mut range, mut indent) = indent_stack.pop().unwrap();
+                    let mut indent = indent_stack.pop().unwrap();
                     if last_row != first_row {
                         // In this case, we landed on an empty row, had to seek forward,
                         // and discovered that the indent we where on is ending.
@@ -3168,32 +3168,24 @@ impl BufferSnapshot {
                         // be on line that ends this indent range, so we
                         // should display the range up to the first non-empty line
                         indent.end_row = first_row.saturating_sub(1);
-                        range.end = Point::new(indent.end_row, 0).to_offset(self);
                     }
 
-                    result_vec.push((range, indent))
+                    result_vec.push(indent)
                 }
             } else if depth > current_depth {
                 for next_depth in current_depth..depth {
-                    let range = Point::new(first_row, 0).to_offset(self)
-                        ..Point::new(last_row, 0).to_offset(self);
-
-                    indent_stack.push((
-                        range,
-                        IndentGuide {
-                            buffer_id: self.remote_id(),
-                            start_row: first_row,
-                            end_row: last_row,
-                            depth: next_depth,
-                            indent_size,
-                        },
-                    ));
+                    indent_stack.push(IndentGuide {
+                        buffer_id: self.remote_id(),
+                        start_row: first_row,
+                        end_row: last_row,
+                        depth: next_depth,
+                        indent_size,
+                    });
                 }
             }
 
-            for (range, indent) in indent_stack.iter_mut() {
+            for indent in indent_stack.iter_mut() {
                 indent.end_row = last_row;
-                range.end = Point::new(indent.end_row, 0).to_offset(self);
             }
         }
 
@@ -3202,7 +3194,10 @@ impl BufferSnapshot {
         result_vec
     }
 
-    pub async fn enclosing_indent(&self, mut buffer_row: u32) -> Option<(Range<u32>, u32)> {
+    pub async fn enclosing_indent(
+        &self,
+        mut buffer_row: BufferRow,
+    ) -> Option<(Range<BufferRow>, u32)> {
         let max_row = self.max_point().row;
         if buffer_row >= max_row {
             return None;
