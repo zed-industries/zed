@@ -184,8 +184,8 @@ impl PlatformTextSystem for DirectWriteTextSystem {
         self.0.write().add_fonts(fonts)
     }
 
-    fn set_fallbacks(&self, fallbacks: &[String], is_ui_font: bool) -> Result<()> {
-        self.0.write().set_fallbacks(fallbacks, is_ui_font)
+    fn set_fallbacks(&self, fallbacks: &[String], font_usage: FontUsage) -> Result<()> {
+        self.0.write().set_fallbacks(fallbacks, font_usage)
     }
 
     fn all_font_names(&self) -> Vec<String> {
@@ -300,7 +300,7 @@ impl DirectWriteState {
         Ok(())
     }
 
-    fn set_fallbacks(&mut self, fallbacks: &[String], is_ui_font: bool) -> Result<()> {
+    fn set_fallbacks(&mut self, fallbacks: &[String], font_usage: FontUsage) -> Result<()> {
         unsafe {
             let builder = self.components.factory.CreateFontFallbackBuilder()?;
             let font_set = &self.system_font_collection.GetFontSet()?;
@@ -346,10 +346,11 @@ impl DirectWriteState {
             }
             let system_fallbacks = self.components.factory.GetSystemFontFallback()?;
             builder.AddMappings(&system_fallbacks)?;
-            if is_ui_font {
-                self.ui_font_fallbacks = builder.CreateFontFallback()?;
-            } else {
-                self.buffer_font_fallbacks = builder.CreateFontFallback()?;
+            match font_usage {
+                FontUsage::UIFont => self.ui_font_fallbacks = builder.CreateFontFallback()?,
+                FontUsage::BufferFont => {
+                    self.buffer_font_fallbacks = builder.CreateFontFallback()?
+                }
             }
             Ok(())
         }
