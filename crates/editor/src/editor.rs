@@ -26,6 +26,7 @@ mod git;
 mod highlight_matching_bracket;
 mod hover_links;
 mod hover_popover;
+mod indent_guides;
 mod inline_completion_provider;
 pub mod items;
 mod mouse_context_menu;
@@ -76,6 +77,7 @@ use highlight_matching_bracket::refresh_matching_bracket_highlights;
 use hover_popover::{hide_hover, HoverState};
 use hunk_diff::ExpandedHunks;
 pub(crate) use hunk_diff::HunkToExpand;
+use indent_guides::ActiveIndentGuidesState;
 use inlay_hint_cache::{InlayHintCache, InlaySplice, InvalidationStrategy};
 pub use inline_completion_provider::*;
 pub use items::MAX_TAB_TITLE_LEN;
@@ -453,11 +455,13 @@ pub struct Editor {
     show_git_diff_gutter: Option<bool>,
     show_code_actions: Option<bool>,
     show_wrap_guides: Option<bool>,
+    show_indent_guides: Option<bool>,
     placeholder_text: Option<Arc<str>>,
     highlight_order: usize,
     highlighted_rows: HashMap<TypeId, Vec<RowHighlight>>,
     background_highlights: TreeMap<TypeId, BackgroundHighlight>,
     scrollbar_marker_state: ScrollbarMarkerState,
+    active_indent_guides_state: ActiveIndentGuidesState,
     nav_history: Option<ItemNavHistory>,
     context_menu: RwLock<Option<ContextMenu>>,
     mouse_context_menu: Option<MouseContextMenu>,
@@ -1656,11 +1660,13 @@ impl Editor {
             show_git_diff_gutter: None,
             show_code_actions: None,
             show_wrap_guides: None,
+            show_indent_guides: None,
             placeholder_text: None,
             highlight_order: 0,
             highlighted_rows: HashMap::default(),
             background_highlights: Default::default(),
             scrollbar_marker_state: ScrollbarMarkerState::default(),
+            active_indent_guides_state: ActiveIndentGuidesState::default(),
             nav_history: None,
             context_menu: RwLock::new(None),
             mouse_context_menu: None,
@@ -9440,6 +9446,7 @@ impl Editor {
 
             cx.notify();
             self.scrollbar_marker_state.dirty = true;
+            self.active_indent_guides_state.dirty = true;
         }
     }
 
@@ -9665,6 +9672,11 @@ impl Editor {
 
     pub fn set_show_wrap_guides(&mut self, show_wrap_guides: bool, cx: &mut ViewContext<Self>) {
         self.show_wrap_guides = Some(show_wrap_guides);
+        cx.notify();
+    }
+
+    pub fn set_show_indent_guides(&mut self, show_indent_guides: bool, cx: &mut ViewContext<Self>) {
+        self.show_indent_guides = Some(show_indent_guides);
         cx.notify();
     }
 
@@ -10303,6 +10315,7 @@ impl Editor {
                 singleton_buffer_edited,
             } => {
                 self.scrollbar_marker_state.dirty = true;
+                self.active_indent_guides_state.dirty = true;
                 self.refresh_active_diagnostics(cx);
                 self.refresh_code_actions(cx);
                 if self.has_active_inline_completion(cx) {

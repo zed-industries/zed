@@ -12,9 +12,9 @@ use language::{
     char_kind,
     language_settings::{language_settings, LanguageSettings},
     AutoindentMode, Buffer, BufferChunks, BufferRow, BufferSnapshot, Capability, CharKind, Chunk,
-    CursorShape, DiagnosticEntry, File, IndentSize, Language, LanguageScope, OffsetRangeExt,
-    OffsetUtf16, Outline, OutlineItem, Point, PointUtf16, Selection, TextDimension, ToOffset as _,
-    ToOffsetUtf16 as _, ToPoint as _, ToPointUtf16 as _, TransactionId, Unclipped,
+    CursorShape, DiagnosticEntry, File, IndentGuide, IndentSize, Language, LanguageScope,
+    OffsetRangeExt, OffsetUtf16, Outline, OutlineItem, Point, PointUtf16, Selection, TextDimension,
+    ToOffset as _, ToOffsetUtf16 as _, ToPoint as _, ToPointUtf16 as _, TransactionId, Unclipped,
 };
 use smallvec::SmallVec;
 use std::{
@@ -279,6 +279,20 @@ struct ExcerptBytes<'a> {
     content_bytes: text::Bytes<'a>,
     padding_height: usize,
     reversed: bool,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct MultiBufferIndentGuide {
+    pub multibuffer_row_range: Range<MultiBufferRow>,
+    pub buffer: IndentGuide,
+}
+
+impl std::ops::Deref for MultiBufferIndentGuide {
+    type Target = IndentGuide;
+
+    fn deref(&self) -> &Self::Target {
+        &self.buffer
+    }
 }
 
 impl MultiBuffer {
@@ -1253,6 +1267,15 @@ impl MultiBuffer {
         }
 
         excerpts
+    }
+
+    pub fn excerpt_buffer_ids(&self) -> Vec<BufferId> {
+        self.snapshot
+            .borrow()
+            .excerpts
+            .iter()
+            .map(|entry| entry.buffer_id)
+            .collect()
     }
 
     pub fn excerpt_ids(&self) -> Vec<ExcerptId> {
@@ -3180,6 +3203,52 @@ impl MultiBufferSnapshot {
                     .skip_while(move |runnable| runnable.run_range.end < range.start)
                     .take_while(move |runnable| runnable.run_range.start < range.end)
             })
+    }
+
+    pub fn indent_guides_in_range(
+        &self,
+        range: Range<Anchor>,
+        cx: &AppContext,
+    ) -> Vec<MultiBufferIndentGuide> {
+        // Fast path for singleton buffers, we can skip the conversion between offsets.
+        if let Some((_, _, snapshot)) = self.as_singleton() {
+            return snapshot
+                .indent_guides_in_range(range.start.text_anchor..range.end.text_anchor, cx)
+                .into_iter()
+                .map(|guide| MultiBufferIndentGuide {
+                    multibuffer_row_range: MultiBufferRow(guide.start_row)
+                        ..MultiBufferRow(guide.end_row),
+                    buffer: guide,
+                })
+                .collect();
+        }
+
+        let range = range.start.to_offset(self)..range.end.to_offset(self);
+
+        self.excerpts_for_range(range.clone())
+            .flat_map(move |(excerpt, excerpt_offset)| {
+                let excerpt_buffer_start_row =
+                    excerpt.range.context.start.to_point(&excerpt.buffer).row;
+                let excerpt_offset_row = crate::ToPoint::to_point(&excerpt_offset, self).row;
+
+                excerpt
+                    .buffer
+                    .indent_guides_in_range(excerpt.range.context.clone(), cx)
+                    .into_iter()
+                    .map(move |indent_guide| {
+                        let start_row = excerpt_offset_row
+                            + (indent_guide.start_row - excerpt_buffer_start_row);
+                        let end_row =
+                            excerpt_offset_row + (indent_guide.end_row - excerpt_buffer_start_row);
+
+                        MultiBufferIndentGuide {
+                            multibuffer_row_range: MultiBufferRow(start_row)
+                                ..MultiBufferRow(end_row),
+                            buffer: indent_guide,
+                        }
+                    })
+            })
+            .collect()
     }
 
     pub fn diagnostics_update_count(&self) -> usize {

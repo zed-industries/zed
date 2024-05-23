@@ -2052,6 +2052,71 @@ fn test_serialization(cx: &mut gpui::AppContext) {
     assert_eq!(buffer2.read(cx).text(), "abcDF");
 }
 
+#[gpui::test]
+async fn test_find_matching_indent(cx: &mut TestAppContext) {
+    cx.update(|cx| init_settings(cx, |_| {}));
+
+    async fn enclosing_indent(
+        text: impl Into<String>,
+        buffer_row: u32,
+        cx: &mut TestAppContext,
+    ) -> Option<(Range<u32>, u32)> {
+        let buffer = cx.new_model(|cx| Buffer::local(text, cx));
+        let snapshot = cx.read(|cx| buffer.read(cx).snapshot());
+        snapshot.enclosing_indent(buffer_row).await
+    }
+
+    assert_eq!(
+        enclosing_indent(
+            "
+        fn b() {
+            if c {
+                let d = 2;
+            }
+        }"
+            .unindent(),
+            1,
+            cx,
+        )
+        .await,
+        Some((1..2, 4))
+    );
+
+    assert_eq!(
+        enclosing_indent(
+            "
+        fn b() {
+            if c {
+                let d = 2;
+            }
+        }"
+            .unindent(),
+            2,
+            cx,
+        )
+        .await,
+        Some((1..2, 4))
+    );
+
+    assert_eq!(
+        enclosing_indent(
+            "
+        fn b() {
+            if c {
+                let d = 2;
+
+                let e = 5;
+            }
+        }"
+            .unindent(),
+            3,
+            cx,
+        )
+        .await,
+        Some((1..4, 4))
+    );
+}
+
 #[gpui::test(iterations = 100)]
 fn test_random_collaboration(cx: &mut AppContext, mut rng: StdRng) {
     let min_peers = env::var("MIN_PEERS")

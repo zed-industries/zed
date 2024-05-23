@@ -3,8 +3,8 @@ use std::sync::Arc;
 use gpui::{hsla, FontStyle, FontWeight, HighlightStyle, WindowBackgroundAppearance};
 
 use crate::{
-    default_color_scales, Appearance, PlayerColors, StatusColors, SyntaxTheme, SystemColors, Theme,
-    ThemeColors, ThemeFamily, ThemeStyles,
+    default_color_scales, AccentColors, Appearance, PlayerColors, StatusColors, SyntaxTheme,
+    SystemColors, Theme, ThemeColors, ThemeFamily, ThemeStyles,
 };
 
 // Note: This theme family is not the one you see in Zed at the moment.
@@ -42,6 +42,7 @@ pub(crate) fn one_dark() -> Theme {
         styles: ThemeStyles {
             window_background_appearance: WindowBackgroundAppearance::Opaque,
             system: SystemColors::default(),
+            accents: AccentColors(vec![blue, orange, purple, teal, red, green, yellow]),
             colors: ThemeColors {
                 border: hsla(225. / 360., 13. / 100., 12. / 100., 1.),
                 border_variant: hsla(228. / 360., 8. / 100., 25. / 100., 1.),
@@ -91,6 +92,8 @@ pub(crate) fn one_dark() -> Theme {
                 editor_invisible: hsla(222.0 / 360., 11.5 / 100., 34.1 / 100., 1.0),
                 editor_wrap_guide: hsla(228. / 360., 8. / 100., 25. / 100., 1.),
                 editor_active_wrap_guide: hsla(228. / 360., 8. / 100., 25. / 100., 1.),
+                editor_indent_guide: hsla(228. / 360., 8. / 100., 25. / 100., 1.),
+                editor_indent_guide_active: hsla(225. / 360., 13. / 100., 12. / 100., 1.),
                 editor_document_highlight_read_background: hsla(
                     207.8 / 360.,
                     81. / 100.,
@@ -249,7 +252,6 @@ pub(crate) fn one_dark() -> Theme {
                     ("variant".into(), HighlightStyle::default()),
                 ],
             }),
-            accents: vec![blue, orange, purple, teal],
         },
     }
 }

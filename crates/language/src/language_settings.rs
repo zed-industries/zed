@@ -78,6 +78,8 @@ pub struct LanguageSettings {
     pub show_wrap_guides: bool,
     /// Character counts at which to show wrap guides in the editor.
     pub wrap_guides: Vec<usize>,
+    /// Indent guide related settings.
+    pub indent_guides: IndentGuideSettings,
     /// Whether or not to perform a buffer format before saving.
     pub format_on_save: FormatOnSave,
     /// Whether or not to remove any trailing whitespace from lines of a buffer
@@ -242,6 +244,9 @@ pub struct LanguageSettingsContent {
     /// Default: []
     #[serde(default)]
     pub wrap_guides: Option<Vec<usize>>,
+    /// Indent guide related settings.
+    #[serde(default)]
+    pub indent_guides: Option<IndentGuideSettings>,
     /// Whether or not to perform a buffer format before saving.
     ///
     /// Default: on
@@ -409,6 +414,59 @@ pub enum Formatter {
     },
     /// Files should be formatted using code actions executed by language servers.
     CodeActions(HashMap<String, bool>),
+}
+
+/// The settings for indent guides.
+#[derive(Default, Debug, Copy, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct IndentGuideSettings {
+    /// Whether to display indent guides in the editor.
+    ///
+    /// Default: true
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+    /// The width of the indent guides in pixels, between 1 and 10.
+    ///
+    /// Default: 1
+    #[serde(default = "line_width")]
+    pub line_width: u32,
+    /// Determines how indent guides are colored.
+    ///
+    /// Default: Fixed
+    #[serde(default)]
+    pub coloring: IndentGuideColoring,
+    /// Determines how indent guide backgrounds are colored.
+    ///
+    /// Default: Disabled
+    #[serde(default)]
+    pub background_coloring: IndentGuideBackgroundColoring,
+}
+
+fn line_width() -> u32 {
+    1
+}
+
+/// Determines how indent guides are colored.
+#[derive(Default, Debug, Copy, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum IndentGuideColoring {
+    /// Do not render any lines for indent guides.
+    Disabled,
+    /// Use the same color for all indentation levels.
+    #[default]
+    Fixed,
+    /// Use a different color for each indentation level.
+    IndentAware,
+}
+
+/// Determines how indent guide backgrounds are colored.
+#[derive(Default, Debug, Copy, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum IndentGuideBackgroundColoring {
+    /// Do not render any background for indent guides.
+    #[default]
+    Disabled,
+    /// Use a different color for each indentation level.
+    IndentAware,
 }
 
 /// The settings for inlay hints.
@@ -715,6 +773,7 @@ fn merge_settings(settings: &mut LanguageSettings, src: &LanguageSettingsContent
     );
     merge(&mut settings.show_wrap_guides, src.show_wrap_guides);
     merge(&mut settings.wrap_guides, src.wrap_guides.clone());
+    merge(&mut settings.indent_guides, src.indent_guides);
     merge(
         &mut settings.code_actions_on_format,
         src.code_actions_on_format.clone(),

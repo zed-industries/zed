@@ -216,6 +216,25 @@
     // Whether to show fold buttons in the gutter.
     "folds": true
   },
+  "indent_guides": {
+    /// Whether to show indent guides in the editor.
+    "enabled": true,
+    /// The width of the indent guides in pixels, between 1 and 10.
+    "line_width": 1,
+    /// Determines how indent guides are colored.
+    /// This setting can take the following three values:
+    ///
+    /// 1. "disabled"
+    /// 2. "fixed"
+    /// 3. "indent_aware"
+    "coloring": "fixed",
+    /// Determines how indent guide backgrounds are colored.
+    /// This setting can take the following two values:
+    ///
+    /// 1. "disabled"
+    /// 2. "indent_aware"
+    "background_coloring": "disabled"
+  },
   // The number of lines to keep above/below the cursor when scrolling.
   "vertical_scroll_margin": 3,
   // Scroll sensitivity multiplier. This multiplier is applied

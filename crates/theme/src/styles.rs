@@ -1,3 +1,4 @@
+mod accents;
 mod colors;
 mod players;
 mod status;
@@ -7,6 +8,7 @@ mod system;
 #[cfg(feature = "stories")]
 mod stories;
 
+pub use accents::*;
 pub use colors::*;
 pub use players::*;
 pub use status::*;
