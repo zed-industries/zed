@@ -63,7 +63,7 @@ use telemetry_events::AssistantKind;
 use theme::ThemeSettings;
 use ui::{
     popover_menu, prelude::*, ButtonLike, ContextMenu, ElevationIndex, KeyBinding, Tab, TabBar,
-    TintColor, Tooltip,
+    Tooltip,
 };
 use util::{paths::CONVERSATIONS_DIR, post_inc, ResultExt, TryFutureExt};
 use uuid::Uuid;
