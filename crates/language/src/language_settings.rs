@@ -417,7 +417,7 @@ pub enum Formatter {
 }
 
 /// The settings for indent guides.
-#[derive(Default, Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[derive(Default, Debug, Copy, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct IndentGuideSettings {
     /// Whether to display indent guides in the editor.
     ///
@@ -446,7 +446,7 @@ fn line_width() -> u32 {
 }
 
 /// Determines how indent guides are colored.
-#[derive(Default, Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[derive(Default, Debug, Copy, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum IndentGuideColoring {
     /// Do not render any lines for indent guides.
@@ -459,7 +459,7 @@ pub enum IndentGuideColoring {
 }
 
 /// Determines how indent guide backgrounds are colored.
-#[derive(Default, Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[derive(Default, Debug, Copy, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum IndentGuideBackgroundColoring {
     /// Do not render any background for indent guides.
