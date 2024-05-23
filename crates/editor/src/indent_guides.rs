@@ -2,6 +2,7 @@ use std::{ops::Range, time::Duration};
 
 use collections::HashSet;
 use gpui::{AppContext, Task};
+use language::BufferRow;
 use multi_buffer::{MultiBufferIndentGuide, MultiBufferRow};
 use text::{BufferId, Point};
 use ui::ViewContext;
@@ -11,7 +12,7 @@ use crate::{DisplaySnapshot, Editor};
 
 struct ActiveIndentedRange {
     buffer_id: BufferId,
-    row_range: Range<u32>,
+    row_range: Range<BufferRow>,
     indent: u32,
 }
 
@@ -32,7 +33,7 @@ impl ActiveIndentGuidesState {
 impl Editor {
     pub fn indent_guides(
         &self,
-        visible_buffer_range: Range<u32>,
+        visible_buffer_range: Range<MultiBufferRow>,
         snapshot: &DisplaySnapshot,
         cx: &AppContext,
     ) -> Option<Vec<MultiBufferIndentGuide>> {
@@ -116,16 +117,16 @@ impl Editor {
 }
 
 pub fn indent_guides_in_range(
-    visible_buffer_range: Range<u32>,
+    visible_buffer_range: Range<MultiBufferRow>,
     snapshot: &DisplaySnapshot,
     cx: &AppContext,
 ) -> Vec<MultiBufferIndentGuide> {
     let start_anchor = snapshot
         .buffer_snapshot
-        .anchor_before(Point::new(visible_buffer_range.start, 0));
+        .anchor_before(Point::new(visible_buffer_range.start.0, 0));
     let end_anchor = snapshot
         .buffer_snapshot
-        .anchor_after(Point::new(visible_buffer_range.end, 0));
+        .anchor_after(Point::new(visible_buffer_range.end.0, 0));
 
     snapshot
         .buffer_snapshot

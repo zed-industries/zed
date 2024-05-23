@@ -1467,7 +1467,7 @@ impl EditorElement {
         &self,
         content_origin: gpui::Point<Pixels>,
         text_origin: gpui::Point<Pixels>,
-        visible_buffer_range: Range<u32>,
+        visible_buffer_range: Range<MultiBufferRow>,
         scroll_pixel_position: gpui::Point<Pixels>,
         line_height: Pixels,
         snapshot: &DisplaySnapshot,
@@ -4339,8 +4339,11 @@ impl Element for EditorElement {
                         scroll_position.y * line_height,
                     );
 
-                    let start_buffer_row = start_anchor.to_point(&snapshot.buffer_snapshot).row;
-                    let end_buffer_row = end_anchor.to_point(&snapshot.buffer_snapshot).row;
+                    let start_buffer_row =
+                        MultiBufferRow(start_anchor.to_point(&snapshot.buffer_snapshot).row);
+                    let end_buffer_row =
+                        MultiBufferRow(end_anchor.to_point(&snapshot.buffer_snapshot).row);
+
                     let indent_guides = self.layout_indent_guides(
                         content_origin,
                         text_hitbox.origin,
