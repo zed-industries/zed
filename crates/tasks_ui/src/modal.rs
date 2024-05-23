@@ -220,7 +220,7 @@ impl PickerDelegate for TasksModalDelegate {
                                 picker.delegate.project.update(cx, |project, cx| {
                                     let remote_templates = project
                                         .remote_id()
-                                        .filter(|_| project.is_remote())
+                                        .filter(|_| project.ssh_connection_string(cx).is_some())
                                         .map(|project_id| {
                                             project.query_remote_task_templates(
                                                 project_id,

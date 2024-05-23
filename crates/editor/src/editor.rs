@@ -7917,13 +7917,14 @@ impl Editor {
             let Some(project) = project else {
                 return;
             };
-            // TODO kb need to distinguish between remote server clients and multiplayer clients,
-            // and enable the runners for the former
-            if project
-                .update(&mut cx, |this, _| this.is_remote())
-                .unwrap_or(true)
-            {
-                // Do not display any test indicators in remote projects.
+
+            let hide_runnables = project
+                .update(&mut cx, |project, cx| {
+                    // Do not display any test indicators in non-dev server remote projects.
+                    project.is_remote() && project.ssh_connection_string(cx).is_none()
+                })
+                .unwrap_or(true);
+            if hide_runnables {
                 return;
             }
             let new_rows =

@@ -36,7 +36,7 @@ use git::{blame::Blame, repository::GitRepository};
 use globset::{Glob, GlobSet, GlobSetBuilder};
 use gpui::{
     AnyModel, AppContext, AsyncAppContext, BackgroundExecutor, BorrowAppContext, Context, Entity,
-    EventEmitter, Model, ModelContext, PromptLevel, Task, WeakModel,
+    EventEmitter, Model, ModelContext, PromptLevel, SharedString, Task, WeakModel,
 };
 use itertools::Itertools;
 use language::{
@@ -1261,6 +1261,19 @@ impl Project {
 
     pub fn dev_server_project_id(&self) -> Option<DevServerProjectId> {
         self.dev_server_project_id
+    }
+
+    pub fn ssh_connection_string(&self, cx: &ModelContext<Self>) -> Option<SharedString> {
+        if self.is_local() {
+            return None;
+        }
+
+        let dev_server_id = self.dev_server_project_id()?;
+        dev_server_projects::Store::global(cx)
+            .read(cx)
+            .dev_server_for_project(dev_server_id)?
+            .ssh_connection_string
+            .clone()
     }
 
     pub fn replica_id(&self) -> ReplicaId {
@@ -10562,7 +10575,10 @@ impl Project {
                     task_variables,
                 })
             })
-        } else if let Some(project_id) = self.remote_id() {
+        } else if let Some(project_id) = self
+            .remote_id()
+            .filter(|_| self.ssh_connection_string(cx).is_some())
+        {
             let task_context = self.client().request(proto::TaskContextForLocation {
                 project_id,
                 location: Some(proto::Location {
@@ -10608,7 +10624,10 @@ impl Project {
                 .task_inventory()
                 .read(cx)
                 .list_tasks(language, worktree)))
-        } else if let Some(project_id) = self.remote_id() {
+        } else if let Some(project_id) = self
+            .remote_id()
+            .filter(|_| self.ssh_connection_string(cx).is_some())
+        {
             let remote_templates =
                 self.query_remote_task_templates(project_id, worktree, location.as_ref(), cx);
             cx.background_executor().spawn(remote_templates)
