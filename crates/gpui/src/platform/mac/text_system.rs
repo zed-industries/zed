@@ -1,13 +1,12 @@
 use crate::{
-    platform::mac::open_type::generate_feature_array, point, px, size, Bounds, DevicePixels, Font,
-    FontFallbacks, FontFeatures, FontId, FontMetrics, FontRun, FontStyle, FontWeight, GlyphId,
-    LineLayout, Pixels, PlatformTextSystem, Point, RenderGlyphParams, Result, ShapedGlyph,
-    ShapedRun, SharedString, Size, SUBPIXEL_VARIANTS,
+    point, px, size, Bounds, DevicePixels, Font, FontFallbacks, FontFeatures, FontId, FontMetrics,
+    FontRun, FontStyle, FontWeight, GlyphId, LineLayout, Pixels, PlatformTextSystem, Point,
+    RenderGlyphParams, Result, ShapedGlyph, ShapedRun, SharedString, Size, SUBPIXEL_VARIANTS,
 };
 use anyhow::anyhow;
 use cocoa::{
     appkit::{CGFloat, CGPoint},
-    base::{id, YES},
+    base::id,
 };
 use collections::{BTreeSet, HashMap};
 use core_foundation::{
@@ -15,8 +14,7 @@ use core_foundation::{
     attributed_string::CFMutableAttributedString,
     base::{kCFAllocatorDefault, CFRange, CFRelease, TCFType},
     dictionary::{
-        kCFTypeDictionaryKeyCallBacks, kCFTypeDictionaryValueCallBacks, CFDictionaryContainsKey,
-        CFDictionaryCreate,
+        kCFTypeDictionaryKeyCallBacks, kCFTypeDictionaryValueCallBacks, CFDictionaryCreate,
     },
     number::CFNumber,
     string::CFString,
@@ -31,8 +29,7 @@ use core_text::{
     font_descriptor::{
         kCTFontCascadeListAttribute, kCTFontFeatureSettingsAttribute, kCTFontSlantTrait,
         kCTFontSymbolicTrait, kCTFontWeightTrait, kCTFontWidthTrait, CTFontDescriptor,
-        CTFontDescriptorCopyAttributes, CTFontDescriptorCreateWithAttributes,
-        CTFontDescriptorCreateWithNameAndSize,
+        CTFontDescriptorCreateWithAttributes, CTFontDescriptorCreateWithNameAndSize,
     },
     line::CTLine,
     string_attributes::kCTFontAttributeName,
@@ -55,9 +52,8 @@ use pathfinder_geometry::{
 };
 use smallvec::SmallVec;
 use std::{borrow::Cow, char, cmp, convert::TryFrom, sync::Arc};
-use util::ResultExt;
 
-use super::open_type::{self, CTFontCreateCopyWithAttributes};
+use super::open_type::{generate_feature_array, CTFontCreateCopyWithAttributes};
 
 #[allow(non_upper_case_globals)]
 const kCGImageAlphaOnly: u32 = 7;
@@ -75,8 +71,6 @@ struct MacTextSystemState {
     memory_source: MemSource,
     system_source: SystemSource,
     fonts: Vec<FontInfo>,
-    ui_font_fallbacks: Vec<String>,
-    buffer_font_fallbacks: Vec<String>,
     font_selections: HashMap<Font, FontId>,
     font_ids_by_postscript_name: HashMap<String, FontId>,
     font_ids_by_font_key: HashMap<FontKey, SmallVec<[FontId; 4]>>,
@@ -106,8 +100,6 @@ impl MacTextSystem {
             memory_source: MemSource::empty(),
             system_source: SystemSource::new(),
             fonts: Vec::new(),
-            ui_font_fallbacks: Vec::new(),
-            buffer_font_fallbacks: Vec::new(),
             font_selections: HashMap::default(),
             font_ids_by_postscript_name: HashMap::default(),
             font_ids_by_font_key: HashMap::default(),
