@@ -1,6 +1,7 @@
 //! Project-wide storage of the tasks available, capable of updating itself from the sources set.
 
 use std::{
+    borrow::Cow,
     cmp::{self, Reverse},
     path::{Path, PathBuf},
     sync::Arc,
@@ -47,11 +48,11 @@ pub enum TaskSourceKind {
     Worktree {
         id: WorktreeId,
         abs_path: PathBuf,
-        id_base: &'static str,
+        id_base: Cow<'static, str>,
     },
     /// ~/.config/zed/task.json - like global files with task definitions, applicable to any path
     AbsPath {
-        id_base: &'static str,
+        id_base: Cow<'static, str>,
         abs_path: PathBuf,
     },
     /// Languages-specific tasks coming from extensions.
@@ -280,7 +281,7 @@ impl Inventory {
             };
 
         let task_context = task_context.clone();
-        cx.spawn(move |cx| async move {
+        cx.spawn(move |_| async move {
             let Some(remote_templates) = remote_templates.await.log_err() else {
                 return (Vec::new(), Vec::new());
             };
@@ -823,7 +824,7 @@ mod tests {
             );
             inventory.add_source(
                 TaskSourceKind::AbsPath {
-                    id_base: "test source",
+                    id_base: "test source".into(),
                     abs_path: path_1.to_path_buf(),
                 },
                 |tx, cx| {
@@ -837,7 +838,7 @@ mod tests {
             );
             inventory.add_source(
                 TaskSourceKind::AbsPath {
-                    id_base: "test source",
+                    id_base: "test source".into(),
                     abs_path: path_2.to_path_buf(),
                 },
                 |tx, cx| {
@@ -853,7 +854,7 @@ mod tests {
                 TaskSourceKind::Worktree {
                     id: worktree_1,
                     abs_path: worktree_path_1.to_path_buf(),
-                    id_base: "test_source",
+                    id_base: "test_source".into(),
                 },
                 |tx, cx| {
                     static_test_source(
@@ -868,7 +869,7 @@ mod tests {
                 TaskSourceKind::Worktree {
                     id: worktree_2,
                     abs_path: worktree_path_2.to_path_buf(),
-                    id_base: "test_source",
+                    id_base: "test_source".into(),
                 },
                 |tx, cx| {
                     static_test_source(
@@ -884,28 +885,28 @@ mod tests {
         let worktree_independent_tasks = vec![
             (
                 TaskSourceKind::AbsPath {
-                    id_base: "test source",
+                    id_base: "test source".into(),
                     abs_path: path_1.to_path_buf(),
                 },
                 "static_source_1".to_string(),
             ),
             (
                 TaskSourceKind::AbsPath {
-                    id_base: "test source",
+                    id_base: "test source".into(),
                     abs_path: path_1.to_path_buf(),
                 },
                 common_name.to_string(),
             ),
             (
                 TaskSourceKind::AbsPath {
-                    id_base: "test source",
+                    id_base: "test source".into(),
                     abs_path: path_2.to_path_buf(),
                 },
                 common_name.to_string(),
             ),
             (
                 TaskSourceKind::AbsPath {
-                    id_base: "test source",
+                    id_base: "test source".into(),
                     abs_path: path_2.to_path_buf(),
                 },
                 "static_source_2".to_string(),
@@ -918,7 +919,7 @@ mod tests {
                 TaskSourceKind::Worktree {
                     id: worktree_1,
                     abs_path: worktree_path_1.to_path_buf(),
-                    id_base: "test_source",
+                    id_base: "test_source".into(),
                 },
                 common_name.to_string(),
             ),
@@ -926,7 +927,7 @@ mod tests {
                 TaskSourceKind::Worktree {
                     id: worktree_1,
                     abs_path: worktree_path_1.to_path_buf(),
-                    id_base: "test_source",
+                    id_base: "test_source".into(),
                 },
                 "worktree_1".to_string(),
             ),
@@ -936,7 +937,7 @@ mod tests {
                 TaskSourceKind::Worktree {
                     id: worktree_2,
                     abs_path: worktree_path_2.to_path_buf(),
-                    id_base: "test_source",
+                    id_base: "test_source".into(),
                 },
                 common_name.to_string(),
             ),
@@ -944,7 +945,7 @@ mod tests {
                 TaskSourceKind::Worktree {
                     id: worktree_2,
                     abs_path: worktree_path_2.to_path_buf(),
-                    id_base: "test_source",
+                    id_base: "test_source".into(),
                 },
                 "worktree_2".to_string(),
             ),

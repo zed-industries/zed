@@ -80,6 +80,7 @@ use similar::{ChangeTag, TextDiff};
 use smol::channel::{Receiver, Sender};
 use smol::lock::Semaphore;
 use std::{
+    borrow::Cow,
     cmp::{self, Ordering},
     convert::TryInto,
     env,
@@ -99,7 +100,7 @@ use std::{
 };
 use task::{
     static_source::{StaticSource, TrackedFile},
-    TaskContext, TaskTemplate, TaskVariables, VariableName,
+    RevealStrategy, TaskContext, TaskTemplate, TaskVariables, VariableName,
 };
 use terminals::Terminals;
 use text::{Anchor, BufferId, LineEnding};
@@ -7897,7 +7898,7 @@ impl Project {
                             TaskSourceKind::Worktree {
                                 id: remote_worktree_id,
                                 abs_path,
-                                id_base: "local_tasks_for_worktree",
+                                id_base: "local_tasks_for_worktree".into(),
                             },
                             |tx, cx| StaticSource::new(TrackedFile::new(tasks_file_rx, tx, cx)),
                             cx,
@@ -7917,7 +7918,7 @@ impl Project {
                             TaskSourceKind::Worktree {
                                 id: remote_worktree_id,
                                 abs_path,
-                                id_base: "local_vscode_tasks_for_worktree",
+                                id_base: "local_vscode_tasks_for_worktree".into(),
                             },
                             |tx, cx| {
                                 StaticSource::new(TrackedFile::new_convertible::<
@@ -10561,7 +10562,7 @@ impl Project {
     ) -> Task<Result<Vec<(TaskSourceKind, TaskTemplate)>>> {
         let client = self.client();
         let location = Some(serialize_location(location, cx));
-        cx.spawn(|cx| async move {
+        cx.spawn(|_| async move {
             let response = client
                 .request(proto::TaskTemplates {
                     project_id,
@@ -10569,13 +10570,53 @@ impl Project {
                 })
                 .await?;
 
-            // response.templates.into_iter().filter_map(|template_pair| {
-            //     let a = template_pair.kind?;
-            //     let b = template_pair.template?;
-            //     todo!("TODO kb")
-            // });
+            Ok(response
+                .templates
+                .into_iter()
+                .filter_map(|template_pair| {
+                    let task_source_kind = match template_pair.kind?.kind? {
+                        proto::task_source_kind::Kind::UserInput(_) => TaskSourceKind::UserInput,
+                        proto::task_source_kind::Kind::Worktree(worktree) => {
+                            TaskSourceKind::Worktree {
+                                id: WorktreeId::from_proto(worktree.id),
+                                abs_path: PathBuf::from(worktree.abs_path),
+                                id_base: Cow::Owned(worktree.id_base),
+                            }
+                        }
+                        proto::task_source_kind::Kind::AbsPath(abs_path) => {
+                            TaskSourceKind::AbsPath {
+                                id_base: Cow::Owned(abs_path.id_base),
+                                abs_path: PathBuf::from(abs_path.abs_path),
+                            }
+                        }
+                        proto::task_source_kind::Kind::Language(language) => {
+                            TaskSourceKind::Language {
+                                name: language.name.into(),
+                            }
+                        }
+                    };
 
-            Ok(todo!("TODO kb"))
+                    let proto_template = template_pair.template?;
+                    let reveal = match proto::RevealStrategy::from_i32(proto_template.reveal)
+                        .unwrap_or(proto::RevealStrategy::Always)
+                    {
+                        proto::RevealStrategy::Always => RevealStrategy::Always,
+                        proto::RevealStrategy::Never => RevealStrategy::Never,
+                    };
+                    let task_template = TaskTemplate {
+                        label: proto_template.label,
+                        command: proto_template.command,
+                        args: proto_template.args,
+                        env: proto_template.env.into_iter().collect(),
+                        cwd: proto_template.cwd,
+                        use_new_terminal: proto_template.use_new_terminal,
+                        allow_concurrent_runs: proto_template.allow_concurrent_runs,
+                        reveal,
+                        tags: proto_template.tags,
+                    };
+                    Some((task_source_kind, task_template))
+                })
+                .collect())
         })
     }
 
