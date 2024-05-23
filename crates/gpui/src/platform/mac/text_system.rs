@@ -326,22 +326,22 @@ impl MacTextSystemState {
                 // let fallback_array: CFArray<CTFont> =
                 //     unsafe { CFArray::wrap_under_create_rule(fallback_array) };
                 println!("Getting font desc");
-                // let feature_array = generate_feature_array(&font.font_features);
-                // let keys = [kCTFontFeatureSettingsAttribute, kCTFontCascadeListAttribute];
-                let keys = [kCTFontCascadeListAttribute];
-                // let values = [feature_array, fallback_array];
-                let values = [fallback_array];
+                let feature_array = generate_feature_array(&font.font_features);
+                let keys = [kCTFontFeatureSettingsAttribute, kCTFontCascadeListAttribute];
+                // let keys = [kCTFontCascadeListAttribute];
+                let values = [feature_array, fallback_array];
+                // let values = [fallback_array];
                 println!("Create attrs");
                 let attrs = CFDictionaryCreate(
                     kCFAllocatorDefault,
                     keys.as_ptr() as _,
                     values.as_ptr() as _,
-                    // 2,
-                    1,
+                    2,
+                    // 1,
                     &kCFTypeDictionaryKeyCallBacks,
                     &kCFTypeDictionaryValueCallBacks,
                 );
-                // CFRelease(feature_array as *const _ as _);
+                CFRelease(feature_array as *const _ as _);
                 CFRelease(fallback_array as *const _ as _);
                 println!("Create new desc");
                 let new_descriptor = CTFontDescriptorCreateWithAttributes(attrs);
