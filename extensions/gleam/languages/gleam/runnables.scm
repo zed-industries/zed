@@ -4,3 +4,17 @@
     (function name: (_) @run
         (#match? @run ".*_test$"))
 ) @gleam-test
+
+; `describe` API for Startest.
+(
+    (function_call
+        function: (_) @name
+        (#any-of? @name "describe" "it")
+        arguments: (arguments
+            .
+            (argument
+                value: (string (quoted_content) @run)
+            )
+        )
+    )
+) @gleam-test
