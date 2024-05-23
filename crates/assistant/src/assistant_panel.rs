@@ -2417,6 +2417,7 @@ impl ConversationEditor {
             editor.set_soft_wrap_mode(SoftWrap::EditorWidth, cx);
             editor.set_show_gutter(false, cx);
             editor.set_show_wrap_guides(false, cx);
+            editor.set_show_indent_guides(false, cx);
             editor
         });
 
