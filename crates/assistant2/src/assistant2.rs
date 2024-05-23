@@ -869,7 +869,6 @@ impl AssistantChat {
                             crate::ui::ChatMessage::new(
                                 *id,
                                 UserOrAssistant::User(self.user_store.read(cx).current_user()),
-                                // todo!(): clean up the vec usage
                                 vec![
                                     body.clone().into_any_element(),
                                     h_flex()

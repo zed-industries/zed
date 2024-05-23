@@ -1581,12 +1581,17 @@ impl Editor {
         let fold_placeholder = FoldPlaceholder {
             text: "⋯",
             constrain_width: true,
-            render: Arc::new(move |fold_id, fold_range, _cx| {
+            render: Arc::new(move |fold_id, fold_range, cx| {
                 let editor = editor.clone();
                 div()
                     .id(fold_id)
+                    .bg(cx.theme().colors().ghost_element_background)
+                    .hover(|style| style.bg(cx.theme().colors().ghost_element_hover))
+                    .active(|style| style.bg(cx.theme().colors().ghost_element_active))
+                    .rounded_sm()
                     .size_full()
                     .cursor_pointer()
+                    .child("⋯")
                     .on_mouse_down(MouseButton::Left, |_, cx| cx.stop_propagation())
                     .on_click(move |_, cx| {
                         editor
