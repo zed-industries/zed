@@ -972,6 +972,27 @@ impl Client {
         });
         let handle_io = executor.spawn(handle_io);
 
+        let original_connection_id = connection_id;
+        cx.spawn({
+            let this = self.clone();
+            move |cx| async move {
+                match handle_io.await {
+                    Ok(()) => {
+                        if let Status::Connected { connection_id, .. } = &*this.status().borrow() {
+                            if *connection_id == original_connection_id {
+                                this.set_status(Status::SignedOut, &cx);
+                            }
+                        }
+                    }
+                    Err(err) => {
+                        log::error!("connection error: {:?}", err);
+                        this.set_status(Status::ConnectionLost, &cx);
+                    }
+                }
+            }
+        })
+        .detach();
+
         let peer_id = async {
             log::info!("waiting for server hello");
             let message = incoming
@@ -1025,29 +1046,6 @@ impl Client {
                         this.handle_message(message, &cx);
                         // Don't starve the main thread when receiving lots of messages at once.
                         smol::future::yield_now().await;
-                    }
-                }
-            }
-        })
-        .detach();
-
-        cx.spawn({
-            let this = self.clone();
-            move |cx| async move {
-                match handle_io.await {
-                    Ok(()) => {
-                        if *this.status().borrow()
-                            == (Status::Connected {
-                                connection_id,
-                                peer_id,
-                            })
-                        {
-                            this.set_status(Status::SignedOut, &cx);
-                        }
-                    }
-                    Err(err) => {
-                        log::error!("connection error: {:?}", err);
-                        this.set_status(Status::ConnectionLost, &cx);
                     }
                 }
             }
