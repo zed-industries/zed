@@ -5209,21 +5209,26 @@ mod tests {
         // multi-buffer support
         // in DisplayPoint coordinates, this is what we're dealing with:
         //  0: [[file
-        //  1:   header]]
-        //  2: aaaaaa
-        //  3: bbbbbb
-        //  4: cccccc
-        //  5:
-        //  6: ...
-        //  7: ffffff
-        //  8: gggggg
-        //  9: hhhhhh
-        // 10:
-        // 11: [[file
-        // 12:   header]]
-        // 13: bbbbbb
-        // 14: cccccc
-        // 15: dddddd
+        //  1:   header
+        //  2:   section]]
+        //  3: aaaaaa
+        //  4: bbbbbb
+        //  5: cccccc
+        //  6:
+        //  7: [[footer]]
+        //  8: [[header]]
+        //  9: ffffff
+        // 10: gggggg
+        // 11: hhhhhh
+        // 12:
+        // 13: [[footer]]
+        // 14: [[file
+        // 15:   header
+        // 16:   section]]
+        // 17: bbbbbb
+        // 18: cccccc
+        // 19: dddddd
+        // 20: [[footer]]
         let window = cx.add_window(|cx| {
             let buffer = MultiBuffer::build_multi(
                 [
@@ -5266,21 +5271,21 @@ mod tests {
         // and doesn't allow selection to bleed through
         assert_eq!(
             local_selections[0].range,
-            DisplayPoint::new(DisplayRow(4), 0)..DisplayPoint::new(DisplayRow(6), 0)
+            DisplayPoint::new(DisplayRow(4), 0)..DisplayPoint::new(DisplayRow(7), 0)
         );
         assert_eq!(
             local_selections[0].head,
-            DisplayPoint::new(DisplayRow(5), 0)
+            DisplayPoint::new(DisplayRow(6), 0)
         );
         // moves cursor on buffer boundary back two lines
         // and doesn't allow selection to bleed through
         assert_eq!(
             local_selections[1].range,
-            DisplayPoint::new(DisplayRow(10), 0)..DisplayPoint::new(DisplayRow(11), 0)
+            DisplayPoint::new(DisplayRow(10), 0)..DisplayPoint::new(DisplayRow(13), 0)
         );
         assert_eq!(
             local_selections[1].head,
-            DisplayPoint::new(DisplayRow(10), 0)
+            DisplayPoint::new(DisplayRow(12), 0)
         );
     }
 
