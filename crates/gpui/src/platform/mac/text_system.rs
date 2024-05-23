@@ -8,16 +8,15 @@ use anyhow::anyhow;
 use cocoa::{
     appkit::{CGFloat, CGPoint},
     base::{id, YES},
-    foundation::{NSArray, NSUserDefaults},
 };
 use collections::{BTreeSet, HashMap};
 use core_foundation::{
-    array::{kCFTypeArrayCallBacks, CFArray, CFArrayAppendValue, CFArrayCreateMutable, CFArrayRef},
+    array::{kCFTypeArrayCallBacks, CFArray, CFArrayAppendValue, CFArrayCreateMutable},
     attributed_string::CFMutableAttributedString,
-    base::{kCFAllocatorDefault, CFRange, CFRelease, TCFType, TCFTypeRef},
+    base::{kCFAllocatorDefault, CFRange, CFRelease, TCFType},
     dictionary::{
-        kCFTypeDictionaryKeyCallBacks, kCFTypeDictionaryValueCallBacks, CFDictionaryAddValue,
-        CFDictionaryContainsKey, CFDictionaryCreate, CFDictionaryReplaceValue,
+        kCFTypeDictionaryKeyCallBacks, kCFTypeDictionaryValueCallBacks, CFDictionaryContainsKey,
+        CFDictionaryCreate,
     },
     number::CFNumber,
     string::CFString,
@@ -28,7 +27,7 @@ use core_graphics::{
     context::CGContext,
 };
 use core_text::{
-    font::{cascade_list_for_languages, new_from_descriptor, new_from_name, CTFont},
+    font::{cascade_list_for_languages, CTFont},
     font_descriptor::{
         kCTFontCascadeListAttribute, kCTFontFeatureSettingsAttribute, kCTFontSlantTrait,
         kCTFontSymbolicTrait, kCTFontWeightTrait, kCTFontWidthTrait, CTFontDescriptor,
@@ -369,9 +368,7 @@ impl MacTextSystemState {
             .select_family_by_name(name)
             .or_else(|_| self.system_source.select_family_by_name(name))?;
         for font in family.fonts() {
-            let mut font = font.load()?;
-
-            // open_type::apply_features(&mut font, features);
+            let font = font.load()?;
 
             // This block contains a precautionary fix to guard against loading fonts
             // that might cause panics due to `.unwrap()`s up the chain.
@@ -611,7 +608,6 @@ impl MacTextSystemState {
                 let cf_range =
                     CFRange::init(utf16_start as isize, (utf16_end - utf16_start) as isize);
 
-                // TODO: apply fallbacks
                 let font: &FontKitFont = &self.fonts[run.font_id.0].font;
 
                 unsafe {
