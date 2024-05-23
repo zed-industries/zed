@@ -93,10 +93,10 @@ pub fn handle_settings_file_changes(
 pub fn set_font_fallbacks(text_system: &TextSystem, cx: &AppContext) {
     let fallbacks = GlobalFontFallbacks::get_global(cx);
     text_system
-        .set_fallbacks(&fallbacks.ui_font_family, true)
+        .set_fallbacks(&fallbacks.ui_font_family, gpui::FontUsage::UIFont)
         .log_err();
     text_system
-        .set_fallbacks(&fallbacks.buffer_font_family, false)
+        .set_fallbacks(&fallbacks.buffer_font_family, gpui::FontUsage::BufferFont)
         .log_err();
 }
 
