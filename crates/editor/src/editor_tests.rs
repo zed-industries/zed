@@ -10358,34 +10358,34 @@ async fn test_toggle_diff_expand_in_multi_buffer(cx: &mut gpui::TestAppContext) 
         (
             "bbbb\n".to_string(),
             DiffHunkStatus::Removed,
-            DisplayRow(3)..DisplayRow(3),
+            DisplayRow(4)..DisplayRow(4),
         ),
         (
             "nnnn\n".to_string(),
             DiffHunkStatus::Modified,
-            DisplayRow(16)..DisplayRow(17),
+            DisplayRow(21)..DisplayRow(22),
         ),
         (
             "".to_string(),
             DiffHunkStatus::Added,
-            DisplayRow(31)..DisplayRow(32),
+            DisplayRow(41)..DisplayRow(42),
         ),
     ];
     let expected_all_hunks_shifted = vec![
         (
             "bbbb\n".to_string(),
             DiffHunkStatus::Removed,
-            DisplayRow(4)..DisplayRow(4),
+            DisplayRow(5)..DisplayRow(5),
         ),
         (
             "nnnn\n".to_string(),
             DiffHunkStatus::Modified,
-            DisplayRow(18)..DisplayRow(19),
+            DisplayRow(23)..DisplayRow(24),
         ),
         (
             "".to_string(),
             DiffHunkStatus::Added,
-            DisplayRow(33)..DisplayRow(34),
+            DisplayRow(43)..DisplayRow(44),
         ),
     ];
 
@@ -10410,8 +10410,8 @@ async fn test_toggle_diff_expand_in_multi_buffer(cx: &mut gpui::TestAppContext) 
         assert_eq!(
             expanded_hunks_background_highlights(editor, cx),
             vec![
-                DisplayRow(18)..=DisplayRow(18),
-                DisplayRow(33)..=DisplayRow(33)
+                DisplayRow(23)..=DisplayRow(23),
+                DisplayRow(43)..=DisplayRow(43)
             ],
         );
         assert_eq!(all_hunks, expected_all_hunks_shifted);
@@ -10442,8 +10442,8 @@ async fn test_toggle_diff_expand_in_multi_buffer(cx: &mut gpui::TestAppContext) 
         assert_eq!(
             expanded_hunks_background_highlights(editor, cx),
             vec![
-                DisplayRow(18)..=DisplayRow(18),
-                DisplayRow(33)..=DisplayRow(33)
+                DisplayRow(23)..=DisplayRow(23),
+                DisplayRow(43)..=DisplayRow(43)
             ],
         );
         assert_eq!(all_hunks, expected_all_hunks_shifted);
