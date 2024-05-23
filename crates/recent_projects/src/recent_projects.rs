@@ -535,7 +535,7 @@ impl PickerDelegate for RecentProjectsDelegate {
                         .when_some(KeyBinding::for_action(&OpenRemote, cx), |button, key| {
                             button.child(key)
                         })
-                        .child(Label::new("Connect…").color(Color::Muted))
+                        .child(Label::new("New remote project…").color(Color::Muted))
                         .on_click(|_, cx| cx.dispatch_action(OpenRemote.boxed_clone())),
                 )
                 .child(
@@ -544,7 +544,7 @@ impl PickerDelegate for RecentProjectsDelegate {
                             KeyBinding::for_action(&workspace::Open, cx),
                             |button, key| button.child(key),
                         )
-                        .child(Label::new("Open folder…").color(Color::Muted))
+                        .child(Label::new("Open local folder…").color(Color::Muted))
                         .on_click(|_, cx| cx.dispatch_action(workspace::Open.boxed_clone())),
                 )
                 .into_any(),
