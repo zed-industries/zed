@@ -49,9 +49,9 @@ pub struct DevServerProjects {
     _dev_server_subscription: Subscription,
 }
 
-#[derive(Default, Clone)]
+#[derive(Default)]
 struct CreateDevServer {
-    creating: bool,
+    creating: Option<Task<()>>,
     dev_server_id: Option<DevServerId>,
     access_token: Option<String>,
     manual_setup: bool,
@@ -316,60 +316,75 @@ impl DevServerProjects {
         let workspace = self.workspace.clone();
         let store = dev_server_projects::Store::global(cx);
 
-        cx.spawn({
-            |this, mut cx| async move {
-                let result = dev_server.await;
+        let task = cx
+            .spawn({
+                |this, mut cx| async move {
+                    let result = dev_server.await;
 
-                match result {
-                    Ok(dev_server) => {
-                        if let Some(ssh_connection_string) = ssh_connection_string {
-                            spawn_ssh_task(
-                                workspace
-                                    .upgrade()
-                                    .ok_or_else(|| anyhow!("workspace dropped"))?,
-                                store,
-                                DevServerId(dev_server.dev_server_id),
-                                ssh_connection_string,
-                                dev_server.access_token.clone(),
-                                &mut cx,
-                            )
-                            .await
-                            .log_err();
+                    match result {
+                        Ok(dev_server) => {
+                            if let Some(ssh_connection_string) = ssh_connection_string {
+                                this.update(&mut cx, |this, cx| {
+                                    if let Mode::CreateDevServer(CreateDevServer {
+                                        access_token,
+                                        dev_server_id,
+                                        ..
+                                    }) = &mut this.mode
+                                    {
+                                        access_token.replace(dev_server.access_token.clone());
+                                        dev_server_id
+                                            .replace(DevServerId(dev_server.dev_server_id));
+                                    }
+                                    cx.notify();
+                                })?;
+
+                                spawn_ssh_task(
+                                    workspace
+                                        .upgrade()
+                                        .ok_or_else(|| anyhow!("workspace dropped"))?,
+                                    store,
+                                    DevServerId(dev_server.dev_server_id),
+                                    ssh_connection_string,
+                                    dev_server.access_token.clone(),
+                                    &mut cx,
+                                )
+                                .await
+                                .log_err();
+                            }
+
+                            this.update(&mut cx, |this, cx| {
+                                this.focus_handle.focus(cx);
+                                this.mode = Mode::CreateDevServer(CreateDevServer {
+                                    creating: None,
+                                    dev_server_id: Some(DevServerId(dev_server.dev_server_id)),
+                                    access_token: Some(dev_server.access_token),
+                                    manual_setup,
+                                });
+                                cx.notify();
+                            })?;
+                            Ok(())
                         }
+                        Err(e) => {
+                            this.update(&mut cx, |this, cx| {
+                                this.mode = Mode::CreateDevServer(CreateDevServer {
+                                    creating: None,
+                                    dev_server_id: existing_id,
+                                    access_token: None,
+                                    manual_setup,
+                                });
+                                cx.notify()
+                            })
+                            .log_err();
 
-                        this.update(&mut cx, |this, cx| {
-                            this.focus_handle.focus(cx);
-                            this.mode = Mode::CreateDevServer(CreateDevServer {
-                                creating: false,
-                                dev_server_id: Some(DevServerId(dev_server.dev_server_id)),
-                                access_token: Some(dev_server.access_token),
-                                manual_setup,
-                            });
-                            cx.notify();
-                        })?;
-                        Ok(())
-                    }
-                    Err(e) => {
-                        this.update(&mut cx, |this, cx| {
-                            this.mode = Mode::CreateDevServer(CreateDevServer {
-                                creating: false,
-                                dev_server_id: existing_id,
-                                access_token: None,
-                                manual_setup,
-                            });
-                            cx.notify()
-                        })
-                        .log_err();
-
-                        return Err(e);
+                            return Err(e);
+                        }
                     }
                 }
-            }
-        })
-        .detach_and_prompt_err("Failed to create server", cx, |_, _| None);
+            })
+            .prompt_err("Failed to create server", cx, |_, _| None);
 
         self.mode = Mode::CreateDevServer(CreateDevServer {
-            creating: true,
+            creating: Some(task),
             dev_server_id: existing_id,
             access_token,
             manual_setup,
@@ -471,7 +486,7 @@ impl DevServerProjects {
                 self.create_dev_server_project(create_project.dev_server_id, cx);
             }
             Mode::CreateDevServer(state) => {
-                if !state.creating {
+                if state.creating.is_none() || state.dev_server_id.is_some() {
                     self.create_or_update_dev_server(
                         state.manual_setup,
                         state.dev_server_id,
@@ -548,7 +563,7 @@ impl DevServerProjects {
                                         .on_click(cx.listener(move |this, _, cx| {
                                             this.mode = Mode::CreateDevServer(CreateDevServer {
                                                 dev_server_id: Some(dev_server_id),
-                                                creating: false,
+                                                creating: None,
                                                 access_token: None,
                                                 manual_setup,
                                             });
@@ -683,16 +698,14 @@ impl DevServerProjects {
     }
 
     fn render_create_dev_server(
-        &mut self,
-        state: CreateDevServer,
+        &self,
+        state: &CreateDevServer,
         cx: &mut ViewContext<Self>,
     ) -> impl IntoElement {
-        let CreateDevServer {
-            creating,
-            dev_server_id,
-            access_token,
-            manual_setup,
-        } = state.clone();
+        let creating = state.creating.is_some();
+        let dev_server_id = state.dev_server_id;
+        let access_token = state.access_token.clone();
+        let manual_setup = state.manual_setup;
 
         let status = dev_server_id
             .map(|id| self.dev_server_store.read(cx).dev_server_status(id))
@@ -738,13 +751,11 @@ impl DevServerProjects {
                                 Label::new("Connect via SSH (default)"),
                                 !manual_setup,
                                 cx.listener({
-                                    let state = state.clone();
                                     move |this, _, cx| {
-                                    this.mode = Mode::CreateDevServer(CreateDevServer {
-                                        manual_setup: false,
-                                        ..state.clone()
-                                    });
-                                    cx.notify()
+                                        if let Mode::CreateDevServer(CreateDevServer{ manual_setup, .. }) = &mut this.mode {
+                                            *manual_setup = false;
+                                        }
+                                        cx.notify()
                                     }
                                 }),
                             ))
@@ -753,13 +764,11 @@ impl DevServerProjects {
                                 Label::new("Manual Setup"),
                                 manual_setup,
                                 cx.listener({
-                                    let state = state.clone();
                                     move |this, _, cx| {
-                                    this.mode = Mode::CreateDevServer(CreateDevServer {
-                                        manual_setup: true,
-                                        ..state.clone()
-                                    });
-                                    cx.notify()
+                                        if let Mode::CreateDevServer(CreateDevServer{ manual_setup, .. }) = &mut this.mode {
+                                            *manual_setup = true;
+                                        }
+                                        cx.notify()
                                 }}),
                             )))
                             .when(dev_server_id.is_none(), |el| {
@@ -807,10 +816,10 @@ impl DevServerProjects {
                             cx.notify();
                         }))
                 } else {
-                    Button::new("create-dev-server", if manual_setup { "Create"} else { "Connect"})
+                    Button::new("create-dev-server", if manual_setup { if dev_server_id.is_some() { "Update" } else { "Create"} } else { if dev_server_id.is_some() { "Reconnect" } else { "Connect"} })
                         .style(ButtonStyle::Filled)
                         .layer(ElevationIndex::ModalSurface)
-                        .disabled(creating)
+                        .disabled(creating && dev_server_id.is_none())
                         .on_click(cx.listener({
                             let access_token = access_token.clone();
                             move |this, _, cx| {
@@ -975,18 +984,15 @@ impl Render for DevServerProjects {
             .on_mouse_down_out(cx.listener(|this, _, cx| {
                 if matches!(this.mode, Mode::Default(None)) {
                     cx.emit(DismissEvent)
-                } else {
-                    this.focus_handle(cx).focus(cx);
-                    cx.stop_propagation()
                 }
             }))
             .w(rems(34.))
             .max_h(rems(40.))
             .child(match &self.mode {
                 Mode::Default(_) => self.render_default(cx).into_any_element(),
-                Mode::CreateDevServer(state) => self
-                    .render_create_dev_server(state.clone(), cx)
-                    .into_any_element(),
+                Mode::CreateDevServer(state) => {
+                    self.render_create_dev_server(state, cx).into_any_element()
+                }
             })
     }
 }
