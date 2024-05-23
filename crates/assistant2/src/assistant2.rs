@@ -1108,7 +1108,7 @@ impl Render for AssistantChat {
                                     .on_click(cx.listener(move |this, _event, cx| {
                                         this.new_conversation(cx);
                                     }))
-                                    .tooltip(move |cx| Tooltip::text("New Conversation", cx)),
+                                    .tooltip(move |cx| Tooltip::text("New Context", cx)),
                             )
                             .child(
                                 IconButton::new("assistant-menu", IconName::Menu)

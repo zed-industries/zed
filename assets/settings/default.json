@@ -316,7 +316,7 @@
     // AI provider.
     "provider": {
       "name": "openai",
-      // The default model to use when starting new conversations. This
+      // The default model to use when creating new contexts. This
       // setting can take three values:
       //
       // 1. "gpt-3.5-turbo"
