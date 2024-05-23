@@ -1282,8 +1282,7 @@ impl AssistantPanel {
                                 .w_full()
                                 .absolute()
                                 .bottom_0()
-                                .pb_4()
-                                .pr_6()
+                                .p_4()
                                 .justify_end()
                                 .children(self.render_send_button(cx)),
                         )
