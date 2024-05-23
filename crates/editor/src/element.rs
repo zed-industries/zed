@@ -1537,7 +1537,7 @@ impl EditorElement {
         let cons_line = cons_line.to_display_point(snapshot).row();
 
         let mut offset_y = row_range.start.0 as f32 * line_height;
-        let mut length = (cons_line.0 - row_range.start.0) as f32 * line_height;
+        let mut length = (cons_line.0.saturating_sub(row_range.start.0)) as f32 * line_height;
 
         // If there is a block (e.g. diagnostic) in between the start of the indent guide and the line above,
         // we want to extend the indent guide to the start of the block.
