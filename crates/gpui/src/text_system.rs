@@ -706,18 +706,18 @@ pub struct Font {
     /// The font style.
     pub style: FontStyle,
 
-    /// TODO:
+    /// The font fallbacks to use.
     pub fallbacks: FontFallbacks,
 }
 
-/// TODO:
+/// Indicate that what kind of fallbacks to use
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Hash, Default)]
 pub enum FontFallbacks {
-    /// TODO:
+    /// Use ui font fallbacks
     UiFontFallbacks,
-    /// TODO:
+    /// Use buffer font fallbacks
     BufferFontFallbacks,
-    /// TODO:
+    /// Use system font fallbacks
     #[default]
     None,
 }
