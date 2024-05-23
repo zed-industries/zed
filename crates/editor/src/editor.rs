@@ -5826,7 +5826,7 @@ impl Editor {
                         let mut end = fold.range.end.to_point(&buffer);
                         start.row -= row_delta;
                         end.row -= row_delta;
-                        refold_ranges.push((start..end, fold.text));
+                        refold_ranges.push((start..end, fold.placeholder));
                     }
                 }
             }
@@ -5920,7 +5920,7 @@ impl Editor {
                         let mut end = fold.range.end.to_point(&buffer);
                         start.row += row_delta;
                         end.row += row_delta;
-                        refold_ranges.push((start..end, fold.text));
+                        refold_ranges.push((start..end, fold.placeholder));
                     }
                 }
             }

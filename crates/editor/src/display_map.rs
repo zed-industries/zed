@@ -174,7 +174,12 @@ impl DisplayMap {
         self.fold(
             other
                 .folds_in_range(0..other.buffer_snapshot.len())
-                .map(|fold| (fold.range.to_offset(&other.buffer_snapshot), fold.text)),
+                .map(|fold| {
+                    (
+                        fold.range.to_offset(&other.buffer_snapshot),
+                        fold.placeholder,
+                    )
+                }),
             cx,
         );
     }
