@@ -149,7 +149,7 @@ fn spawn_task_with_name(
 fn active_item_selection_properties(
     workspace: &Workspace,
     cx: &mut WindowContext,
-) -> Option<(WorktreeId, Location)> {
+) -> Option<(Option<WorktreeId>, Location)> {
     let active_item = workspace.active_item(cx);
     let worktree_id = active_item
         .as_ref()
@@ -172,7 +172,7 @@ fn active_item_selection_properties(
                 })
             })
         });
-    worktree_id.zip(location)
+    Some((worktree_id, location?))
 }
 
 #[cfg(test)]

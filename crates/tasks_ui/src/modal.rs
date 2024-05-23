@@ -224,7 +224,7 @@ impl PickerDelegate for TasksModalDelegate {
                                         .used_and_current_resolved_tasks(
                                             Some(cx.handle()),
                                             Some(location),
-                                            Some(worktree),
+                                            worktree,
                                             &picker.delegate.task_context,
                                             cx,
                                         )

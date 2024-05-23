@@ -171,7 +171,7 @@ pub fn initialize_workspace(app_state: Arc<AppState>, cx: &mut AppContext) {
                         watch_config_file(&cx.background_executor(), fs, paths::TASKS.clone());
                     inventory.add_source(
                         TaskSourceKind::AbsPath {
-                            id_base: "global_tasks",
+                            id_base: "global_tasks".into(),
                             abs_path: paths::TASKS.clone(),
                         },
                         |tx, cx| StaticSource::new(TrackedFile::new(tasks_file_rx, tx, cx)),

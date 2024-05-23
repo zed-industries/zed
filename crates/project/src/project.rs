@@ -9479,9 +9479,70 @@ impl Project {
         _: Arc<Client>,
         mut cx: AsyncAppContext,
     ) -> Result<proto::TaskTemplatesResponse> {
-        // todo!("TODO kb")
+        let worktree = envelope.payload.worktree_id.map(WorktreeId::from_proto);
+        let location = envelope
+            .payload
+            .location
+            .context("missing location in task templates request")?;
+        let location = cx
+            .update(|cx| deserialize_location(&project, location, cx))?
+            .await
+            .context("task templates request location deserializing")?;
+        let templates = project
+            .update(&mut cx, |project, cx| {
+                project.task_templates(location, worktree, cx)
+            })?
+            .await
+            .context("receiving task templates")?
+            .into_iter()
+            .map(|(kind, template)| {
+                let kind = Some(match kind {
+                    TaskSourceKind::UserInput => proto::task_source_kind::Kind::UserInput(
+                        proto::task_source_kind::UserInput {},
+                    ),
+                    TaskSourceKind::Worktree {
+                        id,
+                        abs_path,
+                        id_base,
+                    } => {
+                        proto::task_source_kind::Kind::Worktree(proto::task_source_kind::Worktree {
+                            id: id.to_proto(),
+                            abs_path: abs_path.to_string_lossy().to_string(),
+                            id_base: id_base.to_string(),
+                        })
+                    }
+                    TaskSourceKind::AbsPath { id_base, abs_path } => {
+                        proto::task_source_kind::Kind::AbsPath(proto::task_source_kind::AbsPath {
+                            abs_path: abs_path.to_string_lossy().to_string(),
+                            id_base: id_base.to_string(),
+                        })
+                    }
+                    TaskSourceKind::Language { name } => {
+                        proto::task_source_kind::Kind::Language(proto::task_source_kind::Language {
+                            name: name.to_string(),
+                        })
+                    }
+                });
+                let kind = Some(proto::TaskSourceKind { kind });
+                let template = Some(proto::TaskTemplate {
+                    label: template.label,
+                    command: template.command,
+                    args: template.args,
+                    env: template.env.into_iter().collect(),
+                    cwd: template.cwd,
+                    use_new_terminal: template.use_new_terminal,
+                    allow_concurrent_runs: template.allow_concurrent_runs,
+                    reveal: match template.reveal {
+                        RevealStrategy::Always => proto::RevealStrategy::Always as i32,
+                        RevealStrategy::Never => proto::RevealStrategy::Never as i32,
+                    },
+                    tags: template.tags,
+                });
+                proto::TemplatePair { kind, template }
+            })
+            .collect();
 
-        Ok(proto::TaskTemplatesResponse { templates: vec![] })
+        Ok(proto::TaskTemplatesResponse { templates })
     }
 
     async fn try_resolve_code_action(
@@ -10536,7 +10597,7 @@ impl Project {
     pub fn task_templates(
         &self,
         location: Location,
-        worktree: WorktreeId,
+        worktree: Option<WorktreeId>,
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<Vec<(TaskSourceKind, TaskTemplate)>>> {
         if self.is_local() {
@@ -10544,11 +10605,11 @@ impl Project {
             Task::ready(Ok(self
                 .task_inventory()
                 .read(cx)
-                .list_tasks(language, Some(worktree))))
+                .list_tasks(language, worktree)))
         } else if let Some(project_id) = self.remote_id() {
-            let remote_templates = self.query_remote_task_templates(project_id, &location, cx);
-            cx.background_executor()
-                .spawn(async move { remote_templates.await })
+            let remote_templates =
+                self.query_remote_task_templates(project_id, &location, worktree, cx);
+            cx.background_executor().spawn(remote_templates)
         } else {
             Task::ready(Ok(Vec::new()))
         }
@@ -10558,6 +10619,7 @@ impl Project {
         &self,
         project_id: u64,
         location: &Location,
+        worktree: Option<WorktreeId>,
         cx: &AppContext,
     ) -> Task<Result<Vec<(TaskSourceKind, TaskTemplate)>>> {
         let client = self.client();
@@ -10566,6 +10628,7 @@ impl Project {
             let response = client
                 .request(proto::TaskTemplates {
                     project_id,
+                    worktree_id: worktree.map(|id| id.to_proto()),
                     location,
                 })
                 .await?;

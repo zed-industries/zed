@@ -272,7 +272,7 @@ impl Inventory {
             if let Some((location, project)) = location.as_ref().zip(query_template_tasks_from) {
                 let project = project.read(cx);
                 if let Some(project_id) = project.remote_id() {
-                    project.query_remote_task_templates(project_id, location, cx)
+                    project.query_remote_task_templates(project_id, location, worktree, cx)
                 } else {
                     Task::ready(Ok(Vec::new()))
                 }
