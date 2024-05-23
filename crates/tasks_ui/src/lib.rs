@@ -10,6 +10,7 @@ use workspace::tasks::schedule_task;
 use workspace::{tasks::schedule_resolved_task, Workspace};
 
 mod modal;
+mod modal_completions;
 mod settings;
 
 pub use modal::Spawn;

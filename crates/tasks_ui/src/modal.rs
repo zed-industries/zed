@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use crate::active_item_selection_properties;
+use crate::{active_item_selection_properties, modal_completions::TaskVariablesCompletionProvider};
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{
     impl_actions, rems, Action, AnyElement, AppContext, DismissEvent, EventEmitter, FocusableView,
@@ -139,11 +139,14 @@ impl TasksModal {
         workspace: WeakView<Workspace>,
         cx: &mut ViewContext<Self>,
     ) -> Self {
+        let provider = TaskVariablesCompletionProvider::new(task_context.task_variables.clone());
+
         let picker = cx.new_view(|cx| {
             Picker::uniform_list(
                 TasksModalDelegate::new(inventory, task_context, workspace),
                 cx,
             )
+            .with_completions_provider(Box::new(provider), cx)
         });
         let _subscription = cx.subscribe(&picker, |_, _, _, cx| {
             cx.emit(DismissEvent);

@@ -5,10 +5,11 @@ pub mod static_source;
 mod task_template;
 mod vscode_format;
 
-use collections::{HashMap, HashSet};
+use collections::{BTreeMap, HashMap, HashSet};
 use gpui::SharedString;
 use serde::Serialize;
 use std::path::PathBuf;
+use std::str::FromStr;
 use std::{borrow::Cow, path::Path};
 
 pub use task_template::{RevealStrategy, TaskTemplate, TaskTemplates};
@@ -120,7 +121,7 @@ impl ResolvedTask {
 }
 
 /// Variables, available for use in [`TaskContext`] when a Zed's [`TaskTemplate`] gets resolved into a [`ResolvedTask`].
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize)]
 pub enum VariableName {
     /// An absolute path of the currently opened file.
     File,
@@ -134,8 +135,6 @@ pub enum VariableName {
     Column,
     /// Text from the latest selection.
     SelectedText,
-    /// The symbol selected by the symbol tagging system, specifically the @run capture in a runnables.scm
-    RunnableSymbol,
     /// Custom variable, provided by the plugin or other external source.
     /// Will be printed with `ZED_` prefix to avoid potential conflicts with other variables.
     Custom(Cow<'static, str>),
@@ -165,7 +164,6 @@ impl std::fmt::Display for VariableName {
             Self::Row => write!(f, "{ZED_VARIABLE_NAME_PREFIX}ROW"),
             Self::Column => write!(f, "{ZED_VARIABLE_NAME_PREFIX}COLUMN"),
             Self::SelectedText => write!(f, "{ZED_VARIABLE_NAME_PREFIX}SELECTED_TEXT"),
-            Self::RunnableSymbol => write!(f, "{ZED_VARIABLE_NAME_PREFIX}RUNNABLE_SYMBOL"),
             Self::Custom(s) => write!(f, "{ZED_VARIABLE_NAME_PREFIX}CUSTOM_{s}"),
         }
     }
@@ -173,7 +171,7 @@ impl std::fmt::Display for VariableName {
 
 /// Container for predefined environment variables that describe state of Zed at the time the task was spawned.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize)]
-pub struct TaskVariables(HashMap<VariableName, String>);
+pub struct TaskVariables(BTreeMap<VariableName, String>);
 
 impl TaskVariables {
     /// Inserts another variable into the container, overwriting the existing one if it already exists — in this case, the old value is returned.
@@ -199,14 +197,42 @@ impl TaskVariables {
             }
         })
     }
+
+    /// Returns iterator over names of all set task variables.
+    pub fn keys(&self) -> impl Iterator<Item = &VariableName> {
+        self.0.keys()
+    }
 }
 
 impl FromIterator<(VariableName, String)> for TaskVariables {
     fn from_iter<T: IntoIterator<Item = (VariableName, String)>>(iter: T) -> Self {
-        Self(HashMap::from_iter(iter))
+        Self(BTreeMap::from_iter(iter))
     }
 }
 
+impl FromStr for VariableName {
+    type Err = ();
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        let without_prefix = s.strip_prefix(ZED_VARIABLE_NAME_PREFIX).ok_or(())?;
+        let value = match without_prefix {
+            "FILE" => Self::File,
+            "WORKTREE_ROOT" => Self::WorktreeRoot,
+            "SYMBOL" => Self::Symbol,
+            "SELECTED_TEXT" => Self::SelectedText,
+            "ROW" => Self::Row,
+            "COLUMN" => Self::Column,
+            _ => {
+                if let Some(custom_name) = without_prefix.strip_prefix("CUSTOM_") {
+                    Self::Custom(Cow::Owned(custom_name.to_owned()))
+                } else {
+                    return Err(());
+                }
+            }
+        };
+        Ok(value)
+    }
+}
 /// Keeps track of the file associated with a task and context of tasks execution (i.e. current file or current function).
 /// Keeps all Zed-related state inside, used to produce a resolved task out of its template.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize)]

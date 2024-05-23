@@ -1,5 +1,5 @@
 use anyhow::Result;
-use editor::{scroll::Autoscroll, Editor};
+use editor::{scroll::Autoscroll, CompletionProvider, Editor};
 use gpui::{
     actions, div, impl_actions, list, prelude::*, uniform_list, AnyElement, AppContext, ClickEvent,
     DismissEvent, EventEmitter, FocusHandle, FocusableView, Length, ListState, MouseButton,
@@ -166,6 +166,17 @@ impl<D: PickerDelegate> Picker<D> {
         Self::new(delegate, ContainerKind::List, head, cx)
     }
 
+    /// Adds a completion provider for this pickers query editor, if it has one.
+    pub fn with_completions_provider(
+        self,
+        provider: Box<dyn CompletionProvider>,
+        cx: &mut WindowContext<'_>,
+    ) -> Self {
+        if let Head::Editor(editor) = &self.head {
+            editor.update(cx, |this, _| this.set_completion_provider(provider))
+        }
+        self
+    }
     fn new(delegate: D, container: ContainerKind, head: Head, cx: &mut ViewContext<Self>) -> Self {
         let mut this = Self {
             delegate,
