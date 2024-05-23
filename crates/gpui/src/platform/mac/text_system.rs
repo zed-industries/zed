@@ -129,6 +129,16 @@ impl PlatformTextSystem for MacTextSystem {
     }
 
     fn set_fallbacks(&self, fallbacks: &[String], is_ui_font: bool) -> Result<()> {
+        for fallback in fallbacks {
+            let font = Font {
+                family: fallback.clone().into(),
+                features: FontFeatures(Arc::new(Vec::new())),
+                weight: FontWeight::NORMAL,
+                style: FontStyle::Normal,
+                fallbacks: FontFallbacks::None,
+            };
+            let _ = self.font_id(&font);
+        }
         self.0.write().set_fallbacks(fallbacks, is_ui_font)
     }
 
@@ -260,8 +270,6 @@ impl MacTextSystemState {
             let pref_langs = CFArray::wrap_under_get_rule(self.pref_langs.as_concrete_TypeRef());
             let mut count = 0;
             for font in self.fonts.iter_mut() {
-                println!("==> Font count: {}, {:#?}", count, font);
-                count += 1;
                 let mut fallback_array =
                     CFArrayCreateMutable(kCFAllocatorDefault, 0, &kCFTypeArrayCallBacks);
 
@@ -307,16 +315,14 @@ impl MacTextSystemState {
                         continue;
                     }
                 }
+                println!("==> Font count: {}, {:#?}", count, font);
+                count += 1;
 
                 println!("Getting cascade");
                 cascade_list_for_languages(&font.font.native_font(), &pref_langs)
                     .into_iter()
                     .filter(|desc| desc.font_path().is_some())
                     .for_each(|user_fallback_desc| {
-                        println!(
-                            "      => Sys fallback: {}",
-                            user_fallback_desc.display_name()
-                        );
                         CFArrayAppendValue(
                             fallback_array,
                             user_fallback_desc.as_concrete_TypeRef() as _,
@@ -466,6 +472,7 @@ impl MacTextSystemState {
 
     fn id_for_native_font(&mut self, requested_font: CTFont) -> FontId {
         let postscript_name = requested_font.postscript_name();
+        println!("--> Getting post name: {}", postscript_name);
         if let Some(font_id) = self.font_ids_by_postscript_name.get(&postscript_name) {
             *font_id
         } else {
