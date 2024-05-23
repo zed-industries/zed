@@ -1,5 +1,5 @@
 use gpui::{AnyElement, FontWeight, Model, ModelContext, Render};
-use runtimelib::{JupyterMessageContent, MimeType};
+use runtimelib::{ExecutionState, JupyterMessageContent, MimeType};
 use ui::{div, prelude::*, v_flex, IntoElement, Styled, ViewContext};
 
 use serde_json::Value;
@@ -108,10 +108,21 @@ fn render_error_output(
     )
 }
 
+#[derive(Default)]
+pub enum ExecutionStatus {
+    #[default]
+    Unknown,
+    #[allow(unused)]
+    ConnectingToKernel,
+    Executing,
+    Finished,
+}
+
 pub struct Execution {
     pub execution_id: ExecutionId,
     // pub anchor: Anchor,
     pub outputs: Vec<OutputType>,
+    pub status: ExecutionStatus,
 }
 
 impl Execution {
@@ -119,6 +130,7 @@ impl Execution {
         Self {
             execution_id,
             outputs: Default::default(),
+            status: ExecutionStatus::Unknown,
         }
     }
 
@@ -126,7 +138,15 @@ impl Execution {
         &self.outputs
     }
 
+    pub fn status(&self) -> &ExecutionStatus {
+        &self.status
+    }
+
     pub fn num_lines(&self) -> u8 {
+        if self.outputs.len() == 0 {
+            return 1; // For the status message if outputs are not there
+        }
+
         self.outputs.iter().map(|output| output.num_lines()).sum()
     }
 
@@ -174,7 +194,6 @@ impl Execution {
             }
             JupyterMessageContent::ErrorOutput(result) => {
                 let mut terminal = TerminalOutput::new();
-
                 terminal.append_text(&result.traceback.join("\n"));
 
                 OutputType::ErrorOutput {
@@ -182,6 +201,15 @@ impl Execution {
                     evalue: result.evalue.clone(),
                     traceback: terminal,
                 }
+            }
+            JupyterMessageContent::Status(status) => {
+                match status.execution_state {
+                    ExecutionState::Busy => {
+                        self.status = ExecutionStatus::Executing;
+                    }
+                    ExecutionState::Idle => self.status = ExecutionStatus::Finished,
+                }
+                return;
             }
             _msg => {
                 return;
@@ -231,7 +259,24 @@ impl ExecutionView {
 
 impl Render for ExecutionView {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
-        let outputs = self.execution.read(cx).outputs();
+        let execution = self.execution.read(cx);
+        let outputs = execution.outputs();
+        let status = execution.status();
+
+        if outputs.len() == 0 {
+            match status {
+                ExecutionStatus::ConnectingToKernel => {
+                    return div().child("Connecting to kernel...").into_any_element()
+                }
+                ExecutionStatus::Executing => {
+                    return div().child("Executing...").into_any_element()
+                }
+                ExecutionStatus::Finished => {
+                    return div().child(Icon::new(IconName::Check)).into_any_element()
+                }
+                _ => {}
+            }
+        }
 
         div()
             .w_full()

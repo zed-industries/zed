@@ -6,7 +6,7 @@
 
 use anyhow::{Context as _, Result};
 use futures::channel::mpsc;
-use futures::{io::BufReader, AsyncBufReadExt, StreamExt};
+use futures::StreamExt;
 use gpui::EntityId;
 use project::Fs;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
@@ -69,38 +69,22 @@ impl Runtime {
 
 // Find a set of open ports. This creates a listener with port set to 0. The listener will be closed at the end when it goes out of scope.
 // There's a race condition between closing the ports and usage by a kernel, but it's inherent to the Jupyter protocol.
-async fn peek_ports(ip: IpAddr, num: usize) -> anyhow::Result<Vec<u16>> {
+async fn peek_ports(ip: IpAddr) -> anyhow::Result<[u16; 5]> {
     let mut addr_zeroport: SocketAddr = SocketAddr::new(ip, 0);
     addr_zeroport.set_port(0);
-    let mut ports: Vec<u16> = Vec::new();
-    for _ in 0..num {
+    let mut ports: [u16; 5] = [0; 5];
+    for i in 0..5 {
         let listener = TcpListener::bind(addr_zeroport).await?;
         let addr = listener.local_addr()?;
-        ports.push(addr.port());
+        ports[i] = addr.port();
     }
     Ok(ports)
 }
 
-pub async fn from_peeking_ports(ip: IpAddr, kernel_name: &str) -> Result<ConnectionInfo> {
-    let transport = "tcp".to_string();
-    let ports = peek_ports(ip, 5).await?;
-
-    Ok(ConnectionInfo {
-        transport,
-        ip: ip.to_string(),
-        stdin_port: ports[0],
-        control_port: ports[1],
-        hb_port: ports[2],
-        shell_port: ports[3],
-        iopub_port: ports[4],
-        signature_scheme: "hmac-sha256".to_string(),
-        key: uuid::Uuid::new_v4().to_string(),
-        kernel_name: Some(kernel_name.to_string()),
-    })
-}
-
 pub struct RunningKernel {
+    #[allow(unused)]
     runtime: Runtime,
+    #[allow(unused)]
     process: smol::process::Child,
     pub execution_request_tx: mpsc::UnboundedSender<ExecutionRequest>,
     _runtime_handle: std::thread::JoinHandle<()>,
@@ -114,11 +98,21 @@ impl RunningKernel {
     ) -> anyhow::Result<Self> {
         dbg!("Starting kernel for {}", &runtime.spec.language);
 
-        let connection_info = from_peeking_ports(
-            IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)),
-            &format!("zed-{}", runtime.name),
-        )
-        .await?;
+        let ip = IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1));
+        let ports = peek_ports(ip).await?;
+
+        let connection_info = ConnectionInfo {
+            transport: "tcp".to_string(),
+            ip: ip.to_string(),
+            stdin_port: ports[0],
+            control_port: ports[1],
+            hb_port: ports[2],
+            shell_port: ports[3],
+            iopub_port: ports[4],
+            signature_scheme: "hmac-sha256".to_string(),
+            key: uuid::Uuid::new_v4().to_string(),
+            kernel_name: Some(format!("zed-{}", runtime.name)),
+        };
 
         let connection_path = dirs::runtime_dir().join(format!("kernel-zed-{}.json", entity_id));
         let content = serde_json::to_string(&connection_info)?;
@@ -126,15 +120,15 @@ impl RunningKernel {
         fs.atomic_write(connection_path.clone(), content).await?;
 
         let mut cmd = runtime.command(&connection_path)?;
-        let (execution_request_tx, _runtime_handle) = connect_kernel(connection_info.clone())?;
         // Drop the connection info so the kernel can bind to the allocated ports
-        drop(connection_info);
         let process = cmd
             .stdout(Stdio::null())
             .stderr(Stdio::null())
             .kill_on_drop(true)
             .spawn()
             .context("failed to start the kernel process")?;
+
+        let (execution_request_tx, _runtime_handle) = connect_kernel(connection_info.clone())?;
 
         Ok(Self {
             runtime,
