@@ -24,9 +24,9 @@ mod windows;
 
 use crate::{
     point, Action, AnyWindowHandle, AsyncWindowContext, BackgroundExecutor, Bounds, DevicePixels,
-    DispatchEventResult, Font, FontId, FontMetrics, FontRun, FontUsage, ForegroundExecutor,
-    GlyphId, Keymap, LineLayout, Pixels, PlatformInput, Point, RenderGlyphParams,
-    RenderImageParams, RenderSvgParams, Scene, SharedString, Size, Task, TaskLabel, WindowContext,
+    DispatchEventResult, Font, FontId, FontMetrics, FontRun, ForegroundExecutor, GlyphId, Keymap,
+    LineLayout, Pixels, PlatformInput, Point, RenderGlyphParams, RenderImageParams,
+    RenderSvgParams, Scene, SharedString, Size, Task, TaskLabel, WindowContext,
     DEFAULT_WINDOW_SIZE,
 };
 use anyhow::Result;
