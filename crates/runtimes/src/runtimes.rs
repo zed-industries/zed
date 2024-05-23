@@ -2,7 +2,7 @@ use anyhow::{Context as _, Result};
 use collections::{HashMap, HashSet};
 use editor::{
     display_map::{BlockContext, BlockDisposition, BlockProperties, BlockStyle, RenderBlock},
-    Editor,
+    Anchor, Editor,
 };
 use futures::{
     channel::mpsc::{self, UnboundedSender},
@@ -65,6 +65,13 @@ pub struct RuntimeManager {
     fs: Arc<dyn Fs>,
     runtimes: Vec<Runtime>,
     instances: HashMap<EntityId, RunningKernel>,
+}
+
+pub struct ActiveCode {
+    pub selected_text: String,
+    pub language_name: Arc<str>,
+    pub anchor: Anchor,
+    pub editor: View<Editor>,
 }
 
 impl RuntimeManager {
@@ -167,8 +174,12 @@ impl RuntimeManager {
         cx.set_global(RuntimeGlobal(runtime));
     }
 
-    pub fn run(workspace: &mut Workspace, _: &Run, cx: &mut ViewContext<Workspace>) {
-        let code_snippet = workspace
+    // Gets the active selection in the editor or the current line
+    pub fn get_active_code(
+        workspace: &mut Workspace,
+        cx: &mut ViewContext<Workspace>,
+    ) -> Option<ActiveCode> {
+        workspace
             .active_item(cx)
             .and_then(|item| item.act_as::<Editor>(cx))
             .and_then(|editor_view| {
@@ -223,17 +234,25 @@ impl RuntimeManager {
                     None
                 };
 
-                language_name
-                    .map(|language_name| (selected_text, language_name, anchor, editor_view))
-            });
+                language_name.map(|language_name| ActiveCode {
+                    selected_text,
+                    language_name,
+                    anchor,
+                    editor: editor_view,
+                })
+            })
+    }
 
-        let code_snippet = if let Some(code_snippet) = code_snippet {
-            code_snippet
+    pub fn run(workspace: &mut Workspace, _: &Run, cx: &mut ViewContext<Workspace>) {
+        let active_code = Self::get_active_code(workspace, cx);
+
+        let active_code = if let Some(active_code) = active_code {
+            active_code
         } else {
             return;
         };
 
-        let (code, language_name, anchor, editor) = code_snippet;
+        // let (code, language_name, anchor, editor) = code_snippet;
 
         let runtime_manager = if let Some(runtime_manager) = RuntimeManager::global(cx) {
             runtime_manager
@@ -242,7 +261,7 @@ impl RuntimeManager {
             return;
         };
 
-        let entity_id = editor.entity_id();
+        let entity_id = active_code.editor.entity_id();
         let execution_id = ExecutionId::new();
 
         // Since we don't know the height, in editor terms, we have to calculate it over time
@@ -253,9 +272,11 @@ impl RuntimeManager {
         // Plots and other images will have to wait.
         let execution_view = cx.new_view(|cx| ExecutionView::new(execution_id.clone(), cx));
 
-        let mut block_id = editor.update(cx, |editor, cx| {
+        let position = active_code.anchor;
+
+        let mut block_id = active_code.editor.update(cx, |editor, cx| {
             let block = BlockProperties {
-                position: anchor,
+                position,
                 height: 1,
                 style: BlockStyle::Sticky,
                 render: create_output_area_render(execution_view.clone()),
@@ -268,12 +289,14 @@ impl RuntimeManager {
         let receiver = runtime_manager.update(cx, |runtime_manager, cx| {
             runtime_manager.execute_code(
                 entity_id,
-                language_name,
+                active_code.language_name,
                 execution_id.clone(),
-                code.clone(),
+                active_code.selected_text.clone(),
                 cx,
             )
         });
+
+        let editor = active_code.editor.clone();
 
         cx.spawn(|_this, mut cx| async move {
             let mut receiver = receiver.await?;
@@ -291,7 +314,7 @@ impl RuntimeManager {
                     editor.remove_blocks(blocks_to_remove, None, cx);
 
                     let block = BlockProperties {
-                        position: anchor,
+                        position,
                         height: 1 + execution_view.read(cx).execution.read(cx).num_lines(),
                         style: BlockStyle::Sticky,
                         render: create_output_area_render(execution_view.clone()),
