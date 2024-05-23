@@ -263,7 +263,6 @@ impl AuthenticationPrompt {
             underline: None,
             strikethrough: None,
             white_space: WhiteSpace::Normal,
-            fallbacks: settings.ui_font.fallbacks,
         };
         EditorElement::new(
             &self.api_key,
