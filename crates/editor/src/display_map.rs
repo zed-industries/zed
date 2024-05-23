@@ -43,7 +43,8 @@ pub(crate) use inlay_map::Inlay;
 use inlay_map::{InlayMap, InlaySnapshot};
 pub use inlay_map::{InlayOffset, InlayPoint};
 use language::{
-    language_settings::language_settings, OffsetUtf16, Point, Subscription as BufferSubscription,
+    language_settings::language_settings, ChunkRenderer, OffsetUtf16, Point,
+    Subscription as BufferSubscription,
 };
 use lsp::DiagnosticSeverity;
 use multi_buffer::{
@@ -51,6 +52,7 @@ use multi_buffer::{
     ToOffset, ToPoint,
 };
 use serde::Deserialize;
+use std::ops::Add;
 use std::{any::TypeId, borrow::Cow, fmt::Debug, num::NonZeroU32, ops::Range, sync::Arc};
 use sum_tree::{Bias, TreeMap};
 use tab_map::{TabMap, TabSnapshot};
@@ -392,9 +394,10 @@ pub struct HighlightStyles {
 }
 
 pub struct HighlightedChunk<'a> {
-    pub chunk: &'a str,
+    pub text: &'a str,
     pub style: Option<HighlightStyle>,
     pub is_tab: bool,
+    pub renderer: Option<ChunkRenderer>,
 }
 
 #[derive(Clone)]
@@ -647,9 +650,10 @@ impl DisplaySnapshot {
             }
 
             HighlightedChunk {
-                chunk: chunk.text,
+                text: chunk.text,
                 style: highlight_style,
                 is_tab: chunk.is_tab,
+                renderer: chunk.renderer,
             }
         })
     }
@@ -671,7 +675,7 @@ impl DisplaySnapshot {
 
         let range = display_row..display_row.next_row();
         for chunk in self.highlighted_chunks(range, false, &editor_style) {
-            line.push_str(chunk.chunk);
+            line.push_str(chunk.text);
 
             let text_style = if let Some(style) = chunk.style {
                 Cow::Owned(editor_style.text.clone().highlight(style))
@@ -679,7 +683,7 @@ impl DisplaySnapshot {
                 Cow::Borrowed(&editor_style.text)
             };
 
-            runs.push(text_style.to_run(chunk.chunk.len()))
+            runs.push(text_style.to_run(chunk.text.len()))
         }
 
         if line.ends_with('\n') {
@@ -951,6 +955,14 @@ impl Debug for DisplayPoint {
 #[derive(Debug, Copy, Clone, Default, Eq, Ord, PartialOrd, PartialEq, Deserialize, Hash)]
 #[serde(transparent)]
 pub struct DisplayRow(pub u32);
+
+impl Add for DisplayRow {
+    type Output = Self;
+
+    fn add(self, other: Self) -> Self::Output {
+        DisplayRow(self.0 + other.0)
+    }
+}
 
 impl DisplayPoint {
     pub fn new(row: DisplayRow, column: u32) -> Self {
