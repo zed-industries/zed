@@ -1,6 +1,7 @@
+use collections::HashMap;
+use serde::Deserialize;
 use std::cmp::Ordering;
 
-use collections::HashMap;
 use editor::scroll::Autoscroll;
 use editor::{DisplayPoint, Editor};
 use gpui::{
@@ -8,12 +9,11 @@ use gpui::{
     KeystrokeEvent, Subscription, View, ViewContext, WeakView,
 };
 use perm::{Trie, TrimResult};
-use serde::Deserialize;
 use text::SelectionGoal;
 use ui::{BorrowAppContext, WindowContext};
 use workspace::Workspace;
 
-use crate::util::manh_distance;
+use crate::util::{manh_distance, window_bottom, window_top};
 
 mod editor_events;
 mod perm;
@@ -22,11 +22,8 @@ mod util;
 #[derive(Eq, PartialEq, Copy, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 enum Direction {
-    /// Only include the conversation.
     BiDirectional,
-    /// Send the current file as context.
     Forwards,
-    /// Search the codebase and send relevant excerpts.
     Backwards,
 }
 
@@ -90,9 +87,9 @@ fn register(workspace: &mut Workspace, _cx: &mut ViewContext<Workspace>) {
             easy.easy_motion_n_char(cx);
         });
     });
-    workspace.register_action(|_: &mut Workspace, _action: &Word, cx| {
+    workspace.register_action(|_: &mut Workspace, action: &Word, cx| {
         EasyMotion::update(cx, |easy, cx| {
-            easy.easy_motion_word(cx);
+            easy.easy_motion_word(action, cx);
             easy.sync(cx);
         });
     });
@@ -178,13 +175,14 @@ impl EasyMotion {
             if editor.is_focused(cx) && state.is_some() {
                 let ctx = state.unwrap().keymap_context_layer();
                 editor.set_keymap_context_layer::<Self>(ctx, cx);
-                // disable vim mode if a sub-editor (inline assist, rename, etc.) is focused
+                // disable easy if a sub-editor (inline assist, rename, etc.) is focused
             } else if editor.focus_handle(cx).contains_focused(cx) {
                 editor.remove_keymap_context_layer::<Self>(cx);
             }
         });
     }
 
+    #[allow(dead_code)]
     fn new_state(&mut self) -> &EditorState {
         self.active_editor
             .as_ref()
@@ -226,21 +224,35 @@ impl EasyMotion {
     // fn active_editor_input_ignored(text: Arc<str>, cx: &mut WindowContext) {
     fn easy_motion_n_char(&mut self, _cx: &mut WindowContext) {}
 
-    fn easy_motion_word(&mut self, cx: &mut WindowContext) {
-        self.update_easy_and_active_editor(cx, |easy, editor, view_cx| {
-            let selections = editor.selections.newest_display(view_cx);
-            let map = &editor.snapshot(view_cx).display_snapshot;
+    fn easy_motion_word(&mut self, action: &Word, cx: &mut WindowContext) {
+        self.update_easy_and_active_editor(cx, |easy, editor, cx| {
+            let selections = editor.selections.newest_display(cx);
+            let snapshot = editor.snapshot(cx);
+            let map = &snapshot.display_snapshot;
+            let text_layout_details = editor.text_layout_details(cx);
 
-            let start = selections.start;
-
+            let direction = action.0;
+            let start = match direction {
+                Direction::BiDirectional | Direction::Backwards => {
+                    window_top(map, &text_layout_details)
+                }
+                Direction::Forwards => selections.end,
+            };
+            let end = match direction {
+                Direction::BiDirectional | Direction::Forwards => {
+                    window_bottom(map, &text_layout_details)
+                }
+                Direction::Backwards => selections.start,
+            };
             let highlight = HighlightStyle {
                 background_color: Some(gpui::red()),
                 ..Default::default()
             };
-            let mut word_starts = util::word_starts(&map, start, true, 30);
+
+            let mut word_starts = util::word_starts_in_range(&map, start, end, true);
             word_starts.sort_unstable_by(|a, b| {
-                let a_distance = manh_distance(a, &start, 2.0);
-                let b_distance = manh_distance(b, &start, 2.0);
+                let a_distance = manh_distance(a, &selections.start, 2.0);
+                let b_distance = manh_distance(b, &selections.start, 2.0);
                 if a_distance == b_distance {
                     Ordering::Equal
                 } else if a_distance < b_distance {
@@ -252,7 +264,7 @@ impl EasyMotion {
             let trie = Trie::new("asdghklqwertyuiopzxcvbnmfj".to_string(), word_starts, true);
             let perms = trie.trie_to_perms();
             for (seq, point) in perms {
-                editor.add_overlay(seq.to_string(), point.to_owned(), highlight, view_cx);
+                editor.add_overlay(seq.to_string(), point.to_owned(), highlight, cx);
             }
             easy.insert_state(EditorState {
                 control: true,

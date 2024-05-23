@@ -459,6 +459,37 @@ pub fn find_boundary_point(
     map.clip_point(offset.to_display_point(map), Bias::Right)
 }
 
+// Same as above but lets you specify the end of the range.
+// Also will return None if the predicate is not true before the end of the range
+pub fn find_boundary_point_in_range(
+    map: &DisplaySnapshot,
+    from: DisplayPoint,
+    to: DisplayPoint,
+    mut is_boundary: impl FnMut(char, char) -> bool,
+    return_point_before_boundary: bool,
+) -> Option<DisplayPoint> {
+    let mut offset = from.to_offset(&map, Bias::Right);
+    let to_offset = to.to_offset(&map, Bias::Right);
+    let mut prev_offset = offset;
+
+    let mut iter = map.buffer_snapshot.chars_for_range(offset, to_offset);
+    let mut prev_ch = iter.next()?;
+    offset += prev_ch.len_utf8();
+    for ch in iter {
+        if is_boundary(prev_ch, ch) {
+            if return_point_before_boundary {
+                return Some(map.clip_point(prev_offset.to_display_point(map), Bias::Right));
+            } else {
+                return Some(map.clip_point(offset.to_display_point(map), Bias::Right));
+            }
+        }
+        prev_offset = offset;
+        offset += ch.len_utf8();
+        prev_ch = ch;
+    }
+    None
+}
+
 pub fn find_boundary(
     map: &DisplaySnapshot,
     from: DisplayPoint,
@@ -466,6 +497,15 @@ pub fn find_boundary(
     is_boundary: impl FnMut(char, char) -> bool,
 ) -> DisplayPoint {
     return find_boundary_point(map, from, find_range, is_boundary, false);
+}
+
+pub fn find_boundary_range(
+    map: &DisplaySnapshot,
+    from: DisplayPoint,
+    to: DisplayPoint,
+    is_boundary: impl FnMut(char, char) -> bool,
+) -> Option<DisplayPoint> {
+    return find_boundary_point_in_range(map, from, to, is_boundary, false);
 }
 
 pub fn find_boundary_exclusive(

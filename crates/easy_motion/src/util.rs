@@ -1,6 +1,6 @@
 use editor::{
-    display_map::DisplaySnapshot,
-    movement::{find_boundary, FindRange},
+    display_map::{DisplayRow, DisplaySnapshot, ToDisplayPoint},
+    movement::{find_boundary_range, TextLayoutDetails},
     DisplayPoint, RowExt,
 };
 use language::{char_kind, CharKind};
@@ -11,21 +11,54 @@ pub(crate) fn manh_distance(point_1: &DisplayPoint, point_2: &DisplayPoint, x_bi
         + (point_1.column() as i32 - point_2.column() as i32).abs() as f32
 }
 
-pub(crate) fn word_starts(
+pub(crate) fn window_top(
+    map: &DisplaySnapshot,
+    text_layout_details: &TextLayoutDetails,
+) -> DisplayPoint {
+    let mut point = text_layout_details
+        .scroll_anchor
+        .anchor
+        .to_display_point(map);
+    *point.column_mut() = 0;
+    map.clip_point(point, text::Bias::Left)
+}
+
+pub(crate) fn window_bottom(
+    map: &DisplaySnapshot,
+    text_layout_details: &TextLayoutDetails,
+) -> DisplayPoint {
+    let Some(visible_rows) = text_layout_details.visible_rows else {
+        return DisplayPoint::default();
+    };
+
+    let point = text_layout_details
+        .scroll_anchor
+        .anchor
+        .to_display_point(map);
+    let new_row =
+        point.row().0 + (visible_rows + text_layout_details.scroll_anchor.offset.y).floor() as u32;
+    dbg!(&new_row);
+    let new_col = point.column().min(map.line_len(point.row()));
+    map.clip_point(
+        DisplayPoint::new(DisplayRow(new_row), new_col),
+        text::Bias::Left,
+    )
+}
+
+pub(crate) fn word_starts_in_range(
     map: &DisplaySnapshot,
     mut point: DisplayPoint,
+    end_point: DisplayPoint,
     ignore_punctuation: bool,
-    max_times: usize,
 ) -> Vec<DisplayPoint> {
     let scope = map.buffer_snapshot.language_scope_at(point.to_point(map));
     let mut result = Vec::new();
-    for _ in 0..max_times {
+    while point < end_point {
         let mut crossed_newline = false;
-        let new_point = find_boundary(map, point, FindRange::MultiLine, |left, right| {
+        let new_point = find_boundary_range(map, point, end_point, |left, right| {
             let left_kind = coerce_punctuation(char_kind(&scope, left), ignore_punctuation);
             let right_kind = coerce_punctuation(char_kind(&scope, right), ignore_punctuation);
             let at_newline = right == '\n';
-
             let found = (left_kind != right_kind && right_kind != CharKind::Whitespace)
                 || at_newline && crossed_newline
                 || at_newline && left == '\n'; // Prevents skipping repeated empty lines
@@ -33,6 +66,10 @@ pub(crate) fn word_starts(
             crossed_newline |= at_newline;
             found
         });
+
+        let Some(new_point) = new_point else {
+            break;
+        };
         if point == new_point {
             break;
         }
@@ -57,11 +94,28 @@ mod tests {
     #[gpui::test]
     fn test_get_word_starts(cx: &mut AppContext) {
         init_test(cx);
-        let marked_text = "ˇ lorem ipsum ";
+
+        let marked_text = "ˇ lorem ipsuˇm hi hello ";
         let (snapshot, display_points) = marked_display_snapshot(marked_text, cx);
         let point = display_points.first().unwrap().clone();
-        let word_starts = word_starts(&snapshot, point, true, 4);
-        assert_eq!(word_starts, vec![display_point(1, 0), display_point(7, 0)]);
+        let end = display_points.last().unwrap().clone();
+        let starts = word_starts_in_range(&snapshot, point, end, true);
+        assert_eq!(starts, vec![display_point(1, 0), display_point(7, 0)]);
+
+        let marked_text = "ˇ lorem ipsum hi helloˇ";
+        let (snapshot, display_points) = marked_display_snapshot(marked_text, cx);
+        let point = display_points.first().unwrap().clone();
+        let end = display_points.last().unwrap().clone();
+        let starts = word_starts_in_range(&snapshot, point, end, true);
+        assert_eq!(
+            starts,
+            vec![
+                display_point(1, 0),
+                display_point(7, 0),
+                display_point(13, 0),
+                display_point(16, 0)
+            ]
+        );
     }
 
     fn init_test(cx: &mut gpui::AppContext) {

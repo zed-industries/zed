@@ -2116,6 +2116,13 @@ impl MultiBufferSnapshot {
             .flat_map(|chunk| chunk.chars())
     }
 
+    pub fn chars_for_range<T: ToOffset>(&self, from: T, to: T) -> impl Iterator<Item = char> + '_ {
+        let from_offset = from.to_offset(self);
+        let to_offset = to.to_offset(self);
+        self.text_for_range(from_offset..to_offset)
+            .flat_map(|chunk| chunk.chars())
+    }
+
     pub fn text_for_range<T: ToOffset>(&self, range: Range<T>) -> impl Iterator<Item = &str> + '_ {
         self.chunks(range, false).map(|chunk| chunk.text)
     }
