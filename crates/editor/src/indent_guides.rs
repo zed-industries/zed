@@ -25,8 +25,8 @@ pub struct ActiveIndentGuidesState {
 }
 
 impl ActiveIndentGuidesState {
-    pub fn should_refresh(&self, cursor_row: MultiBufferRow) -> bool {
-        self.pending_refresh.is_none() && (self.cursor_row != cursor_row || self.dirty)
+    pub fn should_refresh(&self) -> bool {
+        self.pending_refresh.is_none() && self.dirty
     }
 }
 
@@ -35,14 +35,11 @@ impl Editor {
         &self,
         visible_buffer_range: Range<MultiBufferRow>,
         snapshot: &DisplaySnapshot,
-        cx: &AppContext,
+        cx: &mut ViewContext<Editor>,
     ) -> Option<Vec<MultiBufferIndentGuide>> {
-        if self.show_indent_guides == Some(false) {
-            return None;
-        }
+        let enabled = self.should_show_indent_guides(cx);
 
-        let settings = self.buffer.read(cx).settings_at(0, cx);
-        if settings.indent_guides.enabled {
+        if enabled {
             Some(indent_guides_in_range(visible_buffer_range, snapshot, cx))
         } else {
             None
@@ -59,12 +56,27 @@ impl Editor {
         let cursor_row = MultiBufferRow(selection.head().row);
 
         let state = &mut self.active_indent_guides_state;
-        if state.cursor_row != cursor_row {
-            state.cursor_row = cursor_row;
+
+        if state
+            .active_indent_range
+            .as_ref()
+            .map(|active_indent_range| {
+                should_recalculate_indented_range(
+                    state.cursor_row,
+                    cursor_row,
+                    active_indent_range,
+                    snapshot,
+                )
+            })
+            .unwrap_or(true)
+        {
             state.dirty = true;
+        } else {
+            state.cursor_row = cursor_row;
         }
 
-        if state.should_refresh(cursor_row) {
+        if state.should_refresh() {
+            state.cursor_row = cursor_row;
             let snapshot = snapshot.clone();
             state.dirty = false;
 
@@ -161,4 +173,36 @@ async fn resolve_indented_range(
             indent,
             buffer_id,
         })
+}
+
+fn should_recalculate_indented_range(
+    prev_row: MultiBufferRow,
+    new_row: MultiBufferRow,
+    current_indent_range: &ActiveIndentedRange,
+    snapshot: &DisplaySnapshot,
+) -> bool {
+    if prev_row.0 == new_row.0 {
+        return false;
+    }
+    if let Some((_, _, snapshot)) = snapshot.buffer_snapshot.as_singleton() {
+        if !current_indent_range.row_range.contains(&new_row.0) {
+            return true;
+        }
+
+        let (old_indent, old_is_blank) = snapshot.line_indent_for_row(prev_row.0);
+        let (new_indent, new_is_blank) = snapshot.line_indent_for_row(new_row.0);
+
+        if old_is_blank
+            || new_is_blank
+            || old_indent != new_indent
+            || snapshot.max_point().row == new_row.0
+        {
+            return true;
+        }
+
+        let (next_line_indent, next_line_is_blank) = snapshot.line_indent_for_row(new_row.0 + 1);
+        next_line_is_blank || next_line_indent != old_indent
+    } else {
+        true
+    }
 }
