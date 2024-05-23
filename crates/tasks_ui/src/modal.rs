@@ -218,27 +218,36 @@ impl PickerDelegate for TasksModalDelegate {
 
                             let resolved_task =
                                 picker.delegate.project.update(cx, |project, cx| {
-                                    let remote_templates = project
-                                        .remote_id()
-                                        .filter(|_| project.ssh_connection_string(cx).is_some())
-                                        .map(|project_id| {
-                                            project.query_remote_task_templates(
-                                                project_id,
+                                    let ssh_connection_string = project.ssh_connection_string(cx);
+                                    if project.is_remote() && ssh_connection_string.is_none() {
+                                        Task::ready((Vec::new(), Vec::new()))
+                                    } else {
+                                        let remote_templates = if project.is_local() {
+                                            None
+                                        } else {
+                                            project
+                                                .remote_id()
+                                                .filter(|_| ssh_connection_string.is_some())
+                                                .map(|project_id| {
+                                                    project.query_remote_task_templates(
+                                                        project_id,
+                                                        worktree,
+                                                        location.as_ref(),
+                                                        cx,
+                                                    )
+                                                })
+                                        };
+                                        project
+                                            .task_inventory()
+                                            .read(cx)
+                                            .used_and_current_resolved_tasks(
+                                                remote_templates,
                                                 worktree,
-                                                location.as_ref(),
+                                                location,
+                                                &picker.delegate.task_context,
                                                 cx,
                                             )
-                                        });
-                                    project
-                                        .task_inventory()
-                                        .read(cx)
-                                        .used_and_current_resolved_tasks(
-                                            remote_templates,
-                                            worktree,
-                                            location,
-                                            &picker.delegate.task_context,
-                                            cx,
-                                        )
+                                    }
                                 });
                             cx.spawn(|picker, mut cx| async move {
                                 let (used, current) = resolved_task.await;
