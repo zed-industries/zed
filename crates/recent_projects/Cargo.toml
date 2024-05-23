@@ -14,6 +14,7 @@ doctest = false
 
 [dependencies]
 anyhow.workspace = true
+client.workspace = true
 editor.workspace = true
 feature_flags.workspace = true
 fuzzy.workspace = true

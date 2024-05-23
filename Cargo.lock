@@ -8067,6 +8067,7 @@ name = "recent_projects"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "client",
  "dev_server_projects",
  "editor",
  "feature_flags",
