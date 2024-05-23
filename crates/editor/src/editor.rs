@@ -12116,7 +12116,6 @@ impl Render for Editor {
                 underline: None,
                 strikethrough: None,
                 white_space: WhiteSpace::Normal,
-                fallbacks: settings.ui_font.fallbacks,
             },
             EditorMode::Full => TextStyle {
                 color: cx.theme().colors().editor_foreground,
@@ -12130,7 +12129,6 @@ impl Render for Editor {
                 underline: None,
                 strikethrough: None,
                 white_space: WhiteSpace::Normal,
-                fallbacks: settings.buffer_font.fallbacks,
             },
         };
 
