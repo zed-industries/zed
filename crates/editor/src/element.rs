@@ -3903,10 +3903,10 @@ impl LineWithInvisibles {
                         } else {
                             invisibles.extend(
                                 line_chunk
-                                    .chars()
+                                    .bytes()
                                     .enumerate()
                                     .filter(|(_, line_char)| {
-                                        let is_whitespace = line_char.is_whitespace();
+                                        let is_whitespace = (*line_char as char).is_whitespace();
                                         non_whitespace_added |= !is_whitespace;
                                         is_whitespace
                                             && (non_whitespace_added || !inside_wrapped_string)
