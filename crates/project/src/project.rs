@@ -9480,17 +9480,18 @@ impl Project {
         mut cx: AsyncAppContext,
     ) -> Result<proto::TaskTemplatesResponse> {
         let worktree = envelope.payload.worktree_id.map(WorktreeId::from_proto);
-        let location = envelope
-            .payload
-            .location
-            .context("missing location in task templates request")?;
-        let location = cx
-            .update(|cx| deserialize_location(&project, location, cx))?
-            .await
-            .context("task templates request location deserializing")?;
+        let location = match envelope.payload.location {
+            Some(location) => Some(
+                cx.update(|cx| deserialize_location(&project, location, cx))?
+                    .await
+                    .context("task templates request location deserializing")?,
+            ),
+            None => None,
+        };
+
         let templates = project
             .update(&mut cx, |project, cx| {
-                project.task_templates(location, worktree, cx)
+                project.task_templates(worktree, location, cx)
             })?
             .await
             .context("receiving task templates")?
@@ -10596,34 +10597,35 @@ impl Project {
 
     pub fn task_templates(
         &self,
-        location: Location,
         worktree: Option<WorktreeId>,
+        location: Option<Location>,
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<Vec<(TaskSourceKind, TaskTemplate)>>> {
         if self.is_local() {
-            let language = location.buffer.read(cx).language_at(location.range.start);
+            let language = location
+                .and_then(|location| location.buffer.read(cx).language_at(location.range.start));
             Task::ready(Ok(self
                 .task_inventory()
                 .read(cx)
                 .list_tasks(language, worktree)))
         } else if let Some(project_id) = self.remote_id() {
             let remote_templates =
-                self.query_remote_task_templates(project_id, &location, worktree, cx);
+                self.query_remote_task_templates(project_id, worktree, location.as_ref(), cx);
             cx.background_executor().spawn(remote_templates)
         } else {
             Task::ready(Ok(Vec::new()))
         }
     }
 
-    fn query_remote_task_templates(
+    pub fn query_remote_task_templates(
         &self,
         project_id: u64,
-        location: &Location,
         worktree: Option<WorktreeId>,
+        location: Option<&Location>,
         cx: &AppContext,
     ) -> Task<Result<Vec<(TaskSourceKind, TaskTemplate)>>> {
         let client = self.client();
-        let location = Some(serialize_location(location, cx));
+        let location = location.map(|location| serialize_location(location, cx));
         cx.spawn(|_| async move {
             let response = client
                 .request(proto::TaskTemplates {

@@ -208,7 +208,7 @@ impl PickerDelegate for TasksModalDelegate {
                             Task::ready(Ok(string_match_candidates(candidates.iter())))
                         }
                         None => {
-                            let Ok(Some((worktree, location))) =
+                            let Ok((worktree, location)) =
                                 picker.delegate.workspace.update(cx, |workspace, cx| {
                                     active_item_selection_properties(workspace, cx)
                                 })
@@ -218,13 +218,21 @@ impl PickerDelegate for TasksModalDelegate {
 
                             let resolved_task =
                                 picker.delegate.project.update(cx, |project, cx| {
+                                    let remote_templates = project.remote_id().map(|project_id| {
+                                        project.query_remote_task_templates(
+                                            project_id,
+                                            worktree,
+                                            location.as_ref(),
+                                            cx,
+                                        )
+                                    });
                                     project
                                         .task_inventory()
                                         .read(cx)
                                         .used_and_current_resolved_tasks(
-                                            Some(cx.handle()),
-                                            Some(location),
+                                            remote_templates,
                                             worktree,
+                                            location,
                                             &picker.delegate.task_context,
                                             cx,
                                         )

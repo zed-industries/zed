@@ -2136,7 +2136,7 @@ message TaskContext {
 
 message TaskTemplates {
     uint64 project_id = 1;
-    Location location = 2;
+    optional Location location = 2;
     optional uint64 worktree_id = 3;
 }
 

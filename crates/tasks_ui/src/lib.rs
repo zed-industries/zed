@@ -108,14 +108,10 @@ fn spawn_task_with_name(
         let task_context = context_task.await;
         let tasks = workspace
             .update(&mut cx, |workspace, cx| {
-                if let Some((worktree, location)) = active_item_selection_properties(workspace, cx)
-                {
-                    workspace.project().update(cx, |project, cx| {
-                        project.task_templates(location, worktree, cx)
-                    })
-                } else {
-                    AsyncTask::ready(Ok(Vec::new()))
-                }
+                let (worktree, location) = active_item_selection_properties(workspace, cx);
+                workspace.project().update(cx, |project, cx| {
+                    project.task_templates(worktree, location, cx)
+                })
             })?
             .await?;
 
@@ -149,7 +145,7 @@ fn spawn_task_with_name(
 fn active_item_selection_properties(
     workspace: &Workspace,
     cx: &mut WindowContext,
-) -> Option<(Option<WorktreeId>, Location)> {
+) -> (Option<WorktreeId>, Option<Location>) {
     let active_item = workspace.active_item(cx);
     let worktree_id = active_item
         .as_ref()
@@ -172,7 +168,7 @@ fn active_item_selection_properties(
                 })
             })
         });
-    Some((worktree_id, location?))
+    (worktree_id, location)
 }
 
 #[cfg(test)]

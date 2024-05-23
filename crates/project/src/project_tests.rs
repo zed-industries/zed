@@ -5215,7 +5215,7 @@ fn get_all_tasks(
         project
             .task_inventory()
             .read(cx)
-            .used_and_current_resolved_tasks(None, None, worktree_id, task_context, cx)
+            .used_and_current_resolved_tasks(None, worktree_id, None, task_context, cx)
     });
 
     cx.spawn(|_| async move {

@@ -192,9 +192,9 @@ impl Inventory {
     /// Deduplicates the tasks by their labels and splits the ordered list into two: used tasks and the rest, newly resolved tasks.
     pub fn used_and_current_resolved_tasks(
         &self,
-        query_template_tasks_from: Option<Model<Project>>,
-        location: Option<Location>,
+        remote_templates_task: Option<Task<Result<Vec<(TaskSourceKind, TaskTemplate)>>>>,
         worktree: Option<WorktreeId>,
+        location: Option<Location>,
         task_context: &TaskContext,
         cx: &AppContext,
     ) -> Task<(
@@ -268,22 +268,14 @@ impl Inventory {
             .map(|(_, (kind, task, lru_score))| (kind.clone(), task.clone(), lru_score))
             .collect::<Vec<_>>();
 
-        let remote_templates =
-            if let Some((location, project)) = location.as_ref().zip(query_template_tasks_from) {
-                let project = project.read(cx);
-                if let Some(project_id) = project.remote_id() {
-                    project.query_remote_task_templates(project_id, location, worktree, cx)
-                } else {
-                    Task::ready(Ok(Vec::new()))
-                }
-            } else {
-                Task::ready(Ok(Vec::new()))
-            };
-
         let task_context = task_context.clone();
         cx.spawn(move |_| async move {
-            let Some(remote_templates) = remote_templates.await.log_err() else {
-                return (Vec::new(), Vec::new());
+            let remote_templates = match remote_templates_task {
+                Some(task) => match task.await.log_err() {
+                    Some(remote_templates) => remote_templates,
+                    None => return (Vec::new(), Vec::new()),
+                },
+                None => Vec::new(),
             };
             let remote_tasks = remote_templates.into_iter().filter_map(|(kind, task)| {
                 let id_base = kind.to_id_base();
@@ -507,8 +499,8 @@ mod test_inventory {
             .update(cx, |inventory, cx| {
                 inventory.used_and_current_resolved_tasks(
                     None,
-                    None,
                     worktree,
+                    None,
                     &TaskContext::default(),
                     cx,
                 )
@@ -993,8 +985,8 @@ mod tests {
             .update(cx, |inventory, cx| {
                 inventory.used_and_current_resolved_tasks(
                     None,
-                    None,
                     worktree,
+                    None,
                     &TaskContext::default(),
                     cx,
                 )
