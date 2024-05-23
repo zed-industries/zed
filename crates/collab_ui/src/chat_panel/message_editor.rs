@@ -541,7 +541,6 @@ impl Render for MessageEditor {
             underline: None,
             strikethrough: None,
             white_space: WhiteSpace::Normal,
-            fallbacks: settings.ui_font.fallbacks,
         };
 
         div()
