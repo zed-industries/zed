@@ -16,7 +16,8 @@ pub use serde_json;
 pub use wit::{
     download_file, make_file_executable,
     zed::extension::github::{
-        latest_github_release, GithubRelease, GithubReleaseAsset, GithubReleaseOptions,
+        github_release_by_tag_name, latest_github_release, GithubRelease, GithubReleaseAsset,
+        GithubReleaseOptions,
     },
     zed::extension::nodejs::{
         node_binary_path, npm_install_package, npm_package_installed_version,

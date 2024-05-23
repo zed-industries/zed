@@ -25,4 +25,9 @@ interface github {
 
     /// Returns the latest release for the given GitHub repository.
     latest-github-release: func(repo: string, options: github-release-options) -> result<github-release, string>;
+
+    /// Returns the GitHub release with the specified tag name for the given GitHub repository.
+    ///
+    /// Returns an error if a release with the given tag name does not exist.
+    github-release-by-tag-name: func(repo: string, tag: string) -> result<github-release, string>;
 }
