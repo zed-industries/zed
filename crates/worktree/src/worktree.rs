@@ -3522,9 +3522,10 @@ impl BackgroundScanner {
     async fn run(&mut self, mut fs_events_rx: Pin<Box<dyn Send + Stream<Item = Vec<PathBuf>>>>) {
         use futures::FutureExt as _;
 
-        // Populate ignores above the root.
+        // If the worktree root does not contain a git repository, then find
+        // the git repository in an ancestor directory. Find any gitignore files
+        // in ancestor directories.
         let root_abs_path = self.state.lock().snapshot.abs_path.clone();
-        let mut external_git_repo = None;
         for (index, ancestor) in root_abs_path.ancestors().enumerate() {
             if index != 0 {
                 if let Ok(ignore) =
@@ -3537,10 +3538,29 @@ impl BackgroundScanner {
                         .insert(ancestor.into(), (ignore.into(), false));
                 }
             }
-            if ancestor.join(&*DOT_GIT).is_dir() {
+
+            let ancestor_dot_git = ancestor.join(&*DOT_GIT);
+            if ancestor_dot_git.is_dir() {
                 if index != 0 {
-                    external_git_repo = Some(ancestor.to_path_buf());
+                    // We canonicalize, since the FS events use the canonicalized path.
+                    if let Some(ancestor_dot_git) =
+                        self.fs.canonicalize(&ancestor_dot_git).await.log_err()
+                    {
+                        let external_events =
+                            self.fs.watch(&ancestor_dot_git, FS_WATCH_LATENCY).await;
+                        fs_events_rx = select(fs_events_rx, external_events).boxed();
+
+                        // We associate the external git repo with our root folder and
+                        // also mark where in the git repo the root folder is located.
+                        self.state.lock().build_git_repository_for_path(
+                            Path::new("").into(),
+                            ancestor_dot_git.into(),
+                            Some(root_abs_path.strip_prefix(ancestor).unwrap().into()),
+                            self.fs.as_ref(),
+                        );
+                    };
                 }
+
                 // Reached root of git repository.
                 break;
             }
@@ -3568,41 +3588,6 @@ impl BackgroundScanner {
         {
             let mut state = self.state.lock();
             state.snapshot.completed_scan_id = state.snapshot.scan_id;
-        }
-
-        // If we don't have a git repository at the root, we check whether we found an external
-        // git repository.
-        if self.state.lock().snapshot.root_git_entry().is_none() {
-            if let Some(external_git_repo) = external_git_repo {
-                let root_abs_path = self.state.lock().snapshot.abs_path.clone();
-                let external_dot_git = external_git_repo.join(&*DOT_GIT);
-
-                // We canonicalize, since the FS events use the canonicalized path.
-                let dot_git_canonical_path =
-                    self.fs.canonicalize(&external_dot_git).await.log_err();
-                let location_in_repo = root_abs_path.strip_prefix(external_git_repo).log_err();
-
-                if let Some((dot_git_canonical_path, location_in_repo)) =
-                    dot_git_canonical_path.zip(location_in_repo)
-                {
-                    // We associate the external git repo with our root folder and
-                    // also mark where in the git repo the root folder is located.
-
-                    self.state.lock().build_git_repository_for_path(
-                        Arc::from(Path::new("")),
-                        dot_git_canonical_path.clone().into(),
-                        Some(location_in_repo.into()),
-                        self.fs.as_ref(),
-                    );
-
-                    let external_events = self
-                        .fs
-                        .watch(&dot_git_canonical_path, FS_WATCH_LATENCY)
-                        .await;
-
-                    fs_events_rx = select(fs_events_rx, external_events).boxed()
-                };
-            }
         }
 
         self.send_status_update(false, None);
