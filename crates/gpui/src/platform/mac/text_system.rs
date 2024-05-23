@@ -120,16 +120,6 @@ impl PlatformTextSystem for MacTextSystem {
     }
 
     fn set_fallbacks(&self, fallbacks: &[String], is_ui_font: bool) -> Result<()> {
-        for fallback in fallbacks {
-            let font = Font {
-                family: fallback.clone().into(),
-                features: FontFeatures(Arc::new(Vec::new())),
-                weight: FontWeight::NORMAL,
-                style: FontStyle::Normal,
-                fallbacks: FontFallbacks::None,
-            };
-            let _ = self.font_id(&font);
-        }
         self.0.write().set_fallbacks(fallbacks, is_ui_font)
     }
 
@@ -299,6 +289,7 @@ impl MacTextSystemState {
                         }
                     }
                     FontFallbacks::None => {
+                        CFRelease(fallback_array as _);
                         continue;
                     }
                 }
