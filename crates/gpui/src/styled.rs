@@ -508,7 +508,6 @@ pub trait Styled: Sized {
             features,
             weight,
             style,
-            fallbacks,
         } = font;
 
         let text_style = self.text_style().get_or_insert_with(Default::default);
@@ -516,7 +515,6 @@ pub trait Styled: Sized {
         text_style.font_features = Some(features);
         text_style.font_weight = Some(weight);
         text_style.font_style = Some(style);
-        text_style.fallbacks = Some(fallbacks);
 
         self
     }
