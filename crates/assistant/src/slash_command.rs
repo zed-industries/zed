@@ -48,6 +48,7 @@ pub(crate) trait SlashCommand: 'static + Send + Sync {
 
 pub(crate) struct SlashCommandInvocation {
     pub output: Task<Result<String>>,
+    pub replace_input: bool,
     pub invalidated: oneshot::Receiver<()>,
     pub cleanup: SlashCommandCleanup,
 }
@@ -162,6 +163,7 @@ impl SlashCommandCompletionProvider {
                         label: CodeLabel::plain(mat.string, None),
                         server_id: LanguageServerId(0),
                         lsp_completion: Default::default(),
+                        confirm: None,
                     })
                 })
                 .collect())
@@ -193,6 +195,9 @@ impl SlashCommandCompletionProvider {
                         documentation: None,
                         server_id: LanguageServerId(0),
                         lsp_completion: Default::default(),
+                        confirm: Some(Arc::new(|_cx| {
+                            dbg!("invoke the command?");
+                        })),
                     })
                     .collect())
             })

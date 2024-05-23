@@ -101,6 +101,7 @@ impl SlashCommand for FileSlashCommand {
         let Some(argument) = argument else {
             return SlashCommandInvocation {
                 output: Task::ready(Err(anyhow::anyhow!("missing path"))),
+                replace_input: true,
                 invalidated: oneshot::channel().1,
                 cleanup: SlashCommandCleanup::default(),
             };
@@ -116,6 +117,7 @@ impl SlashCommand for FileSlashCommand {
         let Some(abs_path) = abs_path else {
             return SlashCommandInvocation {
                 output: Task::ready(Err(anyhow::anyhow!("missing path"))),
+                replace_input: true,
                 invalidated: oneshot::channel().1,
                 cleanup: SlashCommandCleanup::default(),
             };
@@ -138,6 +140,7 @@ impl SlashCommand for FileSlashCommand {
         });
         SlashCommandInvocation {
             output,
+            replace_input: true,
             invalidated: oneshot::channel().1,
             cleanup: SlashCommandCleanup::default(),
         }

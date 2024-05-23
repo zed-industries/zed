@@ -128,6 +128,7 @@ impl SlashCommand for CurrentFileSlashCommand {
 
         SlashCommandInvocation {
             output: output.unwrap_or_else(|error| Task::ready(Err(error))),
+            replace_input: false,
             invalidated: invalidate_rx,
             cleanup: SlashCommandCleanup::new(move || drop(subscriptions)),
         }

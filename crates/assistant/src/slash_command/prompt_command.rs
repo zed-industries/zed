@@ -69,6 +69,7 @@ impl SlashCommand for PromptSlashCommand {
         let Some(title) = title else {
             return SlashCommandInvocation {
                 output: Task::ready(Err(anyhow!("missing prompt name"))),
+                replace_input: false,
                 invalidated: oneshot::channel().1,
                 cleanup: SlashCommandCleanup::default(),
             };
@@ -88,6 +89,7 @@ impl SlashCommand for PromptSlashCommand {
         });
         SlashCommandInvocation {
             output,
+            replace_input: false,
             invalidated: oneshot::channel().1,
             cleanup: SlashCommandCleanup::default(),
         }

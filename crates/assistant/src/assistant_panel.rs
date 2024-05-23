@@ -1891,32 +1891,44 @@ impl Conversation {
                                         let mut output = output.log_err()?;
                                         output.truncate(output.trim_end().len());
 
-                                        let source_end = source_range.end.to_offset(buffer);
-                                        let output_start = source_end + '\n'.len_utf8();
-                                        let output_end = output_start + output.len();
+                                        if invocation.replace_input {
+                                            buffer.edit(
+                                                Some((source_range.clone(), output)),
+                                                None,
+                                                cx,
+                                            );
 
-                                        if buffer
-                                            .chars_at(source_end)
-                                            .next()
-                                            .map_or(false, |c| c != '\n')
-                                        {
-                                            output.push('\n');
+                                            this.slash_command_calls[call_ix].output_range =
+                                                Some(source_range.clone());
+                                            Some(source_range)
+                                        } else {
+                                            let source_end = source_range.end.to_offset(buffer);
+                                            let output_start = source_end + '\n'.len_utf8();
+                                            let output_end = output_start + output.len();
+
+                                            if buffer
+                                                .chars_at(source_end)
+                                                .next()
+                                                .map_or(false, |c| c != '\n')
+                                            {
+                                                output.push('\n');
+                                            }
+
+                                            buffer.edit(
+                                                [
+                                                    (source_end..source_end, "\n".to_string()),
+                                                    (source_end..source_end, output),
+                                                ],
+                                                None,
+                                                cx,
+                                            );
+
+                                            let output_start = buffer.anchor_after(output_start);
+                                            let output_end = buffer.anchor_before(output_end);
+                                            this.slash_command_calls[call_ix].output_range =
+                                                Some(output_start..output_end);
+                                            Some(source_range.end..output_end)
                                         }
-
-                                        buffer.edit(
-                                            [
-                                                (source_end..source_end, "\n".to_string()),
-                                                (source_end..source_end, output),
-                                            ],
-                                            None,
-                                            cx,
-                                        );
-
-                                        let output_start = buffer.anchor_after(output_start);
-                                        let output_end = buffer.anchor_before(output_end);
-                                        this.slash_command_calls[call_ix].output_range =
-                                            Some(output_start..output_end);
-                                        Some(source_range.end..output_end)
                                     });
                                     if let Some(output_range) = output_range {
                                         cx.emit(ConversationEvent::SlashCommandOutputAdded(
