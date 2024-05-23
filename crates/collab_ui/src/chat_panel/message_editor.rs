@@ -537,7 +537,6 @@ impl Render for MessageEditor {
             font_weight: settings.ui_font.weight,
             font_style: FontStyle::Normal,
             line_height: relative(1.3),
-            fallbacks: settings.ui_font.fallbacks,
             ..Default::default()
         };
 
