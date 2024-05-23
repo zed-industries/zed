@@ -1,12 +1,9 @@
-use gpui::{AnyElement, FontWeight, Model, ModelContext, Render};
-use runtimelib::{ExecutionState, JupyterMessageContent, MimeType};
-use ui::{div, prelude::*, v_flex, IntoElement, Styled, ViewContext};
-
-use serde_json::Value;
-
-use crate::ExecutionId;
-
 use crate::stdio::TerminalOutput;
+use crate::ExecutionId;
+use gpui::{AnyElement, FontWeight, Render, View};
+use runtimelib::{ExecutionState, JupyterMessageContent, MimeType};
+use serde_json::Value;
+use ui::{div, prelude::*, v_flex, IntoElement, Styled, ViewContext};
 
 pub enum OutputType {
     Plain(TerminalOutput),
@@ -17,6 +14,10 @@ pub enum OutputType {
         evalue: String,
         traceback: TerminalOutput,
     },
+}
+
+pub trait LineHeight: Sized {
+    fn num_lines(&self, cx: &mut WindowContext) -> u8;
 }
 
 // Priority order goes from highest to lowest (plaintext is the common fallback)
@@ -42,13 +43,15 @@ impl OutputType {
 
         el
     }
+}
 
+impl LineHeight for OutputType {
     /// Calculates the expected number of lines
-    fn num_lines(&self) -> u8 {
+    fn num_lines(&self, cx: &mut WindowContext) -> u8 {
         match self {
-            Self::Plain(stdio) => stdio.num_lines(),
+            Self::Plain(stdio) => stdio.num_lines(cx),
             Self::Media((_mimetype, value)) => value.as_str().unwrap_or("").lines().count() as u8,
-            Self::Stream(stdio) => stdio.num_lines(),
+            Self::Stream(stdio) => stdio.num_lines(cx),
             Self::ErrorOutput {
                 ename,
                 evalue,
@@ -57,7 +60,7 @@ impl OutputType {
                 let mut height: u8 = 0;
                 height = height.saturating_add(ename.lines().count() as u8);
                 height = height.saturating_add(evalue.lines().count() as u8);
-                height = height.saturating_add(traceback.num_lines());
+                height = height.saturating_add(traceback.num_lines(cx));
                 height
             }
         }
@@ -118,15 +121,17 @@ pub enum ExecutionStatus {
     Finished,
 }
 
-pub struct Execution {
+// Cell has status that's dependent on the runtime
+// The runtime itself has status
+
+pub struct ExecutionView {
     pub execution_id: ExecutionId,
-    // pub anchor: Anchor,
     pub outputs: Vec<OutputType>,
     pub status: ExecutionStatus,
 }
 
-impl Execution {
-    pub fn new(execution_id: ExecutionId, _cx: &mut ModelContext<Self>) -> Self {
+impl ExecutionView {
+    pub fn new(execution_id: ExecutionId, _cx: &mut ViewContext<Self>) -> Self {
         Self {
             execution_id,
             outputs: Default::default(),
@@ -134,24 +139,8 @@ impl Execution {
         }
     }
 
-    pub fn outputs(&self) -> &[OutputType] {
-        &self.outputs
-    }
-
-    pub fn status(&self) -> &ExecutionStatus {
-        &self.status
-    }
-
-    pub fn num_lines(&self) -> u8 {
-        if self.outputs.len() == 0 {
-            return 1; // For the status message if outputs are not there
-        }
-
-        self.outputs.iter().map(|output| output.num_lines()).sum()
-    }
-
-    /// Push a new message
-    pub fn push_message(&mut self, message: &JupyterMessageContent, _cx: &mut ModelContext<Self>) {
+    /// Accept a Jupyter message belonging to this execution
+    pub fn push_message(&mut self, message: &JupyterMessageContent, cx: &mut ViewContext<Self>) {
         let output = match message {
             JupyterMessageContent::ExecuteResult(result) => {
                 let (mimetype, value) =
@@ -209,6 +198,7 @@ impl Execution {
                     }
                     ExecutionState::Idle => self.status = ExecutionStatus::Finished,
                 }
+                cx.notify();
                 return;
             }
             _msg => {
@@ -217,11 +207,11 @@ impl Execution {
         };
 
         self.outputs.push(output);
+
+        cx.notify();
     }
 
     fn apply_terminal_text(&mut self, text: &str) -> Option<OutputType> {
-        // This doesn't handle the base case where there is no last output
-
         if let Some(last_output) = self.outputs.last_mut() {
             if let OutputType::Stream(last_stream) = last_output {
                 last_stream.append_text(text);
@@ -236,42 +226,17 @@ impl Execution {
         new_terminal.append_text(text);
         Some(OutputType::Stream(new_terminal))
     }
-}
-
-pub struct ExecutionView {
-    pub execution: Model<Execution>,
-}
-
-impl ExecutionView {
-    pub fn new(execution_id: ExecutionId, cx: &mut ViewContext<Self>) -> Self {
-        let execution = cx.new_model(|cx| Execution::new(execution_id, cx));
-
-        Self { execution }
-    }
-
-    pub fn push_message(&mut self, message: &JupyterMessageContent, cx: &mut ViewContext<Self>) {
-        self.execution
-            .update(cx, |execution, cx| execution.push_message(message, cx));
-
-        cx.notify();
-    }
 
     pub fn set_status(&mut self, status: ExecutionStatus, cx: &mut ViewContext<Self>) {
-        self.execution
-            .update(cx, |execution, _cx| execution.status = status);
-
+        self.status = status;
         cx.notify();
     }
 }
 
 impl Render for ExecutionView {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
-        let execution = self.execution.read(cx);
-        let outputs = execution.outputs();
-        let status = execution.status();
-
-        if outputs.len() == 0 {
-            match status {
+        if self.outputs.len() == 0 {
+            match self.status {
                 ExecutionStatus::ConnectingToKernel => {
                     return div().child("Connecting to kernel...").into_any_element()
                 }
@@ -282,12 +247,34 @@ impl Render for ExecutionView {
                     return div().child(Icon::new(IconName::Check)).into_any_element()
                 }
                 ExecutionStatus::Unknown => return div().child("...").into_any_element(),
+                _ => {}
             }
         }
 
         div()
             .w_full()
-            .children(outputs.iter().filter_map(|output| output.render(cx)))
+            .children(self.outputs.iter().filter_map(|output| output.render(cx)))
             .into_any_element()
+    }
+}
+
+impl LineHeight for ExecutionView {
+    fn num_lines(&self, cx: &mut WindowContext) -> u8 {
+        if self.outputs.is_empty() {
+            return 1; // For the status message if outputs are not there
+        }
+
+        self.outputs
+            .iter()
+            .map(|output| output.num_lines(cx))
+            .fold(0, |acc, additional_height| {
+                acc.saturating_add(additional_height)
+            })
+    }
+}
+
+impl LineHeight for View<ExecutionView> {
+    fn num_lines(&self, cx: &mut WindowContext) -> u8 {
+        self.update(cx, |execution_view, cx| execution_view.num_lines(cx))
     }
 }

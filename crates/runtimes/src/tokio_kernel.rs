@@ -21,29 +21,28 @@ impl From<String> for ExecutionId {
 }
 
 #[derive(Debug)]
-pub struct ExecutionUpdate {
+pub struct Update {
     #[allow(dead_code)]
     pub execution_id: ExecutionId,
-    pub update: JupyterMessageContent,
+    pub content: JupyterMessageContent,
 }
 
 #[derive(Debug)]
-pub struct ExecutionRequest {
+pub struct Request {
     pub execution_id: ExecutionId,
-    pub request: runtimelib::ExecuteRequest,
-    pub response_sender: mpsc::UnboundedSender<ExecutionUpdate>,
+    pub request: runtimelib::JupyterMessageContent,
+    pub iopub_sender: mpsc::UnboundedSender<Update>,
 }
 
 pub async fn connect_tokio_kernel_interface(
     connection_info: &runtimelib::ConnectionInfo,
-    mut execution_request_rx: mpsc::UnboundedReceiver<ExecutionRequest>,
+    mut shell_request_rx: mpsc::UnboundedReceiver<Request>,
 ) -> Result<()> {
     let mut iopub = connection_info.create_client_iopub_connection("").await?;
     let mut shell = connection_info.create_client_shell_connection().await?;
 
-    let executions: Arc<
-        tokio::sync::Mutex<HashMap<ExecutionId, mpsc::UnboundedSender<ExecutionUpdate>>>,
-    > = Default::default();
+    let executions: Arc<tokio::sync::Mutex<HashMap<ExecutionId, mpsc::UnboundedSender<Update>>>> =
+        Default::default();
 
     let iopub_handle: tokio::task::JoinHandle<anyhow::Result<()>> = tokio::spawn({
         let executions = executions.clone();
@@ -56,9 +55,9 @@ pub async fn connect_tokio_kernel_interface(
 
                     if let Some(mut execution) = executions.lock().await.get(&execution_id) {
                         execution
-                            .send(ExecutionUpdate {
+                            .send(Update {
                                 execution_id,
-                                update: message.content,
+                                content: message.content,
                             })
                             .await
                             .ok();
@@ -71,19 +70,30 @@ pub async fn connect_tokio_kernel_interface(
     let shell_handle: tokio::task::JoinHandle<anyhow::Result<()>> = tokio::spawn({
         let executions = executions.clone();
         async move {
-            while let Some(execution) = execution_request_rx.next().await {
-                let mut message: JupyterMessage = execution.request.into();
-                message.header.msg_id.clone_from(&execution.execution_id.0);
+            while let Some(request) = shell_request_rx.next().await {
+                let mut message = JupyterMessage::new(request.request, None);
+                message.header.msg_id.clone_from(&request.execution_id.0);
+
+                let sender = request.iopub_sender.clone();
 
                 executions
                     .lock()
                     .await
-                    .insert(execution.execution_id, execution.response_sender);
+                    .insert(request.execution_id.clone(), sender.clone());
 
-                shell
-                    .send(message)
+                shell.send(message).await?;
+
+                let mut sender = sender.clone();
+
+                let reply = shell.read().await?;
+
+                sender
+                    .send(Update {
+                        execution_id: request.execution_id,
+                        content: reply.content,
+                    })
                     .await
-                    .map_err(|e| anyhow::anyhow!("Failed to send execute request: {e:?}"))?;
+                    .ok();
             }
             anyhow::Ok(())
         }

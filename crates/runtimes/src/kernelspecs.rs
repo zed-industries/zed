@@ -6,7 +6,7 @@
 
 use anyhow::{Context as _, Result};
 use futures::channel::mpsc;
-use futures::StreamExt;
+use futures::{SinkExt as _, StreamExt};
 use gpui::EntityId;
 use project::Fs;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
@@ -20,7 +20,7 @@ use smol::process::Command;
 
 use runtimelib::{dirs, ConnectionInfo, JupyterKernelspec};
 
-use crate::tokio_kernel::{connect_tokio_kernel_interface, ExecutionRequest};
+use crate::tokio_kernel::{connect_tokio_kernel_interface, ExecutionId, Request};
 
 #[derive(Debug, Clone)]
 pub struct Runtime {
@@ -86,7 +86,7 @@ pub struct RunningKernel {
     runtime: Runtime,
     #[allow(unused)]
     process: smol::process::Child,
-    pub execution_request_tx: mpsc::UnboundedSender<ExecutionRequest>,
+    pub shell_request_tx: mpsc::UnboundedSender<Request>,
     _runtime_handle: std::thread::JoinHandle<()>,
 }
 
@@ -96,8 +96,6 @@ impl RunningKernel {
         entity_id: &EntityId,
         fs: Arc<dyn Fs>,
     ) -> anyhow::Result<Self> {
-        dbg!("Starting kernel for {}", &runtime.spec.language);
-
         let ip = IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1));
         let ports = peek_ports(ip).await?;
 
@@ -120,20 +118,34 @@ impl RunningKernel {
         fs.atomic_write(connection_path.clone(), content).await?;
 
         let mut cmd = runtime.command(&connection_path)?;
-        // Drop the connection info so the kernel can bind to the allocated ports
         let process = cmd
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
+            // .stdout(Stdio::null())
+            // .stderr(Stdio::null())
             .kill_on_drop(true)
             .spawn()
             .context("failed to start the kernel process")?;
 
-        let (execution_request_tx, _runtime_handle) = connect_kernel(connection_info.clone())?;
+        let (mut shell_request_tx, _runtime_handle) = connect_kernel(connection_info.clone())?;
+
+        // Send an initial kernel info request to the kernel to kick it off
+        let (tx, mut rx) = mpsc::unbounded();
+        shell_request_tx
+            .send(Request {
+                execution_id: ExecutionId::new(),
+                request: runtimelib::JupyterMessageContent::KernelInfoRequest(
+                    runtimelib::KernelInfoRequest {},
+                ),
+                iopub_sender: tx,
+            })
+            .await?;
+
+        let timeout = smol::Timer::after(std::time::Duration::from_secs(1));
+        futures::future::select(rx.next(), timeout).await;
 
         Ok(Self {
             runtime,
             process,
-            execution_request_tx,
+            shell_request_tx,
             _runtime_handle,
         })
     }
@@ -141,11 +153,8 @@ impl RunningKernel {
 
 pub fn connect_kernel(
     connection_info: ConnectionInfo,
-) -> Result<(
-    mpsc::UnboundedSender<ExecutionRequest>,
-    std::thread::JoinHandle<()>,
-)> {
-    let (execution_request_tx, execution_request_rx) = mpsc::unbounded::<ExecutionRequest>();
+) -> Result<(mpsc::UnboundedSender<Request>, std::thread::JoinHandle<()>)> {
+    let (shell_request_tx, shell_request_rx) = mpsc::unbounded::<Request>();
 
     let _runtime_handle = std::thread::spawn(|| {
         let tokio_runtime = tokio::runtime::Builder::new_current_thread()
@@ -163,12 +172,12 @@ pub fn connect_kernel(
         // TODO: Will need a signal handler to shutdown the runtime
         tokio_runtime
             .block_on(async move {
-                connect_tokio_kernel_interface(&connection_info, execution_request_rx).await
+                connect_tokio_kernel_interface(&connection_info, shell_request_rx).await
             })
             .log_err();
     });
 
-    Ok((execution_request_tx.clone(), _runtime_handle))
+    Ok((shell_request_tx.clone(), _runtime_handle))
 }
 
 pub async fn read_kernelspec_at(

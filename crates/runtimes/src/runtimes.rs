@@ -1,21 +1,26 @@
 use anyhow::{Context as _, Result};
 use collections::{HashMap, HashSet};
 use editor::{
-    display_map::{BlockContext, BlockDisposition, BlockProperties, BlockStyle, RenderBlock},
+    display_map::{
+        BlockContext, BlockDisposition, BlockId, BlockProperties, BlockStyle, RenderBlock,
+    },
     Anchor, Editor,
 };
 use futures::{
     channel::mpsc::{self, UnboundedSender},
-    Future, StreamExt as _,
+    Future, SinkExt as _, StreamExt as _,
 };
-use gpui::{actions, AppContext, Context, EntityId, Global, Model, ModelContext, Task};
+use gpui::{actions, AppContext, Context, EntityId, Global, Model, ModelContext, Task, WeakView};
 use gpui::{Entity, View};
 use kernelspecs::{get_runtimes, RunningKernel, Runtime};
 use language::Point;
-use outputs::{ExecutionStatus, ExecutionView};
+use outputs::{ExecutionStatus, ExecutionView, LineHeight as _};
 use project::Fs;
 use settings::Settings as _;
+use std::ops::Range;
 use std::sync::Arc;
+use theme::{ActiveTheme, ThemeSettings};
+use tokio_kernel::{ExecutionId, Request, Update};
 use ui::prelude::*;
 use workspace::Workspace;
 
@@ -23,10 +28,6 @@ mod kernelspecs;
 mod outputs;
 mod stdio;
 mod tokio_kernel;
-
-use theme::{ActiveTheme, ThemeSettings};
-
-use tokio_kernel::{ExecutionId, ExecutionRequest, ExecutionUpdate};
 
 actions!(runtimes, [Run]);
 
@@ -65,6 +66,26 @@ pub struct RuntimeManager {
     fs: Arc<dyn Fs>,
     runtimes: Vec<Runtime>,
     instances: HashMap<EntityId, RunningKernel>,
+    editors: HashMap<WeakView<Editor>, EditorRuntimeState>,
+}
+
+// We will store the blocks
+
+// Store all the blocks we're working with so that we can
+// * Remove them when
+
+struct EditorRuntimeState {
+    // Could keep this as a sorted list of blocks so that we can eliminate
+    // blocks that overlap with each other
+    blocks: Vec<EditorRuntimeBlock>,
+    // Store a subscription to the editor so we can drop them when the editor is dropped
+    subscription: gpui::Subscription,
+}
+
+struct EditorRuntimeBlock {
+    code_range: Range<Anchor>,
+    block_id: BlockId,
+    execution: View<ExecutionView>,
 }
 
 pub struct ActiveCode {
@@ -80,18 +101,19 @@ impl RuntimeManager {
             fs,
             runtimes: Default::default(),
             instances: Default::default(),
+            editors: Default::default(),
         }
     }
 
-    fn acquire_execution_request_tx(
+    fn acquire_shell_request_tx(
         &mut self,
         entity_id: EntityId,
         language_name: Arc<str>,
         cx: &mut ModelContext<Self>,
-    ) -> Task<Result<UnboundedSender<ExecutionRequest>>> {
+    ) -> Task<Result<UnboundedSender<Request>>> {
         let running_kernel = self.instances.get(&entity_id);
         if let Some(running_kernel) = running_kernel {
-            return Task::ready(anyhow::Ok(running_kernel.execution_request_tx.clone()));
+            return Task::ready(anyhow::Ok(running_kernel.shell_request_tx.clone()));
         }
         // TODO: Track that a kernel is (possibly) starting up so we don't relaunch without tearing down the old one
 
@@ -118,14 +140,29 @@ impl RuntimeManager {
         cx.spawn(|this, mut cx| async move {
             let running_kernel = RunningKernel::new(runtime, &entity_id, fs.clone()).await?;
 
-            let execution_request_tx = running_kernel.execution_request_tx.clone();
+            let mut shell_request_tx = running_kernel.shell_request_tx.clone();
+            let (tx, mut rx) = mpsc::unbounded();
+            shell_request_tx
+                .send(Request {
+                    execution_id: ExecutionId::new(),
+                    request: runtimelib::JupyterMessageContent::KernelInfoRequest(
+                        runtimelib::KernelInfoRequest {},
+                    ),
+                    iopub_sender: tx,
+                })
+                .await?;
+
+            // Wait for a kernel info reply on launch
+            let timeout = smol::Timer::after(std::time::Duration::from_secs(1));
+            futures::future::select(rx.next(), timeout).await;
+
+            let shell_request_tx = running_kernel.shell_request_tx.clone();
             this.update(&mut cx, |this, _cx| {
-                this.instances
-                    .insert(entity_id, running_kernel)
-                    .ok_or(anyhow::anyhow!("Failed to insert runtime"))?;
+                this.instances.insert(entity_id, running_kernel);
                 anyhow::Ok(())
             })??;
-            anyhow::Ok(execution_request_tx)
+
+            anyhow::Ok(shell_request_tx)
         })
     }
 
@@ -136,28 +173,30 @@ impl RuntimeManager {
         execution_id: ExecutionId,
         code: String,
         cx: &mut ModelContext<Self>,
-    ) -> impl Future<Output = Result<mpsc::UnboundedReceiver<ExecutionUpdate>>> {
+    ) -> impl Future<Output = Result<mpsc::UnboundedReceiver<Update>>> {
         let (tx, rx) = mpsc::unbounded();
 
-        let execution_request_tx = self.acquire_execution_request_tx(entity_id, language_name, cx);
+        let shell_request_tx = self.acquire_shell_request_tx(entity_id, language_name, cx);
 
         async move {
-            let execution_request_tx = execution_request_tx.await?;
+            let shell_request_tx = shell_request_tx.await?;
 
-            execution_request_tx
-                .unbounded_send(ExecutionRequest {
+            shell_request_tx
+                .unbounded_send(Request {
                     execution_id,
-                    request: runtimelib::ExecuteRequest {
-                        code,
-                        allow_stdin: false,
-                        silent: false,
-                        store_history: true,
-                        user_expressions: None,
-                        stop_on_error: false,
-                        // TODO(runtimelib): set up Default::default() for the rest of the fields
-                        // ..Default::default()
-                    },
-                    response_sender: tx,
+                    request: runtimelib::JupyterMessageContent::ExecuteRequest(
+                        runtimelib::ExecuteRequest {
+                            code,
+                            allow_stdin: false,
+                            silent: false,
+                            store_history: true,
+                            user_expressions: None,
+                            stop_on_error: true,
+                            // TODO(runtimelib): set up Default::default() for the rest of the fields
+                            // ..Default::default()
+                        },
+                    ),
+                    iopub_sender: tx,
                 })
                 .context("Failed to send execution request")?;
 
@@ -252,8 +291,6 @@ impl RuntimeManager {
             return;
         };
 
-        // let (code, language_name, anchor, editor) = code_snippet;
-
         let runtime_manager = if let Some(runtime_manager) = RuntimeManager::global(cx) {
             runtime_manager
         } else {
@@ -277,7 +314,7 @@ impl RuntimeManager {
         let mut block_id = active_code.editor.update(cx, |editor, cx| {
             let block = BlockProperties {
                 position,
-                height: 1,
+                height: execution_view.num_lines(cx).saturating_add(1),
                 style: BlockStyle::Sticky,
                 render: create_output_area_render(execution_view.clone()),
                 disposition: BlockDisposition::Below,
@@ -306,8 +343,12 @@ impl RuntimeManager {
 
             let execution_view = execution_view.clone();
             while let Some(update) = receiver.next().await {
+                match update.content {
+                    _ => {}
+                }
+
                 execution_view.update(&mut cx, |execution_view, cx| {
-                    execution_view.push_message(&update.update, cx)
+                    execution_view.push_message(&update.content, cx)
                 })?;
 
                 editor.update(&mut cx, |editor, cx| {
@@ -318,7 +359,7 @@ impl RuntimeManager {
 
                     let block = BlockProperties {
                         position,
-                        height: 1 + execution_view.read(cx).execution.read(cx).num_lines(),
+                        height: execution_view.num_lines(cx).saturating_add(1),
                         style: BlockStyle::Sticky,
                         render: create_output_area_render(execution_view.clone()),
                         disposition: BlockDisposition::Below,
@@ -329,7 +370,7 @@ impl RuntimeManager {
             }
             anyhow::Ok(())
         })
-        .detach();
+        .detach_and_log_err(cx);
     }
 }
 

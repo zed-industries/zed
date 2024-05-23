@@ -1,13 +1,12 @@
-use gpui::{font, AnyElement, StyledText, TextRun};
-use theme::Theme;
-use ui::{div, IntoElement, ParentElement as _};
-
-use core::iter;
-
+use crate::outputs::LineHeight;
 use alacritty_terminal::vte::{
     ansi::{Attr, Color, NamedColor, Rgb},
     Params, ParamsIter, Parser, Perform,
 };
+use core::iter;
+use gpui::{font, AnyElement, StyledText, TextRun};
+use theme::Theme;
+use ui::{div, IntoElement, ParentElement as _, WindowContext};
 
 pub struct TerminalOutput {
     parser: Parser,
@@ -32,11 +31,6 @@ impl TerminalOutput {
         for byte in text.as_bytes() {
             self.parser.advance(&mut self.state.handler, *byte);
         }
-    }
-
-    pub fn num_lines(&self) -> u8 {
-        // todo!(): Track this over time with our parser and just return it when needed
-        self.state.handler.buffer.lines().count() as u8
     }
 
     pub fn render(&self, theme: &Theme) -> AnyElement {
@@ -66,6 +60,13 @@ impl TerminalOutput {
         let text =
             StyledText::new(self.state.handler.buffer.trim_end().to_string()).with_runs(runs);
         div().child(text).into_any_element()
+    }
+}
+
+impl LineHeight for TerminalOutput {
+    fn num_lines(&self, _cx: &mut WindowContext) -> u8 {
+        // todo!(): Track this over time with our parser and just return it when needed
+        self.state.handler.buffer.lines().count() as u8
     }
 }
 
