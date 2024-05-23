@@ -534,20 +534,14 @@ impl<'a> MutableSelectionsCollection<'a> {
             }
         }
 
-        self.collection.disjoint = Arc::from_iter(selections.into_iter().map(|selection| {
-            let end_bias = if selection.end > selection.start {
-                Bias::Left
-            } else {
-                Bias::Right
-            };
-            Selection {
+        self.collection.disjoint =
+            Arc::from_iter(selections.into_iter().map(|selection| Selection {
                 id: selection.id,
-                start: buffer.anchor_after(selection.start),
-                end: buffer.anchor_at(selection.end, end_bias),
+                start: buffer.anchor_before(selection.start),
+                end: buffer.anchor_before(selection.end),
                 reversed: selection.reversed,
                 goal: selection.goal,
-            }
-        }));
+            }));
 
         self.collection.pending = None;
         self.selections_changed = true;

@@ -1625,6 +1625,7 @@ impl Conversation {
                 slash_command_registry,
             };
             this.set_language(cx);
+            this.ensure_trailing_user_message(cx);
             this.reparse_edit_suggestions(cx);
             this.count_remaining_tokens(cx);
             this
@@ -1704,10 +1705,30 @@ impl Conversation {
         cx: &mut ModelContext<Self>,
     ) {
         if *event == language::Event::Edited {
-            self.count_remaining_tokens(cx);
+            self.ensure_trailing_user_message(cx);
             self.reparse_edit_suggestions(cx);
             self.reparse_slash_command_calls(cx);
+            self.count_remaining_tokens(cx);
             cx.emit(ConversationEvent::MessagesEdited);
+        }
+    }
+
+    /// If we find a valid trailing message that isn't a user message, then add one
+    fn ensure_trailing_user_message(&mut self, cx: &mut ModelContext<Self>) {
+        let mut trailing_id = None;
+        for MessageAnchor { id, start } in self.message_anchors.iter().rev() {
+            if start.is_valid(self.buffer.read(cx)) {
+                if self.messages_metadata[id].role == Role::User {
+                    return;
+                } else {
+                    trailing_id = Some(*id);
+                    break;
+                }
+            }
+        }
+
+        if let Some(id) = trailing_id {
+            self.insert_message_after(id, Role::User, MessageStatus::Done, cx);
         }
     }
 
@@ -2207,6 +2228,7 @@ impl Conversation {
         for id in ids {
             if let Some(metadata) = self.messages_metadata.get_mut(&id) {
                 metadata.role.cycle();
+                self.ensure_trailing_user_message(cx);
                 cx.emit(ConversationEvent::MessagesEdited);
                 cx.notify();
             }
