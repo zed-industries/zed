@@ -190,7 +190,7 @@ impl PlatformTextSystem for DirectWriteTextSystem {
         self.0.write().add_fonts(fonts)
     }
 
-    fn set_fallbacks(&self, fallbacks: &[String], font_usage: FontUsage) -> Result<()> {
+    fn set_fallbacks(&self, fallbacks: Option<&[String]>, font_usage: FontUsage) -> Result<()> {
         self.0.write().set_fallbacks(fallbacks, font_usage)
     }
 
@@ -306,7 +306,7 @@ impl DirectWriteState {
         Ok(())
     }
 
-    fn set_fallbacks(&mut self, fallbacks: &[String], font_usage: FontUsage) -> Result<()> {
+    fn set_fallbacks(&mut self, fallbacks: Option<&[String]>, font_usage: FontUsage) -> Result<()> {
         unsafe {
             let builder = self.components.factory.CreateFontFallbackBuilder()?;
             let font_set = &self.system_font_collection.GetFontSet()?;
