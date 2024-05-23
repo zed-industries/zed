@@ -496,8 +496,8 @@ fn test_clone(cx: &mut TestAppContext) {
         editor.change_selections(None, cx, |s| s.select_ranges(selection_ranges.clone()));
         editor.fold_ranges(
             [
-                (Point::new(1, 0)..Point::new(2, 0), "⋯"),
-                (Point::new(3, 0)..Point::new(4, 0), "⋯"),
+                (Point::new(1, 0)..Point::new(2, 0), FoldPlaceholder::test()),
+                (Point::new(3, 0)..Point::new(4, 0), FoldPlaceholder::test()),
             ],
             true,
             cx,
@@ -905,9 +905,9 @@ fn test_move_cursor_multibyte(cx: &mut TestAppContext) {
     _ = view.update(cx, |view, cx| {
         view.fold_ranges(
             vec![
-                (Point::new(0, 6)..Point::new(0, 12), "⋯"),
-                (Point::new(1, 2)..Point::new(1, 4), "⋯"),
-                (Point::new(2, 4)..Point::new(2, 8), "⋯"),
+                (Point::new(0, 6)..Point::new(0, 12), FoldPlaceholder::test()),
+                (Point::new(1, 2)..Point::new(1, 4), FoldPlaceholder::test()),
+                (Point::new(2, 4)..Point::new(2, 8), FoldPlaceholder::test()),
             ],
             true,
             cx,
@@ -3409,9 +3409,9 @@ fn test_move_line_up_down(cx: &mut TestAppContext) {
     _ = view.update(cx, |view, cx| {
         view.fold_ranges(
             vec![
-                (Point::new(0, 2)..Point::new(1, 2), "⋯"),
-                (Point::new(2, 3)..Point::new(4, 1), "⋯"),
-                (Point::new(7, 0)..Point::new(8, 4), "⋯"),
+                (Point::new(0, 2)..Point::new(1, 2), FoldPlaceholder::test()),
+                (Point::new(2, 3)..Point::new(4, 1), FoldPlaceholder::test()),
+                (Point::new(7, 0)..Point::new(8, 4), FoldPlaceholder::test()),
             ],
             true,
             cx,
@@ -3893,9 +3893,9 @@ fn test_split_selection_into_lines(cx: &mut TestAppContext) {
     _ = view.update(cx, |view, cx| {
         view.fold_ranges(
             vec![
-                (Point::new(0, 2)..Point::new(1, 2), "⋯"),
-                (Point::new(2, 3)..Point::new(4, 1), "⋯"),
-                (Point::new(7, 0)..Point::new(8, 4), "⋯"),
+                (Point::new(0, 2)..Point::new(1, 2), FoldPlaceholder::test()),
+                (Point::new(2, 3)..Point::new(4, 1), FoldPlaceholder::test()),
+                (Point::new(7, 0)..Point::new(8, 4), FoldPlaceholder::test()),
             ],
             true,
             cx,
@@ -4550,8 +4550,14 @@ async fn test_select_larger_smaller_syntax_node(cx: &mut gpui::TestAppContext) {
     _ = view.update(cx, |view, cx| {
         view.fold_ranges(
             vec![
-                (Point::new(0, 21)..Point::new(0, 24), "⋯"),
-                (Point::new(3, 20)..Point::new(3, 22), "⋯"),
+                (
+                    Point::new(0, 21)..Point::new(0, 24),
+                    FoldPlaceholder::test(),
+                ),
+                (
+                    Point::new(3, 20)..Point::new(3, 22),
+                    FoldPlaceholder::test(),
+                ),
             ],
             true,
             cx,
@@ -11973,6 +11979,7 @@ fn test_flap_insertion_and_rendering(cx: &mut TestAppContext) {
 
             let flap = Flap::new(
                 range,
+                FoldPlaceholder::test(),
                 {
                     let toggle_callback = render_args.clone();
                     move |row, folded, callback, _cx| {

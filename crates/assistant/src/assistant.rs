@@ -189,7 +189,7 @@ pub struct LanguageModelChoiceDelta {
 struct MessageMetadata {
     role: Role,
     status: MessageStatus,
-    // todo!("delete this")
+    // TODO: Delete this
     #[serde(skip)]
     ambient_context: AmbientContextSnapshot,
 }

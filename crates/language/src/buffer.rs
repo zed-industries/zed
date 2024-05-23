@@ -19,7 +19,10 @@ use crate::{
 use anyhow::{anyhow, Context, Result};
 pub use clock::ReplicaId;
 use futures::channel::oneshot;
-use gpui::{AppContext, EventEmitter, HighlightStyle, ModelContext, Task, TaskLabel};
+use gpui::{
+    AnyElement, AppContext, EventEmitter, HighlightStyle, ModelContext, Task, TaskLabel,
+    WindowContext,
+};
 use lazy_static::lazy_static;
 use lsp::LanguageServerId;
 use parking_lot::Mutex;
@@ -31,6 +34,7 @@ use std::{
     cmp::{self, Ordering},
     collections::BTreeMap,
     ffi::OsStr,
+    fmt,
     future::Future,
     iter::{self, Iterator, Peekable},
     mem,
@@ -461,7 +465,7 @@ pub struct BufferChunks<'a> {
 
 /// A chunk of a buffer's text, along with its syntax highlight and
 /// diagnostic status.
-#[derive(Clone, Copy, Debug, Default)]
+#[derive(Clone, Debug, Default)]
 pub struct Chunk<'a> {
     /// The text of the chunk.
     pub text: &'a str,
@@ -476,6 +480,25 @@ pub struct Chunk<'a> {
     pub is_unnecessary: bool,
     /// Whether this chunk of text was originally a tab character.
     pub is_tab: bool,
+    /// An optional recipe for how the chunk should be presented.
+    pub renderer: Option<ChunkRenderer>,
+}
+
+/// A recipe for how the chunk should be presented.
+#[derive(Clone)]
+pub struct ChunkRenderer {
+    /// creates a custom element to represent this chunk.
+    pub render: Arc<dyn Send + Sync + Fn(&mut WindowContext) -> AnyElement>,
+    /// If true, the element is constrained to the shaped width of the text.
+    pub constrain_width: bool,
+}
+
+impl fmt::Debug for ChunkRenderer {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        f.debug_struct("ChunkRenderer")
+            .field("constrain_width", &self.constrain_width)
+            .finish()
+    }
 }
 
 /// A set of edits to a given version of a buffer, computed asynchronously.

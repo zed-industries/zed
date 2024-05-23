@@ -875,7 +875,7 @@ impl<'a> Iterator for BlockChunks<'a> {
 
         Some(Chunk {
             text: prefix,
-            ..self.input_chunk
+            ..self.input_chunk.clone()
         })
     }
 }
