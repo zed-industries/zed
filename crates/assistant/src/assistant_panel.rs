@@ -35,7 +35,7 @@ use fs::Fs;
 use futures::StreamExt;
 use gpui::{
     canvas, div, point, relative, rems, uniform_list, Action, AnyElement, AnyView, AppContext,
-    AsyncAppContext, AsyncWindowContext, AvailableSpace, ClipboardItem, Context, Entity,
+    AsyncAppContext, AsyncWindowContext, AvailableSpace, ClipboardItem, Context, Empty, Entity,
     EventEmitter, FocusHandle, FocusableView, FontStyle, FontWeight, HighlightStyle,
     InteractiveElement, IntoElement, Model, ModelContext, ParentElement, Pixels, Render,
     SharedString, StatefulInteractiveElement, Styled, Subscription, Task, TextStyle,
@@ -2945,10 +2945,7 @@ impl ConversationEditor {
                             [Flap::new(
                                 start..end,
                                 FoldPlaceholder {
-                                    render: Arc::new(|_, _, _| {
-                                        div().child("PLACEHOLDER").into_any()
-                                    }),
-                                    text: "",
+                                    render: Arc::new(|_, _, _| Empty.into_any()),
                                     constrain_width: false,
                                 },
                                 render_slash_command_output_toggle,

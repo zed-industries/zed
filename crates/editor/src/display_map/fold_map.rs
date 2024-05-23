@@ -18,10 +18,8 @@ use util::post_inc;
 pub struct FoldPlaceholder {
     /// Creates an element to represent this fold's placeholder.
     pub render: Arc<dyn Send + Sync + Fn(FoldId, Range<Anchor>, &mut WindowContext) -> AnyElement>,
-    /// If true, the element is constrained to the shaped width of the text.
+    /// If true, the element is constrained to the shaped width of an ellipsis.
     pub constrain_width: bool,
-    /// A textual representation of this placeholder, which can be used to constrain its width.
-    pub text: &'static str,
 }
 
 impl FoldPlaceholder {
@@ -30,7 +28,6 @@ impl FoldPlaceholder {
         Self {
             render: Arc::new(|_id, _range, _cx| gpui::Empty.into_any_element()),
             constrain_width: true,
-            text: "⋯",
         }
     }
 }
@@ -38,7 +35,6 @@ impl FoldPlaceholder {
 impl fmt::Debug for FoldPlaceholder {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("FoldPlaceholder")
-            .field("text", &self.text)
             .field("constrain_width", &self.constrain_width)
             .finish()
     }
@@ -48,9 +44,7 @@ impl Eq for FoldPlaceholder {}
 
 impl PartialEq for FoldPlaceholder {
     fn eq(&self, other: &Self) -> bool {
-        Arc::ptr_eq(&self.render, &other.render)
-            && self.constrain_width == other.constrain_width
-            && self.text == other.text
+        Arc::ptr_eq(&self.render, &other.render) && self.constrain_width == other.constrain_width
     }
 }
 
@@ -403,16 +397,18 @@ impl FoldMap {
                     }
 
                     if fold_range.end > fold_range.start {
+                        const ELLIPSIS: &'static str = "⋯";
+
                         let fold_id = fold.id;
                         new_transforms.push(
                             Transform {
                                 summary: TransformSummary {
-                                    output: TextSummary::from(fold.placeholder.text),
+                                    output: TextSummary::from(ELLIPSIS),
                                     input: inlay_snapshot
                                         .text_summary_for_range(fold_range.start..fold_range.end),
                                 },
                                 placeholder: Some(TransformPlaceholder {
-                                    text: fold.placeholder.text,
+                                    text: ELLIPSIS,
                                     renderer: ChunkRenderer {
                                         render: Arc::new(move |cx| {
                                             (fold.placeholder.render)(
@@ -1189,12 +1185,10 @@ mod tests {
     use super::*;
     use crate::{display_map::inlay_map::InlayMap, MultiBuffer, ToPoint};
     use collections::HashSet;
-    use gpui::Empty;
     use rand::prelude::*;
     use settings::SettingsStore;
     use std::{env, mem};
     use text::Patch;
-    use ui::IntoElement;
     use util::test::sample_text;
     use util::RandomCharIter;
     use Bias::{Left, Right};
@@ -1468,10 +1462,10 @@ mod tests {
             snapshot_edits.push((snapshot.clone(), edits));
 
             let mut expected_text: String = inlay_snapshot.text().to_string();
-            for (fold_range, fold_text) in map.merged_folds().into_iter().rev() {
+            for fold_range in map.merged_folds().into_iter().rev() {
                 let fold_inlay_start = inlay_snapshot.to_inlay_offset(fold_range.start);
                 let fold_inlay_end = inlay_snapshot.to_inlay_offset(fold_range.end);
-                expected_text.replace_range(fold_inlay_start.0..fold_inlay_end.0, fold_text);
+                expected_text.replace_range(fold_inlay_start.0..fold_inlay_end.0, "⋯");
             }
 
             assert_eq!(snapshot.text(), expected_text);
@@ -1483,7 +1477,7 @@ mod tests {
 
             let mut prev_row = 0;
             let mut expected_buffer_rows = Vec::new();
-            for (fold_range, _fold_text) in map.merged_folds().into_iter() {
+            for fold_range in map.merged_folds() {
                 let fold_start = inlay_snapshot
                     .to_point(inlay_snapshot.to_inlay_offset(fold_range.start))
                     .row();
@@ -1597,7 +1591,7 @@ mod tests {
             let folded_buffer_rows = map
                 .merged_folds()
                 .iter()
-                .flat_map(|(fold_range, _)| {
+                .flat_map(|fold_range| {
                     let start_row = fold_range.start.to_point(&buffer_snapshot).row;
                     let end = fold_range.end.to_point(&buffer_snapshot);
                     if end.column == 0 {
@@ -1713,7 +1707,7 @@ mod tests {
     }
 
     impl FoldMap {
-        fn merged_folds(&self) -> Vec<(Range<usize>, &'static str)> {
+        fn merged_folds(&self) -> Vec<Range<usize>> {
             let inlay_snapshot = self.snapshot.inlay_snapshot.clone();
             let buffer = &inlay_snapshot.buffer;
             let mut folds = self.snapshot.folds.items(buffer);
@@ -1721,17 +1715,12 @@ mod tests {
             folds.sort_by(|a, b| a.range.cmp(&b.range, buffer));
             let mut folds = folds
                 .iter()
-                .map(|fold| {
-                    (
-                        fold.range.start.to_offset(buffer)..fold.range.end.to_offset(buffer),
-                        fold.placeholder.text,
-                    )
-                })
+                .map(|fold| fold.range.start.to_offset(buffer)..fold.range.end.to_offset(buffer))
                 .peekable();
 
             let mut merged_folds = Vec::new();
-            while let Some((mut fold_range, fold_text)) = folds.next() {
-                while let Some((next_range, _)) = folds.peek() {
+            while let Some(mut fold_range) = folds.next() {
+                while let Some(next_range) = folds.peek() {
                     if fold_range.end >= next_range.start {
                         if next_range.end > fold_range.end {
                             fold_range.end = next_range.end;
@@ -1742,7 +1731,7 @@ mod tests {
                     }
                 }
                 if fold_range.end > fold_range.start {
-                    merged_folds.push((fold_range, fold_text));
+                    merged_folds.push(fold_range);
                 }
             }
             merged_folds
@@ -1777,16 +1766,7 @@ mod tests {
                     for _ in 0..rng.gen_range(1..=2) {
                         let end = buffer.clip_offset(rng.gen_range(0..=buffer.len()), Right);
                         let start = buffer.clip_offset(rng.gen_range(0..=end), Left);
-                        let text = if rng.gen() {
-                            FoldPlaceholder::test()
-                        } else {
-                            FoldPlaceholder {
-                                text: "",
-                                render: Arc::new(|_, _, _| Empty.into_any_element()),
-                                constrain_width: true,
-                            }
-                        };
-                        to_fold.push((start..end, text));
+                        to_fold.push((start..end, FoldPlaceholder::test()));
                     }
                     log::info!("folding {:?}", to_fold);
                     let (mut writer, snapshot, edits) = self.write(inlay_snapshot, vec![]);

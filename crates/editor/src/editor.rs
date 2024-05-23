@@ -1579,7 +1579,6 @@ impl Editor {
         let font_size = style.font_size.to_pixels(cx.rem_size());
         let editor = cx.view().downgrade();
         let fold_placeholder = FoldPlaceholder {
-            text: "⋯",
             constrain_width: true,
             render: Arc::new(move |fold_id, fold_range, cx| {
                 let editor = editor.clone();
@@ -9339,14 +9338,14 @@ impl Editor {
         let buffer_row = fold_at.buffer_row;
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
 
-        if let Some((fold_range, fold_text)) = display_map.foldable_range(buffer_row) {
+        if let Some((fold_range, placeholder)) = display_map.foldable_range(buffer_row) {
             let autoscroll = self
                 .selections
                 .all::<Point>(cx)
                 .iter()
                 .any(|selection| fold_range.overlaps(&selection.range()));
 
-            self.fold_ranges([(fold_range, fold_text)], autoscroll, cx);
+            self.fold_ranges([(fold_range, placeholder)], autoscroll, cx);
         }
     }
 
