@@ -6958,7 +6958,7 @@ async fn test_advance_downward_on_toggle_comment(cx: &mut gpui::TestAppContext) 
     cx.assert_editor_state(indoc!(
         "fn a() {
              // dog();
-             catˇ();
+             ˇcat();
         }"
     ));
 
@@ -6974,7 +6974,7 @@ async fn test_advance_downward_on_toggle_comment(cx: &mut gpui::TestAppContext) 
     });
     cx.assert_editor_state(indoc!(
         "fn a() {
-             // «dog()ˇ»;
+             «// dog()ˇ»;
              cat();
         }"
     ));
@@ -6992,7 +6992,7 @@ async fn test_advance_downward_on_toggle_comment(cx: &mut gpui::TestAppContext) 
     cx.assert_editor_state(indoc!(
         "fn a() {
              // dog();
-             catˇ(ˇ);
+             ˇcat(ˇ);
         }"
     ));
 
@@ -7008,7 +7008,7 @@ async fn test_advance_downward_on_toggle_comment(cx: &mut gpui::TestAppContext) 
     });
     cx.assert_editor_state(indoc!(
         "fn a() {
-             // ˇdˇog«()ˇ»;
+             ˇ// dˇog«()ˇ»;
              cat();
         }"
     ));
