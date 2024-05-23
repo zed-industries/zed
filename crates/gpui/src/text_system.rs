@@ -35,7 +35,7 @@ use std::{
 #[repr(C)]
 pub struct FontId(pub usize);
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum FontUsage {
     UIFont,
     BufferFont,

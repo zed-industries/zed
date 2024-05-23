@@ -1,7 +1,8 @@
 use crate::{
     point, px, size, Bounds, DevicePixels, Font, FontFallbacks, FontFeatures, FontId, FontMetrics,
-    FontRun, FontStyle, FontWeight, GlyphId, LineLayout, Pixels, PlatformTextSystem, Point,
-    RenderGlyphParams, Result, ShapedGlyph, ShapedRun, SharedString, Size, SUBPIXEL_VARIANTS,
+    FontRun, FontStyle, FontUsage, FontWeight, GlyphId, LineLayout, Pixels, PlatformTextSystem,
+    Point, RenderGlyphParams, Result, ShapedGlyph, ShapedRun, SharedString, Size,
+    SUBPIXEL_VARIANTS,
 };
 use anyhow::anyhow;
 use cocoa::{
@@ -119,8 +120,8 @@ impl PlatformTextSystem for MacTextSystem {
         self.0.write().add_fonts(fonts)
     }
 
-    fn set_fallbacks(&self, fallbacks: &[String], is_ui_font: bool) -> Result<()> {
-        self.0.write().set_fallbacks(fallbacks, is_ui_font)
+    fn set_fallbacks(&self, fallbacks: &[String], font_usage: FontUsage) -> Result<()> {
+        self.0.write().set_fallbacks(fallbacks, font_usage)
     }
 
     fn all_font_names(&self) -> Vec<String> {
@@ -241,7 +242,7 @@ impl MacTextSystemState {
         Ok(())
     }
 
-    fn set_fallbacks(&mut self, fallbacks: &[String], is_ui_font: bool) -> Result<()> {
+    fn set_fallbacks(&mut self, fallbacks: &[String], font_usage: FontUsage) -> Result<()> {
         if self.fonts.is_empty() {
             return Ok(());
         }
@@ -253,7 +254,7 @@ impl MacTextSystemState {
 
                 match font.fallbacks {
                     FontFallbacks::UiFontFallbacks => {
-                        if is_ui_font {
+                        if font_usage == FontUsage::UIFont {
                             for user_fallback in fallbacks {
                                 let name = CFString::from(user_fallback.as_str());
                                 let fallback_desc = {
@@ -271,7 +272,7 @@ impl MacTextSystemState {
                         }
                     }
                     FontFallbacks::BufferFontFallbacks => {
-                        if !is_ui_font {
+                        if font_usage == FontUsage::BufferFont {
                             for user_fallback in fallbacks {
                                 let name = CFString::from(user_fallback.as_str());
                                 let fallback_desc = {
