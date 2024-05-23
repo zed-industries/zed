@@ -1,12 +1,13 @@
-use crate::outputs::LineHeight;
+use crate::outputs::{ExecutionView, LineHeight};
 use alacritty_terminal::vte::{
     ansi::{Attr, Color, NamedColor, Rgb},
     Params, ParamsIter, Parser, Perform,
 };
 use core::iter;
-use gpui::{font, AnyElement, StyledText, TextRun};
-use theme::Theme;
-use ui::{div, IntoElement, ParentElement as _, WindowContext};
+use gpui::{font, prelude::*, AnyElement, StyledText, TextRun};
+use settings::Settings as _;
+use theme::ThemeSettings;
+use ui::{div, prelude::*, IntoElement, ViewContext, WindowContext};
 
 pub struct TerminalOutput {
     parser: Parser,
@@ -33,7 +34,9 @@ impl TerminalOutput {
         }
     }
 
-    pub fn render(&self, theme: &Theme) -> AnyElement {
+    pub fn render(&self, cx: &ViewContext<ExecutionView>) -> AnyElement {
+        let theme = cx.theme();
+        let buffer_font = ThemeSettings::get_global(cx).buffer_font.family.clone();
         let mut text_runs = self.state.handler.text_runs.clone();
         text_runs.push(self.state.handler.current_text_run.clone());
 
@@ -51,7 +54,7 @@ impl TerminalOutput {
                     color,
                     background_color,
                     underline: Default::default(),
-                    font: font("Zed Mono"),
+                    font: font(buffer_font.clone()),
                     strikethrough: None,
                 }
             })
@@ -59,7 +62,10 @@ impl TerminalOutput {
 
         let text =
             StyledText::new(self.state.handler.buffer.trim_end().to_string()).with_runs(runs);
-        div().child(text).into_any_element()
+        div()
+            .font_family(buffer_font)
+            .child(text)
+            .into_any_element()
     }
 }
 

@@ -25,15 +25,13 @@ const PRIORITY_ORDER: &[MimeType] = &[MimeType::Markdown, MimeType::Plain];
 
 impl OutputType {
     fn render(&self, cx: &ViewContext<ExecutionView>) -> Option<AnyElement> {
-        let theme = cx.theme();
-
         let el = match self {
             // Note: in typical frontends we would show the execute_result.execution_count
             // Here we can just handle either
-            Self::Plain(stdio) => Some(stdio.render(theme)),
+            Self::Plain(stdio) => Some(stdio.render(cx)),
             // Self::Markdown(markdown) => Some(markdown.render(theme)),
             Self::Media((mimetype, value)) => render_rich(mimetype, value),
-            Self::Stream(stdio) => Some(stdio.render(theme)),
+            Self::Stream(stdio) => Some(stdio.render(cx)),
             Self::ErrorOutput {
                 ename,
                 evalue,
@@ -106,7 +104,7 @@ fn render_error_output(
                     .font_weight(FontWeight::BOLD)
                     .child(format!("{}: {}", ename, evalue)),
             )
-            .child(traceback.render(theme))
+            .child(traceback.render(cx))
             .into_any_element(),
     )
 }
