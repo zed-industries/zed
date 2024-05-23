@@ -330,7 +330,6 @@ impl DirectWriteState {
                     let font = fonts.GetFontFaceReference(0)?.CreateFontFace()?;
                     let mut count = 0;
                     font.GetUnicodeRanges(None, &mut count).ok();
-                    println!("Unicode ranges for {}: {}", family_name, count);
                     if count == 0 {
                         continue;
                     }
@@ -357,11 +356,10 @@ impl DirectWriteState {
             } else {
                 None
             };
-
             self.fonts
                 .iter_mut()
                 .filter(|font_info| font_info.font_family == target_family)
-                .map(|font_info| font_info.fallbacks = fallbacks.clone());
+                .for_each(|font_info| font_info.fallbacks = fallbacks.clone());
             Ok(())
         }
     }
