@@ -3,7 +3,7 @@ mod keymap_file;
 mod settings_file;
 mod settings_store;
 
-use gpui::{AppContext, Global, Subscription};
+use gpui::AppContext;
 use rust_embed::RustEmbed;
 use std::{borrow::Cow, str};
 use util::asset_str;
@@ -79,8 +79,6 @@ pub struct GlobalFontFallbacks {
     pub ui_font_family: Vec<String>,
     pub buffer_font_family: Vec<String>,
 }
-
-// impl Global for FontFallbacks {}
 
 impl Settings for GlobalFontFallbacks {
     const KEY: Option<&'static str> = None;
