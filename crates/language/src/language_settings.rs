@@ -773,7 +773,7 @@ fn merge_settings(settings: &mut LanguageSettings, src: &LanguageSettingsContent
     );
     merge(&mut settings.show_wrap_guides, src.show_wrap_guides);
     merge(&mut settings.wrap_guides, src.wrap_guides.clone());
-    merge(&mut settings.indent_guides, src.indent_guides.clone());
+    merge(&mut settings.indent_guides, src.indent_guides);
     merge(
         &mut settings.code_actions_on_format,
         src.code_actions_on_format.clone(),
