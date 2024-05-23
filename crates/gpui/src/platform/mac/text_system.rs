@@ -264,11 +264,8 @@ impl MacTextSystemState {
         if self.fonts.is_empty() {
             return Ok(());
         }
-        println!("====================== Setting fallbacks ======================");
-        println!("{:#?}<->{:#?}", fallbacks, is_ui_font);
         unsafe {
             let pref_langs = CFArray::wrap_under_get_rule(self.pref_langs.as_concrete_TypeRef());
-            let mut count = 0;
             for font in self.fonts.iter_mut() {
                 let mut fallback_array =
                     CFArrayCreateMutable(kCFAllocatorDefault, 0, &kCFTypeArrayCallBacks);
@@ -294,7 +291,6 @@ impl MacTextSystemState {
                     }
                     FontFallbacks::BufferFontFallbacks => {
                         if !is_ui_font {
-                            println!("Adding fallbacks");
                             for user_fallback in fallbacks {
                                 let name = CFString::from(user_fallback.as_str());
                                 let fallback_desc = {
@@ -315,10 +311,7 @@ impl MacTextSystemState {
                         continue;
                     }
                 }
-                println!("==> Font count: {}, {:#?}", count, font);
-                count += 1;
 
-                println!("Getting cascade");
                 cascade_list_for_languages(&font.font.native_font(), &pref_langs)
                     .into_iter()
                     .filter(|desc| desc.font_path().is_some())
@@ -329,31 +322,22 @@ impl MacTextSystemState {
                         );
                     });
 
-                // let fallback_array: CFArray<CTFont> =
-                //     unsafe { CFArray::wrap_under_create_rule(fallback_array) };
-                println!("Getting font desc");
                 let feature_array = generate_feature_array(&font.font_features);
                 let keys = [kCTFontFeatureSettingsAttribute, kCTFontCascadeListAttribute];
-                // let keys = [kCTFontCascadeListAttribute];
                 let values = [feature_array, fallback_array];
-                // let values = [fallback_array];
-                println!("Create attrs");
                 let attrs = CFDictionaryCreate(
                     kCFAllocatorDefault,
                     keys.as_ptr() as _,
                     values.as_ptr() as _,
                     2,
-                    // 1,
                     &kCFTypeDictionaryKeyCallBacks,
                     &kCFTypeDictionaryValueCallBacks,
                 );
                 CFRelease(feature_array as *const _ as _);
                 CFRelease(fallback_array as *const _ as _);
-                println!("Create new desc");
                 let new_descriptor = CTFontDescriptorCreateWithAttributes(attrs);
                 CFRelease(attrs as _);
                 let new_descriptor = CTFontDescriptor::wrap_under_create_rule(new_descriptor);
-                println!("Create new font");
                 let new_font = CTFontCreateCopyWithAttributes(
                     font.font.native_font().as_concrete_TypeRef(),
                     0.0,
@@ -472,7 +456,6 @@ impl MacTextSystemState {
 
     fn id_for_native_font(&mut self, requested_font: CTFont) -> FontId {
         let postscript_name = requested_font.postscript_name();
-        println!("--> Getting post name: {}", postscript_name);
         if let Some(font_id) = self.font_ids_by_postscript_name.get(&postscript_name) {
             *font_id
         } else {
