@@ -7917,6 +7917,8 @@ impl Editor {
             let Some(project) = project else {
                 return;
             };
+            // TODO kb need to distinguish between remote server clients and multiplayer clients,
+            // and enable the runners for the former
             if project
                 .update(&mut cx, |this, _| this.is_remote())
                 .unwrap_or(true)

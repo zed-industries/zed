@@ -218,14 +218,17 @@ impl PickerDelegate for TasksModalDelegate {
 
                             let resolved_task =
                                 picker.delegate.project.update(cx, |project, cx| {
-                                    let remote_templates = project.remote_id().map(|project_id| {
-                                        project.query_remote_task_templates(
-                                            project_id,
-                                            worktree,
-                                            location.as_ref(),
-                                            cx,
-                                        )
-                                    });
+                                    let remote_templates = project
+                                        .remote_id()
+                                        .filter(|_| project.is_remote())
+                                        .map(|project_id| {
+                                            project.query_remote_task_templates(
+                                                project_id,
+                                                worktree,
+                                                location.as_ref(),
+                                                cx,
+                                            )
+                                        });
                                     project
                                         .task_inventory()
                                         .read(cx)
