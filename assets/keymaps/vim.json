@@ -245,10 +245,6 @@
           "displayLines": true
         }
       ],
-      "] d": "editor::GoToDiagnostic",
-      "[ d": "editor::GoToPrevDiagnostic",
-      "] c": "editor::GoToHunk",
-      "[ c": "editor::GoToPrevHunk",
       "g ]": "editor::GoToDiagnostic",
       "g [": "editor::GoToPrevDiagnostic",
       "g i": ["workspace::SendKeystrokes", "` ^ i"],
@@ -389,7 +385,11 @@
       "ctrl-pageup": "pane::ActivatePrevItem",
       // tree-sitter related commands
       "[ x": "editor::SelectLargerSyntaxNode",
-      "] x": "editor::SelectSmallerSyntaxNode"
+      "] x": "editor::SelectSmallerSyntaxNode",
+      "] d": "editor::GoToDiagnostic",
+      "[ d": "editor::GoToPrevDiagnostic",
+      "] c": "editor::GoToHunk",
+      "[ c": "editor::GoToPrevHunk"
     }
   },
   {
