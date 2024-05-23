@@ -123,7 +123,6 @@ impl BufferSearchBar {
             underline: None,
             strikethrough: None,
             white_space: WhiteSpace::Normal,
-            fallbacks: settings.buffer_font.fallbacks,
         };
 
         EditorElement::new(
