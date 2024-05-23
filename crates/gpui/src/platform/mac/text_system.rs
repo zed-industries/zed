@@ -244,6 +244,7 @@ impl MacTextSystemState {
             return Ok(());
         }
         println!("====================== Setting fallbacks");
+        println!("{:#?}<->{:#?}", fallbacks, is_ui_font);
         unsafe {
             let user_defaults: id = msg_send![class!(NSUserDefaults), standardUserDefaults];
             let key = CFString::from_static_string("AppleLanguages");
@@ -260,12 +261,17 @@ impl MacTextSystemState {
                         if is_ui_font {
                             for user_fallback in fallbacks {
                                 let name = CFString::from(user_fallback.as_str());
-                                let fallback_desc = CTFontDescriptorCreateWithNameAndSize(
-                                    name.as_concrete_TypeRef(),
-                                    0.0,
+                                let fallback_desc = {
+                                    let desc = CTFontDescriptorCreateWithNameAndSize(
+                                        name.as_concrete_TypeRef(),
+                                        0.0,
+                                    );
+                                    CTFontDescriptor::wrap_under_create_rule(desc)
+                                };
+                                CFArrayAppendValue(
+                                    fallback_array,
+                                    fallback_desc.as_concrete_TypeRef() as _,
                                 );
-                                CFArrayAppendValue(fallback_array, fallback_desc as _);
-                                CFRelease(fallback_desc as _);
                             }
                         }
                     }
@@ -273,16 +279,23 @@ impl MacTextSystemState {
                         if !is_ui_font {
                             for user_fallback in fallbacks {
                                 let name = CFString::from(user_fallback.as_str());
-                                let fallback_desc = CTFontDescriptorCreateWithNameAndSize(
-                                    name.as_concrete_TypeRef(),
-                                    0.0,
+                                let fallback_desc = {
+                                    let desc = CTFontDescriptorCreateWithNameAndSize(
+                                        name.as_concrete_TypeRef(),
+                                        0.0,
+                                    );
+                                    CTFontDescriptor::wrap_under_create_rule(desc)
+                                };
+                                CFArrayAppendValue(
+                                    fallback_array,
+                                    fallback_desc.as_concrete_TypeRef() as _,
                                 );
-                                CFArrayAppendValue(fallback_array, fallback_desc as _);
-                                CFRelease(fallback_desc as _);
                             }
                         }
                     }
-                    FontFallbacks::None => {}
+                    FontFallbacks::None => {
+                        continue;
+                    }
                 }
 
                 println!("Getting cascade");
@@ -294,40 +307,40 @@ impl MacTextSystemState {
                             fallback_array,
                             user_fallback_desc.as_concrete_TypeRef() as _,
                         );
-                        CFRelease(user_fallback_desc.as_concrete_TypeRef() as _);
                     });
 
                 // let fallback_array: CFArray<CTFont> =
                 //     unsafe { CFArray::wrap_under_create_rule(fallback_array) };
                 println!("Getting font desc");
-                let feature_array = generate_feature_array(&font.font_features);
-                let keys = [kCTFontFeatureSettingsAttribute, kCTFontCascadeListAttribute];
-                let values = [feature_array, fallback_array];
+                // let feature_array = generate_feature_array(&font.font_features);
+                // let keys = [kCTFontFeatureSettingsAttribute, kCTFontCascadeListAttribute];
+                let keys = [kCTFontCascadeListAttribute];
+                // let values = [feature_array, fallback_array];
+                let values = [fallback_array];
                 println!("Create attrs");
                 let attrs = CFDictionaryCreate(
                     kCFAllocatorDefault,
                     keys.as_ptr() as _,
                     values.as_ptr() as _,
-                    2,
+                    // 2,
+                    1,
                     &kCFTypeDictionaryKeyCallBacks,
                     &kCFTypeDictionaryValueCallBacks,
                 );
-                CFRelease(feature_array as *const _ as _);
+                // CFRelease(feature_array as *const _ as _);
                 CFRelease(fallback_array as *const _ as _);
                 println!("Create new desc");
                 let new_descriptor = CTFontDescriptorCreateWithAttributes(attrs);
                 CFRelease(attrs as _);
-                // let new_descriptor = CTFontDescriptor::wrap_under_create_rule(new_descriptor);
+                let new_descriptor = CTFontDescriptor::wrap_under_create_rule(new_descriptor);
                 println!("Create new font");
                 let new_font = CTFontCreateCopyWithAttributes(
                     font.font.native_font().as_concrete_TypeRef(),
                     0.0,
                     std::ptr::null(),
-                    new_descriptor,
+                    new_descriptor.as_concrete_TypeRef(),
                 );
-                CFRelease(new_descriptor as _);
                 let new_font = CTFont::wrap_under_create_rule(new_font);
-                CFRelease(font.font.native_font().as_concrete_TypeRef() as _);
                 font.font = font_kit::font::Font::from_native_font(&new_font);
             }
             Ok(())
@@ -354,7 +367,7 @@ impl MacTextSystemState {
         for font in family.fonts() {
             let mut font = font.load()?;
 
-            open_type::apply_features(&mut font, features);
+            // open_type::apply_features(&mut font, features);
 
             // This block contains a precautionary fix to guard against loading fonts
             // that might cause panics due to `.unwrap()`s up the chain.
