@@ -2140,7 +2140,12 @@ message TaskTemplates {
 }
 
 message TaskTemplatesResponse {
-    repeated TaskTemplate templates = 1;
+    repeated TemplatePair templates = 1;
+}
+
+message TemplatePair {
+    TaskSourceKind kind = 1;
+    TaskTemplate template = 2;
 }
 
 message TaskTemplate {

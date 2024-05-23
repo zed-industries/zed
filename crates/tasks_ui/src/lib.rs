@@ -83,7 +83,7 @@ fn spawn_task_or_modal(workspace: &mut Workspace, action: &Spawn, cx: &mut ViewC
 }
 
 fn toggle_modal(workspace: &mut Workspace, cx: &mut ViewContext<'_, Workspace>) -> AsyncTask<()> {
-    let inventory = workspace.project().read(cx).task_inventory().clone();
+    let project = workspace.project().clone();
     let workspace_handle = workspace.weak_handle();
     let context_task = task_context(workspace, cx);
     cx.spawn(|workspace, mut cx| async move {
@@ -91,7 +91,7 @@ fn toggle_modal(workspace: &mut Workspace, cx: &mut ViewContext<'_, Workspace>) 
         workspace
             .update(&mut cx, |workspace, cx| {
                 workspace.toggle_modal(cx, |cx| {
-                    TasksModal::new(inventory, task_context, workspace_handle, cx)
+                    TasksModal::new(project, task_context, workspace_handle, cx)
                 })
             })
             .ok();

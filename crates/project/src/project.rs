@@ -9439,25 +9439,9 @@ impl Project {
             .payload
             .location
             .context("no location given for task context handling")?;
-        // TODO kb extract it into a function
-        let buffer_id = BufferId::new(location.buffer_id)?;
-        let buffer = project
-            .update(&mut cx, |project, cx| {
-                project.wait_for_remote_buffer(buffer_id, cx)
-            })?
+        let location = cx
+            .update(|cx| deserialize_location(&project, location, cx))?
             .await?;
-        let start = location
-            .start
-            .and_then(deserialize_anchor)
-            .context("missing task context location start")?;
-        let end = location
-            .end
-            .and_then(deserialize_anchor)
-            .context("missing task context location end")?;
-        let location = Location {
-            buffer,
-            range: start..end,
-        };
         let context_task = project.update(&mut cx, |project, cx| {
             let captured_variables = {
                 let mut variables = TaskVariables::default();
@@ -10552,31 +10536,47 @@ impl Project {
         &self,
         location: Location,
         worktree: WorktreeId,
-        cx: &mut AppContext,
+        cx: &mut ModelContext<Self>,
     ) -> Task<Result<Vec<(TaskSourceKind, TaskTemplate)>>> {
-        // if self.is_local() {
-        //     let language = buffer.read(cx).language();
-        //     Task::ready(Ok(self
-        //         .task_inventory()
-        //         .read(cx)
-        //         .list_tasks(language.cloned(), worktree)))
-        // } else if let Some(project_id) = self.remote_id() {
-        //     let task_templates = self.client().request(proto::TaskTemplates {
-        //         project_id,
-        //         buffer_id: buffer.read(cx).remote_id().into(),
-        //     });
-        //     cx.background_executor().spawn(async move {
-        //         let response = task_templates.await.log_err()?;
-        //         // Ok(response.templates
-        //         //     .into_iter()
-        //         //     .map(|template| (template.task_context, template.task)
-        //         //     .collect())
-        //         todo!("TODO kb")
-        //     })
-        // } else {
-        //     Task::ready(Ok(Vec::new()))
-        // }
-        todo!()
+        if self.is_local() {
+            let language = location.buffer.read(cx).language_at(location.range.start);
+            Task::ready(Ok(self
+                .task_inventory()
+                .read(cx)
+                .list_tasks(language, Some(worktree))))
+        } else if let Some(project_id) = self.remote_id() {
+            let remote_templates = self.query_remote_task_templates(project_id, &location, cx);
+            cx.background_executor()
+                .spawn(async move { remote_templates.await })
+        } else {
+            Task::ready(Ok(Vec::new()))
+        }
+    }
+
+    fn query_remote_task_templates(
+        &self,
+        project_id: u64,
+        location: &Location,
+        cx: &AppContext,
+    ) -> Task<Result<Vec<(TaskSourceKind, TaskTemplate)>>> {
+        let client = self.client();
+        let location = Some(serialize_location(location, cx));
+        cx.spawn(|cx| async move {
+            let response = client
+                .request(proto::TaskTemplates {
+                    project_id,
+                    location,
+                })
+                .await?;
+
+            // response.templates.into_iter().filter_map(|template_pair| {
+            //     let a = template_pair.kind?;
+            //     let b = template_pair.template?;
+            //     todo!("TODO kb")
+            // });
+
+            Ok(todo!("TODO kb"))
+        })
     }
 
     fn task_cwd(&self, cx: &AppContext) -> anyhow::Result<Option<PathBuf>> {
@@ -11465,3 +11465,40 @@ impl std::fmt::Display for NoRepositoryError {
 }
 
 impl std::error::Error for NoRepositoryError {}
+
+fn serialize_location(location: &Location, cx: &AppContext) -> proto::Location {
+    proto::Location {
+        buffer_id: location.buffer.read(cx).remote_id().into(),
+        start: Some(serialize_anchor(&location.range.start)),
+        end: Some(serialize_anchor(&location.range.end)),
+    }
+}
+
+fn deserialize_location(
+    project: &Model<Project>,
+    location: proto::Location,
+    cx: &mut AppContext,
+) -> Task<Result<Location>> {
+    let buffer_id = match BufferId::new(location.buffer_id) {
+        Ok(id) => id,
+        Err(e) => return Task::ready(Err(e)),
+    };
+    let buffer_task = project.update(cx, |project, cx| {
+        project.wait_for_remote_buffer(buffer_id, cx)
+    });
+    cx.spawn(|_| async move {
+        let buffer = buffer_task.await?;
+        let start = location
+            .start
+            .and_then(deserialize_anchor)
+            .context("missing task context location start")?;
+        let end = location
+            .end
+            .and_then(deserialize_anchor)
+            .context("missing task context location end")?;
+        Ok(Location {
+            buffer,
+            range: start..end,
+        })
+    })
+}

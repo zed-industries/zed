@@ -8,7 +8,7 @@ use gpui::{
     View, ViewContext, VisualContext, WeakView,
 };
 use picker::{highlighted_match_with_paths::HighlightedText, Picker, PickerDelegate};
-use project::{Inventory, TaskSourceKind};
+use project::{Project, TaskSourceKind};
 use task::{ResolvedTask, TaskContext, TaskTemplate};
 use ui::{
     div, h_flex, v_flex, ActiveTheme, Button, ButtonCommon, ButtonSize, Clickable, Color,
@@ -60,7 +60,7 @@ impl_actions!(task, [Rerun, Spawn]);
 
 /// A modal used to spawn new tasks.
 pub(crate) struct TasksModalDelegate {
-    inventory: Model<Inventory>,
+    project: Model<Project>,
     candidates: Option<Vec<(TaskSourceKind, ResolvedTask)>>,
     last_used_candidate_index: Option<usize>,
     divider_index: Option<usize>,
@@ -74,12 +74,12 @@ pub(crate) struct TasksModalDelegate {
 
 impl TasksModalDelegate {
     fn new(
-        inventory: Model<Inventory>,
+        project: Model<Project>,
         task_context: TaskContext,
         workspace: WeakView<Workspace>,
     ) -> Self {
         Self {
-            inventory,
+            project,
             workspace,
             candidates: None,
             matches: Vec::new(),
@@ -121,8 +121,10 @@ impl TasksModalDelegate {
         // it doesn't make sense to requery the inventory for new candidates, as that's potentially costly and more often than not it should just return back
         // the original list without a removed entry.
         candidates.remove(ix);
-        self.inventory.update(cx, |inventory, _| {
-            inventory.delete_previously_used(&task.id);
+        self.project.update(cx, |project, cx| {
+            project.task_inventory().update(cx, |inventory, _| {
+                inventory.delete_previously_used(&task.id);
+            })
         });
     }
 }
@@ -134,14 +136,14 @@ pub(crate) struct TasksModal {
 
 impl TasksModal {
     pub(crate) fn new(
-        inventory: Model<Inventory>,
+        project: Model<Project>,
         task_context: TaskContext,
         workspace: WeakView<Workspace>,
         cx: &mut ViewContext<Self>,
     ) -> Self {
         let picker = cx.new_view(|cx| {
             Picker::uniform_list(
-                TasksModalDelegate::new(inventory, task_context, workspace),
+                TasksModalDelegate::new(project, task_context, workspace),
                 cx,
             )
         });
@@ -215,14 +217,17 @@ impl PickerDelegate for TasksModalDelegate {
                             };
 
                             let resolved_task =
-                                picker.delegate.inventory.update(cx, |inventory, cx| {
-                                    let language =
-                                        location.buffer.read(cx).language_at(location.range.start);
-                                    inventory.used_and_current_resolved_tasks(
-                                        language,
-                                        Some(worktree),
-                                        &picker.delegate.task_context,
-                                    )
+                                picker.delegate.project.update(cx, |project, cx| {
+                                    project
+                                        .task_inventory()
+                                        .read(cx)
+                                        .used_and_current_resolved_tasks(
+                                            Some(cx.handle()),
+                                            Some(location),
+                                            Some(worktree),
+                                            &picker.delegate.task_context,
+                                            cx,
+                                        )
                                 });
                             cx.spawn(|picker, mut cx| async move {
                                 let (used, current) = resolved_task.await;

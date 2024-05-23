@@ -5212,9 +5212,10 @@ fn get_all_tasks(
     cx: &mut AppContext,
 ) -> Task<Vec<(TaskSourceKind, ResolvedTask)>> {
     let resolved_tasks = project.update(cx, |project, cx| {
-        project.task_inventory().update(cx, |inventory, _| {
-            inventory.used_and_current_resolved_tasks(None, worktree_id, task_context)
-        })
+        project
+            .task_inventory()
+            .read(cx)
+            .used_and_current_resolved_tasks(None, None, worktree_id, task_context, cx)
     });
 
     cx.spawn(|_| async move {

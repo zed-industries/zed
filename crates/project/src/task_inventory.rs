@@ -20,7 +20,7 @@ use task::{
     TaskVariables, VariableName,
 };
 use text::{Point, ToPoint};
-use util::{post_inc, NumericPrefixWithSuffix};
+use util::{post_inc, NumericPrefixWithSuffix, ResultExt};
 use worktree::WorktreeId;
 
 use crate::Project;
@@ -191,14 +191,18 @@ impl Inventory {
     /// Deduplicates the tasks by their labels and splits the ordered list into two: used tasks and the rest, newly resolved tasks.
     pub fn used_and_current_resolved_tasks(
         &self,
-        language: Option<Arc<Language>>,
+        query_template_tasks_from: Option<Model<Project>>,
+        location: Option<Location>,
         worktree: Option<WorktreeId>,
         task_context: &TaskContext,
+        cx: &AppContext,
     ) -> Task<(
         Vec<(TaskSourceKind, ResolvedTask)>,
         Vec<(TaskSourceKind, ResolvedTask)>,
     )> {
-        // TODO kb proxy that through the project's list_task analogue so it requests collab for remote projects + merge it with the local tasks
+        let language = location
+            .as_ref()
+            .and_then(|location| location.buffer.read(cx).language_at(location.range.start));
         let task_source_kind = language.as_ref().map(|language| TaskSourceKind::Language {
             name: language.name(),
         });
@@ -230,7 +234,7 @@ impl Inventory {
                 },
             );
         let not_used_score = post_inc(&mut lru_score);
-        let currently_resolved_tasks = self
+        let mut currently_resolved_tasks = self
             .sources
             .iter()
             .filter(|source| {
@@ -260,67 +264,95 @@ impl Inventory {
             .collect::<Vec<_>>();
         let previously_spawned_tasks = task_usage
             .into_iter()
-            .map(|(_, (kind, task, lru_score))| (kind.clone(), task.clone(), lru_score));
-
-        let mut tasks_by_label = BTreeMap::default();
-        tasks_by_label = previously_spawned_tasks.into_iter().fold(
-            tasks_by_label,
-            |mut tasks_by_label, (source, task, lru_score)| {
-                match tasks_by_label.entry((source, task.resolved_label.clone())) {
-                    btree_map::Entry::Occupied(mut o) => {
-                        let (_, previous_lru_score) = o.get();
-                        if previous_lru_score >= &lru_score {
-                            o.insert((task, lru_score));
-                        }
-                    }
-                    btree_map::Entry::Vacant(v) => {
-                        v.insert((task, lru_score));
-                    }
-                }
-                tasks_by_label
-            },
-        );
-        tasks_by_label = currently_resolved_tasks.iter().fold(
-            tasks_by_label,
-            |mut tasks_by_label, (source, task, lru_score)| {
-                match tasks_by_label.entry((source.clone(), task.resolved_label.clone())) {
-                    btree_map::Entry::Occupied(mut o) => {
-                        let (previous_task, _) = o.get();
-                        let new_template = task.original_task();
-                        if new_template != previous_task.original_task() {
-                            o.insert((task.clone(), *lru_score));
-                        }
-                    }
-                    btree_map::Entry::Vacant(v) => {
-                        v.insert((task.clone(), *lru_score));
-                    }
-                }
-                tasks_by_label
-            },
-        );
-
-        let resolved = tasks_by_label
-            .into_iter()
-            .map(|((kind, _), (task, lru_score))| (kind, task, lru_score))
-            .sorted_by(task_lru_comparator)
-            .filter_map(|(kind, task, lru_score)| {
-                if lru_score < not_used_score {
-                    Some((kind, task))
-                } else {
-                    None
-                }
-            })
+            .map(|(_, (kind, task, lru_score))| (kind.clone(), task.clone(), lru_score))
             .collect::<Vec<_>>();
 
-        // (
-        //     resolved,
-        //     currently_resolved_tasks
-        //         .into_iter()
-        //         .sorted_unstable_by(task_lru_comparator)
-        //         .map(|(kind, task, _)| (kind, task))
-        //         .collect(),
-        // )
-        todo!("TODO kb")
+        let remote_templates =
+            if let Some((location, project)) = location.as_ref().zip(query_template_tasks_from) {
+                let project = project.read(cx);
+                if let Some(project_id) = project.remote_id() {
+                    project.query_remote_task_templates(project_id, location, cx)
+                } else {
+                    Task::ready(Ok(Vec::new()))
+                }
+            } else {
+                Task::ready(Ok(Vec::new()))
+            };
+
+        let task_context = task_context.clone();
+        cx.spawn(move |cx| async move {
+            let Some(remote_templates) = remote_templates.await.log_err() else {
+                return (Vec::new(), Vec::new());
+            };
+            let remote_tasks = remote_templates.into_iter().filter_map(|(kind, task)| {
+                let id_base = kind.to_id_base();
+                Some((
+                    kind,
+                    task.resolve_task(&id_base, &task_context)?,
+                    not_used_score,
+                ))
+            });
+            currently_resolved_tasks.extend(remote_tasks);
+
+            let mut tasks_by_label = BTreeMap::default();
+            tasks_by_label = previously_spawned_tasks.into_iter().fold(
+                tasks_by_label,
+                |mut tasks_by_label, (source, task, lru_score)| {
+                    match tasks_by_label.entry((source, task.resolved_label.clone())) {
+                        btree_map::Entry::Occupied(mut o) => {
+                            let (_, previous_lru_score) = o.get();
+                            if previous_lru_score >= &lru_score {
+                                o.insert((task, lru_score));
+                            }
+                        }
+                        btree_map::Entry::Vacant(v) => {
+                            v.insert((task, lru_score));
+                        }
+                    }
+                    tasks_by_label
+                },
+            );
+            tasks_by_label = currently_resolved_tasks.iter().fold(
+                tasks_by_label,
+                |mut tasks_by_label, (source, task, lru_score)| {
+                    match tasks_by_label.entry((source.clone(), task.resolved_label.clone())) {
+                        btree_map::Entry::Occupied(mut o) => {
+                            let (previous_task, _) = o.get();
+                            let new_template = task.original_task();
+                            if new_template != previous_task.original_task() {
+                                o.insert((task.clone(), *lru_score));
+                            }
+                        }
+                        btree_map::Entry::Vacant(v) => {
+                            v.insert((task.clone(), *lru_score));
+                        }
+                    }
+                    tasks_by_label
+                },
+            );
+
+            let resolved = tasks_by_label
+                .into_iter()
+                .map(|((kind, _), (task, lru_score))| (kind, task, lru_score))
+                .sorted_by(task_lru_comparator)
+                .filter_map(|(kind, task, lru_score)| {
+                    if lru_score < not_used_score {
+                        Some((kind, task))
+                    } else {
+                        None
+                    }
+                })
+                .collect::<Vec<_>>();
+
+            (
+                resolved,
+                currently_resolved_tasks
+                    .into_iter()
+                    .sorted_unstable_by(task_lru_comparator)
+                    .map(|(kind, task, _)| (kind, task))
+                    .collect(),
+            )
+        })
     }
 
     /// Returns the last scheduled task, if any of the sources contains one with the matching id.
@@ -471,8 +503,14 @@ mod test_inventory {
         cx: &mut TestAppContext,
     ) -> Vec<(TaskSourceKind, String)> {
         let (used, current) = inventory
-            .update(cx, |inventory, _| {
-                inventory.used_and_current_resolved_tasks(None, worktree, &TaskContext::default())
+            .update(cx, |inventory, cx| {
+                inventory.used_and_current_resolved_tasks(
+                    None,
+                    None,
+                    worktree,
+                    &TaskContext::default(),
+                    cx,
+                )
             })
             .await;
         let mut all = used;
@@ -951,8 +989,14 @@ mod tests {
         cx: &mut TestAppContext,
     ) -> Vec<String> {
         let (used, current) = inventory
-            .update(cx, |inventory, _| {
-                inventory.used_and_current_resolved_tasks(None, worktree, &TaskContext::default())
+            .update(cx, |inventory, cx| {
+                inventory.used_and_current_resolved_tasks(
+                    None,
+                    None,
+                    worktree,
+                    &TaskContext::default(),
+                    cx,
+                )
             })
             .await;
         used.into_iter()
