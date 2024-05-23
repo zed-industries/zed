@@ -359,7 +359,7 @@ impl DirectWriteState {
             self.fonts
                 .iter_mut()
                 .filter(|font_info| font_info.font_family == target_family)
-                .for_each(|font_info| font_info.fallbacks = fallbacks.clone());
+                .for_each(|font_info| font_info.fallbacks.clone_from(&fallbacks));
             Ok(())
         }
     }
