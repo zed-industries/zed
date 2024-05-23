@@ -64,7 +64,7 @@ impl PlatformTextSystem for CosmicTextSystem {
     }
 
     // todo(linux)
-    fn set_fallbacks(&self, _fallbacks: &[String], _font_usage: FontUsage) -> Result<()> {
+    fn set_fallbacks(&self, _fallbacks: Option<&[String]>, _font_usage: FontUsage) -> Result<()> {
         Ok(())
     }
 
