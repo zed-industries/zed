@@ -3271,51 +3271,25 @@ impl ConversationEditor {
         }
 
         if let Some(text) = text {
-            panel.update(cx, |panel, cx| {
-                if let Some(conversation) = panel
-                    .active_conversation_editor()
-                    .cloned()
-                    .or_else(|| panel.new_conversation(cx))
-                {
-                    conversation.update(cx, |conversation, cx| {
-                        conversation
-                            .editor
-                            .update(cx, |editor, cx| editor.insert(&text, cx))
-                    });
-                };
+            panel.update(cx, |_, cx| {
+                // Wait to create a new conversation until the workspace is no longer
+                // being updated.
+                cx.defer(move |panel, cx| {
+                    if let Some(conversation) = panel
+                        .active_conversation_editor()
+                        .cloned()
+                        .or_else(|| panel.new_conversation(cx))
+                    {
+                        conversation.update(cx, |conversation, cx| {
+                            conversation
+                                .editor
+                                .update(cx, |editor, cx| editor.insert(&text, cx))
+                        });
+                    };
+                });
             });
         }
     }
-
-    // fn insert_active_prompt(
-    //     workspace: &mut Workspace,
-    //     _: &InsertActivePrompt,
-    //     cx: &mut ViewContext<Workspace>,
-    // ) {
-    //     let Some(panel) = workspace.panel::<AssistantPanel>(cx) else {
-    //         return;
-    //     };
-
-    //     if !panel.focus_handle(cx).contains_focused(cx) {
-    //         workspace.toggle_panel_focus::<AssistantPanel>(cx);
-    //     }
-
-    //     if let Some(default_prompt) = panel.read(cx).prompt_library.clone().default_prompt() {
-    //         panel.update(cx, |panel, cx| {
-    //             if let Some(conversation) = panel
-    //                 .active_conversation_editor()
-    //                 .cloned()
-    //                 .or_else(|| panel.new_conversation(cx))
-    //             {
-    //                 conversation.update(cx, |conversation, cx| {
-    //                     conversation
-    //                         .editor
-    //                         .update(cx, |editor, cx| editor.insert(&default_prompt, cx))
-    //                 });
-    //             };
-    //         });
-    //     };
-    // }
 
     fn copy(&mut self, _: &editor::actions::Copy, cx: &mut ViewContext<Self>) {
         let editor = self.editor.read(cx);
