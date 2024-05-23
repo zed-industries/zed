@@ -6,6 +6,8 @@ use sum_tree::{Bias, SeekTarget, SumTree};
 use text::Point;
 use ui::WindowContext;
 
+use crate::FoldPlaceholder;
+
 #[derive(Copy, Clone, Default, Debug, Eq, PartialEq, PartialOrd, Ord, Hash)]
 pub struct FlapId(usize);
 
@@ -76,6 +78,7 @@ type RenderTrailerFn =
 #[derive(Clone)]
 pub struct Flap {
     pub range: Range<Anchor>,
+    pub placeholder: FoldPlaceholder,
     pub render_toggle: RenderToggleFn,
     pub render_trailer: RenderTrailerFn,
 }
@@ -83,6 +86,7 @@ pub struct Flap {
 impl Flap {
     pub fn new<RenderToggle, ToggleElement, RenderTrailer, TrailerElement>(
         range: Range<Anchor>,
+        placeholder: FoldPlaceholder,
         render_toggle: RenderToggle,
         render_trailer: RenderTrailer,
     ) -> Self
@@ -107,6 +111,7 @@ impl Flap {
     {
         Flap {
             range,
+            placeholder,
             render_toggle: Arc::new(move |row, folded, toggle, cx| {
                 render_toggle(row, folded, toggle, cx).into_any_element()
             }),
@@ -256,11 +261,13 @@ mod test {
         let flaps = [
             Flap::new(
                 snapshot.anchor_before(Point::new(1, 0))..snapshot.anchor_after(Point::new(1, 5)),
+                FoldPlaceholder::test(),
                 |_row, _folded, _toggle, _cx| div(),
                 |_row, _folded, _cx| div(),
             ),
             Flap::new(
                 snapshot.anchor_before(Point::new(3, 0))..snapshot.anchor_after(Point::new(3, 5)),
+                FoldPlaceholder::test(),
                 |_row, _folded, _toggle, _cx| div(),
                 |_row, _folded, _cx| div(),
             ),

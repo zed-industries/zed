@@ -2,7 +2,7 @@ use super::{
     inlay_map::{InlayBufferRows, InlayChunks, InlayEdit, InlayOffset, InlayPoint, InlaySnapshot},
     Highlights,
 };
-use gpui::{AnyElement, ElementId, WindowContext};
+use gpui::{AnyElement, ElementId, IntoElement, WindowContext};
 use language::{Chunk, ChunkRenderer, Edit, Point, TextSummary};
 use multi_buffer::{Anchor, AnchorRangeExt, MultiBufferRow, MultiBufferSnapshot, ToOffset};
 use std::{
@@ -24,13 +24,14 @@ pub struct FoldPlaceholder {
     pub text: &'static str,
 }
 
-impl Eq for FoldPlaceholder {}
-
-impl PartialEq for FoldPlaceholder {
-    fn eq(&self, other: &Self) -> bool {
-        Arc::ptr_eq(&self.render, &other.render)
-            && self.constrain_width == other.constrain_width
-            && self.text == other.text
+impl FoldPlaceholder {
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn test() -> Self {
+        Self {
+            render: Arc::new(|_id, _range, _cx| gpui::Empty.into_any_element()),
+            constrain_width: true,
+            text: "⋯",
+        }
     }
 }
 
@@ -40,6 +41,16 @@ impl fmt::Debug for FoldPlaceholder {
             .field("text", &self.text)
             .field("constrain_width", &self.constrain_width)
             .finish()
+    }
+}
+
+impl Eq for FoldPlaceholder {}
+
+impl PartialEq for FoldPlaceholder {
+    fn eq(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.render, &other.render)
+            && self.constrain_width == other.constrain_width
+            && self.text == other.text
     }
 }
 
@@ -1188,14 +1199,6 @@ mod tests {
     use util::RandomCharIter;
     use Bias::{Left, Right};
 
-    fn placeholder() -> FoldPlaceholder {
-        FoldPlaceholder {
-            render: Arc::new(|_id, _range, _cx| Empty.into_any_element()),
-            constrain_width: true,
-            text: "⋯",
-        }
-    }
-
     #[gpui::test]
     fn test_basic_folds(cx: &mut gpui::AppContext) {
         init_test(cx);
@@ -1207,8 +1210,8 @@ mod tests {
 
         let (mut writer, _, _) = map.write(inlay_snapshot, vec![]);
         let (snapshot2, edits) = writer.fold(vec![
-            (Point::new(0, 2)..Point::new(2, 2), placeholder()),
-            (Point::new(2, 4)..Point::new(4, 1), placeholder()),
+            (Point::new(0, 2)..Point::new(2, 2), FoldPlaceholder::test()),
+            (Point::new(2, 4)..Point::new(4, 1), FoldPlaceholder::test()),
         ]);
         assert_eq!(snapshot2.text(), "aa⋯cc⋯eeeee");
         assert_eq!(
@@ -1287,19 +1290,25 @@ mod tests {
             let mut map = FoldMap::new(inlay_snapshot.clone()).0;
 
             let (mut writer, _, _) = map.write(inlay_snapshot.clone(), vec![]);
-            writer.fold(vec![(5..8, placeholder())]);
+            writer.fold(vec![(5..8, FoldPlaceholder::test())]);
             let (snapshot, _) = map.read(inlay_snapshot.clone(), vec![]);
             assert_eq!(snapshot.text(), "abcde⋯ijkl");
 
             // Create an fold adjacent to the start of the first fold.
             let (mut writer, _, _) = map.write(inlay_snapshot.clone(), vec![]);
-            writer.fold(vec![(0..1, placeholder()), (2..5, placeholder())]);
+            writer.fold(vec![
+                (0..1, FoldPlaceholder::test()),
+                (2..5, FoldPlaceholder::test()),
+            ]);
             let (snapshot, _) = map.read(inlay_snapshot.clone(), vec![]);
             assert_eq!(snapshot.text(), "⋯b⋯ijkl");
 
             // Create an fold adjacent to the end of the first fold.
             let (mut writer, _, _) = map.write(inlay_snapshot.clone(), vec![]);
-            writer.fold(vec![(11..11, placeholder()), (8..10, placeholder())]);
+            writer.fold(vec![
+                (11..11, FoldPlaceholder::test()),
+                (8..10, FoldPlaceholder::test()),
+            ]);
             let (snapshot, _) = map.read(inlay_snapshot.clone(), vec![]);
             assert_eq!(snapshot.text(), "⋯b⋯kl");
         }
@@ -1309,7 +1318,10 @@ mod tests {
 
             // Create two adjacent folds.
             let (mut writer, _, _) = map.write(inlay_snapshot.clone(), vec![]);
-            writer.fold(vec![(0..2, placeholder()), (2..5, placeholder())]);
+            writer.fold(vec![
+                (0..2, FoldPlaceholder::test()),
+                (2..5, FoldPlaceholder::test()),
+            ]);
             let (snapshot, _) = map.read(inlay_snapshot, vec![]);
             assert_eq!(snapshot.text(), "⋯fghijkl");
 
@@ -1333,10 +1345,10 @@ mod tests {
         let mut map = FoldMap::new(inlay_snapshot.clone()).0;
         let (mut writer, _, _) = map.write(inlay_snapshot.clone(), vec![]);
         writer.fold(vec![
-            (Point::new(0, 2)..Point::new(2, 2), placeholder()),
-            (Point::new(0, 4)..Point::new(1, 0), placeholder()),
-            (Point::new(1, 2)..Point::new(3, 2), placeholder()),
-            (Point::new(3, 1)..Point::new(4, 1), placeholder()),
+            (Point::new(0, 2)..Point::new(2, 2), FoldPlaceholder::test()),
+            (Point::new(0, 4)..Point::new(1, 0), FoldPlaceholder::test()),
+            (Point::new(1, 2)..Point::new(3, 2), FoldPlaceholder::test()),
+            (Point::new(3, 1)..Point::new(4, 1), FoldPlaceholder::test()),
         ]);
         let (snapshot, _) = map.read(inlay_snapshot, vec![]);
         assert_eq!(snapshot.text(), "aa⋯eeeee");
@@ -1353,8 +1365,8 @@ mod tests {
 
         let (mut writer, _, _) = map.write(inlay_snapshot.clone(), vec![]);
         writer.fold(vec![
-            (Point::new(0, 2)..Point::new(2, 2), placeholder()),
-            (Point::new(3, 1)..Point::new(4, 1), placeholder()),
+            (Point::new(0, 2)..Point::new(2, 2), FoldPlaceholder::test()),
+            (Point::new(3, 1)..Point::new(4, 1), FoldPlaceholder::test()),
         ]);
         let (snapshot, _) = map.read(inlay_snapshot.clone(), vec![]);
         assert_eq!(snapshot.text(), "aa⋯cccc\nd⋯eeeee");
@@ -1378,10 +1390,10 @@ mod tests {
 
         let (mut writer, _, _) = map.write(inlay_snapshot.clone(), vec![]);
         writer.fold(vec![
-            (Point::new(0, 2)..Point::new(2, 2), placeholder()),
-            (Point::new(0, 4)..Point::new(1, 0), placeholder()),
-            (Point::new(1, 2)..Point::new(3, 2), placeholder()),
-            (Point::new(3, 1)..Point::new(4, 1), placeholder()),
+            (Point::new(0, 2)..Point::new(2, 2), FoldPlaceholder::test()),
+            (Point::new(0, 4)..Point::new(1, 0), FoldPlaceholder::test()),
+            (Point::new(1, 2)..Point::new(3, 2), FoldPlaceholder::test()),
+            (Point::new(3, 1)..Point::new(4, 1), FoldPlaceholder::test()),
         ]);
         let (snapshot, _) = map.read(inlay_snapshot.clone(), vec![]);
         let fold_ranges = snapshot
@@ -1682,8 +1694,8 @@ mod tests {
 
         let (mut writer, _, _) = map.write(inlay_snapshot.clone(), vec![]);
         writer.fold(vec![
-            (Point::new(0, 2)..Point::new(2, 2), placeholder()),
-            (Point::new(3, 1)..Point::new(4, 1), placeholder()),
+            (Point::new(0, 2)..Point::new(2, 2), FoldPlaceholder::test()),
+            (Point::new(3, 1)..Point::new(4, 1), FoldPlaceholder::test()),
         ]);
 
         let (snapshot, _) = map.read(inlay_snapshot, vec![]);
@@ -1766,7 +1778,7 @@ mod tests {
                         let end = buffer.clip_offset(rng.gen_range(0..=buffer.len()), Right);
                         let start = buffer.clip_offset(rng.gen_range(0..=end), Left);
                         let text = if rng.gen() {
-                            placeholder()
+                            FoldPlaceholder::test()
                         } else {
                             FoldPlaceholder {
                                 text: "",

@@ -52,8 +52,8 @@ use clock::ReplicaId;
 use collections::{BTreeMap, Bound, HashMap, HashSet, VecDeque};
 use convert_case::{Case, Casing};
 use debounced_delay::DebouncedDelay;
-pub use display_map::DisplayPoint;
 use display_map::*;
+pub use display_map::{DisplayPoint, FoldPlaceholder};
 use editor_settings::CurrentLineHighlight;
 pub use editor_settings::EditorSettings;
 use element::LineWithInvisibles;
@@ -1577,8 +1577,44 @@ impl Editor {
     ) -> Self {
         let style = cx.text_style();
         let font_size = style.font_size.to_pixels(cx.rem_size());
+        let editor = cx.view().downgrade();
+        let fold_placeholder = FoldPlaceholder {
+            text: "⋯",
+            constrain_width: true,
+            render: Arc::new(move |fold_id, fold_range, _cx| {
+                let editor = editor.clone();
+                div()
+                    .id(fold_id)
+                    .size_full()
+                    .cursor_pointer()
+                    .on_mouse_down(MouseButton::Left, |_, cx| cx.stop_propagation())
+                    .on_click(move |_, cx| {
+                        editor
+                            .update(cx, |editor, cx| {
+                                editor.unfold_ranges(
+                                    [fold_range.start..fold_range.end],
+                                    true,
+                                    false,
+                                    cx,
+                                );
+                                cx.stop_propagation();
+                            })
+                            .ok();
+                    })
+                    .into_any()
+            }),
+        };
         let display_map = cx.new_model(|cx| {
-            DisplayMap::new(buffer.clone(), style.font(), font_size, None, 2, 1, cx)
+            DisplayMap::new(
+                buffer.clone(),
+                style.font(),
+                font_size,
+                None,
+                2,
+                1,
+                fold_placeholder,
+                cx,
+            )
         });
 
         let selections = SelectionsCollection::new(display_map.clone(), buffer.clone());
@@ -5826,7 +5862,7 @@ impl Editor {
                         let mut end = fold.range.end.to_point(&buffer);
                         start.row -= row_delta;
                         end.row -= row_delta;
-                        refold_ranges.push((start..end, fold.placeholder));
+                        refold_ranges.push((start..end, fold.placeholder.clone()));
                     }
                 }
             }
@@ -5920,7 +5956,7 @@ impl Editor {
                         let mut end = fold.range.end.to_point(&buffer);
                         start.row += row_delta;
                         end.row += row_delta;
-                        refold_ranges.push((start..end, fold.placeholder));
+                        refold_ranges.push((start..end, fold.placeholder.clone()));
                     }
                 }
             }
@@ -9359,9 +9395,9 @@ impl Editor {
                         .buffer_snapshot
                         .line_len(MultiBufferRow(s.end.row)),
                 );
-                (start..end, "⋯")
+                (start..end, display_map.fold_placeholder.clone())
             } else {
-                (s.start..s.end, "⋯")
+                (s.start..s.end, display_map.fold_placeholder.clone())
             }
         });
         self.fold_ranges(ranges, true, cx);
@@ -9369,7 +9405,7 @@ impl Editor {
 
     pub fn fold_ranges<T: ToOffset + Clone>(
         &mut self,
-        ranges: impl IntoIterator<Item = (Range<T>, &'static str)>,
+        ranges: impl IntoIterator<Item = (Range<T>, FoldPlaceholder)>,
         auto_scroll: bool,
         cx: &mut ViewContext<Self>,
     ) {

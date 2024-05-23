@@ -873,7 +873,7 @@ impl EditorElement {
             .folds_in_range(visible_anchor_range.clone())
             .filter_map(|fold| {
                 // Skip folds that have no text.
-                if fold.placeholder.is_empty() {
+                if fold.placeholder.constrain_width && fold.placeholder.text.is_empty() {
                     return None;
                 }
 

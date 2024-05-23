@@ -508,7 +508,7 @@ impl<'a> Iterator for TabChunks<'a> {
                         self.chunk.text = suffix;
                         return Some(Chunk {
                             text: prefix,
-                            ..self.chunk
+                            ..self.chunk.clone()
                         });
                     } else {
                         self.chunk.text = &self.chunk.text[1..];
@@ -529,7 +529,7 @@ impl<'a> Iterator for TabChunks<'a> {
                         return Some(Chunk {
                             text: &SPACES[..len as usize],
                             is_tab: true,
-                            ..self.chunk
+                            ..self.chunk.clone()
                         });
                     }
                 }

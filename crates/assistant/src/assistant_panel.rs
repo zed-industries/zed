@@ -19,6 +19,7 @@ use crate::{
 use anyhow::{anyhow, Result};
 use client::telemetry::Telemetry;
 use collections::{hash_map, HashMap, HashSet, VecDeque};
+use editor::FoldPlaceholder;
 use editor::{
     actions::{FoldAt, MoveDown, MoveUp},
     display_map::{
@@ -2943,6 +2944,13 @@ impl ConversationEditor {
                         .insert_flaps(
                             [Flap::new(
                                 start..end,
+                                FoldPlaceholder {
+                                    render: Arc::new(|_, _, _| {
+                                        div().child("PLACEHOLDER").into_any()
+                                    }),
+                                    text: "",
+                                    constrain_width: false,
+                                },
                                 render_slash_command_output_toggle,
                                 render_slash_command_output_trailer,
                             )],

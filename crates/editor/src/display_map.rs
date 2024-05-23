@@ -24,15 +24,24 @@ mod inlay_map;
 mod tab_map;
 mod wrap_map;
 
-use crate::{hover_links::InlayHighlight, movement::TextLayoutDetails, InlayId};
-use crate::{EditorStyle, RowExt};
-pub use block_map::{BlockMap, BlockPoint};
-use collections::{HashMap, HashSet};
-use fold_map::FoldMap;
-use gpui::{
-    AnyElement, Font, HighlightStyle, Hsla, LineLayout, Model, ModelContext, Pixels, UnderlineStyle,
+use crate::{
+    hover_links::InlayHighlight, movement::TextLayoutDetails, EditorStyle, InlayId, RowExt,
 };
-use inlay_map::InlayMap;
+pub use block_map::{
+    BlockBufferRows, BlockChunks as DisplayChunks, BlockContext, BlockDisposition, BlockId,
+    BlockMap, BlockPoint, BlockProperties, BlockStyle, RenderBlock, TransformBlock,
+};
+use block_map::{BlockRow, BlockSnapshot};
+use collections::{HashMap, HashSet};
+pub use flap_map::*;
+pub use fold_map::{Fold, FoldId, FoldPlaceholder, FoldPoint};
+use fold_map::{FoldMap, FoldSnapshot};
+use gpui::{
+    AnyElement, Font, HighlightStyle, LineLayout, Model, ModelContext, Pixels, UnderlineStyle,
+};
+pub(crate) use inlay_map::Inlay;
+use inlay_map::{InlayMap, InlaySnapshot};
+pub use inlay_map::{InlayOffset, InlayPoint};
 use language::{
     language_settings::language_settings, OffsetUtf16, Point, Subscription as BufferSubscription,
 };
@@ -44,25 +53,9 @@ use multi_buffer::{
 use serde::Deserialize;
 use std::{any::TypeId, borrow::Cow, fmt::Debug, num::NonZeroU32, ops::Range, sync::Arc};
 use sum_tree::{Bias, TreeMap};
-use tab_map::TabMap;
+use tab_map::{TabMap, TabSnapshot};
 use ui::WindowContext;
-
-use wrap_map::WrapMap;
-
-pub use block_map::{
-    BlockBufferRows, BlockChunks as DisplayChunks, BlockContext, BlockDisposition, BlockId,
-    BlockProperties, BlockStyle, RenderBlock, TransformBlock,
-};
-pub use flap_map::*;
-
-use self::block_map::{BlockRow, BlockSnapshot};
-use self::fold_map::FoldSnapshot;
-pub use self::fold_map::{Fold, FoldId, FoldPoint};
-use self::inlay_map::InlaySnapshot;
-pub use self::inlay_map::{InlayOffset, InlayPoint};
-use self::tab_map::TabSnapshot;
-use self::wrap_map::WrapSnapshot;
-pub(crate) use inlay_map::Inlay;
+use wrap_map::{WrapMap, WrapSnapshot};
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum FoldStatus {
@@ -105,6 +98,7 @@ pub struct DisplayMap {
     inlay_highlights: InlayHighlights,
     /// A container for explicitly foldable ranges, which supersede indentation based fold range suggestions.
     flap_map: FlapMap,
+    fold_placeholder: FoldPlaceholder,
     pub clip_at_line_ends: bool,
 }
 
@@ -116,6 +110,7 @@ impl DisplayMap {
         wrap_width: Option<Pixels>,
         buffer_header_height: u8,
         excerpt_header_height: u8,
+        fold_placeholder: FoldPlaceholder,
         cx: &mut ModelContext<Self>,
     ) -> Self {
         let buffer_subscription = buffer.update(cx, |buffer, _| buffer.subscribe());
@@ -138,6 +133,7 @@ impl DisplayMap {
             wrap_map,
             block_map,
             flap_map,
+            fold_placeholder,
             text_highlights: Default::default(),
             inlay_highlights: Default::default(),
             clip_at_line_ends: false,
@@ -167,6 +163,7 @@ impl DisplayMap {
             text_highlights: self.text_highlights.clone(),
             inlay_highlights: self.inlay_highlights.clone(),
             clip_at_line_ends: self.clip_at_line_ends,
+            fold_placeholder: self.fold_placeholder.clone(),
         }
     }
 
@@ -177,7 +174,7 @@ impl DisplayMap {
                 .map(|fold| {
                     (
                         fold.range.to_offset(&other.buffer_snapshot),
-                        fold.placeholder,
+                        fold.placeholder.clone(),
                     )
                 }),
             cx,
@@ -186,7 +183,7 @@ impl DisplayMap {
 
     pub fn fold<T: ToOffset>(
         &mut self,
-        ranges: impl IntoIterator<Item = (Range<T>, &'static str)>,
+        ranges: impl IntoIterator<Item = (Range<T>, FoldPlaceholder)>,
         cx: &mut ModelContext<Self>,
     ) {
         let snapshot = self.buffer.read(cx).snapshot(cx);
@@ -329,10 +326,6 @@ impl DisplayMap {
             .update(cx, |map, cx| map.set_font_with_size(font, font_size, cx))
     }
 
-    pub fn set_fold_ellipses_color(&mut self, color: Hsla) -> bool {
-        self.fold_map.set_ellipses_color(color)
-    }
-
     pub fn set_wrap_width(&self, width: Option<Pixels>, cx: &mut ModelContext<Self>) -> bool {
         self.wrap_map
             .update(cx, |map, cx| map.set_wrap_width(width, cx))
@@ -416,6 +409,7 @@ pub struct DisplaySnapshot {
     text_highlights: TextHighlights,
     inlay_highlights: InlayHighlights,
     clip_at_line_ends: bool,
+    pub(crate) fold_placeholder: FoldPlaceholder,
 }
 
 impl DisplaySnapshot {
@@ -888,13 +882,16 @@ impl DisplaySnapshot {
     pub fn foldable_range(
         &self,
         buffer_row: MultiBufferRow,
-    ) -> Option<(Range<Point>, &'static str)> {
+    ) -> Option<(Range<Point>, FoldPlaceholder)> {
         let start = MultiBufferPoint::new(buffer_row.0, self.buffer_snapshot.line_len(buffer_row));
         if let Some(flap) = self
             .flap_snapshot
             .query_row(buffer_row, &self.buffer_snapshot)
         {
-            Some((flap.range.to_point(&self.buffer_snapshot), ""))
+            Some((
+                flap.range.to_point(&self.buffer_snapshot),
+                flap.placeholder.clone(),
+            ))
         } else if self.starts_indent(MultiBufferRow(start.row))
             && !self.is_line_folded(MultiBufferRow(start.row))
         {
@@ -914,7 +911,7 @@ impl DisplaySnapshot {
                 }
             }
             let end = end.unwrap_or(max_point);
-            Some((start..end, "⋯"))
+            Some((start..end, self.fold_placeholder.clone()))
         } else {
             None
         }
@@ -1088,6 +1085,7 @@ pub mod tests {
                 wrap_width,
                 buffer_start_excerpt_header_height,
                 excerpt_header_height,
+                FoldPlaceholder::test(),
                 cx,
             )
         });
@@ -1191,7 +1189,12 @@ pub mod tests {
                     } else {
                         log::info!("folding ranges: {:?}", ranges);
                         map.update(cx, |map, cx| {
-                            map.fold(ranges.into_iter().map(|range| (range, "⋯")), cx);
+                            map.fold(
+                                ranges
+                                    .into_iter()
+                                    .map(|range| (range, FoldPlaceholder::test())),
+                                cx,
+                            );
                         });
                     }
                 }
@@ -1328,6 +1331,7 @@ pub mod tests {
                     wrap_width,
                     1,
                     1,
+                    FoldPlaceholder::test(),
                     cx,
                 )
             });
@@ -1429,7 +1433,16 @@ pub mod tests {
 
         let font_size = px(14.0);
         let map = cx.new_model(|cx| {
-            DisplayMap::new(buffer.clone(), font("Helvetica"), font_size, None, 1, 1, cx)
+            DisplayMap::new(
+                buffer.clone(),
+                font("Helvetica"),
+                font_size,
+                None,
+                1,
+                1,
+                FoldPlaceholder::test(),
+                cx,
+            )
         });
 
         buffer.update(cx, |buffer, cx| {
@@ -1515,8 +1528,18 @@ pub mod tests {
 
         let font_size = px(14.0);
 
-        let map = cx
-            .new_model(|cx| DisplayMap::new(buffer, font("Helvetica"), font_size, None, 1, 1, cx));
+        let map = cx.new_model(|cx| {
+            DisplayMap::new(
+                buffer,
+                font("Helvetica"),
+                font_size,
+                None,
+                1,
+                1,
+                FoldPlaceholder::test(),
+                cx,
+            )
+        });
         assert_eq!(
             cx.update(|cx| syntax_chunks(DisplayRow(0)..DisplayRow(5), &map, &theme, cx)),
             vec![
@@ -1541,7 +1564,7 @@ pub mod tests {
             map.fold(
                 vec![(
                     MultiBufferPoint::new(0, 6)..MultiBufferPoint::new(3, 2),
-                    "⋯",
+                    FoldPlaceholder::test(),
                 )],
                 cx,
             )
@@ -1607,7 +1630,16 @@ pub mod tests {
         let font_size = px(16.0);
 
         let map = cx.new_model(|cx| {
-            DisplayMap::new(buffer, font("Courier"), font_size, Some(px(40.0)), 1, 1, cx)
+            DisplayMap::new(
+                buffer,
+                font("Courier"),
+                font_size,
+                Some(px(40.0)),
+                1,
+                1,
+                FoldPlaceholder::test(),
+                cx,
+            )
         });
         assert_eq!(
             cx.update(|cx| syntax_chunks(DisplayRow(0)..DisplayRow(5), &map, &theme, cx)),
@@ -1626,7 +1658,7 @@ pub mod tests {
             map.fold(
                 vec![(
                     MultiBufferPoint::new(0, 6)..MultiBufferPoint::new(3, 2),
-                    "⋯",
+                    FoldPlaceholder::test(),
                 )],
                 cx,
             )
@@ -1679,8 +1711,18 @@ pub mod tests {
         let buffer_snapshot = buffer.read_with(cx, |buffer, cx| buffer.snapshot(cx));
 
         let font_size = px(16.0);
-        let map =
-            cx.new_model(|cx| DisplayMap::new(buffer, font("Courier"), font_size, None, 1, 1, cx));
+        let map = cx.new_model(|cx| {
+            DisplayMap::new(
+                buffer,
+                font("Courier"),
+                font_size,
+                None,
+                1,
+                1,
+                FoldPlaceholder::test(),
+                cx,
+            )
+        });
 
         enum MyType {}
 
@@ -1794,8 +1836,16 @@ pub mod tests {
         let buffer = MultiBuffer::build_simple(text, cx);
         let font_size = px(14.0);
         cx.new_model(|cx| {
-            let mut map =
-                DisplayMap::new(buffer.clone(), font("Helvetica"), font_size, None, 1, 1, cx);
+            let mut map = DisplayMap::new(
+                buffer.clone(),
+                font("Helvetica"),
+                font_size,
+                None,
+                1,
+                1,
+                FoldPlaceholder::test(),
+                cx,
+            );
             let snapshot = map.buffer.read(cx).snapshot(cx);
             let range =
                 snapshot.anchor_before(Point::new(2, 0))..snapshot.anchor_after(Point::new(3, 3));
@@ -1803,6 +1853,7 @@ pub mod tests {
             map.flap_map.insert(
                 [Flap::new(
                     range,
+                    FoldPlaceholder::test(),
                     |_row, _status, _toggle, _cx| div(),
                     |_row, _status, _cx| div(),
                 )],
@@ -1822,7 +1873,16 @@ pub mod tests {
         let font_size = px(14.0);
 
         let map = cx.new_model(|cx| {
-            DisplayMap::new(buffer.clone(), font("Helvetica"), font_size, None, 1, 1, cx)
+            DisplayMap::new(
+                buffer.clone(),
+                font("Helvetica"),
+                font_size,
+                None,
+                1,
+                1,
+                FoldPlaceholder::test(),
+                cx,
+            )
         });
         let map = map.update(cx, |map, cx| map.snapshot(cx));
         assert_eq!(map.text(), "✅       α\nβ   \n🏀β      γ");
@@ -1888,7 +1948,16 @@ pub mod tests {
         let buffer = MultiBuffer::build_simple("aaa\n\t\tbbb", cx);
         let font_size = px(14.0);
         let map = cx.new_model(|cx| {
-            DisplayMap::new(buffer.clone(), font("Helvetica"), font_size, None, 1, 1, cx)
+            DisplayMap::new(
+                buffer.clone(),
+                font("Helvetica"),
+                font_size,
+                None,
+                1,
+                1,
+                FoldPlaceholder::test(),
+                cx,
+            )
         });
         assert_eq!(
             map.update(cx, |map, cx| map.snapshot(cx)).max_point(),
