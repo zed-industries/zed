@@ -422,7 +422,7 @@ pub struct IndentGuideSettings {
     /// Whether to display indent guides in the editor.
     ///
     /// Default: true
-    #[serde(default)]
+    #[serde(default = "default_true")]
     pub enabled: bool,
     /// The width of the indent guides in pixels, between 1 and 10.
     ///
