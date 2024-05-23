@@ -40,7 +40,7 @@ def convert_body(body: str) -> str:
         if is_list:
             line = re.sub(r"^-\s*", "", line)
             line = f"    <li>{line}</li>"
-        elif in_code_fence:
+        elif in_code_fence or contains_code_fence:
             line = f"    <li><code>    {line}</code></li>"
         else:
             line = f"<p>{line}</p>"
