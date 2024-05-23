@@ -376,7 +376,7 @@ unindent = "0.1.7"
 unicase = "2.6"
 unicode-segmentation = "1.10"
 url = "2.2"
-uuid = { version = "1.1.2", features = ["v4", "v5"] }
+uuid = { version = "1.1.2", features = ["v4", "v5", "serde"] }
 wasmparser = "0.201"
 wasm-encoder = "0.201"
 wasmtime = { version = "19.0.0", default-features = false, features = [

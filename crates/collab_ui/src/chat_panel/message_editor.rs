@@ -75,6 +75,17 @@ impl CompletionProvider for MessageEditorCompletionProvider {
     ) -> Task<Result<Option<language::Transaction>>> {
         Task::ready(Ok(None))
     }
+
+    fn is_completion_trigger(
+        &self,
+        _buffer: &Model<Buffer>,
+        _position: language::Anchor,
+        text: &str,
+        _trigger_in_words: bool,
+        _cx: &mut ViewContext<Editor>,
+    ) -> bool {
+        text == "@"
+    }
 }
 
 impl MessageEditor {

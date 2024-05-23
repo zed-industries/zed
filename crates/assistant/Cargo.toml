@@ -21,6 +21,7 @@ editor.workspace = true
 file_icons.workspace = true
 fs.workspace = true
 futures.workspace = true
+fuzzy.workspace = true
 gpui.workspace = true
 http.workspace = true
 indoc.workspace = true
@@ -49,6 +50,8 @@ ui.workspace = true
 util.workspace = true
 uuid.workspace = true
 workspace.workspace = true
+picker.workspace = true
+gray_matter = "0.2.7"
 
 [dev-dependencies]
 ctor.workspace = true

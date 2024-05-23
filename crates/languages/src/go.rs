@@ -16,7 +16,7 @@ use std::{
     borrow::Cow,
     ffi::{OsStr, OsString},
     ops::Range,
-    path::{Path, PathBuf},
+    path::PathBuf,
     str,
     sync::{
         atomic::{AtomicBool, Ordering::SeqCst},
@@ -447,7 +447,7 @@ const GO_PACKAGE_TASK_VARIABLE: VariableName = VariableName::Custom(Cow::Borrowe
 impl ContextProvider for GoContextProvider {
     fn build_context(
         &self,
-        worktree_abs_path: Option<&Path>,
+        variables: &TaskVariables,
         location: &Location,
         cx: &mut gpui::AppContext,
     ) -> Result<TaskVariables> {
@@ -465,7 +465,8 @@ impl ContextProvider for GoContextProvider {
                 // Prefer the relative form `./my-nested-package/is-here` over
                 // absolute path, because it's more readable in the modal, but
                 // the absolute path also works.
-                let package_name = worktree_abs_path
+                let package_name = variables
+                    .get(&VariableName::WorktreeRoot)
                     .and_then(|worktree_abs_path| buffer_dir.strip_prefix(worktree_abs_path).ok())
                     .map(|relative_pkg_dir| {
                         if relative_pkg_dir.as_os_str().is_empty() {
