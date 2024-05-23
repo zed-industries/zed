@@ -65,25 +65,25 @@ pub fn initial_tasks_content() -> Cow<'static, str> {
 }
 
 pub fn init_font_fallbacks(cx: &mut AppContext) {
-    GlobalFontFallbacks::register(cx);
+    FontFamilies::register(cx);
 }
 
 #[derive(Default, Clone, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
-pub struct FontFallbacksContent {
+pub struct FontFamiliesContent {
     ui_font_family: Option<Vec<String>>,
     buffer_font_family: Option<Vec<String>>,
 }
 
 #[derive(Debug, Clone)]
-pub struct GlobalFontFallbacks {
+pub struct FontFamilies {
     pub ui_font_family: Vec<String>,
     pub buffer_font_family: Vec<String>,
 }
 
-impl Settings for GlobalFontFallbacks {
+impl Settings for FontFamilies {
     const KEY: Option<&'static str> = None;
 
-    type FileContent = FontFallbacksContent;
+    type FileContent = FontFamiliesContent;
 
     fn load(
         sources: crate::SettingsSources<Self::FileContent>,
@@ -95,47 +95,13 @@ impl Settings for GlobalFontFallbacks {
         Ok(Self {
             ui_font_family: sources
                 .user
-                .and_then(|fallbacks| {
-                    if let Some(ref fallbacks) = fallbacks.ui_font_family {
-                        if fallbacks.len() > 1 {
-                            Some(fallbacks[1..].to_vec())
-                        } else {
-                            None
-                        }
-                    } else {
-                        None
-                    }
-                })
-                .or_else(|| {
-                    let fallbacks = sources.default.ui_font_family.as_ref().unwrap();
-                    if fallbacks.len() > 1 {
-                        Some(fallbacks[1..].to_vec())
-                    } else {
-                        None
-                    }
-                })
+                .and_then(|fallbacks| fallbacks.ui_font_family.clone())
+                .or_else(|| sources.default.ui_font_family.clone())
                 .unwrap_or_default(),
             buffer_font_family: sources
                 .user
-                .and_then(|fallbacks| {
-                    if let Some(ref fallbacks) = fallbacks.buffer_font_family {
-                        if fallbacks.len() > 1 {
-                            Some(fallbacks[1..].to_vec())
-                        } else {
-                            None
-                        }
-                    } else {
-                        None
-                    }
-                })
-                .or_else(|| {
-                    let fallbacks = sources.default.buffer_font_family.as_ref().unwrap();
-                    if fallbacks.len() > 1 {
-                        Some(fallbacks[1..].to_vec())
-                    } else {
-                        None
-                    }
-                })
+                .and_then(|fallbacks| fallbacks.buffer_font_family.clone())
+                .or_else(|| sources.default.buffer_font_family.clone())
                 .unwrap_or_default(),
         })
     }
