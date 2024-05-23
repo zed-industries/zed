@@ -107,14 +107,10 @@ impl TextSystem {
         self.platform_text_system.add_fonts(fonts)
     }
 
-    /// Set fallbacks fonts to target font type
-    pub fn set_fallbacks(
-        &self,
-        fallbacks: Option<&[String]>,
-        target_font: FontUsage,
-    ) -> Result<()> {
+    /// Set fallbacks fonts to target font family
+    pub fn set_fallbacks(&self, fallbacks: Option<&[String]>, target_family: &str) -> Result<()> {
         self.platform_text_system
-            .set_fallbacks(fallbacks, target_font)
+            .set_fallbacks(fallbacks, target_family)
     }
 
     /// Get the FontId for the configure font family and style.

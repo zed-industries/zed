@@ -92,12 +92,28 @@ pub fn handle_settings_file_changes(
 
 pub fn set_font_fallbacks(text_system: &TextSystem, cx: &AppContext) {
     let fallbacks = FontFamilies::get_global(cx);
-    text_system
-        .set_fallbacks(&fallbacks.ui_font_family, fallbacks)
-        .log_err();
-    text_system
-        .set_fallbacks(&fallbacks.buffer_font_family, gpui::FontUsage::BufferFont)
-        .log_err();
+    {
+        let target_family = fallbacks.ui_font_family[0].as_str();
+        let fallbacks = if fallbacks.ui_font_family.len() > 1 {
+            Some(&fallbacks.ui_font_family[1..])
+        } else {
+            None
+        };
+        text_system
+            .set_fallbacks(fallbacks, target_family)
+            .log_err();
+    }
+    {
+        let target_family = fallbacks.buffer_font_family[0].as_str();
+        let fallbacks = if fallbacks.buffer_font_family.len() > 1 {
+            Some(&fallbacks.buffer_font_family[1..])
+        } else {
+            None
+        };
+        text_system
+            .set_fallbacks(fallbacks, target_family)
+            .log_err();
+    }
 }
 
 pub fn update_settings_file<T: Settings>(
