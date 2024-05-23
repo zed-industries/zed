@@ -3448,18 +3448,13 @@ checksum = "23d2f3407d9a573d666de4b5bdf10569d73ca9478087346697dcbae6244bfbcd"
 name = "easy_motion"
 version = "0.1.0"
 dependencies = [
- "anyhow",
  "collections",
  "command_palette",
- "command_palette_hooks",
  "editor",
  "gpui",
  "language",
- "multi_buffer",
  "project",
  "serde",
- "serde_derive",
- "serde_json",
  "settings",
  "text",
  "theme",
@@ -3467,7 +3462,6 @@ dependencies = [
  "util",
  "vim",
  "workspace",
- "zed_actions",
 ]
 
 [[package]]

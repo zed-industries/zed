@@ -20,7 +20,7 @@ impl Overlay {
         if !visible_display_row_range.contains(&self.point.row()) {
             return None;
         }
-        let highlights = vec![(0..self.text.len(), self.highlight)];
+        let highlights = [(0..self.text.len(), self.highlight)];
         let iter = highlights.iter().cloned();
         Some((
             self.point,
