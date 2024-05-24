@@ -510,6 +510,7 @@ message CreateDevServerResponse {
 }
 
 message ShutdownDevServer {
+    optional string reason = 1;
 }
 
 message RenameDevServer {
