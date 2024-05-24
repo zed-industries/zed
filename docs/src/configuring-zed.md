@@ -110,7 +110,7 @@ The name of any font family installed on the user's system
 
 **Options**
 
-Zed supports all OpenType features that can be enabled, disabled or set to a value for a given buffer or terminal font.
+Zed supports all OpenType features that can be enabled, disabled or set a value to a font feature for a given buffer or terminal font.
 
 For example, to disable ligatures and set `7` to `cv01` for a given font you can add the following to your settings:
 
