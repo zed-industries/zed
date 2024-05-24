@@ -7695,6 +7695,7 @@ dependencies = [
  "lsp",
  "node_runtime",
  "parking_lot",
+ "pathdiff",
  "postage",
  "prettier",
  "pretty_assertions",
