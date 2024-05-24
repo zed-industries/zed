@@ -337,6 +337,7 @@ version = "0.1.0"
 dependencies = [
  "anthropic",
  "anyhow",
+ "assistant_slash_command",
  "cargo_toml",
  "chrono",
  "client",
@@ -424,6 +425,18 @@ dependencies = [
  "unindent",
  "util",
  "workspace",
+]
+
+[[package]]
+name = "assistant_slash_command"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "collections",
+ "derive_more",
+ "futures 0.3.28",
+ "gpui",
+ "parking_lot",
 ]
 
 [[package]]
