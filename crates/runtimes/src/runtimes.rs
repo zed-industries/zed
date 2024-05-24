@@ -4,7 +4,7 @@ use editor::{
     display_map::{
         BlockContext, BlockDisposition, BlockId, BlockProperties, BlockStyle, RenderBlock,
     },
-    Anchor, Editor,
+    Anchor, AnchorRangeExt, Editor,
 };
 use futures::{
     channel::mpsc::{self, UnboundedSender},
@@ -79,18 +79,20 @@ pub struct RuntimeManager {
 // Store all the blocks we're working with so that we can
 // * Remove them when
 
+#[derive(Debug, Clone)]
 struct EditorRuntimeState {
     // Could keep this as a sorted list of blocks so that we can eliminate
     // blocks that overlap with each other
     blocks: Vec<EditorRuntimeBlock>,
     // Store a subscription to the editor so we can drop them when the editor is dropped
-    subscription: gpui::Subscription,
+    // subscription: gpui::Subscription,
 }
 
+#[derive(Debug, Clone)]
 struct EditorRuntimeBlock {
     code_range: Range<Anchor>,
     block_id: BlockId,
-    execution: View<ExecutionView>,
+    execution_view: View<ExecutionView>,
 }
 
 impl RuntimeManager {
@@ -310,6 +312,31 @@ pub fn run(workspace: &mut Workspace, _: &Run, cx: &mut ViewContext<Workspace>) 
     // Plots and other images will have to wait.
     let execution_view = cx.new_view(|cx| ExecutionView::new(execution_id.clone(), cx));
 
+    // If any block overlaps with the new block, remove it
+    // When inserting a new block, put it in order so that search is efficient
+    let blocks_to_remove = runtime_manager.update(cx, |runtime_manager, cx| {
+        // Get the current `EditorRuntimeState` for this runtime_manager, inserting it if it doesn't exist
+        let editor_runtime_state = runtime_manager
+            .editors
+            .entry(editor.downgrade())
+            .or_insert_with(|| EditorRuntimeState { blocks: Vec::new() });
+
+        let mut blocks = editor_runtime_state.blocks.clone();
+        let mut blocks_to_remove: Vec<BlockId> = Vec::new();
+        for (i, block) in blocks.iter().enumerate() {
+            let other_range: Range<Anchor> = block.code_range.clone();
+
+            // We don't have an intersection operator on `Range`, so we have to do it manually
+            // Sadly we can't use `<=` on Anchors either
+            // if intersects(anchor_range, other_range) {
+            //     // The block overlaps with the new block, remove it
+            //     blocks_to_remove.push(i);
+            // }
+        }
+
+        blocks_to_remove
+    });
+
     let mut block_id = editor.update(cx, |editor, cx| {
         let block = BlockProperties {
             position: anchor_range.end,
@@ -322,7 +349,14 @@ pub fn run(workspace: &mut Workspace, _: &Run, cx: &mut ViewContext<Workspace>) 
         editor.insert_blocks([block], None, cx)[0]
     });
 
+    let editor_runtime_block = EditorRuntimeBlock {
+        code_range: anchor_range.clone(),
+        block_id: block_id.clone(),
+        execution_view: execution_view.clone(),
+    };
+
     let receiver = runtime_manager.update(cx, |runtime_manager, cx| {
+        // Run the code!
         runtime_manager.execute_code(
             entity_id,
             language_name,
