@@ -345,15 +345,17 @@ impl EasyMotion {
 
     fn add_overlays(editor: &mut Editor, trie: &Trie, cx: &mut ViewContext<Editor>) {
         let settings = ThemeSettings::get_global(cx);
+        let players = &settings.active_theme.players().0;
+        let color_0 = players[0].cursor;
+        let color_1 = players[1].cursor;
+        let color_2 = players[2].cursor;
         let background = settings.active_theme.colors().background;
-        let accent = settings.active_theme.colors().text_accent;
-        let icon = settings.active_theme.colors().icon;
         let perms = trie.trie_to_perms();
         for (seq, point) in perms {
             let color = match seq.len() {
-                0 | 1 => accent,
-                2 => icon,
-                3.. => icon,
+                0 | 1 => color_0,
+                2 => color_1,
+                3.. => color_2,
             };
 
             let mut highlights = vec![(
