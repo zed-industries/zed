@@ -256,6 +256,10 @@ impl EasyMotion {
                 }
             });
 
+            if word_starts.is_empty() {
+                return;
+            }
+
             let settings = ThemeSettings::get_global(cx);
             let players = &settings.active_theme.players().0;
             let color_0 = players[0].cursor;

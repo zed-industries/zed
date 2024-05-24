@@ -46,15 +46,26 @@ pub(crate) fn window_bottom(
 
 pub(crate) fn word_starts_in_range(
     map: &DisplaySnapshot,
-    mut point: DisplayPoint,
-    end_point: DisplayPoint,
+    mut from: DisplayPoint,
+    to: DisplayPoint,
     ignore_punctuation: bool,
 ) -> Vec<DisplayPoint> {
-    let scope = map.buffer_snapshot.language_scope_at(point.to_point(map));
+    let scope = map.buffer_snapshot.language_scope_at(from.to_point(map));
     let mut result = Vec::new();
-    while point < end_point {
+
+    if from.is_zero() {
+        let offset = from.to_offset(map, text::Bias::Left);
+        let first_char = map.buffer_snapshot.chars_at(offset).next();
+        if let Some(first_char) = first_char {
+            if char_kind(&scope, first_char) == CharKind::Word {
+                result.push(DisplayPoint::zero());
+            }
+        }
+    }
+
+    while from < to {
         let mut crossed_newline = false;
-        let new_point = find_boundary_range(map, point, end_point, |left, right| {
+        let new_point = find_boundary_range(map, from, to, |left, right| {
             let left_kind = coerce_punctuation(char_kind(&scope, left), ignore_punctuation);
             let right_kind = coerce_punctuation(char_kind(&scope, right), ignore_punctuation);
             let at_newline = right == '\n';
@@ -67,11 +78,11 @@ pub(crate) fn word_starts_in_range(
         let Some(new_point) = new_point else {
             break;
         };
-        if point == new_point {
+        if from == new_point {
             break;
         }
         result.push(new_point);
-        point = new_point;
+        from = new_point;
     }
     result
 }
