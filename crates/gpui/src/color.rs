@@ -134,11 +134,31 @@ impl TryFrom<&'_ str> for Rgba {
 
         let (r, g, b, a) = match hex.len() {
             RGB | RGBA => {
-                let r = u8::from_str_radix(hex.get(0..1).context(INVALID_UNICODE)?, 16)?;
-                let g = u8::from_str_radix(hex.get(1..2).context(INVALID_UNICODE)?, 16)?;
-                let b = u8::from_str_radix(hex.get(2..3).context(INVALID_UNICODE)?, 16)?;
+                let r = u8::from_str_radix(
+                    hex.get(0..1).with_context(|| {
+                        format!("{INVALID_UNICODE}: r component of #rgb/#rgba for value: '{value}'")
+                    })?,
+                    16,
+                )?;
+                let g = u8::from_str_radix(
+                    hex.get(1..2).with_context(|| {
+                        format!("{INVALID_UNICODE}: g component of #rgb/#rgba for value: '{value}'")
+                    })?,
+                    16,
+                )?;
+                let b = u8::from_str_radix(
+                    hex.get(2..3).with_context(|| {
+                        format!("{INVALID_UNICODE}: b component of #rgb/#rgba for value: '{value}'")
+                    })?,
+                    16,
+                )?;
                 let a = if hex.len() == RGBA {
-                    u8::from_str_radix(hex.get(3..4).context(INVALID_UNICODE)?, 16)?
+                    u8::from_str_radix(
+                        hex.get(3..4).with_context(|| {
+                            format!("{INVALID_UNICODE}: a component of #rgba for value: '{value}'")
+                        })?,
+                        16,
+                    )?
                 } else {
                     0xf
                 };
@@ -152,11 +172,40 @@ impl TryFrom<&'_ str> for Rgba {
                 (duplicate(r), duplicate(g), duplicate(b), duplicate(a))
             }
             RRGGBB | RRGGBBAA => {
-                let r = u8::from_str_radix(hex.get(0..2).context(INVALID_UNICODE)?, 16)?;
-                let g = u8::from_str_radix(hex.get(2..4).context(INVALID_UNICODE)?, 16)?;
-                let b = u8::from_str_radix(hex.get(4..6).context(INVALID_UNICODE)?, 16)?;
+                let r = u8::from_str_radix(
+                    hex.get(0..2).with_context(|| {
+                        format!(
+                            "{}: r component of #rrggbb/#rrggbbaa for value: '{}'",
+                            INVALID_UNICODE, value
+                        )
+                    })?,
+                    16,
+                )?;
+                let g = u8::from_str_radix(
+                    hex.get(2..4).with_context(|| {
+                        format!(
+                            "{INVALID_UNICODE}: g component of #rrggbb/#rrggbbaa for value: '{value}'"
+                        )
+                    })?,
+                    16,
+                )?;
+                let b = u8::from_str_radix(
+                    hex.get(4..6).with_context(|| {
+                        format!(
+                            "{INVALID_UNICODE}: b component of #rrggbb/#rrggbbaa for value: '{value}'"
+                        )
+                    })?,
+                    16,
+                )?;
                 let a = if hex.len() == RRGGBBAA {
-                    u8::from_str_radix(hex.get(6..8).context(INVALID_UNICODE)?, 16)?
+                    u8::from_str_radix(
+                        hex.get(6..8).with_context(|| {
+                            format!(
+                                "{INVALID_UNICODE}: a component of #rrggbbaa for value: '{value}'"
+                            )
+                        })?,
+                        16,
+                    )?
                 } else {
                     0xff
                 };
