@@ -19,5 +19,5 @@
 ; go run
 (
     (function_declaration name: (_) @run @_name
-        (#match? @_name "^main$"))
+        (#eq? @_name "main"))
 ) @go-run
