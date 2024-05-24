@@ -6,9 +6,9 @@ use std::{
 
 use crate::{
     black, phi, point, quad, rems, AbsoluteLength, Bounds, ContentMask, Corners, CornersRefinement,
-    CursorStyle, DefiniteLength, Edges, EdgesRefinement, Font, FontFeatures, FontStyle, FontWeight,
-    Hsla, Length, Pixels, Point, PointRefinement, Rgba, SharedString, Size, SizeRefinement, Styled,
-    TextRun, WindowContext,
+    CursorStyle, DefiniteLength, Edges, EdgesRefinement, Font, FontFallbacks, FontFeatures,
+    FontStyle, FontWeight, Hsla, Length, Pixels, Point, PointRefinement, Rgba, SharedString, Size,
+    SizeRefinement, Styled, TextRun, WindowContext,
 };
 use collections::HashSet;
 use refineable::Refineable;
@@ -180,6 +180,9 @@ pub struct TextStyle {
     /// The font features to use
     pub font_features: FontFeatures,
 
+    /// TODO:
+    pub font_fallbacks: FontFallbacks,
+
     /// The font size to use, in pixels or rems.
     pub font_size: AbsoluteLength,
 
@@ -269,6 +272,7 @@ impl TextStyle {
         Font {
             family: self.font_family.clone(),
             features: self.font_features.clone(),
+            fallbacks: self.font_fallbacks.clone(),
             weight: self.font_weight,
             style: self.font_style,
         }
@@ -286,6 +290,7 @@ impl TextStyle {
             font: Font {
                 family: self.font_family.clone(),
                 features: Default::default(),
+                fallbacks: self.font_fallbacks.clone(),
                 weight: self.font_weight,
                 style: self.font_style,
             },

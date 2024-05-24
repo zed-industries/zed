@@ -691,14 +691,14 @@ pub struct Font {
     /// The font features to use.
     pub features: FontFeatures,
 
+    /// TODO:
+    pub fallbacks: FontFallbacks,
+
     /// The font weight.
     pub weight: FontWeight,
 
     /// The font style.
     pub style: FontStyle,
-
-    /// TODO:
-    pub fallbacks: FontFallbacks,
 }
 
 /// Get a [`Font`] for a given name.
