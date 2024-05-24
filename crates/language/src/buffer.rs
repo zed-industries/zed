@@ -14,7 +14,7 @@ use crate::{
         SyntaxSnapshot, ToTreeSitterPoint,
     },
     task_context::RunnableRange,
-    LanguageScope, Outline, RunnableTag,
+    LanguageScope, Outline, RunnableCapture, RunnableTag,
 };
 use anyhow::{anyhow, Context, Result};
 pub use clock::ReplicaId;
@@ -3061,41 +3061,76 @@ impl BufferSnapshot {
 
         iter::from_fn(move || loop {
             let mat = syntax_matches.peek()?;
+
             let test_range = test_configs[mat.grammar_index].and_then(|test_configs| {
-                let mut tags: SmallVec<[(Range<usize>, RunnableTag); 1]> =
+                let mut run_range = None;
+                let full_range = mat.captures.iter().fold(
+                    Range {
+                        start: usize::MAX,
+                        end: 0,
+                    },
+                    |mut acc, next| {
+                        let byte_range = next.node.byte_range();
+                        if acc.start > byte_range.start {
+                            acc.start = byte_range.start;
+                        }
+                        if acc.end < byte_range.end {
+                            acc.end = byte_range.end;
+                        }
+                        acc
+                    },
+                );
+                if full_range.start > full_range.end {
+                    // We did not find a full spanning range of this match.
+                    return None;
+                }
+                let extra_captures: SmallVec<[_; 1]> =
                     SmallVec::from_iter(mat.captures.iter().filter_map(|capture| {
                         test_configs
-                            .runnable_tags
-                            .get(&capture.index)
+                            .extra_captures
+                            .get(capture.index as usize)
                             .cloned()
-                            .map(|tag_name| (capture.node.byte_range(), tag_name))
+                            .and_then(|tag_name| match tag_name {
+                                RunnableCapture::Named(name) => {
+                                    Some((capture.node.byte_range(), name))
+                                }
+                                RunnableCapture::Run => {
+                                    let _ = run_range.insert(capture.node.byte_range());
+                                    None
+                                }
+                            })
                     }));
-                let maximum_range = tags
+                let run_range = run_range?;
+                let tags = test_configs
+                    .query
+                    .property_settings(mat.pattern_index)
                     .iter()
-                    .max_by_key(|(byte_range, _)| byte_range.len())
-                    .map(|(range, _)| range)?
-                    .clone();
-                tags.sort_by_key(|(range, _)| range == &maximum_range);
-                let split_point = tags.partition_point(|(range, _)| range != &maximum_range);
-                let (extra_captures, tags) = tags.split_at(split_point);
-
+                    .filter_map(|property| {
+                        if *property.key == *"tag" {
+                            property
+                                .value
+                                .as_ref()
+                                .map(|value| RunnableTag(value.to_string().into()))
+                        } else {
+                            None
+                        }
+                    })
+                    .collect();
                 let extra_captures = extra_captures
                     .into_iter()
                     .map(|(range, name)| {
                         (
-                            name.0.to_string(),
+                            name.to_string(),
                             self.text_for_range(range.clone()).collect::<String>(),
                         )
                     })
                     .collect();
+                // All tags should have the same range.
                 Some(RunnableRange {
-                    run_range: mat
-                        .captures
-                        .iter()
-                        .find(|capture| capture.index == test_configs.run_capture_ix)
-                        .map(|mat| mat.node.byte_range())?,
+                    run_range,
+                    full_range,
                     runnable: Runnable {
-                        tags: tags.into_iter().cloned().map(|(_, tag)| tag).collect(),
+                        tags,
                         language: mat.language,
                         buffer: self.remote_id(),
                     },

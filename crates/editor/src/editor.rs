@@ -406,10 +406,13 @@ impl Default for ScrollbarMarkerState {
 #[derive(Clone, Debug)]
 struct RunnableTasks {
     templates: Vec<(TaskSourceKind, TaskTemplate)>,
-    // We need the column at which the task context evaluation should take place.
+    offset: MultiBufferOffset,
+    // We need the column at which the task context evaluation should take place (when we're spawning it via gutter).
     column: u32,
     // Values of all named captures, including those starting with '_'
     extra_variables: HashMap<String, String>,
+    // Full range of the tagged region. We use it to determine which `extra_variables` to grab for context resolution in e.g. a modal.
+    context_range: Range<BufferOffset>,
 }
 
 #[derive(Clone)]
@@ -417,7 +420,10 @@ struct ResolvedTasks {
     templates: SmallVec<[(TaskSourceKind, ResolvedTask); 1]>,
     position: Anchor,
 }
-
+#[derive(Copy, Clone, Debug)]
+struct MultiBufferOffset(usize);
+#[derive(Copy, Clone, Debug, PartialEq, PartialOrd)]
+struct BufferOffset(usize);
 /// Zed's primary text input `View`, allowing users to edit a [`MultiBuffer`]
 ///
 /// See the [module level documentation](self) for more information.
@@ -516,7 +522,7 @@ pub struct Editor {
     >,
     last_bounds: Option<Bounds<Pixels>>,
     expect_bounds_change: Option<Bounds<Pixels>>,
-    tasks: HashMap<(BufferId, BufferRow), (usize, RunnableTasks)>,
+    tasks: BTreeMap<(BufferId, BufferRow), RunnableTasks>,
     tasks_update_task: Option<Task<()>>,
 }
 
@@ -4053,7 +4059,7 @@ impl Editor {
                     this.discard_inline_completion(false, cx);
                     let tasks = tasks.as_ref().zip(this.workspace.clone()).and_then(
                         |(tasks, (workspace, _))| {
-                            let position = Point::new(buffer_row, tasks.1.column);
+                            let position = Point::new(buffer_row, tasks.column);
                             let range_start = buffer.read(cx).anchor_at(position, Bias::Right);
                             let location = Location {
                                 buffer: buffer.clone(),
@@ -4061,7 +4067,7 @@ impl Editor {
                             };
                             // Fill in the environmental variables from the tree-sitter captures
                             let mut captured_task_variables = TaskVariables::default();
-                            for (capture_name, value) in tasks.1.extra_variables.clone() {
+                            for (capture_name, value) in tasks.extra_variables.clone() {
                                 captured_task_variables.insert(
                                     task::VariableName::Custom(capture_name.into()),
                                     value.clone(),
@@ -4082,7 +4088,6 @@ impl Editor {
                                 .map(|task_context| {
                                     Arc::new(ResolvedTasks {
                                         templates: tasks
-                                            .1
                                             .templates
                                             .iter()
                                             .filter_map(|(kind, template)| {
@@ -4092,7 +4097,7 @@ impl Editor {
                                             })
                                             .collect(),
                                         position: snapshot.buffer_snapshot.anchor_before(
-                                            Point::new(multibuffer_point.row, tasks.1.column),
+                                            Point::new(multibuffer_point.row, tasks.column),
                                         ),
                                     })
                                 })
@@ -4693,7 +4698,7 @@ impl Editor {
         self.tasks.clear()
     }
 
-    fn insert_tasks(&mut self, key: (BufferId, BufferRow), value: (usize, RunnableTasks)) {
+    fn insert_tasks(&mut self, key: (BufferId, BufferRow), value: RunnableTasks) {
         if let Some(_) = self.tasks.insert(key, value) {
             // This case should hopefully be rare, but just in case...
             log::error!("multiple different run targets found on a single line, only the last target will be rendered")
@@ -7931,7 +7936,7 @@ impl Editor {
         snapshot: DisplaySnapshot,
         runnable_ranges: Vec<RunnableRange>,
         mut cx: AsyncWindowContext,
-    ) -> Vec<((BufferId, u32), (usize, RunnableTasks))> {
+    ) -> Vec<((BufferId, u32), RunnableTasks)> {
         runnable_ranges
             .into_iter()
             .filter_map(|mut runnable| {
@@ -7953,16 +7958,17 @@ impl Editor {
                     .start
                     .row;
 
+                let context_range =
+                    BufferOffset(runnable.full_range.start)..BufferOffset(runnable.full_range.end);
                 Some((
                     (runnable.buffer_id, row),
-                    (
-                        runnable.run_range.start,
-                        RunnableTasks {
-                            templates: tasks,
-                            column: point.column,
-                            extra_variables: runnable.extra_captures,
-                        },
-                    ),
+                    RunnableTasks {
+                        templates: tasks,
+                        offset: MultiBufferOffset(runnable.run_range.start),
+                        context_range,
+                        column: point.column,
+                        extra_variables: runnable.extra_captures,
+                    },
                 ))
             })
             .collect()
