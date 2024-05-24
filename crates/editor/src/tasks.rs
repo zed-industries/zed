@@ -5,7 +5,7 @@ use gpui::{Model, WindowContext};
 use language::ContextProvider;
 use project::{BasicContextProvider, Location, Project};
 use task::{TaskContext, TaskVariables, VariableName};
-use text::Point;
+use text::{Point, ToOffset, ToPoint};
 use util::ResultExt;
 use workspace::Workspace;
 
@@ -70,14 +70,26 @@ fn task_context_with_editor(
     };
     let captured_variables = {
         let mut variables = TaskVariables::default();
-        for range in location
-            .buffer
-            .read(cx)
-            .snapshot()
-            .runnable_ranges(location.range.clone())
+        let buffer = location.buffer.read(cx);
+        let buffer_id = buffer.remote_id();
+        let snapshot = buffer.snapshot();
+        let starting_point = location.range.start.to_point(&snapshot);
+        let starting_offset = starting_point.to_offset(&snapshot);
+        for (_, tasks) in editor
+            .tasks
+            .range((buffer_id, 0)..(buffer_id, starting_point.row + 1))
         {
-            for (capture_name, value) in range.extra_captures {
-                variables.insert(VariableName::Custom(capture_name.into()), value);
+            if !tasks
+                .context_range
+                .contains(&crate::BufferOffset(starting_offset))
+            {
+                continue;
+            }
+            for (capture_name, value) in tasks.extra_variables.iter() {
+                variables.insert(
+                    VariableName::Custom(capture_name.to_owned().into()),
+                    value.clone(),
+                );
             }
         }
         variables

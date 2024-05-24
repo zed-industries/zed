@@ -405,10 +405,12 @@ impl Default for ScrollbarMarkerState {
 struct RunnableTasks {
     templates: Vec<(TaskSourceKind, TaskTemplate)>,
     offset: MultiBufferOffset,
-    // We need the column at which the task context evaluation should take place.
+    // We need the column at which the task context evaluation should take place (when we're spawning it via gutter).
     column: u32,
     // Values of all named captures, including those starting with '_'
     extra_variables: HashMap<String, String>,
+    // Full range of the tagged region. We use it to determine which `extra_variables` to grab for context resolution in e.g. a modal.
+    context_range: Range<BufferOffset>,
 }
 
 #[derive(Clone)]
@@ -418,7 +420,8 @@ struct ResolvedTasks {
 }
 #[derive(Copy, Clone, Debug)]
 struct MultiBufferOffset(usize);
-
+#[derive(Copy, Clone, Debug, PartialEq, PartialOrd)]
+struct BufferOffset(usize);
 /// Zed's primary text input `View`, allowing users to edit a [`MultiBuffer`]
 ///
 /// See the [module level documentation](self) for more information.
@@ -7909,11 +7912,14 @@ impl Editor {
                     .start
                     .row;
 
+                let context_range =
+                    BufferOffset(runnable.full_range.start)..BufferOffset(runnable.full_range.end);
                 Some((
                     (runnable.buffer_id, row),
                     RunnableTasks {
                         templates: tasks,
                         offset: MultiBufferOffset(runnable.run_range.start),
+                        context_range,
                         column: point.column,
                         extra_variables: runnable.extra_captures,
                     },

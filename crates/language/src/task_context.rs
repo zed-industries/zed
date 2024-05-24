@@ -11,6 +11,7 @@ use text::BufferId;
 pub struct RunnableRange {
     pub buffer_id: BufferId,
     pub run_range: Range<usize>,
+    pub full_range: Range<usize>,
     pub runnable: Runnable,
     pub extra_captures: HashMap<String, String>,
 }

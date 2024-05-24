@@ -25,7 +25,7 @@ use anyhow::{anyhow, Context, Result};
 use async_trait::async_trait;
 use collections::{HashMap, HashSet};
 use futures::Future;
-use gpui::{AppContext, AsyncAppContext, Model, Task};
+use gpui::{AppContext, AsyncAppContext, Model, SharedString, Task};
 pub use highlight_map::HighlightMap;
 use http::HttpClient;
 use lazy_static::lazy_static;
@@ -882,12 +882,16 @@ struct RedactionConfig {
     pub redaction_capture_ix: u32,
 }
 
+#[derive(Clone, Debug, PartialEq)]
+enum RunnableCapture {
+    Named(SharedString),
+    Run,
+}
+
 struct RunnableConfig {
     pub query: Query,
-    /// A mapping from captures indices to known test tags
-    pub runnable_tags: HashMap<u32, RunnableTag>,
-    /// index of the capture that corresponds to @run
-    pub run_capture_ix: u32,
+    /// A mapping from capture indice to capture kind
+    pub extra_captures: Vec<RunnableCapture>,
 }
 
 struct OverrideConfig {
@@ -1009,23 +1013,21 @@ impl Language {
             .ok_or_else(|| anyhow!("cannot mutate grammar"))?;
 
         let query = Query::new(&grammar.ts_language, source)?;
-        let mut run_capture_index = None;
-        let mut runnable_tags = HashMap::default();
-        for (ix, name) in query.capture_names().iter().enumerate() {
-            if *name == "run" {
-                run_capture_index = Some(ix as u32);
+        let mut extra_captures = Vec::with_capacity(query.capture_names().len());
+
+        for name in query.capture_names().iter() {
+            let kind = if *name == "run" {
+                RunnableCapture::Run
             } else {
-                runnable_tags.insert(ix as u32, RunnableTag(name.to_string().into()));
-            }
+                RunnableCapture::Named(name.to_string().into())
+            };
+            extra_captures.push(kind);
         }
 
-        if let Some(run_capture_ix) = run_capture_index {
-            grammar.runnable_config = Some(RunnableConfig {
-                query,
-                run_capture_ix,
-                runnable_tags,
-            });
-        }
+        grammar.runnable_config = Some(RunnableConfig {
+            extra_captures,
+            query,
+        });
 
         Ok(self)
     }
