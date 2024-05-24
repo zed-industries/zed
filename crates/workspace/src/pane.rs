@@ -1708,7 +1708,7 @@ impl Pane {
                                         let worktree = worktree.read(cx);
                                         let entry = worktree.entry_for_id(entry)?;
                                         let abs_path = worktree.absolutize(&entry.path).ok()?;
-                                        let parent = if entry.is_symlink {
+                                        let parent = if entry.is_symlink() {
                                             abs_path.canonicalize().ok()?
                                         } else {
                                             abs_path

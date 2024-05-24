@@ -3283,7 +3283,7 @@ impl Entry {
             path,
             inode: metadata.inode,
             mtime: Some(metadata.mtime),
-            is_symlink: metadata.is_symlink,
+            canonical_path: None,
             is_ignored: false,
             is_external: false,
             is_private: false,
@@ -4071,6 +4071,8 @@ impl BackgroundScanner {
                 if !canonical_path.starts_with(root_canonical_path) {
                     child_entry.is_external = true;
                 }
+
+                child_entry.canonical_path = Some(canonical_path);
             }
 
             if child_entry.is_dir() {
@@ -4250,6 +4252,10 @@ impl BackgroundScanner {
                                 }
                             }
                         }
+                    }
+
+                    if metadata.is_symlink {
+                        fs_entry.canonical_path = Some(canonical_path.to_path_buf());
                     }
 
                     if let (Some(scan_queue_tx), true) = (&scan_queue_tx, fs_entry.is_dir()) {
@@ -4983,7 +4989,7 @@ impl<'a> From<&'a Entry> for proto::Entry {
             path: entry.path.to_string_lossy().into(),
             inode: entry.inode,
             mtime: entry.mtime.map(|time| time.into()),
-            is_symlink: entry.is_symlink,
+            is_symlink: entry.is_symlink(),
             is_ignored: entry.is_ignored,
             is_external: entry.is_external,
             git_status: entry.git_status.map(git_status_to_proto),
@@ -5009,7 +5015,7 @@ impl<'a> TryFrom<(&'a CharBag, proto::Entry)> for Entry {
             path,
             inode: entry.inode,
             mtime: entry.mtime.map(|time| time.into()),
-            is_symlink: entry.is_symlink,
+            canonical_path: None,
             is_ignored: entry.is_ignored,
             is_external: entry.is_external,
             git_status: git_status_from_proto(entry.git_status),

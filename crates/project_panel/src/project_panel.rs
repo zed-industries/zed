@@ -1198,7 +1198,7 @@ impl ProjectPanel {
             let working_directory = if entry.is_dir() {
                 Some(abs_path)
             } else {
-                if entry.is_symlink {
+                if entry.is_symlink() {
                     abs_path.canonicalize().ok()
                 } else {
                     Some(abs_path)
@@ -1445,11 +1445,11 @@ impl ProjectPanel {
                         path: entry.path.join("\0").into(),
                         inode: 0,
                         mtime: entry.mtime,
-                        is_symlink: false,
                         is_ignored: entry.is_ignored,
                         is_external: false,
                         is_private: false,
                         git_status: entry.git_status,
+                        canonical_path: entry.canonical_path.clone(),
                     });
                 }
                 if expanded_dir_ids.binary_search(&entry.id).is_err()
@@ -1647,7 +1647,7 @@ impl ProjectPanel {
                             .map_or(false, |e| e.is_cut() && e.entry_id() == entry.id),
                         git_status: status,
                         is_private: entry.is_private,
-                        is_symlink: entry.is_symlink,
+                        is_symlink: entry.is_symlink(),
                     };
 
                     if let Some(edit_state) = &self.edit_state {
