@@ -49,6 +49,11 @@ pub trait UpdateGlobal {
     where
         C: BorrowAppContext,
         F: FnOnce(&mut Self, &mut C) -> R;
+
+    /// Set the global instance of the implementing type.
+    fn set_global<C>(cx: &mut C, global: Self)
+    where
+        C: BorrowAppContext;
 }
 
 impl<T: Global> UpdateGlobal for T {
@@ -58,5 +63,12 @@ impl<T: Global> UpdateGlobal for T {
         F: FnOnce(&mut Self, &mut C) -> R,
     {
         cx.update_global(update)
+    }
+
+    fn set_global<C>(cx: &mut C, global: Self)
+    where
+        C: BorrowAppContext,
+    {
+        cx.set_global(global)
     }
 }

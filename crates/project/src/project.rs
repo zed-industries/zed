@@ -113,7 +113,9 @@ pub use fs::*;
 pub use language::Location;
 #[cfg(any(test, feature = "test-support"))]
 pub use prettier::FORMAT_SUFFIX as TEST_PRETTIER_FORMAT_SUFFIX;
-pub use task_inventory::{Inventory, TaskSourceKind};
+pub use task_inventory::{
+    BasicContextProvider, ContextProviderWithTasks, Inventory, TaskSourceKind,
+};
 pub use worktree::{
     DiagnosticSummary, Entry, EntryKind, File, LocalWorktree, PathChange, ProjectEntryId,
     RepositoryEntry, UpdatedEntriesSet, UpdatedGitRepositoriesSet, Worktree, WorktreeId,
@@ -4702,11 +4704,11 @@ impl Project {
         if self.is_local() {
             let buffers_with_paths = buffers
                 .into_iter()
-                .filter_map(|buffer_handle| {
+                .map(|buffer_handle| {
                     let buffer = buffer_handle.read(cx);
-                    let file = File::from_dyn(buffer.file())?;
-                    let buffer_abs_path = file.as_local().map(|f| f.abs_path(cx));
-                    Some((buffer_handle, buffer_abs_path))
+                    let buffer_abs_path = File::from_dyn(buffer.file())
+                        .and_then(|file| file.as_local().map(|f| f.abs_path(cx)));
+                    (buffer_handle, buffer_abs_path)
                 })
                 .collect::<Vec<_>>();
 

@@ -97,12 +97,11 @@ impl EntityMap {
     #[track_caller]
     pub fn lease<'a, T>(&mut self, model: &'a Model<T>) -> Lease<'a, T> {
         self.assert_valid_context(model);
-        let entity = Some(self.entities.remove(model.entity_id).unwrap_or_else(|| {
-            panic!(
-                "Circular entity lease of {}. Is it already being updated?",
-                std::any::type_name::<T>()
-            )
-        }));
+        let entity = Some(
+            self.entities
+                .remove(model.entity_id)
+                .unwrap_or_else(|| double_lease_panic::<T>("update")),
+        );
         Lease {
             model,
             entity,
@@ -118,7 +117,9 @@ impl EntityMap {
 
     pub fn read<T: 'static>(&self, model: &Model<T>) -> &T {
         self.assert_valid_context(model);
-        self.entities[model.entity_id].downcast_ref().unwrap()
+        self.entities[model.entity_id]
+            .downcast_ref()
+            .unwrap_or_else(|| double_lease_panic::<T>("read"))
     }
 
     fn assert_valid_context(&self, model: &AnyModel) {
@@ -147,6 +148,13 @@ impl EntityMap {
             })
             .collect()
     }
+}
+
+fn double_lease_panic<T>(operation: &str) -> ! {
+    panic!(
+        "cannot {operation} {} while it is already being updated",
+        std::any::type_name::<T>()
+    )
 }
 
 pub(crate) struct Lease<'a, T> {
