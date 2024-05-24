@@ -260,6 +260,10 @@ mod tests {
                     cwd: Some("/dir".into()),
                     task_variables: TaskVariables::from_iter([
                         (VariableName::File, "/dir/rust/b.rs".into()),
+                        (VariableName::Filename, "b.rs".into()),
+                        (VariableName::RelativeFile, "rust/b.rs".into()),
+                        (VariableName::Dirname, "/dir/rust".into()),
+                        (VariableName::Stem, "b".into()),
                         (VariableName::WorktreeRoot, "/dir".into()),
                         (VariableName::Row, "1".into()),
                         (VariableName::Column, "1".into()),
@@ -276,6 +280,10 @@ mod tests {
                     cwd: Some("/dir".into()),
                     task_variables: TaskVariables::from_iter([
                         (VariableName::File, "/dir/rust/b.rs".into()),
+                        (VariableName::Filename, "b.rs".into()),
+                        (VariableName::RelativeFile, "rust/b.rs".into()),
+                        (VariableName::Dirname, "/dir/rust".into()),
+                        (VariableName::Stem, "b".into()),
                         (VariableName::WorktreeRoot, "/dir".into()),
                         (VariableName::Row, "1".into()),
                         (VariableName::Column, "15".into()),
@@ -293,6 +301,10 @@ mod tests {
                     cwd: Some("/dir".into()),
                     task_variables: TaskVariables::from_iter([
                         (VariableName::File, "/dir/a.ts".into()),
+                        (VariableName::Filename, "a.ts".into()),
+                        (VariableName::RelativeFile, "a.ts".into()),
+                        (VariableName::Dirname, "/dir".into()),
+                        (VariableName::Stem, "a".into()),
                         (VariableName::WorktreeRoot, "/dir".into()),
                         (VariableName::Row, "1".into()),
                         (VariableName::Column, "1".into()),

@@ -391,6 +391,22 @@ impl ContextProvider for RustContextProvider {
             },
             TaskTemplate {
                 label: format!(
+                    "cargo test -p {} {}",
+                    RUST_PACKAGE_TASK_VARIABLE.template_value(),
+                    VariableName::Stem.template_value(),
+                ),
+                command: "cargo".into(),
+                args: vec![
+                    "test".into(),
+                    "-p".into(),
+                    RUST_PACKAGE_TASK_VARIABLE.template_value(),
+                    VariableName::Stem.template_value(),
+                ],
+                tags: vec!["rust-mod-test".to_owned()],
+                ..TaskTemplate::default()
+            },
+            TaskTemplate {
+                label: format!(
                     "cargo test -p {}",
                     RUST_PACKAGE_TASK_VARIABLE.template_value()
                 ),

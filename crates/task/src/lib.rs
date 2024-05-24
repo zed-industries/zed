@@ -124,6 +124,14 @@ impl ResolvedTask {
 pub enum VariableName {
     /// An absolute path of the currently opened file.
     File,
+    /// A path of the currently opened file (relative to worktree root).
+    RelativeFile,
+    /// The currently opened filename.
+    Filename,
+    /// The path to a parent directory of a currently opened file.
+    Dirname,
+    /// Stem (filename without extension) of the currently opened file.
+    Stem,
     /// An absolute path of the currently opened worktree, that contains the file.
     WorktreeRoot,
     /// A symbol text, that contains latest cursor/selection position.
@@ -160,6 +168,10 @@ impl std::fmt::Display for VariableName {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         match self {
             Self::File => write!(f, "{ZED_VARIABLE_NAME_PREFIX}FILE"),
+            Self::Filename => write!(f, "{ZED_VARIABLE_NAME_PREFIX}FILENAME"),
+            Self::RelativeFile => write!(f, "{ZED_VARIABLE_NAME_PREFIX}RELATIVE_FILE"),
+            Self::Dirname => write!(f, "{ZED_VARIABLE_NAME_PREFIX}DIRNAME"),
+            Self::Stem => write!(f, "{ZED_VARIABLE_NAME_PREFIX}STEM"),
             Self::WorktreeRoot => write!(f, "{ZED_VARIABLE_NAME_PREFIX}WORKTREE_ROOT"),
             Self::Symbol => write!(f, "{ZED_VARIABLE_NAME_PREFIX}SYMBOL"),
             Self::Row => write!(f, "{ZED_VARIABLE_NAME_PREFIX}ROW"),
