@@ -1787,6 +1787,7 @@ impl EditorElement {
                     starts_new_buffer,
                     height,
                     id,
+                    show_excerpt_controls,
                     ..
                 } => {
                     let include_root = self
@@ -1917,7 +1918,7 @@ impl EditorElement {
                                             }))
                                     }),
                             )
-                            .child(
+                            .children(show_excerpt_controls.then(|| {
                                 h_flex()
                                     .flex_basis(Length::Definite(DefiniteLength::Fraction(0.333)))
                                     .pt_1()
@@ -1962,8 +1963,8 @@ impl EditorElement {
                                                     )
                                                 }
                                             }),
-                                    ),
-                            )
+                                    )
+                            }))
                     } else {
                         v_flex()
                             .id(("excerpt header", block_id))
@@ -1993,43 +1994,91 @@ impl EditorElement {
                                     .w(icon_offset)
                                     .h_full()
                                     .child(
-                                        ButtonLike::new("expand-icon")
-                                            .style(ButtonStyle::Transparent)
-                                            .child(
-                                                svg()
-                                                    .path(IconName::ArrowUpFromLine.path())
-                                                    .size(IconSize::XSmall.rems())
-                                                    .text_color(
-                                                        cx.theme().colors().editor_line_number,
-                                                    )
-                                                    .group("")
-                                                    .hover(|style| {
-                                                        style.text_color(
-                                                            cx.theme()
-                                                                .colors()
-                                                                .editor_active_line_number,
+                                        show_excerpt_controls.then(|| {
+                                            ButtonLike::new("expand-icon")
+                                                .style(ButtonStyle::Transparent)
+                                                .child(
+                                                    svg()
+                                                        .path(IconName::ArrowUpFromLine.path())
+                                                        .size(IconSize::XSmall.rems())
+                                                        .text_color(
+                                                            cx.theme().colors().editor_line_number,
                                                         )
-                                                    }),
-                                            )
-                                            .on_click(cx.listener_for(&self.editor, {
-                                                let id = *id;
-                                                move |editor, _, cx| {
-                                                    editor.expand_excerpt(
-                                                        id,
-                                                        multi_buffer::ExpandExcerptDirection::Up,
-                                                        cx,
-                                                    );
-                                                }
-                                            }))
-                                            .tooltip({
-                                                move |cx| {
-                                                    Tooltip::for_action(
-                                                        "Expand Excerpt",
-                                                        &ExpandExcerpts { lines: 0 },
-                                                        cx,
-                                                    )
-                                                }
-                                            }),
+                                                        .group("")
+                                                        .hover(|style| {
+                                                            style.text_color(
+                                                                cx.theme()
+                                                                    .colors()
+                                                                    .editor_active_line_number,
+                                                            )
+                                                        }),
+                                                )
+                                                .on_click(cx.listener_for(&self.editor, {
+                                                    let id = *id;
+                                                    move |editor, _, cx| {
+                                                        editor.expand_excerpt(
+                                                            id,
+                                                            multi_buffer::ExpandExcerptDirection::Up,
+                                                            cx,
+                                                        );
+                                                    }
+                                                }))
+                                                .tooltip({
+                                                    move |cx| {
+                                                        Tooltip::for_action(
+                                                            "Expand Excerpt",
+                                                            &ExpandExcerpts { lines: 0 },
+                                                            cx,
+                                                        )
+                                                    }
+                                                })
+                                        }).unwrap_or_else(|| {
+                                            ButtonLike::new("jump-icon")
+                                                .style(ButtonStyle::Transparent)
+                                                .child(
+                                                    svg()
+                                                        .path(IconName::ArrowUpRight.path())
+                                                        .size(IconSize::XSmall.rems())
+                                                        .text_color(
+                                                            cx.theme().colors().border_variant,
+                                                        )
+                                                        .group("excerpt-jump-action")
+                                                        .group_hover("excerpt-jump-action", |style| {
+                                                            style.text_color(
+                                                                cx.theme().colors().border
+
+                                                            )
+                                                        })
+                                                )
+                                                .when_some(jump_data.clone(), |this, jump_data| {
+                                                    this.on_click(cx.listener_for(&self.editor, {
+                                                        let path = jump_data.path.clone();
+                                                        move |editor, _, cx| {
+                                                            cx.stop_propagation();
+
+                                                            editor.jump(
+                                                                path.clone(),
+                                                                jump_data.position,
+                                                                jump_data.anchor,
+                                                                jump_data.line_offset_from_top,
+                                                                cx,
+                                                            );
+                                                        }
+                                                    }))
+                                                    .tooltip(move |cx| {
+                                                        Tooltip::for_action(
+                                                            format!(
+                                                                "Jump to {}:L{}",
+                                                                jump_data.path.path.display(),
+                                                                jump_data.position.row + 1
+                                                            ),
+                                                            &OpenExcerpts,
+                                                            cx,
+                                                        )
+                                                    })
+                                                })
+                                        })
+
                                     ),
                             )
                             .group("excerpt-jump-action")
@@ -5064,7 +5113,7 @@ mod tests {
         init_test(cx, |_| {});
         let window = cx.add_window(|cx| {
             let buffer = MultiBuffer::build_simple(&sample_text(6, 6, 'a'), cx);
-            Editor::new(EditorMode::Full, buffer, None, cx)
+            Editor::new(EditorMode::Full, buffer, None, true, cx)
         });
 
         let editor = window.root(cx).unwrap();
@@ -5144,7 +5193,7 @@ mod tests {
 
         let window = cx.add_window(|cx| {
             let buffer = MultiBuffer::build_simple(&(sample_text(6, 6, 'a') + "\n"), cx);
-            Editor::new(EditorMode::Full, buffer, None, cx)
+            Editor::new(EditorMode::Full, buffer, None, true, cx)
         });
         let cx = &mut VisualTestContext::from_window(*window, cx);
         let editor = window.root(cx).unwrap();
@@ -5246,7 +5295,7 @@ mod tests {
                 ],
                 cx,
             );
-            Editor::new(EditorMode::Full, buffer, None, cx)
+            Editor::new(EditorMode::Full, buffer, None, true, cx)
         });
         let editor = window.root(cx).unwrap();
         let style = cx.update(|cx| editor.read(cx).style().unwrap().clone());
@@ -5295,7 +5344,7 @@ mod tests {
 
         let window = cx.add_window(|cx| {
             let buffer = MultiBuffer::build_simple("", cx);
-            Editor::new(EditorMode::Full, buffer, None, cx)
+            Editor::new(EditorMode::Full, buffer, None, true, cx)
         });
         let cx = &mut VisualTestContext::from_window(*window, cx);
         let editor = window.root(cx).unwrap();
@@ -5493,7 +5542,7 @@ mod tests {
         );
         let window = cx.add_window(|cx| {
             let buffer = MultiBuffer::build_simple(&input_text, cx);
-            Editor::new(editor_mode, buffer, None, cx)
+            Editor::new(editor_mode, buffer, None, true, cx)
         });
         let cx = &mut VisualTestContext::from_window(*window, cx);
         let editor = window.root(cx).unwrap();

@@ -2662,8 +2662,8 @@ pub mod tests {
         });
 
         cx.executor().run_until_parked();
-        let editor =
-            cx.add_window(|cx| Editor::for_multibuffer(multibuffer, Some(project.clone()), cx));
+        let editor = cx
+            .add_window(|cx| Editor::for_multibuffer(multibuffer, Some(project.clone()), true, cx));
 
         let editor_edited = Arc::new(AtomicBool::new(false));
         let fake_server = fake_servers.next().await.unwrap();
@@ -2971,8 +2971,8 @@ pub mod tests {
         assert!(!buffer_2_excerpts.is_empty());
 
         cx.executor().run_until_parked();
-        let editor =
-            cx.add_window(|cx| Editor::for_multibuffer(multibuffer, Some(project.clone()), cx));
+        let editor = cx
+            .add_window(|cx| Editor::for_multibuffer(multibuffer, Some(project.clone()), true, cx));
         let editor_edited = Arc::new(AtomicBool::new(false));
         let fake_server = fake_servers.next().await.unwrap();
         let closure_editor_edited = Arc::clone(&editor_edited);

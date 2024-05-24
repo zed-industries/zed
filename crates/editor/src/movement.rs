@@ -577,7 +577,7 @@ mod tests {
     use crate::{
         display_map::Inlay,
         test::{editor_test_context::EditorTestContext, marked_display_snapshot},
-        Buffer, DisplayMap, DisplayRow, ExcerptRange, InlayId, MultiBuffer,
+        DisplayMap, InlayId, MultiBuffer,
     };
     use gpui::{font, Context as _};
     use indoc::indoc;
@@ -696,7 +696,7 @@ mod tests {
         let buffer = MultiBuffer::build_simple(input_text, cx);
         let buffer_snapshot = buffer.read(cx).snapshot(cx);
         let display_map =
-            cx.new_model(|cx| DisplayMap::new(buffer, font, font_size, None, 1, 1, 1, cx));
+            cx.new_model(|cx| DisplayMap::new(buffer, font, font_size, None, true, 1, 1, 1, cx));
 
         // add all kinds of inlays between two word boundaries: we should be able to cross them all, when looking for another boundary
         let mut id = 0;

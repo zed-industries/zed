@@ -36,7 +36,7 @@ pub fn marked_display_snapshot(
 
     let buffer = MultiBuffer::build_simple(&unmarked_text, cx);
     let display_map =
-        cx.new_model(|cx| DisplayMap::new(buffer, font, font_size, None, 1, 1, 1, cx));
+        cx.new_model(|cx| DisplayMap::new(buffer, font, font_size, None, true, 1, 1, 1, cx));
     let snapshot = display_map.update(cx, |map, cx| map.snapshot(cx));
     let markers = markers
         .into_iter()
@@ -66,7 +66,7 @@ pub fn assert_text_with_selections(
 #[allow(dead_code)]
 #[cfg(any(test, feature = "test-support"))]
 pub(crate) fn build_editor(buffer: Model<MultiBuffer>, cx: &mut ViewContext<Editor>) -> Editor {
-    Editor::new(EditorMode::Full, buffer, None, cx)
+    Editor::new(EditorMode::Full, buffer, None, true, cx)
 }
 
 pub(crate) fn build_editor_with_project(
@@ -74,7 +74,7 @@ pub(crate) fn build_editor_with_project(
     buffer: Model<MultiBuffer>,
     cx: &mut ViewContext<Editor>,
 ) -> Editor {
-    Editor::new(EditorMode::Full, buffer, Some(project), cx)
+    Editor::new(EditorMode::Full, buffer, Some(project), true, cx)
 }
 
 #[cfg(any(test, feature = "test-support"))]

@@ -12,7 +12,7 @@ use std::{
     cell::RefCell,
     cmp::{self, Ordering},
     fmt::Debug,
-    ops::{Deref, DerefMut, Range},
+    ops::{Deref, DerefMut, Range, RangeBounds},
     sync::{
         atomic::{AtomicUsize, Ordering::SeqCst},
         Arc,
@@ -31,6 +31,7 @@ pub struct BlockMap {
     wrap_snapshot: RefCell<WrapSnapshot>,
     blocks: Vec<Arc<Block>>,
     transforms: RefCell<SumTree<Transform>>,
+    show_excerpt_controls: bool,
     buffer_header_height: u8,
     excerpt_header_height: u8,
     excerpt_footer_height: u8,
@@ -106,6 +107,17 @@ struct Transform {
     block: Option<TransformBlock>,
 }
 
+pub(crate) enum BlockType {
+    Custom(BlockId),
+    Header,
+    Footer,
+}
+
+pub(crate) trait BlockLike {
+    fn block_type(&self) -> BlockType;
+    fn disposition(&self) -> BlockDisposition;
+}
+
 #[allow(clippy::large_enum_variant)]
 #[derive(Clone)]
 pub enum TransformBlock {
@@ -116,12 +128,27 @@ pub enum TransformBlock {
         range: ExcerptRange<text::Anchor>,
         height: u8,
         starts_new_buffer: bool,
+        show_excerpt_controls: bool,
     },
     ExcerptFooter {
         id: ExcerptId,
         disposition: BlockDisposition,
         height: u8,
     },
+}
+
+impl BlockLike for TransformBlock {
+    fn block_type(&self) -> BlockType {
+        match self {
+            TransformBlock::Custom(block) => BlockType::Custom(block.id),
+            TransformBlock::ExcerptHeader { .. } => BlockType::Header,
+            TransformBlock::ExcerptFooter { .. } => BlockType::Footer,
+        }
+    }
+
+    fn disposition(&self) -> BlockDisposition {
+        self.disposition()
+    }
 }
 
 impl TransformBlock {
@@ -193,6 +220,7 @@ pub struct BlockBufferRows<'a> {
 impl BlockMap {
     pub fn new(
         wrap_snapshot: WrapSnapshot,
+        show_excerpt_controls: bool,
         buffer_header_height: u8,
         excerpt_header_height: u8,
         excerpt_footer_height: u8,
@@ -203,6 +231,7 @@ impl BlockMap {
             blocks: Vec::new(),
             transforms: RefCell::new(SumTree::from_item(Transform::isomorphic(row_count), &())),
             wrap_snapshot: RefCell::new(wrap_snapshot.clone()),
+            show_excerpt_controls,
             buffer_header_height,
             excerpt_header_height,
             excerpt_footer_height,
@@ -391,105 +420,18 @@ impl BlockMap {
             );
 
             if buffer.show_headers() {
-                blocks_in_edit.extend(
-                    buffer
-                        .excerpt_boundaries_in_range((start_bound, end_bound))
-                        .flat_map(|excerpt_boundary| {
-                            let wrap_row = wrap_snapshot
-                                .make_wrap_point(Point::new(excerpt_boundary.row.0, 0), Bias::Left)
-                                .row();
-
-                            [
-                                excerpt_boundary.prev.as_ref().map(|prev| {
-                                    (
-                                        wrap_row,
-                                        TransformBlock::ExcerptFooter {
-                                            id: prev.id,
-                                            height: self.excerpt_footer_height,
-                                            disposition: if excerpt_boundary.next.is_some() {
-                                                BlockDisposition::Above
-                                            } else {
-                                                BlockDisposition::Below
-                                            },
-                                        },
-                                    )
-                                }),
-                                excerpt_boundary.next.map(|next| {
-                                    let starts_new_buffer = excerpt_boundary
-                                        .prev
-                                        .map_or(true, |prev| prev.buffer_id != next.buffer_id);
-
-                                    (
-                                        wrap_row,
-                                        TransformBlock::ExcerptHeader {
-                                            id: next.id,
-                                            buffer: next.buffer,
-                                            range: next.range,
-                                            height: if starts_new_buffer {
-                                                self.buffer_header_height
-                                            } else {
-                                                self.excerpt_header_height
-                                            },
-                                            starts_new_buffer,
-                                        },
-                                    )
-                                }),
-                            ]
-                        })
-                        .filter_map(|block| block),
-                );
+                blocks_in_edit.extend(BlockMap::header_blocks(
+                    self.show_excerpt_controls,
+                    self.excerpt_footer_height,
+                    self.buffer_header_height,
+                    self.excerpt_header_height,
+                    buffer,
+                    (start_bound, end_bound),
+                    wrap_snapshot,
+                ));
             }
 
-            // Place excerpt headers and footers above custom blocks on the same row
-            blocks_in_edit.sort_unstable_by(|(row_a, block_a), (row_b, block_b)| {
-                row_a.cmp(row_b).then_with(|| match (block_a, block_b) {
-                    // Sort footers with an above disposition
-                    (
-                        TransformBlock::ExcerptFooter {
-                            disposition: BlockDisposition::Above,
-                            ..
-                        },
-                        TransformBlock::ExcerptFooter {
-                            disposition: BlockDisposition::Above,
-                            ..
-                        },
-                    ) => Ordering::Equal,
-                    (
-                        TransformBlock::ExcerptFooter {
-                            disposition: BlockDisposition::Above,
-                            ..
-                        },
-                        _,
-                    ) => Ordering::Less,
-                    (
-                        _,
-                        TransformBlock::ExcerptFooter {
-                            disposition: BlockDisposition::Above,
-                            ..
-                        },
-                    ) => Ordering::Greater,
-
-                    // Then excerpt headers
-                    (
-                        TransformBlock::ExcerptHeader { .. },
-                        TransformBlock::ExcerptHeader { .. },
-                    ) => Ordering::Equal,
-                    (TransformBlock::ExcerptHeader { .. }, _) => Ordering::Less,
-                    (_, TransformBlock::ExcerptHeader { .. }) => Ordering::Greater,
-                    // Then footers
-                    (
-                        TransformBlock::ExcerptFooter { .. },
-                        TransformBlock::ExcerptFooter { .. },
-                    ) => Ordering::Equal,
-                    (TransformBlock::ExcerptFooter { .. }, _) => Ordering::Less,
-                    (_, TransformBlock::ExcerptFooter { .. }) => Ordering::Greater,
-                    // And finally, custom blocks
-                    (TransformBlock::Custom(block_a), TransformBlock::Custom(block_b)) => block_a
-                        .disposition
-                        .cmp(&block_b.disposition)
-                        .then_with(|| block_a.id.cmp(&block_b.id)),
-                })
-            });
+            BlockMap::sort_blocks(&mut blocks_in_edit);
 
             // For each of these blocks, insert a new isomorphic transform preceding the block,
             // and then insert the block itself.
@@ -531,6 +473,95 @@ impl BlockMap {
                 *block.render.lock() = render;
             }
         }
+    }
+
+    pub fn show_excerpt_controls(&self) -> bool {
+        self.show_excerpt_controls
+    }
+
+    pub fn header_blocks<'a, 'b: 'a, 'c: 'a + 'b, R, T>(
+        show_excerpt_controls: bool,
+        excerpt_footer_height: u8,
+        buffer_header_height: u8,
+        excerpt_header_height: u8,
+        buffer: &'b multi_buffer::MultiBufferSnapshot,
+        range: R,
+        wrap_snapshot: &'c WrapSnapshot,
+    ) -> impl Iterator<Item = (u32, TransformBlock)> + 'b
+    where
+        R: RangeBounds<T>,
+        T: multi_buffer::ToOffset,
+    {
+        buffer
+            .excerpt_boundaries_in_range(range)
+            .flat_map(move |excerpt_boundary| {
+                let wrap_row = wrap_snapshot
+                    .make_wrap_point(Point::new(excerpt_boundary.row.0, 0), Bias::Left)
+                    .row();
+
+                [
+                    show_excerpt_controls
+                        .then(|| {
+                            excerpt_boundary.prev.as_ref().map(|prev| {
+                                (
+                                    wrap_row,
+                                    TransformBlock::ExcerptFooter {
+                                        id: prev.id,
+                                        height: excerpt_footer_height,
+                                        disposition: if excerpt_boundary.next.is_some() {
+                                            BlockDisposition::Above
+                                        } else {
+                                            BlockDisposition::Below
+                                        },
+                                    },
+                                )
+                            })
+                        })
+                        .flatten(),
+                    excerpt_boundary.next.map(|next| {
+                        let starts_new_buffer = excerpt_boundary
+                            .prev
+                            .map_or(true, |prev| prev.buffer_id != next.buffer_id);
+
+                        (
+                            wrap_row,
+                            TransformBlock::ExcerptHeader {
+                                id: next.id,
+                                buffer: next.buffer,
+                                range: next.range,
+                                height: if starts_new_buffer {
+                                    buffer_header_height
+                                } else {
+                                    excerpt_header_height
+                                },
+                                starts_new_buffer,
+                                show_excerpt_controls,
+                            },
+                        )
+                    }),
+                ]
+            })
+            .filter_map(|block| block)
+    }
+
+    pub(crate) fn sort_blocks<B: BlockLike>(blocks: &mut Vec<(u32, B)>) {
+        // Place excerpt headers and footers above custom blocks on the same row
+        blocks.sort_unstable_by(|(row_a, block_a), (row_b, block_b)| {
+            row_a.cmp(row_b).then_with(|| {
+                block_a
+                    .disposition()
+                    .cmp(&block_b.disposition())
+                    .then_with(|| match ((block_a.block_type()), (block_b.block_type())) {
+                        (BlockType::Footer, BlockType::Footer) => Ordering::Equal,
+                        (BlockType::Footer, _) => Ordering::Less,
+                        (_, BlockType::Footer) => Ordering::Greater,
+                        (BlockType::Header, BlockType::Header) => Ordering::Equal,
+                        (BlockType::Header, _) => Ordering::Less,
+                        (_, BlockType::Header) => Ordering::Greater,
+                        (BlockType::Custom(a_id), BlockType::Custom(b_id)) => a_id.cmp(&b_id),
+                    })
+            })
+        });
     }
 }
 
@@ -1079,6 +1110,8 @@ fn offset_for_row(s: &str, target: u32) -> (u32, usize) {
 
 #[cfg(test)]
 mod tests {
+    use std::env;
+
     use super::*;
     use crate::display_map::inlay_map::InlayMap;
     use crate::display_map::{fold_map::FoldMap, tab_map::TabMap, wrap_map::WrapMap};
@@ -1086,7 +1119,6 @@ mod tests {
     use multi_buffer::MultiBuffer;
     use rand::prelude::*;
     use settings::SettingsStore;
-    use std::env;
     use util::RandomCharIter;
 
     #[gpui::test]
@@ -1117,7 +1149,7 @@ mod tests {
         let (mut tab_map, tab_snapshot) = TabMap::new(fold_snapshot, 1.try_into().unwrap());
         let (wrap_map, wraps_snapshot) =
             cx.update(|cx| WrapMap::new(tab_snapshot, font("Helvetica"), px(14.0), None, cx));
-        let mut block_map = BlockMap::new(wraps_snapshot.clone(), 1, 1, 1);
+        let mut block_map = BlockMap::new(wraps_snapshot.clone(), true, 1, 1, 1);
 
         let mut writer = block_map.write(wraps_snapshot.clone(), Default::default());
         let block_ids = writer.insert(vec![
@@ -1289,7 +1321,7 @@ mod tests {
         let (_, wraps_snapshot) = cx.update(|cx| {
             WrapMap::new(tab_snapshot, font("Helvetica"), px(14.0), Some(px(60.)), cx)
         });
-        let mut block_map = BlockMap::new(wraps_snapshot.clone(), 1, 1, 0);
+        let mut block_map = BlockMap::new(wraps_snapshot.clone(), true, 1, 1, 0);
 
         let mut writer = block_map.write(wraps_snapshot.clone(), Default::default());
         writer.insert(vec![
@@ -1335,9 +1367,11 @@ mod tests {
         let font_size = px(14.0);
         let buffer_start_header_height = rng.gen_range(1..=5);
         let excerpt_header_height = rng.gen_range(1..=5);
+        let excerpt_footer_height = rng.gen_range(1..=5);
 
         log::info!("Wrap width: {:?}", wrap_width);
         log::info!("Excerpt Header Height: {:?}", excerpt_header_height);
+        log::info!("Excerpt Footer Height: {:?}", excerpt_footer_height);
 
         let buffer = if rng.gen() {
             let len = rng.gen_range(0..10);
@@ -1356,9 +1390,10 @@ mod tests {
             .update(|cx| WrapMap::new(tab_snapshot, font("Helvetica"), font_size, wrap_width, cx));
         let mut block_map = BlockMap::new(
             wraps_snapshot,
+            true,
             buffer_start_header_height,
             excerpt_header_height,
-            0,
+            excerpt_footer_height,
         );
         let mut custom_blocks = Vec::new();
 
@@ -1494,31 +1529,23 @@ mod tests {
                     },
                 )
             }));
+
+            // Note that this needs to be synced with the related section in BlockMap::sync
             expected_blocks.extend(
-                buffer_snapshot
-                    .excerpt_boundaries_in_range(0..)
-                    // TODO: actually handle prev and next
-                    .filter_map(|boundary| {
-                        let starts_new_buffer = boundary.starts_new_buffer();
-                        boundary.next.map(|_| {
-                            let position = wraps_snapshot
-                                .make_wrap_point(Point::new(boundary.row.0, 0), Bias::Left);
-                            (
-                                position.row(),
-                                ExpectedBlock::ExcerptHeader {
-                                    height: if starts_new_buffer {
-                                        buffer_start_header_height
-                                    } else {
-                                        excerpt_header_height
-                                    },
-                                    starts_new_buffer,
-                                },
-                            )
-                        })
-                    }),
+                BlockMap::header_blocks(
+                    true,
+                    excerpt_footer_height,
+                    buffer_start_header_height,
+                    excerpt_header_height,
+                    &buffer_snapshot,
+                    0..,
+                    &wraps_snapshot,
+                )
+                .map(|(row, block)| (row, block.into())),
             );
 
-            expected_blocks.sort_unstable();
+            BlockMap::sort_blocks(&mut expected_blocks);
+
             let mut sorted_blocks_iter = expected_blocks.into_iter().peekable();
 
             let input_buffer_rows = buffer_snapshot
@@ -1684,7 +1711,7 @@ mod tests {
             }
         }
 
-        #[derive(Debug, Eq, PartialEq, Ord, PartialOrd)]
+        #[derive(Debug, Eq, PartialEq)]
         enum ExpectedBlock {
             ExcerptHeader {
                 height: u8,
@@ -1692,12 +1719,27 @@ mod tests {
             },
             ExcerptFooter {
                 height: u8,
+                disposition: BlockDisposition,
             },
             Custom {
                 disposition: BlockDisposition,
                 id: BlockId,
                 height: u8,
             },
+        }
+
+        impl BlockLike for ExpectedBlock {
+            fn block_type(&self) -> BlockType {
+                match self {
+                    ExpectedBlock::Custom { id, .. } => BlockType::Custom(*id),
+                    ExpectedBlock::ExcerptHeader { .. } => BlockType::Header,
+                    ExpectedBlock::ExcerptFooter { .. } => BlockType::Footer,
+                }
+            }
+
+            fn disposition(&self) -> BlockDisposition {
+                self.disposition()
+            }
         }
 
         impl ExpectedBlock {
@@ -1713,7 +1755,7 @@ mod tests {
                 match self {
                     ExpectedBlock::ExcerptHeader { .. } => BlockDisposition::Above,
                     ExpectedBlock::Custom { disposition, .. } => *disposition,
-                    ExpectedBlock::ExcerptFooter { .. } => BlockDisposition::Below,
+                    ExpectedBlock::ExcerptFooter { disposition, .. } => *disposition,
                 }
             }
         }
@@ -1734,9 +1776,14 @@ mod tests {
                         height,
                         starts_new_buffer,
                     },
-                    TransformBlock::ExcerptFooter { height, .. } => {
-                        ExpectedBlock::ExcerptFooter { height }
-                    }
+                    TransformBlock::ExcerptFooter {
+                        height,
+                        disposition,
+                        ..
+                    } => ExpectedBlock::ExcerptFooter {
+                        height,
+                        disposition,
+                    },
                 }
             }
         }

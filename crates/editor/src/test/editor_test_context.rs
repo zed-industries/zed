@@ -1,6 +1,6 @@
 use crate::{
-    display_map::ToDisplayPoint, AnchorRangeExt, Autoscroll, DisplayPoint, Editor, EditorMode,
-    MultiBuffer, RowExt,
+    display_map::ToDisplayPoint, AnchorRangeExt, Autoscroll, DisplayPoint, Editor, MultiBuffer,
+    RowExt,
 };
 use collections::BTreeMap;
 use futures::Future;
@@ -17,16 +17,13 @@ use project::{FakeFs, Project};
 use std::{
     any::TypeId,
     ops::{Deref, DerefMut, Range},
-    path::PathBuf,
-    str::FromStr,
     sync::{
         atomic::{AtomicUsize, Ordering},
         Arc,
     },
 };
-use workspace::Workspace;
 
-use ui::{Context, VisualContext};
+use ui::Context;
 use util::{
     assert_set_eq,
     test::{generate_marked_text, marked_text_ranges},

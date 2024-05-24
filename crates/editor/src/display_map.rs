@@ -101,6 +101,7 @@ impl DisplayMap {
         font: Font,
         font_size: Pixels,
         wrap_width: Option<Pixels>,
+        show_excerpt_controls: bool,
         buffer_header_height: u8,
         excerpt_header_height: u8,
         excerpt_footer_height: u8,
@@ -115,6 +116,7 @@ impl DisplayMap {
         let (wrap_map, snapshot) = WrapMap::new(snapshot, font, font_size, wrap_width, cx);
         let block_map = BlockMap::new(
             snapshot,
+            show_excerpt_controls,
             buffer_header_height,
             excerpt_header_height,
             excerpt_footer_height,
@@ -348,6 +350,10 @@ impl DisplayMap {
     #[cfg(test)]
     pub fn is_rewrapping(&self, cx: &gpui::AppContext) -> bool {
         self.wrap_map.read(cx).is_rewrapping()
+    }
+
+    pub fn show_excerpt_controls(&self) -> bool {
+        self.block_map.show_excerpt_controls()
     }
 }
 
@@ -1066,6 +1072,7 @@ pub mod tests {
                 font("Helvetica"),
                 font_size,
                 wrap_width,
+                true,
                 buffer_start_excerpt_header_height,
                 excerpt_header_height,
                 0,
@@ -1307,6 +1314,7 @@ pub mod tests {
                     font("Helvetica"),
                     font_size,
                     wrap_width,
+                    true,
                     1,
                     1,
                     0,
@@ -1416,6 +1424,7 @@ pub mod tests {
                 font("Helvetica"),
                 font_size,
                 None,
+                true,
                 1,
                 1,
                 0,
@@ -1507,7 +1516,17 @@ pub mod tests {
         let font_size = px(14.0);
 
         let map = cx.new_model(|cx| {
-            DisplayMap::new(buffer, font("Helvetica"), font_size, None, 1, 1, 1, cx)
+            DisplayMap::new(
+                buffer,
+                font("Helvetica"),
+                font_size,
+                None,
+                true,
+                1,
+                1,
+                1,
+                cx,
+            )
         });
         assert_eq!(
             cx.update(|cx| syntax_chunks(DisplayRow(0)..DisplayRow(5), &map, &theme, cx)),
@@ -1601,6 +1620,7 @@ pub mod tests {
                 font("Courier"),
                 font_size,
                 Some(px(40.0)),
+                true,
                 1,
                 1,
                 0,
@@ -1674,8 +1694,9 @@ pub mod tests {
         let buffer_snapshot = buffer.read_with(cx, |buffer, cx| buffer.snapshot(cx));
 
         let font_size = px(16.0);
-        let map = cx
-            .new_model(|cx| DisplayMap::new(buffer, font("Courier"), font_size, None, 1, 1, 1, cx));
+        let map = cx.new_model(|cx| {
+            DisplayMap::new(buffer, font("Courier"), font_size, None, true, 1, 1, 1, cx)
+        });
 
         enum MyType {}
 
@@ -1795,6 +1816,7 @@ pub mod tests {
                 font("Helvetica"),
                 font_size,
                 None,
+                true,
                 1,
                 1,
                 0,
@@ -1870,6 +1892,7 @@ pub mod tests {
                 font("Helvetica"),
                 font_size,
                 None,
+                true,
                 1,
                 1,
                 0,

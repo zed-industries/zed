@@ -781,7 +781,7 @@ mod tests {
             );
             multibuffer
         });
-        let editor = cx.add_window(|cx| Editor::for_multibuffer(multibuffer, None, cx));
+        let editor = cx.add_window(|cx| Editor::for_multibuffer(multibuffer, None, true, cx));
         editor.update(cx, |editor, cx| editor.focus(cx)).unwrap();
         let copilot_provider = cx.new_model(|_| CopilotCompletionProvider::new(copilot));
         editor
@@ -1032,7 +1032,7 @@ mod tests {
             );
             multibuffer
         });
-        let editor = cx.add_window(|cx| Editor::for_multibuffer(multibuffer, None, cx));
+        let editor = cx.add_window(|cx| Editor::for_multibuffer(multibuffer, None, true, cx));
         let copilot_provider = cx.new_model(|_| CopilotCompletionProvider::new(copilot));
         editor
             .update(cx, |editor, cx| {
