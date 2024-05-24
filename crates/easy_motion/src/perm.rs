@@ -1,28 +1,12 @@
-use editor::DisplayPoint;
-use std::slice::Iter;
+use std::mem;
 
 #[derive(Debug)]
-enum TrieNode {
-    Leaf(DisplayPoint),
-    Node(Vec<TrieNode>),
+enum TrieNode<T> {
+    Leaf(T),
+    Node(Vec<TrieNode<T>>),
 }
 
-impl TrieNode {
-    pub fn insert(&mut self, point: DisplayPoint) -> &mut Self {
-        match self {
-            Self::Leaf(old_point) => {
-                *self = Self::Node(vec![
-                    TrieNode::Leaf(old_point.to_owned()),
-                    TrieNode::Leaf(point),
-                ]);
-            }
-            Self::Node(hash_map) => {
-                hash_map.push(TrieNode::Leaf(point));
-            }
-        }
-        self
-    }
-
+impl<T> TrieNode<T> {
     #[allow(dead_code)]
     pub fn is_leaf(&self) -> bool {
         matches!(self, Self::Leaf(_))
@@ -37,52 +21,79 @@ impl TrieNode {
     }
 }
 
-#[derive(Debug)]
-pub(crate) struct Trie {
-    keys: String,
-    root: TrieNode,
+impl<T: Default> TrieNode<T> {
+    pub fn insert(&mut self, point: T) -> &mut Self {
+        match self {
+            Self::Leaf(old_point) => {
+                *self = Self::Node(vec![
+                    TrieNode::Leaf(mem::take(old_point)),
+                    TrieNode::Leaf(point),
+                ]);
+            }
+            Self::Node(hash_map) => {
+                hash_map.push(TrieNode::Leaf(point));
+            }
+        }
+        self
+    }
 }
 
-impl Trie {
-    pub fn new(keys: String, points: Vec<DisplayPoint>, reverse: bool) -> Self {
-        let root = TrieNode::Node(vec![TrieNode::Leaf(DisplayPoint::default())]);
-        let mut trie = Trie { keys, root };
+#[derive(Debug)]
+struct TrieBuilder {
+    root: TrieNode<()>,
+    keys_len: usize,
+}
+
+impl TrieBuilder {
+    pub fn new(keys_len: usize, len: usize) -> Self {
+        let root = TrieNode::Node(vec![TrieNode::Leaf(())]);
+        let mut builder = TrieBuilder { keys_len, root };
         let mut p = vec![0];
         // constructs the trie
-        for _ in 1..points.len() {
-            p = trie.next_perm(p, DisplayPoint::default());
+        for _ in 1..len {
+            p = builder.next_perm(p);
         }
+        builder
         // replace the points with the actual points
-        (trie.root, _) = Trie::new_rec(trie.root, points.iter(), reverse);
-        trie
     }
 
-    fn next_perm(&mut self, pointer: Vec<usize>, point: DisplayPoint) -> Vec<usize> {
-        self.next_perm_internal(pointer, point)
+    fn populate<T>(
+        self,
+        keys: String,
+        reverse: bool,
+        iter: impl IntoIterator<Item = T>,
+    ) -> Trie<T> {
+        let (node, _) = TrieBuilder::new_rec(self.root, iter.into_iter(), reverse);
+        Trie { keys, root: node }
+    }
+
+    fn next_perm(&mut self, pointer: Vec<usize>) -> Vec<usize> {
+        self.next_perm_internal(pointer)
     }
 
     // reverse puts the deeper nodes last
     // i.e. aa ab b c -> a b ca cb
-    fn new_rec(
-        node: TrieNode,
-        mut iter: Iter<DisplayPoint>,
+    fn new_rec<T>(
+        node: TrieNode<()>,
+        mut iter: impl Iterator<Item = T>,
         reverse: bool,
-    ) -> (TrieNode, Iter<DisplayPoint>) {
+    ) -> (TrieNode<T>, impl Iterator<Item = T>) {
         let node = match node {
             TrieNode::Leaf(_) => {
-                let point = iter.next().unwrap().to_owned();
+                let point = iter.next().unwrap();
                 TrieNode::Leaf(point)
             }
             TrieNode::Node(mut list) => {
-                let mut ret = Vec::<TrieNode>::new();
+                let mut ret = Vec::<TrieNode<T>>::new();
                 for _ in 0..list.len() {
-                    let mut child = if reverse {
+                    let child = if reverse {
                         list.pop().unwrap()
                     } else {
                         list.remove(0)
                     };
-                    (child, iter) = Trie::new_rec(child, iter, reverse);
-                    ret.push(child);
+                    let (new_child, new_iter) = TrieBuilder::new_rec(child, iter, reverse);
+                    iter = new_iter;
+                    ret.push(new_child);
                 }
                 TrieNode::Node(ret)
             }
@@ -90,16 +101,16 @@ impl Trie {
         (node, iter)
     }
 
-    fn next_perm_internal(&mut self, mut pointer: Vec<usize>, point: DisplayPoint) -> Vec<usize> {
-        let max_len = self.keys.len();
+    fn next_perm_internal(&mut self, mut pointer: Vec<usize>) -> Vec<usize> {
+        let max_len = self.keys_len;
         let len = pointer.len();
         let last_index = pointer.last().unwrap().clone();
         if last_index < max_len - 1 {
             pointer[len - 1] += 1;
             // get parent to current node
-            let node = self.pointer_to_node(&pointer[0..len - 1]);
+            let node = self.pointer_to_node_ref(&pointer[0..len - 1]);
             debug_assert!(matches!(node, TrieNode::Node(_)));
-            node.insert(point);
+            node.insert(());
             return pointer;
         }
 
@@ -115,22 +126,22 @@ impl Trie {
             // return to original depth adding 0s
             pointer[depth..].fill(0);
             *pointer.last_mut().unwrap() = 1;
-            let node = self.pointer_to_node(&pointer[0..len - 1]);
+            let node = self.pointer_to_node_ref(&pointer[0..len - 1]);
             debug_assert!(matches!(node, TrieNode::Leaf(_)));
-            node.insert(point);
+            node.insert(());
             return pointer;
         }
 
         // current layer is completely full so we need to add a new layer
         pointer.fill(0);
         pointer.push(1);
-        let node = self.pointer_to_node(&pointer[0..len]);
+        let node = self.pointer_to_node_ref(&pointer[0..len]);
         debug_assert!(matches!(node, TrieNode::Leaf(_)));
-        node.insert(point);
+        node.insert(());
         pointer
     }
 
-    fn pointer_to_node(&mut self, pointer: &[usize]) -> &mut TrieNode {
+    fn pointer_to_node_ref(&mut self, pointer: &[usize]) -> &mut TrieNode<()> {
         if pointer.is_empty() {
             return &mut self.root;
         }
@@ -143,25 +154,39 @@ impl Trie {
         }
         node
     }
+}
+
+#[derive(Debug)]
+pub(crate) struct Trie<T> {
+    keys: String,
+    root: TrieNode<T>,
+}
+
+impl<T> Trie<T> {
+    pub fn new(keys: String, points: Vec<T>, reverse: bool) -> Self {
+        let builder = TrieBuilder::new(keys.len(), points.len());
+        builder.populate(keys, reverse, points)
+        // replace the points with the actual points
+    }
 
     #[allow(dead_code)]
-    pub fn for_each(&self, func: impl Fn(&str, &DisplayPoint)) {
+    pub fn for_each(&self, func: impl Fn(&str, &T)) {
         let mut path = String::new();
         self.for_each_rec(&self.root, &mut path, false, &func);
     }
 
     #[allow(dead_code)]
-    pub fn for_each_reverse(&self, func: impl Fn(&str, &DisplayPoint)) {
+    pub fn for_each_reverse(&self, func: impl Fn(&str, &T)) {
         let mut path = String::new();
         self.for_each_rec(&self.root, &mut path, true, &func);
     }
 
     fn for_each_rec(
         &self,
-        node: &TrieNode,
+        node: &TrieNode<T>,
         path: &mut String,
         reverse: bool,
-        func: &impl Fn(&str, &DisplayPoint),
+        func: &impl Fn(&str, &T),
     ) {
         match node {
             TrieNode::Leaf(point) => func(path, point),
@@ -182,10 +207,10 @@ impl Trie {
     fn for_each_rec_loop(
         &self,
         i: usize,
-        node: &TrieNode,
+        node: &TrieNode<T>,
         path: &mut String,
         reverse: bool,
-        func: &impl Fn(&str, &DisplayPoint),
+        func: &impl Fn(&str, &T),
     ) {
         let character = self.keys.chars().nth(i).unwrap();
         path.push(character);
@@ -194,7 +219,8 @@ impl Trie {
     }
 
     // returns a list of all permutations
-    pub fn trie_to_perms(&self) -> Vec<(String, DisplayPoint)> {
+    #[allow(dead_code)]
+    pub fn trie_to_perms(&self) -> Vec<(String, &T)> {
         let mut perms = Vec::new();
         let mut path = String::new();
         self.trie_to_perms_rec(&self.root, &mut path, &mut perms, false);
@@ -204,23 +230,23 @@ impl Trie {
     // returns a list of all permutations with the indices reversed
     // i.e. a b ca cb -> c b ac ab
     #[allow(dead_code)]
-    pub fn trie_to_perms_rev(&self) -> Vec<(String, DisplayPoint)> {
+    pub fn trie_to_perms_rev(&self) -> Vec<(String, &T)> {
         let mut perms = Vec::new();
         let mut path = String::new();
         self.trie_to_perms_rec(&self.root, &mut path, &mut perms, true);
         return perms;
     }
 
-    fn trie_to_perms_rec(
-        &self,
-        node: &TrieNode,
+    fn trie_to_perms_rec<'a>(
+        &'a self,
+        node: &'a TrieNode<T>,
         path: &mut String,
-        perms: &mut Vec<(String, DisplayPoint)>,
+        perms: &mut Vec<(String, &'a T)>,
         reverse: bool,
     ) {
         match node {
             TrieNode::Leaf(point) => {
-                perms.push((path.clone(), point.clone()));
+                perms.push((path.clone(), &point));
                 return;
             }
             TrieNode::Node(list) => {
@@ -237,12 +263,12 @@ impl Trie {
         }
     }
 
-    fn trie_to_perms_rec_loop(
-        &self,
+    fn trie_to_perms_rec_loop<'a>(
+        &'a self,
         i: usize,
-        node: &TrieNode,
+        node: &'a TrieNode<T>,
         path: &mut String,
-        perms: &mut Vec<(String, DisplayPoint)>,
+        perms: &mut Vec<(String, &'a T)>,
         reverse: bool,
     ) {
         let character = self.keys.chars().nth(i).unwrap();
@@ -251,7 +277,7 @@ impl Trie {
         path.pop();
     }
 
-    pub fn trim(&mut self, character: char) -> TrimResult {
+    pub fn trim(&mut self, character: char) -> TrimResult<&T> {
         let node = match &mut self.root {
             TrieNode::Leaf(_) => {
                 return TrimResult::Err;
@@ -269,56 +295,59 @@ impl Trie {
         };
         self.root = node;
         match &self.root {
-            TrieNode::Leaf(point) => TrimResult::Found(point.clone()),
+            TrieNode::Leaf(point) => TrimResult::Found(&point),
             TrieNode::Node(_) => TrimResult::Changed,
         }
     }
+
+    pub fn iter(&self) -> TrieIterator<T> {
+        TrieIterator::new(self)
+    }
 }
 
-pub(crate) enum TrimResult {
-    Found(DisplayPoint),
+pub(crate) enum TrimResult<T> {
+    Found(T),
     Changed,
     NoChange,
     Err,
 }
 
-impl<'a> IntoIterator for &'a Trie {
-    type Item = (String, DisplayPoint);
-    type IntoIter = TrieIterator<'a>;
-
-    fn into_iter(self) -> TrieIterator<'a> {
-        TrieIterator::new(self)
-    }
+pub struct TrieIterator<'a, T> {
+    keys: &'a str,
+    stack: Vec<(&'a TrieNode<T>, String)>,
 }
 
-pub struct TrieIterator<'a> {
-    path: String,
-    stack: Vec<&'a TrieNode>,
-}
-
-impl<'a> TrieIterator<'a> {
-    fn new(trie: &'a Trie) -> Self {
+impl<'a, T> TrieIterator<'a, T> {
+    fn new(trie: &'a Trie<T>) -> Self {
         TrieIterator {
-            stack: vec![&trie.root],
-            path: String::new(),
+            stack: vec![(&trie.root, String::new())],
+            keys: trie.keys.as_str(),
         }
     }
 }
 
-impl<'a> Iterator for TrieIterator<'a> {
-    type Item = (String, DisplayPoint);
+impl<'a, T> Iterator for TrieIterator<'a, T> {
+    type Item = (String, &'a T);
 
     fn next(&mut self) -> Option<Self::Item> {
         let mut node = self.stack.pop();
         while node.is_some() {
             match node.unwrap() {
-                TrieNode::Leaf(point) => {
-                    return Some((self.path.clone(), point.clone()));
+                (TrieNode::Leaf(point), path) => {
+                    return Some((path, point));
                 }
-                TrieNode::Node(list) => {
-                    for child in list {
-                        self.stack.push(child);
-                    }
+                (TrieNode::Node(list), path) => {
+                    let old_stack = mem::take(&mut self.stack);
+                    let new_stack = list
+                        .iter()
+                        .enumerate()
+                        .map(|(i, child)| {
+                            let mut path = path.clone();
+                            path.push(self.keys.chars().nth(i).unwrap());
+                            (child, path)
+                        })
+                        .rev();
+                    self.stack = old_stack.into_iter().chain(new_stack).collect();
                 }
             }
             node = self.stack.pop();
@@ -329,148 +358,136 @@ impl<'a> Iterator for TrieIterator<'a> {
 
 #[cfg(test)]
 mod tests {
-    use editor::display_map::DisplayRow;
-
     use super::*;
 
-    fn point(x: u32) -> DisplayPoint {
-        DisplayPoint::new(DisplayRow(x), x)
+    fn perms_helper(trie: &Trie<i32>, perms: Vec<(&str, i32)>) {
+        let trie_perms = trie.trie_to_perms();
+        assert_eq!(
+            trie_perms,
+            perms
+                .iter()
+                .map(|(a, b)| (a.to_string(), b))
+                .collect::<Vec<_>>()
+        );
+    }
+
+    fn perms_helper_rev(trie: &Trie<i32>, perms: Vec<(&str, i32)>) {
+        let trie_perms = trie.trie_to_perms_rev();
+        assert_eq!(
+            trie_perms,
+            perms
+                .iter()
+                .map(|(a, b)| (a.to_string(), b))
+                .collect::<Vec<_>>()
+        );
     }
 
     #[test]
     fn test_trie_perms() {
-        let mut trie = Trie::new("abc".to_string(), vec![point(0), point(1), point(2)], false);
-        assert_eq!(
-            trie.trie_to_perms(),
-            vec![
-                ("a".to_string(), point(0)),
-                ("b".to_string(), point(1)),
-                ("c".to_string(), point(2))
-            ]
-        );
-        trie = Trie::new(
-            "abc".to_string(),
-            vec![point(0), point(1), point(2), point(3)],
-            false,
-        );
-        assert_eq!(
-            trie.trie_to_perms(),
-            vec![
-                ("aa".to_string(), point(0)),
-                ("ab".to_string(), point(1)),
-                ("b".to_string(), point(2)),
-                ("c".to_string(), point(3))
-            ]
-        );
-        trie = Trie::new(
-            "abc".to_string(),
-            vec![point(0), point(1), point(2), point(3), point(4)],
-            false,
-        );
-        assert_eq!(
-            trie.trie_to_perms(),
-            vec![
-                ("aa".to_string(), point(0)),
-                ("ab".to_string(), point(1)),
-                ("ac".to_string(), point(2)),
-                ("b".to_string(), point(3)),
-                ("c".to_string(), point(4))
-            ]
-        );
-        trie = Trie::new(
-            "abc".to_string(),
-            vec![
-                point(0),
-                point(1),
-                point(2),
-                point(3),
-                point(4),
-                point(5),
-                point(6),
-                point(7),
-                point(8),
-                point(9),
-            ],
-            false,
-        );
-        assert_eq!(
-            trie.trie_to_perms(),
-            vec![
-                ("aaa".to_string(), point(0)),
-                ("aab".to_string(), point(1)),
-                ("ab".to_string(), point(2)),
-                ("ac".to_string(), point(3)),
-                ("ba".to_string(), point(4)),
-                ("bb".to_string(), point(5)),
-                ("bc".to_string(), point(6)),
-                ("ca".to_string(), point(7)),
-                ("cb".to_string(), point(8)),
-                ("cc".to_string(), point(9))
-            ]
-        );
-        trie = Trie::new(
-            "abc".to_string(),
-            vec![
-                point(0),
-                point(1),
-                point(2),
-                point(3),
-                point(4),
-                point(5),
-                point(6),
-                point(7),
-                point(8),
-                point(9),
-            ],
-            true,
-        );
-        assert_eq!(
-            trie.trie_to_perms(),
-            vec![
-                ("aa".to_string(), point(0)),
-                ("ab".to_string(), point(1)),
-                ("ac".to_string(), point(2)),
-                ("ba".to_string(), point(3)),
-                ("bb".to_string(), point(4)),
-                ("bc".to_string(), point(5)),
-                ("ca".to_string(), point(6)),
-                ("cb".to_string(), point(7)),
-                ("cca".to_string(), point(8)),
-                ("ccb".to_string(), point(9))
-            ]
-        );
+        let trie = Trie::new("abc".to_string(), vec![0, 1, 2], false);
+        let expected = vec![("a", 0), ("b", 1), ("c", 2)];
+        perms_helper(&trie, expected);
+
+        let trie = Trie::new("abc".to_string(), vec![0, 1, 2, 3], false);
+        let expected = vec![("aa", 0), ("ab", 1), ("b", 2), ("c", 3)];
+        perms_helper(&trie, expected);
+
+        let trie = Trie::new("abc".to_string(), vec![0, 1, 2, 3, 4], false);
+        let expected = vec![("aa", 0), ("ab", 1), ("ac", 2), ("b", 3), ("c", 4)];
+        perms_helper(&trie, expected);
+
+        let trie = Trie::new("abc".to_string(), vec![0, 1, 2, 3, 4, 5, 6, 7, 8, 9], false);
+        let expected = vec![
+            ("aaa", 0),
+            ("aab", 1),
+            ("ab", 2),
+            ("ac", 3),
+            ("ba", 4),
+            ("bb", 5),
+            ("bc", 6),
+            ("ca", 7),
+            ("cb", 8),
+            ("cc", 9),
+        ];
+        perms_helper(&trie, expected);
+
+        let mut trie = Trie::new("abc".to_string(), vec![0, 1, 2, 3, 4, 5, 6, 7, 8, 9], true);
+        let expected = vec![
+            ("aa", 0),
+            ("ab", 1),
+            ("ac", 2),
+            ("ba", 3),
+            ("bb", 4),
+            ("bc", 5),
+            ("ca", 6),
+            ("cb", 7),
+            ("cca", 8),
+            ("ccb", 9),
+        ];
+        perms_helper(&trie, expected);
 
         let res = trie.trim('c');
         assert!(matches!(res, TrimResult::Changed));
-        assert_eq!(
-            trie.trie_to_perms(),
-            vec![
-                ("a".to_string(), point(6)),
-                ("b".to_string(), point(7)),
-                ("ca".to_string(), point(8)),
-                ("cb".to_string(), point(9))
-            ]
-        );
+        let expected = vec![("a", 6), ("b", 7), ("ca", 8), ("cb", 9)];
+        perms_helper(&trie, expected);
+
         let res = trie.trim('c');
         assert!(matches!(res, TrimResult::Changed));
-        assert_eq!(
-            trie.trie_to_perms(),
-            vec![("a".to_string(), point(8)), ("b".to_string(), point(9))]
-        );
+        let expected = vec![("a", 8), ("b", 9)];
+        perms_helper(&trie, expected);
+
         let res = trie.trim('c');
         assert!(matches!(res, TrimResult::NoChange));
-        assert_eq!(
-            trie.trie_to_perms(),
-            vec![("a".to_string(), point(8)), ("b".to_string(), point(9))]
-        );
+        let expected = vec![("a", 8), ("b", 9)];
+        perms_helper(&trie, expected);
+
         let res = trie.trim('b');
         match res {
             TrimResult::Found(p) => {
-                assert_eq!(p, point(9));
+                assert_eq!(p, &9);
             }
             _ => panic!("Expected Found"),
         }
         let res = trie.trim('b');
         assert!(matches!(res, TrimResult::Err));
+    }
+
+    fn iter_helper(trie: Trie<i32>, expected: Vec<(&str, i32)>) {
+        for ((path, point), (expected_path, expected_point)) in
+            trie.iter().zip(expected.into_iter())
+        {
+            assert_eq!(path, expected_path);
+            assert_eq!(point, &expected_point);
+        }
+    }
+
+    #[test]
+    fn test_trie_iter() {
+        let trie = Trie::new("abc".to_string(), vec![0, 1, 2], false);
+        let expected = vec![("a", 0), ("b", 1), ("c", 2)];
+        iter_helper(trie, expected);
+
+        let trie = Trie::new("abc".to_string(), vec![0, 1, 2, 3], false);
+        let expected = vec![("aa", 0), ("ab", 1), ("b", 2), ("c", 3)];
+        iter_helper(trie, expected);
+
+        let trie = Trie::new("abc".to_string(), vec![0, 1, 2, 3], true);
+        let expected = vec![("a", 0), ("b", 1), ("ca", 2), ("cb", 3)];
+        iter_helper(trie, expected);
+
+        let trie = Trie::new("abc".to_string(), vec![0, 1, 2, 3, 4, 5, 6, 7, 8, 9], true);
+        let expected = vec![
+            ("aa", 0),
+            ("ab", 1),
+            ("ac", 2),
+            ("ba", 3),
+            ("bb", 4),
+            ("bc", 5),
+            ("ca", 6),
+            ("cb", 7),
+            ("cca", 8),
+            ("ccb", 9),
+        ];
+        iter_helper(trie, expected);
     }
 }

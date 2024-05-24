@@ -59,7 +59,7 @@ actions!(easy_motion, [Cancel]);
 #[derive(Debug, Default)]
 pub(crate) struct EditorState {
     pub control: bool,
-    current_trie: Option<Trie>,
+    current_trie: Option<Trie<DisplayPoint>>,
 }
 
 #[derive(Default)]
@@ -343,15 +343,14 @@ impl EasyMotion {
         });
     }
 
-    fn add_overlays(editor: &mut Editor, trie: &Trie, cx: &mut ViewContext<Editor>) {
+    fn add_overlays(editor: &mut Editor, trie: &Trie<DisplayPoint>, cx: &mut ViewContext<Editor>) {
         let settings = ThemeSettings::get_global(cx);
         let players = &settings.active_theme.players().0;
         let color_0 = players[0].cursor;
-        let color_1 = players[1].cursor;
-        let color_2 = players[2].cursor;
+        let color_1 = players[2].cursor;
+        let color_2 = players[3].cursor;
         let background = settings.active_theme.colors().background;
-        let perms = trie.trie_to_perms();
-        for (seq, point) in perms {
+        for (seq, point) in trie.iter() {
             let color = match seq.len() {
                 0 | 1 => color_0,
                 2 => color_1,
@@ -377,14 +376,14 @@ impl EasyMotion {
                     },
                 ));
             }
-            editor.add_overlay(seq.to_string(), point.to_owned(), highlights, cx);
+            editor.add_overlay(seq.to_string(), point.clone(), highlights, cx);
         }
     }
 }
 
 impl EditorState {
     #[allow(dead_code)]
-    fn trie(&self) -> Option<&Trie> {
+    fn trie(&self) -> Option<&Trie<DisplayPoint>> {
         self.current_trie.as_ref()
     }
 
@@ -401,22 +400,22 @@ impl EditorState {
         return context;
     }
 
-    fn record_char(&mut self, character: char) -> TrimResult {
+    fn record_char(&mut self, character: char) -> TrimResult<&DisplayPoint> {
         let Some(trie) = &mut self.current_trie else {
             return TrimResult::Err;
         };
         trie.trim(character)
     }
 
-    fn record_str(&mut self, characters: &str) -> TrimResult {
+    fn record_str(&mut self, characters: &str) -> TrimResult<DisplayPoint> {
         let mut changed = false;
         for character in characters.chars() {
             let ret = self.record_char(character);
             match ret {
                 TrimResult::NoChange => {}
                 TrimResult::Changed => changed = true,
-                TrimResult::Found(_) => return ret,
-                TrimResult::Err => return ret,
+                TrimResult::Found(point) => return TrimResult::Found(point.clone()),
+                TrimResult::Err => return TrimResult::Err,
             };
         }
         if changed {
