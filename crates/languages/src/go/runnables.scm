@@ -8,7 +8,8 @@
 (
     (call_expression function: (_) @run @_name
         (#match? @_name "^t.Run.*"))
-) @go-subtest
+        (#set! tag go-subtest)
+)
 
 ; Functions names start with `Benchmark`
 (
