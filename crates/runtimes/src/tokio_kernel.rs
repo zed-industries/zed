@@ -103,6 +103,7 @@ pub async fn connect_tokio_kernel_interface(
 
     let results = join_fut.await?;
 
+    // todo!("If any of these error, we should send back an error using the sender");
     if let Err(e) = results.0 {
         log::error!("iopub error: {e:?}");
     }
