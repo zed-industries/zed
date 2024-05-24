@@ -484,13 +484,9 @@ impl ContextProvider for GoContextProvider {
                 (GO_PACKAGE_TASK_VARIABLE.clone(), package_name.to_string())
             });
 
-        let snapshot = location.buffer.read(cx).snapshot();
-        let point_range = location.range.to_point(&snapshot);
-        let start = Point::new(point_range.start.row, 0);
-        let end = Point::new(point_range.start.row + 1, 0);
-        let line = snapshot.text_for_range(start..end).peek();
+        let _subtest_name = variables.get(&VariableName::Custom(Cow::Borrowed("_subtest_name")));
 
-        let go_subtest_variable = extract_subtest_name(line.unwrap_or(""))
+        let go_subtest_variable = extract_subtest_name(_subtest_name.unwrap_or(""))
             .map(|subtest_name| (GO_SUBTEST_NAME_TASK_VARIABLE.clone(), subtest_name));
 
         Ok(TaskVariables::from_iter(
@@ -582,19 +578,15 @@ impl ContextProvider for GoContextProvider {
 }
 
 fn extract_subtest_name(input: &str) -> Option<String> {
-    GO_EXTRACT_SUBTEST_NAME_REGEX
-        .captures(input)
-        .map(|captures| {
-            let subtest_name = captures
-                .get(1)
-                .map(|matched| matched.as_str().replace(' ', "_"))
-                .unwrap_or_default();
-            GO_ESCAPE_SUBTEST_NAME_REGEX
-                .replace_all(&subtest_name, |caps: &regex::Captures| {
-                    format!("\\{}", &caps[0])
-                })
-                .to_string()
-        })
+    let replaced_spaces = input.trim_matches('"').replace(" ", "_");
+
+    Some(
+        GO_ESCAPE_SUBTEST_NAME_REGEX
+            .replace_all(&replaced_spaces, |caps: &regex::Captures| {
+                format!("\\{}", &caps[0])
+            })
+            .to_string(),
+    )
 }
 
 #[cfg(test)]
