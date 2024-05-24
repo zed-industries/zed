@@ -206,8 +206,7 @@ impl AssistantPanel {
                     })
                     .detach();
 
-                    let slash_command_registry = SlashCommandRegistry::new();
-
+                    let slash_command_registry = SlashCommandRegistry::global(cx);
                     let window = cx.window_handle().downcast::<Workspace>();
 
                     slash_command_registry.register_command(file_command::FileSlashCommand::new(

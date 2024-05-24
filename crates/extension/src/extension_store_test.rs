@@ -5,6 +5,7 @@ use crate::{
     ExtensionIndexThemeEntry, ExtensionManifest, ExtensionStore, GrammarManifestEntry,
     RELOAD_DEBOUNCE_DURATION,
 };
+use assistant_slash_command::SlashCommandRegistry;
 use async_compression::futures::bufread::GzipEncoder;
 use collections::BTreeMap;
 use fs::{FakeFs, Fs, RealFs};
@@ -250,6 +251,7 @@ async fn test_extension_store(cx: &mut TestAppContext) {
 
     let language_registry = Arc::new(LanguageRegistry::test(cx.executor()));
     let theme_registry = Arc::new(ThemeRegistry::new(Box::new(())));
+    let slash_command_registry = SlashCommandRegistry::new();
     let node_runtime = FakeNodeRuntime::new();
 
     let store = cx.new_model(|cx| {
@@ -262,6 +264,7 @@ async fn test_extension_store(cx: &mut TestAppContext) {
             node_runtime.clone(),
             language_registry.clone(),
             theme_registry.clone(),
+            slash_command_registry.clone(),
             cx,
         )
     });
@@ -382,6 +385,7 @@ async fn test_extension_store(cx: &mut TestAppContext) {
             node_runtime.clone(),
             language_registry.clone(),
             theme_registry.clone(),
+            slash_command_registry,
             cx,
         )
     });
@@ -460,6 +464,7 @@ async fn test_extension_store_with_gleam_extension(cx: &mut TestAppContext) {
 
     let language_registry = project.read_with(cx, |project, _cx| project.languages().clone());
     let theme_registry = Arc::new(ThemeRegistry::new(Box::new(())));
+    let slash_command_registry = SlashCommandRegistry::new();
     let node_runtime = FakeNodeRuntime::new();
 
     let mut status_updates = language_registry.language_server_binary_statuses();
@@ -541,6 +546,7 @@ async fn test_extension_store_with_gleam_extension(cx: &mut TestAppContext) {
             node_runtime,
             language_registry.clone(),
             theme_registry.clone(),
+            slash_command_registry,
             cx,
         )
     });
