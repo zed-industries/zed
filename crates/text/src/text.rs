@@ -521,7 +521,7 @@ pub struct UndoOperation {
 pub struct LineIndent {
     pub tabs: u32,
     pub spaces: u32,
-    line_blank: bool,
+    pub line_blank: bool,
 }
 
 impl LineIndent {

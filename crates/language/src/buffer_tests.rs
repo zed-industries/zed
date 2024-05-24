@@ -2079,7 +2079,14 @@ async fn test_find_matching_indent(cx: &mut TestAppContext) {
             cx,
         )
         .await,
-        Some((1..2, LineIndent::spaces(4)))
+        Some((
+            1..2,
+            LineIndent {
+                tabs: 0,
+                spaces: 4,
+                line_blank: false,
+            }
+        ))
     );
 
     assert_eq!(
@@ -2095,7 +2102,14 @@ async fn test_find_matching_indent(cx: &mut TestAppContext) {
             cx,
         )
         .await,
-        Some((1..2, LineIndent::spaces(4)))
+        Some((
+            1..2,
+            LineIndent {
+                tabs: 0,
+                spaces: 4,
+                line_blank: false,
+            }
+        ))
     );
 
     assert_eq!(
@@ -2113,7 +2127,14 @@ async fn test_find_matching_indent(cx: &mut TestAppContext) {
             cx,
         )
         .await,
-        Some((1..4, LineIndent::spaces(4)))
+        Some((
+            1..4,
+            LineIndent {
+                tabs: 0,
+                spaces: 4,
+                line_blank: false,
+            }
+        ))
     );
 }
 
