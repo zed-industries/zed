@@ -87,10 +87,12 @@ impl RecentBuffersContext {
 
     /// Returns the [`RecentBuffersContext`] as a message to the language model.
     pub fn to_message(&self) -> Option<LanguageModelRequestMessage> {
-        self.enabled.then(|| LanguageModelRequestMessage {
-            role: Role::System,
-            content: self.snapshot.message.to_string(),
-        })
+        self.enabled
+            .then(|| LanguageModelRequestMessage {
+                role: Role::System,
+                content: self.snapshot.message.to_string(),
+            })
+            .filter(|message| !message.content.is_empty())
     }
 }
 

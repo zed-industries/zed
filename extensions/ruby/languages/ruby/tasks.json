@@ -1,0 +1,14 @@
+[
+  {
+    "label": "test $ZED_SYMBOL",
+    "command": "ruby",
+    "args": ["-Itest", "$ZED_FILE", "--name", "\"/$ZED_SYMBOL/\""],
+    "tags": ["minitest-test"]
+  },
+  {
+    "label": "rspec $ZED_SYMBOL",
+    "command": "./bin/rspec",
+    "args": ["\"$ZED_FILE:$ZED_ROW\""],
+    "tags": ["rspec-test"]
+  }
+]

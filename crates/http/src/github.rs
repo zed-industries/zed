@@ -76,6 +76,47 @@ pub async fn latest_github_release(
         .ok_or(anyhow!("Failed to find a release"))
 }
 
+pub async fn get_release_by_tag_name(
+    repo_name_with_owner: &str,
+    tag: &str,
+    http: Arc<dyn HttpClient>,
+) -> Result<GithubRelease, anyhow::Error> {
+    let mut response = http
+        .get(
+            &format!("https://api.github.com/repos/{repo_name_with_owner}/releases/tags/{tag}"),
+            Default::default(),
+            true,
+        )
+        .await
+        .context("error fetching latest release")?;
+
+    let mut body = Vec::new();
+    response
+        .body_mut()
+        .read_to_end(&mut body)
+        .await
+        .context("error reading latest release")?;
+
+    if response.status().is_client_error() {
+        let text = String::from_utf8_lossy(body.as_slice());
+        bail!(
+            "status error {}, response: {text:?}",
+            response.status().as_u16()
+        );
+    }
+
+    let release = serde_json::from_slice::<GithubRelease>(body.as_slice()).map_err(|err| {
+        log::error!("Error deserializing: {:?}", err);
+        log::error!(
+            "GitHub API response text: {:?}",
+            String::from_utf8_lossy(body.as_slice())
+        );
+        anyhow!("error deserializing GitHub release")
+    })?;
+
+    Ok(release)
+}
+
 pub fn build_tarball_url(repo_name_with_owner: &str, tag: &str) -> Result<String> {
     let mut url = Url::parse(&format!(
         "https://github.com/{repo_name_with_owner}/archive/refs/tags",

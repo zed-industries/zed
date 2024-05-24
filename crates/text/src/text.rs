@@ -1865,6 +1865,87 @@ impl BufferSnapshot {
         (row_end_offset - row_start_offset) as u32
     }
 
+    pub fn line_indents_in_row_range(
+        &self,
+        row_range: Range<u32>,
+    ) -> impl Iterator<Item = (u32, u32, bool)> + '_ {
+        let start = Point::new(row_range.start, 0).to_offset(self);
+        let end = Point::new(row_range.end, 0).to_offset(self);
+
+        let mut lines = self.as_rope().chunks_in_range(start..end).lines();
+        let mut row = row_range.start;
+        std::iter::from_fn(move || {
+            if let Some(line) = lines.next() {
+                let mut indent_size = 0;
+                let mut is_blank = true;
+
+                for c in line.chars() {
+                    is_blank = false;
+                    if c == ' ' || c == '\t' {
+                        indent_size += 1;
+                    } else {
+                        break;
+                    }
+                }
+
+                row += 1;
+                Some((row - 1, indent_size, is_blank))
+            } else {
+                None
+            }
+        })
+    }
+
+    pub fn reversed_line_indents_in_row_range(
+        &self,
+        row_range: Range<u32>,
+    ) -> impl Iterator<Item = (u32, u32, bool)> + '_ {
+        let start = Point::new(row_range.start, 0).to_offset(self);
+        let end = Point::new(row_range.end, 0)
+            .to_offset(self)
+            .saturating_sub(1);
+
+        let mut lines = self.as_rope().reversed_chunks_in_range(start..end).lines();
+        let mut row = row_range.end;
+        std::iter::from_fn(move || {
+            if let Some(line) = lines.next() {
+                let mut indent_size = 0;
+                let mut is_blank = true;
+
+                for c in line.chars() {
+                    is_blank = false;
+                    if c == ' ' || c == '\t' {
+                        indent_size += 1;
+                    } else {
+                        break;
+                    }
+                }
+
+                row = row.saturating_sub(1);
+                Some((row, indent_size, is_blank))
+            } else {
+                None
+            }
+        })
+    }
+
+    pub fn line_indent_for_row(&self, row: u32) -> (u32, bool) {
+        let mut indent_size = 0;
+        let mut is_blank = false;
+        for c in self.chars_at(Point::new(row, 0)) {
+            if c == ' ' || c == '\t' {
+                indent_size += 1;
+            } else {
+                if c == '\n' {
+                    is_blank = true;
+                }
+                break;
+            }
+        }
+
+        (indent_size, is_blank)
+    }
+
     pub fn is_line_blank(&self, row: u32) -> bool {
         self.text_for_range(Point::new(row, 0)..Point::new(row, self.line_len(row)))
             .all(|chunk| chunk.matches(|c: char| !c.is_whitespace()).next().is_none())
@@ -2164,6 +2245,31 @@ impl BufferSnapshot {
             range: (start_fragment_id, range.start.offset)..(end_fragment_id, range.end.offset),
             buffer_id: self.remote_id,
         }
+    }
+
+    pub fn has_edits_since_in_range(&self, since: &clock::Global, range: Range<Anchor>) -> bool {
+        if *since != self.version {
+            let start_fragment_id = self.fragment_id_for_anchor(&range.start);
+            let end_fragment_id = self.fragment_id_for_anchor(&range.end);
+            let mut cursor = self
+                .fragments
+                .filter::<_, usize>(move |summary| !since.observed_all(&summary.max_version));
+            cursor.next(&None);
+            while let Some(fragment) = cursor.item() {
+                if fragment.id > *end_fragment_id {
+                    break;
+                }
+                if fragment.id > *start_fragment_id {
+                    let was_visible = fragment.was_visible(since, &self.undo_map);
+                    let is_visible = fragment.visible;
+                    if was_visible != is_visible {
+                        return true;
+                    }
+                }
+                cursor.next(&None);
+            }
+        }
+        false
     }
 
     pub fn has_edits_since(&self, since: &clock::Global) -> bool {

@@ -34,10 +34,12 @@ impl Default for CurrentProjectContext {
 impl CurrentProjectContext {
     /// Returns the [`CurrentProjectContext`] as a message to the language model.
     pub fn to_message(&self) -> Option<LanguageModelRequestMessage> {
-        self.enabled.then(|| LanguageModelRequestMessage {
-            role: Role::System,
-            content: self.message.clone(),
-        })
+        self.enabled
+            .then(|| LanguageModelRequestMessage {
+                role: Role::System,
+                content: self.message.clone(),
+            })
+            .filter(|message| !message.content.is_empty())
     }
 
     /// Updates the [`CurrentProjectContext`] for the given [`Project`].

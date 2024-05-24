@@ -3,11 +3,9 @@ pub mod editor_test_context;
 
 use crate::{
     display_map::{DisplayMap, DisplaySnapshot, ToDisplayPoint},
-    DisplayPoint, Editor, EditorMode, MultiBuffer,
+    DisplayPoint, Editor, EditorMode, FoldPlaceholder, MultiBuffer,
 };
-
 use gpui::{Context, Font, FontFeatures, FontStyle, FontWeight, Model, Pixels, ViewContext};
-
 use project::Project;
 use util::test::{marked_text_offsets, marked_text_ranges};
 
@@ -35,7 +33,18 @@ pub fn marked_display_snapshot(
     let font_size: Pixels = 14usize.into();
 
     let buffer = MultiBuffer::build_simple(&unmarked_text, cx);
-    let display_map = cx.new_model(|cx| DisplayMap::new(buffer, font, font_size, None, 1, 1, cx));
+    let display_map = cx.new_model(|cx| {
+        DisplayMap::new(
+            buffer,
+            font,
+            font_size,
+            None,
+            1,
+            1,
+            FoldPlaceholder::test(),
+            cx,
+        )
+    });
     let snapshot = display_map.update(cx, |map, cx| map.snapshot(cx));
     let markers = markers
         .into_iter()

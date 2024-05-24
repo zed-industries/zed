@@ -30,6 +30,7 @@ log.workspace = true
 lsp.workspace = true
 node_runtime.workspace = true
 project.workspace = true
+release_channel.workspace = true
 schemars.workspace = true
 semantic_version.workspace = true
 serde.workspace = true

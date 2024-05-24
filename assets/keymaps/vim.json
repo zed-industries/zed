@@ -155,6 +155,7 @@
       "g shift-t": "pane::ActivatePrevItem",
       "g d": "editor::GoToDefinition",
       "g shift-d": "editor::GoToTypeDefinition",
+      "g cmd-d": "editor::GoToImplementation",
       "g x": "editor::OpenUrl",
       "g n": "vim::SelectNextMatch",
       "g shift-n": "vim::SelectPreviousMatch",
@@ -384,7 +385,11 @@
       "ctrl-pageup": "pane::ActivatePrevItem",
       // tree-sitter related commands
       "[ x": "editor::SelectLargerSyntaxNode",
-      "] x": "editor::SelectSmallerSyntaxNode"
+      "] x": "editor::SelectSmallerSyntaxNode",
+      "] d": "editor::GoToDiagnostic",
+      "[ d": "editor::GoToPrevDiagnostic",
+      "] c": "editor::GoToHunk",
+      "[ c": "editor::GoToPrevHunk"
     }
   },
   {
@@ -493,8 +498,8 @@
       "shift-o": "vim::OtherEnd",
       "d": "vim::VisualDelete",
       "x": "vim::VisualDelete",
-      "shift-d": "vim::VisualDelete",
-      "shift-x": "vim::VisualDelete",
+      "shift-d": "vim::VisualDeleteLine",
+      "shift-x": "vim::VisualDeleteLine",
       "y": "vim::VisualYank",
       "shift-y": "vim::VisualYank",
       "p": "vim::Paste",

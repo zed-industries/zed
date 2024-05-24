@@ -66,6 +66,16 @@ impl Database {
                     .await?
                     .ok_or_else(|| anyhow!("no remote project"))?;
 
+                let (_, dev_server) = dev_server_project::Entity::find_by_id(dev_server_project_id)
+                    .find_also_related(dev_server::Entity)
+                    .one(&*tx)
+                    .await?
+                    .ok_or_else(|| anyhow!("no dev_server_project"))?;
+
+                if !dev_server.is_some_and(|dev_server| dev_server.user_id == participant.user_id) {
+                    return Err(anyhow!("not your dev server"))?;
+                }
+
                 if project.room_id.is_some() {
                     return Err(anyhow!("project already shared"))?;
                 };
@@ -77,7 +87,6 @@ impl Database {
                 .exec(&*tx)
                 .await?;
 
-                // todo! check user is a project-collaborator
                 let room = self.get_room(room_id, &tx).await?;
                 return Ok((project.id, room));
             }

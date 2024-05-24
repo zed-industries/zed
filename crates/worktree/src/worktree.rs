@@ -114,6 +114,8 @@ pub struct LocalWorktree {
     fs: Arc<dyn Fs>,
     fs_case_sensitive: bool,
     visible: bool,
+
+    next_entry_id: Arc<AtomicUsize>,
 }
 
 struct ScanRequest {
@@ -285,6 +287,7 @@ pub struct LocalSnapshot {
     git_repositories: TreeMap<ProjectEntryId, LocalRepositoryEntry>,
     file_scan_exclusions: Vec<PathMatcher>,
     private_files: Vec<PathMatcher>,
+    share_private_files: bool,
 }
 
 struct BackgroundScannerState {
@@ -381,9 +384,6 @@ impl Worktree {
             true
         });
 
-        let closure_fs = Arc::clone(&fs);
-        let closure_next_entry_id = Arc::clone(&next_entry_id);
-        let closure_abs_path = abs_path.to_path_buf();
         cx.new_model(move |cx: &mut ModelContext<Worktree>| {
             cx.observe_global::<SettingsStore>(move |this, cx| {
                 if let Self::Local(this) = this {
@@ -421,21 +421,7 @@ impl Worktree {
                                 .collect::<Vec<_>>()
                         );
 
-                        let (scan_requests_tx, scan_requests_rx) = channel::unbounded();
-                        let (path_prefixes_to_scan_tx, path_prefixes_to_scan_rx) =
-                            channel::unbounded();
-                        this.scan_requests_tx = scan_requests_tx;
-                        this.path_prefixes_to_scan_tx = path_prefixes_to_scan_tx;
-                        this._background_scanner_tasks = start_background_scan_tasks(
-                            &closure_abs_path,
-                            this.snapshot(),
-                            scan_requests_rx,
-                            path_prefixes_to_scan_rx,
-                            Arc::clone(&closure_next_entry_id),
-                            Arc::clone(&closure_fs),
-                            cx,
-                        );
-                        this.is_scanning = watch::channel_with(true);
+                        this.restart_background_scanners(cx);
                     }
                 }
             })
@@ -459,6 +445,7 @@ impl Worktree {
                     }), cx).private_files.as_deref(),
                     "private_files",
                 ),
+                share_private_files: false,
                 ignores_by_parent_abs_path: Default::default(),
                 git_repositories: Default::default(),
                 snapshot: Snapshot {
@@ -490,6 +477,7 @@ impl Worktree {
             let (path_prefixes_to_scan_tx, path_prefixes_to_scan_rx) = channel::unbounded();
             let task_snapshot = snapshot.clone();
             Worktree::Local(LocalWorktree {
+                next_entry_id: Arc::clone(&next_entry_id),
                 snapshot,
                 is_scanning: watch::channel_with(true),
                 share: None,
@@ -949,14 +937,32 @@ impl LocalWorktree {
         Ok(!old_summary.is_empty() || !new_summary.is_empty())
     }
 
+    fn restart_background_scanners(&mut self, cx: &mut ModelContext<Worktree>) {
+        let (scan_requests_tx, scan_requests_rx) = channel::unbounded();
+        let (path_prefixes_to_scan_tx, path_prefixes_to_scan_rx) = channel::unbounded();
+        self.scan_requests_tx = scan_requests_tx;
+        self.path_prefixes_to_scan_tx = path_prefixes_to_scan_tx;
+        self._background_scanner_tasks = start_background_scan_tasks(
+            &self.snapshot.abs_path,
+            self.snapshot(),
+            scan_requests_rx,
+            path_prefixes_to_scan_rx,
+            Arc::clone(&self.next_entry_id),
+            Arc::clone(&self.fs),
+            cx,
+        );
+        self.is_scanning = watch::channel_with(true);
+    }
+
     fn set_snapshot(
         &mut self,
-        new_snapshot: LocalSnapshot,
+        mut new_snapshot: LocalSnapshot,
         entry_changes: UpdatedEntriesSet,
         cx: &mut ModelContext<Worktree>,
     ) {
         let repo_changes = self.changed_repos(&self.snapshot, &new_snapshot);
 
+        new_snapshot.share_private_files = self.snapshot.share_private_files;
         self.snapshot = new_snapshot;
 
         if let Some(share) = self.share.as_mut() {
@@ -1662,6 +1668,11 @@ impl LocalWorktree {
 
     pub fn is_shared(&self) -> bool {
         self.share.is_some()
+    }
+
+    pub fn share_private_files(&mut self, cx: &mut ModelContext<Worktree>) {
+        self.snapshot.share_private_files = true;
+        self.restart_background_scanners(cx);
     }
 }
 
@@ -2517,6 +2528,9 @@ impl LocalSnapshot {
     }
 
     pub fn is_path_private(&self, path: &Path) -> bool {
+        if self.share_private_files {
+            return false;
+        }
         path.ancestors().any(|ancestor| {
             self.private_files
                 .iter()

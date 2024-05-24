@@ -153,8 +153,8 @@ mod tests {
 
     use editor::Editor;
     use gpui::{Entity, TestAppContext};
-    use language::{BasicContextProvider, Language, LanguageConfig};
-    use project::{FakeFs, Project};
+    use language::{Language, LanguageConfig};
+    use project::{BasicContextProvider, FakeFs, Project};
     use serde_json::json;
     use task::{TaskContext, TaskVariables, VariableName};
     use ui::VisualContext;
@@ -191,7 +191,7 @@ mod tests {
             }),
         )
         .await;
-
+        let project = Project::test(fs, ["/dir".as_ref()], cx).await;
         let rust_language = Arc::new(
             Language::new(
                 LanguageConfig::default(),
@@ -203,7 +203,7 @@ mod tests {
             name: (_) @name) @item"#,
             )
             .unwrap()
-            .with_context_provider(Some(Arc::new(BasicContextProvider))),
+            .with_context_provider(Some(Arc::new(BasicContextProvider::new(project.clone())))),
         );
 
         let typescript_language = Arc::new(
@@ -221,9 +221,9 @@ mod tests {
                       ")" @context)) @item"#,
             )
             .unwrap()
-            .with_context_provider(Some(Arc::new(BasicContextProvider))),
+            .with_context_provider(Some(Arc::new(BasicContextProvider::new(project.clone())))),
         );
-        let project = Project::test(fs, ["/dir".as_ref()], cx).await;
+
         let worktree_id = project.update(cx, |project, cx| {
             project.worktrees().next().unwrap().read(cx).id()
         });
