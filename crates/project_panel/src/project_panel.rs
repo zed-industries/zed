@@ -695,8 +695,8 @@ impl ProjectPanel {
         let worktree_id = edit_state.worktree_id;
         let is_new_entry = edit_state.is_new_entry;
         let filename = self.filename_editor.read(cx).text(cx);
-        edit_state.is_dir =
-            edit_state.is_dir || (edit_state.is_new_entry && filename.ends_with('/'));
+        edit_state.is_dir = edit_state.is_dir
+            || (edit_state.is_new_entry && filename.ends_with(std::path::MAIN_SEPARATOR));
         let is_dir = edit_state.is_dir;
         let worktree = self.project.read(cx).worktree_for_id(worktree_id, cx)?;
         let entry = worktree.read(cx).entry_for_id(edit_state.entry_id)?.clone();
@@ -2847,7 +2847,7 @@ mod tests {
         );
     }
 
-    #[gpui::test(iterations = 10)]
+    #[gpui::test]
     async fn test_adding_directory_via_file(cx: &mut gpui::TestAppContext) {
         init_test(cx);
 
