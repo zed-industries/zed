@@ -2,6 +2,7 @@ pub mod extension_builder;
 mod extension_lsp_adapter;
 mod extension_manifest;
 mod extension_settings;
+mod extension_slash_command;
 mod wasm_host;
 
 #[cfg(test)]

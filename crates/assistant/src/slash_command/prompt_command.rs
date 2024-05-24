@@ -4,6 +4,7 @@ use anyhow::{anyhow, Context, Result};
 use futures::channel::oneshot;
 use fuzzy::StringMatchCandidate;
 use gpui::{AppContext, Task};
+use language::LspAdapterDelegate;
 use std::sync::{atomic::AtomicBool, Arc};
 
 pub(crate) struct PromptSlashCommand {
@@ -65,7 +66,12 @@ impl SlashCommand for PromptSlashCommand {
         })
     }
 
-    fn run(&self, title: Option<&str>, cx: &mut AppContext) -> SlashCommandInvocation {
+    fn run(
+        self: Arc<Self>,
+        title: Option<&str>,
+        _delegate: Arc<dyn LspAdapterDelegate>,
+        cx: &mut AppContext,
+    ) -> SlashCommandInvocation {
         let Some(title) = title else {
             return SlashCommandInvocation {
                 output: Task::ready(Err(anyhow!("missing prompt name"))),

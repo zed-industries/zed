@@ -436,6 +436,7 @@ dependencies = [
  "derive_more",
  "futures 0.3.28",
  "gpui",
+ "language",
  "parking_lot",
 ]
 
@@ -3784,6 +3785,7 @@ name = "extension"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "assistant_slash_command",
  "async-compression",
  "async-tar",
  "async-trait",

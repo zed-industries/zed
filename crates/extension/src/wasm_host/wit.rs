@@ -256,7 +256,7 @@ impl Extension {
         }
     }
 
-    pub async fn slash_commands(
+    pub async fn call_slash_commands(
         &self,
         store: &mut Store<WasmState>,
     ) -> Result<Result<Vec<SlashCommand>, String>> {
@@ -266,7 +266,7 @@ impl Extension {
         }
     }
 
-    pub async fn run_slash_command(
+    pub async fn call_run_slash_command(
         &self,
         store: &mut Store<WasmState>,
         command: &SlashCommand,

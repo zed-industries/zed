@@ -1,3 +1,4 @@
+use std::sync::Arc;
 use std::{borrow::Cow, cell::Cell, rc::Rc};
 
 use anyhow::{anyhow, Result};
@@ -5,6 +6,7 @@ use collections::HashMap;
 use editor::Editor;
 use futures::channel::oneshot;
 use gpui::{AppContext, Entity, Subscription, Task, WindowHandle};
+use language::LspAdapterDelegate;
 use workspace::{Event as WorkspaceEvent, Workspace};
 
 use super::{SlashCommand, SlashCommandCleanup, SlashCommandInvocation};
@@ -41,7 +43,12 @@ impl SlashCommand for CurrentFileSlashCommand {
         false
     }
 
-    fn run(&self, _argument: Option<&str>, cx: &mut AppContext) -> SlashCommandInvocation {
+    fn run(
+        self: Arc<Self>,
+        _argument: Option<&str>,
+        _delegate: Arc<dyn LspAdapterDelegate>,
+        cx: &mut AppContext,
+    ) -> SlashCommandInvocation {
         let (invalidate_tx, invalidate_rx) = oneshot::channel();
         let invalidate_tx = Rc::new(Cell::new(Some(invalidate_tx)));
         let mut subscriptions: Vec<Subscription> = Vec::new();

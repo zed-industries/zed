@@ -43,13 +43,14 @@ use gpui::{
     UniformListScrollHandle, View, ViewContext, VisualContext, WeakModel, WeakView, WhiteSpace,
     WindowContext,
 };
+use language::LspAdapterDelegate;
 use language::{
     language_settings::SoftWrap, AutoindentMode, Buffer, BufferSnapshot, LanguageRegistry,
     OffsetRangeExt as _, Point, ToOffset as _, ToPoint as _,
 };
 use multi_buffer::MultiBufferRow;
 use parking_lot::Mutex;
-use project::{Project, ProjectTransaction};
+use project::{Project, ProjectLspAdapterDelegate, ProjectTransaction};
 use search::{buffer_search::DivRegistrar, BufferSearchBar};
 use settings::Settings;
 use std::{
@@ -1484,6 +1485,7 @@ pub struct Conversation {
     telemetry: Option<Arc<Telemetry>>,
     slash_command_registry: Arc<SlashCommandRegistry>,
     language_registry: Arc<LanguageRegistry>,
+    lsp_adapter_delegate: Option<Arc<dyn LspAdapterDelegate>>,
 }
 
 impl EventEmitter<ConversationEvent> for Conversation {}
@@ -1494,6 +1496,7 @@ impl Conversation {
         language_registry: Arc<LanguageRegistry>,
         slash_command_registry: Arc<SlashCommandRegistry>,
         telemetry: Option<Arc<Telemetry>>,
+        lsp_adapter_delegate: Option<Arc<dyn LspAdapterDelegate>>,
         cx: &mut ModelContext<Self>,
     ) -> Self {
         let buffer = cx.new_model(|cx| {
@@ -1526,6 +1529,7 @@ impl Conversation {
             telemetry,
             slash_command_registry,
             language_registry,
+            lsp_adapter_delegate,
         };
 
         let message = MessageAnchor {
@@ -1635,6 +1639,8 @@ impl Conversation {
                 telemetry,
                 language_registry,
                 slash_command_registry,
+                // TODO: Initialize this when deserializing.
+                lsp_adapter_delegate: None,
             };
             this.set_language(cx);
             this.reparse_edit_suggestions(cx);
@@ -1850,7 +1856,13 @@ impl Conversation {
                                 buffer.anchor_after(offset)..buffer.anchor_before(line_end_offset);
 
                             let argument = call.argument.map(|range| &line[range]);
-                            let invocation = command.run(argument, cx);
+                            let invocation = command.run(
+                                argument,
+                                this.lsp_adapter_delegate
+                                    .clone()
+                                    .expect("no LspAdapterDelegate present when invoking command"),
+                                cx,
+                            );
 
                             new_calls.push(SlashCommandCall {
                                 name,
@@ -2728,12 +2740,23 @@ impl ConversationEditor {
         cx: &mut ViewContext<Self>,
     ) -> Self {
         let telemetry = workspace.read(cx).client().telemetry().clone();
+        let project = workspace.read(cx).project().clone();
+        let delegate = project.update(cx, |project, cx| {
+            // TODO: Find the right worktree.
+            let worktree = project
+                .worktrees()
+                .next()
+                .expect("expected at least one worktree");
+            ProjectLspAdapterDelegate::new(project, &worktree, cx)
+        });
+
         let conversation = cx.new_model(|cx| {
             Conversation::new(
                 model,
                 language_registry,
                 slash_command_registry,
                 Some(telemetry),
+                Some(delegate),
                 cx,
             )
         });
@@ -3935,6 +3958,7 @@ mod tests {
                 registry,
                 Default::default(),
                 None,
+                None,
                 cx,
             )
         });
@@ -4074,6 +4098,7 @@ mod tests {
                 registry,
                 Default::default(),
                 None,
+                None,
                 cx,
             )
         });
@@ -4179,6 +4204,7 @@ mod tests {
                 LanguageModel::default(),
                 registry,
                 Default::default(),
+                None,
                 None,
                 cx,
             )
@@ -4298,6 +4324,7 @@ mod tests {
                 LanguageModel::default(),
                 registry.clone(),
                 slash_command_registry,
+                None,
                 None,
                 cx,
             )
@@ -4598,6 +4625,7 @@ mod tests {
                 LanguageModel::default(),
                 registry.clone(),
                 Default::default(),
+                None,
                 None,
                 cx,
             )
