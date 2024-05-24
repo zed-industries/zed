@@ -245,7 +245,6 @@ impl Render for ExecutionView {
                     return div().child(Icon::new(IconName::Check)).into_any_element()
                 }
                 ExecutionStatus::Unknown => return div().child("...").into_any_element(),
-                _ => {}
             }
         }
 

@@ -10,7 +10,6 @@ use futures::{SinkExt as _, StreamExt};
 use gpui::EntityId;
 use project::Fs;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
-use std::process::Stdio;
 use std::{path::PathBuf, sync::Arc};
 use util::ResultExt as _;
 

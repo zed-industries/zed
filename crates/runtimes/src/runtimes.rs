@@ -92,7 +92,7 @@ struct EditorRuntimeState {
 struct EditorRuntimeBlock {
     code_range: Range<Anchor>,
     block_id: BlockId,
-    execution_view: View<ExecutionView>,
+    _execution_view: View<ExecutionView>,
 }
 
 impl RuntimeManager {
@@ -334,7 +334,6 @@ pub fn run(workspace: &mut Workspace, _: &Run, cx: &mut ViewContext<Workspace>) 
     });
 
     let blocks_to_remove = blocks_to_remove.clone();
-    dbg!(&blocks_to_remove);
 
     let mut block_id = editor.update(cx, |editor, cx| {
         println!("Removing blocks {blocks_to_remove:?}");
@@ -356,7 +355,7 @@ pub fn run(workspace: &mut Workspace, _: &Run, cx: &mut ViewContext<Workspace>) 
         let editor_runtime_block = EditorRuntimeBlock {
             code_range: anchor_range.clone(),
             block_id,
-            execution_view: execution_view.clone(),
+            _execution_view: execution_view.clone(),
         };
 
         let editor_runtime_state = runtime_manager
@@ -384,9 +383,7 @@ pub fn run(workspace: &mut Workspace, _: &Run, cx: &mut ViewContext<Workspace>) 
 
         let execution_view = execution_view.clone();
         while let Some(update) = receiver.next().await {
-            match update.content {
-                _ => {}
-            }
+            {}
 
             execution_view.update(&mut cx, |execution_view, cx| {
                 execution_view.push_message(&update.content, cx)
