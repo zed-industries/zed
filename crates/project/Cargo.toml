@@ -44,6 +44,7 @@ log.workspace = true
 lsp.workspace = true
 node_runtime.workspace = true
 parking_lot.workspace = true
+pathdiff.workspace = true
 postage.workspace = true
 prettier.workspace = true
 worktree.workspace = true

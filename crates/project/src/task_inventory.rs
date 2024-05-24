@@ -549,20 +549,6 @@ impl ContextProvider for BasicContextProvider {
         if !selected_text.trim().is_empty() {
             task_variables.insert(VariableName::SelectedText, selected_text);
         }
-        if let Some(path) = current_file {
-            task_variables.insert(VariableName::File, path.clone());
-
-            let path = Path::new(&path);
-
-            if let Some(filename) = path.file_name().and_then(|f| f.to_str()) {
-                task_variables.insert(VariableName::Filename, String::from(filename));
-            }
-
-            if let Some(stem) = path.file_stem().and_then(|s| s.to_str()) {
-                task_variables.insert(VariableName::Stem, String::from(stem));
-            }
-        }
-
         let worktree_abs_path = buffer
             .file()
             .map(|file| WorktreeId::from_usize(file.worktree_id()))
@@ -577,6 +563,32 @@ impl ContextProvider for BasicContextProvider {
                 VariableName::WorktreeRoot,
                 worktree_path.to_string_lossy().to_string(),
             );
+            if let Some(full_path) = current_file.as_ref() {
+                let relative_path = pathdiff::diff_paths(full_path, worktree_path);
+                if let Some(relative_path) = relative_path {
+                    task_variables.insert(
+                        VariableName::RelativeFile,
+                        relative_path.to_string_lossy().into_owned(),
+                    );
+                }
+            }
+        }
+
+        if let Some(path_as_string) = current_file {
+            let path = Path::new(&path_as_string);
+            if let Some(filename) = path.file_name().and_then(|f| f.to_str()) {
+                task_variables.insert(VariableName::Filename, String::from(filename));
+            }
+
+            if let Some(stem) = path.file_stem().and_then(|s| s.to_str()) {
+                task_variables.insert(VariableName::Stem, stem.into());
+            }
+
+            if let Some(dirname) = path.parent().and_then(|s| s.to_str()) {
+                task_variables.insert(VariableName::Dirname, dirname.into());
+            }
+
+            task_variables.insert(VariableName::File, path_as_string);
         }
 
         Ok(task_variables)
