@@ -93,13 +93,6 @@ struct EditorRuntimeBlock {
     execution: View<ExecutionView>,
 }
 
-pub struct ActiveCode {
-    pub selected_text: String,
-    pub language_name: Arc<str>,
-    pub anchor: Anchor,
-    pub editor: View<Editor>,
-}
-
 impl RuntimeManager {
     pub fn new(fs: Arc<dyn Fs>, _cx: &mut AppContext) -> Self {
         Self {
@@ -219,92 +212,94 @@ impl RuntimeManager {
     }
 }
 
-// Gets the active selection in the editor or the current line
-pub fn get_active_code(
+pub fn get_active_editor(
     workspace: &mut Workspace,
     cx: &mut ViewContext<Workspace>,
-) -> Option<ActiveCode> {
+) -> Option<View<Editor>> {
     workspace
         .active_item(cx)
         .and_then(|item| item.act_as::<Editor>(cx))
-        .and_then(|editor_view| {
-            let editor = editor_view.read(cx);
-            let selection = editor.selections.newest::<usize>(cx);
-            let buffer = editor.buffer().read(cx).snapshot(cx);
+}
 
-            let range = if selection.is_empty() {
-                let cursor = selection.head();
+// Gets the active selection in the editor or the current line
+pub fn selection(editor: View<Editor>, cx: &mut ViewContext<Workspace>) -> Range<Anchor> {
+    let editor = editor.read(cx);
+    let selection = editor.selections.newest::<usize>(cx);
+    let buffer = editor.buffer().read(cx).snapshot(cx);
 
-                let line_start = buffer.offset_to_point(cursor).row;
-                let mut start_offset = buffer.point_to_offset(Point::new(line_start, 0));
+    let range = if selection.is_empty() {
+        let cursor = selection.head();
 
-                // Iterate backwards to find the start of the line
-                while start_offset > 0 {
-                    let ch = buffer.chars_at(start_offset - 1).next().unwrap_or('\0');
-                    if ch == '\n' {
-                        break;
-                    }
-                    start_offset -= 1;
-                }
+        let line_start = buffer.offset_to_point(cursor).row;
+        let mut start_offset = buffer.point_to_offset(Point::new(line_start, 0));
 
-                let mut end_offset = cursor;
+        // Iterate backwards to find the start of the line
+        while start_offset > 0 {
+            let ch = buffer.chars_at(start_offset - 1).next().unwrap_or('\0');
+            if ch == '\n' {
+                break;
+            }
+            start_offset -= 1;
+        }
 
-                // Iterate forwards to find the end of the line
-                while end_offset < buffer.len() {
-                    let ch = buffer.chars_at(end_offset).next().unwrap_or('\0');
-                    if ch == '\n' {
-                        break;
-                    }
-                    end_offset += 1;
-                }
+        let mut end_offset = cursor;
 
-                // Create a range from the start to the end of the line
-                start_offset..end_offset
-            } else {
-                selection.range()
-            };
+        // Iterate forwards to find the end of the line
+        while end_offset < buffer.len() {
+            let ch = buffer.chars_at(end_offset).next().unwrap_or('\0');
+            if ch == '\n' {
+                break;
+            }
+            end_offset += 1;
+        }
 
-            let anchor = buffer.anchor_after(range.end);
+        // Create a range from the start to the end of the line
+        start_offset..end_offset
+    } else {
+        selection.range()
+    };
 
-            let selected_text = buffer.text_for_range(range.clone()).collect::<String>();
-
-            let start_language = buffer.language_at(range.start);
-            let end_language = buffer.language_at(range.end);
-
-            let language_name = if start_language == end_language {
-                start_language
-                    .map(|language| language.code_fence_block_name())
-                    .filter(|lang| **lang != *"markdown")
-            } else {
-                None
-            };
-
-            language_name.map(|language_name| ActiveCode {
-                selected_text,
-                language_name,
-                anchor,
-                editor: editor_view,
-            })
-        })
+    let anchor_range = buffer.anchor_before(range.start)..buffer.anchor_after(range.end);
+    anchor_range
 }
 
 pub fn run(workspace: &mut Workspace, _: &Run, cx: &mut ViewContext<Workspace>) {
-    let active_code = get_active_code(workspace, cx);
+    let (editor, runtime_manager) = if let (Some(editor), Some(runtime_manager)) =
+        (get_active_editor(workspace, cx), RuntimeManager::global(cx))
+    {
+        (editor, runtime_manager)
+    } else {
+        log::warn!("No active editor or runtime manager found");
+        return;
+    };
 
-    let active_code = if let Some(active_code) = active_code {
-        active_code
+    let anchor_range = selection(editor.clone(), cx);
+
+    let buffer = editor.read(cx).buffer().read(cx).snapshot(cx);
+
+    let selected_text = buffer
+        .text_for_range(anchor_range.clone())
+        .collect::<String>();
+
+    let start_language = buffer.language_at(anchor_range.start);
+    let end_language = buffer.language_at(anchor_range.end);
+
+    let language_name = if start_language == end_language {
+        start_language
+            .map(|language| language.code_fence_block_name())
+            .filter(|lang| **lang != *"markdown")
+    } else {
+        // If the selection spans multiple languages, don't run it
+        return;
+    };
+
+    let language_name = if let Some(language_name) = language_name {
+        language_name
     } else {
         return;
     };
 
-    let runtime_manager = if let Some(runtime_manager) = RuntimeManager::global(cx) {
-        runtime_manager
-    } else {
-        log::error!("No runtime manager found");
-        return;
-    };
-
-    let entity_id = active_code.editor.entity_id();
+    let entity_id = editor.entity_id();
     let execution_id = ExecutionId::new();
 
     // Since we don't know the height, in editor terms, we have to calculate it over time
@@ -315,11 +310,9 @@ pub fn run(workspace: &mut Workspace, _: &Run, cx: &mut ViewContext<Workspace>) 
     // Plots and other images will have to wait.
     let execution_view = cx.new_view(|cx| ExecutionView::new(execution_id.clone(), cx));
 
-    let position = active_code.anchor;
-
-    let mut block_id = active_code.editor.update(cx, |editor, cx| {
+    let mut block_id = editor.update(cx, |editor, cx| {
         let block = BlockProperties {
-            position,
+            position: anchor_range.end,
             height: execution_view.num_lines(cx).saturating_add(1),
             style: BlockStyle::Sticky,
             render: create_output_area_render(execution_view.clone()),
@@ -332,14 +325,12 @@ pub fn run(workspace: &mut Workspace, _: &Run, cx: &mut ViewContext<Workspace>) 
     let receiver = runtime_manager.update(cx, |runtime_manager, cx| {
         runtime_manager.execute_code(
             entity_id,
-            active_code.language_name,
+            language_name,
             execution_id.clone(),
-            active_code.selected_text.clone(),
+            selected_text.clone(),
             cx,
         )
     });
-
-    let editor = active_code.editor.clone();
 
     cx.spawn(|_this, mut cx| async move {
         execution_view.update(&mut cx, |execution_view, cx| {
@@ -364,7 +355,7 @@ pub fn run(workspace: &mut Workspace, _: &Run, cx: &mut ViewContext<Workspace>) 
                 editor.remove_blocks(blocks_to_remove, None, cx);
 
                 let block = BlockProperties {
-                    position,
+                    position: anchor_range.end,
                     height: execution_view.num_lines(cx).saturating_add(1),
                     style: BlockStyle::Sticky,
                     render: create_output_area_render(execution_view.clone()),
