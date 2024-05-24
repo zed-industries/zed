@@ -1,6 +1,7 @@
 use crate::ambient_context::{AmbientContext, ContextUpdated, RecentBuffer};
 use crate::prompts::prompt_library::PromptLibrary;
 use crate::prompts::prompt_manager::PromptManager;
+use crate::slash_command::RenderFoldPlaceholder;
 use crate::{
     ambient_context::*,
     assistant_settings::{AssistantDockPosition, AssistantSettings, ZedDotDevModel},
@@ -8,15 +9,13 @@ use crate::{
     omit_ranges::text_in_range_omitting_ranges,
     prompts::prompt::generate_content_prompt,
     search::*,
-    slash_command::{
-        SlashCommandCleanup, SlashCommandCompletionProvider, SlashCommandLine, SlashCommandRegistry,
-    },
+    slash_command::{SlashCommandCompletionProvider, SlashCommandRegistry},
     ApplyEdit, Assist, CompletionProvider, CycleMessageRole, InlineAssist, LanguageModel,
     LanguageModelRequest, LanguageModelRequestMessage, MessageId, MessageMetadata, MessageStatus,
     QuoteSelection, ResetKey, Role, SavedConversation, SavedConversationMetadata, SavedMessage,
     Split, ToggleFocus, ToggleHistory, ToggleIncludeConversation,
 };
-use anyhow::{anyhow, Result};
+use anyhow::{anyhow, Context as _, Result};
 use client::telemetry::Telemetry;
 use collections::{hash_map, HashMap, HashSet, VecDeque};
 use editor::FoldPlaceholder;
@@ -35,7 +34,7 @@ use fs::Fs;
 use futures::StreamExt;
 use gpui::{
     canvas, div, point, relative, rems, uniform_list, Action, AnyElement, AnyView, AppContext,
-    AsyncAppContext, AsyncWindowContext, AvailableSpace, ClipboardItem, Context, Empty, Entity,
+    AsyncAppContext, AsyncWindowContext, AvailableSpace, ClipboardItem, Context, Entity,
     EventEmitter, FocusHandle, FocusableView, FontStyle, FontWeight, HighlightStyle,
     InteractiveElement, IntoElement, Model, ModelContext, ParentElement, Pixels, Render,
     SharedString, StatefulInteractiveElement, Styled, Subscription, Task, TextStyle,
@@ -44,7 +43,7 @@ use gpui::{
 };
 use language::{
     language_settings::SoftWrap, AutoindentMode, Buffer, BufferSnapshot, LanguageRegistry,
-    OffsetRangeExt as _, Point, ToOffset as _, ToPoint as _,
+    OffsetRangeExt as _, Point, ToOffset as _,
 };
 use multi_buffer::MultiBufferRow;
 use parking_lot::Mutex;
@@ -54,7 +53,7 @@ use settings::Settings;
 use std::{
     cmp::{self, Ordering},
     fmt::Write,
-    iter, mem,
+    iter,
     ops::Range,
     path::PathBuf,
     sync::Arc,
@@ -1438,10 +1437,21 @@ enum ConversationEvent {
     SummaryChanged,
     EditSuggestionsChanged,
     StreamedCompletion,
-    SlashCommandFinished {
+    SlashCommandStarted {
+        id: SlashCommandInvocationId,
+        name: String,
+        argument: Option<String>,
+        command_range: Range<language::Anchor>,
+    },
+    SlashCommandUpdated {
+        id: SlashCommandInvocationId,
         name: String,
         argument: Option<String>,
         output_range: Range<language::Anchor>,
+        render_placeholder: RenderFoldPlaceholder,
+    },
+    SlashCommandRemoved {
+        id: SlashCommandInvocationId,
     },
 }
 
@@ -1449,6 +1459,24 @@ enum ConversationEvent {
 struct Summary {
     text: String,
     done: bool,
+}
+
+#[derive(Copy, Clone, Default, Eq, PartialEq, Hash)]
+struct SlashCommandInvocationId(usize);
+
+impl SlashCommandInvocationId {
+    fn post_inc(&mut self) -> Self {
+        let id = *self;
+        self.0 += 1;
+        id
+    }
+}
+
+struct SlashCommandInvocation {
+    name: String,
+    argument: Option<String>,
+    range: Range<language::Anchor>,
+    pending_output: Task<Option<()>>,
 }
 
 pub struct Conversation {
@@ -1468,9 +1496,10 @@ pub struct Conversation {
     token_count: Option<usize>,
     pending_token_count: Task<Option<()>>,
     pending_edit_suggestion_parse: Option<Task<()>>,
-    pending_command_invocation_parse: Option<Task<()>>,
     pending_save: Task<Result<()>>,
     path: Option<PathBuf>,
+    invocations: HashMap<SlashCommandInvocationId, SlashCommandInvocation>,
+    next_invocation_id: SlashCommandInvocationId,
     _subscriptions: Vec<Subscription>,
     telemetry: Option<Arc<Telemetry>>,
     slash_command_registry: Arc<SlashCommandRegistry>,
@@ -1508,7 +1537,8 @@ impl Conversation {
             token_count: None,
             pending_token_count: Task::ready(None),
             pending_edit_suggestion_parse: None,
-            pending_command_invocation_parse: None,
+            next_invocation_id: SlashCommandInvocationId::default(),
+            invocations: HashMap::default(),
             model,
             _subscriptions: vec![cx.subscribe(&buffer, Self::handle_buffer_event)],
             pending_save: Task::ready(Ok(())),
@@ -1616,8 +1646,9 @@ impl Conversation {
                 pending_completions: Default::default(),
                 token_count: None,
                 pending_edit_suggestion_parse: None,
-                pending_command_invocation_parse: None,
                 pending_token_count: Task::ready(None),
+                next_invocation_id: SlashCommandInvocationId::default(),
+                invocations: HashMap::default(),
                 model,
                 _subscriptions: vec![cx.subscribe(&buffer, Self::handle_buffer_event)],
                 pending_save: Task::ready(Ok(())),
@@ -1709,7 +1740,7 @@ impl Conversation {
         if *event == language::Event::Edited {
             self.count_remaining_tokens(cx);
             self.reparse_edit_suggestions(cx);
-            // self.reparse_slash_command_calls(cx);
+            // self.invalidate_command_invocations(cx);
             cx.emit(ConversationEvent::MessagesEdited);
         }
     }
@@ -1797,37 +1828,72 @@ impl Conversation {
 
     pub fn confirm_command(
         &mut self,
-        range: Range<language::Anchor>,
+        command_range: Range<language::Anchor>,
         name: &str,
         argument: Option<&str>,
         cx: &mut ModelContext<Self>,
     ) {
         if let Some(command) = self.slash_command_registry.command(name) {
-            let invocation = command.run(argument, cx);
             let name = name.to_string();
             let argument = argument.map(ToString::to_string);
-            cx.spawn(|this, mut cx| async move {
-                let mut output = invocation.output.await?;
-                if !output.ends_with('\n') {
-                    output.push('\n');
-                }
+            let id = self.next_invocation_id.post_inc();
 
-                this.update(&mut cx, |this, cx| {
-                    let output_range = this.buffer.update(cx, |buffer, cx| {
-                        let new_start = range.start.to_offset(buffer);
-                        let new_end = new_start + output.len();
-                        buffer.edit([(range, output)], None, cx);
-                        buffer.anchor_after(new_start)..buffer.anchor_before(new_end)
-                    });
-                    cx.emit(ConversationEvent::SlashCommandFinished {
-                        name,
-                        argument,
-                        output_range,
-                    });
-                })?;
-                anyhow::Ok(())
-            })
-            .detach_and_log_err(cx);
+            let insert_output_task = cx.spawn({
+                let command_range = command_range.clone();
+                let name = name.clone();
+                let argument = argument.clone();
+                let command_registry = self.slash_command_registry.clone();
+                |this, mut cx| {
+                    async move {
+                        let command = command_registry
+                            .command(&name)
+                            .with_context(|| format!("command {name:?} not found"))?;
+                        let output = cx
+                            .update(|cx| command.run(argument.as_deref(), cx))?
+                            .await?;
+
+                        let mut text = output.text;
+                        if !text.ends_with('\n') {
+                            text.push('\n');
+                        }
+
+                        this.update(&mut cx, |this, cx| {
+                            let output_range = this.buffer.update(cx, |buffer, cx| {
+                                let new_start = command_range.start.to_offset(buffer);
+                                let new_end = new_start + text.len();
+                                buffer.edit([(command_range, text)], None, cx);
+                                buffer.anchor_after(new_start)..buffer.anchor_before(new_end)
+                            });
+                            cx.emit(ConversationEvent::SlashCommandUpdated {
+                                id,
+                                name: name.clone(),
+                                argument: argument.clone(),
+                                output_range,
+                                render_placeholder: output.render_placeholder,
+                            });
+                        })?;
+
+                        anyhow::Ok(())
+                    }
+                    .log_err()
+                }
+            });
+
+            self.invocations.insert(
+                id,
+                SlashCommandInvocation {
+                    name: name.clone(),
+                    argument: argument.clone(),
+                    range: command_range.clone(),
+                    pending_output: insert_output_task,
+                },
+            );
+            cx.emit(ConversationEvent::SlashCommandStarted {
+                id,
+                name,
+                argument,
+                command_range,
+            });
         }
     }
 
@@ -2502,7 +2568,6 @@ struct SlashCommandCall {
     argument: Option<String>,
     should_rerun: bool,
     _invalidate: Task<()>,
-    _command_cleanup: SlashCommandCleanup,
 }
 
 struct PendingCompletion {
@@ -2525,7 +2590,7 @@ struct ConversationEditor {
     fs: Arc<dyn Fs>,
     workspace: WeakView<Workspace>,
     editor: View<Editor>,
-    flap_ids: HashMap<Range<language::Anchor>, FlapId>,
+    flaps_by_invocation_id: HashMap<SlashCommandInvocationId, FlapId>,
     blocks: HashSet<BlockId>,
     scroll_position: Option<ScrollPosition>,
     _subscriptions: Vec<Subscription>,
@@ -2587,7 +2652,7 @@ impl ConversationEditor {
             editor,
             blocks: Default::default(),
             scroll_position: None,
-            flap_ids: Default::default(),
+            flaps_by_invocation_id: Default::default(),
             fs,
             workspace: workspace.downgrade(),
             _subscriptions,
@@ -2726,10 +2791,18 @@ impl ConversationEditor {
                     }
                 });
             }
-            ConversationEvent::SlashCommandFinished {
+            ConversationEvent::SlashCommandStarted {
+                id,
+                name,
+                argument,
+                command_range,
+            } => {}
+            ConversationEvent::SlashCommandUpdated {
+                id,
                 name,
                 argument,
                 output_range,
+                render_placeholder,
             } => {
                 let name = name.clone();
                 let argument = argument.clone();
@@ -2749,26 +2822,25 @@ impl ConversationEditor {
                             [Flap::new(
                                 start..end,
                                 FoldPlaceholder {
-                                    render: Arc::new(move |_, _, cx| {
-                                        let mut command = format!("/{name}");
-                                        if let Some(argument) = argument.as_ref() {
-                                            command.push(' ');
-                                            command.push_str(argument);
+                                    render: Arc::new({
+                                        let editor = cx.view().downgrade();
+                                        let render_placeholder = render_placeholder.clone();
+                                        move |fold_id, fold_range, cx| {
+                                            let editor = editor.clone();
+                                            let unfold = Arc::new(move |cx: &mut WindowContext| {
+                                                editor
+                                                    .update(cx, |editor, cx| {
+                                                        editor.unfold_ranges(
+                                                            [fold_range.start..fold_range.end],
+                                                            true,
+                                                            false,
+                                                            cx,
+                                                        );
+                                                    })
+                                                    .ok();
+                                            });
+                                            render_placeholder(fold_id.into(), unfold, cx)
                                         }
-                                        h_flex()
-                                            .h_full()
-                                            .child(
-                                                div()
-                                                    .px_1()
-                                                    .rounded_sm()
-                                                    .text_xs()
-                                                    .bg(cx
-                                                        .theme()
-                                                        .colors()
-                                                        .editor_document_highlight_read_background)
-                                                    .child(command),
-                                            )
-                                            .into_any()
                                     }),
                                     constrain_width: false,
                                 },
@@ -2780,16 +2852,17 @@ impl ConversationEditor {
                         .into_iter()
                         .next()
                         .unwrap();
-                    self.flap_ids.insert(output_range.clone(), flap_id);
+                    self.flaps_by_invocation_id.insert(*id, flap_id);
                     editor.fold_at(&FoldAt { buffer_row }, cx);
                 });
-            } // ConversationEvent::SlashCommandOutputRemoved(range) => {
-              //     if let Some(flap_id) = self.flap_ids.remove(range) {
-              //         self.editor.update(cx, |editor, cx| {
-              //             editor.remove_flaps([flap_id], cx);
-              //         });
-              //     }
-              // }
+            }
+            ConversationEvent::SlashCommandRemoved { id } => {
+                if let Some(flap_id) = self.flaps_by_invocation_id.remove(id) {
+                    self.editor.update(cx, |editor, cx| {
+                        editor.remove_flaps([flap_id], cx);
+                    });
+                }
+            }
         }
     }
 

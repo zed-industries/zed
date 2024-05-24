@@ -1,13 +1,11 @@
-use std::{borrow::Cow, cell::Cell, rc::Rc};
-
+use super::{file_command::FilePlaceholder, SlashCommand, SlashCommandOutput};
 use anyhow::{anyhow, Result};
 use collections::HashMap;
 use editor::Editor;
-use futures::channel::oneshot;
-use gpui::{AppContext, Entity, Subscription, Task, WindowHandle};
-use workspace::{Event as WorkspaceEvent, Workspace};
-
-use super::{SlashCommand, SlashCommandCleanup, SlashCommandInvocation};
+use gpui::{AppContext, Entity, Task, WindowHandle};
+use std::{borrow::Cow, sync::Arc};
+use ui::IntoElement;
+use workspace::Workspace;
 
 pub(crate) struct CurrentFileSlashCommand {
     workspace: WindowHandle<Workspace>,
@@ -41,10 +39,11 @@ impl SlashCommand for CurrentFileSlashCommand {
         false
     }
 
-    fn run(&self, _argument: Option<&str>, cx: &mut AppContext) -> SlashCommandInvocation {
-        let (invalidate_tx, invalidate_rx) = oneshot::channel();
-        let invalidate_tx = Rc::new(Cell::new(Some(invalidate_tx)));
-        let mut subscriptions: Vec<Subscription> = Vec::new();
+    fn run(
+        &self,
+        _argument: Option<&str>,
+        cx: &mut AppContext,
+    ) -> Task<Result<SlashCommandOutput>> {
         let output = self.workspace.update(cx, |workspace, cx| {
             let mut timestamps_by_entity_id = HashMap::default();
             for pane in workspace.panes() {
@@ -72,65 +71,48 @@ impl SlashCommand for CurrentFileSlashCommand {
                 }
             }
 
-            subscriptions.push({
-                let workspace_view = cx.view().clone();
-                let invalidate_tx = invalidate_tx.clone();
-                cx.window_context()
-                    .subscribe(&workspace_view, move |_workspace, event, _cx| match event {
-                        WorkspaceEvent::ActiveItemChanged
-                        | WorkspaceEvent::ItemAdded
-                        | WorkspaceEvent::ItemRemoved
-                        | WorkspaceEvent::PaneAdded(_)
-                        | WorkspaceEvent::PaneRemoved => {
-                            if let Some(invalidate_tx) = invalidate_tx.take() {
-                                _ = invalidate_tx.send(());
-                            }
-                        }
-                        _ => {}
-                    })
-            });
-
             if let Some((buffer, _)) = most_recent_buffer {
-                subscriptions.push({
-                    let invalidate_tx = invalidate_tx.clone();
-                    cx.window_context().observe(&buffer, move |_buffer, _cx| {
-                        if let Some(invalidate_tx) = invalidate_tx.take() {
-                            _ = invalidate_tx.send(());
-                        }
-                    })
-                });
-
                 let snapshot = buffer.read(cx).snapshot();
                 let path = snapshot.resolve_file_path(cx, true);
-                cx.background_executor().spawn(async move {
-                    let path = path
-                        .as_ref()
-                        .map(|path| path.to_string_lossy())
-                        .unwrap_or_else(|| Cow::Borrowed("untitled"));
+                let text = cx.background_executor().spawn({
+                    let path = path.clone();
+                    async move {
+                        let path = path
+                            .as_ref()
+                            .map(|path| path.to_string_lossy())
+                            .unwrap_or_else(|| Cow::Borrowed("untitled"));
 
-                    let mut output = String::with_capacity(path.len() + snapshot.len() + 9);
-                    output.push_str("```");
-                    output.push_str(&path);
-                    output.push('\n');
-                    for chunk in snapshot.as_rope().chunks() {
-                        output.push_str(chunk);
-                    }
-                    if !output.ends_with('\n') {
+                        let mut output = String::with_capacity(path.len() + snapshot.len() + 9);
+                        output.push_str("```");
+                        output.push_str(&path);
                         output.push('\n');
+                        for chunk in snapshot.as_rope().chunks() {
+                            output.push_str(chunk);
+                        }
+                        if !output.ends_with('\n') {
+                            output.push('\n');
+                        }
+                        output.push_str("```");
+                        output
                     }
-                    output.push_str("```");
-                    Ok(output)
+                });
+                cx.foreground_executor().spawn(async move {
+                    Ok(SlashCommandOutput {
+                        text: text.await,
+                        render_placeholder: Arc::new(move |id, unfold, _| {
+                            FilePlaceholder {
+                                id,
+                                path: path.clone(),
+                                unfold,
+                            }
+                            .into_any_element()
+                        }),
+                    })
                 })
             } else {
                 Task::ready(Err(anyhow!("no recent buffer found")))
             }
         });
-
-        SlashCommandInvocation {
-            output: output.unwrap_or_else(|error| Task::ready(Err(error))),
-            replace_input: false,
-            invalidated: invalidate_rx,
-            cleanup: SlashCommandCleanup::new(move || drop(subscriptions)),
-        }
+        output.unwrap_or_else(|error| Task::ready(Err(error)))
     }
 }

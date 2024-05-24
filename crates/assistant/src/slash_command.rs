@@ -1,9 +1,8 @@
 use anyhow::Result;
 use collections::HashMap;
 use editor::{CompletionProvider, Editor};
-use futures::channel::oneshot;
 use fuzzy::{match_strings, StringMatchCandidate};
-use gpui::{AppContext, Model, Task, ViewContext, WindowHandle};
+use gpui::{AnyElement, AppContext, ElementId, Model, Task, ViewContext, WindowHandle};
 use language::{Anchor, Buffer, CodeLabel, Documentation, LanguageServerId, ToPoint};
 use parking_lot::{Mutex, RwLock};
 use project::Project;
@@ -15,6 +14,7 @@ use std::{
         Arc,
     },
 };
+use ui::WindowContext;
 use workspace::Workspace;
 
 use crate::{assistant_panel::Conversation, PromptLibrary};
@@ -44,31 +44,18 @@ pub(crate) trait SlashCommand: 'static + Send + Sync {
         cx: &mut AppContext,
     ) -> Task<Result<Vec<String>>>;
     fn requires_argument(&self) -> bool;
-    fn run(&self, argument: Option<&str>, cx: &mut AppContext) -> SlashCommandInvocation;
+    fn run(&self, argument: Option<&str>, cx: &mut AppContext) -> Task<Result<SlashCommandOutput>>;
 }
 
-pub(crate) struct SlashCommandInvocation {
-    pub output: Task<Result<String>>,
-    pub replace_input: bool,
-    pub invalidated: oneshot::Receiver<()>,
-    pub cleanup: SlashCommandCleanup,
-}
+pub(crate) type RenderFoldPlaceholder = Arc<
+    dyn Send
+        + Sync
+        + Fn(ElementId, Arc<dyn Fn(&mut WindowContext)>, &mut WindowContext) -> AnyElement,
+>;
 
-#[derive(Default)]
-pub(crate) struct SlashCommandCleanup(Option<Box<dyn FnOnce()>>);
-
-impl SlashCommandCleanup {
-    pub fn new(cleanup: impl FnOnce() + 'static) -> Self {
-        Self(Some(Box::new(cleanup)))
-    }
-}
-
-impl Drop for SlashCommandCleanup {
-    fn drop(&mut self) {
-        if let Some(cleanup) = self.0.take() {
-            cleanup();
-        }
-    }
+pub(crate) struct SlashCommandOutput {
+    pub text: String,
+    pub render_placeholder: RenderFoldPlaceholder,
 }
 
 pub(crate) struct SlashCommandLine {
@@ -138,6 +125,7 @@ impl SlashCommandCompletionProvider {
             .collect::<Vec<_>>();
         let commands = self.commands.clone();
         let command_name = command_name.to_string();
+        let conversation = self.conversation.clone();
         let executor = cx.background_executor().clone();
         executor.clone().spawn(async move {
             let matches = match_strings(
@@ -155,7 +143,8 @@ impl SlashCommandCompletionProvider {
                 .filter_map(|mat| {
                     let command = commands.command(&mat.string)?;
                     let mut new_text = mat.string.clone();
-                    if command.requires_argument() {
+                    let requires_argument = command.requires_argument();
+                    if requires_argument {
                         new_text.push(' ');
                     }
 
@@ -163,10 +152,25 @@ impl SlashCommandCompletionProvider {
                         old_range: name_range.clone(),
                         documentation: Some(Documentation::SingleLine(command.description())),
                         new_text,
-                        label: CodeLabel::plain(mat.string, None),
+                        label: CodeLabel::plain(mat.string.clone(), None),
                         server_id: LanguageServerId(0),
                         lsp_completion: Default::default(),
-                        confirm: None,
+                        confirm: (!requires_argument).then(|| {
+                            let command_name = mat.string.clone();
+                            let command_range = command_range.clone();
+                            let conversation = conversation.clone();
+                            Arc::new(move |cx: &mut WindowContext| {
+                                dbg!("!!!!!!");
+                                conversation.update(cx, |conversation, cx| {
+                                    conversation.confirm_command(
+                                        command_range.clone(),
+                                        &command_name,
+                                        None,
+                                        cx,
+                                    );
+                                });
+                            }) as Arc<_>
+                        }),
                     })
                 })
                 .collect())
