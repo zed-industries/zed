@@ -2,7 +2,7 @@
     (
         (function_declaration name: (_) @run
             (#match? @run "^Test.*"))
-    ) @xd
+    ) @_
     (#set! tag go-test)
 )
 
