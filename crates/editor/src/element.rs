@@ -2250,7 +2250,7 @@ impl EditorElement {
 
         let available_space = size(AvailableSpace::MinContent, AvailableSpace::MinContent);
 
-        for (anchor, mut overlay) in overlays.into_iter().flatten() {
+        for (anchor, offset, mut overlay) in overlays.into_iter().flatten() {
             let _overlay_size = overlay.layout_as_root(available_space, cx);
 
             let hovered_row_layout =
@@ -2258,7 +2258,7 @@ impl EditorElement {
 
             let x =
                 hovered_row_layout.x_for_index(anchor.column() as usize) - scroll_pixel_position.x;
-            let y = anchor.row().as_f32() * line_height - scroll_pixel_position.y;
+            let y = (anchor.row().as_f32() + offset) * line_height - scroll_pixel_position.y;
             let origin = content_origin + point(x, y);
 
             cx.defer_draw(overlay, origin, 1);

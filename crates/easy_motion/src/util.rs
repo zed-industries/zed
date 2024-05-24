@@ -58,9 +58,7 @@ pub(crate) fn word_starts_in_range(
             let left_kind = coerce_punctuation(char_kind(&scope, left), ignore_punctuation);
             let right_kind = coerce_punctuation(char_kind(&scope, right), ignore_punctuation);
             let at_newline = right == '\n';
-            let found = (left_kind != right_kind && right_kind != CharKind::Whitespace)
-                || at_newline && crossed_newline
-                || at_newline && left == '\n'; // Prevents skipping repeated empty lines
+            let found = (left_kind != right_kind && right_kind != CharKind::Whitespace);
 
             crossed_newline |= at_newline;
             found

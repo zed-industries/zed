@@ -4757,7 +4757,7 @@ impl Editor {
         snapshot: &EditorSnapshot,
         visible_display_row_range: Range<DisplayRow>,
         cx: &mut ViewContext<Editor>,
-    ) -> Vec<Option<(DisplayPoint, AnyElement)>> {
+    ) -> Vec<Option<(DisplayPoint, f32, AnyElement)>> {
         let Some(style) = self.style.as_ref() else {
             return vec![];
         };
@@ -10335,6 +10335,7 @@ impl Editor {
         &mut self,
         text: String,
         point: DisplayPoint,
+        offset: f32,
         highlights: Vec<(Range<usize>, HighlightStyle)>,
         cx: &mut ViewContext<Self>,
     ) {
@@ -10342,6 +10343,7 @@ impl Editor {
             text,
             highlights,
             point,
+            offset,
         };
         self.overlays.push(overlay);
         cx.notify();

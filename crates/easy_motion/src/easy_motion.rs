@@ -377,7 +377,7 @@ impl EasyMotion {
                     },
                 ));
             }
-            editor.add_overlay(seq.to_string(), overlay.point.clone(), highlights, cx);
+            editor.add_overlay(seq.to_string(), overlay.point.clone(), 0.0, highlights, cx);
         }
     }
 }
