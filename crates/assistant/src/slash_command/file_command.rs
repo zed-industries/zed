@@ -3,6 +3,7 @@ use anyhow::Result;
 use futures::channel::oneshot;
 use fuzzy::PathMatch;
 use gpui::{AppContext, Model, Task};
+use language::LspAdapterDelegate;
 use project::{PathMatchCandidateSet, Project};
 use std::{
     path::Path,
@@ -96,7 +97,12 @@ impl SlashCommand for FileSlashCommand {
         })
     }
 
-    fn run(&self, argument: Option<&str>, cx: &mut AppContext) -> SlashCommandInvocation {
+    fn run(
+        self: Arc<Self>,
+        argument: Option<&str>,
+        _delegate: Arc<dyn LspAdapterDelegate>,
+        cx: &mut AppContext,
+    ) -> SlashCommandInvocation {
         let project = self.project.read(cx);
         let Some(argument) = argument else {
             return SlashCommandInvocation {

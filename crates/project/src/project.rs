@@ -11175,7 +11175,7 @@ impl<P: AsRef<Path>> From<(WorktreeId, P)> for ProjectPath {
     }
 }
 
-struct ProjectLspAdapterDelegate {
+pub struct ProjectLspAdapterDelegate {
     project: WeakModel<Project>,
     worktree: worktree::Snapshot,
     fs: Arc<dyn Fs>,
@@ -11185,7 +11185,11 @@ struct ProjectLspAdapterDelegate {
 }
 
 impl ProjectLspAdapterDelegate {
-    fn new(project: &Project, worktree: &Model<Worktree>, cx: &ModelContext<Project>) -> Arc<Self> {
+    pub fn new(
+        project: &Project,
+        worktree: &Model<Worktree>,
+        cx: &ModelContext<Project>,
+    ) -> Arc<Self> {
         Arc::new(Self {
             project: cx.weak_model(),
             worktree: worktree.read(cx).snapshot(),
