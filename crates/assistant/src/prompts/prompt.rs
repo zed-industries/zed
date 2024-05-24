@@ -19,7 +19,7 @@ pub struct StaticPromptFrontmatter {
 impl Default for StaticPromptFrontmatter {
     fn default() -> Self {
         Self {
-            title: "New Prompt".to_string(),
+            title: "Untitled Prompt".to_string(),
             version: "1.0".to_string(),
             author: "No Author".to_string(),
             languages: vec!["*".to_string()],
