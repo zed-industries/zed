@@ -1,6 +1,7 @@
 use std::sync::Arc;
 
 /// The fallback fonts that can be configured for a given font.
+/// Fallback fonts family names are stored here.
 #[derive(Default, Clone, Eq, PartialEq, Hash, Debug)]
 pub struct FontFallbacks(pub Arc<Vec<String>>);
 
