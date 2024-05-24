@@ -335,7 +335,7 @@ pub fn run(workspace: &mut Workspace, _: &Run, cx: &mut ViewContext<Workspace>) 
 
     let blocks_to_remove = blocks_to_remove.clone();
 
-    let mut block_id = editor.update(cx, |editor, cx| {
+    let block_id = editor.update(cx, |editor, cx| {
         println!("Removing blocks {blocks_to_remove:?}");
         editor.remove_blocks(blocks_to_remove, None, cx);
         let block = BlockProperties {
@@ -351,32 +351,28 @@ pub fn run(workspace: &mut Workspace, _: &Run, cx: &mut ViewContext<Workspace>) 
 
     println!("Created block {block_id:?}");
 
-    let (receiver, editor_runtime_block) = runtime_manager.update(cx, |runtime_manager, cx| {
+    let receiver = runtime_manager.update(cx, |runtime_manager, cx| {
+        let editor_runtime_state = runtime_manager
+            .editors
+            .entry(editor.downgrade())
+            .or_insert_with(|| EditorRuntimeState { blocks: Vec::new() });
+
         let editor_runtime_block = EditorRuntimeBlock {
             code_range: anchor_range.clone(),
             block_id,
             _execution_view: execution_view.clone(),
         };
 
-        let editor_runtime_state = runtime_manager
-            .editors
-            .entry(editor.downgrade())
-            .or_insert_with(|| EditorRuntimeState { blocks: Vec::new() });
-
         editor_runtime_state
             .blocks
             .push(editor_runtime_block.clone());
 
-        // Run the code!
-        (
-            runtime_manager.execute_code(
-                entity_id,
-                language_name,
-                execution_id.clone(),
-                selected_text.clone(),
-                cx,
-            ),
-            editor_runtime_block,
+        runtime_manager.execute_code(
+            entity_id,
+            language_name,
+            execution_id.clone(),
+            selected_text.clone(),
+            cx,
         )
     });
 
@@ -388,29 +384,20 @@ pub fn run(workspace: &mut Workspace, _: &Run, cx: &mut ViewContext<Workspace>) 
 
         let execution_view = execution_view.clone();
         while let Some(update) = receiver.next().await {
-            {}
-
             execution_view.update(&mut cx, |execution_view, cx| {
                 execution_view.push_message(&update.content, cx)
             })?;
 
-            let block_id = editor.update(&mut cx, |editor, cx| {
-                let mut blocks_to_remove = HashSet::default();
-                blocks_to_remove.insert(block_id);
-
-                editor.remove_blocks(blocks_to_remove, None, cx);
-
-                let block = BlockProperties {
-                    position: anchor_range.end,
-                    height: execution_view.num_lines(cx).saturating_add(1),
-                    style: BlockStyle::Sticky,
-                    render: create_output_area_render(execution_view.clone()),
-                    disposition: BlockDisposition::Below,
-                };
-
-                block_id = editor.insert_blocks([block], None, cx)[0];
-
-                block_id
+            editor.update(&mut cx, |editor, cx| {
+                let mut replacements = HashMap::default();
+                replacements.insert(
+                    block_id,
+                    (
+                        Some(execution_view.num_lines(cx).saturating_add(1)),
+                        create_output_area_render(execution_view.clone()),
+                    ),
+                );
+                editor.replace_blocks(replacements, None, cx);
             })?;
 
             // runtime_manager.update(&mut cx, |runtime_manager, cx| {
