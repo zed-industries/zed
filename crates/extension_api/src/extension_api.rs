@@ -24,6 +24,7 @@ pub use wit::{
         npm_package_latest_version,
     },
     zed::extension::platform::{current_platform, Architecture, Os},
+    zed::extension::slash_command::SlashCommand,
     CodeLabel, CodeLabelSpan, CodeLabelSpanLiteral, Command, DownloadedFileType, EnvVars,
     LanguageServerInstallationStatus, Range, Worktree,
 };
@@ -103,6 +104,21 @@ pub trait Extension: Send + Sync {
         _symbol: Symbol,
     ) -> Option<CodeLabel> {
         None
+    }
+
+    /// Returns the list of slash commands defined by this extension.
+    fn slash_commands(&self) -> Result<Vec<SlashCommand>, String> {
+        Ok(Vec::new())
+    }
+
+    /// Runs the given slash command.
+    fn run_slash_command(
+        &self,
+        _command: SlashCommand,
+        _argument: Option<String>,
+        _worktree: &Worktree,
+    ) -> Result<Option<String>, String> {
+        Ok(None)
     }
 }
 
@@ -208,6 +224,18 @@ impl wit::Guest for Component {
             }
         }
         Ok(labels)
+    }
+
+    fn slash_commands() -> Result<Vec<SlashCommand>, String> {
+        extension().slash_commands()
+    }
+
+    fn run_slash_command(
+        command: SlashCommand,
+        argument: Option<String>,
+        worktree: &Worktree,
+    ) -> Result<Option<String>, String> {
+        extension().run_slash_command(command, argument, worktree)
     }
 }
 

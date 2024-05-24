@@ -19,7 +19,7 @@ use wasmtime::{
 pub use latest::CodeLabelSpanLiteral;
 pub use latest::{
     zed::extension::lsp::{Completion, CompletionKind, InsertTextFormat, Symbol, SymbolKind},
-    CodeLabel, CodeLabelSpan, Command, Range,
+    CodeLabel, CodeLabelSpan, Command, Range, SlashCommand,
 };
 pub use since_v0_0_4::LanguageServerConfig;
 
@@ -253,6 +253,32 @@ impl Extension {
                         .collect()
                 })),
             Extension::V001(_) | Extension::V004(_) => Ok(Ok(Vec::new())),
+        }
+    }
+
+    pub async fn slash_commands(
+        &self,
+        store: &mut Store<WasmState>,
+    ) -> Result<Result<Vec<SlashCommand>, String>> {
+        match self {
+            Extension::V007(ext) => ext.call_slash_commands(store).await,
+            Extension::V001(_) | Extension::V004(_) | Extension::V006(_) => Ok(Ok(Vec::new())),
+        }
+    }
+
+    pub async fn run_slash_command(
+        &self,
+        store: &mut Store<WasmState>,
+        command: &SlashCommand,
+        argument: Option<&str>,
+        resource: Resource<Arc<dyn LspAdapterDelegate>>,
+    ) -> Result<Result<Option<String>, String>> {
+        match self {
+            Extension::V007(ext) => {
+                ext.call_run_slash_command(store, command, argument, resource)
+                    .await
+            }
+            Extension::V001(_) | Extension::V004(_) | Extension::V006(_) => Ok(Ok(None)),
         }
     }
 }
