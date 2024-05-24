@@ -123,7 +123,15 @@ jobs:
   # todo(windows): Actually run the tests
   windows_tests:
     name: (Windows) Run Clippy and tests
-    runs-on: hosted-windows-1
+    # Run on either of the `runner` hosts, but not on both.
+    # `hosted-windows-1` is a large, on-demand machine,
+    # while `windows-latest` is a free GH Actions one.
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      matrix:
+        runner: [hosted-windows-1, windows-latest]
+      fail-fast: false
+    continue-on-error: true
     steps:
       - name: Checkout repo
         uses: actions/checkout@v4
