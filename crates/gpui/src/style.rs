@@ -180,7 +180,7 @@ pub struct TextStyle {
     /// The font features to use
     pub font_features: FontFeatures,
 
-    /// TODO:
+    /// The fallback fonts to use
     pub font_fallbacks: FontFallbacks,
 
     /// The font size to use, in pixels or rems.
