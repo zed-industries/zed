@@ -1,3 +1,8 @@
+(mod_item
+    name: (_) @run
+    (#eq? @run "tests")
+) @rust-mod-test
+
 (
     (attribute_item (attribute
         [((identifier) @_attribute)

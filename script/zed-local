@@ -75,10 +75,11 @@ const displayInfo = JSON.parse(
     encoding: "utf8",
   }),
 );
-const mainDisplayResolution =
-  displayInfo?.SPDisplaysDataType[0]?.spdisplays_ndrvs
-    ?.find((entry) => entry.spdisplays_main === "spdisplays_yes")
-    ?._spdisplays_resolution?.match(RESOLUTION_REGEX);
+const mainDisplayResolution = displayInfo?.SPDisplaysDataType?.flatMap(
+  (display) => display?.spdisplays_ndrvs,
+)
+  ?.find((entry) => entry?.spdisplays_main === "spdisplays_yes")
+  ?._spdisplays_resolution?.match(RESOLUTION_REGEX);
 if (!mainDisplayResolution) {
   throw new Error("Could not parse screen resolution");
 }

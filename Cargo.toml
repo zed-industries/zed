@@ -305,6 +305,7 @@ once_cell = "1.19.0"
 ordered-float = "2.1.1"
 palette = { version = "0.7.5", default-features = false, features = ["std"] }
 parking_lot = "0.12.1"
+pathdiff = "0.2"
 profiling = "1"
 postage = { version = "0.5", features = ["futures-traits"] }
 pretty_assertions = "1.3.0"
@@ -376,7 +377,7 @@ unindent = "0.1.7"
 unicase = "2.6"
 unicode-segmentation = "1.10"
 url = "2.2"
-uuid = { version = "1.1.2", features = ["v4", "v5"] }
+uuid = { version = "1.1.2", features = ["v4", "v5", "serde"] }
 wasmparser = "0.201"
 wasm-encoder = "0.201"
 wasmtime = { version = "19.0.0", default-features = false, features = [

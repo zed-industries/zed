@@ -143,6 +143,7 @@ gpui::actions!(
     editor,
     [
         AcceptPartialCopilotSuggestion,
+        AcceptInlineCompletion,
         AcceptPartialInlineCompletion,
         AddSelectionAbove,
         AddSelectionBelow,
@@ -272,6 +273,7 @@ gpui::actions!(
         ToggleHunkDiff,
         ToggleInlayHints,
         ToggleLineNumbers,
+        ToggleIndentGuides,
         ToggleSoftWrap,
         Transpose,
         Undo,

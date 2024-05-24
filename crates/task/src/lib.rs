@@ -8,8 +8,8 @@ mod vscode_format;
 use collections::{HashMap, HashSet};
 use gpui::SharedString;
 use serde::Serialize;
-use std::borrow::Cow;
 use std::path::PathBuf;
+use std::{borrow::Cow, path::Path};
 
 pub use task_template::{RevealStrategy, TaskTemplate, TaskTemplates};
 pub use vscode_format::VsCodeTaskFile;
@@ -34,19 +34,19 @@ pub enum TerminalWorkDir {
 }
 
 impl TerminalWorkDir {
-    /// is_local
+    /// Returns whether the terminal task is supposed to be spawned on a local machine or not.
     pub fn is_local(&self) -> bool {
         match self {
-            TerminalWorkDir::Local(_) => true,
-            TerminalWorkDir::Ssh { .. } => false,
+            Self::Local(_) => true,
+            Self::Ssh { .. } => false,
         }
     }
 
-    /// local_path
-    pub fn local_path(&self) -> Option<PathBuf> {
+    /// Returns a local CWD if the terminal is local, None otherwise.
+    pub fn local_path(&self) -> Option<&Path> {
         match self {
-            TerminalWorkDir::Local(path) => Some(path.clone()),
-            TerminalWorkDir::Ssh { .. } => None,
+            Self::Local(path) => Some(path),
+            Self::Ssh { .. } => None,
         }
     }
 }
@@ -124,6 +124,14 @@ impl ResolvedTask {
 pub enum VariableName {
     /// An absolute path of the currently opened file.
     File,
+    /// A path of the currently opened file (relative to worktree root).
+    RelativeFile,
+    /// The currently opened filename.
+    Filename,
+    /// The path to a parent directory of a currently opened file.
+    Dirname,
+    /// Stem (filename without extension) of the currently opened file.
+    Stem,
     /// An absolute path of the currently opened worktree, that contains the file.
     WorktreeRoot,
     /// A symbol text, that contains latest cursor/selection position.
@@ -160,6 +168,10 @@ impl std::fmt::Display for VariableName {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         match self {
             Self::File => write!(f, "{ZED_VARIABLE_NAME_PREFIX}FILE"),
+            Self::Filename => write!(f, "{ZED_VARIABLE_NAME_PREFIX}FILENAME"),
+            Self::RelativeFile => write!(f, "{ZED_VARIABLE_NAME_PREFIX}RELATIVE_FILE"),
+            Self::Dirname => write!(f, "{ZED_VARIABLE_NAME_PREFIX}DIRNAME"),
+            Self::Stem => write!(f, "{ZED_VARIABLE_NAME_PREFIX}STEM"),
             Self::WorktreeRoot => write!(f, "{ZED_VARIABLE_NAME_PREFIX}WORKTREE_ROOT"),
             Self::Symbol => write!(f, "{ZED_VARIABLE_NAME_PREFIX}SYMBOL"),
             Self::Row => write!(f, "{ZED_VARIABLE_NAME_PREFIX}ROW"),
@@ -184,6 +196,20 @@ impl TaskVariables {
     /// Extends the container with another one, overwriting the existing variables on collision.
     pub fn extend(&mut self, other: Self) {
         self.0.extend(other.0);
+    }
+    /// Get the value associated with given variable name, if there is one.
+    pub fn get(&self, key: &VariableName) -> Option<&str> {
+        self.0.get(key).map(|s| s.as_str())
+    }
+    /// Clear out variables obtained from tree-sitter queries, which are prefixed with '_' character
+    pub fn sweep(&mut self) {
+        self.0.retain(|name, _| {
+            if let VariableName::Custom(name) = name {
+                !name.starts_with('_')
+            } else {
+                true
+            }
+        })
     }
 }
 

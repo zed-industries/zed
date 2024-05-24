@@ -285,9 +285,9 @@ impl Matches {
                         cmp::Ordering::Greater
                     }
 
-                    (Match::History(_, match_a), Match::History(_, match_b)) => match_b
-                        .cmp(match_a)
-                        .then(history_score_a.cmp(history_score_b)),
+                    (Match::History(_, match_a), Match::History(_, match_b)) => {
+                        match_b.cmp(match_a)
+                    }
                     (Match::History(_, match_a), Match::Search(match_b)) => {
                         Some(match_b).cmp(&match_a.as_ref())
                     }
@@ -296,6 +296,7 @@ impl Matches {
                     }
                     (Match::Search(match_a), Match::Search(match_b)) => match_b.cmp(match_a),
                 }
+                .then(history_score_a.cmp(history_score_b))
             })
             .take(100)
             .map(|(_, m)| m)

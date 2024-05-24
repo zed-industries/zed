@@ -302,7 +302,7 @@ impl WrappedLineLayout {
         }
     }
 
-    /// todo!()
+    /// Returns the pixel position for the given byte index.
     pub fn position_for_index(&self, index: usize, line_height: Pixels) -> Option<Point<Pixels>> {
         let mut line_start_ix = 0;
         let mut line_end_indices = self

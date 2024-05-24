@@ -251,12 +251,10 @@ impl Editor {
                     let end_column = cmp::min(display_map.line_len(head.row()), head.column() + 3);
                     target_left = target_left.min(
                         layouts[head.row().minus(start_row) as usize]
-                            .line
                             .x_for_index(start_column as usize),
                     );
                     target_right = target_right.max(
                         layouts[head.row().minus(start_row) as usize]
-                            .line
                             .x_for_index(end_column as usize)
                             + max_glyph_width,
                     );

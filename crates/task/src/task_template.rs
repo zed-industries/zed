@@ -384,8 +384,9 @@ mod tests {
         assert_eq!(
             resolved_task(&task_without_cwd, &cx)
                 .cwd
+                .as_ref()
                 .and_then(|cwd| cwd.local_path()),
-            Some(context_cwd.clone()),
+            Some(context_cwd.as_path()),
             "TaskContext's cwd should be taken on resolve if task's cwd is None"
         );
 
@@ -401,8 +402,9 @@ mod tests {
         assert_eq!(
             resolved_task(&task_with_cwd, &cx)
                 .cwd
+                .as_ref()
                 .and_then(|cwd| cwd.local_path()),
-            Some(task_cwd.clone()),
+            Some(task_cwd.as_path()),
             "TaskTemplate's cwd should be taken on resolve if TaskContext's cwd is None"
         );
 
@@ -413,8 +415,9 @@ mod tests {
         assert_eq!(
             resolved_task(&task_with_cwd, &cx)
                 .cwd
+                .as_ref()
                 .and_then(|cwd| cwd.local_path()),
-            Some(task_cwd.clone()),
+            Some(task_cwd.as_path()),
             "TaskTemplate's cwd should be taken on resolve if TaskContext's cwd is not None"
         );
     }

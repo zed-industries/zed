@@ -27,7 +27,7 @@ If you prefer to format your code with [Mix](https://hexdocs.pm/mix/Mix.html), u
 
 ```json
 {
-  "language_overrides": {
+  "languages": {
     "Elixir": {
       "format_on_save": {
         "external": {
