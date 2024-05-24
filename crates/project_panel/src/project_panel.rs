@@ -1764,6 +1764,9 @@ impl ProjectPanel {
                     .indent_level(depth)
                     .indent_step_size(px(settings.indent_size))
                     .selected(is_selected)
+                    .when(is_symlink, |item| {
+                        item.end_slot::<Icon>(Icon::new(IconName::ArrowRight))
+                    })
                     .child(if let Some(icon) = &icon {
                         h_flex().child(Icon::from_path(icon.to_string()).color(filename_text_color))
                     } else {
