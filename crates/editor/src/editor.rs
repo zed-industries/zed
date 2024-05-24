@@ -10222,12 +10222,12 @@ impl Editor {
         &mut self,
         text: String,
         point: DisplayPoint,
-        highlight: HighlightStyle,
+        highlights: Vec<(Range<usize>, HighlightStyle)>,
         cx: &mut ViewContext<Self>,
     ) {
         let overlay = Overlay {
             text,
-            highlight,
+            highlights,
             point,
         };
         self.overlays.push(overlay);

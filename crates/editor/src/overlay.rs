@@ -5,7 +5,7 @@ use gpui::{AnyElement, HighlightStyle, IntoElement, StyledText, ViewContext};
 
 pub struct Overlay {
     pub text: String,
-    pub highlight: HighlightStyle,
+    pub highlights: Vec<(Range<usize>, HighlightStyle)>,
     pub point: DisplayPoint,
 }
 
@@ -20,8 +20,7 @@ impl Overlay {
         if !visible_display_row_range.contains(&self.point.row()) {
             return None;
         }
-        let highlights = [(0..self.text.len(), self.highlight)];
-        let iter = highlights.iter().cloned();
+        let iter = self.highlights.iter().cloned();
         Some((
             self.point,
             StyledText::new(self.text.clone())

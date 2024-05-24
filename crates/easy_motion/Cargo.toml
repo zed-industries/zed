@@ -21,6 +21,8 @@ test-support = [
 [dependencies]
 collections.workspace = true
 editor.workspace = true
+settings.workspace = true
+theme.workspace = true
 language.workspace = true
 vim.workspace = true
 text.workspace = true

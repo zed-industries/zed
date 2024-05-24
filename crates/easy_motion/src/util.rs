@@ -37,7 +37,6 @@ pub(crate) fn window_bottom(
         .to_display_point(map);
     let new_row =
         point.row().0 + (visible_rows + text_layout_details.scroll_anchor.offset.y).floor() as u32;
-    dbg!(&new_row);
     let new_col = point.column().min(map.line_len(point.row()));
     map.clip_point(
         DisplayPoint::new(DisplayRow(new_row), new_col),

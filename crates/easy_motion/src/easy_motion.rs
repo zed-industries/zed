@@ -1,6 +1,8 @@
 use collections::HashMap;
 use serde::Deserialize;
+use settings::Settings;
 use std::cmp::Ordering;
+use theme::ThemeSettings;
 
 use editor::scroll::Autoscroll;
 use editor::{DisplayPoint, Editor};
@@ -9,7 +11,7 @@ use gpui::{
     KeystrokeEvent, Subscription, View, ViewContext, WeakView,
 };
 use perm::{Trie, TrimResult};
-use text::SelectionGoal;
+use text::{Bias, SelectionGoal};
 use ui::{BorrowAppContext, WindowContext};
 use workspace::Workspace;
 
@@ -244,10 +246,6 @@ impl EasyMotion {
                 }
                 Direction::Backwards => selections.start,
             };
-            let highlight = HighlightStyle {
-                background_color: Some(gpui::red()),
-                ..Default::default()
-            };
 
             let mut word_starts = util::word_starts_in_range(&map, start, end, true);
             word_starts.sort_unstable_by(|a, b| {
@@ -262,15 +260,23 @@ impl EasyMotion {
                 }
             });
             let trie = Trie::new("asdghklqwertyuiopzxcvbnmfj".to_string(), word_starts, true);
-            let perms = trie.trie_to_perms();
-            for (seq, point) in perms {
-                editor.add_overlay(seq.to_string(), point.to_owned(), highlight, cx);
-            }
+            EasyMotion::add_overlays(editor, &trie, cx);
+
             easy.insert_state(EditorState {
                 control: true,
                 current_trie: Some(trie),
             })
             .unwrap();
+
+            let anchor_start = map.display_point_to_anchor(start, Bias::Left);
+            let anchor_end = map.display_point_to_anchor(end, Bias::Left);
+            // let settings = ThemeSettings::get_global(cx);
+            // let muted = settings.active_theme.colors().text_muted;
+            let highlight = HighlightStyle {
+                fade_out: Some(0.7),
+                ..Default::default()
+            };
+            editor.highlight_text::<EasyMotion>(vec![anchor_start..anchor_end], highlight, cx);
         });
     }
     fn easy_motion_pattern(&mut self, _cx: &mut WindowContext) {}
@@ -280,6 +286,7 @@ impl EasyMotion {
         self.clear_state();
         self.update_active_editor(cx, |_, editor, cx| {
             editor.clear_overlays(cx);
+            editor.clear_highlights::<EasyMotion>(cx);
         });
     }
 
@@ -298,6 +305,7 @@ impl EasyMotion {
                 self.clear_state();
                 self.update_active_editor(cx, |_, editor, cx| {
                     editor.clear_overlays(cx);
+                    editor.clear_highlights::<EasyMotion>(cx);
                 });
                 self.sync(cx);
             }
@@ -308,23 +316,18 @@ impl EasyMotion {
                     .flatten();
                 self.update_active_editor(cx, |_, editor, cx| {
                     editor.clear_overlays(cx);
-                    let Some(trie) = trie else {
-                        return;
+                    if let Some(trie) = trie {
+                        EasyMotion::add_overlays(editor, trie, cx);
+                    } else {
+                        editor.clear_highlights::<EasyMotion>(cx);
                     };
-                    let perms = trie.trie_to_perms();
-                    let highlight = HighlightStyle {
-                        background_color: Some(gpui::red()),
-                        ..Default::default()
-                    };
-                    for (seq, point) in perms {
-                        editor.add_overlay(seq.to_string(), point.to_owned(), highlight, cx);
-                    }
                 });
             }
             TrimResult::Err => {
                 self.clear_state();
                 self.update_active_editor(cx, |_, editor, cx| {
                     editor.clear_overlays(cx);
+                    editor.clear_highlights::<EasyMotion>(cx);
                 });
                 self.sync(cx);
             }
@@ -338,6 +341,42 @@ impl EasyMotion {
                 selection.move_cursors_with(|_, _, _| (point, SelectionGoal::None))
             });
         });
+    }
+
+    fn add_overlays(editor: &mut Editor, trie: &Trie, cx: &mut ViewContext<Editor>) {
+        let settings = ThemeSettings::get_global(cx);
+        let background = settings.active_theme.colors().background;
+        let accent = settings.active_theme.colors().text_accent;
+        let icon = settings.active_theme.colors().icon;
+        let perms = trie.trie_to_perms();
+        for (seq, point) in perms {
+            let color = match seq.len() {
+                0 | 1 => accent,
+                2 => icon,
+                3.. => icon,
+            };
+
+            let mut highlights = vec![(
+                0..1,
+                HighlightStyle {
+                    color: Some(color),
+                    background_color: Some(background),
+                    ..Default::default()
+                },
+            )];
+            if seq.len() > 1 {
+                highlights.push((
+                    1..seq.len(),
+                    HighlightStyle {
+                        color: Some(color),
+                        background_color: Some(background),
+                        fade_out: Some(0.3),
+                        ..Default::default()
+                    },
+                ));
+            }
+            editor.add_overlay(seq.to_string(), point.to_owned(), highlights, cx);
+        }
     }
 }
 
