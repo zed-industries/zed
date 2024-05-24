@@ -277,7 +277,7 @@ impl DisplayMap {
         block_map.insert(blocks)
     }
 
-    pub fn replace_blocks(&mut self, styles: HashMap<BlockId, RenderBlock>) {
+    pub fn replace_blocks(&mut self, styles: HashMap<BlockId, (Option<u8>, RenderBlock)>) {
         self.block_map.replace(styles);
     }
 

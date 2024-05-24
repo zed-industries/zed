@@ -467,10 +467,26 @@ impl BlockMap {
         *transforms = new_transforms;
     }
 
-    pub fn replace(&mut self, mut renderers: HashMap<BlockId, RenderBlock>) {
-        for block in &self.blocks {
-            if let Some(render) = renderers.remove(&block.id) {
-                *block.render.lock() = render;
+    pub fn replace(
+        &mut self,
+        mut heights_and_renderers: HashMap<BlockId, (Option<u8>, RenderBlock)>,
+    ) {
+        for block in &mut self.blocks {
+            if let Some((height, render)) = heights_and_renderers.remove(&block.id) {
+                if let Some(height) = height {
+                    let new_block = Block {
+                        id: block.id,
+                        style: block.style,
+                        render: Mutex::new(render),
+                        height,
+                        position: block.position,
+                        disposition: block.disposition,
+                    };
+
+                    *block = Arc::new(new_block);
+                } else {
+                    *block.render.lock() = render;
+                }
             }
         }
     }

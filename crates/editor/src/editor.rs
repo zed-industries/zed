@@ -9248,7 +9248,10 @@ impl Editor {
                 for (block_id, diagnostic) in &active_diagnostics.blocks {
                     new_styles.insert(
                         *block_id,
-                        diagnostic_block_renderer(diagnostic.clone(), is_valid),
+                        (
+                            None,
+                            diagnostic_block_renderer(diagnostic.clone(), is_valid),
+                        ),
                     );
                 }
                 self.display_map
@@ -9609,7 +9612,7 @@ impl Editor {
 
     pub fn replace_blocks(
         &mut self,
-        blocks: HashMap<BlockId, RenderBlock>,
+        blocks: HashMap<BlockId, (Option<u8>, RenderBlock)>,
         autoscroll: Option<Autoscroll>,
         cx: &mut ViewContext<Self>,
     ) {
