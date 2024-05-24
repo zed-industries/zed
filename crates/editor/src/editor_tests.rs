@@ -11523,7 +11523,7 @@ fn assert_indent_guides(
 }
 
 #[gpui::test]
-async fn test_indent_guides_single_line(cx: &mut gpui::TestAppContext) {
+async fn test_indent_guide_single_line(cx: &mut gpui::TestAppContext) {
     let (buffer_id, mut cx) = setup_indent_guides_editor(
         &"
     fn main() {
@@ -11543,7 +11543,7 @@ async fn test_indent_guides_single_line(cx: &mut gpui::TestAppContext) {
 }
 
 #[gpui::test]
-async fn test_indent_guides_simple_block(cx: &mut gpui::TestAppContext) {
+async fn test_indent_guide_simple_block(cx: &mut gpui::TestAppContext) {
     let (buffer_id, mut cx) = setup_indent_guides_editor(
         &"
     fn main() {
@@ -11564,7 +11564,7 @@ async fn test_indent_guides_simple_block(cx: &mut gpui::TestAppContext) {
 }
 
 #[gpui::test]
-async fn test_indent_guides_nested(cx: &mut gpui::TestAppContext) {
+async fn test_indent_guide_nested(cx: &mut gpui::TestAppContext) {
     let (buffer_id, mut cx) = setup_indent_guides_editor(
         &"
     fn main() {
@@ -11593,7 +11593,7 @@ async fn test_indent_guides_nested(cx: &mut gpui::TestAppContext) {
 }
 
 #[gpui::test]
-async fn test_indent_guides_tab(cx: &mut gpui::TestAppContext) {
+async fn test_indent_guide_tab(cx: &mut gpui::TestAppContext) {
     let (buffer_id, mut cx) = setup_indent_guides_editor(
         &"
     fn main() {
@@ -11618,7 +11618,7 @@ async fn test_indent_guides_tab(cx: &mut gpui::TestAppContext) {
 }
 
 #[gpui::test]
-async fn test_indent_guides_continues_on_empty_line(cx: &mut gpui::TestAppContext) {
+async fn test_indent_guide_continues_on_empty_line(cx: &mut gpui::TestAppContext) {
     let (buffer_id, mut cx) = setup_indent_guides_editor(
         &"
         fn main() {
@@ -11640,7 +11640,7 @@ async fn test_indent_guides_continues_on_empty_line(cx: &mut gpui::TestAppContex
 }
 
 #[gpui::test]
-async fn test_indent_guides_complex(cx: &mut gpui::TestAppContext) {
+async fn test_indent_guide_complex(cx: &mut gpui::TestAppContext) {
     let (buffer_id, mut cx) = setup_indent_guides_editor(
         &"
         fn main() {
@@ -11672,7 +11672,7 @@ async fn test_indent_guides_complex(cx: &mut gpui::TestAppContext) {
 }
 
 #[gpui::test]
-async fn test_indent_guides_starts_off_screen(cx: &mut gpui::TestAppContext) {
+async fn test_indent_guide_starts_off_screen(cx: &mut gpui::TestAppContext) {
     let (buffer_id, mut cx) = setup_indent_guides_editor(
         &"
         fn main() {
@@ -11704,7 +11704,7 @@ async fn test_indent_guides_starts_off_screen(cx: &mut gpui::TestAppContext) {
 }
 
 #[gpui::test]
-async fn test_indent_guides_ends_off_screen(cx: &mut gpui::TestAppContext) {
+async fn test_indent_guide_ends_off_screen(cx: &mut gpui::TestAppContext) {
     let (buffer_id, mut cx) = setup_indent_guides_editor(
         &"
         fn main() {
@@ -11736,7 +11736,7 @@ async fn test_indent_guides_ends_off_screen(cx: &mut gpui::TestAppContext) {
 }
 
 #[gpui::test]
-async fn test_indent_guides_without_brackets(cx: &mut gpui::TestAppContext) {
+async fn test_indent_guide_without_brackets(cx: &mut gpui::TestAppContext) {
     let (buffer_id, mut cx) = setup_indent_guides_editor(
         &"
         block1
@@ -11764,7 +11764,7 @@ async fn test_indent_guides_without_brackets(cx: &mut gpui::TestAppContext) {
 }
 
 #[gpui::test]
-async fn test_indent_guides_ends_before_empty_line(cx: &mut gpui::TestAppContext) {
+async fn test_indent_guide_ends_before_empty_line(cx: &mut gpui::TestAppContext) {
     let (buffer_id, mut cx) = setup_indent_guides_editor(
         &"
         block1
@@ -11790,7 +11790,7 @@ async fn test_indent_guides_ends_before_empty_line(cx: &mut gpui::TestAppContext
 }
 
 #[gpui::test]
-async fn test_indent_guides_continuing_off_screen(cx: &mut gpui::TestAppContext) {
+async fn test_indent_guide_continuing_off_screen(cx: &mut gpui::TestAppContext) {
     let (buffer_id, mut cx) = setup_indent_guides_editor(
         &"
         block1
@@ -11813,7 +11813,34 @@ async fn test_indent_guides_continuing_off_screen(cx: &mut gpui::TestAppContext)
 }
 
 #[gpui::test]
-async fn test_active_indent_guides_single_line(cx: &mut gpui::TestAppContext) {
+async fn test_indent_guide_tabs(cx: &mut gpui::TestAppContext) {
+    let (buffer_id, mut cx) = setup_indent_guides_editor(
+        &"
+        def a:
+        \tb = 3
+        \tif True:
+        \t\tc = 4
+        \t\td = 5
+        \tprint(b)
+        "
+        .unindent(),
+        cx,
+    )
+    .await;
+
+    assert_indent_guides(
+        0..6,
+        vec![
+            IndentGuide::new(buffer_id, 1, 6, 0, 4),
+            IndentGuide::new(buffer_id, 3, 4, 1, 4),
+        ],
+        None,
+        &mut cx,
+    );
+}
+
+#[gpui::test]
+async fn test_active_indent_guide_single_line(cx: &mut gpui::TestAppContext) {
     let (buffer_id, mut cx) = setup_indent_guides_editor(
         &"
     fn main() {
@@ -11839,7 +11866,7 @@ async fn test_active_indent_guides_single_line(cx: &mut gpui::TestAppContext) {
 }
 
 #[gpui::test]
-async fn test_active_indent_guides_respect_indented_range(cx: &mut gpui::TestAppContext) {
+async fn test_active_indent_guide_respect_indented_range(cx: &mut gpui::TestAppContext) {
     let (buffer_id, mut cx) = setup_indent_guides_editor(
         &"
     fn main() {
@@ -11902,7 +11929,7 @@ async fn test_active_indent_guides_respect_indented_range(cx: &mut gpui::TestApp
 }
 
 #[gpui::test]
-async fn test_active_indent_guides_empty_line(cx: &mut gpui::TestAppContext) {
+async fn test_active_indent_guide_empty_line(cx: &mut gpui::TestAppContext) {
     let (buffer_id, mut cx) = setup_indent_guides_editor(
         &"
     fn main() {
@@ -11930,7 +11957,7 @@ async fn test_active_indent_guides_empty_line(cx: &mut gpui::TestAppContext) {
 }
 
 #[gpui::test]
-async fn test_active_indent_guides_non_matching_indent(cx: &mut gpui::TestAppContext) {
+async fn test_active_indent_guide_non_matching_indent(cx: &mut gpui::TestAppContext) {
     let (buffer_id, mut cx) = setup_indent_guides_editor(
         &"
     def m:
