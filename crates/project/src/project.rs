@@ -688,7 +688,7 @@ impl Project {
 
             Self {
                 worktrees: Vec::new(),
-                worktrees_reordered: Default::default(),
+                worktrees_reordered: false,
                 buffer_ordered_messages_tx: tx,
                 flush_language_server_update: None,
                 pending_language_server_update: None,
@@ -7129,17 +7129,15 @@ impl Project {
         let destination_index =
             destination_index.with_context(|| format!("Missing worktree for id {destination}"))?;
 
-        match source_index.cmp(&destination_index) {
-            Ordering::Equal => return Ok(()),
-            _ => {
-                let worktree_to_move = self.worktrees.remove(source_index);
-                self.worktrees.insert(destination_index, worktree_to_move);
-            }
+        if source_index == destination_index {
+            return Ok(());
         }
 
+        let worktree_to_move = self.worktrees.remove(source_index);
+        self.worktrees.insert(destination_index, worktree_to_move);
         self.worktrees_reordered = true;
         cx.emit(Event::WorktreeOrderChanged);
-        self.metadata_changed(cx);
+        cx.notify();
         Ok(())
     }
 
@@ -7364,8 +7362,7 @@ impl Project {
                 .binary_search_by_key(&Some(worktree.read(cx).abs_path()), |other| {
                     other.upgrade().map(|worktree| worktree.read(cx).abs_path())
                 }) {
-                Ok(i) => i,
-                Err(i) => i,
+                Ok(i) | Err(i) => i,
             };
             self.worktrees.insert(i, handle);
         }

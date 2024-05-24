@@ -904,23 +904,21 @@ impl Workspace {
             let serialized_workspace: Option<SerializedWorkspace> =
                 persistence::DB.workspace_for_roots(abs_paths.as_slice());
 
-            let mut paths_to_open = Arc::new(abs_paths);
+            let mut paths_to_open = abs_paths;
 
             let paths_order = serialized_workspace
                 .as_ref()
-                .map(|ws| ws.location.clone())
+                .map(|ws| &ws.location)
                 .and_then(|loc| match loc {
                     SerializedWorkspaceLocation::Local(_, order) => Some(order.order()),
                     _ => None,
                 });
 
             if let Some(paths_order) = paths_order {
-                paths_to_open = Arc::new(
-                    paths_order
-                        .iter()
-                        .filter_map(|i| paths_to_open.get(*i).cloned())
-                        .collect::<Vec<_>>(),
-                );
+                paths_to_open = paths_order
+                    .iter()
+                    .filter_map(|i| paths_to_open.get(*i).cloned())
+                    .collect::<Vec<_>>();
                 if paths_order.iter().enumerate().any(|(i, &j)| i != j) {
                     project_handle
                         .update(&mut cx, |project, _| {
@@ -934,7 +932,7 @@ impl Workspace {
             let mut worktree_roots: HashSet<Arc<Path>> = Default::default();
             let mut project_paths: Vec<(PathBuf, Option<ProjectPath>)> =
                 Vec::with_capacity(paths_to_open.len());
-            for path in paths_to_open.iter().cloned() {
+            for path in paths_to_open.into_iter() {
                 if let Some((worktree, project_entry)) = cx
                     .update(|cx| {
                         Workspace::project_path_for_path(project_handle.clone(), &path, true, cx)
