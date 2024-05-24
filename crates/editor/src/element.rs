@@ -1428,8 +1428,6 @@ impl EditorElement {
                             snapshot,
                         );
 
-                        dbg!(length);
-
                         let start_y = content_origin.y + offset_y - scroll_pixel_position.y;
 
                         Some(IndentGuideLayout {
