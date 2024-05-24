@@ -190,10 +190,6 @@ impl PlatformTextSystem for DirectWriteTextSystem {
         self.0.write().add_fonts(fonts)
     }
 
-    fn set_fallbacks(&self, fallbacks: Option<&[String]>, target_family: &str) -> Result<()> {
-        self.0.write().set_fallbacks(fallbacks, target_family)
-    }
-
     fn all_font_names(&self) -> Vec<String> {
         self.0.read().all_font_names()
     }
@@ -203,7 +199,6 @@ impl PlatformTextSystem for DirectWriteTextSystem {
     }
 
     fn font_id(&self, font: &Font) -> Result<FontId> {
-        println!("Font: {:#?}", font);
         let lock = self.0.upgradable_read();
         if let Some(font_id) = lock.font_selections.get(font) {
             Ok(*font_id)
@@ -362,64 +357,6 @@ impl DirectWriteState {
         }
     }
 
-    fn set_fallbacks(&mut self, fallbacks: Option<&[String]>, target_family: &str) -> Result<()> {
-        unsafe {
-            let fallbacks = if let Some(fallbacks) = fallbacks {
-                let builder = self.components.factory.CreateFontFallbackBuilder()?;
-                let font_set = &self.system_font_collection.GetFontSet()?;
-                for family_name in fallbacks {
-                    let Some(fonts) = font_set
-                        .GetMatchingFonts(
-                            &HSTRING::from(family_name),
-                            DWRITE_FONT_WEIGHT_NORMAL,
-                            DWRITE_FONT_STRETCH_NORMAL,
-                            DWRITE_FONT_STYLE_NORMAL,
-                        )
-                        .log_err()
-                    else {
-                        continue;
-                    };
-                    if fonts.GetFontCount() == 0 {
-                        log::error!("No mathcing font find for {}", family_name);
-                        continue;
-                    }
-                    let font = fonts.GetFontFaceReference(0)?.CreateFontFace()?;
-                    let mut count = 0;
-                    font.GetUnicodeRanges(None, &mut count).ok();
-                    if count == 0 {
-                        continue;
-                    }
-                    let mut unicode_ranges = vec![DWRITE_UNICODE_RANGE::default(); count as usize];
-                    let Some(_) = font
-                        .GetUnicodeRanges(Some(&mut unicode_ranges), &mut count)
-                        .log_err()
-                    else {
-                        continue;
-                    };
-                    let target_family_name = HSTRING::from(family_name);
-                    builder.AddMapping(
-                        &unicode_ranges,
-                        &[target_family_name.as_ptr()],
-                        None,
-                        None,
-                        None,
-                        1.0,
-                    )?;
-                }
-                let system_fallbacks = self.components.factory.GetSystemFontFallback()?;
-                builder.AddMappings(&system_fallbacks)?;
-                Some(builder.CreateFontFallback()?)
-            } else {
-                None
-            };
-            self.fonts
-                .iter_mut()
-                .filter(|font_info| font_info.font_family == target_family)
-                .for_each(|font_info| font_info.fallbacks.clone_from(&fallbacks));
-            Ok(())
-        }
-    }
-
     unsafe fn generate_font_features(
         &self,
         font_features: &FontFeatures,
@@ -472,7 +409,6 @@ impl DirectWriteState {
                 .generate_font_fallbacks(font_fallbacks)
                 .log_err()
                 .unwrap_or_default();
-            println!("  -> font {}, {:#?}", family_name, fallbacks);
             let font_info = FontInfo {
                 font_family: family_name.to_owned(),
                 font_face,
