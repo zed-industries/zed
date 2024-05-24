@@ -26,6 +26,7 @@ mod git;
 mod highlight_matching_bracket;
 mod hover_links;
 mod hover_popover;
+mod indent_guides;
 mod inline_completion_provider;
 pub mod items;
 mod mouse_context_menu;
@@ -51,8 +52,8 @@ use clock::ReplicaId;
 use collections::{BTreeMap, Bound, HashMap, HashSet, VecDeque};
 use convert_case::{Case, Casing};
 use debounced_delay::DebouncedDelay;
-pub use display_map::DisplayPoint;
 use display_map::*;
+pub use display_map::{DisplayPoint, FoldPlaceholder};
 use editor_settings::CurrentLineHighlight;
 pub use editor_settings::EditorSettings;
 use element::LineWithInvisibles;
@@ -76,6 +77,7 @@ use highlight_matching_bracket::refresh_matching_bracket_highlights;
 use hover_popover::{hide_hover, HoverState};
 use hunk_diff::ExpandedHunks;
 pub(crate) use hunk_diff::HunkToExpand;
+use indent_guides::ActiveIndentGuidesState;
 use inlay_hint_cache::{InlayHintCache, InlaySplice, InvalidationStrategy};
 pub use inline_completion_provider::*;
 pub use items::MAX_TAB_TITLE_LEN;
@@ -459,11 +461,13 @@ pub struct Editor {
     show_git_diff_gutter: Option<bool>,
     show_code_actions: Option<bool>,
     show_wrap_guides: Option<bool>,
+    show_indent_guides: Option<bool>,
     placeholder_text: Option<Arc<str>>,
     highlight_order: usize,
     highlighted_rows: HashMap<TypeId, Vec<RowHighlight>>,
     background_highlights: TreeMap<TypeId, BackgroundHighlight>,
     scrollbar_marker_state: ScrollbarMarkerState,
+    active_indent_guides_state: ActiveIndentGuidesState,
     nav_history: Option<ItemNavHistory>,
     context_menu: RwLock<Option<ContextMenu>>,
     mouse_context_menu: Option<MouseContextMenu>,
@@ -1579,8 +1583,48 @@ impl Editor {
     ) -> Self {
         let style = cx.text_style();
         let font_size = style.font_size.to_pixels(cx.rem_size());
+        let editor = cx.view().downgrade();
+        let fold_placeholder = FoldPlaceholder {
+            constrain_width: true,
+            render: Arc::new(move |fold_id, fold_range, cx| {
+                let editor = editor.clone();
+                div()
+                    .id(fold_id)
+                    .bg(cx.theme().colors().ghost_element_background)
+                    .hover(|style| style.bg(cx.theme().colors().ghost_element_hover))
+                    .active(|style| style.bg(cx.theme().colors().ghost_element_active))
+                    .rounded_sm()
+                    .size_full()
+                    .cursor_pointer()
+                    .child("⋯")
+                    .on_mouse_down(MouseButton::Left, |_, cx| cx.stop_propagation())
+                    .on_click(move |_, cx| {
+                        editor
+                            .update(cx, |editor, cx| {
+                                editor.unfold_ranges(
+                                    [fold_range.start..fold_range.end],
+                                    true,
+                                    false,
+                                    cx,
+                                );
+                                cx.stop_propagation();
+                            })
+                            .ok();
+                    })
+                    .into_any()
+            }),
+        };
         let display_map = cx.new_model(|cx| {
-            DisplayMap::new(buffer.clone(), style.font(), font_size, None, 2, 1, cx)
+            DisplayMap::new(
+                buffer.clone(),
+                style.font(),
+                font_size,
+                None,
+                2,
+                1,
+                fold_placeholder,
+                cx,
+            )
         });
 
         let selections = SelectionsCollection::new(display_map.clone(), buffer.clone());
@@ -1662,11 +1706,13 @@ impl Editor {
             show_git_diff_gutter: None,
             show_code_actions: None,
             show_wrap_guides: None,
+            show_indent_guides: None,
             placeholder_text: None,
             highlight_order: 0,
             highlighted_rows: HashMap::default(),
             background_highlights: Default::default(),
             scrollbar_marker_state: ScrollbarMarkerState::default(),
+            active_indent_guides_state: ActiveIndentGuidesState::default(),
             nav_history: None,
             context_menu: RwLock::new(None),
             mouse_context_menu: None,
@@ -5825,7 +5871,7 @@ impl Editor {
                         let mut end = fold.range.end.to_point(&buffer);
                         start.row -= row_delta;
                         end.row -= row_delta;
-                        refold_ranges.push((start..end, fold.text));
+                        refold_ranges.push((start..end, fold.placeholder.clone()));
                     }
                 }
             }
@@ -5919,7 +5965,7 @@ impl Editor {
                         let mut end = fold.range.end.to_point(&buffer);
                         start.row += row_delta;
                         end.row += row_delta;
-                        refold_ranges.push((start..end, fold.text));
+                        refold_ranges.push((start..end, fold.placeholder.clone()));
                     }
                 }
             }
@@ -9298,14 +9344,14 @@ impl Editor {
         let buffer_row = fold_at.buffer_row;
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
 
-        if let Some((fold_range, fold_text)) = display_map.foldable_range(buffer_row) {
+        if let Some((fold_range, placeholder)) = display_map.foldable_range(buffer_row) {
             let autoscroll = self
                 .selections
                 .all::<Point>(cx)
                 .iter()
                 .any(|selection| fold_range.overlaps(&selection.range()));
 
-            self.fold_ranges([(fold_range, fold_text)], autoscroll, cx);
+            self.fold_ranges([(fold_range, placeholder)], autoscroll, cx);
         }
     }
 
@@ -9359,9 +9405,9 @@ impl Editor {
                         .buffer_snapshot
                         .line_len(MultiBufferRow(s.end.row)),
                 );
-                (start..end, "⋯")
+                (start..end, display_map.fold_placeholder.clone())
             } else {
-                (s.start..s.end, "⋯")
+                (s.start..s.end, display_map.fold_placeholder.clone())
             }
         });
         self.fold_ranges(ranges, true, cx);
@@ -9369,7 +9415,7 @@ impl Editor {
 
     pub fn fold_ranges<T: ToOffset + Clone>(
         &mut self,
-        ranges: impl IntoIterator<Item = (Range<T>, &'static str)>,
+        ranges: impl IntoIterator<Item = (Range<T>, FoldPlaceholder)>,
         auto_scroll: bool,
         cx: &mut ViewContext<Self>,
     ) {
@@ -9446,6 +9492,7 @@ impl Editor {
 
             cx.notify();
             self.scrollbar_marker_state.dirty = true;
+            self.active_indent_guides_state.dirty = true;
         }
     }
 
@@ -9639,6 +9686,22 @@ impl Editor {
         cx.notify();
     }
 
+    pub fn toggle_indent_guides(&mut self, _: &ToggleIndentGuides, cx: &mut ViewContext<Self>) {
+        let currently_enabled = self.should_show_indent_guides(cx);
+        self.show_indent_guides = Some(!currently_enabled);
+        cx.notify();
+    }
+
+    fn should_show_indent_guides(&self, cx: &mut ViewContext<Self>) -> bool {
+        self.show_indent_guides.unwrap_or_else(|| {
+            self.buffer
+                .read(cx)
+                .settings_at(0, cx)
+                .indent_guides
+                .enabled
+        })
+    }
+
     pub fn toggle_line_numbers(&mut self, _: &ToggleLineNumbers, cx: &mut ViewContext<Self>) {
         let mut editor_settings = EditorSettings::get_global(cx).clone();
         editor_settings.gutter.line_numbers = !editor_settings.gutter.line_numbers;
@@ -9671,6 +9734,11 @@ impl Editor {
 
     pub fn set_show_wrap_guides(&mut self, show_wrap_guides: bool, cx: &mut ViewContext<Self>) {
         self.show_wrap_guides = Some(show_wrap_guides);
+        cx.notify();
+    }
+
+    pub fn set_show_indent_guides(&mut self, show_indent_guides: bool, cx: &mut ViewContext<Self>) {
+        self.show_indent_guides = Some(show_indent_guides);
         cx.notify();
     }
 
@@ -10309,6 +10377,7 @@ impl Editor {
                 singleton_buffer_edited,
             } => {
                 self.scrollbar_marker_state.dirty = true;
+                self.active_indent_guides_state.dirty = true;
                 self.refresh_active_diagnostics(cx);
                 self.refresh_code_actions(cx);
                 if self.has_active_inline_completion(cx) {

@@ -273,6 +273,7 @@ gpui::actions!(
         ToggleHunkDiff,
         ToggleInlayHints,
         ToggleLineNumbers,
+        ToggleIndentGuides,
         ToggleSoftWrap,
         Transpose,
         Undo,

@@ -16,10 +16,11 @@ Vim mode has several "core Zed" key bindings, that will help you make the most o
 
 ```
 # Language server
-g d   Go to definition
-g D   Go to type definition
-c d   Rename (change definition)
-g A   Go to All references to the current word
+g d     Go to definition
+g D     Go to type definition
+g cmd-d Go to implementation
+c d     Rename (change definition)
+g A     Go to All references to the current word
 
 g s   Find symbol in current file
 g S   Find symbol in entire project
@@ -28,6 +29,10 @@ g ]   Go to next diagnostic
 g [   Go to previous diagnostic
 g h   Show inline error (hover)
 g .   Open the code actions menu
+
+# Git
+] c   Go to previous git change
+[ c   Go to next git change
 
 # Treesitter
 ] x   Select a smaller syntax node
@@ -190,6 +195,9 @@ Currently supported vim-specific commands:
 As any Zed command is available, you may find that it's helpful to remember mnemonics that run the correct command. For example:
 
 ```
+:diff    Toggle Hunk [Diff]
+:diffs    Toggle all Hunk [Diffs]
+:revert  Revert Selected Hunks
 :cpp  [C]o[p]y [P]ath to file
 :crp  [C]opy [r]elative [P]ath
 :reveal [Reveal] in finder

@@ -231,7 +231,7 @@ impl PickerDelegate for RecentProjectsDelegate {
             .enumerate()
             .map(|(id, (_, location))| {
                 let combined_string = match location {
-                    SerializedWorkspaceLocation::Local(paths) => paths
+                    SerializedWorkspaceLocation::Local(paths, _) => paths
                         .paths()
                         .iter()
                         .map(|path| path.compact().to_string_lossy().into_owned())
@@ -291,7 +291,7 @@ impl PickerDelegate for RecentProjectsDelegate {
                         Task::ready(Ok(()))
                     } else {
                         match candidate_workspace_location {
-                            SerializedWorkspaceLocation::Local(paths) => {
+                            SerializedWorkspaceLocation::Local(paths, _) => {
                                 let paths = paths.paths().as_ref().clone();
                                 if replace_current_window {
                                     cx.spawn(move |workspace, mut cx| async move {
@@ -413,7 +413,7 @@ impl PickerDelegate for RecentProjectsDelegate {
 
         let mut path_start_offset = 0;
         let paths = match location {
-            SerializedWorkspaceLocation::Local(paths) => paths.paths(),
+            SerializedWorkspaceLocation::Local(paths, _) => paths.paths(),
             SerializedWorkspaceLocation::DevServer(dev_server_project) => {
                 Arc::new(vec![PathBuf::from(format!(
                     "{}:{}",

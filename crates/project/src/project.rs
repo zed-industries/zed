@@ -155,6 +155,7 @@ pub enum OpenedBufferEvent {
 /// Can be either local (for the project opened on the same host) or remote.(for collab projects, browsed by multiple remote users).
 pub struct Project {
     worktrees: Vec<WorktreeHandle>,
+    worktrees_reordered: bool,
     active_entry: Option<ProjectEntryId>,
     buffer_ordered_messages_tx: mpsc::UnboundedSender<BufferOrderedMessage>,
     pending_language_server_update: Option<BufferOrderedMessage>,
@@ -312,6 +313,7 @@ pub enum Event {
     ActiveEntryChanged(Option<ProjectEntryId>),
     ActivateProjectPanel,
     WorktreeAdded,
+    WorktreeOrderChanged,
     WorktreeRemoved(WorktreeId),
     WorktreeUpdatedEntries(WorktreeId, UpdatedEntriesSet),
     WorktreeUpdatedGitRepositories,
@@ -692,6 +694,7 @@ impl Project {
 
             Self {
                 worktrees: Vec::new(),
+                worktrees_reordered: false,
                 buffer_ordered_messages_tx: tx,
                 flush_language_server_update: None,
                 pending_language_server_update: None,
@@ -825,6 +828,7 @@ impl Project {
                 .detach();
             let mut this = Self {
                 worktrees: Vec::new(),
+                worktrees_reordered: false,
                 buffer_ordered_messages_tx: tx,
                 pending_language_server_update: None,
                 flush_language_server_update: None,
@@ -1289,6 +1293,10 @@ impl Project {
         self.collaborators.values().find(|c| c.replica_id == 0)
     }
 
+    pub fn set_worktrees_reordered(&mut self, worktrees_reordered: bool) {
+        self.worktrees_reordered = worktrees_reordered;
+    }
+
     /// Collect all worktrees, including ones that don't appear in the project panel
     pub fn worktrees(&self) -> impl '_ + DoubleEndedIterator<Item = Model<Worktree>> {
         self.worktrees
@@ -1296,20 +1304,13 @@ impl Project {
             .filter_map(move |worktree| worktree.upgrade())
     }
 
-    /// Collect all user-visible worktrees, the ones that appear in the project panel
+    /// Collect all user-visible worktrees, the ones that appear in the project panel.
     pub fn visible_worktrees<'a>(
         &'a self,
         cx: &'a AppContext,
     ) -> impl 'a + DoubleEndedIterator<Item = Model<Worktree>> {
-        self.worktrees.iter().filter_map(|worktree| {
-            worktree.upgrade().and_then(|worktree| {
-                if worktree.read(cx).is_visible() {
-                    Some(worktree)
-                } else {
-                    None
-                }
-            })
-        })
+        self.worktrees()
+            .filter(|worktree| worktree.read(cx).is_visible())
     }
 
     pub fn worktree_root_names<'a>(&'a self, cx: &'a AppContext) -> impl Iterator<Item = &'a str> {
@@ -1338,6 +1339,18 @@ impl Project {
     ) -> Option<WorktreeId> {
         self.worktree_for_entry(entry_id, cx)
             .map(|worktree| worktree.read(cx).id())
+    }
+
+    /// Checks if the entry is the root of a worktree.
+    pub fn entry_is_worktree_root(&self, entry_id: ProjectEntryId, cx: &AppContext) -> bool {
+        self.worktree_for_entry(entry_id, cx)
+            .map(|worktree| {
+                worktree
+                    .read(cx)
+                    .root_entry()
+                    .is_some_and(|e| e.id == entry_id)
+            })
+            .unwrap_or(false)
     }
 
     pub fn visibility_for_paths(&self, paths: &[PathBuf], cx: &AppContext) -> Option<bool> {
@@ -7204,6 +7217,67 @@ impl Project {
         })
     }
 
+    /// Move a worktree to a new position in the worktree order.
+    ///
+    /// The worktree will moved to the opposite side of the destination worktree.
+    ///
+    /// # Example
+    ///
+    /// Given the worktree order `[11, 22, 33]` and a call to move worktree `22` to `33`,
+    /// worktree_order will be updated to produce the indexes `[11, 33, 22]`.
+    ///
+    /// Given the worktree order `[11, 22, 33]` and a call to move worktree `22` to `11`,
+    /// worktree_order will be updated to produce the indexes `[22, 11, 33]`.
+    ///
+    /// # Errors
+    ///
+    /// An error will be returned if the worktree or destination worktree are not found.
+    pub fn move_worktree(
+        &mut self,
+        source: WorktreeId,
+        destination: WorktreeId,
+        cx: &mut ModelContext<'_, Self>,
+    ) -> Result<()> {
+        if source == destination {
+            return Ok(());
+        }
+
+        let mut source_index = None;
+        let mut destination_index = None;
+        for (i, worktree) in self.worktrees.iter().enumerate() {
+            if let Some(worktree) = worktree.upgrade() {
+                let worktree_id = worktree.read(cx).id();
+                if worktree_id == source {
+                    source_index = Some(i);
+                    if destination_index.is_some() {
+                        break;
+                    }
+                } else if worktree_id == destination {
+                    destination_index = Some(i);
+                    if source_index.is_some() {
+                        break;
+                    }
+                }
+            }
+        }
+
+        let source_index =
+            source_index.with_context(|| format!("Missing worktree for id {source}"))?;
+        let destination_index =
+            destination_index.with_context(|| format!("Missing worktree for id {destination}"))?;
+
+        if source_index == destination_index {
+            return Ok(());
+        }
+
+        let worktree_to_move = self.worktrees.remove(source_index);
+        self.worktrees.insert(destination_index, worktree_to_move);
+        self.worktrees_reordered = true;
+        cx.emit(Event::WorktreeOrderChanged);
+        cx.notify();
+        Ok(())
+    }
+
     pub fn find_or_create_local_worktree(
         &mut self,
         abs_path: impl AsRef<Path>,
@@ -7372,6 +7446,7 @@ impl Project {
                 false
             }
         });
+
         self.metadata_changed(cx);
     }
 
@@ -7411,12 +7486,22 @@ impl Project {
             let worktree = worktree.read(cx);
             self.is_shared() || worktree.is_visible() || worktree.is_remote()
         };
-        if push_strong_handle {
-            self.worktrees
-                .push(WorktreeHandle::Strong(worktree.clone()));
+        let handle = if push_strong_handle {
+            WorktreeHandle::Strong(worktree.clone())
         } else {
-            self.worktrees
-                .push(WorktreeHandle::Weak(worktree.downgrade()));
+            WorktreeHandle::Weak(worktree.downgrade())
+        };
+        if self.worktrees_reordered {
+            self.worktrees.push(handle);
+        } else {
+            let i = match self
+                .worktrees
+                .binary_search_by_key(&Some(worktree.read(cx).abs_path()), |other| {
+                    other.upgrade().map(|worktree| worktree.read(cx).abs_path())
+                }) {
+                Ok(i) | Err(i) => i,
+            };
+            self.worktrees.insert(i, handle);
         }
 
         let handle_id = worktree.entity_id();

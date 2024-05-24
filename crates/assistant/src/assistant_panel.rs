@@ -19,6 +19,7 @@ use crate::{
 use anyhow::{anyhow, Result};
 use client::telemetry::Telemetry;
 use collections::{hash_map, HashMap, HashSet, VecDeque};
+use editor::FoldPlaceholder;
 use editor::{
     actions::{FoldAt, MoveDown, MoveUp},
     display_map::{
@@ -34,7 +35,7 @@ use fs::Fs;
 use futures::StreamExt;
 use gpui::{
     canvas, div, point, relative, rems, uniform_list, Action, AnyElement, AnyView, AppContext,
-    AsyncAppContext, AsyncWindowContext, AvailableSpace, ClipboardItem, Context, Entity,
+    AsyncAppContext, AsyncWindowContext, AvailableSpace, ClipboardItem, Context, Empty, Entity,
     EventEmitter, FocusHandle, FocusableView, FontStyle, FontWeight, HighlightStyle,
     InteractiveElement, IntoElement, Model, ModelContext, ParentElement, Pixels, Render,
     SharedString, StatefulInteractiveElement, Styled, Subscription, Task, TextStyle,
@@ -2744,6 +2745,7 @@ impl ConversationEditor {
             editor.set_show_git_diff_gutter(false, cx);
             editor.set_show_code_actions(false, cx);
             editor.set_show_wrap_guides(false, cx);
+            editor.set_show_indent_guides(false, cx);
             editor.set_completion_provider(Box::new(completion_provider));
             editor
         });
@@ -2942,6 +2944,10 @@ impl ConversationEditor {
                         .insert_flaps(
                             [Flap::new(
                                 start..end,
+                                FoldPlaceholder {
+                                    render: Arc::new(|_, _, _| Empty.into_any()),
+                                    constrain_width: false,
+                                },
                                 render_slash_command_output_toggle,
                                 render_slash_command_output_trailer,
                             )],
@@ -3270,51 +3276,25 @@ impl ConversationEditor {
         }
 
         if let Some(text) = text {
-            panel.update(cx, |panel, cx| {
-                if let Some(conversation) = panel
-                    .active_conversation_editor()
-                    .cloned()
-                    .or_else(|| panel.new_conversation(cx))
-                {
-                    conversation.update(cx, |conversation, cx| {
-                        conversation
-                            .editor
-                            .update(cx, |editor, cx| editor.insert(&text, cx))
-                    });
-                };
+            panel.update(cx, |_, cx| {
+                // Wait to create a new conversation until the workspace is no longer
+                // being updated.
+                cx.defer(move |panel, cx| {
+                    if let Some(conversation) = panel
+                        .active_conversation_editor()
+                        .cloned()
+                        .or_else(|| panel.new_conversation(cx))
+                    {
+                        conversation.update(cx, |conversation, cx| {
+                            conversation
+                                .editor
+                                .update(cx, |editor, cx| editor.insert(&text, cx))
+                        });
+                    };
+                });
             });
         }
     }
-
-    // fn insert_active_prompt(
-    //     workspace: &mut Workspace,
-    //     _: &InsertActivePrompt,
-    //     cx: &mut ViewContext<Workspace>,
-    // ) {
-    //     let Some(panel) = workspace.panel::<AssistantPanel>(cx) else {
-    //         return;
-    //     };
-
-    //     if !panel.focus_handle(cx).contains_focused(cx) {
-    //         workspace.toggle_panel_focus::<AssistantPanel>(cx);
-    //     }
-
-    //     if let Some(default_prompt) = panel.read(cx).prompt_library.clone().default_prompt() {
-    //         panel.update(cx, |panel, cx| {
-    //             if let Some(conversation) = panel
-    //                 .active_conversation_editor()
-    //                 .cloned()
-    //                 .or_else(|| panel.new_conversation(cx))
-    //             {
-    //                 conversation.update(cx, |conversation, cx| {
-    //                     conversation
-    //                         .editor
-    //                         .update(cx, |editor, cx| editor.insert(&default_prompt, cx))
-    //                 });
-    //             };
-    //         });
-    //     };
-    // }
 
     fn copy(&mut self, _: &editor::actions::Copy, cx: &mut ViewContext<Self>) {
         let editor = self.editor.read(cx);

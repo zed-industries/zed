@@ -12,8 +12,9 @@ use refineable::Refineable;
 use util::ResultExt;
 
 use crate::{
-    try_parse_color, Appearance, AppearanceContent, PlayerColors, StatusColors, SyntaxTheme,
-    SystemColors, Theme, ThemeColors, ThemeContent, ThemeFamily, ThemeFamilyContent, ThemeStyles,
+    try_parse_color, AccentColors, Appearance, AppearanceContent, PlayerColors, StatusColors,
+    SyntaxTheme, SystemColors, Theme, ThemeColors, ThemeContent, ThemeFamily, ThemeFamilyContent,
+    ThemeStyles,
 };
 
 #[derive(Debug, Clone)]
@@ -118,6 +119,12 @@ impl ThemeRegistry {
             };
             player_colors.merge(&user_theme.style.players);
 
+            let mut accent_colors = match user_theme.appearance {
+                AppearanceContent::Light => AccentColors::light(),
+                AppearanceContent::Dark => AccentColors::dark(),
+            };
+            accent_colors.merge(&user_theme.style.accents);
+
             let syntax_highlights = user_theme
                 .style
                 .syntax
@@ -156,11 +163,11 @@ impl ThemeRegistry {
                 styles: ThemeStyles {
                     system: SystemColors::default(),
                     window_background_appearance,
+                    accents: accent_colors,
                     colors: theme_colors,
                     status: status_colors,
                     player: player_colors,
                     syntax: syntax_theme,
-                    accents: Vec::new(),
                 },
             }
         }));

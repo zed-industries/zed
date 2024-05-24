@@ -325,6 +325,7 @@ impl ThemeSettings {
                 .status
                 .refine(&theme_overrides.status_colors_refinement());
             base_theme.styles.player.merge(&theme_overrides.players);
+            base_theme.styles.accents.merge(&theme_overrides.accents);
             base_theme.styles.syntax =
                 SyntaxTheme::merge(base_theme.styles.syntax, theme_overrides.syntax_overrides());
 

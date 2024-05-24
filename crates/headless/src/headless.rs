@@ -104,7 +104,10 @@ impl DevServer {
         let request = if self.remote_shutdown {
             None
         } else {
-            Some(self.client.request(proto::ShutdownDevServer {}))
+            Some(
+                self.client
+                    .request(proto::ShutdownDevServer { reason: None }),
+            )
         };
         async move {
             if let Some(request) = request {

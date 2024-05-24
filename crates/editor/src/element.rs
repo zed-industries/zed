@@ -23,7 +23,6 @@ use crate::{
     LineDown, LineUp, OpenExcerpts, PageDown, PageUp, Point, RowExt, RowRangeExt, SelectPhase,
     Selection, SoftWrap, ToPoint, CURSORS_VISIBLE_FOR, MAX_LINE_LEN,
 };
-use anyhow::Result;
 use client::ParticipantIndex;
 use collections::{BTreeMap, HashMap};
 use git::{blame::BlameEntry, diff::DiffHunkStatus, Oid};
@@ -31,14 +30,16 @@ use gpui::{
     anchored, deferred, div, fill, outline, point, px, quad, relative, size, svg,
     transparent_black, Action, AnchorCorner, AnyElement, AvailableSpace, Bounds, ClipboardItem,
     ContentMask, Corners, CursorStyle, DispatchPhase, Edges, Element, ElementInputHandler, Entity,
-    GlobalElementId, Hitbox, Hsla, InteractiveElement, IntoElement, ModifiersChangedEvent,
+    FontId, GlobalElementId, Hitbox, Hsla, InteractiveElement, IntoElement, ModifiersChangedEvent,
     MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, PaintQuad, ParentElement, Pixels,
-    ScrollDelta, ScrollWheelEvent, ShapedLine, SharedString, Size, Stateful,
-    StatefulInteractiveElement, Style, Styled, TextRun, TextStyle, TextStyleRefinement, View,
-    ViewContext, WeakView, WindowContext,
+    ScrollDelta, ScrollWheelEvent, ShapedLine, SharedString, Size, StatefulInteractiveElement,
+    Style, Styled, TextRun, TextStyle, TextStyleRefinement, View, ViewContext, WeakView,
+    WindowContext,
 };
 use itertools::Itertools;
-use language::language_settings::ShowWhitespaceSetting;
+use language::language_settings::{
+    IndentGuideBackgroundColoring, IndentGuideColoring, ShowWhitespaceSetting,
+};
 use lsp::DiagnosticSeverity;
 use multi_buffer::{Anchor, MultiBufferPoint, MultiBufferRow};
 use project::{
@@ -46,12 +47,12 @@ use project::{
     ProjectPath,
 };
 use settings::Settings;
-use smallvec::SmallVec;
+use smallvec::{smallvec, SmallVec};
 use std::{
     any::TypeId,
     borrow::Cow,
     cmp::{self, Ordering},
-    fmt::Write,
+    fmt::{self, Write},
     iter, mem,
     ops::{Deref, Range},
     sync::Arc,
@@ -316,6 +317,7 @@ impl EditorElement {
         register_action(view, cx, Editor::open_excerpts_in_split);
         register_action(view, cx, Editor::toggle_soft_wrap);
         register_action(view, cx, Editor::toggle_line_numbers);
+        register_action(view, cx, Editor::toggle_indent_guides);
         register_action(view, cx, Editor::toggle_inlay_hints);
         register_action(view, cx, hover_popover::hover);
         register_action(view, cx, Editor::reveal_in_finder);
@@ -854,76 +856,6 @@ impl EditorElement {
         (selections, active_rows, newest_selection_head)
     }
 
-    #[allow(clippy::too_many_arguments)]
-    fn layout_folds(
-        &self,
-        snapshot: &EditorSnapshot,
-        content_origin: gpui::Point<Pixels>,
-        visible_anchor_range: Range<Anchor>,
-        visible_display_row_range: Range<DisplayRow>,
-        scroll_pixel_position: gpui::Point<Pixels>,
-        line_height: Pixels,
-        line_layouts: &[LineWithInvisibles],
-        cx: &mut WindowContext,
-    ) -> Vec<FoldLayout> {
-        snapshot
-            .folds_in_range(visible_anchor_range.clone())
-            .filter_map(|fold| {
-                // Skip folds that have no text.
-                if fold.text.is_empty() {
-                    return None;
-                }
-
-                let fold_range = fold.range.clone();
-                let display_range = fold.range.start.to_display_point(&snapshot)
-                    ..fold.range.end.to_display_point(&snapshot);
-                debug_assert_eq!(display_range.start.row(), display_range.end.row());
-                let row = display_range.start.row();
-                debug_assert!(row < visible_display_row_range.end);
-                let line_layout = line_layouts
-                    .get(row.minus(visible_display_row_range.start) as usize)
-                    .map(|l| &l.line)?;
-
-                let start_x = content_origin.x
-                    + line_layout.x_for_index(display_range.start.column() as usize)
-                    - scroll_pixel_position.x;
-                let start_y =
-                    content_origin.y + row.as_f32() * line_height - scroll_pixel_position.y;
-                let end_x = content_origin.x
-                    + line_layout.x_for_index(display_range.end.column() as usize)
-                    - scroll_pixel_position.x;
-
-                let fold_bounds = Bounds {
-                    origin: point(start_x, start_y),
-                    size: size(end_x - start_x, line_height),
-                };
-
-                let mut hover_element = div()
-                    .id(fold.id)
-                    .size_full()
-                    .cursor_pointer()
-                    .on_mouse_down(MouseButton::Left, |_, cx| cx.stop_propagation())
-                    .on_click(
-                        cx.listener_for(&self.editor, move |editor: &mut Editor, _, cx| {
-                            editor.unfold_ranges(
-                                [fold_range.start..fold_range.end],
-                                true,
-                                false,
-                                cx,
-                            );
-                            cx.stop_propagation();
-                        }),
-                    )
-                    .into_any();
-                hover_element.prepaint_as_root(fold_bounds.origin, fold_bounds.size.into(), cx);
-                Some(FoldLayout {
-                    display_range,
-                    hover_element,
-                })
-            })
-            .collect()
-    }
-
     fn collect_cursors(
         &self,
         snapshot: &EditorSnapshot,
@@ -991,8 +923,7 @@ impl EditorElement {
                     }
 
                     let cursor_row_layout = &line_layouts
-                        [cursor_position.row().minus(visible_display_row_range.start) as usize]
-                        .line;
+                        [cursor_position.row().minus(visible_display_row_range.start) as usize];
                     let cursor_column = cursor_position.column() as usize;
 
                     let cursor_character_x = cursor_row_layout.x_for_index(cursor_column);
@@ -1225,7 +1156,7 @@ impl EditorElement {
                 );
                 let size = element.layout_as_root(available_space, cx);
 
-                let line = &lines[ix].line;
+                let line = &lines[ix];
                 let padding = if line.width == Pixels::ZERO {
                     Pixels::ZERO
                 } else {
@@ -1370,7 +1301,7 @@ impl EditorElement {
             let line_end = if let Some(flap_trailer) = flap_trailer {
                 flap_trailer.bounds.right()
             } else {
-                content_origin.x - scroll_pixel_position.x + line_layout.line.width
+                content_origin.x - scroll_pixel_position.x + line_layout.width
             };
             let padded_line_end = line_end + em_width * INLINE_BLAME_PADDING_EM_WIDTHS;
 
@@ -1458,6 +1389,117 @@ impl EditorElement {
             .collect();
 
         Some(shaped_lines)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn layout_indent_guides(
+        &self,
+        content_origin: gpui::Point<Pixels>,
+        text_origin: gpui::Point<Pixels>,
+        visible_buffer_range: Range<MultiBufferRow>,
+        scroll_pixel_position: gpui::Point<Pixels>,
+        line_height: Pixels,
+        snapshot: &DisplaySnapshot,
+        cx: &mut WindowContext,
+    ) -> Option<Vec<IndentGuideLayout>> {
+        let indent_guides = self.editor.update(cx, |editor, cx| {
+            editor.indent_guides(visible_buffer_range, snapshot, cx)
+        })?;
+
+        let active_indent_guide_indices = self.editor.update(cx, |editor, cx| {
+            editor
+                .find_active_indent_guide_indices(&indent_guides, snapshot, cx)
+                .unwrap_or_default()
+        });
+
+        Some(
+            indent_guides
+                .into_iter()
+                .enumerate()
+                .filter_map(|(i, indent_guide)| {
+                    let indent_size = self.column_pixels(indent_guide.indent_size as usize, cx);
+                    let total_width = indent_size * px(indent_guide.depth as f32);
+
+                    let start_x = content_origin.x + total_width - scroll_pixel_position.x;
+                    if start_x >= text_origin.x {
+                        let (offset_y, length) = Self::calculate_indent_guide_bounds(
+                            indent_guide.multibuffer_row_range.clone(),
+                            line_height,
+                            snapshot,
+                        );
+
+                        let start_y = content_origin.y + offset_y - scroll_pixel_position.y;
+
+                        Some(IndentGuideLayout {
+                            origin: point(start_x, start_y),
+                            length,
+                            indent_size,
+                            depth: indent_guide.depth,
+                            active: active_indent_guide_indices.contains(&i),
+                        })
+                    } else {
+                        None
+                    }
+                })
+                .collect(),
+        )
+    }
+
+    fn calculate_indent_guide_bounds(
+        row_range: Range<MultiBufferRow>,
+        line_height: Pixels,
+        snapshot: &DisplaySnapshot,
+    ) -> (gpui::Pixels, gpui::Pixels) {
+        let start_point = Point::new(row_range.start.0, 0);
+        let end_point = Point::new(row_range.end.0, 0);
+
+        let row_range = start_point.to_display_point(snapshot).row()
+            ..end_point.to_display_point(snapshot).row();
+
+        let mut prev_line = start_point;
+        prev_line.row = prev_line.row.saturating_sub(1);
+        let prev_line = prev_line.to_display_point(snapshot).row();
+
+        let mut cons_line = end_point;
+        cons_line.row += 1;
+        let cons_line = cons_line.to_display_point(snapshot).row();
+
+        let mut offset_y = row_range.start.0 as f32 * line_height;
+        let mut length = (cons_line.0.saturating_sub(row_range.start.0)) as f32 * line_height;
+
+        // If there is a block (e.g. diagnostic) in between the start of the indent guide and the line above,
+        // we want to extend the indent guide to the start of the block.
+        let mut block_height = 0;
+        let mut block_offset = 0;
+        let mut found_excerpt_header = false;
+        for (_, block) in snapshot.blocks_in_range(prev_line..row_range.start) {
+            if matches!(block, TransformBlock::ExcerptHeader { .. }) {
+                found_excerpt_header = true;
+                break;
+            }
+            block_offset += block.height();
+            block_height += block.height();
+        }
+        if !found_excerpt_header {
+            offset_y -= block_offset as f32 * line_height;
+            length += block_height as f32 * line_height;
+        }
+
+        // If there is a block (e.g. diagnostic) at the end of an multibuffer excerpt,
+        // we want to ensure that the indent guide stops before the excerpt header.
+        let mut block_height = 0;
+        let mut found_excerpt_header = false;
+        for (_, block) in snapshot.blocks_in_range(row_range.end..cons_line) {
+            if matches!(block, TransformBlock::ExcerptHeader { .. }) {
+                found_excerpt_header = true;
+            }
+            block_height += block.height();
+        }
+        if found_excerpt_header {
+            length -= block_height as f32 * line_height;
+        }
+
+        (offset_y, length)
     }
 
     fn layout_run_indicators(
@@ -1746,7 +1788,7 @@ impl EditorElement {
         rows: Range<DisplayRow>,
         line_number_layouts: &[Option<ShapedLine>],
         snapshot: &EditorSnapshot,
-        cx: &WindowContext,
+        cx: &mut WindowContext,
     ) -> Vec<LineWithInvisibles> {
         if rows.start >= rows.end {
             return Vec::new();
@@ -1780,8 +1822,11 @@ impl EditorElement {
                         .log_err()
                 })
                 .map(|line| LineWithInvisibles {
-                    line,
+                    width: line.width,
+                    len: line.len,
+                    fragments: smallvec![LineFragment::Text(line)],
                     invisibles: Vec::new(),
+                    font_size,
                 })
                 .collect()
         } else {
@@ -1796,6 +1841,30 @@ impl EditorElement {
                 cx,
             )
         }
+    }
+
+    fn prepaint_lines(
+        &self,
+        start_row: DisplayRow,
+        line_layouts: &mut [LineWithInvisibles],
+        line_height: Pixels,
+        scroll_pixel_position: gpui::Point<Pixels>,
+        content_origin: gpui::Point<Pixels>,
+        cx: &mut WindowContext,
+    ) -> SmallVec<[AnyElement; 1]> {
+        let mut line_elements = SmallVec::new();
+        for (ix, line) in line_layouts.iter_mut().enumerate() {
+            let row = start_row + DisplayRow(ix as u32);
+            line.prepaint(
+                line_height,
+                scroll_pixel_position,
+                row,
+                content_origin,
+                &mut line_elements,
+                cx,
+            );
+        }
+        line_elements
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -1835,11 +1904,9 @@ impl EditorElement {
                     let anchor_x = text_x
                         + if rows.contains(&align_to.row()) {
                             line_layouts[align_to.row().minus(rows.start) as usize]
-                                .line
                                 .x_for_index(align_to.column() as usize)
                         } else {
                             layout_line(align_to.row(), snapshot, &self.style, cx)
-                                .unwrap()
                                 .x_for_index(align_to.column() as usize)
                         };
 
@@ -2196,7 +2263,7 @@ impl EditorElement {
 
         let (x, y) = match position {
             crate::ContextMenuOrigin::EditorPoint(point) => {
-                let cursor_row_layout = &line_layouts[point.row().minus(start_row) as usize].line;
+                let cursor_row_layout = &line_layouts[point.row().minus(start_row) as usize];
                 let x = cursor_row_layout.x_for_index(point.column() as usize)
                     - scroll_pixel_position.x;
                 let y = point.row().next_row().as_f32() * line_height - scroll_pixel_position.y;
@@ -2292,7 +2359,7 @@ impl EditorElement {
 
         // This is safe because we check on layout whether the required row is available
         let hovered_row_layout =
-            &line_layouts[position.row().minus(visible_display_row_range.start) as usize].line;
+            &line_layouts[position.row().minus(visible_display_row_range.start) as usize];
 
         // Compute Hovered Point
         let x =
@@ -2498,6 +2565,91 @@ impl EditorElement {
                 }
             }
         })
+    }
+
+    fn paint_indent_guides(&mut self, layout: &mut EditorLayout, cx: &mut WindowContext) {
+        let Some(indent_guides) = &layout.indent_guides else {
+            return;
+        };
+
+        let settings = self
+            .editor
+            .read(cx)
+            .buffer()
+            .read(cx)
+            .settings_at(0, cx)
+            .indent_guides;
+
+        let faded_color = |color: Hsla, alpha: f32| {
+            let mut faded = color;
+            faded.a = alpha;
+            faded
+        };
+
+        for indent_guide in indent_guides {
+            let indent_accent_colors = cx.theme().accents().color_for_index(indent_guide.depth);
+
+            // TODO fixed for now, expose them through themes later
+            const INDENT_AWARE_ALPHA: f32 = 0.2;
+            const INDENT_AWARE_ACTIVE_ALPHA: f32 = 0.4;
+            const INDENT_AWARE_BACKGROUND_ALPHA: f32 = 0.1;
+            const INDENT_AWARE_BACKGROUND_ACTIVE_ALPHA: f32 = 0.2;
+
+            let line_color = match (&settings.coloring, indent_guide.active) {
+                (IndentGuideColoring::Disabled, _) => None,
+                (IndentGuideColoring::Fixed, false) => {
+                    Some(cx.theme().colors().editor_indent_guide)
+                }
+                (IndentGuideColoring::Fixed, true) => {
+                    Some(cx.theme().colors().editor_indent_guide_active)
+                }
+                (IndentGuideColoring::IndentAware, false) => {
+                    Some(faded_color(indent_accent_colors, INDENT_AWARE_ALPHA))
+                }
+                (IndentGuideColoring::IndentAware, true) => {
+                    Some(faded_color(indent_accent_colors, INDENT_AWARE_ACTIVE_ALPHA))
+                }
+            };
+
+            let background_color = match (&settings.background_coloring, indent_guide.active) {
+                (IndentGuideBackgroundColoring::Disabled, _) => None,
+                (IndentGuideBackgroundColoring::IndentAware, false) => Some(faded_color(
+                    indent_accent_colors,
+                    INDENT_AWARE_BACKGROUND_ALPHA,
+                )),
+                (IndentGuideBackgroundColoring::IndentAware, true) => Some(faded_color(
+                    indent_accent_colors,
+                    INDENT_AWARE_BACKGROUND_ACTIVE_ALPHA,
+                )),
+            };
+
+            let requested_line_width = settings.line_width.clamp(1, 10);
+            let mut line_indicator_width = 0.;
+            if let Some(color) = line_color {
+                cx.paint_quad(fill(
+                    Bounds {
+                        origin: indent_guide.origin,
+                        size: size(px(requested_line_width as f32), indent_guide.length),
+                    },
+                    color,
+                ));
+                line_indicator_width = requested_line_width as f32;
+            }
+
+            if let Some(color) = background_color {
+                let width = indent_guide.indent_size - px(line_indicator_width);
+                cx.paint_quad(fill(
+                    Bounds {
+                        origin: point(
+                            indent_guide.origin.x + px(line_indicator_width),
+                            indent_guide.origin.y,
+                        ),
+                        size: size(width, indent_guide.length),
+                    },
+                    color,
+                ));
+            }
+        }
     }
 
     fn paint_gutter(&mut self, layout: &mut EditorLayout, cx: &mut WindowContext) {
@@ -2721,7 +2873,6 @@ impl EditorElement {
                 };
                 cx.set_cursor_style(cursor_style, &layout.text_hitbox);
 
-                cx.with_element_namespace("folds", |cx| self.paint_folds(layout, cx));
                 let invisible_display_ranges = self.paint_highlights(layout, cx);
                 self.paint_lines(&invisible_display_ranges, layout, cx);
                 self.paint_redactions(layout, cx);
@@ -2780,7 +2931,7 @@ impl EditorElement {
     fn paint_lines(
         &mut self,
         invisible_display_ranges: &[Range<DisplayPoint>],
-        layout: &EditorLayout,
+        layout: &mut EditorLayout,
         cx: &mut WindowContext,
     ) {
         let whitespace_setting = self
@@ -2801,6 +2952,10 @@ impl EditorElement {
                 invisible_display_ranges,
                 cx,
             )
+        }
+
+        for line_element in &mut layout.line_elements {
+            line_element.paint(cx);
         }
     }
 
@@ -3179,7 +3334,7 @@ impl EditorElement {
                     .iter_rows()
                     .map(|row| {
                         let line_layout =
-                            &layout.position_map.line_layouts[row.minus(start_row) as usize].line;
+                            &layout.position_map.line_layouts[row.minus(start_row) as usize];
                         HighlightedRangeLine {
                             start_x: if row == range.start.row() {
                                 layout.content_origin.x
@@ -3204,37 +3359,6 @@ impl EditorElement {
 
             highlighted_range.paint(layout.text_hitbox.bounds, cx);
         }
-    }
-
-    fn paint_folds(&mut self, layout: &mut EditorLayout, cx: &mut WindowContext) {
-        if layout.folds.is_empty() {
-            return;
-        }
-
-        cx.paint_layer(layout.text_hitbox.bounds, |cx| {
-            let fold_corner_radius = 0.15 * layout.position_map.line_height;
-            for mut fold in mem::take(&mut layout.folds) {
-                fold.hover_element.paint(cx);
-
-                let hover_element = fold.hover_element.downcast_mut::<Stateful<Div>>().unwrap();
-                let fold_background = if hover_element.interactivity().active.unwrap() {
-                    cx.theme().colors().ghost_element_active
-                } else if hover_element.interactivity().hovered.unwrap() {
-                    cx.theme().colors().ghost_element_hover
-                } else {
-                    cx.theme().colors().ghost_element_background
-                };
-
-                self.paint_highlighted_range(
-                    fold.display_range.clone(),
-                    fold_background,
-                    fold_corner_radius,
-                    fold_corner_radius * 2.,
-                    layout,
-                    cx,
-                );
-            }
-        })
     }
 
     fn paint_inline_blame(&mut self, layout: &mut EditorLayout, cx: &mut WindowContext) {
@@ -3614,8 +3738,34 @@ fn deploy_blame_entry_context_menu(
 
 #[derive(Debug)]
 pub(crate) struct LineWithInvisibles {
-    pub line: ShapedLine,
+    fragments: SmallVec<[LineFragment; 1]>,
     invisibles: Vec<Invisible>,
+    len: usize,
+    width: Pixels,
+    font_size: Pixels,
+}
+
+#[allow(clippy::large_enum_variant)]
+enum LineFragment {
+    Text(ShapedLine),
+    Element {
+        element: Option<AnyElement>,
+        width: Pixels,
+        len: usize,
+    },
+}
+
+impl fmt::Debug for LineFragment {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            LineFragment::Text(shaped_line) => f.debug_tuple("Text").field(shaped_line).finish(),
+            LineFragment::Element { width, len, .. } => f
+                .debug_struct("Element")
+                .field("width", width)
+                .field("len", len)
+                .finish(),
+        }
+    }
 }
 
 impl LineWithInvisibles {
@@ -3626,105 +3776,194 @@ impl LineWithInvisibles {
         max_line_count: usize,
         line_number_layouts: &[Option<ShapedLine>],
         editor_mode: EditorMode,
-        cx: &WindowContext,
+        cx: &mut WindowContext,
     ) -> Vec<Self> {
         let mut layouts = Vec::with_capacity(max_line_count);
+        let mut fragments: SmallVec<[LineFragment; 1]> = SmallVec::new();
         let mut line = String::new();
         let mut invisibles = Vec::new();
+        let mut width = Pixels::ZERO;
+        let mut len = 0;
         let mut styles = Vec::new();
         let mut non_whitespace_added = false;
         let mut row = 0;
         let mut line_exceeded_max_len = false;
         let font_size = text_style.font_size.to_pixels(cx.rem_size());
 
+        let ellipsis = SharedString::from("⋯");
+
         for highlighted_chunk in chunks.chain([HighlightedChunk {
-            chunk: "\n",
+            text: "\n",
             style: None,
             is_tab: false,
+            renderer: None,
         }]) {
-            for (ix, mut line_chunk) in highlighted_chunk.chunk.split('\n').enumerate() {
-                if ix > 0 {
+            if let Some(renderer) = highlighted_chunk.renderer {
+                if !line.is_empty() {
                     let shaped_line = cx
                         .text_system()
                         .shape_line(line.clone().into(), font_size, &styles)
                         .unwrap();
-                    layouts.push(Self {
-                        line: shaped_line,
-                        invisibles: std::mem::take(&mut invisibles),
-                    });
-
+                    width += shaped_line.width;
+                    len += shaped_line.len;
+                    fragments.push(LineFragment::Text(shaped_line));
                     line.clear();
                     styles.clear();
-                    row += 1;
-                    line_exceeded_max_len = false;
-                    non_whitespace_added = false;
-                    if row == max_line_count {
-                        return layouts;
-                    }
                 }
 
-                if !line_chunk.is_empty() && !line_exceeded_max_len {
-                    let text_style = if let Some(style) = highlighted_chunk.style {
-                        Cow::Owned(text_style.clone().highlight(style))
+                let available_width = if renderer.constrain_width {
+                    let chunk = if highlighted_chunk.text == ellipsis.as_ref() {
+                        ellipsis.clone()
                     } else {
-                        Cow::Borrowed(text_style)
+                        SharedString::from(Arc::from(highlighted_chunk.text))
                     };
+                    let shaped_line = cx
+                        .text_system()
+                        .shape_line(
+                            chunk,
+                            font_size,
+                            &[text_style.to_run(highlighted_chunk.text.len())],
+                        )
+                        .unwrap();
+                    AvailableSpace::Definite(shaped_line.width)
+                } else {
+                    AvailableSpace::MinContent
+                };
 
-                    if line.len() + line_chunk.len() > max_line_len {
-                        let mut chunk_len = max_line_len - line.len();
-                        while !line_chunk.is_char_boundary(chunk_len) {
-                            chunk_len -= 1;
+                let mut element = (renderer.render)(cx);
+                let line_height = text_style.line_height_in_pixels(cx.rem_size());
+                let size = element.layout_as_root(
+                    size(available_width, AvailableSpace::Definite(line_height)),
+                    cx,
+                );
+
+                width += size.width;
+                len += highlighted_chunk.text.len();
+                fragments.push(LineFragment::Element {
+                    element: Some(element),
+                    width: size.width,
+                    len: highlighted_chunk.text.len(),
+                });
+            } else {
+                for (ix, mut line_chunk) in highlighted_chunk.text.split('\n').enumerate() {
+                    if ix > 0 {
+                        let shaped_line = cx
+                            .text_system()
+                            .shape_line(line.clone().into(), font_size, &styles)
+                            .unwrap();
+                        width += shaped_line.width;
+                        len += shaped_line.len;
+                        fragments.push(LineFragment::Text(shaped_line));
+                        layouts.push(Self {
+                            width: mem::take(&mut width),
+                            len: mem::take(&mut len),
+                            fragments: mem::take(&mut fragments),
+                            invisibles: std::mem::take(&mut invisibles),
+                            font_size,
+                        });
+
+                        line.clear();
+                        styles.clear();
+                        row += 1;
+                        line_exceeded_max_len = false;
+                        non_whitespace_added = false;
+                        if row == max_line_count {
+                            return layouts;
                         }
-                        line_chunk = &line_chunk[..chunk_len];
-                        line_exceeded_max_len = true;
                     }
 
-                    styles.push(TextRun {
-                        len: line_chunk.len(),
-                        font: text_style.font(),
-                        color: text_style.color,
-                        background_color: text_style.background_color,
-                        underline: text_style.underline,
-                        strikethrough: text_style.strikethrough,
-                    });
-
-                    if editor_mode == EditorMode::Full {
-                        // Line wrap pads its contents with fake whitespaces,
-                        // avoid printing them
-                        let inside_wrapped_string = line_number_layouts
-                            .get(row)
-                            .and_then(|layout| layout.as_ref())
-                            .is_none();
-                        if highlighted_chunk.is_tab {
-                            if non_whitespace_added || !inside_wrapped_string {
-                                invisibles.push(Invisible::Tab {
-                                    line_start_offset: line.len(),
-                                });
-                            }
+                    if !line_chunk.is_empty() && !line_exceeded_max_len {
+                        let text_style = if let Some(style) = highlighted_chunk.style {
+                            Cow::Owned(text_style.clone().highlight(style))
                         } else {
-                            invisibles.extend(
-                                line_chunk
-                                    .chars()
-                                    .enumerate()
-                                    .filter(|(_, line_char)| {
-                                        let is_whitespace = line_char.is_whitespace();
-                                        non_whitespace_added |= !is_whitespace;
-                                        is_whitespace
-                                            && (non_whitespace_added || !inside_wrapped_string)
-                                    })
-                                    .map(|(whitespace_index, _)| Invisible::Whitespace {
-                                        line_offset: line.len() + whitespace_index,
-                                    }),
-                            )
-                        }
-                    }
+                            Cow::Borrowed(text_style)
+                        };
 
-                    line.push_str(line_chunk);
+                        if line.len() + line_chunk.len() > max_line_len {
+                            let mut chunk_len = max_line_len - line.len();
+                            while !line_chunk.is_char_boundary(chunk_len) {
+                                chunk_len -= 1;
+                            }
+                            line_chunk = &line_chunk[..chunk_len];
+                            line_exceeded_max_len = true;
+                        }
+
+                        styles.push(TextRun {
+                            len: line_chunk.len(),
+                            font: text_style.font(),
+                            color: text_style.color,
+                            background_color: text_style.background_color,
+                            underline: text_style.underline,
+                            strikethrough: text_style.strikethrough,
+                        });
+
+                        if editor_mode == EditorMode::Full {
+                            // Line wrap pads its contents with fake whitespaces,
+                            // avoid printing them
+                            let inside_wrapped_string = line_number_layouts
+                                .get(row)
+                                .and_then(|layout| layout.as_ref())
+                                .is_none();
+                            if highlighted_chunk.is_tab {
+                                if non_whitespace_added || !inside_wrapped_string {
+                                    invisibles.push(Invisible::Tab {
+                                        line_start_offset: line.len(),
+                                    });
+                                }
+                            } else {
+                                invisibles.extend(
+                                    line_chunk
+                                        .bytes()
+                                        .enumerate()
+                                        .filter(|(_, line_byte)| {
+                                            let is_whitespace =
+                                                (*line_byte as char).is_whitespace();
+                                            non_whitespace_added |= !is_whitespace;
+                                            is_whitespace
+                                                && (non_whitespace_added || !inside_wrapped_string)
+                                        })
+                                        .map(|(whitespace_index, _)| Invisible::Whitespace {
+                                            line_offset: line.len() + whitespace_index,
+                                        }),
+                                )
+                            }
+                        }
+
+                        line.push_str(line_chunk);
+                    }
                 }
             }
         }
 
         layouts
+    }
+
+    fn prepaint(
+        &mut self,
+        line_height: Pixels,
+        scroll_pixel_position: gpui::Point<Pixels>,
+        row: DisplayRow,
+        content_origin: gpui::Point<Pixels>,
+        line_elements: &mut SmallVec<[AnyElement; 1]>,
+        cx: &mut WindowContext,
+    ) {
+        let line_y = line_height * (row.as_f32() - scroll_pixel_position.y / line_height);
+        let mut fragment_origin = content_origin + gpui::point(-scroll_pixel_position.x, line_y);
+        for fragment in &mut self.fragments {
+            match fragment {
+                LineFragment::Text(line) => {
+                    fragment_origin.x += line.width;
+                }
+                LineFragment::Element { element, width, .. } => {
+                    let mut element = element
+                        .take()
+                        .expect("you can't prepaint LineWithInvisibles twice");
+                    element.prepaint_at(fragment_origin, cx);
+                    line_elements.push(element);
+                    fragment_origin.x += *width;
+                }
+            }
+        }
     }
 
     fn draw(
@@ -3740,9 +3979,20 @@ impl LineWithInvisibles {
         let line_y = line_height
             * (row.as_f32() - layout.position_map.scroll_pixel_position.y / line_height);
 
-        let line_origin =
+        let mut fragment_origin =
             content_origin + gpui::point(-layout.position_map.scroll_pixel_position.x, line_y);
-        self.line.paint(line_origin, line_height, cx).log_err();
+
+        for fragment in &self.fragments {
+            match fragment {
+                LineFragment::Text(line) => {
+                    line.paint(fragment_origin, line_height, cx).log_err();
+                    fragment_origin.x += line.width;
+                }
+                LineFragment::Element { width, .. } => {
+                    fragment_origin.x += *width;
+                }
+            }
+        }
 
         self.draw_invisibles(
             &selection_ranges,
@@ -3780,7 +4030,7 @@ impl LineWithInvisibles {
                 Invisible::Whitespace { line_offset } => (line_offset, &layout.space_invisible),
             };
 
-            let x_offset = self.line.x_for_index(token_offset);
+            let x_offset = self.x_for_index(token_offset);
             let invisible_offset =
                 (layout.position_map.em_width - invisible_symbol.width).max(Pixels::ZERO) / 2.0;
             let origin = content_origin
@@ -3800,6 +4050,90 @@ impl LineWithInvisibles {
             }
             invisible_symbol.paint(origin, line_height, cx).log_err();
         }
+    }
+
+    pub fn x_for_index(&self, index: usize) -> Pixels {
+        let mut fragment_start_x = Pixels::ZERO;
+        let mut fragment_start_index = 0;
+
+        for fragment in &self.fragments {
+            match fragment {
+                LineFragment::Text(shaped_line) => {
+                    let fragment_end_index = fragment_start_index + shaped_line.len;
+                    if index < fragment_end_index {
+                        return fragment_start_x
+                            + shaped_line.x_for_index(index - fragment_start_index);
+                    }
+                    fragment_start_x += shaped_line.width;
+                    fragment_start_index = fragment_end_index;
+                }
+                LineFragment::Element { len, width, .. } => {
+                    let fragment_end_index = fragment_start_index + len;
+                    if index < fragment_end_index {
+                        return fragment_start_x;
+                    }
+                    fragment_start_x += *width;
+                    fragment_start_index = fragment_end_index;
+                }
+            }
+        }
+
+        fragment_start_x
+    }
+
+    pub fn index_for_x(&self, x: Pixels) -> Option<usize> {
+        let mut fragment_start_x = Pixels::ZERO;
+        let mut fragment_start_index = 0;
+
+        for fragment in &self.fragments {
+            match fragment {
+                LineFragment::Text(shaped_line) => {
+                    let fragment_end_x = fragment_start_x + shaped_line.width;
+                    if x < fragment_end_x {
+                        return Some(
+                            fragment_start_index + shaped_line.index_for_x(x - fragment_start_x)?,
+                        );
+                    }
+                    fragment_start_x = fragment_end_x;
+                    fragment_start_index += shaped_line.len;
+                }
+                LineFragment::Element { len, width, .. } => {
+                    let fragment_end_x = fragment_start_x + *width;
+                    if x < fragment_end_x {
+                        return Some(fragment_start_index);
+                    }
+                    fragment_start_index += len;
+                    fragment_start_x = fragment_end_x;
+                }
+            }
+        }
+
+        None
+    }
+
+    pub fn font_id_for_index(&self, index: usize) -> Option<FontId> {
+        let mut fragment_start_index = 0;
+
+        for fragment in &self.fragments {
+            match fragment {
+                LineFragment::Text(shaped_line) => {
+                    let fragment_end_index = fragment_start_index + shaped_line.len;
+                    if index < fragment_end_index {
+                        return shaped_line.font_id_for_index(index - fragment_start_index);
+                    }
+                    fragment_start_index = fragment_end_index;
+                }
+                LineFragment::Element { len, .. } => {
+                    let fragment_end_index = fragment_start_index + len;
+                    if index < fragment_end_index {
+                        return None;
+                    }
+                    fragment_start_index = fragment_end_index;
+                }
+            }
+        }
+
+        None
     }
 }
 
@@ -4110,18 +4444,16 @@ impl Element for EditorElement {
                     );
 
                     let mut max_visible_line_width = Pixels::ZERO;
-                    let line_layouts =
+                    let mut line_layouts =
                         self.layout_lines(start_row..end_row, &line_numbers, &snapshot, cx);
                     for line_with_invisibles in &line_layouts {
-                        if line_with_invisibles.line.width > max_visible_line_width {
-                            max_visible_line_width = line_with_invisibles.line.width;
+                        if line_with_invisibles.width > max_visible_line_width {
+                            max_visible_line_width = line_with_invisibles.width;
                         }
                     }
 
                     let longest_line_width =
-                        layout_line(snapshot.longest_row(), &snapshot, &style, cx)
-                            .unwrap()
-                            .width;
+                        layout_line(snapshot.longest_row(), &snapshot, &style, cx).width;
                     let mut scroll_width =
                         longest_line_width.max(max_visible_line_width) + overscroll.width;
 
@@ -4144,6 +4476,21 @@ impl Element for EditorElement {
                     let scroll_pixel_position = point(
                         scroll_position.x * em_width,
                         scroll_position.y * line_height,
+                    );
+
+                    let start_buffer_row =
+                        MultiBufferRow(start_anchor.to_point(&snapshot.buffer_snapshot).row);
+                    let end_buffer_row =
+                        MultiBufferRow(end_anchor.to_point(&snapshot.buffer_snapshot).row);
+
+                    let indent_guides = self.layout_indent_guides(
+                        content_origin,
+                        text_hitbox.origin,
+                        start_buffer_row..end_buffer_row,
+                        scroll_pixel_position,
+                        line_height,
+                        &snapshot,
+                        cx,
                     );
 
                     let flap_trailers = cx.with_element_namespace("flap_trailers", |cx| {
@@ -4216,6 +4563,15 @@ impl Element for EditorElement {
                         }
                     });
 
+                    let line_elements = self.prepaint_lines(
+                        start_row,
+                        &mut line_layouts,
+                        line_height,
+                        scroll_pixel_position,
+                        content_origin,
+                        cx,
+                    );
+
                     cx.with_element_namespace("blocks", |cx| {
                         self.layout_blocks(
                             &mut blocks,
@@ -4256,26 +4612,13 @@ impl Element for EditorElement {
                         cx,
                     );
 
-                    let folds = cx.with_element_namespace("folds", |cx| {
-                        self.layout_folds(
-                            &snapshot,
-                            content_origin,
-                            start_anchor..end_anchor,
-                            start_row..end_row,
-                            scroll_pixel_position,
-                            line_height,
-                            &line_layouts,
-                            cx,
-                        )
-                    });
-
                     let gutter_settings = EditorSettings::get_global(cx).gutter;
 
-                    let mut context_menu_visible = false;
+                    let mut _context_menu_visible = false;
                     let mut code_actions_indicator = None;
                     if let Some(newest_selection_head) = newest_selection_head {
                         if (start_row..end_row).contains(&newest_selection_head.row()) {
-                            context_menu_visible = self.layout_context_menu(
+                            _context_menu_visible = self.layout_context_menu(
                                 line_height,
                                 &hitbox,
                                 &text_hitbox,
@@ -4328,7 +4671,7 @@ impl Element for EditorElement {
                         cx,
                     );
 
-                    if !context_menu_visible && !cx.has_active_drag() {
+                    if !cx.has_active_drag() {
                         self.layout_hover_popovers(
                             &snapshot,
                             &hitbox,
@@ -4403,6 +4746,7 @@ impl Element for EditorElement {
                         }),
                         visible_display_row_range: start_row..end_row,
                         wrap_guides,
+                        indent_guides,
                         hitbox,
                         text_hitbox,
                         gutter_hitbox,
@@ -4413,11 +4757,11 @@ impl Element for EditorElement {
                         highlighted_rows,
                         highlighted_ranges,
                         redacted_ranges,
+                        line_elements,
                         line_numbers,
                         display_hunks,
                         blamed_display_rows,
                         inline_blame,
-                        folds,
                         blocks,
                         cursors,
                         visible_cursors,
@@ -4492,6 +4836,7 @@ impl Element for EditorElement {
                 cx.with_content_mask(Some(ContentMask { bounds }), |cx| {
                     self.paint_mouse_listeners(layout, hovered_hunk, cx);
                     self.paint_background(layout, cx);
+                    self.paint_indent_guides(layout, cx);
                     if layout.gutter_hitbox.size.width > Pixels::ZERO {
                         self.paint_gutter(layout, cx)
                     }
@@ -4530,14 +4875,15 @@ pub struct EditorLayout {
     scrollbar_layout: Option<ScrollbarLayout>,
     mode: EditorMode,
     wrap_guides: SmallVec<[(Pixels, bool); 2]>,
+    indent_guides: Option<Vec<IndentGuideLayout>>,
     visible_display_row_range: Range<DisplayRow>,
     active_rows: BTreeMap<DisplayRow, bool>,
     highlighted_rows: BTreeMap<DisplayRow, Hsla>,
+    line_elements: SmallVec<[AnyElement; 1]>,
     line_numbers: Vec<Option<ShapedLine>>,
     display_hunks: Vec<(DisplayDiffHunk, Option<Hitbox>)>,
     blamed_display_rows: Option<Vec<AnyElement>>,
     inline_blame: Option<AnyElement>,
-    folds: Vec<FoldLayout>,
     blocks: Vec<BlockLayout>,
     highlighted_ranges: Vec<(Range<DisplayPoint>, Hsla)>,
     redacted_ranges: Vec<Range<DisplayPoint>>,
@@ -4676,11 +5022,6 @@ struct FlapTrailerLayout {
     bounds: Bounds<Pixels>,
 }
 
-struct FoldLayout {
-    display_range: Range<DisplayPoint>,
-    hover_element: AnyElement,
-}
-
 struct PositionMap {
     size: Size<Pixels>,
     line_height: Pixels,
@@ -4725,7 +5066,6 @@ impl PositionMap {
         let (column, x_overshoot_after_line_end) = if let Some(line) = self
             .line_layouts
             .get(row as usize - scroll_position.y as usize)
-            .map(|LineWithInvisibles { line, .. }| line)
         {
             if let Some(ix) = line.index_for_x(x) {
                 (ix as u32, px(0.))
@@ -4762,37 +5102,21 @@ fn layout_line(
     row: DisplayRow,
     snapshot: &EditorSnapshot,
     style: &EditorStyle,
-    cx: &WindowContext,
-) -> Result<ShapedLine> {
-    let mut line = snapshot.line(row);
+    cx: &mut WindowContext,
+) -> LineWithInvisibles {
+    let chunks = snapshot.highlighted_chunks(row..row + DisplayRow(1), true, style);
+    LineWithInvisibles::from_chunks(chunks, &style.text, MAX_LINE_LEN, 1, &[], snapshot.mode, cx)
+        .pop()
+        .unwrap()
+}
 
-    let len = {
-        let line_len = line.len();
-        if line_len > MAX_LINE_LEN {
-            let mut len = MAX_LINE_LEN;
-            while !line.is_char_boundary(len) {
-                len -= 1;
-            }
-
-            line.truncate(len);
-            len
-        } else {
-            line_len
-        }
-    };
-
-    cx.text_system().shape_line(
-        line.into(),
-        style.text.font_size.to_pixels(cx.rem_size()),
-        &[TextRun {
-            len,
-            font: style.text.font(),
-            color: Hsla::default(),
-            background_color: None,
-            underline: None,
-            strikethrough: None,
-        }],
-    )
+#[derive(Debug)]
+pub struct IndentGuideLayout {
+    origin: gpui::Point<Pixels>,
+    length: Pixels,
+    indent_size: Pixels,
+    depth: u32,
+    active: bool,
 }
 
 pub struct CursorLayout {
