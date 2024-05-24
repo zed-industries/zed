@@ -157,6 +157,7 @@ async fn test_extension_store(cx: &mut TestAppContext) {
                         .into_iter()
                         .collect(),
                         language_servers: BTreeMap::default(),
+                        slash_commands: BTreeMap::default(),
                     }),
                     dev: false,
                 },
@@ -180,6 +181,7 @@ async fn test_extension_store(cx: &mut TestAppContext) {
                         languages: Default::default(),
                         grammars: BTreeMap::default(),
                         language_servers: BTreeMap::default(),
+                        slash_commands: BTreeMap::default(),
                     }),
                     dev: false,
                 },
@@ -336,6 +338,7 @@ async fn test_extension_store(cx: &mut TestAppContext) {
                 languages: Default::default(),
                 grammars: BTreeMap::default(),
                 language_servers: BTreeMap::default(),
+                slash_commands: BTreeMap::default(),
             }),
             dev: false,
         },

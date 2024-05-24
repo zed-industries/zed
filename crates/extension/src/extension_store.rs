@@ -1177,13 +1177,13 @@ impl ExtensionStore {
                         }
                     }
 
-                    if manifest.id.as_ref() == "gleam" {
+                    for (slash_command_name, slash_command) in &manifest.slash_commands {
                         this.slash_command_registry
                             .register_command(ExtensionSlashCommand {
                                 command: crate::wit::SlashCommand {
-                                    name: "gleam-project".to_string(),
-                                    description: "the description".to_string(),
-                                    requires_argument: false,
+                                    name: slash_command_name.to_string(),
+                                    description: slash_command.description.to_string(),
+                                    requires_argument: slash_command.requires_argument,
                                 },
                                 extension: wasm_extension.clone(),
                                 host: this.wasm_host.clone(),

@@ -143,22 +143,24 @@ impl zed::Extension for GleamExtension {
         })
     }
 
-    fn slash_commands(&self) -> Result<Vec<SlashCommand>, String> {
-        Ok(vec![SlashCommand {
-            name: "gleam-project".to_string(),
-            description: "Returns information about the current Gleam project.".to_string(),
-            requires_argument: false,
-        }])
-    }
-
     fn run_slash_command(
         &self,
         command: SlashCommand,
         _argument: Option<String>,
-        _worktree: &zed::Worktree,
+        worktree: &zed::Worktree,
     ) -> Result<Option<String>, String> {
         match command.name.as_str() {
-            "gleam-project" => Ok(Some("You are in a Gleam project.".to_string())),
+            "gleam-project" => {
+                let mut message = String::new();
+                message.push_str("You are in a Gleam project.\n");
+
+                if let Some(gleam_toml) = worktree.read_text_file("gleam.toml").ok() {
+                    message.push_str("The `gleam.toml` is as follows:\n");
+                    message.push_str(&gleam_toml);
+                }
+
+                Ok(Some(message))
+            }
             command => Err(format!("unknown slash command: \"{command}\"")),
         }
     }

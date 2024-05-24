@@ -256,16 +256,6 @@ impl Extension {
         }
     }
 
-    pub async fn call_slash_commands(
-        &self,
-        store: &mut Store<WasmState>,
-    ) -> Result<Result<Vec<SlashCommand>, String>> {
-        match self {
-            Extension::V007(ext) => ext.call_slash_commands(store).await,
-            Extension::V001(_) | Extension::V004(_) | Extension::V006(_) => Ok(Ok(Vec::new())),
-        }
-    }
-
     pub async fn call_run_slash_command(
         &self,
         store: &mut Store<WasmState>,

@@ -13,6 +13,7 @@ use crate::wasm_host::{WasmExtension, WasmHost};
 
 pub struct ExtensionSlashCommand {
     pub(crate) extension: WasmExtension,
+    #[allow(unused)]
     pub(crate) host: Arc<WasmHost>,
     pub(crate) command: crate::wit::SlashCommand,
 }

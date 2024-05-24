@@ -106,11 +106,6 @@ pub trait Extension: Send + Sync {
         None
     }
 
-    /// Returns the list of slash commands defined by this extension.
-    fn slash_commands(&self) -> Result<Vec<SlashCommand>, String> {
-        Ok(Vec::new())
-    }
-
     /// Runs the given slash command.
     fn run_slash_command(
         &self,
@@ -224,10 +219,6 @@ impl wit::Guest for Component {
             }
         }
         Ok(labels)
-    }
-
-    fn slash_commands() -> Result<Vec<SlashCommand>, String> {
-        extension().slash_commands()
     }
 
     fn run_slash_command(
