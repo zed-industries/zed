@@ -1,9 +1,9 @@
 use editor::{CursorLayout, HighlightedRange, HighlightedRangeLine};
 use gpui::{
     div, fill, point, px, relative, AnyElement, Bounds, DispatchPhase, Element, ElementId,
-    FocusHandle, Font, FontStyle, FontWeight, GlobalElementId, HighlightStyle, Hitbox, Hsla,
-    InputHandler, InteractiveElement, Interactivity, IntoElement, LayoutId, Model, ModelContext,
-    ModifiersChangedEvent, MouseButton, MouseMoveEvent, Pixels, Point, ShapedLine,
+    FocusHandle, Font, FontFallbacks, FontStyle, FontWeight, GlobalElementId, HighlightStyle,
+    Hitbox, Hsla, InputHandler, InteractiveElement, Interactivity, IntoElement, LayoutId, Model,
+    ModelContext, ModifiersChangedEvent, MouseButton, MouseMoveEvent, Pixels, Point, ShapedLine,
     StatefulInteractiveElement, StrikethroughStyle, Styled, TextRun, TextStyle, UnderlineStyle,
     WeakView, WhiteSpace, WindowContext, WindowTextSystem,
 };
@@ -619,6 +619,7 @@ impl Element for TerminalElement {
                     font_family,
                     font_features,
                     font_weight,
+                    font_fallbacks: FontFallbacks::default(), // TODO: add font fallbacks support
                     font_size: font_size.into(),
                     font_style: FontStyle::Normal,
                     line_height: line_height.into(),
