@@ -3,8 +3,8 @@ use crate::{Appearance, SyntaxTheme, Theme, ThemeRegistry, ThemeStyleContent};
 use anyhow::Result;
 use derive_more::{Deref, DerefMut};
 use gpui::{
-    px, AppContext, Font, FontFeatures, FontStyle, FontWeight, Global, Pixels, Subscription,
-    ViewContext, WindowContext,
+    px, AppContext, Font, FontFallbacks, FontFeatures, FontStyle, FontWeight, Global, Pixels,
+    Subscription, ViewContext, WindowContext,
 };
 use refineable::Refineable;
 use schemars::{
@@ -514,6 +514,7 @@ impl settings::Settings for ThemeSettings {
                 features: defaults.ui_font_features.clone().unwrap(),
                 weight: defaults.ui_font_weight.map(FontWeight).unwrap(),
                 style: Default::default(),
+                fallbacks: get_fallbacks(defaults.ui_font_family.as_ref().unwrap()),
             },
             buffer_font: Font {
                 family: defaults.buffer_font_family.as_ref().unwrap()[0]
@@ -522,6 +523,7 @@ impl settings::Settings for ThemeSettings {
                 features: defaults.buffer_font_features.clone().unwrap(),
                 weight: defaults.buffer_font_weight.map(FontWeight).unwrap(),
                 style: FontStyle::default(),
+                fallbacks: get_fallbacks(defaults.buffer_font_family.as_ref().unwrap()),
             },
             buffer_font_size: defaults.buffer_font_size.unwrap().into(),
             buffer_line_height: defaults.buffer_line_height.unwrap(),
@@ -649,5 +651,13 @@ impl settings::Settings for ThemeSettings {
 fn merge<T: Copy>(target: &mut T, value: Option<T>) {
     if let Some(value) = value {
         *target = value;
+    }
+}
+
+fn get_fallbacks(families: &[String]) -> FontFallbacks {
+    if families.len() > 1 {
+        FontFallbacks(Arc::new(families[1..].to_vec()))
+    } else {
+        FontFallbacks::default()
     }
 }

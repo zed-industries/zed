@@ -1,8 +1,10 @@
+mod font_fallbacks;
 mod font_features;
 mod line;
 mod line_layout;
 mod line_wrapper;
 
+pub use font_fallbacks::*;
 pub use font_features::*;
 pub use line::*;
 pub use line_layout::*;
@@ -694,6 +696,9 @@ pub struct Font {
 
     /// The font style.
     pub style: FontStyle,
+
+    /// TODO:
+    pub fallbacks: FontFallbacks,
 }
 
 /// Get a [`Font`] for a given name.
@@ -703,6 +708,7 @@ pub fn font(family: impl Into<SharedString>) -> Font {
         features: FontFeatures::default(),
         weight: FontWeight::default(),
         style: FontStyle::default(),
+        fallbacks: FontFallbacks::default(),
     }
 }
 
