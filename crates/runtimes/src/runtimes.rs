@@ -336,7 +336,6 @@ pub fn run(workspace: &mut Workspace, _: &Run, cx: &mut ViewContext<Workspace>) 
     let blocks_to_remove = blocks_to_remove.clone();
 
     let block_id = editor.update(cx, |editor, cx| {
-        println!("Removing blocks {blocks_to_remove:?}");
         editor.remove_blocks(blocks_to_remove, None, cx);
         let block = BlockProperties {
             position: anchor_range.end,
