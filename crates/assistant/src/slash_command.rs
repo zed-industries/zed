@@ -240,13 +240,15 @@ impl CompletionProvider for SlashCommandCompletionProvider {
             let line = lines.next()?;
             let call = SlashCommandLine::parse(line)?;
 
-            let name = &line[call.name.clone()];
-
-            let command_range_start = call.name.start - 1;
-            let command_range_end = call.argument.as_ref().map_or(call.name.end, |arg| arg.end);
+            let command_range_start = Point::new(position.row, call.name.start as u32 - 1);
+            let command_range_end = Point::new(
+                position.row,
+                call.argument.as_ref().map_or(call.name.end, |arg| arg.end) as u32,
+            );
             let command_range =
                 buffer.anchor_after(command_range_start)..buffer.anchor_after(command_range_end);
 
+            let name = &line[call.name.clone()];
             if let Some(argument) = call.argument {
                 let start = buffer.anchor_after(Point::new(position.row, argument.start as u32));
                 let argument = line[argument.clone()].to_string();
