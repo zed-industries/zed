@@ -1428,6 +1428,8 @@ impl EditorElement {
                             snapshot,
                         );
 
+                        dbg!(length);
+
                         let start_y = content_origin.y + offset_y - scroll_pixel_position.y;
 
                         Some(IndentGuideLayout {
@@ -1466,6 +1468,11 @@ impl EditorElement {
 
         let mut offset_y = row_range.start.0 as f32 * line_height;
         let mut length = (cons_line.0.saturating_sub(row_range.start.0)) as f32 * line_height;
+
+        // If we are at the end of the buffer, ensure that the indent guide extends to the end of the line.
+        if row_range.end == cons_line {
+            length += line_height;
+        }
 
         // If there is a block (e.g. diagnostic) in between the start of the indent guide and the line above,
         // we want to extend the indent guide to the start of the block.
