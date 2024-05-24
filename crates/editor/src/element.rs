@@ -2254,7 +2254,7 @@ impl EditorElement {
             let _overlay_size = overlay.layout_as_root(available_space, cx);
 
             let hovered_row_layout =
-                &line_layouts[anchor.row().minus(visible_display_row_range.start) as usize].line;
+                &line_layouts[anchor.row().minus(visible_display_row_range.start) as usize];
 
             let x =
                 hovered_row_layout.x_for_index(anchor.column() as usize) - scroll_pixel_position.x;
