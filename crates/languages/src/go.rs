@@ -578,7 +578,7 @@ impl ContextProvider for GoContextProvider {
 }
 
 fn extract_subtest_name(input: &str) -> Option<String> {
-    let replaced_spaces = input.trim_matches('"').replace(" ", "_");
+    let replaced_spaces = input.trim_matches('"').replace(' ', "_");
 
     Some(
         GO_ESCAPE_SUBTEST_NAME_REGEX
