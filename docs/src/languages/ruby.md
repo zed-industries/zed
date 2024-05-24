@@ -3,6 +3,24 @@
 - Tree Sitter: [tree-sitter-ruby](https://github.com/tree-sitter/tree-sitter-ruby)
 - Language Servers: [solargraph](https://github.com/castwide/solargraph), [ruby-lsp](https://github.com/Shopify/ruby-lsp)
 
+### Switching between language servers
+
+To switch between language servers in Zed, you can configure your `settings.json` file.
+
+Here's the default configuration:
+
+```json
+{
+  "languages": {
+    "Ruby": {
+      "language_servers": ["solargraph", "!ruby-lsp", "..."]
+    }
+  }
+}
+```
+
+It sets up Solargraph as the primary language server for Ruby, while the `ruby-lsp` is disabled by default (indicated by the `!` before `ruby-lsp`) due to [some limitations in Zed](https://github.com/zed-industries/zed/pull/8613).
+
 ### Setting up `solargraph`
 
 Zed currently doesn't install Solargraph automatically. To use Solargraph, you need to install the gem. Zed just looks for an executable called `solargraph` on your `PATH`.
