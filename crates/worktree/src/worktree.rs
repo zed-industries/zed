@@ -3213,7 +3213,7 @@ pub struct Entry {
     pub path: Arc<Path>,
     pub inode: u64,
     pub mtime: Option<SystemTime>,
-    pub is_symlink: bool,
+    pub canonical_path: Option<PathBuf>,
 
     /// Whether this entry is ignored by Git.
     ///
@@ -3305,6 +3305,9 @@ impl Entry {
 
     pub fn git_status(&self) -> Option<GitFileStatus> {
         self.git_status
+    }
+    pub fn is_symlink(&self) -> bool {
+        self.canonical_path.is_some()
     }
 }
 
