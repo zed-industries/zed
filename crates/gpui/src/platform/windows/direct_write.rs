@@ -203,6 +203,7 @@ impl PlatformTextSystem for DirectWriteTextSystem {
     }
 
     fn font_id(&self, font: &Font) -> Result<FontId> {
+        println!("Font: {:#?}", font);
         let lock = self.0.upgradable_read();
         if let Some(font_id) = lock.font_selections.get(font) {
             Ok(*font_id)
@@ -306,6 +307,61 @@ impl DirectWriteState {
         Ok(())
     }
 
+    fn generate_font_fallbacks(
+        &self,
+        fallbacks: &FontFallbacks,
+    ) -> Result<Option<IDWriteFontFallback>> {
+        if fallbacks.fallback_list().len() == 0 {
+            return Ok(None);
+        }
+        unsafe {
+            let builder = self.components.factory.CreateFontFallbackBuilder()?;
+            let font_set = &self.system_font_collection.GetFontSet()?;
+            for family_name in fallbacks.fallback_list() {
+                let Some(fonts) = font_set
+                    .GetMatchingFonts(
+                        &HSTRING::from(family_name),
+                        DWRITE_FONT_WEIGHT_NORMAL,
+                        DWRITE_FONT_STRETCH_NORMAL,
+                        DWRITE_FONT_STYLE_NORMAL,
+                    )
+                    .log_err()
+                else {
+                    continue;
+                };
+                if fonts.GetFontCount() == 0 {
+                    log::error!("No mathcing font find for {}", family_name);
+                    continue;
+                }
+                let font = fonts.GetFontFaceReference(0)?.CreateFontFace()?;
+                let mut count = 0;
+                font.GetUnicodeRanges(None, &mut count).ok();
+                if count == 0 {
+                    continue;
+                }
+                let mut unicode_ranges = vec![DWRITE_UNICODE_RANGE::default(); count as usize];
+                let Some(_) = font
+                    .GetUnicodeRanges(Some(&mut unicode_ranges), &mut count)
+                    .log_err()
+                else {
+                    continue;
+                };
+                let target_family_name = HSTRING::from(family_name);
+                builder.AddMapping(
+                    &unicode_ranges,
+                    &[target_family_name.as_ptr()],
+                    None,
+                    None,
+                    None,
+                    1.0,
+                )?;
+            }
+            let system_fallbacks = self.components.factory.GetSystemFontFallback()?;
+            builder.AddMappings(&system_fallbacks)?;
+            Ok(Some(builder.CreateFontFallback()?))
+        }
+    }
+
     fn set_fallbacks(&mut self, fallbacks: Option<&[String]>, target_family: &str) -> Result<()> {
         unsafe {
             let fallbacks = if let Some(fallbacks) = fallbacks {
@@ -379,6 +435,7 @@ impl DirectWriteState {
         font_weight: FontWeight,
         font_style: FontStyle,
         font_features: &FontFeatures,
+        font_fallbacks: &FontFallbacks,
         is_system_font: bool,
     ) -> Option<FontId> {
         let collection = if is_system_font {
@@ -411,11 +468,16 @@ impl DirectWriteState {
             else {
                 continue;
             };
+            let fallbacks = self
+                .generate_font_fallbacks(font_fallbacks)
+                .log_err()
+                .unwrap_or_default();
+            println!("  -> font {}, {:#?}", family_name, fallbacks);
             let font_info = FontInfo {
                 font_family: family_name.to_owned(),
                 font_face,
                 features: direct_write_features,
-                fallbacks: None,
+                fallbacks,
                 is_system_font,
                 is_emoji,
             };
@@ -449,6 +511,7 @@ impl DirectWriteState {
                     target_font.weight,
                     target_font.style,
                     &target_font.features,
+                    &target_font.fallbacks,
                 )
                 .unwrap()
             } else {
@@ -457,6 +520,7 @@ impl DirectWriteState {
                     target_font.weight,
                     target_font.style,
                     &target_font.features,
+                    &target_font.fallbacks,
                 )
                 .unwrap_or_else(|| {
                     let family = self.system_ui_font_name.clone();
@@ -466,6 +530,7 @@ impl DirectWriteState {
                         target_font.weight,
                         target_font.style,
                         &target_font.features,
+                        &target_font.fallbacks,
                         true,
                     )
                     .unwrap()
@@ -480,16 +545,38 @@ impl DirectWriteState {
         weight: FontWeight,
         style: FontStyle,
         features: &FontFeatures,
+        fallbacks: &FontFallbacks,
     ) -> Option<FontId> {
         // try to find target font in custom font collection first
-        self.get_font_id_from_font_collection(family_name, weight, style, features, false)
-            .or_else(|| {
-                self.get_font_id_from_font_collection(family_name, weight, style, features, true)
-            })
-            .or_else(|| {
-                self.update_system_font_collection();
-                self.get_font_id_from_font_collection(family_name, weight, style, features, true)
-            })
+        self.get_font_id_from_font_collection(
+            family_name,
+            weight,
+            style,
+            features,
+            fallbacks,
+            false,
+        )
+        .or_else(|| {
+            self.get_font_id_from_font_collection(
+                family_name,
+                weight,
+                style,
+                features,
+                fallbacks,
+                true,
+            )
+        })
+        .or_else(|| {
+            self.update_system_font_collection();
+            self.get_font_id_from_font_collection(
+                family_name,
+                weight,
+                style,
+                features,
+                fallbacks,
+                true,
+            )
+        })
     }
 
     fn layout_line(
