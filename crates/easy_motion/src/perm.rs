@@ -22,32 +22,38 @@ impl<T> TrieNode<T> {
 }
 
 impl<T: Default> TrieNode<T> {
-    pub fn insert(&mut self, point: T) -> &mut Self {
+    pub fn insert(&mut self, val: T) -> &mut Self {
         match self {
-            Self::Leaf(old_point) => {
+            Self::Leaf(old_val) => {
                 *self = Self::Node(vec![
-                    TrieNode::Leaf(mem::take(old_point)),
-                    TrieNode::Leaf(point),
+                    TrieNode::Leaf(mem::take(old_val)),
+                    TrieNode::Leaf(val),
                 ]);
             }
             Self::Node(hash_map) => {
-                hash_map.push(TrieNode::Leaf(point));
+                hash_map.push(TrieNode::Leaf(val));
             }
         }
         self
     }
 }
 
+impl<T: Default> Default for TrieNode<T> {
+    fn default() -> Self {
+        TrieNode::Leaf(Default::default())
+    }
+}
+
 #[derive(Debug)]
-struct TrieBuilder {
+pub(crate) struct TrieBuilder {
     root: TrieNode<()>,
-    keys_len: usize,
+    keys: String,
 }
 
 impl TrieBuilder {
-    pub fn new(keys_len: usize, len: usize) -> Self {
+    pub fn new(keys: String, len: usize) -> Self {
         let root = TrieNode::Node(vec![TrieNode::Leaf(())]);
-        let mut builder = TrieBuilder { keys_len, root };
+        let mut builder = TrieBuilder { keys, root };
         let mut p = vec![0];
         // constructs the trie
         for _ in 1..len {
@@ -57,14 +63,27 @@ impl TrieBuilder {
         // replace the points with the actual points
     }
 
-    fn populate<T>(
-        self,
-        keys: String,
+    pub fn populate<T>(self, reverse: bool, iter: impl IntoIterator<Item = T>) -> Trie<T> {
+        let (node, _) = TrieBuilder::new_rec(self.root, reverse, iter.into_iter());
+        Trie {
+            keys: self.keys,
+            root: node,
+        }
+    }
+
+    pub fn populate_with<TItem, TFinal>(
+        mut self,
         reverse: bool,
-        iter: impl IntoIterator<Item = T>,
-    ) -> Trie<T> {
-        let (node, _) = TrieBuilder::new_rec(self.root, iter.into_iter(), reverse);
-        Trie { keys, root: node }
+        iter: impl IntoIterator<Item = TItem>,
+        func: impl Fn(&str, TItem) -> TFinal,
+    ) -> Trie<TFinal> {
+        let node = mem::take(&mut self.root);
+        let (node, _, _) =
+            self.new_rec_with(node, "".to_string(), reverse, iter.into_iter(), &func);
+        Trie {
+            keys: self.keys,
+            root: node,
+        }
     }
 
     fn next_perm(&mut self, pointer: Vec<usize>) -> Vec<usize> {
@@ -75,13 +94,13 @@ impl TrieBuilder {
     // i.e. aa ab b c -> a b ca cb
     fn new_rec<T>(
         node: TrieNode<()>,
-        mut iter: impl Iterator<Item = T>,
         reverse: bool,
+        mut iter: impl Iterator<Item = T>,
     ) -> (TrieNode<T>, impl Iterator<Item = T>) {
         let node = match node {
             TrieNode::Leaf(_) => {
-                let point = iter.next().unwrap();
-                TrieNode::Leaf(point)
+                let val = iter.next().unwrap();
+                TrieNode::Leaf(val)
             }
             TrieNode::Node(mut list) => {
                 let mut ret = Vec::<TrieNode<T>>::new();
@@ -91,7 +110,7 @@ impl TrieBuilder {
                     } else {
                         list.remove(0)
                     };
-                    let (new_child, new_iter) = TrieBuilder::new_rec(child, iter, reverse);
+                    let (new_child, new_iter) = TrieBuilder::new_rec(child, reverse, iter);
                     iter = new_iter;
                     ret.push(new_child);
                 }
@@ -101,8 +120,44 @@ impl TrieBuilder {
         (node, iter)
     }
 
+    fn new_rec_with<TItem, TFinal, TFunc: Fn(&str, TItem) -> TFinal>(
+        &self,
+        node: TrieNode<()>,
+        mut path: String,
+        reverse: bool,
+        mut iter: impl Iterator<Item = TItem>,
+        func: &TFunc,
+    ) -> (TrieNode<TFinal>, impl Iterator<Item = TItem>, String) {
+        let node = match node {
+            TrieNode::Leaf(_) => {
+                let val = iter.next().unwrap();
+                TrieNode::Leaf(func(&path, val))
+            }
+            TrieNode::Node(mut list) => {
+                let mut ret = Vec::<TrieNode<TFinal>>::new();
+                for i in 0..list.len() {
+                    let character = self.keys.chars().nth(i).unwrap();
+                    path.push(character);
+                    let child = if reverse {
+                        list.pop().unwrap()
+                    } else {
+                        list.remove(0)
+                    };
+                    let (new_child, new_iter, new_path) =
+                        self.new_rec_with(child, path, reverse, iter, func);
+                    iter = new_iter;
+                    ret.push(new_child);
+                    path = new_path;
+                    path.pop();
+                }
+                TrieNode::Node(ret)
+            }
+        };
+        (node, iter, path)
+    }
+
     fn next_perm_internal(&mut self, mut pointer: Vec<usize>) -> Vec<usize> {
-        let max_len = self.keys_len;
+        let max_len = self.keys.len();
         let len = pointer.len();
         let last_index = pointer.last().unwrap().clone();
         if last_index < max_len - 1 {
@@ -163,10 +218,8 @@ pub(crate) struct Trie<T> {
 }
 
 impl<T> Trie<T> {
-    pub fn new(keys: String, points: Vec<T>, reverse: bool) -> Self {
-        let builder = TrieBuilder::new(keys.len(), points.len());
-        builder.populate(keys, reverse, points)
-        // replace the points with the actual points
+    pub fn new_from_vec(keys: String, values: Vec<T>, reverse: bool) -> Self {
+        TrieBuilder::new(keys, values.len()).populate(reverse, values.into_iter())
     }
 
     #[allow(dead_code)]
@@ -189,7 +242,7 @@ impl<T> Trie<T> {
         func: &impl Fn(&str, &T),
     ) {
         match node {
-            TrieNode::Leaf(point) => func(path, point),
+            TrieNode::Leaf(val) => func(path, val),
             TrieNode::Node(list) => {
                 if reverse {
                     for (i, child) in list.into_iter().enumerate().rev() {
@@ -245,8 +298,8 @@ impl<T> Trie<T> {
         reverse: bool,
     ) {
         match node {
-            TrieNode::Leaf(point) => {
-                perms.push((path.clone(), &point));
+            TrieNode::Leaf(val) => {
+                perms.push((path.clone(), &val));
                 return;
             }
             TrieNode::Node(list) => {
@@ -295,7 +348,7 @@ impl<T> Trie<T> {
         };
         self.root = node;
         match &self.root {
-            TrieNode::Leaf(point) => TrimResult::Found(&point),
+            TrieNode::Leaf(val) => TrimResult::Found(&val),
             TrieNode::Node(_) => TrimResult::Changed,
         }
     }
@@ -333,8 +386,8 @@ impl<'a, T> Iterator for TrieIterator<'a, T> {
         let mut node = self.stack.pop();
         while node.is_some() {
             match node.unwrap() {
-                (TrieNode::Leaf(point), path) => {
-                    return Some((path, point));
+                (TrieNode::Leaf(val), path) => {
+                    return Some((path, val));
                 }
                 (TrieNode::Node(list), path) => {
                     let old_stack = mem::take(&mut self.stack);
@@ -384,19 +437,19 @@ mod tests {
 
     #[test]
     fn test_trie_perms() {
-        let trie = Trie::new("abc".to_string(), vec![0, 1, 2], false);
+        let trie = Trie::new_from_vec("abc".to_string(), vec![0, 1, 2], false);
         let expected = vec![("a", 0), ("b", 1), ("c", 2)];
         perms_helper(&trie, expected);
 
-        let trie = Trie::new("abc".to_string(), vec![0, 1, 2, 3], false);
+        let trie = Trie::new_from_vec("abc".to_string(), vec![0, 1, 2, 3], false);
         let expected = vec![("aa", 0), ("ab", 1), ("b", 2), ("c", 3)];
         perms_helper(&trie, expected);
 
-        let trie = Trie::new("abc".to_string(), vec![0, 1, 2, 3, 4], false);
+        let trie = Trie::new_from_vec("abc".to_string(), vec![0, 1, 2, 3, 4], false);
         let expected = vec![("aa", 0), ("ab", 1), ("ac", 2), ("b", 3), ("c", 4)];
         perms_helper(&trie, expected);
 
-        let trie = Trie::new("abc".to_string(), vec![0, 1, 2, 3, 4, 5, 6, 7, 8, 9], false);
+        let trie = Trie::new_from_vec("abc".to_string(), vec![0, 1, 2, 3, 4, 5, 6, 7, 8, 9], false);
         let expected = vec![
             ("aaa", 0),
             ("aab", 1),
@@ -411,7 +464,8 @@ mod tests {
         ];
         perms_helper(&trie, expected);
 
-        let mut trie = Trie::new("abc".to_string(), vec![0, 1, 2, 3, 4, 5, 6, 7, 8, 9], true);
+        let mut trie =
+            Trie::new_from_vec("abc".to_string(), vec![0, 1, 2, 3, 4, 5, 6, 7, 8, 9], true);
         let expected = vec![
             ("aa", 0),
             ("ab", 1),
@@ -463,19 +517,19 @@ mod tests {
 
     #[test]
     fn test_trie_iter() {
-        let trie = Trie::new("abc".to_string(), vec![0, 1, 2], false);
+        let trie = Trie::new_from_vec("abc".to_string(), vec![0, 1, 2], false);
         let expected = vec![("a", 0), ("b", 1), ("c", 2)];
         iter_helper(trie, expected);
 
-        let trie = Trie::new("abc".to_string(), vec![0, 1, 2, 3], false);
+        let trie = Trie::new_from_vec("abc".to_string(), vec![0, 1, 2, 3], false);
         let expected = vec![("aa", 0), ("ab", 1), ("b", 2), ("c", 3)];
         iter_helper(trie, expected);
 
-        let trie = Trie::new("abc".to_string(), vec![0, 1, 2, 3], true);
+        let trie = Trie::new_from_vec("abc".to_string(), vec![0, 1, 2, 3], true);
         let expected = vec![("a", 0), ("b", 1), ("ca", 2), ("cb", 3)];
         iter_helper(trie, expected);
 
-        let trie = Trie::new("abc".to_string(), vec![0, 1, 2, 3, 4, 5, 6, 7, 8, 9], true);
+        let trie = Trie::new_from_vec("abc".to_string(), vec![0, 1, 2, 3, 4, 5, 6, 7, 8, 9], true);
         let expected = vec![
             ("aa", 0),
             ("ab", 1),
@@ -489,5 +543,46 @@ mod tests {
             ("ccb", 9),
         ];
         iter_helper(trie, expected);
+    }
+
+    #[test]
+    fn test_populate_with() {
+        let keys = "abc".to_string();
+        let values = vec![0, 1, 2];
+        let builder = TrieBuilder::new(keys.clone(), values.len());
+        let trie = builder.populate_with(true, values.into_iter(), |path, val| {
+            (path.to_string(), val)
+        });
+        let perms = trie.trie_to_perms();
+        assert_eq!(
+            perms,
+            vec![
+                ("a".to_string(), &("a".to_string(), 0)),
+                ("b".to_string(), &("b".to_string(), 1)),
+                ("c".to_string(), &("c".to_string(), 2)),
+            ]
+        );
+
+        let values = vec![0, 1, 2, 3, 4, 5, 6, 7, 8, 9];
+        let builder = TrieBuilder::new(keys, values.len());
+        let trie = builder.populate_with(true, values.into_iter(), |path, val| {
+            (path.to_string(), val)
+        });
+        let perms = trie.trie_to_perms();
+        assert_eq!(
+            perms,
+            vec![
+                ("aa".to_string(), &("aa".to_string(), 0)),
+                ("ab".to_string(), &("ab".to_string(), 1)),
+                ("ac".to_string(), &("ac".to_string(), 2)),
+                ("ba".to_string(), &("ba".to_string(), 3)),
+                ("bb".to_string(), &("bb".to_string(), 4)),
+                ("bc".to_string(), &("bc".to_string(), 5)),
+                ("ca".to_string(), &("ca".to_string(), 6)),
+                ("cb".to_string(), &("cb".to_string(), 7)),
+                ("cca".to_string(), &("cca".to_string(), 8)),
+                ("ccb".to_string(), &("ccb".to_string(), 9)),
+            ]
+        );
     }
 }

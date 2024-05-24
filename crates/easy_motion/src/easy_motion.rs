@@ -1,4 +1,5 @@
 use collections::HashMap;
+use editor_state::{EditorState, OverlayState};
 use serde::Deserialize;
 use settings::Settings;
 use std::cmp::Ordering;
@@ -7,10 +8,10 @@ use theme::ThemeSettings;
 use editor::scroll::Autoscroll;
 use editor::{DisplayPoint, Editor};
 use gpui::{
-    actions, impl_actions, AppContext, EntityId, FocusableView, Global, HighlightStyle, KeyContext,
+    actions, impl_actions, AppContext, EntityId, FocusableView, Global, HighlightStyle,
     KeystrokeEvent, Subscription, View, ViewContext, WeakView,
 };
-use perm::{Trie, TrimResult};
+use perm::{Trie, TrieBuilder, TrimResult};
 use text::{Bias, SelectionGoal};
 use ui::{BorrowAppContext, WindowContext};
 use workspace::Workspace;
@@ -18,6 +19,7 @@ use workspace::Workspace;
 use crate::util::{manh_distance, window_bottom, window_top};
 
 mod editor_events;
+mod editor_state;
 mod perm;
 mod util;
 
@@ -55,12 +57,6 @@ struct FullWord(Direction);
 impl_actions!(easy_motion, [NChar, Pattern, Word, SubWord, FullWord]);
 
 actions!(easy_motion, [Cancel]);
-
-#[derive(Debug, Default)]
-pub(crate) struct EditorState {
-    pub control: bool,
-    current_trie: Option<Trie<DisplayPoint>>,
-}
 
 #[derive(Default)]
 pub struct EasyMotion {
@@ -259,7 +255,22 @@ impl EasyMotion {
                     Ordering::Greater
                 }
             });
-            let trie = Trie::new("asdghklqwertyuiopzxcvbnmfj".to_string(), word_starts, true);
+
+            let settings = ThemeSettings::get_global(cx);
+            let players = &settings.active_theme.players().0;
+            let color_0 = players[0].cursor;
+            let color_1 = players[2].cursor;
+            let color_2 = players[3].cursor;
+            let trie =
+                TrieBuilder::new("asdghklqwertyuiopzxcvbnmfj".to_string(), word_starts.len())
+                    .populate_with(true, word_starts.into_iter(), |seq, point| {
+                        let color = match seq.len() {
+                            0 | 1 => color_0,
+                            2 => color_1,
+                            3.. => color_2,
+                        };
+                        OverlayState { color, point }
+                    });
             EasyMotion::add_overlays(editor, &trie, cx);
 
             easy.insert_state(EditorState {
@@ -343,24 +354,14 @@ impl EasyMotion {
         });
     }
 
-    fn add_overlays(editor: &mut Editor, trie: &Trie<DisplayPoint>, cx: &mut ViewContext<Editor>) {
+    fn add_overlays(editor: &mut Editor, trie: &Trie<OverlayState>, cx: &mut ViewContext<Editor>) {
         let settings = ThemeSettings::get_global(cx);
-        let players = &settings.active_theme.players().0;
-        let color_0 = players[0].cursor;
-        let color_1 = players[2].cursor;
-        let color_2 = players[3].cursor;
         let background = settings.active_theme.colors().background;
-        for (seq, point) in trie.iter() {
-            let color = match seq.len() {
-                0 | 1 => color_0,
-                2 => color_1,
-                3.. => color_2,
-            };
-
+        for (seq, overlay) in trie.iter() {
             let mut highlights = vec![(
                 0..1,
                 HighlightStyle {
-                    color: Some(color),
+                    color: Some(overlay.color),
                     background_color: Some(background),
                     ..Default::default()
                 },
@@ -369,59 +370,14 @@ impl EasyMotion {
                 highlights.push((
                     1..seq.len(),
                     HighlightStyle {
-                        color: Some(color),
+                        color: Some(overlay.color),
                         background_color: Some(background),
                         fade_out: Some(0.3),
                         ..Default::default()
                     },
                 ));
             }
-            editor.add_overlay(seq.to_string(), point.clone(), highlights, cx);
-        }
-    }
-}
-
-impl EditorState {
-    #[allow(dead_code)]
-    fn trie(&self) -> Option<&Trie<DisplayPoint>> {
-        self.current_trie.as_ref()
-    }
-
-    fn easy_motion_controlled(&self) -> bool {
-        return self.control;
-    }
-
-    fn keymap_context_layer(&self) -> KeyContext {
-        let mut context = KeyContext::new_with_defaults();
-        if self.easy_motion_controlled() {
-            context.add("EasyMotionControlled");
-            context.add("menu");
-        }
-        return context;
-    }
-
-    fn record_char(&mut self, character: char) -> TrimResult<&DisplayPoint> {
-        let Some(trie) = &mut self.current_trie else {
-            return TrimResult::Err;
-        };
-        trie.trim(character)
-    }
-
-    fn record_str(&mut self, characters: &str) -> TrimResult<DisplayPoint> {
-        let mut changed = false;
-        for character in characters.chars() {
-            let ret = self.record_char(character);
-            match ret {
-                TrimResult::NoChange => {}
-                TrimResult::Changed => changed = true,
-                TrimResult::Found(point) => return TrimResult::Found(point.clone()),
-                TrimResult::Err => return TrimResult::Err,
-            };
-        }
-        if changed {
-            TrimResult::Changed
-        } else {
-            TrimResult::NoChange
+            editor.add_overlay(seq.to_string(), overlay.point.clone(), highlights, cx);
         }
     }
 }
