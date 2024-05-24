@@ -732,7 +732,7 @@ mod tests {
             assert_eq!(rendered.text, "some basic docs".to_string())
         });
 
-        // check that the completion menu is still visable and that there still has only been 1 completion request
+        // check that the completion menu is still visible and that there still has only been 1 completion request
         cx.editor(|editor, _| assert!(editor.context_menu_visible()));
         assert_eq!(counter.load(atomic::Ordering::Acquire), 1);
 
