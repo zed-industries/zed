@@ -72,6 +72,9 @@ Zed has basic support for both modes. The mode is selected at runtime. If you're
 
 ## Flatpak
 
+> [!WARNING]
+> Zed's current Flatpak integration simply exits the sandbox on startup. Workflows that rely on flatpak's sandboxing may not work as expected. 
+
 To build & install the flatpak package locally follow the steps below:
 
 1. Install flatpak for your distribution as outlined [here](https://flathub.org/setup).
