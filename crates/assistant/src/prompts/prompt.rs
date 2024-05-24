@@ -58,7 +58,7 @@ impl StaticPromptFrontmatter {
     // }
 }
 
-/// A statuc prompt that can be loaded into the prompt library
+/// A static prompt that can be loaded into the prompt library
 /// from Markdown with a frontmatter header
 ///
 /// Examples:
