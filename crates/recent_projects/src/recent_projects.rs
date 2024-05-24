@@ -815,7 +815,7 @@ mod tests {
         cx.dispatch_action(
             (*workspace).into(),
             OpenRecent {
-                create_new_window: false,
+                create_new_window: true,
             },
         );
         workspace

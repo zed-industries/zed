@@ -473,7 +473,7 @@ impl CollabTitlebarItem {
                 Tooltip::for_action(
                     "Recent Projects",
                     &recent_projects::OpenRecent {
-                        create_new_window: false,
+                        create_new_window: true,
                     },
                     cx,
                 )
@@ -481,7 +481,7 @@ impl CollabTitlebarItem {
             .on_click(cx.listener(move |_, _, cx| {
                 if let Some(workspace) = workspace.upgrade() {
                     workspace.update(cx, |workspace, cx| {
-                        RecentProjects::open(workspace, false, cx);
+                        RecentProjects::open(workspace, true, cx);
                     })
                 }
             }))
