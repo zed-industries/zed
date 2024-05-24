@@ -9566,6 +9566,20 @@ impl Editor {
         }
     }
 
+    pub fn resize_blocks(
+        &mut self,
+        heights_and_renderers: HashMap<BlockId, (u8, RenderBlock)>,
+        autoscroll: Option<Autoscroll>,
+        cx: &mut ViewContext<Self>,
+    ) {
+        self.display_map.update(cx, |display_map, cx| {
+            display_map.resize_blocks(heights_and_renderers, cx)
+        });
+        if let Some(autoscroll) = autoscroll {
+            self.request_autoscroll(autoscroll, cx);
+        }
+    }
+
     pub fn insert_flaps(
         &mut self,
         flaps: impl IntoIterator<Item = Flap>,

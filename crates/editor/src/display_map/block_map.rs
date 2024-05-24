@@ -1232,8 +1232,8 @@ mod tests {
         assert_eq!(snapshot.text(), "aaa\n\nb!!!\n\n\nbb\nccc\nddd\n\n\n");
     }
 
-    /// Write some tests on the unhappy path
-    /// Write randomization tests
+    /// TODO: Write some tests on the unhappy path
+    /// TODO: Write randomization tests
 
     #[gpui::test]
     fn test_resize(cx: &mut gpui::TestAppContext) {

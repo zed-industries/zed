@@ -286,6 +286,24 @@ impl DisplayMap {
         block_map.remove(ids);
     }
 
+    pub fn resize_blocks(
+        &mut self,
+        heights_and_renderers: HashMap<BlockId, (u8, RenderBlock)>,
+        cx: &mut ModelContext<Self>,
+    ) {
+        let snapshot = self.buffer.read(cx).snapshot(cx);
+        let edits = self.buffer_subscription.consume().into_inner();
+        let tab_size = Self::tab_size(&self.buffer, cx);
+        let (snapshot, edits) = self.inlay_map.sync(snapshot, edits);
+        let (snapshot, edits) = self.fold_map.read(snapshot, edits);
+        let (snapshot, edits) = self.tab_map.sync(snapshot, edits, tab_size);
+        let (snapshot, edits) = self
+            .wrap_map
+            .update(cx, |map, cx| map.sync(snapshot, edits, cx));
+        let mut block_map = self.block_map.write(snapshot, edits);
+        block_map.resize(heights_and_renderers);
+    }
+
     pub fn highlight_text(
         &mut self,
         type_id: TypeId,
