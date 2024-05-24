@@ -540,8 +540,8 @@ mod tests {
 
     use editor::Editor;
     use gpui::{TestAppContext, VisualTestContext};
-    use language::{ContextProviderWithTasks, Language, LanguageConfig, LanguageMatcher, Point};
-    use project::{FakeFs, Project};
+    use language::{Language, LanguageConfig, LanguageMatcher, Point};
+    use project::{ContextProviderWithTasks, FakeFs, Project};
     use serde_json::json;
     use task::TaskTemplates;
     use workspace::CloseInactiveTabsAndPanes;

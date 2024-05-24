@@ -116,7 +116,7 @@ async fn test_absolute_paths(cx: &mut TestAppContext) {
         .await;
     picker.update(cx, |picker, _| {
         assert_eq!(
-            collect_search_matches(picker).search_only(),
+            collect_search_matches(picker).search_paths_only(),
             vec![PathBuf::from("a/b/file2.txt")],
             "Matching abs path should be the only match"
         )
@@ -138,7 +138,7 @@ async fn test_absolute_paths(cx: &mut TestAppContext) {
         .await;
     picker.update(cx, |picker, _| {
         assert_eq!(
-            collect_search_matches(picker).search_only(),
+            collect_search_matches(picker).search_paths_only(),
             Vec::<PathBuf>::new(),
             "Mismatching abs path should produce no matches"
         )
@@ -171,7 +171,7 @@ async fn test_complex_path(cx: &mut TestAppContext) {
     picker.update(cx, |picker, _| {
         assert_eq!(picker.delegate.matches.len(), 1);
         assert_eq!(
-            collect_search_matches(picker).search_only(),
+            collect_search_matches(picker).search_paths_only(),
             vec![PathBuf::from("其他/S数据表格/task.xlsx")],
         )
     });
@@ -369,12 +369,8 @@ async fn test_matching_cancellation(cx: &mut TestAppContext) {
     });
 
     picker.update(cx, |picker, cx| {
+        let matches = collect_search_matches(picker).search_matches_only();
         let delegate = &mut picker.delegate;
-        assert!(
-            delegate.matches.history.is_empty(),
-            "Search matches expected"
-        );
-        let matches = delegate.matches.search.clone();
 
         // Simulate a search being cancelled after the time limit,
         // returning only a subset of the matches that would have been found.
@@ -383,7 +379,10 @@ async fn test_matching_cancellation(cx: &mut TestAppContext) {
             delegate.latest_search_id,
             true, // did-cancel
             query.clone(),
-            vec![matches[1].clone(), matches[3].clone()],
+            vec![
+                ProjectPanelOrdMatch(matches[1].clone()),
+                ProjectPanelOrdMatch(matches[3].clone()),
+            ],
             cx,
         );
 
@@ -393,15 +392,20 @@ async fn test_matching_cancellation(cx: &mut TestAppContext) {
             delegate.latest_search_id,
             true, // did-cancel
             query.clone(),
-            vec![matches[0].clone(), matches[2].clone(), matches[3].clone()],
+            vec![
+                ProjectPanelOrdMatch(matches[0].clone()),
+                ProjectPanelOrdMatch(matches[2].clone()),
+                ProjectPanelOrdMatch(matches[3].clone()),
+            ],
             cx,
         );
 
-        assert!(
-            delegate.matches.history.is_empty(),
-            "Search matches expected"
+        assert_eq!(
+            collect_search_matches(picker)
+                .search_matches_only()
+                .as_slice(),
+            &matches[0..4]
         );
-        assert_eq!(delegate.matches.search.as_slice(), &matches[0..4]);
     });
 }
 
@@ -480,15 +484,11 @@ async fn test_single_file_worktrees(cx: &mut TestAppContext) {
     cx.read(|cx| {
         let picker = picker.read(cx);
         let delegate = &picker.delegate;
-        assert!(
-            delegate.matches.history.is_empty(),
-            "Search matches expected"
-        );
-        let matches = delegate.matches.search.clone();
+        let matches = collect_search_matches(picker).search_matches_only();
         assert_eq!(matches.len(), 1);
 
         let (file_name, file_name_positions, full_path, full_path_positions) =
-            delegate.labels_for_path_match(&matches[0].0);
+            delegate.labels_for_path_match(&matches[0]);
         assert_eq!(file_name, "the-file");
         assert_eq!(file_name_positions, &[0, 1, 4]);
         assert_eq!(full_path, "");
@@ -552,15 +552,10 @@ async fn test_path_distance_ordering(cx: &mut TestAppContext) {
         })
         .await;
 
-    finder.update(cx, |f, _| {
-        let delegate = &f.delegate;
-        assert!(
-            delegate.matches.history.is_empty(),
-            "Search matches expected"
-        );
-        let matches = &delegate.matches.search;
-        assert_eq!(matches[0].0.path.as_ref(), Path::new("dir2/a.txt"));
-        assert_eq!(matches[1].0.path.as_ref(), Path::new("dir1/a.txt"));
+    finder.update(cx, |picker, _| {
+        let matches = collect_search_matches(picker).search_paths_only();
+        assert_eq!(matches[0].as_path(), Path::new("dir2/a.txt"));
+        assert_eq!(matches[1].as_path(), Path::new("dir1/a.txt"));
     });
 }
 
@@ -877,7 +872,7 @@ async fn test_toggle_panel_new_selections(cx: &mut gpui::TestAppContext) {
     let current_history = open_close_queried_buffer("sec", 1, "second.rs", &workspace, cx).await;
 
     for expected_selected_index in 0..current_history.len() {
-        cx.dispatch_action(Toggle);
+        cx.dispatch_action(Toggle::default());
         let picker = active_file_picker(&workspace, cx);
         let selected_index = picker.update(cx, |picker, _| picker.delegate.selected_index());
         assert_eq!(
@@ -886,7 +881,7 @@ async fn test_toggle_panel_new_selections(cx: &mut gpui::TestAppContext) {
         );
     }
 
-    cx.dispatch_action(Toggle);
+    cx.dispatch_action(Toggle::default());
     let selected_index = workspace.update(cx, |workspace, cx| {
         workspace
             .active_modal::<FileFinder>(cx)
@@ -945,20 +940,19 @@ async fn test_search_preserves_history_items(cx: &mut gpui::TestAppContext) {
             finder.delegate.update_matches(first_query.to_string(), cx)
         })
         .await;
-    finder.update(cx, |finder, _| {
-            let delegate = &finder.delegate;
-            assert_eq!(delegate.matches.history.len(), 1, "Only one history item contains {first_query}, it should be present and others should be filtered out");
-            let history_match = delegate.matches.history.first().unwrap();
-            assert!(history_match.1.is_some(), "Should have path matches for history items after querying");
-            assert_eq!(history_match.0, FoundPath::new(
+    finder.update(cx, |picker, _| {
+            let matches = collect_search_matches(picker);
+            assert_eq!(matches.history.len(), 1, "Only one history item contains {first_query}, it should be present and others should be filtered out");
+            let history_match = matches.history_found_paths.first().expect("Should have path matches for history items after querying");
+            assert_eq!(history_match, &FoundPath::new(
                 ProjectPath {
                     worktree_id,
                     path: Arc::from(Path::new("test/first.rs")),
                 },
                 Some(PathBuf::from("/src/test/first.rs"))
             ));
-            assert_eq!(delegate.matches.search.len(), 1, "Only one non-history item contains {first_query}, it should be present");
-            assert_eq!(delegate.matches.search.first().unwrap().0.path.as_ref(), Path::new("test/fourth.rs"));
+            assert_eq!(matches.search.len(), 1, "Only one non-history item contains {first_query}, it should be present");
+            assert_eq!(matches.search.first().unwrap(), Path::new("test/fourth.rs"));
         });
 
     let second_query = "fsdasdsa";
@@ -968,14 +962,11 @@ async fn test_search_preserves_history_items(cx: &mut gpui::TestAppContext) {
             finder.delegate.update_matches(second_query.to_string(), cx)
         })
         .await;
-    finder.update(cx, |finder, _| {
-        let delegate = &finder.delegate;
+    finder.update(cx, |picker, _| {
         assert!(
-            delegate.matches.history.is_empty(),
-            "No history entries should match {second_query}"
-        );
-        assert!(
-            delegate.matches.search.is_empty(),
+            collect_search_matches(picker)
+                .search_paths_only()
+                .is_empty(),
             "No search entries should match {second_query}"
         );
     });
@@ -990,20 +981,19 @@ async fn test_search_preserves_history_items(cx: &mut gpui::TestAppContext) {
                 .update_matches(first_query_again.to_string(), cx)
         })
         .await;
-    finder.update(cx, |finder, _| {
-            let delegate = &finder.delegate;
-            assert_eq!(delegate.matches.history.len(), 1, "Only one history item contains {first_query_again}, it should be present and others should be filtered out, even after non-matching query");
-            let history_match = delegate.matches.history.first().unwrap();
-            assert!(history_match.1.is_some(), "Should have path matches for history items after querying");
-            assert_eq!(history_match.0, FoundPath::new(
+    finder.update(cx, |picker, _| {
+            let matches = collect_search_matches(picker);
+            assert_eq!(matches.history.len(), 1, "Only one history item contains {first_query_again}, it should be present and others should be filtered out, even after non-matching query");
+            let history_match = matches.history_found_paths.first().expect("Should have path matches for history items after querying");
+            assert_eq!(history_match, &FoundPath::new(
                 ProjectPath {
                     worktree_id,
                     path: Arc::from(Path::new("test/first.rs")),
                 },
                 Some(PathBuf::from("/src/test/first.rs"))
             ));
-            assert_eq!(delegate.matches.search.len(), 1, "Only one non-history item contains {first_query_again}, it should be present, even after non-matching query");
-            assert_eq!(delegate.matches.search.first().unwrap().0.path.as_ref(), Path::new("test/fourth.rs"));
+            assert_eq!(matches.search.len(), 1, "Only one non-history item contains {first_query_again}, it should be present, even after non-matching query");
+            assert_eq!(matches.search.first().unwrap(), Path::new("test/fourth.rs"));
         });
 }
 
@@ -1139,6 +1129,9 @@ async fn test_keep_opened_file_on_top_of_search_results_and_select_next_one(
         assert_eq!(finder.delegate.matches.len(), 5);
         assert_match_at_position(finder, 0, "main.rs");
         assert_match_selection(finder, 1, "bar.rs");
+        assert_match_at_position(finder, 2, "lib.rs");
+        assert_match_at_position(finder, 3, "moo.rs");
+        assert_match_at_position(finder, 4, "maaa.rs");
     });
 
     // main.rs is not among matches, select top item
@@ -1150,6 +1143,7 @@ async fn test_keep_opened_file_on_top_of_search_results_and_select_next_one(
     picker.update(cx, |finder, _| {
         assert_eq!(finder.delegate.matches.len(), 2);
         assert_match_at_position(finder, 0, "bar.rs");
+        assert_match_at_position(finder, 1, "lib.rs");
     });
 
     // main.rs is back, put it on top and select next item
@@ -1162,6 +1156,7 @@ async fn test_keep_opened_file_on_top_of_search_results_and_select_next_one(
         assert_eq!(finder.delegate.matches.len(), 3);
         assert_match_at_position(finder, 0, "main.rs");
         assert_match_selection(finder, 1, "moo.rs");
+        assert_match_at_position(finder, 2, "maaa.rs");
     });
 
     // get back to the initial state
@@ -1174,6 +1169,99 @@ async fn test_keep_opened_file_on_top_of_search_results_and_select_next_one(
         assert_eq!(finder.delegate.matches.len(), 3);
         assert_match_selection(finder, 0, "main.rs");
         assert_match_at_position(finder, 1, "lib.rs");
+        assert_match_at_position(finder, 2, "bar.rs");
+    });
+}
+
+#[gpui::test]
+async fn test_non_separate_history_items(cx: &mut TestAppContext) {
+    let app_state = init_test(cx);
+
+    app_state
+        .fs
+        .as_fake()
+        .insert_tree(
+            "/src",
+            json!({
+                "test": {
+                    "bar.rs": "// Bar file",
+                    "lib.rs": "// Lib file",
+                    "maaa.rs": "// Maaaaaaa",
+                    "main.rs": "// Main file",
+                    "moo.rs": "// Moooooo",
+                }
+            }),
+        )
+        .await;
+
+    let project = Project::test(app_state.fs.clone(), ["/src".as_ref()], cx).await;
+    let (workspace, cx) = cx.add_window_view(|cx| Workspace::test_new(project, cx));
+
+    open_close_queried_buffer("bar", 1, "bar.rs", &workspace, cx).await;
+    open_close_queried_buffer("lib", 1, "lib.rs", &workspace, cx).await;
+    open_queried_buffer("main", 1, "main.rs", &workspace, cx).await;
+
+    cx.dispatch_action(Toggle::default());
+    let picker = active_file_picker(&workspace, cx);
+    // main.rs is on top, previously used is selected
+    picker.update(cx, |finder, _| {
+        assert_eq!(finder.delegate.matches.len(), 3);
+        assert_match_selection(finder, 0, "main.rs");
+        assert_match_at_position(finder, 1, "lib.rs");
+        assert_match_at_position(finder, 2, "bar.rs");
+    });
+
+    // all files match, main.rs is still on top, but the second item is selected
+    picker
+        .update(cx, |finder, cx| {
+            finder.delegate.update_matches(".rs".to_string(), cx)
+        })
+        .await;
+    picker.update(cx, |finder, _| {
+        assert_eq!(finder.delegate.matches.len(), 5);
+        assert_match_at_position(finder, 0, "main.rs");
+        assert_match_selection(finder, 1, "moo.rs");
+        assert_match_at_position(finder, 2, "bar.rs");
+        assert_match_at_position(finder, 3, "lib.rs");
+        assert_match_at_position(finder, 4, "maaa.rs");
+    });
+
+    // main.rs is not among matches, select top item
+    picker
+        .update(cx, |finder, cx| {
+            finder.delegate.update_matches("b".to_string(), cx)
+        })
+        .await;
+    picker.update(cx, |finder, _| {
+        assert_eq!(finder.delegate.matches.len(), 2);
+        assert_match_at_position(finder, 0, "bar.rs");
+        assert_match_at_position(finder, 1, "lib.rs");
+    });
+
+    // main.rs is back, put it on top and select next item
+    picker
+        .update(cx, |finder, cx| {
+            finder.delegate.update_matches("m".to_string(), cx)
+        })
+        .await;
+    picker.update(cx, |finder, _| {
+        assert_eq!(finder.delegate.matches.len(), 3);
+        assert_match_at_position(finder, 0, "main.rs");
+        assert_match_selection(finder, 1, "moo.rs");
+        assert_match_at_position(finder, 2, "maaa.rs");
+    });
+
+    // get back to the initial state
+    picker
+        .update(cx, |finder, cx| {
+            finder.delegate.update_matches("".to_string(), cx)
+        })
+        .await;
+    picker.update(cx, |finder, _| {
+        assert_eq!(finder.delegate.matches.len(), 3);
+        assert_match_selection(finder, 0, "main.rs");
+        assert_match_at_position(finder, 1, "lib.rs");
+        assert_match_at_position(finder, 2, "bar.rs");
     });
 }
 
@@ -1266,19 +1354,8 @@ async fn test_history_items_vs_very_good_external_match(cx: &mut gpui::TestAppCo
     let finder = open_file_picker(&workspace, cx);
     let query = "collab_ui";
     cx.simulate_input(query);
-    finder.update(cx, |finder, _| {
-            let delegate = &finder.delegate;
-            assert!(
-                delegate.matches.history.is_empty(),
-                "History items should not math query {query}, they should be matched by name only"
-            );
-
-            let search_entries = delegate
-                .matches
-                .search
-                .iter()
-                .map(|path_match| path_match.0.path.to_path_buf())
-                .collect::<Vec<_>>();
+    finder.update(cx, |picker, _| {
+            let search_entries = collect_search_matches(picker).search_paths_only();
             assert_eq!(
                 search_entries,
                 vec![
@@ -1321,15 +1398,9 @@ async fn test_nonexistent_history_items_not_shown(cx: &mut gpui::TestAppContext)
     let picker = open_file_picker(&workspace, cx);
     cx.simulate_input("rs");
 
-    picker.update(cx, |finder, _| {
-            let history_entries = finder.delegate
-                .matches
-                .history
-                .iter()
-                .map(|(_, path_match)| path_match.as_ref().expect("should have a path match").0.path.to_path_buf())
-                .collect::<Vec<_>>();
+    picker.update(cx, |picker, _| {
             assert_eq!(
-                history_entries,
+                collect_search_matches(picker).history,
                 vec![
                     PathBuf::from("test/first.rs"),
                     PathBuf::from("test/third.rs"),
@@ -1582,7 +1653,7 @@ async fn test_switches_between_release_norelease_modes_on_forward_nav(
     // Back to navigation with initial shortcut
     // Open file on modifiers release
     cx.simulate_modifiers_change(Modifiers::secondary_key());
-    cx.dispatch_action(Toggle);
+    cx.dispatch_action(Toggle::default());
     cx.simulate_modifiers_change(Modifiers::none());
     cx.read(|cx| {
         let active_editor = workspace.read(cx).active_item_as::<Editor>(cx).unwrap();
@@ -1776,7 +1847,9 @@ fn open_file_picker(
     workspace: &View<Workspace>,
     cx: &mut VisualTestContext,
 ) -> View<Picker<FileFinderDelegate>> {
-    cx.dispatch_action(Toggle);
+    cx.dispatch_action(Toggle {
+        separate_history: true,
+    });
     active_file_picker(workspace, cx)
 }
 
@@ -1795,15 +1868,17 @@ fn active_file_picker(
     })
 }
 
-#[derive(Debug)]
+#[derive(Debug, Default)]
 struct SearchEntries {
     history: Vec<PathBuf>,
+    history_found_paths: Vec<FoundPath>,
     search: Vec<PathBuf>,
+    search_matches: Vec<PathMatch>,
 }
 
 impl SearchEntries {
     #[track_caller]
-    fn search_only(self) -> Vec<PathBuf> {
+    fn search_paths_only(self) -> Vec<PathBuf> {
         assert!(
             self.history.is_empty(),
             "Should have no history matches, but got: {:?}",
@@ -1811,35 +1886,50 @@ impl SearchEntries {
         );
         self.search
     }
+
+    #[track_caller]
+    fn search_matches_only(self) -> Vec<PathMatch> {
+        assert!(
+            self.history.is_empty(),
+            "Should have no history matches, but got: {:?}",
+            self.history
+        );
+        self.search_matches
+    }
 }
 
 fn collect_search_matches(picker: &Picker<FileFinderDelegate>) -> SearchEntries {
-    let matches = &picker.delegate.matches;
-    SearchEntries {
-        history: matches
-            .history
-            .iter()
-            .map(|(history_path, path_match)| {
-                path_match
-                    .as_ref()
-                    .map(|path_match| {
-                        Path::new(path_match.0.path_prefix.as_ref()).join(&path_match.0.path)
-                    })
-                    .unwrap_or_else(|| {
-                        history_path
-                            .absolute
-                            .as_deref()
-                            .unwrap_or_else(|| &history_path.project.path)
-                            .to_path_buf()
-                    })
-            })
-            .collect(),
-        search: matches
-            .search
-            .iter()
-            .map(|path_match| Path::new(path_match.0.path_prefix.as_ref()).join(&path_match.0.path))
-            .collect(),
+    let mut search_entries = SearchEntries::default();
+    for m in &picker.delegate.matches.matches {
+        match m {
+            Match::History(history_path, path_match) => {
+                search_entries.history.push(
+                    path_match
+                        .as_ref()
+                        .map(|path_match| {
+                            Path::new(path_match.0.path_prefix.as_ref()).join(&path_match.0.path)
+                        })
+                        .unwrap_or_else(|| {
+                            history_path
+                                .absolute
+                                .as_deref()
+                                .unwrap_or_else(|| &history_path.project.path)
+                                .to_path_buf()
+                        }),
+                );
+                search_entries
+                    .history_found_paths
+                    .push(history_path.clone());
+            }
+            Match::Search(path_match) => {
+                search_entries
+                    .search
+                    .push(Path::new(path_match.0.path_prefix.as_ref()).join(&path_match.0.path));
+                search_entries.search_matches.push(path_match.0.clone());
+            }
+        }
     }
+    search_entries
 }
 
 #[track_caller]

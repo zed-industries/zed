@@ -3,16 +3,13 @@ use client::DevServerProjectId;
 use client::{user::UserStore, Client, ClientSettings};
 use fs::Fs;
 use futures::Future;
-use gpui::{
-    AppContext, AsyncAppContext, Context, Global, Model, ModelContext, Task, UpdateGlobal,
-    WeakModel,
-};
+use gpui::{AppContext, AsyncAppContext, Context, Global, Model, ModelContext, Task, WeakModel};
 use language::LanguageRegistry;
 use node_runtime::NodeRuntime;
 use postage::stream::Stream;
-use project::{Project, WorktreeSettings};
+use project::Project;
 use rpc::{proto, ErrorCode, TypedEnvelope};
-use settings::{Settings, SettingsStore};
+use settings::Settings;
 use std::{collections::HashMap, sync::Arc};
 use util::{ResultExt, TryFutureExt};
 
@@ -39,15 +36,6 @@ impl Global for GlobalDevServer {}
 pub fn init(client: Arc<Client>, app_state: AppState, cx: &mut AppContext) -> Task<Result<()>> {
     let dev_server = cx.new_model(|cx| DevServer::new(client.clone(), app_state, cx));
     cx.set_global(GlobalDevServer(dev_server.clone()));
-
-    // Dev server cannot have any private files for now
-    SettingsStore::update_global(cx, |store, _cx| {
-        let old_settings = store.get::<WorktreeSettings>(None);
-        store.override_global(WorktreeSettings {
-            private_files: Some(vec![]),
-            ..old_settings.clone()
-        });
-    });
 
     #[cfg(not(target_os = "windows"))]
     {
@@ -116,7 +104,10 @@ impl DevServer {
         let request = if self.remote_shutdown {
             None
         } else {
-            Some(self.client.request(proto::ShutdownDevServer {}))
+            Some(
+                self.client
+                    .request(proto::ShutdownDevServer { reason: None }),
+            )
         };
         async move {
             if let Some(request) = request {
@@ -229,11 +220,15 @@ impl DevServer {
 
         let path = shellexpand::tilde(&dev_server_project.path).to_string();
 
-        project
+        let (worktree, _) = project
             .update(cx, |project, cx| {
                 project.find_or_create_local_worktree(&path, true, cx)
             })?
             .await?;
+
+        worktree.update(cx, |worktree, cx| {
+            worktree.as_local_mut().unwrap().share_private_files(cx)
+        })?;
 
         let worktrees =
             project.read_with(cx, |project, cx| project.worktree_metadata_protos(cx))?;

@@ -1,6 +1,6 @@
 use gpui::{AnyView, DefiniteLength};
 
-use crate::{prelude::*, IconPosition, KeyBinding, Spacing};
+use crate::{prelude::*, ElevationIndex, IconPosition, KeyBinding, Spacing};
 use crate::{
     ButtonCommon, ButtonLike, ButtonSize, ButtonStyle, IconName, IconSize, Label, LineHeightStyle,
 };
@@ -338,6 +338,11 @@ impl ButtonCommon for Button {
     /// This will create a button with a tooltip that displays "This is a tooltip" when hovered over.
     fn tooltip(mut self, tooltip: impl Fn(&mut WindowContext) -> AnyView + 'static) -> Self {
         self.base = self.base.tooltip(tooltip);
+        self
+    }
+
+    fn layer(mut self, elevation: ElevationIndex) -> Self {
+        self.base = self.base.layer(elevation);
         self
     }
 }

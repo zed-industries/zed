@@ -55,9 +55,9 @@ use language::{
 use log::error;
 use lsp::{
     DiagnosticSeverity, DiagnosticTag, DidChangeWatchedFilesRegistrationOptions,
-    DocumentHighlightKind, LanguageServer, LanguageServerBinary, LanguageServerId,
-    LspRequestFuture, MessageActionItem, OneOf, ServerCapabilities, ServerHealthStatus,
-    ServerStatus,
+    DocumentHighlightKind, Edit, FileSystemWatcher, LanguageServer, LanguageServerBinary,
+    LanguageServerId, LspRequestFuture, MessageActionItem, OneOf, ServerCapabilities,
+    ServerHealthStatus, ServerStatus, TextEdit,
 };
 use lsp_command::*;
 use node_runtime::NodeRuntime;
@@ -67,6 +67,7 @@ use prettier_support::{DefaultPrettier, PrettierInstance};
 use project_settings::{LspSettings, ProjectSettings};
 use rand::prelude::*;
 use search_history::SearchHistory;
+use snippet::Snippet;
 use worktree::LocalSnapshot;
 
 use http::{HttpClient, Url};
@@ -112,7 +113,9 @@ pub use fs::*;
 pub use language::Location;
 #[cfg(any(test, feature = "test-support"))]
 pub use prettier::FORMAT_SUFFIX as TEST_PRETTIER_FORMAT_SUFFIX;
-pub use task_inventory::{Inventory, TaskSourceKind};
+pub use task_inventory::{
+    BasicContextProvider, ContextProviderWithTasks, Inventory, TaskSourceKind,
+};
 pub use worktree::{
     DiagnosticSummary, Entry, EntryKind, File, LocalWorktree, PathChange, ProjectEntryId,
     RepositoryEntry, UpdatedEntriesSet, UpdatedGitRepositoriesSet, Worktree, WorktreeId,
@@ -152,6 +155,7 @@ pub enum OpenedBufferEvent {
 /// Can be either local (for the project opened on the same host) or remote.(for collab projects, browsed by multiple remote users).
 pub struct Project {
     worktrees: Vec<WorktreeHandle>,
+    worktrees_reordered: bool,
     active_entry: Option<ProjectEntryId>,
     buffer_ordered_messages_tx: mpsc::UnboundedSender<BufferOrderedMessage>,
     pending_language_server_update: Option<BufferOrderedMessage>,
@@ -166,6 +170,8 @@ pub struct Project {
     last_formatting_failure: Option<String>,
     last_workspace_edits_by_language_server: HashMap<LanguageServerId, ProjectTransaction>,
     language_server_watched_paths: HashMap<LanguageServerId, HashMap<WorktreeId, GlobSet>>,
+    language_server_watcher_registrations:
+        HashMap<LanguageServerId, HashMap<String, Vec<FileSystemWatcher>>>,
     client: Arc<client::Client>,
     next_entry_id: Arc<AtomicUsize>,
     join_project_response_message_id: u32,
@@ -307,6 +313,7 @@ pub enum Event {
     ActiveEntryChanged(Option<ProjectEntryId>),
     ActivateProjectPanel,
     WorktreeAdded,
+    WorktreeOrderChanged,
     WorktreeRemoved(WorktreeId),
     WorktreeUpdatedEntries(WorktreeId, UpdatedEntriesSet),
     WorktreeUpdatedGitRepositories,
@@ -332,6 +339,7 @@ pub enum Event {
     CollaboratorLeft(proto::PeerId),
     RefreshInlayHints,
     RevealInProjectPanel(ProjectEntryId),
+    SnippetEdit(BufferId, Vec<(lsp::Range, Snippet)>),
 }
 
 pub enum LanguageServerState {
@@ -686,6 +694,7 @@ impl Project {
 
             Self {
                 worktrees: Vec::new(),
+                worktrees_reordered: false,
                 buffer_ordered_messages_tx: tx,
                 flush_language_server_update: None,
                 pending_language_server_update: None,
@@ -723,6 +732,7 @@ impl Project {
                 last_formatting_failure: None,
                 last_workspace_edits_by_language_server: Default::default(),
                 language_server_watched_paths: HashMap::default(),
+                language_server_watcher_registrations: HashMap::default(),
                 buffers_being_formatted: Default::default(),
                 buffers_needing_diff: Default::default(),
                 git_diff_debouncer: DebouncedDelay::new(),
@@ -818,6 +828,7 @@ impl Project {
                 .detach();
             let mut this = Self {
                 worktrees: Vec::new(),
+                worktrees_reordered: false,
                 buffer_ordered_messages_tx: tx,
                 pending_language_server_update: None,
                 flush_language_server_update: None,
@@ -873,6 +884,7 @@ impl Project {
                 last_formatting_failure: None,
                 last_workspace_edits_by_language_server: Default::default(),
                 language_server_watched_paths: HashMap::default(),
+                language_server_watcher_registrations: HashMap::default(),
                 opened_buffers: Default::default(),
                 buffers_being_formatted: Default::default(),
                 buffers_needing_diff: Default::default(),
@@ -1281,6 +1293,10 @@ impl Project {
         self.collaborators.values().find(|c| c.replica_id == 0)
     }
 
+    pub fn set_worktrees_reordered(&mut self, worktrees_reordered: bool) {
+        self.worktrees_reordered = worktrees_reordered;
+    }
+
     /// Collect all worktrees, including ones that don't appear in the project panel
     pub fn worktrees(&self) -> impl '_ + DoubleEndedIterator<Item = Model<Worktree>> {
         self.worktrees
@@ -1288,20 +1304,13 @@ impl Project {
             .filter_map(move |worktree| worktree.upgrade())
     }
 
-    /// Collect all user-visible worktrees, the ones that appear in the project panel
+    /// Collect all user-visible worktrees, the ones that appear in the project panel.
     pub fn visible_worktrees<'a>(
         &'a self,
         cx: &'a AppContext,
     ) -> impl 'a + DoubleEndedIterator<Item = Model<Worktree>> {
-        self.worktrees.iter().filter_map(|worktree| {
-            worktree.upgrade().and_then(|worktree| {
-                if worktree.read(cx).is_visible() {
-                    Some(worktree)
-                } else {
-                    None
-                }
-            })
-        })
+        self.worktrees()
+            .filter(|worktree| worktree.read(cx).is_visible())
     }
 
     pub fn worktree_root_names<'a>(&'a self, cx: &'a AppContext) -> impl Iterator<Item = &'a str> {
@@ -1330,6 +1339,18 @@ impl Project {
     ) -> Option<WorktreeId> {
         self.worktree_for_entry(entry_id, cx)
             .map(|worktree| worktree.read(cx).id())
+    }
+
+    /// Checks if the entry is the root of a worktree.
+    pub fn entry_is_worktree_root(&self, entry_id: ProjectEntryId, cx: &AppContext) -> bool {
+        self.worktree_for_entry(entry_id, cx)
+            .map(|worktree| {
+                worktree
+                    .read(cx)
+                    .root_entry()
+                    .is_some_and(|e| e.id == entry_id)
+            })
+            .unwrap_or(false)
     }
 
     pub fn visibility_for_paths(&self, paths: &[PathBuf], cx: &AppContext) -> Option<bool> {
@@ -2694,7 +2715,6 @@ impl Project {
                     };
 
                     let next_version = previous_snapshot.version + 1;
-
                     buffer_snapshots.push(LspBufferSnapshot {
                         version: next_version,
                         snapshot: next_snapshot.clone(),
@@ -3470,10 +3490,31 @@ impl Project {
                                     let options = serde_json::from_value(options)?;
                                     this.update(&mut cx, |this, cx| {
                                         this.on_lsp_did_change_watched_files(
-                                            server_id, options, cx,
+                                            server_id, &reg.id, options, cx,
                                         );
                                     })?;
                                 }
+                            }
+                        }
+                        Ok(())
+                    }
+                }
+            })
+            .detach();
+
+        language_server
+            .on_request::<lsp::request::UnregisterCapability, _, _>({
+                let this = this.clone();
+                move |params, mut cx| {
+                    let this = this.clone();
+                    async move {
+                        for unreg in params.unregisterations.iter() {
+                            if unreg.method == "workspace/didChangeWatchedFiles" {
+                                this.update(&mut cx, |this, cx| {
+                                    this.on_lsp_unregister_did_change_watched_files(
+                                        server_id, &unreg.id, cx,
+                                    );
+                                })?;
                             }
                         }
                         Ok(())
@@ -4207,16 +4248,67 @@ impl Project {
     fn on_lsp_did_change_watched_files(
         &mut self,
         language_server_id: LanguageServerId,
+        registration_id: &str,
         params: DidChangeWatchedFilesRegistrationOptions,
         cx: &mut ModelContext<Self>,
     ) {
+        let registrations = self
+            .language_server_watcher_registrations
+            .entry(language_server_id)
+            .or_default();
+
+        registrations.insert(registration_id.to_string(), params.watchers);
+
+        self.rebuild_watched_paths(language_server_id, cx);
+    }
+
+    fn on_lsp_unregister_did_change_watched_files(
+        &mut self,
+        language_server_id: LanguageServerId,
+        registration_id: &str,
+        cx: &mut ModelContext<Self>,
+    ) {
+        let registrations = self
+            .language_server_watcher_registrations
+            .entry(language_server_id)
+            .or_default();
+
+        if registrations.remove(registration_id).is_some() {
+            log::info!(
+                "language server {}: unregistered workspace/DidChangeWatchedFiles capability with id {}",
+                language_server_id,
+                registration_id
+            );
+        } else {
+            log::warn!(
+                "language server {}: failed to unregister workspace/DidChangeWatchedFiles capability with id {}. not registered.",
+                language_server_id,
+                registration_id
+            );
+        }
+
+        self.rebuild_watched_paths(language_server_id, cx);
+    }
+
+    fn rebuild_watched_paths(
+        &mut self,
+        language_server_id: LanguageServerId,
+        cx: &mut ModelContext<Self>,
+    ) {
+        let Some(watchers) = self
+            .language_server_watcher_registrations
+            .get(&language_server_id)
+        else {
+            return;
+        };
+
         let watched_paths = self
             .language_server_watched_paths
             .entry(language_server_id)
             .or_default();
 
         let mut builders = HashMap::default();
-        for watcher in params.watchers {
+        for watcher in watchers.values().flatten() {
             for worktree in &self.worktrees {
                 if let Some(worktree) = worktree.upgrade() {
                     let glob_is_inside_worktree = worktree.update(cx, |tree, _| {
@@ -4625,11 +4717,11 @@ impl Project {
         if self.is_local() {
             let buffers_with_paths = buffers
                 .into_iter()
-                .filter_map(|buffer_handle| {
+                .map(|buffer_handle| {
                     let buffer = buffer_handle.read(cx);
-                    let file = File::from_dyn(buffer.file())?;
-                    let buffer_abs_path = file.as_local().map(|f| f.abs_path(cx));
-                    Some((buffer_handle, buffer_abs_path))
+                    let buffer_abs_path = File::from_dyn(buffer.file())
+                        .and_then(|file| file.as_local().map(|f| f.abs_path(cx)));
+                    (buffer_handle, buffer_abs_path)
                 })
                 .collect::<Vec<_>>();
 
@@ -6209,7 +6301,7 @@ impl Project {
                         uri,
                         version: None,
                     },
-                    edits: edits.into_iter().map(OneOf::Left).collect(),
+                    edits: edits.into_iter().map(Edit::Plain).collect(),
                 })
             }));
         }
@@ -6287,7 +6379,7 @@ impl Project {
                     let buffer_to_edit = this
                         .update(cx, |this, cx| {
                             this.open_local_buffer_via_lsp(
-                                op.text_document.uri,
+                                op.text_document.uri.clone(),
                                 language_server.server_id(),
                                 lsp_adapter.name.clone(),
                                 cx,
@@ -6297,10 +6389,68 @@ impl Project {
 
                     let edits = this
                         .update(cx, |this, cx| {
-                            let edits = op.edits.into_iter().map(|edit| match edit {
-                                OneOf::Left(edit) => edit,
-                                OneOf::Right(edit) => edit.text_edit,
+                            let path = buffer_to_edit.read(cx).project_path(cx);
+                            let active_entry = this.active_entry;
+                            let is_active_entry = path.clone().map_or(false, |project_path| {
+                                this.entry_for_path(&project_path, cx)
+                                    .map_or(false, |entry| Some(entry.id) == active_entry)
                             });
+
+                            let (mut edits, mut snippet_edits) = (vec![], vec![]);
+                            for edit in op.edits {
+                                match edit {
+                                    Edit::Plain(edit) => edits.push(edit),
+                                    Edit::Annotated(edit) => edits.push(edit.text_edit),
+                                    Edit::Snippet(edit) => {
+                                        let Ok(snippet) = Snippet::parse(&edit.snippet.value)
+                                        else {
+                                            continue;
+                                        };
+
+                                        if is_active_entry {
+                                            snippet_edits.push((edit.range, snippet));
+                                        } else {
+                                            // Since this buffer is not focused, apply a normal edit.
+                                            edits.push(TextEdit {
+                                                range: edit.range,
+                                                new_text: snippet.text,
+                                            });
+                                        }
+                                    }
+                                }
+                            }
+                            if !snippet_edits.is_empty() {
+                                if let Some(buffer_version) = op.text_document.version {
+                                    let buffer_id = buffer_to_edit.read(cx).remote_id();
+                                    // Check if the edit that triggered that edit has been made by this participant.
+                                    let should_apply_edit = this
+                                        .buffer_snapshots
+                                        .get(&buffer_id)
+                                        .and_then(|server_to_snapshots| {
+                                            let all_snapshots = server_to_snapshots
+                                                .get(&language_server.server_id())?;
+                                            all_snapshots
+                                                .binary_search_by_key(&buffer_version, |snapshot| {
+                                                    snapshot.version
+                                                })
+                                                .ok()
+                                                .and_then(|index| all_snapshots.get(index))
+                                        })
+                                        .map_or(false, |lsp_snapshot| {
+                                            let version = lsp_snapshot.snapshot.version();
+                                            let most_recent_edit = version
+                                                .iter()
+                                                .max_by_key(|timestamp| timestamp.value);
+                                            most_recent_edit.map_or(false, |edit| {
+                                                edit.replica_id == this.replica_id()
+                                            })
+                                        });
+                                    if should_apply_edit {
+                                        cx.emit(Event::SnippetEdit(buffer_id, snippet_edits));
+                                    }
+                                }
+                            }
+
                             this.edits_from_lsp(
                                 &buffer_to_edit,
                                 edits,
@@ -7067,6 +7217,67 @@ impl Project {
         })
     }
 
+    /// Move a worktree to a new position in the worktree order.
+    ///
+    /// The worktree will moved to the opposite side of the destination worktree.
+    ///
+    /// # Example
+    ///
+    /// Given the worktree order `[11, 22, 33]` and a call to move worktree `22` to `33`,
+    /// worktree_order will be updated to produce the indexes `[11, 33, 22]`.
+    ///
+    /// Given the worktree order `[11, 22, 33]` and a call to move worktree `22` to `11`,
+    /// worktree_order will be updated to produce the indexes `[22, 11, 33]`.
+    ///
+    /// # Errors
+    ///
+    /// An error will be returned if the worktree or destination worktree are not found.
+    pub fn move_worktree(
+        &mut self,
+        source: WorktreeId,
+        destination: WorktreeId,
+        cx: &mut ModelContext<'_, Self>,
+    ) -> Result<()> {
+        if source == destination {
+            return Ok(());
+        }
+
+        let mut source_index = None;
+        let mut destination_index = None;
+        for (i, worktree) in self.worktrees.iter().enumerate() {
+            if let Some(worktree) = worktree.upgrade() {
+                let worktree_id = worktree.read(cx).id();
+                if worktree_id == source {
+                    source_index = Some(i);
+                    if destination_index.is_some() {
+                        break;
+                    }
+                } else if worktree_id == destination {
+                    destination_index = Some(i);
+                    if source_index.is_some() {
+                        break;
+                    }
+                }
+            }
+        }
+
+        let source_index =
+            source_index.with_context(|| format!("Missing worktree for id {source}"))?;
+        let destination_index =
+            destination_index.with_context(|| format!("Missing worktree for id {destination}"))?;
+
+        if source_index == destination_index {
+            return Ok(());
+        }
+
+        let worktree_to_move = self.worktrees.remove(source_index);
+        self.worktrees.insert(destination_index, worktree_to_move);
+        self.worktrees_reordered = true;
+        cx.emit(Event::WorktreeOrderChanged);
+        cx.notify();
+        Ok(())
+    }
+
     pub fn find_or_create_local_worktree(
         &mut self,
         abs_path: impl AsRef<Path>,
@@ -7235,6 +7446,7 @@ impl Project {
                 false
             }
         });
+
         self.metadata_changed(cx);
     }
 
@@ -7274,12 +7486,22 @@ impl Project {
             let worktree = worktree.read(cx);
             self.is_shared() || worktree.is_visible() || worktree.is_remote()
         };
-        if push_strong_handle {
-            self.worktrees
-                .push(WorktreeHandle::Strong(worktree.clone()));
+        let handle = if push_strong_handle {
+            WorktreeHandle::Strong(worktree.clone())
         } else {
-            self.worktrees
-                .push(WorktreeHandle::Weak(worktree.downgrade()));
+            WorktreeHandle::Weak(worktree.downgrade())
+        };
+        if self.worktrees_reordered {
+            self.worktrees.push(handle);
+        } else {
+            let i = match self
+                .worktrees
+                .binary_search_by_key(&Some(worktree.read(cx).abs_path()), |other| {
+                    other.upgrade().map(|worktree| worktree.read(cx).abs_path())
+                }) {
+                Ok(i) | Err(i) => i,
+            };
+            self.worktrees.insert(i, handle);
         }
 
         let handle_id = worktree.entity_id();

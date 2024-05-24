@@ -3,10 +3,11 @@ pub mod assistant_panel;
 pub mod assistant_settings;
 mod codegen;
 mod completion_provider;
-mod prompt_library;
+mod omit_ranges;
 mod prompts;
 mod saved_conversation;
 mod search;
+mod slash_command;
 mod streaming_diff;
 
 use ambient_context::AmbientContextSnapshot;
@@ -187,7 +188,7 @@ pub struct LanguageModelChoiceDelta {
 struct MessageMetadata {
     role: Role,
     status: MessageStatus,
-    // todo!("delete this")
+    // TODO: Delete this
     #[serde(skip)]
     ambient_context: AmbientContextSnapshot,
 }

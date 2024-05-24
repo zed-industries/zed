@@ -12,7 +12,7 @@ The following global settings can be overridden with a folder-specific configura
 - `format_on_save`
 - `formatter`
 - `hard_tabs`
-- `language_overrides`
+- `languages`
 - `preferred_line_length`
 - `remove_trailing_whitespace_on_save`
 - `soft_wrap`
@@ -651,18 +651,19 @@ The result is still `)))` and not `))))))`, which is what it would be by default
 ## File Types
 
 - Setting: `file_types`
-- Description: Configure how Zed selects a language for a file based on its filename or extension.
+- Description: Configure how Zed selects a language for a file based on its filename or extension. Supports glob entries.
 - Default: `{}`
 
 **Examples**
 
-To interpret all `.c` files as C++, and files called `MyLockFile` as TOML:
+To interpret all `.c` files as C++, files called `MyLockFile` as TOML and files starting with `Dockerfile` as Dockerfile:
 
 ```json
 {
   "file_types": {
     "C++": ["c"],
-    "TOML": ["MyLockFile"]
+    "TOML": ["MyLockFile"],
+    "Dockerfile": ["Dockerfile*"]
   }
 }
 ```
@@ -857,18 +858,18 @@ Settings-related hint updates are not debounced.
 }
 ```
 
-## Language Overrides
+## Languages
 
-- Description: Configuration overrides for specific languages.
-- Setting: `language_overrides`
+- Description: Configuration for specific languages.
+- Setting: `languages`
 - Default: `null`
 
 **Options**
 
-To override settings for a language, add an entry for that languages name to the `language_overrides` value. Example:
+To override settings for a language, add an entry for that languages name to the `languages` value. Example:
 
 ```json
-"language_overrides": {
+"languages": {
   "C": {
     "format_on_save": "off",
     "preferred_line_length": 64,
@@ -1523,7 +1524,7 @@ Run the `theme selector: toggle` action in the command palette to see a current 
     "font_family": "FiraCode Nerd Font Mono",
     "blinking": "off"
   },
-  "language_overrides": {
+  "languages": {
     "C": {
       "format_on_save": "language_server",
       "preferred_line_length": 64,

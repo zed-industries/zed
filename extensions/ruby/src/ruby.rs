@@ -1,7 +1,7 @@
 mod language_servers;
 
 use zed::lsp::{Completion, Symbol};
-use zed::serde_json::json;
+use zed::settings::LspSettings;
 use zed::{serde_json, CodeLabel, LanguageServerId};
 use zed_extension_api::{self as zed, Result};
 
@@ -77,20 +77,15 @@ impl zed::Extension for RubyExtension {
     fn language_server_initialization_options(
         &mut self,
         language_server_id: &LanguageServerId,
-        _worktree: &zed::Worktree,
+        worktree: &zed::Worktree,
     ) -> Result<Option<serde_json::Value>> {
-        match language_server_id.as_ref() {
-            // We disable diagnostics because ruby-lsp uses pull-based diagnostics,
-            // which Zed doesn't support yet.
-            RubyLsp::LANGUAGE_SERVER_ID => Ok(Some(json!({
-                "enabledFeatures": {
-                  "diagnostics": false
-                },
-                "experimentalFeaturesEnabled": true
-            }))),
+        let initialization_options =
+            LspSettings::for_worktree(language_server_id.as_ref(), worktree)
+                .ok()
+                .and_then(|lsp_settings| lsp_settings.initialization_options.clone())
+                .unwrap_or_default();
 
-            _ => Ok(None),
-        }
+        Ok(Some(serde_json::json!(initialization_options)))
     }
 }
 

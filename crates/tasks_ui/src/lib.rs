@@ -153,8 +153,8 @@ mod tests {
 
     use editor::Editor;
     use gpui::{Entity, TestAppContext};
-    use language::{BasicContextProvider, Language, LanguageConfig};
-    use project::{FakeFs, Project};
+    use language::{Language, LanguageConfig};
+    use project::{BasicContextProvider, FakeFs, Project};
     use serde_json::json;
     use task::{TaskContext, TaskVariables, VariableName};
     use ui::VisualContext;
@@ -191,7 +191,7 @@ mod tests {
             }),
         )
         .await;
-
+        let project = Project::test(fs, ["/dir".as_ref()], cx).await;
         let rust_language = Arc::new(
             Language::new(
                 LanguageConfig::default(),
@@ -203,7 +203,7 @@ mod tests {
             name: (_) @name) @item"#,
             )
             .unwrap()
-            .with_context_provider(Some(Arc::new(BasicContextProvider))),
+            .with_context_provider(Some(Arc::new(BasicContextProvider::new(project.clone())))),
         );
 
         let typescript_language = Arc::new(
@@ -221,9 +221,9 @@ mod tests {
                       ")" @context)) @item"#,
             )
             .unwrap()
-            .with_context_provider(Some(Arc::new(BasicContextProvider))),
+            .with_context_provider(Some(Arc::new(BasicContextProvider::new(project.clone())))),
         );
-        let project = Project::test(fs, ["/dir".as_ref()], cx).await;
+
         let worktree_id = project.update(cx, |project, cx| {
             project.worktrees().next().unwrap().read(cx).id()
         });
@@ -260,6 +260,10 @@ mod tests {
                     cwd: Some("/dir".into()),
                     task_variables: TaskVariables::from_iter([
                         (VariableName::File, "/dir/rust/b.rs".into()),
+                        (VariableName::Filename, "b.rs".into()),
+                        (VariableName::RelativeFile, "rust/b.rs".into()),
+                        (VariableName::Dirname, "/dir/rust".into()),
+                        (VariableName::Stem, "b".into()),
                         (VariableName::WorktreeRoot, "/dir".into()),
                         (VariableName::Row, "1".into()),
                         (VariableName::Column, "1".into()),
@@ -276,6 +280,10 @@ mod tests {
                     cwd: Some("/dir".into()),
                     task_variables: TaskVariables::from_iter([
                         (VariableName::File, "/dir/rust/b.rs".into()),
+                        (VariableName::Filename, "b.rs".into()),
+                        (VariableName::RelativeFile, "rust/b.rs".into()),
+                        (VariableName::Dirname, "/dir/rust".into()),
+                        (VariableName::Stem, "b".into()),
                         (VariableName::WorktreeRoot, "/dir".into()),
                         (VariableName::Row, "1".into()),
                         (VariableName::Column, "15".into()),
@@ -293,6 +301,10 @@ mod tests {
                     cwd: Some("/dir".into()),
                     task_variables: TaskVariables::from_iter([
                         (VariableName::File, "/dir/a.ts".into()),
+                        (VariableName::Filename, "a.ts".into()),
+                        (VariableName::RelativeFile, "a.ts".into()),
+                        (VariableName::Dirname, "/dir".into()),
+                        (VariableName::Stem, "a".into()),
                         (VariableName::WorktreeRoot, "/dir".into()),
                         (VariableName::Row, "1".into()),
                         (VariableName::Column, "1".into()),

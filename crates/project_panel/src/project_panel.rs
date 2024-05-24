@@ -130,6 +130,7 @@ actions!(
         Copy,
         CopyPath,
         CopyRelativePath,
+        Duplicate,
         RevealInFinder,
         Cut,
         Paste,
@@ -209,7 +210,9 @@ impl ProjectPanel {
                     this.update_visible_entries(None, cx);
                     cx.notify();
                 }
-                project::Event::WorktreeUpdatedEntries(_, _) | project::Event::WorktreeAdded => {
+                project::Event::WorktreeUpdatedEntries(_, _)
+                | project::Event::WorktreeAdded
+                | project::Event::WorktreeOrderChanged => {
                     this.update_visible_entries(None, cx);
                     cx.notify();
                 }
@@ -460,6 +463,7 @@ impl ProjectPanel {
                             .separator()
                             .action("Cut", Box::new(Cut))
                             .action("Copy", Box::new(Copy))
+                            .action("Duplicate", Box::new(Duplicate))
                             // TODO: Paste should always be visible, but disabled when clipboard is empty
                             .when_some(self.clipboard_entry, |menu, entry| {
                                 menu.when(entry.worktree_id() == worktree_id, |menu| {
@@ -1156,6 +1160,11 @@ impl ProjectPanel {
         });
     }
 
+    fn duplicate(&mut self, _: &Duplicate, cx: &mut ViewContext<Self>) {
+        self.copy(&Copy {}, cx);
+        self.paste(&Paste {}, cx);
+    }
+
     fn copy_path(&mut self, _: &CopyPath, cx: &mut ViewContext<Self>) {
         if let Some((worktree, entry)) = self.selected_entry(cx) {
             cx.write_to_clipboard(ClipboardItem::new(
@@ -1227,6 +1236,48 @@ impl ProjectPanel {
     }
 
     fn move_entry(
+        &mut self,
+        entry_to_move: ProjectEntryId,
+        destination: ProjectEntryId,
+        destination_is_file: bool,
+        cx: &mut ViewContext<Self>,
+    ) {
+        if self
+            .project
+            .read(cx)
+            .entry_is_worktree_root(entry_to_move, cx)
+        {
+            self.move_worktree_root(entry_to_move, destination, cx)
+        } else {
+            self.move_worktree_entry(entry_to_move, destination, destination_is_file, cx)
+        }
+    }
+
+    fn move_worktree_root(
+        &mut self,
+        entry_to_move: ProjectEntryId,
+        destination: ProjectEntryId,
+        cx: &mut ViewContext<Self>,
+    ) {
+        self.project.update(cx, |project, cx| {
+            let Some(worktree_to_move) = project.worktree_for_entry(entry_to_move, cx) else {
+                return;
+            };
+            let Some(destination_worktree) = project.worktree_for_entry(destination, cx) else {
+                return;
+            };
+
+            let worktree_id = worktree_to_move.read(cx).id();
+            let destination_id = destination_worktree.read(cx).id();
+
+            project
+                .move_worktree(worktree_id, destination_id, cx)
+                .log_err();
+        });
+        return;
+    }
+
+    fn move_worktree_entry(
         &mut self,
         entry_to_move: ProjectEntryId,
         destination: ProjectEntryId,
@@ -1678,7 +1729,13 @@ impl ProjectPanel {
         let filename_text_color =
             entry_git_aware_label_color(details.git_status, details.is_ignored, is_selected);
         let file_name = details.filename.clone();
-        let icon = details.icon.clone();
+        let mut icon = details.icon.clone();
+        if show_editor && details.kind.is_file() {
+            let filename = self.filename_editor.read(cx).text(cx);
+            if filename.len() > 2 {
+                icon = FileIcons::get_icon(Path::new(&filename), cx);
+            }
+        }
         let depth = details.depth;
         div()
             .id(entry_id.to_proto() as usize)
@@ -1831,6 +1888,7 @@ impl Render for ProjectPanel {
                         .on_action(cx.listener(Self::cut))
                         .on_action(cx.listener(Self::copy))
                         .on_action(cx.listener(Self::paste))
+                        .on_action(cx.listener(Self::duplicate))
                 })
                 .when(project.is_local(), |el| {
                     el.on_action(cx.listener(Self::reveal_in_finder))

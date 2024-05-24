@@ -14,12 +14,15 @@ use crate::{
         SyntaxSnapshot, ToTreeSitterPoint,
     },
     task_context::RunnableRange,
-    LanguageScope, Outline, RunnableTag,
+    LanguageScope, Outline, RunnableCapture, RunnableTag,
 };
 use anyhow::{anyhow, Context, Result};
 pub use clock::ReplicaId;
 use futures::channel::oneshot;
-use gpui::{AppContext, EventEmitter, HighlightStyle, ModelContext, Task, TaskLabel};
+use gpui::{
+    AnyElement, AppContext, EventEmitter, HighlightStyle, ModelContext, Task, TaskLabel,
+    WindowContext,
+};
 use lazy_static::lazy_static;
 use lsp::LanguageServerId;
 use parking_lot::Mutex;
@@ -31,6 +34,7 @@ use std::{
     cmp::{self, Ordering},
     collections::BTreeMap,
     ffi::OsStr,
+    fmt,
     future::Future,
     iter::{self, Iterator, Peekable},
     mem,
@@ -461,7 +465,7 @@ pub struct BufferChunks<'a> {
 
 /// A chunk of a buffer's text, along with its syntax highlight and
 /// diagnostic status.
-#[derive(Clone, Copy, Debug, Default)]
+#[derive(Clone, Debug, Default)]
 pub struct Chunk<'a> {
     /// The text of the chunk.
     pub text: &'a str,
@@ -476,6 +480,25 @@ pub struct Chunk<'a> {
     pub is_unnecessary: bool,
     /// Whether this chunk of text was originally a tab character.
     pub is_tab: bool,
+    /// An optional recipe for how the chunk should be presented.
+    pub renderer: Option<ChunkRenderer>,
+}
+
+/// A recipe for how the chunk should be presented.
+#[derive(Clone)]
+pub struct ChunkRenderer {
+    /// creates a custom element to represent this chunk.
+    pub render: Arc<dyn Send + Sync + Fn(&mut WindowContext) -> AnyElement>,
+    /// If true, the element is constrained to the shaped width of the text.
+    pub constrain_width: bool,
+}
+
+impl fmt::Debug for ChunkRenderer {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        f.debug_struct("ChunkRenderer")
+            .field("constrain_width", &self.constrain_width)
+            .finish()
+    }
 }
 
 /// A set of edits to a given version of a buffer, computed asynchronously.
@@ -510,6 +533,37 @@ pub struct Runnable {
     pub tags: SmallVec<[RunnableTag; 1]>,
     pub language: Arc<Language>,
     pub buffer: BufferId,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct IndentGuide {
+    pub buffer_id: BufferId,
+    pub start_row: BufferRow,
+    pub end_row: BufferRow,
+    pub depth: u32,
+    pub tab_size: u32,
+}
+
+impl IndentGuide {
+    pub fn new(
+        buffer_id: BufferId,
+        start_row: BufferRow,
+        end_row: BufferRow,
+        depth: u32,
+        tab_size: u32,
+    ) -> Self {
+        Self {
+            buffer_id,
+            start_row,
+            end_row,
+            depth,
+            tab_size,
+        }
+    }
+
+    pub fn indent_level(&self) -> u32 {
+        self.depth * self.tab_size
+    }
 }
 
 impl Buffer {
@@ -3005,53 +3059,326 @@ impl BufferSnapshot {
             .map(|grammar| grammar.runnable_config.as_ref())
             .collect::<Vec<_>>();
 
-        iter::from_fn(move || {
-            let test_range = syntax_matches.peek().and_then(|mat| {
-                test_configs[mat.grammar_index].and_then(|test_configs| {
-                    let mut tags: SmallVec<[(Range<usize>, RunnableTag); 1]> =
-                        SmallVec::from_iter(mat.captures.iter().filter_map(|capture| {
-                            test_configs
-                                .runnable_tags
-                                .get(&capture.index)
-                                .cloned()
-                                .map(|tag_name| (capture.node.byte_range(), tag_name))
-                        }));
-                    let maximum_range = tags
-                        .iter()
-                        .max_by_key(|(byte_range, _)| byte_range.len())
-                        .map(|(range, _)| range)?
-                        .clone();
-                    tags.sort_by_key(|(range, _)| range == &maximum_range);
-                    let split_point = tags.partition_point(|(range, _)| range != &maximum_range);
-                    let (extra_captures, tags) = tags.split_at(split_point);
-                    let extra_captures = extra_captures
-                        .into_iter()
-                        .map(|(range, name)| {
-                            (
-                                name.0.to_string(),
-                                self.text_for_range(range.clone()).collect::<String>(),
-                            )
-                        })
-                        .collect();
-                    Some(RunnableRange {
-                        run_range: mat
-                            .captures
-                            .iter()
-                            .find(|capture| capture.index == test_configs.run_capture_ix)
-                            .map(|mat| mat.node.byte_range())?,
-                        runnable: Runnable {
-                            tags: tags.into_iter().cloned().map(|(_, tag)| tag).collect(),
-                            language: mat.language,
-                            buffer: self.remote_id(),
-                        },
-                        extra_captures,
-                        buffer_id: self.remote_id(),
+        iter::from_fn(move || loop {
+            let mat = syntax_matches.peek()?;
+
+            let test_range = test_configs[mat.grammar_index].and_then(|test_configs| {
+                let mut run_range = None;
+                let full_range = mat.captures.iter().fold(
+                    Range {
+                        start: usize::MAX,
+                        end: 0,
+                    },
+                    |mut acc, next| {
+                        let byte_range = next.node.byte_range();
+                        if acc.start > byte_range.start {
+                            acc.start = byte_range.start;
+                        }
+                        if acc.end < byte_range.end {
+                            acc.end = byte_range.end;
+                        }
+                        acc
+                    },
+                );
+                if full_range.start > full_range.end {
+                    // We did not find a full spanning range of this match.
+                    return None;
+                }
+                let extra_captures: SmallVec<[_; 1]> =
+                    SmallVec::from_iter(mat.captures.iter().filter_map(|capture| {
+                        test_configs
+                            .extra_captures
+                            .get(capture.index as usize)
+                            .cloned()
+                            .and_then(|tag_name| match tag_name {
+                                RunnableCapture::Named(name) => {
+                                    Some((capture.node.byte_range(), name))
+                                }
+                                RunnableCapture::Run => {
+                                    let _ = run_range.insert(capture.node.byte_range());
+                                    None
+                                }
+                            })
+                    }));
+                let run_range = run_range?;
+                let tags = test_configs
+                    .query
+                    .property_settings(mat.pattern_index)
+                    .iter()
+                    .filter_map(|property| {
+                        if *property.key == *"tag" {
+                            property
+                                .value
+                                .as_ref()
+                                .map(|value| RunnableTag(value.to_string().into()))
+                        } else {
+                            None
+                        }
                     })
+                    .collect();
+                let extra_captures = extra_captures
+                    .into_iter()
+                    .map(|(range, name)| {
+                        (
+                            name.to_string(),
+                            self.text_for_range(range.clone()).collect::<String>(),
+                        )
+                    })
+                    .collect();
+                // All tags should have the same range.
+                Some(RunnableRange {
+                    run_range,
+                    full_range,
+                    runnable: Runnable {
+                        tags,
+                        language: mat.language,
+                        buffer: self.remote_id(),
+                    },
+                    extra_captures,
+                    buffer_id: self.remote_id(),
                 })
             });
+
             syntax_matches.advance();
-            test_range
+            if test_range.is_some() {
+                // It's fine for us to short-circuit on .peek()? returning None. We don't want to return None from this iter if we
+                // had a capture that did not contain a run marker, hence we'll just loop around for the next capture.
+                return test_range;
+            }
         })
+    }
+
+    pub fn indent_guides_in_range(
+        &self,
+        range: Range<Anchor>,
+        cx: &AppContext,
+    ) -> Vec<IndentGuide> {
+        fn tab_size_for_row(this: &BufferSnapshot, row: BufferRow, cx: &AppContext) -> u32 {
+            let language = this.language_at(Point::new(row, 0));
+            language_settings(language, None, cx).tab_size.get() as u32
+        }
+
+        let start_row = range.start.to_point(self).row;
+        let end_row = range.end.to_point(self).row;
+        let row_range = start_row..end_row + 1;
+
+        let mut row_indents = self.line_indents_in_row_range(row_range.clone());
+
+        let mut result_vec = Vec::new();
+        let mut indent_stack = SmallVec::<[IndentGuide; 8]>::new();
+
+        // TODO: This should be calculated for every row but it is pretty expensive
+        let tab_size = tab_size_for_row(self, start_row, cx);
+
+        while let Some((first_row, mut line_indent)) = row_indents.next() {
+            let current_depth = indent_stack.len() as u32;
+
+            // When encountering empty, continue until found useful line indent
+            // then add to the indent stack with the depth found
+            let mut found_indent = false;
+            let mut last_row = first_row;
+            if line_indent.is_line_empty() {
+                let mut trailing_row = end_row;
+                while !found_indent {
+                    let (target_row, new_line_indent) =
+                        if let Some(display_row) = row_indents.next() {
+                            display_row
+                        } else {
+                            // This means we reached the end of the given range and found empty lines at the end.
+                            // We need to traverse further until we find a non-empty line to know if we need to add
+                            // an indent guide for the last visible indent.
+                            trailing_row += 1;
+
+                            const TRAILING_ROW_SEARCH_LIMIT: u32 = 25;
+                            if trailing_row > self.max_point().row
+                                || trailing_row > end_row + TRAILING_ROW_SEARCH_LIMIT
+                            {
+                                break;
+                            }
+                            let new_line_indent = self.line_indent_for_row(trailing_row);
+                            (trailing_row, new_line_indent)
+                        };
+
+                    if new_line_indent.is_line_empty() {
+                        continue;
+                    }
+                    last_row = target_row.min(end_row);
+                    line_indent = new_line_indent;
+                    found_indent = true;
+                    break;
+                }
+            } else {
+                found_indent = true
+            }
+
+            let depth = if found_indent {
+                line_indent.len(tab_size) / tab_size
+                    + ((line_indent.len(tab_size) % tab_size) > 0) as u32
+            } else {
+                current_depth
+            };
+
+            if depth < current_depth {
+                for _ in 0..(current_depth - depth) {
+                    let mut indent = indent_stack.pop().unwrap();
+                    if last_row != first_row {
+                        // In this case, we landed on an empty row, had to seek forward,
+                        // and discovered that the indent we where on is ending.
+                        // This means that the last display row must
+                        // be on line that ends this indent range, so we
+                        // should display the range up to the first non-empty line
+                        indent.end_row = first_row.saturating_sub(1);
+                    }
+
+                    result_vec.push(indent)
+                }
+            } else if depth > current_depth {
+                for next_depth in current_depth..depth {
+                    indent_stack.push(IndentGuide {
+                        buffer_id: self.remote_id(),
+                        start_row: first_row,
+                        end_row: last_row,
+                        depth: next_depth,
+                        tab_size,
+                    });
+                }
+            }
+
+            for indent in indent_stack.iter_mut() {
+                indent.end_row = last_row;
+            }
+        }
+
+        result_vec.extend(indent_stack);
+
+        result_vec
+    }
+
+    pub async fn enclosing_indent(
+        &self,
+        mut buffer_row: BufferRow,
+    ) -> Option<(Range<BufferRow>, LineIndent)> {
+        let max_row = self.max_point().row;
+        if buffer_row >= max_row {
+            return None;
+        }
+
+        let mut target_indent = self.line_indent_for_row(buffer_row);
+
+        // If the current row is at the start of an indented block, we want to return this
+        // block as the enclosing indent.
+        if !target_indent.is_line_empty() && buffer_row < max_row {
+            let next_line_indent = self.line_indent_for_row(buffer_row + 1);
+            if !next_line_indent.is_line_empty()
+                && target_indent.raw_len() < next_line_indent.raw_len()
+            {
+                target_indent = next_line_indent;
+                buffer_row += 1;
+            }
+        }
+
+        const SEARCH_ROW_LIMIT: u32 = 25000;
+        const SEARCH_WHITESPACE_ROW_LIMIT: u32 = 2500;
+        const YIELD_INTERVAL: u32 = 100;
+
+        let mut accessed_row_counter = 0;
+
+        // If there is a blank line at the current row, search for the next non indented lines
+        if target_indent.is_line_empty() {
+            let start = buffer_row.saturating_sub(SEARCH_WHITESPACE_ROW_LIMIT);
+            let end = (max_row + 1).min(buffer_row + SEARCH_WHITESPACE_ROW_LIMIT);
+
+            let mut non_empty_line_above = None;
+            for (row, indent) in self
+                .text
+                .reversed_line_indents_in_row_range(start..buffer_row)
+            {
+                accessed_row_counter += 1;
+                if accessed_row_counter == YIELD_INTERVAL {
+                    accessed_row_counter = 0;
+                    yield_now().await;
+                }
+                if !indent.is_line_empty() {
+                    non_empty_line_above = Some((row, indent));
+                    break;
+                }
+            }
+
+            let mut non_empty_line_below = None;
+            for (row, indent) in self.text.line_indents_in_row_range((buffer_row + 1)..end) {
+                accessed_row_counter += 1;
+                if accessed_row_counter == YIELD_INTERVAL {
+                    accessed_row_counter = 0;
+                    yield_now().await;
+                }
+                if !indent.is_line_empty() {
+                    non_empty_line_below = Some((row, indent));
+                    break;
+                }
+            }
+
+            let (row, indent) = match (non_empty_line_above, non_empty_line_below) {
+                (Some((above_row, above_indent)), Some((below_row, below_indent))) => {
+                    if above_indent.raw_len() >= below_indent.raw_len() {
+                        (above_row, above_indent)
+                    } else {
+                        (below_row, below_indent)
+                    }
+                }
+                (Some(above), None) => above,
+                (None, Some(below)) => below,
+                _ => return None,
+            };
+
+            target_indent = indent;
+            buffer_row = row;
+        }
+
+        let start = buffer_row.saturating_sub(SEARCH_ROW_LIMIT);
+        let end = (max_row + 1).min(buffer_row + SEARCH_ROW_LIMIT);
+
+        let mut start_indent = None;
+        for (row, indent) in self
+            .text
+            .reversed_line_indents_in_row_range(start..buffer_row)
+        {
+            accessed_row_counter += 1;
+            if accessed_row_counter == YIELD_INTERVAL {
+                accessed_row_counter = 0;
+                yield_now().await;
+            }
+            if !indent.is_line_empty() && indent.raw_len() < target_indent.raw_len() {
+                start_indent = Some((row, indent));
+                break;
+            }
+        }
+        let (start_row, start_indent_size) = start_indent?;
+
+        let mut end_indent = (end, None);
+        for (row, indent) in self.text.line_indents_in_row_range((buffer_row + 1)..end) {
+            accessed_row_counter += 1;
+            if accessed_row_counter == YIELD_INTERVAL {
+                accessed_row_counter = 0;
+                yield_now().await;
+            }
+            if !indent.is_line_empty() && indent.raw_len() < target_indent.raw_len() {
+                end_indent = (row.saturating_sub(1), Some(indent));
+                break;
+            }
+        }
+        let (end_row, end_indent_size) = end_indent;
+
+        let indent = if let Some(end_indent_size) = end_indent_size {
+            if start_indent_size.raw_len() > end_indent_size.raw_len() {
+                start_indent_size
+            } else {
+                end_indent_size
+            }
+        } else {
+            start_indent_size
+        };
+
+        Some((start_row..end_row, indent))
     }
 
     /// Returns selections for remote peers intersecting the given range.

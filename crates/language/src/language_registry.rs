@@ -14,6 +14,7 @@ use futures::{
     future::Shared,
     Future, FutureExt as _,
 };
+use globset::GlobSet;
 use gpui::{AppContext, BackgroundExecutor, Task};
 use lsp::LanguageServerId;
 use parking_lot::{Mutex, RwLock};
@@ -506,23 +507,25 @@ impl LanguageRegistry {
         self: &Arc<Self>,
         path: &Path,
         content: Option<&Rope>,
-        user_file_types: Option<&HashMap<Arc<str>, Vec<String>>>,
+        user_file_types: Option<&HashMap<Arc<str>, GlobSet>>,
     ) -> impl Future<Output = Result<Arc<Language>>> {
         let filename = path.file_name().and_then(|name| name.to_str());
         let extension = path.extension_or_hidden_file_name();
         let path_suffixes = [extension, filename];
-        let empty = Vec::new();
+        let empty = GlobSet::empty();
 
         let rx = self.get_or_load_language(move |language_name, config| {
             let path_matches_default_suffix = config
                 .path_suffixes
                 .iter()
                 .any(|suffix| path_suffixes.contains(&Some(suffix.as_str())));
-            let path_matches_custom_suffix = user_file_types
+            let custom_suffixes = user_file_types
                 .and_then(|types| types.get(language_name))
-                .unwrap_or(&empty)
+                .unwrap_or(&empty);
+            let path_matches_custom_suffix = path_suffixes
                 .iter()
-                .any(|suffix| path_suffixes.contains(&Some(suffix.as_str())));
+                .map(|suffix| suffix.unwrap_or(""))
+                .any(|suffix| custom_suffixes.is_match(suffix));
             let content_matches = content.zip(config.first_line_pattern.as_ref()).map_or(
                 false,
                 |(content, pattern)| {
