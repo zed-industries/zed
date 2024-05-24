@@ -1,6 +1,6 @@
 use crate::{
-    point, px, size, Bounds, DevicePixels, Font, FontFeatures, FontId, FontMetrics, FontRun,
-    FontStyle, FontWeight, GlyphId, LineLayout, Pixels, PlatformTextSystem, Point,
+    point, px, size, Bounds, DevicePixels, Font, FontFallbacks, FontFeatures, FontId, FontMetrics,
+    FontRun, FontStyle, FontWeight, GlyphId, LineLayout, Pixels, PlatformTextSystem, Point,
     RenderGlyphParams, Result, ShapedGlyph, ShapedRun, SharedString, Size, SUBPIXEL_VARIANTS,
 };
 use anyhow::anyhow;
@@ -64,13 +64,14 @@ pub(crate) struct MacTextSystem(RwLock<MacTextSystemState>);
 struct FontKey {
     font_family: SharedString,
     font_features: FontFeatures,
+    font_fallbacks: FontFallbacks,
 }
 
 struct MacTextSystemState {
     pref_langs: CFArray<CFString>,
     memory_source: MemSource,
     system_source: SystemSource,
-    fonts: Vec<FontInfo>,
+    fonts: Vec<FontKitFont>,
     font_selections: HashMap<Font, FontId>,
     font_ids_by_postscript_name: HashMap<String, FontId>,
     font_ids_by_font_key: HashMap<FontKey, SmallVec<[FontId; 4]>>,
@@ -79,13 +80,6 @@ struct MacTextSystemState {
 
 unsafe impl Send for MacTextSystemState {}
 unsafe impl Sync for MacTextSystemState {}
-
-#[derive(Debug)]
-struct FontInfo {
-    font: FontKitFont,
-    font_features: FontFeatures,
-    family_name: String,
-}
 
 impl MacTextSystem {
     pub(crate) fn new() -> Self {
@@ -117,10 +111,6 @@ impl Default for MacTextSystem {
 impl PlatformTextSystem for MacTextSystem {
     fn add_fonts(&self, fonts: Vec<Cow<'static, [u8]>>) -> Result<()> {
         self.0.write().add_fonts(fonts)
-    }
-
-    fn set_fallbacks(&self, fallbacks: Option<&[String]>, target_family: &str) -> Result<()> {
-        self.0.write().set_fallbacks(fallbacks, target_family)
     }
 
     fn all_font_names(&self) -> Vec<String> {
@@ -155,18 +145,19 @@ impl PlatformTextSystem for MacTextSystem {
             let font_key = FontKey {
                 font_family: font.family.clone(),
                 font_features: font.features.clone(),
+                font_fallbacks: font.fallbacks.clone(),
             };
             let candidates = if let Some(font_ids) = lock.font_ids_by_font_key.get(&font_key) {
                 font_ids.as_slice()
             } else {
-                let font_ids = lock.load_family(&font.family, &font.features)?;
+                let font_ids = lock.load_family(&font.family, &font.features, &font.fallbacks)?;
                 lock.font_ids_by_font_key.insert(font_key.clone(), font_ids);
                 lock.font_ids_by_font_key[&font_key].as_ref()
             };
 
             let candidate_properties = candidates
                 .iter()
-                .map(|font_id| lock.fonts[font_id.0].font.properties())
+                .map(|font_id| lock.fonts[font_id.0].properties())
                 .collect::<SmallVec<[_; 4]>>();
 
             let ix = font_kit::matching::find_best_match(
@@ -185,12 +176,11 @@ impl PlatformTextSystem for MacTextSystem {
     }
 
     fn font_metrics(&self, font_id: FontId) -> FontMetrics {
-        self.0.read().fonts[font_id.0].font.metrics().into()
+        self.0.read().fonts[font_id.0].metrics().into()
     }
 
     fn typographic_bounds(&self, font_id: FontId, glyph_id: GlyphId) -> Result<Bounds<f32>> {
         Ok(self.0.read().fonts[font_id.0]
-            .font
             .typographic_bounds(glyph_id.0)?
             .into())
     }
@@ -241,71 +231,63 @@ impl MacTextSystemState {
         Ok(())
     }
 
-    fn set_fallbacks(&mut self, fallbacks: Option<&[String]>, target_family: &str) -> Result<()> {
-        if self.fonts.is_empty() {
-            return Ok(());
-        }
+    fn configure_font_features_and_fallbacks(
+        &self,
+        font: &mut FontKitFont,
+        features: &FontFeatures,
+        fallbacks: &FontFallbacks,
+    ) -> Result<()> {
         unsafe {
             let pref_langs = CFArray::wrap_under_get_rule(self.pref_langs.as_concrete_TypeRef());
-            for font in self.fonts.iter_mut() {
-                if font.family_name != target_family {
-                    continue;
-                }
-                let mut fallback_array =
-                    CFArrayCreateMutable(kCFAllocatorDefault, 0, &kCFTypeArrayCallBacks);
 
-                if let Some(fallbacks) = fallbacks {
-                    for user_fallback in fallbacks {
-                        let name = CFString::from(user_fallback.as_str());
-                        let fallback_desc = {
-                            let desc = CTFontDescriptorCreateWithNameAndSize(
-                                name.as_concrete_TypeRef(),
-                                0.0,
-                            );
-                            CTFontDescriptor::wrap_under_create_rule(desc)
-                        };
-                        CFArrayAppendValue(
-                            fallback_array,
-                            fallback_desc.as_concrete_TypeRef() as _,
-                        );
-                    }
-                }
+            let mut fallback_array =
+                CFArrayCreateMutable(kCFAllocatorDefault, 0, &kCFTypeArrayCallBacks);
 
-                cascade_list_for_languages(&font.font.native_font(), &pref_langs)
-                    .into_iter()
-                    .filter(|desc| desc.font_path().is_some())
-                    .for_each(|user_fallback_desc| {
-                        CFArrayAppendValue(
-                            fallback_array,
-                            user_fallback_desc.as_concrete_TypeRef() as _,
-                        );
-                    });
-
-                let feature_array = generate_feature_array(&font.font_features);
-                let keys = [kCTFontFeatureSettingsAttribute, kCTFontCascadeListAttribute];
-                let values = [feature_array, fallback_array];
-                let attrs = CFDictionaryCreate(
-                    kCFAllocatorDefault,
-                    keys.as_ptr() as _,
-                    values.as_ptr() as _,
-                    2,
-                    &kCFTypeDictionaryKeyCallBacks,
-                    &kCFTypeDictionaryValueCallBacks,
-                );
-                CFRelease(feature_array as *const _ as _);
-                CFRelease(fallback_array as *const _ as _);
-                let new_descriptor = CTFontDescriptorCreateWithAttributes(attrs);
-                CFRelease(attrs as _);
-                let new_descriptor = CTFontDescriptor::wrap_under_create_rule(new_descriptor);
-                let new_font = CTFontCreateCopyWithAttributes(
-                    font.font.native_font().as_concrete_TypeRef(),
-                    0.0,
-                    std::ptr::null(),
-                    new_descriptor.as_concrete_TypeRef(),
-                );
-                let new_font = CTFont::wrap_under_create_rule(new_font);
-                font.font = font_kit::font::Font::from_native_font(&new_font);
+            for user_fallback in fallbacks.fallback_list() {
+                let name = CFString::from(user_fallback.as_str());
+                let fallback_desc = {
+                    let desc =
+                        CTFontDescriptorCreateWithNameAndSize(name.as_concrete_TypeRef(), 0.0);
+                    CTFontDescriptor::wrap_under_create_rule(desc)
+                };
+                CFArrayAppendValue(fallback_array, fallback_desc.as_concrete_TypeRef() as _);
             }
+
+            cascade_list_for_languages(&font.native_font(), &pref_langs)
+                .into_iter()
+                .filter(|desc| desc.font_path().is_some())
+                .for_each(|user_fallback_desc| {
+                    CFArrayAppendValue(
+                        fallback_array,
+                        user_fallback_desc.as_concrete_TypeRef() as _,
+                    );
+                });
+
+            let feature_array = generate_feature_array(features);
+            let keys = [kCTFontFeatureSettingsAttribute, kCTFontCascadeListAttribute];
+            let values = [feature_array, fallback_array];
+            let attrs = CFDictionaryCreate(
+                kCFAllocatorDefault,
+                keys.as_ptr() as _,
+                values.as_ptr() as _,
+                2,
+                &kCFTypeDictionaryKeyCallBacks,
+                &kCFTypeDictionaryValueCallBacks,
+            );
+            CFRelease(feature_array as *const _ as _);
+            CFRelease(fallback_array as *const _ as _);
+            let new_descriptor = CTFontDescriptorCreateWithAttributes(attrs);
+            CFRelease(attrs as _);
+            let new_descriptor = CTFontDescriptor::wrap_under_create_rule(new_descriptor);
+            let new_font = CTFontCreateCopyWithAttributes(
+                font.native_font().as_concrete_TypeRef(),
+                0.0,
+                std::ptr::null(),
+                new_descriptor.as_concrete_TypeRef(),
+            );
+            let new_font = CTFont::wrap_under_create_rule(new_font);
+            *font = font_kit::font::Font::from_native_font(&new_font);
+
             Ok(())
         }
     }
@@ -314,6 +296,7 @@ impl MacTextSystemState {
         &mut self,
         name: &str,
         features: &FontFeatures,
+        fallbacks: &FontFallbacks,
     ) -> Result<SmallVec<[FontId; 4]>> {
         let name = if name == ".SystemUIFont" {
             ".AppleSystemUIFont"
@@ -327,8 +310,9 @@ impl MacTextSystemState {
             .select_family_by_name(name)
             .or_else(|_| self.system_source.select_family_by_name(name))?;
         for font in family.fonts() {
-            let font = font.load()?;
+            let mut font = font.load()?;
 
+            self.configure_font_features_and_fallbacks(&mut font, features, fallbacks)?;
             // This block contains a precautionary fix to guard against loading fonts
             // that might cause panics due to `.unwrap()`s up the chain.
             {
@@ -392,22 +376,17 @@ impl MacTextSystemState {
                 .insert(postscript_name.clone(), font_id);
             self.postscript_names_by_font_id
                 .insert(font_id, postscript_name);
-            let font_info = FontInfo {
-                font,
-                font_features: features.clone(),
-                family_name: name.to_string(),
-            };
-            self.fonts.push(font_info);
+            self.fonts.push(font);
         }
         Ok(font_ids)
     }
 
     fn advance(&self, font_id: FontId, glyph_id: GlyphId) -> Result<Size<f32>> {
-        Ok(self.fonts[font_id.0].font.advance(glyph_id.0)?.into())
+        Ok(self.fonts[font_id.0].advance(glyph_id.0)?.into())
     }
 
     fn glyph_for_char(&self, font_id: FontId, ch: char) -> Option<GlyphId> {
-        self.fonts[font_id.0].font.glyph_for_char(ch).map(GlyphId)
+        self.fonts[font_id.0].glyph_for_char(ch).map(GlyphId)
     }
 
     fn id_for_native_font(&mut self, requested_font: CTFont) -> FontId {
@@ -420,14 +399,10 @@ impl MacTextSystemState {
                 .insert(postscript_name.clone(), font_id);
             self.postscript_names_by_font_id
                 .insert(font_id, postscript_name);
-            let font_info = FontInfo {
-                font: font_kit::font::Font::from_core_graphics_font(
+            self.fonts
+                .push(font_kit::font::Font::from_core_graphics_font(
                     requested_font.copy_to_CGFont(),
-                ),
-                font_features: FontFeatures::default(),
-                family_name: requested_font.family_name(),
-            };
-            self.fonts.push(font_info);
+                ));
             font_id
         }
     }
@@ -441,7 +416,7 @@ impl MacTextSystemState {
     }
 
     fn raster_bounds(&self, params: &RenderGlyphParams) -> Result<Bounds<DevicePixels>> {
-        let font = &self.fonts[params.font_id.0].font;
+        let font = &self.fonts[params.font_id.0];
         let scale = Transform2F::from_scale(params.scale_factor);
         Ok(font
             .raster_bounds(
@@ -517,7 +492,6 @@ impl MacTextSystemState {
             cx.set_allows_font_subpixel_quantization(false);
             cx.set_should_subpixel_quantize_fonts(false);
             self.fonts[params.font_id.0]
-                .font
                 .native_font()
                 .clone_with_font_size(f32::from(params.font_size) as CGFloat)
                 .draw_glyphs(
@@ -566,7 +540,7 @@ impl MacTextSystemState {
                 let cf_range =
                     CFRange::init(utf16_start as isize, (utf16_end - utf16_start) as isize);
 
-                let font: &FontKitFont = &self.fonts[run.font_id.0].font;
+                let font: &FontKitFont = &self.fonts[run.font_id.0];
 
                 unsafe {
                     string.set_attribute(
