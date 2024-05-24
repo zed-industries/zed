@@ -793,6 +793,8 @@ mod tests {
         cx.background_executor
             .advance_clock(Duration::from_millis(HOVER_DELAY_MILLIS + 100));
         request.next().await;
+
+        // verify that the information popover is no longer visible
         cx.editor(|editor, _| {
             assert!(!editor.hover_state.visible());
         });
