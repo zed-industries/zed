@@ -10161,6 +10161,7 @@ dependencies = [
 name = "tasks_ui"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "editor",
  "file_icons",
  "fuzzy",

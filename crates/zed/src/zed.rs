@@ -163,7 +163,9 @@ pub fn initialize_workspace(app_state: Arc<AppState>, cx: &mut AppContext) {
         });
 
         let project = workspace.project().clone();
-        if project.read(cx).is_local() {
+        if project.update(cx, |project, cx| {
+            project.is_local() || project.ssh_connection_string(cx).is_some()
+        }) {
             project.update(cx, |project, cx| {
                 let fs = app_state.fs.clone();
                 project.task_inventory().update(cx, |inventory, cx| {
@@ -171,7 +173,7 @@ pub fn initialize_workspace(app_state: Arc<AppState>, cx: &mut AppContext) {
                         watch_config_file(&cx.background_executor(), fs, paths::TASKS.clone());
                     inventory.add_source(
                         TaskSourceKind::AbsPath {
-                            id_base: "global_tasks",
+                            id_base: "global_tasks".into(),
                             abs_path: paths::TASKS.clone(),
                         },
                         |tx, cx| StaticSource::new(TrackedFile::new(tasks_file_rx, tx, cx)),
