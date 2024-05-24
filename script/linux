@@ -15,6 +15,7 @@ if [[ -n $apt ]]; then
   deps=(
     gcc
     g++
+    make
     libasound2-dev
     libfontconfig-dev
     libwayland-dev
