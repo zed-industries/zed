@@ -221,6 +221,7 @@ impl Default for TextStyle {
                 "Helvetica".into()
             },
             font_features: FontFeatures::default(),
+            font_fallbacks: FontFallbacks::default(),
             font_size: rems(1.).into(),
             line_height: phi(),
             font_weight: FontWeight::default(),

@@ -1,7 +1,7 @@
-use crate::{settings_store::SettingsStore, FontFamilies, Settings};
+use crate::{settings_store::SettingsStore, Settings};
 use fs::Fs;
 use futures::{channel::mpsc, StreamExt};
-use gpui::{AppContext, BackgroundExecutor, ReadGlobal, TextSystem, UpdateGlobal};
+use gpui::{AppContext, BackgroundExecutor, ReadGlobal, UpdateGlobal};
 use std::{path::PathBuf, sync::Arc, time::Duration};
 use util::ResultExt;
 

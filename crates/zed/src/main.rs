@@ -234,8 +234,6 @@ fn init_ui(app_state: Arc<AppState>, cx: &mut AppContext) -> Result<()> {
     settings_ui::init(cx);
     extensions_ui::init(cx);
 
-    settings::init_font_fallbacks(cx);
-
     // Initialize each completion provider. Settings are used for toggling between them.
     let copilot_language_server_id = app_state.languages.next_language_server_id();
     copilot::init(
@@ -267,7 +265,6 @@ fn init_ui(app_state: Arc<AppState>, cx: &mut AppContext) -> Result<()> {
                     client.reconnect(&cx.to_async());
                 }
             }
-            settings::set_font_fallbacks(cx.text_system(), cx);
         }
     })
     .detach();
