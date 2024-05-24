@@ -1955,9 +1955,7 @@ impl BufferSnapshot {
         let mut row = row_range.start;
         std::iter::from_fn(move || {
             if let Some(line) = lines.next() {
-                dbg!(line);
                 let indent = LineIndent::from(line);
-                dbg!(indent);
                 row += 1;
                 Some((row - 1, indent))
             } else {
