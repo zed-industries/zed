@@ -3880,6 +3880,7 @@ impl Editor {
 
         let snippet;
         let text;
+
         if completion.is_snippet() {
             snippet = Some(Snippet::parse(&completion.new_text).log_err()?);
             text = snippet.as_ref().unwrap().text.clone();
@@ -3972,6 +3973,10 @@ impl Editor {
 
             this.refresh_inline_completion(true, cx);
         });
+
+        if let Some(confirm) = completion.confirm.as_ref() {
+            (confirm)(cx);
+        }
 
         let provider = self.completion_provider.as_ref()?;
         let apply_edits = provider.apply_additional_edits_for_completion(
