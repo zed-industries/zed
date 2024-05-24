@@ -1793,6 +1793,36 @@ impl Conversation {
         cx.notify();
     }
 
+    pub fn confirm_command(
+        &mut self,
+        range: Range<language::Anchor>,
+        name: &str,
+        argument: Option<&str>,
+        cx: &mut ModelContext<Self>,
+    ) {
+        if let Some(command) = self.slash_command_registry.command(name) {
+            let invocation = command.run(argument, cx);
+            cx.spawn(|this, mut cx| async move {
+                let mut output = invocation.output.await?;
+                if !output.ends_with('\n') {
+                    output.push('\n');
+                }
+
+                this.update(&mut cx, |this, cx| {
+                    let output_range = this.buffer.update(cx, |buffer, cx| {
+                        let new_start = range.start.to_offset(buffer);
+                        let new_end = new_start + output.len();
+                        buffer.edit([(range, output)], None, cx);
+                        buffer.anchor_after(new_start)..buffer.anchor_before(new_end)
+                    });
+                    cx.emit(ConversationEvent::SlashCommandOutputAdded(output_range));
+                })?;
+                anyhow::Ok(())
+            })
+            .detach_and_log_err(cx);
+        }
+    }
+
     fn reparse_slash_command_calls(&mut self, cx: &mut ModelContext<Self>) {
         self.pending_command_invocation_parse = Some(cx.spawn(|this, mut cx| async move {
             cx.background_executor().timer(SLASH_COMMAND_DEBOUNCE).await;
@@ -2748,7 +2778,8 @@ impl ConversationEditor {
         cx: &mut ViewContext<Self>,
     ) -> Self {
         let command_registry = conversation.read(cx).slash_command_registry.clone();
-        let completion_provider = SlashCommandCompletionProvider::new(command_registry);
+        let completion_provider =
+            SlashCommandCompletionProvider::new(conversation.clone(), command_registry);
 
         let editor = cx.new_view(|cx| {
             let mut editor = Editor::for_buffer(conversation.read(cx).buffer.clone(), None, cx);
@@ -2957,7 +2988,12 @@ impl ConversationEditor {
                             [Flap::new(
                                 start..end,
                                 FoldPlaceholder {
-                                    render: Arc::new(|_, _, _| Empty.into_any()),
+                                    render: Arc::new(|_, _, cx| {
+                                        div()
+                                            .bg(cx.theme().colors().ghost_element_active)
+                                            .child("COMMAND")
+                                            .into_any()
+                                    }),
                                     constrain_width: false,
                                 },
                                 render_slash_command_output_toggle,

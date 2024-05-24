@@ -17,13 +17,14 @@ use std::{
 };
 use workspace::Workspace;
 
-use crate::PromptLibrary;
+use crate::{assistant_panel::Conversation, PromptLibrary};
 
 mod current_file_command;
 mod file_command;
 mod prompt_command;
 
 pub(crate) struct SlashCommandCompletionProvider {
+    conversation: Model<Conversation>,
     commands: Arc<SlashCommandRegistry>,
     cancel_flag: Mutex<Arc<AtomicBool>>,
 }
@@ -110,9 +111,10 @@ impl SlashCommandRegistry {
 }
 
 impl SlashCommandCompletionProvider {
-    pub fn new(commands: Arc<SlashCommandRegistry>) -> Self {
+    pub fn new(conversation: Model<Conversation>, commands: Arc<SlashCommandRegistry>) -> Self {
         Self {
             cancel_flag: Mutex::new(Arc::new(AtomicBool::new(false))),
+            conversation,
             commands,
         }
     }
@@ -120,7 +122,8 @@ impl SlashCommandCompletionProvider {
     fn complete_command_name(
         &self,
         command_name: &str,
-        range: Range<Anchor>,
+        command_range: Range<Anchor>,
+        name_range: Range<Anchor>,
         cx: &mut AppContext,
     ) -> Task<Result<Vec<project::Completion>>> {
         let candidates = self
@@ -157,7 +160,7 @@ impl SlashCommandCompletionProvider {
                     }
 
                     Some(project::Completion {
-                        old_range: range.clone(),
+                        old_range: name_range.clone(),
                         documentation: Some(Documentation::SingleLine(command.description())),
                         new_text,
                         label: CodeLabel::plain(mat.string, None),
@@ -174,7 +177,8 @@ impl SlashCommandCompletionProvider {
         &self,
         command_name: &str,
         argument: String,
-        range: Range<Anchor>,
+        command_range: Range<Anchor>,
+        argument_range: Range<Anchor>,
         cx: &mut AppContext,
     ) -> Task<Result<Vec<project::Completion>>> {
         let new_cancel_flag = Arc::new(AtomicBool::new(false));
@@ -184,19 +188,33 @@ impl SlashCommandCompletionProvider {
 
         if let Some(command) = self.commands.command(command_name) {
             let completions = command.complete_argument(argument, new_cancel_flag.clone(), cx);
+            let command_name: Arc<str> = command_name.into();
+            let conversation = self.conversation.clone();
             cx.background_executor().spawn(async move {
                 Ok(completions
                     .await?
                     .into_iter()
                     .map(|arg| project::Completion {
-                        old_range: range.clone(),
+                        old_range: argument_range.clone(),
                         label: CodeLabel::plain(arg.clone(), None),
                         new_text: arg.clone(),
                         documentation: None,
                         server_id: LanguageServerId(0),
                         lsp_completion: Default::default(),
-                        confirm: Some(Arc::new(|_cx| {
-                            dbg!("invoke the command?");
+                        confirm: Some(Arc::new({
+                            let command_name = command_name.clone();
+                            let command_range = command_range.clone();
+                            let conversation = conversation.clone();
+                            move |cx| {
+                                conversation.update(cx, |conversation, cx| {
+                                    conversation.confirm_command(
+                                        command_range.clone(),
+                                        &command_name,
+                                        Some(&arg),
+                                        cx,
+                                    );
+                                });
+                            }
                         })),
                     })
                     .collect())
@@ -223,13 +241,25 @@ impl CompletionProvider for SlashCommandCompletionProvider {
             let call = SlashCommandLine::parse(line)?;
 
             let name = &line[call.name.clone()];
+
+            let command_range_start = call.name.start - 1;
+            let command_range_end = call.argument.as_ref().map_or(call.name.end, |arg| arg.end);
+            let command_range =
+                buffer.anchor_after(command_range_start)..buffer.anchor_after(command_range_end);
+
             if let Some(argument) = call.argument {
                 let start = buffer.anchor_after(Point::new(position.row, argument.start as u32));
                 let argument = line[argument.clone()].to_string();
-                Some(self.complete_command_argument(name, argument, start..buffer_position, cx))
+                Some(self.complete_command_argument(
+                    name,
+                    argument,
+                    command_range,
+                    start..buffer_position,
+                    cx,
+                ))
             } else {
                 let start = buffer.anchor_after(Point::new(position.row, call.name.start as u32));
-                Some(self.complete_command_name(name, start..buffer_position, cx))
+                Some(self.complete_command_name(name, command_range, start..buffer_position, cx))
             }
         });
 
