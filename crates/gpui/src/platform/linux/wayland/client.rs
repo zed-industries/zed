@@ -1,6 +1,7 @@
 use core::hash;
 use std::cell::{RefCell, RefMut};
 use std::ffi::OsString;
+use std::ops::{Deref, DerefMut};
 use std::os::fd::{AsRawFd, BorrowedFd};
 use std::path::PathBuf;
 use std::rc::{Rc, Weak};
@@ -66,7 +67,7 @@ use crate::platform::linux::is_within_click_distance;
 use crate::platform::linux::wayland::cursor::Cursor;
 use crate::platform::linux::wayland::serial::{SerialKind, SerialTracker};
 use crate::platform::linux::wayland::window::WaylandWindow;
-use crate::platform::linux::xdg_desktop_portal::init_portal_listener;
+use crate::platform::linux::xdg_desktop_portal::{XDPEventSource, Event as XDPEvent};
 use crate::platform::linux::LinuxClient;
 use crate::platform::PlatformWindow;
 use crate::{
@@ -320,7 +321,7 @@ impl WaylandClient {
 
         let event_loop = EventLoop::<WaylandClientStatePtr>::try_new().unwrap();
 
-        let (common, main_receiver, appearance) = LinuxCommon::new(event_loop.get_signal());
+        let (common, main_receiver) = LinuxCommon::new(event_loop.get_signal());
 
         let handle = event_loop.handle();
         handle.insert_source(main_receiver, |event, _, _: &mut WaylandClientStatePtr| {
@@ -345,6 +346,21 @@ impl WaylandClient {
         let (primary, clipboard) = unsafe { create_clipboards_from_external(display) };
 
         let cursor = Cursor::new(&conn, &globals, 24);
+
+        handle
+            .insert_source(XDPEventSource::new(&common.background_executor), {
+                move |event, _, client| match event {
+                    XDPEvent::WindowAppearance(appearance) => {
+                        if let Some(client) = client.0.upgrade() {
+                            client.borrow_mut().common.appearance = appearance;
+
+                            for (_, window) in &mut client.borrow_mut().windows {
+                                window.set_appearance(appearance);
+                            }
+                        }
+                    },
+                }
+            });
 
         let mut state = Rc::new(RefCell::new(WaylandClientState {
             serial_tracker: SerialTracker::new(),
@@ -406,31 +422,7 @@ impl WaylandClient {
 
         WaylandSource::new(conn, event_queue).insert(handle);
 
-        Self::setup_appearance_listener(
-            Rc::downgrade(&state),
-            &state.borrow().common.foreground_executor,
-            appearance,
-        );
-
         Self(state)
-    }
-
-    fn setup_appearance_listener(
-        state_ptr: Weak<RefCell<WaylandClientState>>,
-        executor: &ForegroundExecutor,
-        appearance: Weak<Mutex<WindowAppearance>>,
-    ) {
-        init_portal_listener(
-            executor,
-            appearance,
-            Box::new(move || {
-                if let Some(state) = state_ptr.upgrade() {
-                    for (_, window) in &state.borrow().windows {
-                        window.appearance_changed()
-                    }
-                }
-            }),
-        );
     }
 }
 
@@ -458,7 +450,7 @@ impl LinuxClient for WaylandClient {
             state.globals.clone(),
             WaylandClientStatePtr(Rc::downgrade(&self.0)),
             params,
-            Rc::downgrade(&state.common.appearance),
+            state.common.appearance,
         );
         state.windows.insert(surface_id, window.0.clone());
 

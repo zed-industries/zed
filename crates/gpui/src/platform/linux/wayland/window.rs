@@ -71,7 +71,7 @@ pub struct WaylandWindowState {
     acknowledged_first_configure: bool,
     pub surface: wl_surface::WlSurface,
     decoration: Option<zxdg_toplevel_decoration_v1::ZxdgToplevelDecorationV1>,
-    appearance: Weak<Mutex<WindowAppearance>>,
+    appearance: WindowAppearance,
     blur: Option<org_kde_kwin_blur::OrgKdeKwinBlur>,
     toplevel: xdg_toplevel::XdgToplevel,
     viewport: Option<wp_viewport::WpViewport>,
@@ -102,7 +102,7 @@ impl WaylandWindowState {
         xdg_surface: xdg_surface::XdgSurface,
         toplevel: xdg_toplevel::XdgToplevel,
         decoration: Option<zxdg_toplevel_decoration_v1::ZxdgToplevelDecorationV1>,
-        appearance: Weak<Mutex<WindowAppearance>>,
+        appearance: WindowAppearance,
         viewport: Option<wp_viewport::WpViewport>,
         client: WaylandClientStatePtr,
         globals: Globals,
@@ -219,7 +219,7 @@ impl WaylandWindow {
         globals: Globals,
         client: WaylandClientStatePtr,
         params: WindowParams,
-        appearance: Weak<Mutex<WindowAppearance>>,
+        appearance: WindowAppearance,
     ) -> (Self, ObjectId) {
         let surface = globals.compositor.create_surface(&globals.qh, ());
         let xdg_surface = globals
@@ -578,7 +578,9 @@ impl WaylandWindowStatePtr {
         }
     }
 
-    pub fn appearance_changed(&self) {
+    pub fn set_appearance(&mut self, appearance: WindowAppearance) {
+        self.state.borrow_mut().appearance = appearance;
+
         let mut callbacks = self.callbacks.borrow_mut();
         if let Some(ref mut fun) = callbacks.appearance_changed {
             (fun)()
@@ -632,9 +634,7 @@ impl PlatformWindow for WaylandWindow {
     }
 
     fn appearance(&self) -> WindowAppearance {
-        self.borrow().appearance.upgrade()
-            .map(|v| v.lock().deref().clone())
-            .unwrap_or(WindowAppearance::Light)
+        self.borrow().appearance
     }
 
     // todo(linux)

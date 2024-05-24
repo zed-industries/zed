@@ -1,60 +1,97 @@
 //! Provides a [calloop] event source from [XDG Desktop Portal] events
 //!
 //! This module uses the [ashpd] crate and handles many async loop
+use std::future::Future;
+
 use ashpd::desktop::settings::{ColorScheme, Settings};
+use calloop::channel::{Channel, Sender};
+use calloop::{EventSource, Poll, PostAction, Readiness, Token, TokenFactory};
 use parking_lot::Mutex;
 use smol::stream::StreamExt;
-use std::rc::{Rc, Weak};
 
-use crate::{BackgroundExecutor, ForegroundExecutor, WindowAppearance};
+use crate::{BackgroundExecutor, WindowAppearance};
 
 pub enum Event {
     WindowAppearance(WindowAppearance),
 }
 
-pub fn init_portal_listener(
-    executor: &ForegroundExecutor,
-    appearance: Weak<Mutex<WindowAppearance>>,
-    appearance_changed_cb: Box<dyn FnMut()>,
-) {
-    executor
-        .spawn(async move {
-            if let Err(e) = observe_appearance(appearance, appearance_changed_cb).await {
-                log::error!("{e}");
-            }
-        })
-        .detach();
+pub struct XDPEventSource {
+    channel : Channel<Event>,
 }
 
-async fn observe_appearance(
-    appearance: Weak<Mutex<WindowAppearance>>,
-    mut appearance_changed_cb: Box<dyn FnMut()>,
-) -> Result<(), anyhow::Error> {
-    let settings = Settings::new().await?;
+impl XDPEventSource {
+    pub fn new(executor : &BackgroundExecutor) -> Self {
+        let (sender, channel) = calloop::channel::channel();
 
-    // We get the color set before the initialization of the application
-    let scheme = settings.color_scheme().await?;
+        Self::spawn_observer(executor, Self::appearance_observer(sender.clone()));
 
-    weak_try(&appearance)?.lock().set_native(scheme);
-    (appearance_changed_cb)();
-
-    // We observe the color change during the execution of the application
-    let mut stream = settings.receive_color_scheme_changed().await?;
-    while let Some(scheme) = stream.next().await {
-        weak_try(&appearance)?.lock().set_native(scheme);
-        (appearance_changed_cb)();
+        Self {
+            channel,
+        }
     }
 
-    Ok(())
+    fn spawn_observer(
+        executor : &BackgroundExecutor,
+        to_spawn : impl Future<Output = Result<(), anyhow::Error>> + Send + 'static
+    ) {
+        executor
+            .spawn(async move {
+                if let Err(e) = to_spawn.await {
+                    log::error!("{e}");
+                }
+            })
+            .detach()
+    }
+
+    async fn appearance_observer(sender: Sender<Event>) -> Result<(), anyhow::Error> {
+        let settings = Settings::new().await?;
+
+        // We get the color set before the initialization of the application
+        let scheme = settings.color_scheme().await?;
+        sender.send(Event::WindowAppearance(WindowAppearance::from_native(scheme)))?;
+
+        // We observe the color change during the execution of the application
+        let mut stream = settings.receive_color_scheme_changed().await?;
+        while let Some(scheme) = stream.next().await {
+            sender.send(Event::WindowAppearance(WindowAppearance::from_native(scheme)))?;
+        }
+
+        Ok(())
+    }
 }
 
-fn weak_try<T>(from: &Weak<T>) -> Result<Rc<T>, anyhow::Error> {
-    if let Some(ret) = from.upgrade() {
-        Ok(ret)
-    } else {
-        Err(anyhow::format_err!(
-            "Trying to get a value from a drop reference"
-        ))
+impl EventSource for XDPEventSource {
+    type Event = Event;
+    type Metadata = ();
+    type Ret = ();
+    type Error = anyhow::Error;
+
+    fn process_events<F>(&mut self, readiness: Readiness, token: Token, mut callback: F) -> Result<PostAction, Self::Error> where F: FnMut(Self::Event, &mut Self::Metadata) -> Self::Ret {
+        self.channel.process_events(readiness, token, |evt, _| {
+            if let calloop::channel::Event::Msg(msg) = evt {
+                (callback)(msg, &mut ())
+            }
+        })?;
+
+        Ok(PostAction::Continue)
+    }
+
+    fn register(&mut self, poll: &mut Poll, token_factory: &mut TokenFactory) -> calloop::Result<()> {
+        self.channel.register(poll, token_factory)?;
+
+        Ok(())
+    }
+
+    fn reregister(&mut self, poll: &mut Poll, token_factory: &mut TokenFactory) -> calloop::Result<()> {
+        self.channel.reregister(poll, token_factory)?;
+
+        Ok(())
+    }
+
+    fn unregister(&mut self, poll: &mut Poll) -> calloop::Result<()> {
+        self.channel.unregister(poll)?;
+
+        Ok(())
     }
 }
 

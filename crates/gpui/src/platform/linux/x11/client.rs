@@ -43,7 +43,7 @@ use super::{button_from_mask, button_of_key, modifiers_from_state};
 use super::{XimCallbackEvent, XimHandler};
 use crate::platform::linux::is_within_click_distance;
 use crate::platform::linux::platform::DOUBLE_CLICK_INTERVAL;
-use crate::platform::linux::xdg_desktop_portal::init_portal_listener;
+use crate::platform::linux::xdg_desktop_portal::{ XDPEventSource, Event as XDPEvent };
 
 pub(crate) struct WindowRef {
     window: X11WindowStatePtr,
@@ -148,7 +148,7 @@ impl X11Client {
     pub(crate) fn new() -> Self {
         let event_loop = EventLoop::try_new().unwrap();
 
-        let (common, main_receiver, appearance) = LinuxCommon::new(event_loop.get_signal());
+        let (common, main_receiver) = LinuxCommon::new(event_loop.get_signal());
 
         let handle = event_loop.handle();
 
@@ -345,8 +345,19 @@ impl X11Client {
                 }
             })
             .expect("Failed to initialize XIM event source");
+        handle
+            .insert_source(XDPEventSource::new(&common.background_executor), {
+                move |event, _, client| match event {
+                    XDPEvent::WindowAppearance(appearance) => {
+                        client.with_common(|common| common.appearance = appearance);
+                        for (_, window) in &mut client.0.borrow_mut().windows {
+                            window.window.set_appearance(appearance);
+                        }
+                    },
+                }
+            });
 
-        let state = Rc::new(RefCell::new(X11ClientState {
+        X11Client(Rc::new(RefCell::new(X11ClientState {
             event_loop: Some(event_loop),
             loop_handle: handle,
             common,
@@ -375,33 +386,7 @@ impl X11Client {
 
             clipboard,
             primary,
-        }));
-
-        Self::setup_appearance_listener(
-            Rc::downgrade(&state),
-            &state.borrow().common.foreground_executor,
-            appearance,
-        );
-
-        X11Client(state)
-    }
-
-    fn setup_appearance_listener(
-        state_ptr: Weak<RefCell<X11ClientState>>,
-        executor: &ForegroundExecutor,
-        appearance: Weak<Mutex<WindowAppearance>>,
-    ) {
-        init_portal_listener(
-            executor,
-            appearance,
-            Box::new(move || {
-                if let Some(state) = state_ptr.upgrade() {
-                    for (_, window) in &state.borrow().windows {
-                        window.appearance_changed()
-                    }
-                }
-            }),
-        );
+        })))
     }
 
     fn get_window(&self, win: xproto::Window) -> Option<X11WindowStatePtr> {
@@ -803,7 +788,7 @@ impl LinuxClient for X11Client {
             x_window,
             &state.atoms,
             state.scale_factor,
-            Rc::downgrade(&state.common.appearance),
+            state.common.appearance,
         );
 
         let screen_resources = state

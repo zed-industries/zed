@@ -87,18 +87,16 @@ pub(crate) struct LinuxCommon {
     pub(crate) background_executor: BackgroundExecutor,
     pub(crate) foreground_executor: ForegroundExecutor,
     pub(crate) text_system: Arc<CosmicTextSystem>,
-    pub(crate) appearance: Rc<Mutex<WindowAppearance>>,
+    pub(crate) appearance: WindowAppearance,
     pub(crate) callbacks: PlatformHandlers,
     pub(crate) signal: LoopSignal,
 }
 
 impl LinuxCommon {
-    pub fn new(signal: LoopSignal) -> (Self, Channel<Runnable>, Weak<Mutex<WindowAppearance>>) {
+    pub fn new(signal: LoopSignal) -> (Self, Channel<Runnable>) {
         let (main_sender, main_receiver) = calloop::channel::channel::<Runnable>();
         let text_system = Arc::new(CosmicTextSystem::new());
         let callbacks = PlatformHandlers::default();
-        let appearance = Rc::new(Mutex::new(WindowAppearance::Light));
-        let appearance_ptr = Rc::downgrade(&appearance);
 
         let dispatcher = Arc::new(LinuxDispatcher::new(main_sender.clone()));
 
@@ -106,12 +104,12 @@ impl LinuxCommon {
             background_executor: BackgroundExecutor::new(dispatcher.clone()),
             foreground_executor: ForegroundExecutor::new(dispatcher.clone()),
             text_system,
-            appearance,
+            appearance: WindowAppearance::Light,
             callbacks,
             signal,
         };
 
-        (common, main_receiver, appearance_ptr)
+        (common, main_receiver)
     }
 }
 
@@ -468,7 +466,7 @@ impl<P: LinuxClient + 'static> Platform for P {
     }
 
     fn window_appearance(&self) -> WindowAppearance {
-        self.with_common(|common| common.appearance.lock().deref().clone())
+        self.with_common(|common| common.appearance)
     }
 
     fn register_url_scheme(&self, _: &str) -> Task<anyhow::Result<()>> {

@@ -166,7 +166,7 @@ pub(crate) struct X11WindowState {
     renderer: BladeRenderer,
     display: Rc<dyn PlatformDisplay>,
     input_handler: Option<PlatformInputHandler>,
-    appearance: Weak<Mutex<WindowAppearance>>,
+    appearance: WindowAppearance,
 }
 
 #[derive(Clone)]
@@ -216,7 +216,7 @@ impl X11WindowState {
         x_window: xproto::Window,
         atoms: &XcbAtoms,
         scale_factor: f32,
-        appearance: Weak<Mutex<WindowAppearance>>,
+        appearance: WindowAppearance,
     ) -> Self {
         let x_screen_index = params
             .display_id
@@ -419,7 +419,7 @@ impl X11Window {
         x_window: xproto::Window,
         atoms: &XcbAtoms,
         scale_factor: f32,
-        appearance: Weak<Mutex<WindowAppearance>>,
+        appearance: WindowAppearance,
     ) -> Self {
         Self(X11WindowStatePtr {
             state: Rc::new(RefCell::new(X11WindowState::new(
@@ -556,7 +556,9 @@ impl X11WindowStatePtr {
         }
     }
 
-    pub fn appearance_changed(&self) {
+    pub fn set_appearance(&mut self, appearance: WindowAppearance) {
+        self.state.borrow_mut().appearance = appearance;
+
         let mut callbacks = self.callbacks.borrow_mut();
         if let Some(ref mut fun) = callbacks.appearance_changed {
             (fun)()
@@ -594,9 +596,7 @@ impl PlatformWindow for X11Window {
     }
 
     fn appearance(&self) -> WindowAppearance {
-        self.0.state.borrow().appearance.upgrade()
-            .map(|v| v.lock().deref().clone())
-            .unwrap_or(WindowAppearance::Light)
+        self.0.state.borrow().appearance
     }
 
     fn display(&self) -> Rc<dyn PlatformDisplay> {
