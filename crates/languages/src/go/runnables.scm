@@ -2,7 +2,8 @@
 (
     (function_declaration name: (_) @run @_name
         (#match? @_name "^Test.+"))
-) @go-test
+        (#set! tag go-test)
+)
 
 ; `t.Run`
 (
@@ -15,10 +16,12 @@
 (
     (function_declaration name: (_) @run @_name
         (#match? @_name "^Benchmark.+"))
-) @go-benchmark
+        (#set! tag go-benchmark)
+)
 
 ; go run
 (
     (function_declaration name: (_) @run @_name
         (#eq? @_name "main"))
-) @go-run
+        (#set! tag go-run)
+)
