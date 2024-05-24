@@ -351,7 +351,7 @@ pub fn run(workspace: &mut Workspace, _: &Run, cx: &mut ViewContext<Workspace>) 
 
     println!("Created block {block_id:?}");
 
-    let receiver = runtime_manager.update(cx, |runtime_manager, cx| {
+    let (receiver, editor_runtime_block) = runtime_manager.update(cx, |runtime_manager, cx| {
         let editor_runtime_block = EditorRuntimeBlock {
             code_range: anchor_range.clone(),
             block_id,
@@ -363,15 +363,20 @@ pub fn run(workspace: &mut Workspace, _: &Run, cx: &mut ViewContext<Workspace>) 
             .entry(editor.downgrade())
             .or_insert_with(|| EditorRuntimeState { blocks: Vec::new() });
 
-        editor_runtime_state.blocks.push(editor_runtime_block);
+        editor_runtime_state
+            .blocks
+            .push(editor_runtime_block.clone());
 
         // Run the code!
-        runtime_manager.execute_code(
-            entity_id,
-            language_name,
-            execution_id.clone(),
-            selected_text.clone(),
-            cx,
+        (
+            runtime_manager.execute_code(
+                entity_id,
+                language_name,
+                execution_id.clone(),
+                selected_text.clone(),
+                cx,
+            ),
+            editor_runtime_block,
         )
     });
 
@@ -389,7 +394,7 @@ pub fn run(workspace: &mut Workspace, _: &Run, cx: &mut ViewContext<Workspace>) 
                 execution_view.push_message(&update.content, cx)
             })?;
 
-            editor.update(&mut cx, |editor, cx| {
+            let block_id = editor.update(&mut cx, |editor, cx| {
                 let mut blocks_to_remove = HashSet::default();
                 blocks_to_remove.insert(block_id);
 
@@ -404,7 +409,14 @@ pub fn run(workspace: &mut Workspace, _: &Run, cx: &mut ViewContext<Workspace>) 
                 };
 
                 block_id = editor.insert_blocks([block], None, cx)[0];
+
+                block_id
             })?;
+
+            // runtime_manager.update(&mut cx, |runtime_manager, cx| {
+            //     editor_runtime_block.block_id = block_id;
+            //     // runtime_manager.update_block(editor_runtime_block, update, cx);
+            // });
         }
         anyhow::Ok(())
     })
