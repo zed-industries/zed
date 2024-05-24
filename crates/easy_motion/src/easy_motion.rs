@@ -262,18 +262,27 @@ impl EasyMotion {
 
             let settings = ThemeSettings::get_global(cx);
             let players = &settings.active_theme.players().0;
-            let color_0 = players[0].cursor;
-            let color_1 = players[2].cursor;
-            let color_2 = players[3].cursor;
+            let style_0 = HighlightStyle {
+                color: Some(players[0].cursor),
+                ..HighlightStyle::default()
+            };
+            let style_1 = HighlightStyle {
+                color: Some(players[2].cursor),
+                ..HighlightStyle::default()
+            };
+            let style_2 = HighlightStyle {
+                color: Some(players[3].cursor),
+                ..HighlightStyle::default()
+            };
             let trie =
                 TrieBuilder::new("asdghklqwertyuiopzxcvbnmfj".to_string(), word_starts.len())
                     .populate_with(true, word_starts.into_iter(), |seq, point| {
-                        let color = match seq.len() {
-                            0 | 1 => color_0,
-                            2 => color_1,
-                            3.. => color_2,
+                        let style = match seq.len() {
+                            0 | 1 => style_0,
+                            2 => style_1,
+                            3.. => style_2,
                         };
-                        OverlayState { color, point }
+                        OverlayState { style, point }
                     });
             EasyMotion::add_overlays(editor, &trie, cx);
 
@@ -283,15 +292,15 @@ impl EasyMotion {
             })
             .unwrap();
 
+            // -- dimming --
             let anchor_start = map.display_point_to_anchor(start, Bias::Left);
             let anchor_end = map.display_point_to_anchor(end, Bias::Left);
-            // let settings = ThemeSettings::get_global(cx);
-            // let muted = settings.active_theme.colors().text_muted;
             let highlight = HighlightStyle {
                 fade_out: Some(0.7),
                 ..Default::default()
             };
             editor.highlight_text::<EasyMotion>(vec![anchor_start..anchor_end], highlight, cx);
+            // --
         });
     }
     fn easy_motion_pattern(&mut self, _cx: &mut WindowContext) {}
@@ -360,28 +369,28 @@ impl EasyMotion {
 
     fn add_overlays(editor: &mut Editor, trie: &Trie<OverlayState>, cx: &mut ViewContext<Editor>) {
         let settings = ThemeSettings::get_global(cx);
+        // if not doing direct overlays
+        // let background = None;
         let background = settings.active_theme.colors().background;
         for (seq, overlay) in trie.iter() {
             let mut highlights = vec![(
                 0..1,
                 HighlightStyle {
-                    color: Some(overlay.color),
                     background_color: Some(background),
-                    ..Default::default()
+                    ..overlay.style.clone()
                 },
             )];
             if seq.len() > 1 {
                 highlights.push((
                     1..seq.len(),
                     HighlightStyle {
-                        color: Some(overlay.color),
                         background_color: Some(background),
                         fade_out: Some(0.3),
-                        ..Default::default()
+                        ..overlay.style.clone()
                     },
                 ));
             }
-            editor.add_overlay(seq.to_string(), overlay.point.clone(), 0.0, highlights, cx);
+            editor.add_overlay(seq, overlay.point.clone(), 0.0, highlights, cx);
         }
     }
 }

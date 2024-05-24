@@ -2556,6 +2556,15 @@ impl AbsoluteLength {
     }
 }
 
+impl MulAssign<f32> for AbsoluteLength {
+    fn mul_assign(&mut self, rhs: f32) {
+        match self {
+            AbsoluteLength::Pixels(px) => px.0 *= rhs,
+            AbsoluteLength::Rems(rems) => rems.0 *= rhs,
+        }
+    }
+}
+
 impl From<Pixels> for AbsoluteLength {
     fn from(pixels: Pixels) -> Self {
         AbsoluteLength::Pixels(pixels)

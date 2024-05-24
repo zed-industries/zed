@@ -23,12 +23,22 @@ impl Overlay {
             return None;
         }
         let iter = self.highlights.iter().cloned();
-        Some((
-            self.point,
-            self.offset,
-            StyledText::new(self.text.clone())
-                .with_highlights(&style.text, iter)
-                .into_any_element(),
-        ))
+
+        let el = StyledText::new(self.text.clone())
+            .with_highlights(&style.text, iter)
+            .into_any_element();
+        Some((self.point, self.offset, el))
+        // -- same rendering as player names --
+        // let text_size = style.text.font_size;
+        // let high = iter.next().unwrap().1;
+        // let el = div()
+        //     .bg(high.background_color.unwrap())
+        //     .text_size(text_size)
+        //     .px_0p5()
+        //     .line_height(text_size.to_pixels(cx.rem_size()) + px(2.))
+        //     .text_color(Hsla::white())
+        //     .font_family(style.text.font_family.clone())
+        //     .child(self.text.clone())
+        //     .into_any_element();
     }
 }

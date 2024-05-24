@@ -1,11 +1,11 @@
-use editor::{overlay, DisplayPoint};
-use gpui::{Hsla, KeyContext};
+use editor::DisplayPoint;
+use gpui::{HighlightStyle, KeyContext};
 
 use crate::perm::{Trie, TrimResult};
 
 #[derive(Debug, Default)]
 pub(crate) struct OverlayState {
-    pub color: Hsla,
+    pub style: HighlightStyle,
     pub point: DisplayPoint,
 }
 

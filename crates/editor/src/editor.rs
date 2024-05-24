@@ -4761,6 +4761,8 @@ impl Editor {
         let Some(style) = self.style.as_ref() else {
             return vec![];
         };
+        // let mut new_style = style.clone();
+        // new_style.text.font_size *= 0.8;
         let overlays = &self.overlays;
         overlays
             .into_iter()
