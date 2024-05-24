@@ -56,6 +56,7 @@ use std::ops::Add;
 use std::{any::TypeId, borrow::Cow, fmt::Debug, num::NonZeroU32, ops::Range, sync::Arc};
 use sum_tree::{Bias, TreeMap};
 use tab_map::{TabMap, TabSnapshot};
+use text::LineIndent;
 use ui::WindowContext;
 use wrap_map::{WrapMap, WrapSnapshot};
 
@@ -843,7 +844,7 @@ impl DisplaySnapshot {
         result
     }
 
-    pub fn line_indent_for_buffer_row(&self, buffer_row: MultiBufferRow) -> (u32, bool) {
+    pub fn line_indent_for_buffer_row(&self, buffer_row: MultiBufferRow) -> LineIndent {
         let (buffer, range) = self
             .buffer_snapshot
             .buffer_line_for_row(buffer_row)
@@ -866,17 +867,16 @@ impl DisplaySnapshot {
             return false;
         }
 
-        let (indent_size, is_blank) = self.line_indent_for_buffer_row(buffer_row);
-        if is_blank {
+        let line_indent = self.line_indent_for_buffer_row(buffer_row);
+        if line_indent.is_line_blank() {
             return false;
         }
 
         for next_row in (buffer_row.0 + 1)..=max_row.0 {
-            let (next_indent_size, next_line_is_blank) =
-                self.line_indent_for_buffer_row(MultiBufferRow(next_row));
-            if next_indent_size > indent_size {
+            let next_line_indent = self.line_indent_for_buffer_row(MultiBufferRow(next_row));
+            if next_line_indent.raw_len() > line_indent.raw_len() {
                 return true;
-            } else if !next_line_is_blank {
+            } else if !next_line_indent.is_line_blank() {
                 break;
             }
         }
@@ -900,13 +900,15 @@ impl DisplaySnapshot {
         } else if self.starts_indent(MultiBufferRow(start.row))
             && !self.is_line_folded(MultiBufferRow(start.row))
         {
-            let (start_indent, _) = self.line_indent_for_buffer_row(buffer_row);
+            let start_line_indent = self.line_indent_for_buffer_row(buffer_row);
             let max_point = self.buffer_snapshot.max_point();
             let mut end = None;
 
             for row in (buffer_row.0 + 1)..=max_point.row {
-                let (indent, is_blank) = self.line_indent_for_buffer_row(MultiBufferRow(row));
-                if !is_blank && indent <= start_indent {
+                let line_indent = self.line_indent_for_buffer_row(MultiBufferRow(row));
+                if !line_indent.is_line_blank()
+                    && line_indent.raw_len() <= start_line_indent.raw_len()
+                {
                     let prev_row = row - 1;
                     end = Some(Point::new(
                         prev_row,

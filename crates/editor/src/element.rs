@@ -1417,9 +1417,9 @@ impl EditorElement {
                 .into_iter()
                 .enumerate()
                 .filter_map(|(i, indent_guide)| {
-                    let indent_size = self.column_pixels(indent_guide.indent_size as usize, cx);
-                    let total_width = indent_size * px(indent_guide.depth as f32);
-
+                    let single_indent_width =
+                        self.column_pixels(indent_guide.tab_size as usize, cx);
+                    let total_width = single_indent_width * indent_guide.depth as f32;
                     let start_x = content_origin.x + total_width - scroll_pixel_position.x;
                     if start_x >= text_origin.x {
                         let (offset_y, length) = Self::calculate_indent_guide_bounds(
@@ -1433,7 +1433,7 @@ impl EditorElement {
                         Some(IndentGuideLayout {
                             origin: point(start_x, start_y),
                             length,
-                            indent_size,
+                            single_indent_width,
                             depth: indent_guide.depth,
                             active: active_indent_guide_indices.contains(&i),
                         })
@@ -1466,6 +1466,11 @@ impl EditorElement {
 
         let mut offset_y = row_range.start.0 as f32 * line_height;
         let mut length = (cons_line.0.saturating_sub(row_range.start.0)) as f32 * line_height;
+
+        // If we are at the end of the buffer, ensure that the indent guide extends to the end of the line.
+        if row_range.end == cons_line {
+            length += line_height;
+        }
 
         // If there is a block (e.g. diagnostic) in between the start of the indent guide and the line above,
         // we want to extend the indent guide to the start of the block.
@@ -2637,7 +2642,7 @@ impl EditorElement {
             }
 
             if let Some(color) = background_color {
-                let width = indent_guide.indent_size - px(line_indicator_width);
+                let width = indent_guide.single_indent_width - px(line_indicator_width);
                 cx.paint_quad(fill(
                     Bounds {
                         origin: point(
@@ -5114,7 +5119,7 @@ fn layout_line(
 pub struct IndentGuideLayout {
     origin: gpui::Point<Pixels>,
     length: Pixels,
-    indent_size: Pixels,
+    single_indent_width: Pixels,
     depth: u32,
     active: bool,
 }
