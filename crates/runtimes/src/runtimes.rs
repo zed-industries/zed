@@ -314,30 +314,31 @@ pub fn run(workspace: &mut Workspace, _: &Run, cx: &mut ViewContext<Workspace>) 
 
     // If any block overlaps with the new block, remove it
     // When inserting a new block, put it in order so that search is efficient
-    let blocks_to_remove = runtime_manager.update(cx, |runtime_manager, cx| {
+    let blocks_to_remove = runtime_manager.update(cx, |runtime_manager, _cx| {
         // Get the current `EditorRuntimeState` for this runtime_manager, inserting it if it doesn't exist
         let editor_runtime_state = runtime_manager
             .editors
             .entry(editor.downgrade())
             .or_insert_with(|| EditorRuntimeState { blocks: Vec::new() });
 
-        let mut blocks = editor_runtime_state.blocks.clone();
-        let mut blocks_to_remove: Vec<BlockId> = Vec::new();
-        for (i, block) in blocks.iter().enumerate() {
+        let mut blocks_to_remove: HashSet<BlockId> = HashSet::default();
+        for (_i, block) in editor_runtime_state.blocks.iter().enumerate() {
             let other_range: Range<Anchor> = block.code_range.clone();
 
-            // We don't have an intersection operator on `Range`, so we have to do it manually
-            // Sadly we can't use `<=` on Anchors either
-            // if intersects(anchor_range, other_range) {
-            //     // The block overlaps with the new block, remove it
-            //     blocks_to_remove.push(i);
-            // }
+            if anchor_range.overlaps(&other_range, &buffer) {
+                blocks_to_remove.insert(block.block_id);
+            }
         }
 
         blocks_to_remove
     });
 
+    let blocks_to_remove = blocks_to_remove.clone();
+    dbg!(&blocks_to_remove);
+
     let mut block_id = editor.update(cx, |editor, cx| {
+        println!("Removing blocks {blocks_to_remove:?}");
+        editor.remove_blocks(blocks_to_remove, None, cx);
         let block = BlockProperties {
             position: anchor_range.end,
             height: execution_view.num_lines(cx).saturating_add(1),
@@ -349,13 +350,22 @@ pub fn run(workspace: &mut Workspace, _: &Run, cx: &mut ViewContext<Workspace>) 
         editor.insert_blocks([block], None, cx)[0]
     });
 
-    let editor_runtime_block = EditorRuntimeBlock {
-        code_range: anchor_range.clone(),
-        block_id: block_id.clone(),
-        execution_view: execution_view.clone(),
-    };
+    println!("Created block {block_id:?}");
 
     let receiver = runtime_manager.update(cx, |runtime_manager, cx| {
+        let editor_runtime_block = EditorRuntimeBlock {
+            code_range: anchor_range.clone(),
+            block_id,
+            execution_view: execution_view.clone(),
+        };
+
+        let editor_runtime_state = runtime_manager
+            .editors
+            .entry(editor.downgrade())
+            .or_insert_with(|| EditorRuntimeState { blocks: Vec::new() });
+
+        editor_runtime_state.blocks.push(editor_runtime_block);
+
         // Run the code!
         runtime_manager.execute_code(
             entity_id,
