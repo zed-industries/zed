@@ -103,6 +103,7 @@ pub struct EntryDetails {
     is_cut: bool,
     git_status: Option<GitFileStatus>,
     is_private: bool,
+    is_symlink: bool,
 }
 
 #[derive(PartialEq, Clone, Default, Debug, Deserialize)]
@@ -1646,6 +1647,7 @@ impl ProjectPanel {
                             .map_or(false, |e| e.is_cut() && e.entry_id() == entry.id),
                         git_status: status,
                         is_private: entry.is_private,
+                        is_symlink: entry.is_symlink,
                     };
 
                     if let Some(edit_state) = &self.edit_state {
@@ -1738,6 +1740,9 @@ impl ProjectPanel {
                 icon = FileIcons::get_icon(Path::new(&filename), cx);
             }
         }
+
+        let is_symlink = details.is_symlink;
+
         let depth = details.depth;
         div()
             .id(entry_id.to_proto() as usize)
