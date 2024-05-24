@@ -736,7 +736,7 @@ mod tests {
         cx.editor(|editor, _| assert!(editor.context_menu_visible()));
         assert_eq!(counter.load(atomic::Ordering::Acquire), 1);
 
-        //apply a completion and check it was succesfully applied
+        //apply a completion and check it was successfully applied
         let _apply_additional_edits = cx.update_editor(|editor, cx| {
             editor.context_menu_next(&Default::default(), cx);
             editor
@@ -750,11 +750,11 @@ mod tests {
             fn test() { println!(); }
         "});
 
-        // check that the completion menu is no longer visable and that there still has only been 1 completion request
+        // check that the completion menu is no longer visible and that there still has only been 1 completion request
         cx.editor(|editor, _| assert!(!editor.context_menu_visible()));
         assert_eq!(counter.load(atomic::Ordering::Acquire), 1);
 
-        //verify the informaton popover is still visable and unchanged
+        //verify the information popover is still visible and unchanged
         cx.editor(|editor, _| {
             assert!(editor.hover_state.visible());
             assert_eq!(
