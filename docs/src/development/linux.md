@@ -73,11 +73,11 @@ Zed has basic support for both modes. The mode is selected at runtime. If you're
 ## Flatpak
 
 > [!WARNING]
-> Zed's current Flatpak integration simply exits the sandbox on startup. Workflows that rely on flatpak's sandboxing may not work as expected. 
+> Zed's current Flatpak integration simply exits the sandbox on startup. Workflows that rely on Flatpak's sandboxing may not work as expected. 
 
-To build & install the flatpak package locally follow the steps below:
+To build & install the Flatpak package locally follow the steps below:
 
-1. Install flatpak for your distribution as outlined [here](https://flathub.org/setup).
+1. Install Flatpak for your distribution as outlined [here](https://flathub.org/setup).
 2. Run the `script/flatpak/deps` script to install the required dependencies.
 3. Run `script/flatpak/bundle-flatpak`.
 4. Now the package has been installed and has a bundle available at `target/release/{app-id}.flatpak`.
