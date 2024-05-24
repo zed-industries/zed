@@ -16,18 +16,13 @@ doctest = false
 anyhow.workspace = true
 # the terminal crate doesn't add alacritty to the workspace, so we directly depend on it here
 alacritty_terminal = "0.23"
-client.workspace = true
-clock.workspace = true
 collections.workspace = true
 editor.workspace = true
 gpui.workspace = true
 futures.workspace = true
 language.workspace = true
-languages.workspace = true
 log.workspace = true
-postage.workspace = true
 project.workspace = true
-#runtimelib = { path = "../../../../runtimed/runtimed/runtimelib"}
 runtimelib = "0.10.0"
 serde.workspace = true
 serde_json.workspace = true
@@ -35,7 +30,6 @@ settings.workspace = true
 smol.workspace = true
 tokio.workspace = true
 theme.workspace = true
-terminal.workspace = true
 terminal_view.workspace = true
 ui.workspace = true
 util.workspace = true
