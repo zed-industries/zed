@@ -2,6 +2,7 @@ use anyhow::Context;
 use collections::HashMap;
 use fs::Fs;
 
+use gray_matter::{engine::YAML, Matter};
 use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
 use smol::stream::StreamExt;
@@ -119,6 +120,17 @@ impl PromptLibrary {
 
         while let Some(prompt_path) = prompt_paths.next().await {
             let prompt_path = prompt_path.with_context(|| "Failed to read prompt path")?;
+            let file_name_lossy = if prompt_path.file_name().is_some() {
+                Some(
+                    prompt_path
+                        .file_name()
+                        .unwrap()
+                        .to_string_lossy()
+                        .to_string(),
+                )
+            } else {
+                None
+            };
 
             if !fs.is_file(&prompt_path).await
                 || prompt_path.extension().and_then(|ext| ext.to_str()) != Some("md")
@@ -130,12 +142,16 @@ impl PromptLibrary {
                 .load(&prompt_path)
                 .await
                 .with_context(|| format!("Failed to load prompt {:?}", prompt_path))?;
-            let mut static_prompt = StaticPrompt::new(json);
 
-            if let Some(file_name) = prompt_path.file_name() {
-                let file_name = file_name.to_string_lossy().into_owned();
-                static_prompt.file_name(file_name);
+            // Check that the prompt is valid
+            let matter = Matter::<YAML>::new();
+            let result = matter.parse(&json);
+            if result.data.is_none() {
+                log::warn!("Invalid prompt: {:?}", prompt_path);
+                continue;
             }
+
+            let static_prompt = StaticPrompt::new(json, file_name_lossy.clone());
 
             let state = self.state.get_mut();
 

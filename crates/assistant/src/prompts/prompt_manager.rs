@@ -321,7 +321,7 @@ impl PickerDelegate for PromptManagerDelegate {
                 .inset(true)
                 .spacing(ListItemSpacing::Sparse)
                 .selected(selected)
-                .child(Label::new(prompt.title().unwrap_or_default().clone())),
+                .child(Label::new(prompt.title())),
         )
     }
 }
