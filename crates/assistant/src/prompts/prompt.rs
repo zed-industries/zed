@@ -62,9 +62,10 @@ impl Default for StaticPromptFrontmatter {
 /// ```
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub struct StaticPrompt {
+    #[serde(skip)]
+    metadata: StaticPromptFrontmatter,
     content: String,
     file_name: Option<String>,
-    metadata: StaticPromptFrontmatter,
 }
 
 impl StaticPrompt {
