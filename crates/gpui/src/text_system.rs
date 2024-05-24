@@ -64,8 +64,7 @@ impl TextSystem {
             wrapper_pool: Mutex::default(),
             font_runs_pool: Mutex::default(),
             fallback_font_stack: smallvec![
-                // TODO: This is currently Zed-specific.
-                // We should allow GPUI users to provide their own fallback font stack.
+                // TODO: Remove this when Linux have implemented setting fallbacks.
                 font("Zed Plex Mono"),
                 font("Helvetica"),
                 font("Segoe UI"),  // Windows
@@ -685,7 +684,7 @@ pub struct Font {
     /// The font features to use.
     pub features: FontFeatures,
 
-    /// TODO:
+    /// The fallbacks fonts to use.
     pub fallbacks: FontFallbacks,
 
     /// The font weight.
