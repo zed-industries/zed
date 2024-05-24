@@ -1,12 +1,9 @@
 use anyhow::Result;
-use collections::HashMap;
 use editor::{CompletionProvider, Editor};
-use futures::channel::oneshot;
 use fuzzy::{match_strings, StringMatchCandidate};
-use gpui::{AppContext, Model, Task, ViewContext, WindowHandle};
+use gpui::{AppContext, Model, Task, ViewContext};
 use language::{Anchor, Buffer, CodeLabel, Documentation, LanguageServerId, ToPoint};
 use parking_lot::{Mutex, RwLock};
-use project::Project;
 use rope::Point;
 use std::{
     ops::Range,
@@ -15,58 +12,18 @@ use std::{
         Arc,
     },
 };
-use workspace::Workspace;
 
-use crate::PromptLibrary;
+pub use assistant_slash_command::{
+    SlashCommand, SlashCommandCleanup, SlashCommandInvocation, SlashCommandRegistry,
+};
 
-mod current_file_command;
-mod file_command;
-mod prompt_command;
+pub mod current_file_command;
+pub mod file_command;
+pub mod prompt_command;
 
 pub(crate) struct SlashCommandCompletionProvider {
     commands: Arc<SlashCommandRegistry>,
     cancel_flag: Mutex<Arc<AtomicBool>>,
-}
-
-#[derive(Default)]
-pub(crate) struct SlashCommandRegistry {
-    commands: HashMap<String, Box<dyn SlashCommand>>,
-}
-
-pub(crate) trait SlashCommand: 'static + Send + Sync {
-    fn name(&self) -> String;
-    fn description(&self) -> String;
-    fn complete_argument(
-        &self,
-        query: String,
-        cancel: Arc<AtomicBool>,
-        cx: &mut AppContext,
-    ) -> Task<Result<Vec<String>>>;
-    fn requires_argument(&self) -> bool;
-    fn run(&self, argument: Option<&str>, cx: &mut AppContext) -> SlashCommandInvocation;
-}
-
-pub(crate) struct SlashCommandInvocation {
-    pub output: Task<Result<String>>,
-    pub invalidated: oneshot::Receiver<()>,
-    pub cleanup: SlashCommandCleanup,
-}
-
-#[derive(Default)]
-pub(crate) struct SlashCommandCleanup(Option<Box<dyn FnOnce()>>);
-
-impl SlashCommandCleanup {
-    pub fn new(cleanup: impl FnOnce() + 'static) -> Self {
-        Self(Some(Box::new(cleanup)))
-    }
-}
-
-impl Drop for SlashCommandCleanup {
-    fn drop(&mut self) {
-        if let Some(cleanup) = self.0.take() {
-            cleanup();
-        }
-    }
 }
 
 pub(crate) struct SlashCommandLine {
@@ -74,38 +31,6 @@ pub(crate) struct SlashCommandLine {
     pub name: Range<usize>,
     /// The range within the line containing the command argument.
     pub argument: Option<Range<usize>>,
-}
-
-impl SlashCommandRegistry {
-    pub fn new(
-        project: Model<Project>,
-        prompt_library: Arc<PromptLibrary>,
-        window: Option<WindowHandle<Workspace>>,
-    ) -> Arc<Self> {
-        let mut this = Self {
-            commands: HashMap::default(),
-        };
-
-        this.register_command(file_command::FileSlashCommand::new(project));
-        this.register_command(prompt_command::PromptSlashCommand::new(prompt_library));
-        if let Some(window) = window {
-            this.register_command(current_file_command::CurrentFileSlashCommand::new(window));
-        }
-
-        Arc::new(this)
-    }
-
-    fn register_command(&mut self, command: impl SlashCommand) {
-        self.commands.insert(command.name(), Box::new(command));
-    }
-
-    fn command_names(&self) -> impl Iterator<Item = &String> {
-        self.commands.keys()
-    }
-
-    pub(crate) fn command(&self, name: &str) -> Option<&dyn SlashCommand> {
-        self.commands.get(name).map(|b| &**b)
-    }
 }
 
 impl SlashCommandCompletionProvider {
@@ -125,11 +50,12 @@ impl SlashCommandCompletionProvider {
         let candidates = self
             .commands
             .command_names()
+            .into_iter()
             .enumerate()
             .map(|(ix, def)| StringMatchCandidate {
                 id: ix,
-                string: def.clone(),
-                char_bag: def.as_str().into(),
+                string: def.to_string(),
+                char_bag: def.as_ref().into(),
             })
             .collect::<Vec<_>>();
         let commands = self.commands.clone();

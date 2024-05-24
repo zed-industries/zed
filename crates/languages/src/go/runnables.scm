@@ -1,21 +1,24 @@
 ; Functions names start with `Test`
 (
-    (function_declaration name: (_) @run @_name
-        (#match? @_name "^Test.+"))
-        (#set! tag go-test)
-) @go-test
+  (
+    (function_declaration name: (_) @run
+      (#match? @run "^Test.*"))
+  ) @_
+  (#set! tag go-test)
+)
 
 ; `t.Run`
 (
-    (call_expression 
+  (
+    (call_expression
       function: (
-      	selector_expression
-      	field: _ @run @_name
+        selector_expression
+        field: _ @run @_name
         (#eq? @_name "Run")
       )
       arguments: (
         argument_list
-        . 
+        .
         (interpreted_string_literal) @_subtest_name
         .
         (func_literal
@@ -36,19 +39,24 @@
         ) @second_argument
       )
     )
-    (#set! tag go-subtest)
-) @go-subtest
+  ) @_
+  (#set! tag go-subtest)
+)
 
 ; Functions names start with `Benchmark`
 (
+  (
     (function_declaration name: (_) @run @_name
-        (#match? @_name "^Benchmark.+"))
-        (#set! tag go-benchmark)
-) @go-benchmark
+      (#match? @_name "^Benchmark.+"))
+  ) @_
+  (#set! tag go-benchmark)
+)
 
 ; go run
 (
-    (function_declaration name: (_) @run @_name
-        (#eq? @_name "main"))
-        (#set! tag go-run)
-) @go-run
+  (
+    (function_declaration name: (_) @run
+      (#eq? @run "main"))
+  ) @_
+  (#set! tag go-main)
+)

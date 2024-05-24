@@ -1535,8 +1535,8 @@ impl EditorElement {
             editor
                 .tasks
                 .iter()
-                .filter_map(|(_, (multibuffer_offset, _))| {
-                    let multibuffer_point = multibuffer_offset.to_point(&snapshot.buffer_snapshot);
+                .filter_map(|(_, tasks)| {
+                    let multibuffer_point = tasks.offset.0.to_point(&snapshot.buffer_snapshot);
                     let multibuffer_row = MultiBufferRow(multibuffer_point.row);
                     if snapshot.is_line_folded(multibuffer_row) {
                         return None;

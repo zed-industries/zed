@@ -9,7 +9,8 @@ use crate::{
     prompts::prompt::generate_content_prompt,
     search::*,
     slash_command::{
-        SlashCommandCleanup, SlashCommandCompletionProvider, SlashCommandLine, SlashCommandRegistry,
+        current_file_command, file_command, prompt_command, SlashCommandCleanup,
+        SlashCommandCompletionProvider, SlashCommandLine, SlashCommandRegistry,
     },
     ApplyEdit, Assist, CompletionProvider, CycleMessageRole, InlineAssist, LanguageModel,
     LanguageModelRequest, LanguageModelRequestMessage, MessageId, MessageMetadata, MessageStatus,
@@ -204,11 +205,21 @@ impl AssistantPanel {
                     })
                     .detach();
 
-                    let slash_command_registry = SlashCommandRegistry::new(
+                    let slash_command_registry = SlashCommandRegistry::new();
+
+                    let window = cx.window_handle().downcast::<Workspace>();
+
+                    slash_command_registry.register_command(file_command::FileSlashCommand::new(
                         workspace.project().clone(),
-                        prompt_library.clone(),
-                        cx.window_handle().downcast::<Workspace>(),
+                    ));
+                    slash_command_registry.register_command(
+                        prompt_command::PromptSlashCommand::new(prompt_library.clone()),
                     );
+                    if let Some(window) = window {
+                        slash_command_registry.register_command(
+                            current_file_command::CurrentFileSlashCommand::new(window),
+                        );
+                    }
 
                     Self {
                         workspace: workspace_handle,
@@ -4273,8 +4284,13 @@ mod tests {
 
         let project = Project::test(fs.clone(), ["/test".as_ref()], cx).await;
         let prompt_library = Arc::new(PromptLibrary::default());
-        let slash_command_registry =
-            SlashCommandRegistry::new(project.clone(), prompt_library, None);
+        let slash_command_registry = SlashCommandRegistry::new();
+
+        slash_command_registry
+            .register_command(file_command::FileSlashCommand::new(project.clone()));
+        slash_command_registry.register_command(prompt_command::PromptSlashCommand::new(
+            prompt_library.clone(),
+        ));
 
         let registry = Arc::new(LanguageRegistry::test(cx.executor()));
         let conversation = cx.new_model(|cx| {
