@@ -300,8 +300,8 @@ impl DisplayMap {
         // directly and the new behavior separately.
         //
         //
-        let mut only_renderers = HashMap::new();
-        let mut full_replace = HashMap::new();
+        let mut only_renderers = HashMap::<BlockId, RenderBlock>::default();
+        let mut full_replace = HashMap::<BlockId, (u8, RenderBlock)>::default();
         for (id, (height, render)) in heights_and_renderers {
             if let Some(height) = height {
                 full_replace.insert(id, (height, render));
