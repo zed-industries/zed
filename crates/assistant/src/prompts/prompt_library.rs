@@ -15,6 +15,11 @@ use super::prompt::StaticPrompt;
 #[derive(Debug, Clone, Copy, Eq, PartialEq, Hash, Serialize, Deserialize)]
 pub struct PromptId(pub Uuid);
 
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+pub enum SortOrder {
+    Alphabetical,
+}
+
 #[allow(unused)]
 impl PromptId {
     pub fn new() -> Self {
@@ -58,6 +63,22 @@ impl PromptLibrary {
             .iter()
             .map(|(id, prompt)| (*id, prompt.clone()))
             .collect()
+    }
+
+    pub fn sorted_prompts(&self, sort_order: SortOrder) -> Vec<(PromptId, StaticPrompt)> {
+        let state = self.state.read();
+
+        let mut prompts = state
+            .prompts
+            .iter()
+            .map(|(id, prompt)| (*id, prompt.clone()))
+            .collect::<Vec<_>>();
+
+        match sort_order {
+            SortOrder::Alphabetical => prompts.sort_by(|(_, a), (_, b)| a.title().cmp(&b.title())),
+        };
+
+        prompts
     }
 
     pub fn first_prompt_id(&self) -> Option<PromptId> {

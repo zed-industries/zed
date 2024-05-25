@@ -9,7 +9,7 @@ use ui::{prelude::*, IconButtonShape, ListItem, ListItemSpacing};
 use util::{ResultExt, TryFutureExt};
 use workspace::ModalView;
 
-use super::prompt_library::{PromptId, PromptLibrary};
+use super::prompt_library::{PromptId, PromptLibrary, SortOrder};
 use crate::prompts::prompt::StaticPrompt;
 
 pub struct PromptManager {
@@ -264,7 +264,7 @@ impl PickerDelegate for PromptManagerDelegate {
         let prompt_library = self.prompt_library.clone();
         cx.spawn(|picker, mut cx| async move {
             async {
-                let prompts = prompt_library.prompts();
+                let prompts = prompt_library.sorted_prompts(SortOrder::Alphabetical);
                 let matching_prompts = prompts
                     .into_iter()
                     .filter(|(_, prompt)| {
