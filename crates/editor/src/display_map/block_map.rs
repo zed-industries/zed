@@ -541,7 +541,7 @@ impl BlockMap {
                     }),
                 ]
             })
-            .filter_map(|block| block)
+            .flatten()
     }
 
     pub(crate) fn sort_blocks<B: BlockLike>(blocks: &mut Vec<(u32, B)>) {
