@@ -1,19 +1,21 @@
 {
   "stems": {
-    "Podfile": "ruby",
+    "config": "settings",
+    "Dockerfile": "docker",
     "Gemfile": "ruby",
-    "Procfile": "heroku",
-    "Dockerfile": "docker"
+    "LICENSE": "document",
+    "Podfile": "ruby",
+    "Procfile": "heroku"
   },
   "suffixes": {
-    "astro": "astro",
-    "asset": "unity",
-    "Emakefile": "erlang",
     "aac": "audio",
+    "abc": "blender",
     "accdb": "storage",
+    "app.src": "erlang",
     "asp": "template",
     "aspx": "template",
-    "app.src": "erlang",
+    "asset": "unity",
+    "astro": "astro",
     "avi": "video",
     "avif": "image",
     "bak": "backup",
@@ -22,17 +24,20 @@
     "bash_logout": "terminal",
     "bash_profile": "terminal",
     "bashrc": "terminal",
+    "blend": "blender",
     "bmp": "image",
     "c": "c",
     "cc": "cpp",
     "cjs": "javascript",
+    "coffee": "coffeescript",
     "conf": "settings",
     "cpp": "cpp",
+    "cs": "cpp",
     "cshtml": "template",
+    "csproj": "settings",
     "css": "css",
     "csv": "storage",
     "cts": "typescript",
-    "coffee": "coffeescript",
     "cxx": "cpp",
     "dart": "dart",
     "dat": "storage",
@@ -41,9 +46,14 @@
     "dll": "storage",
     "dng": "image",
     "doc": "document",
+    "dockerignore": "docker",
     "docx": "document",
+    "dxf": "blender",
     "eex": "elixir",
+    "egg": "blender",
     "elm": "elm",
+    "Emakefile": "erlang",
+    "entitlements": "lock",
     "erl": "erlang",
     "escript": "erlang",
     "eslintrc": "eslint",
@@ -51,6 +61,7 @@
     "eslintrc.json": "eslint",
     "ex": "elixir",
     "exs": "elixir",
+    "fbx": "blender",
     "fish": "terminal",
     "flac": "audio",
     "fmp": "storage",
@@ -66,37 +77,39 @@
     "gitignore": "vcs",
     "gitkeep": "vcs",
     "gitmodules": "vcs",
+    "glb": "blender",
+    "gltf": "blender",
     "go": "go",
     "gql": "graphql",
     "graphql": "graphql",
     "graphqls": "graphql",
     "h": "c",
-    "hh": "cpp",
-    "hpp": "cpp",
-    "hxx": "cpp",
     "handlebars": "template",
     "hbs": "template",
     "heex": "elixir",
-    "heif": "image",
     "heic": "image",
+    "heif": "image",
+    "hh": "cpp",
+    "hpp": "cpp",
     "hrl": "erlang",
     "hs": "haskell",
     "htm": "template",
     "html": "template",
+    "hxx": "cpp",
     "ib": "storage",
     "ico": "image",
     "ini": "settings",
     "j2k": "image",
-    "java": "java",
     "jar": "java",
+    "java": "java",
     "jfif": "image",
     "jp2": "image",
     "jpeg": "image",
     "jpg": "image",
     "js": "javascript",
-    "jsx": "react",
     "json": "storage",
     "jsonc": "storage",
+    "jsx": "react",
     "jxl": "image",
     "kt": "kotlin",
     "ldf": "storage",
@@ -104,36 +117,40 @@
     "lockb": "bun",
     "log": "log",
     "lua": "lua",
+    "m": "c",
     "m4a": "audio",
     "m4v": "video",
-    "md": "document",
     "markdown": "document",
+    "md": "document",
     "mdb": "storage",
     "mdf": "storage",
-    "m": "c",
-    "mm": "cpp",
     "mdx": "document",
     "metadata": "code",
-    "mkv": "video",
     "mjs": "javascript",
     "mka": "audio",
+    "mkv": "video",
     "ml": "ocaml",
     "mli": "ocaml",
+    "mm": "cpp",
     "mov": "video",
     "mp3": "audio",
     "mp4": "video",
     "mts": "typescript",
     "myd": "storage",
     "myi": "storage",
+    "nim": "nim",
+    "npmrc": "settings",
     "nu": "terminal",
     "numbers": "document",
-    "nim": "nim",
+    "nvmrc": "settings",
+    "obj": "blender",
     "odp": "document",
     "ods": "document",
     "odt": "document",
     "ogg": "audio",
     "opus": "audio",
     "otf": "font",
+    "pbxproj": "lock",
     "pdb": "storage",
     "pdf": "document",
     "php": "php",
@@ -141,6 +158,7 @@
     "php4": "php",
     "php5": "php",
     "plist": "template",
+    "ply": "blender",
     "png": "image",
     "ppt": "document",
     "pptx": "document",
@@ -152,54 +170,45 @@
     "psd": "image",
     "py": "python",
     "qoi": "image",
+    "r": "r",
     "r3d": "video",
     "raw": "image",
     "rb": "ruby",
     "rebar.config": "erlang",
     "rkt": "code",
     "rs": "rust",
-    "r": "r",
     "rtf": "document",
     "sav": "storage",
+    "sc": "scala",
+    "scala": "scala",
     "scm": "code",
     "sdf": "storage",
     "settings": "settings",
     "sh": "terminal",
     "shtm": "template",
     "shtml": "template",
+    "sql": "storage",
     "sqlite": "storage",
+    "stl": "blender",
+    "storyboard": "template",
     "svelte": "template",
     "svg": "image",
-    "sc": "scala",
-    "scala": "scala",
-    "sql": "storage",
     "swift": "swift",
-    "tf": "terraform",
+    "tcl": "tcl",
     "tex": "document",
+    "tf": "terraform",
     "tfvars": "terraform",
     "tiff": "image",
     "toml": "toml",
     "ts": "typescript",
     "tsv": "storage",
-    "ttf": "font",
     "tsx": "react",
+    "ttf": "font",
     "txt": "document",
-    "tcl": "tcl",
     "unity": "unity",
     "unity.meta": "unity",
-    "egg": "blender",
-    "blend": "blender",
-    "fbx": "blender",
-    "obj": "blender",
-    "stl": "blender",
-    "gltf": "blender",
-    "x3d": "blender",
-    "dxf": "blender",
-    "glb": "blender",
-    "abc": "blender",
-    "ply": "blender",
-    "vue": "vue",
     "vcxproj": "settings",
+    "vue": "vue",
     "wav": "audio",
     "webm": "video",
     "webp": "image",
@@ -208,9 +217,10 @@
     "woff": "font",
     "woff2": "font",
     "wv": "audio",
+    "x3d": "blender",
     "xcodeproj": "settings",
-    "xcworkspacedata": "template",
     "xcscheme": "template",
+    "xcworkspacedata": "template",
     "xhtml": "template",
     "xls": "document",
     "xlsx": "document",
@@ -237,8 +247,17 @@
     "blender": {
       "icon": "icons/file_icons/blender.svg"
     },
+    "bun": {
+      "icon": "icons/file_icons/bun.svg"
+    },
+    "c": {
+      "icon": "icons/file_icons/c.svg"
+    },
     "code": {
       "icon": "icons/file_icons/code.svg"
+    },
+    "coffeescript": {
+      "icon": "icons/file_icons/coffeescript.svg"
     },
     "collapsed_chevron": {
       "icon": "icons/file_icons/chevron_right.svg"
@@ -246,17 +265,11 @@
     "collapsed_folder": {
       "icon": "icons/file_icons/folder.svg"
     },
-    "c": {
-      "icon": "icons/file_icons/c.svg"
-    },
     "cpp": {
       "icon": "icons/file_icons/cpp.svg"
     },
     "css": {
       "icon": "icons/file_icons/css.svg"
-    },
-    "coffeescript": {
-      "icon": "icons/file_icons/coffeescript.svg"
     },
     "dart": {
       "icon": "icons/file_icons/dart.svg"
@@ -294,17 +307,17 @@
     "fsharp": {
       "icon": "icons/file_icons/fsharp.svg"
     },
-    "haskell": {
-      "icon": "icons/file_icons/haskell.svg"
-    },
-    "heroku": {
-      "icon": "icons/file_icons/heroku.svg"
-    },
     "go": {
       "icon": "icons/file_icons/go.svg"
     },
     "graphql": {
       "icon": "icons/file_icons/graphql.svg"
+    },
+    "haskell": {
+      "icon": "icons/file_icons/haskell.svg"
+    },
+    "heroku": {
+      "icon": "icons/file_icons/heroku.svg"
     },
     "image": {
       "icon": "icons/file_icons/image.svg"
@@ -321,20 +334,17 @@
     "lock": {
       "icon": "icons/file_icons/lock.svg"
     },
-    "bun": {
-      "icon": "icons/file_icons/bun.svg"
-    },
     "log": {
       "icon": "icons/file_icons/info.svg"
     },
     "lua": {
       "icon": "icons/file_icons/lua.svg"
     },
-    "ocaml": {
-      "icon": "icons/file_icons/ocaml.svg"
-    },
     "nim": {
       "icon": "icons/file_icons/nim.svg"
+    },
+    "ocaml": {
+      "icon": "icons/file_icons/ocaml.svg"
     },
     "phoenix": {
       "icon": "icons/file_icons/phoenix.svg"
@@ -363,35 +373,35 @@
     "rust": {
       "icon": "icons/file_icons/rust.svg"
     },
+    "scala": {
+      "icon": "icons/file_icons/scala.svg"
+    },
     "settings": {
       "icon": "icons/file_icons/settings.svg"
     },
     "storage": {
       "icon": "icons/file_icons/database.svg"
     },
-    "scala": {
-      "icon": "icons/file_icons/scala.svg"
-    },
     "swift": {
       "icon": "icons/file_icons/swift.svg"
+    },
+    "tcl": {
+      "icon": "icons/file_icons/tcl.svg"
     },
     "template": {
       "icon": "icons/file_icons/html.svg"
     },
-    "terraform": {
-      "icon": "icons/file_icons/terraform.svg"
-    },
     "terminal": {
       "icon": "icons/file_icons/terminal.svg"
+    },
+    "terraform": {
+      "icon": "icons/file_icons/terraform.svg"
     },
     "toml": {
       "icon": "icons/file_icons/toml.svg"
     },
     "typescript": {
       "icon": "icons/file_icons/typescript.svg"
-    },
-    "tcl": {
-      "icon": "icons/file_icons/tcl.svg"
     },
     "unity": {
       "icon": "icons/file_icons/unity.svg"
