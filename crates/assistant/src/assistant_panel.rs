@@ -1858,20 +1858,18 @@ impl Conversation {
                         let name = &line[call.name];
                         if let Some(call) = unchanged_call {
                             new_calls.push(call);
-                        } else if let Some(command) = this.slash_command_registry.command(name) {
+                        } else if let Some((command, lsp_adapter_delegate)) = this
+                            .slash_command_registry
+                            .command(name)
+                            .zip(this.lsp_adapter_delegate.clone())
+                        {
                             changed = true;
                             let name = name.to_string();
                             let source_range =
                                 buffer.anchor_after(offset)..buffer.anchor_before(line_end_offset);
 
                             let argument = call.argument.map(|range| &line[range]);
-                            let invocation = command.run(
-                                argument,
-                                this.lsp_adapter_delegate
-                                    .clone()
-                                    .expect("no LspAdapterDelegate present when invoking command"),
-                                cx,
-                            );
+                            let invocation = command.run(argument, lsp_adapter_delegate, cx);
 
                             new_calls.push(SlashCommandCall {
                                 name,
