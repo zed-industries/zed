@@ -45,6 +45,7 @@ use postage::{
 use serde::Serialize;
 use settings::{Settings, SettingsLocation, SettingsStore};
 use smol::channel::{self, Sender};
+use std::time::Instant;
 use std::{
     any::Any,
     cmp::{self, Ordering},
@@ -1559,9 +1560,11 @@ impl LocalWorktree {
         } else {
             vec![path.clone()]
         };
+        let t0 = Instant::now();
         let mut refresh = self.refresh_entries_for_paths(paths);
         cx.spawn(move |this, mut cx| async move {
             refresh.recv().await;
+            log::trace!("refreshed entry {path:?} in {:?}", t0.elapsed());
             let new_entry = this.update(&mut cx, |this, _| {
                 this.entry_for_path(path)
                     .cloned()
@@ -3632,7 +3635,10 @@ impl BackgroundScanner {
 
         self.update_ignore_statuses(scan_job_tx).await;
         self.scan_dirs(false, scan_job_rx).await;
-        self.update_git_repositories(dot_git_paths).await;
+
+        if !dot_git_paths.is_empty() {
+            self.update_git_repositories(dot_git_paths).await;
+        }
 
         {
             let mut state = self.state.lock();
@@ -4289,10 +4295,6 @@ impl BackgroundScanner {
     }
 
     async fn update_git_repositories(&self, dot_git_paths: Vec<PathBuf>) {
-        if dot_git_paths.is_empty() {
-            return;
-        }
-
         log::debug!("reloading repositories: {dot_git_paths:?}");
 
         let (update_job_tx, update_job_rx) = channel::unbounded();
@@ -4300,9 +4302,7 @@ impl BackgroundScanner {
             let mut state = self.state.lock();
             let scan_id = state.snapshot.scan_id;
             for dot_git_dir in dot_git_paths {
-                // If there is already a repository for this .git directory, reload
-                // the status for all of its files.
-                let repository =
+                let existing_repository_entry =
                     state
                         .snapshot
                         .git_repositories
@@ -4311,12 +4311,13 @@ impl BackgroundScanner {
                             (repo.git_dir_path.as_ref() == dot_git_dir)
                                 .then(|| (*entry_id, repo.clone()))
                         });
-                match repository {
+
+                let (work_dir, repository) = match existing_repository_entry {
                     None => {
-                        state.build_git_repository(
-                            Arc::from(dot_git_dir.as_path()),
-                            self.fs.as_ref(),
-                        );
+                        match state.build_git_repository(dot_git_dir.into(), self.fs.as_ref()) {
+                            Some(output) => output,
+                            None => continue,
+                        }
                     }
                     Some((entry_id, repository)) => {
                         if repository.git_dir_scan_id == scan_id {
@@ -4334,7 +4335,6 @@ impl BackgroundScanner {
                         let repo = repository.repo_ptr.lock();
                         let branch = repo.branch_name();
                         repo.reload_index();
-                        let staged_statuses = repo.staged_statuses(Path::new(""));
 
                         state
                             .snapshot
@@ -4345,33 +4345,33 @@ impl BackgroundScanner {
                             .snapshot
                             .repository_entries
                             .update(&work_dir, |entry| entry.branch = branch.map(Into::into));
+                        (work_dir, repository.repo_ptr.clone())
+                    }
+                };
 
-                        let mut files = state.snapshot.traverse_from_path(
-                            true,
-                            false,
-                            false,
-                            work_dir.0.as_ref(),
-                        );
-                        let mut start_path = work_dir.0.clone();
-                        while start_path.starts_with(&work_dir.0) {
-                            files.advance_by(GIT_STATUS_UPDATE_BATCH_SIZE);
-                            let end_path = files.entry().map(|e| e.path.clone());
-                            smol::block_on(update_job_tx.send(UpdateGitStatusesJob {
-                                start_path: start_path.clone(),
-                                end_path: end_path.clone(),
-                                containing_repository: ScanJobContainingRepository {
-                                    work_directory: work_dir.clone(),
-                                    repository: repository.repo_ptr.clone(),
-                                    staged_statuses: staged_statuses.clone(),
-                                },
-                            }))
-                            .unwrap();
-                            if let Some(end_path) = end_path {
-                                start_path = end_path;
-                            } else {
-                                break;
-                            }
-                        }
+                let staged_statuses = repository.lock().staged_statuses(Path::new(""));
+                let mut files =
+                    state
+                        .snapshot
+                        .traverse_from_path(true, false, false, work_dir.0.as_ref());
+                let mut start_path = work_dir.0.clone();
+                while start_path.starts_with(&work_dir.0) {
+                    files.advance_by(GIT_STATUS_UPDATE_BATCH_SIZE);
+                    let end_path = files.entry().map(|e| e.path.clone());
+                    smol::block_on(update_job_tx.send(UpdateGitStatusesJob {
+                        start_path: start_path.clone(),
+                        end_path: end_path.clone(),
+                        containing_repository: ScanJobContainingRepository {
+                            work_directory: work_dir.clone(),
+                            repository: repository.clone(),
+                            staged_statuses: staged_statuses.clone(),
+                        },
+                    }))
+                    .unwrap();
+                    if let Some(end_path) = end_path {
+                        start_path = end_path;
+                    } else {
+                        break;
                     }
                 }
             }
@@ -4412,8 +4412,12 @@ impl BackgroundScanner {
 
         self.executor
             .scoped(|scope| {
-                for _ in 0..self.executor.num_cpus() {
+                // Git status updates are currently not very parallelizable,
+                // because they need to lock the git repository. Limit the number
+                // of workers so that
+                for _ in 0..self.executor.num_cpus().min(3) {
                     scope.spawn(async {
+                        let mut entries = Vec::with_capacity(GIT_STATUS_UPDATE_BATCH_SIZE);
                         loop {
                             select_biased! {
                                 // Process any path refresh requests before moving on to process
@@ -4425,10 +4429,10 @@ impl BackgroundScanner {
                                     }
                                 }
 
-                                // Recursively process directories whose ignores have changed.
+                                // Process git status updates in batches.
                                 job = update_job_rx.recv().fuse() => {
                                     let Ok(job) = job else { break };
-                                    self.update_git_statuses(job);
+                                    self.update_git_statuses(job, &mut entries);
                                 }
                             }
                         }
@@ -4438,37 +4442,53 @@ impl BackgroundScanner {
             .await;
     }
 
-    fn update_git_statuses(&self, job: UpdateGitStatusesJob) {
-        let mut state = self.state.lock();
-        let snapshot = &mut state.snapshot;
-        let repo_entry = snapshot
+    /// Update the git statuses for a given batch of entries.
+    fn update_git_statuses(&self, job: UpdateGitStatusesJob, entries: &mut Vec<Entry>) {
+        let t0 = Instant::now();
+        let repo_work_dir = &job.containing_repository.work_directory;
+        let state = self.state.lock();
+        let Some(repo_entry) = state
+            .snapshot
             .repository_entries
-            .get(&job.containing_repository.work_directory);
+            .get(&repo_work_dir)
+            .cloned()
+        else {
+            return;
+        };
 
-        let mut changes = vec![];
-        let mut edits = vec![];
-
-        for entry in snapshot.traverse_from_path(true, false, false, &job.start_path) {
-            if let Some(end_path) = &job.end_path {
-                if entry.path >= *end_path {
-                    break;
-                }
-            } else if !entry
-                .path
-                .starts_with(&job.containing_repository.work_directory.0)
+        // Retrieve a batch of entries for this job, and then release the state lock.
+        entries.clear();
+        for entry in state
+            .snapshot
+            .traverse_from_path(true, false, false, &job.start_path)
+        {
+            if job
+                .end_path
+                .as_ref()
+                .map_or(false, |end| &entry.path >= end)
+                || !entry.path.starts_with(&repo_work_dir)
             {
                 break;
             }
+            entries.push(entry.clone());
+        }
+        drop(state);
 
-            let repo_path =
-                repo_entry.map(|repo_entry| repo_entry.relativize(&snapshot, &entry.path));
-            let Some(Ok(repo_path)) = repo_path else {
+        // Determine which entries in this batch have changed their git status.
+        let mut edits = vec![];
+        for entry in entries.iter() {
+            let Ok(repo_path) = entry.path.strip_prefix(&repo_work_dir) else {
                 continue;
             };
             let Some(mtime) = entry.mtime else {
                 continue;
             };
-            let git_file_status = combine_git_statuses(
+            let repo_path = RepoPath(if let Some(location) = &repo_entry.location_in_repo {
+                location.join(repo_path)
+            } else {
+                repo_path.to_path_buf()
+            });
+            let git_status = combine_git_statuses(
                 job.containing_repository
                     .staged_statuses
                     .get(&repo_path)
@@ -4478,16 +4498,31 @@ impl BackgroundScanner {
                     .lock()
                     .unstaged_status(&repo_path, mtime),
             );
-            if entry.git_status != git_file_status {
+            if entry.git_status != git_status {
                 let mut entry = entry.clone();
-                entry.git_status = git_file_status;
-                changes.push(entry.path.clone());
+                entry.git_status = git_status;
                 edits.push(Edit::Insert(entry));
             }
         }
 
-        snapshot.entries_by_path.edit(edits, &());
-        util::extend_sorted(&mut state.changed_paths, changes, usize::MAX, Ord::cmp);
+        // Apply the git status changes.
+        let mut state = self.state.lock();
+        let path_changes = edits.iter().map(|edit| {
+            if let Edit::Insert(entry) = edit {
+                entry.path.clone()
+            } else {
+                unreachable!()
+            }
+        });
+        util::extend_sorted(&mut state.changed_paths, path_changes, usize::MAX, Ord::cmp);
+        state.snapshot.entries_by_path.edit(edits, &());
+
+        log::trace!(
+            "refreshed git status of {} entries starting with {} in {:?}",
+            entries.len(),
+            job.start_path.display(),
+            t0.elapsed()
+        );
     }
 
     fn build_change_set(
