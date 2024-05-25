@@ -340,6 +340,10 @@ mod flatpak {
 
     fn get_flatpak_dir() -> Option<PathBuf> {
         if let Ok(flatpak_id) = env::var("FLATPAK_ID") {
+            if !flatpak_id.starts_with("dev.zed.Zed") {
+                return None;
+            }
+
             let install_dir = Command::new("/usr/bin/flatpak-spawn")
                 .arg("--host")
                 .arg("flatpak")
