@@ -1770,7 +1770,7 @@ impl ProjectPanel {
                     .when_some(canonical_path, |this, path| {
                         this.end_slot::<Icon>(
                             Icon::new(IconName::ArrowRight)
-                                .size(IconSize::XSmall)
+                                .size(IconSize::Indicator)
                                 .color(filename_text_color),
                         )
                         .tooltip(move |cx| Tooltip::text(format!("{} • Symbolic Link", path), cx))
