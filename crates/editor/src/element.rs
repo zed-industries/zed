@@ -278,6 +278,8 @@ impl EditorElement {
         register_action(view, cx, Editor::redo_selection);
         if !view.read(cx).is_singleton(cx) {
             register_action(view, cx, Editor::expand_excerpts);
+            register_action(view, cx, Editor::expand_excerpts_up);
+            register_action(view, cx, Editor::expand_excerpts_down);
         }
         register_action(view, cx, Editor::go_to_diagnostic);
         register_action(view, cx, Editor::go_to_prev_diagnostic);

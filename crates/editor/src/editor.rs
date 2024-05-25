@@ -8146,12 +8146,33 @@ impl Editor {
     }
 
     pub fn expand_excerpts(&mut self, action: &ExpandExcerpts, cx: &mut ViewContext<Self>) {
+        self.expand_excerpts_for_direction(action.lines, ExpandExcerptDirection::UpAndDown, cx)
+    }
+
+    pub fn expand_excerpts_down(
+        &mut self,
+        action: &ExpandExcerptsDown,
+        cx: &mut ViewContext<Self>,
+    ) {
+        self.expand_excerpts_for_direction(action.lines, ExpandExcerptDirection::Down, cx)
+    }
+
+    pub fn expand_excerpts_up(&mut self, action: &ExpandExcerptsUp, cx: &mut ViewContext<Self>) {
+        self.expand_excerpts_for_direction(action.lines, ExpandExcerptDirection::Up, cx)
+    }
+
+    pub fn expand_excerpts_for_direction(
+        &mut self,
+        lines: u32,
+        direction: ExpandExcerptDirection,
+        cx: &mut ViewContext<Self>,
+    ) {
         let selections = self.selections.disjoint_anchors();
 
-        let lines = if action.lines == 0 {
+        let lines = if lines == 0 {
             EditorSettings::get_global(cx).expand_excerpt_lines
         } else {
-            action.lines
+            lines
         };
 
         self.buffer.update(cx, |buffer, cx| {
@@ -8161,7 +8182,7 @@ impl Editor {
                     .map(|selection| selection.head().excerpt_id)
                     .dedup(),
                 lines,
-                ExpandExcerptDirection::UpAndDown,
+                direction,
                 cx,
             )
         })
