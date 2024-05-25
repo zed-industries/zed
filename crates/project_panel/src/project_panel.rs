@@ -1743,7 +1743,7 @@ impl ProjectPanel {
 
         let canonical_path = details
             .canonical_path
-            .clone()
+            .as_ref()
             .map(|f| f.to_string_lossy().to_string());
 
         let depth = details.depth;
