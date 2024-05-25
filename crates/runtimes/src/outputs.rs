@@ -1,19 +1,65 @@
+use std::sync::Arc;
+
 use crate::stdio::TerminalOutput;
 use crate::ExecutionId;
-use gpui::{AnyElement, FontWeight, Render, View};
+use anyhow::{anyhow, Result};
+use gpui::{img, AnyElement, FontWeight, ImageData, Render, View};
 use runtimelib::{ExecutionState, JupyterMessageContent, MimeType};
 use serde_json::Value;
 use ui::{div, prelude::*, v_flex, IntoElement, Styled, ViewContext};
+
+pub struct ImageView {
+    height: u32,
+    width: u32,
+    image: Arc<ImageData>,
+}
+
+impl ImageView {
+    fn render(&self, cx: &ViewContext<ExecutionView>) -> AnyElement {
+        let line_height = cx.line_height();
+
+        let (height, width) = if self.height as f32 / line_height.0 == u8::MAX as f32 {
+            let height = u8::MAX as f32 * line_height.0;
+            let width = self.width as f32 * height / self.height as f32;
+            (height, width)
+        } else {
+            (self.height as f32, self.width as f32)
+        };
+
+        let image = self.image.clone();
+
+        div()
+            .h(Pixels(height as f32))
+            .w(Pixels(width as f32))
+            .child(img(image))
+            .into_any_element()
+    }
+}
+
+impl LineHeight for ImageView {
+    fn num_lines(&self, cx: &mut WindowContext) -> u8 {
+        let line_height = cx.line_height();
+
+        let lines = self.height as f32 / line_height.0;
+
+        if lines > u8::MAX as f32 {
+            return u8::MAX;
+        }
+        lines as u8
+    }
+}
 
 pub enum OutputType {
     Plain(TerminalOutput),
     Media((MimeType, Value)),
     Stream(TerminalOutput),
+    Image(ImageView),
     ErrorOutput {
         ename: String,
         evalue: String,
         traceback: TerminalOutput,
     },
+    Message(String),
 }
 
 pub trait LineHeight: Sized {
@@ -21,7 +67,12 @@ pub trait LineHeight: Sized {
 }
 
 // Priority order goes from highest to lowest (plaintext is the common fallback)
-const PRIORITY_ORDER: &[MimeType] = &[MimeType::Markdown, MimeType::Plain];
+const PRIORITY_ORDER: &[MimeType] = &[
+    MimeType::Png,
+    MimeType::Jpeg,
+    MimeType::Markdown,
+    MimeType::Plain,
+];
 
 impl OutputType {
     fn render(&self, cx: &ViewContext<ExecutionView>) -> Option<AnyElement> {
@@ -32,6 +83,8 @@ impl OutputType {
             // Self::Markdown(markdown) => Some(markdown.render(theme)),
             Self::Media((mimetype, value)) => render_rich(mimetype, value),
             Self::Stream(stdio) => Some(stdio.render(cx)),
+            Self::Image(image) => Some(image.render(cx)),
+            Self::Message(message) => Some(div().child(message.clone()).into_any_element()),
             Self::ErrorOutput {
                 ename,
                 evalue,
@@ -50,6 +103,8 @@ impl LineHeight for OutputType {
             Self::Plain(stdio) => stdio.num_lines(cx),
             Self::Media((_mimetype, value)) => value.as_str().unwrap_or("").lines().count() as u8,
             Self::Stream(stdio) => stdio.num_lines(cx),
+            Self::Image(image) => image.num_lines(cx),
+            Self::Message(message) => message.lines().count() as u8,
             Self::ErrorOutput {
                 ename,
                 evalue,
@@ -119,13 +174,38 @@ pub enum ExecutionStatus {
     Finished,
 }
 
-// Cell has status that's dependent on the runtime
-// The runtime itself has status
-
 pub struct ExecutionView {
     pub execution_id: ExecutionId,
     pub outputs: Vec<OutputType>,
     pub status: ExecutionStatus,
+}
+
+pub fn extract_image_output(mimetype: &MimeType, value: &Value) -> Result<OutputType> {
+    let media_type = match mimetype {
+        // TODO: Introduce From<MimeType> for str in runtimelib
+        // We don't necessarily need it since we use guess_format, however we could skip
+        // it if we wanted to.
+        MimeType::Png => "image/png",
+        MimeType::Jpeg => "image/jpeg",
+        _ => return Err(anyhow::anyhow!("Unsupported image format")),
+    };
+
+    let bytes = value.as_str().ok_or(anyhow!("Invalid image data"))?;
+    let bytes = base64::decode(bytes)?;
+
+    let format = image::guess_format(&bytes)?;
+    let data = image::load_from_memory_with_format(&bytes, format)?.into_bgra8();
+
+    let height = data.height();
+    let width = data.width();
+
+    let gpui_image_data = ImageData::new(data);
+
+    return Ok(OutputType::Image(ImageView {
+        height,
+        width,
+        image: Arc::new(gpui_image_data),
+    }));
 }
 
 impl ExecutionView {
@@ -155,6 +235,14 @@ impl ExecutionView {
                     }
                     MimeType::Markdown => {
                         OutputType::Plain(TerminalOutput::from(value.as_str().unwrap_or("")))
+                    }
+                    MimeType::Png | MimeType::Jpeg => {
+                        match extract_image_output(&mimetype, &value) {
+                            Ok(output) => output,
+                            Err(error) => {
+                                OutputType::Message(format!("Failed to load image: {}", error))
+                            }
+                        }
                     }
                     // We don't handle this type, but ok
                     _ => OutputType::Media((mimetype, value)),

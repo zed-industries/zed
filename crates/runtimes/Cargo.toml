@@ -14,12 +14,15 @@ doctest = false
 
 [dependencies]
 anyhow.workspace = true
-# the terminal crate doesn't add alacritty to the workspace, so we directly depend on it here
+# Note: terminal crate doesn't add alacritty to the workspace, so we directly depend on it here
 alacritty_terminal = "0.23"
+base64.workspace = true
 collections.workspace = true
 editor.workspace = true
 gpui.workspace = true
 futures.workspace = true
+# Note: gpui crate doesn't pull image from the workspace
+image = "0.23"
 language.workspace = true
 log.workspace = true
 project.workspace = true
