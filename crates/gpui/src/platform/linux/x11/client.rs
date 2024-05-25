@@ -441,7 +441,12 @@ impl X11Client {
             Event::FocusOut(event) => {
                 let window = self.get_window(event.event)?;
                 window.set_focused(false);
-                self.0.borrow_mut().focused_window = None;
+                let mut state = self.0.borrow_mut();
+                state.focused_window = None;
+                state.compose_state.reset();
+                state.pre_edit_text.take();
+                drop(state);
+                window.handle_ime_delete();
             }
             Event::XkbStateNotify(event) => {
                 let mut state = self.0.borrow_mut();
@@ -542,6 +547,12 @@ impl X11Client {
                     px(event.event_x as f32 / u16::MAX as f32 / state.scale_factor),
                     px(event.event_y as f32 / u16::MAX as f32 / state.scale_factor),
                 );
+                if let Some(text) = state.pre_edit_text.take() {
+                    state.compose_state.reset();
+                    drop(state);
+                    window.handle_ime_commit(text);
+                    state = self.0.borrow_mut();
+                }
                 if let Some(button) = button_of_key(event.detail.try_into().unwrap()) {
                     let click_elapsed = state.last_click.elapsed();
 
