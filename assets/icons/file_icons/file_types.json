@@ -7,6 +7,7 @@
   },
   "suffixes": {
     "astro": "astro",
+    "asset": "unity",
     "Emakefile": "erlang",
     "aac": "audio",
     "accdb": "storage",
@@ -184,6 +185,19 @@
     "tsx": "react",
     "txt": "document",
     "tcl": "tcl",
+    "unity": "unity",
+    "unity.meta": "unity",
+    "egg": "blender",
+    "blend": "blender",
+    "fbx": "blender",
+    "obj": "blender",
+    "stl": "blender",
+    "gltf": "blender",
+    "x3d": "blender",
+    "dxf": "blender",
+    "glb": "blender",
+    "abc": "blender",
+    "ply": "blender",
     "vue": "vue",
     "vcxproj": "settings",
     "wav": "audio",
@@ -219,6 +233,9 @@
     },
     "audio": {
       "icon": "icons/file_icons/audio.svg"
+    },
+    "blender": {
+      "icon": "icons/file_icons/blender.svg"
     },
     "code": {
       "icon": "icons/file_icons/code.svg"
@@ -375,6 +392,9 @@
     },
     "tcl": {
       "icon": "icons/file_icons/tcl.svg"
+    },
+    "unity": {
+      "icon": "icons/file_icons/unity.svg"
     },
     "vcs": {
       "icon": "icons/file_icons/git.svg"
