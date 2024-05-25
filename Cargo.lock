@@ -11350,8 +11350,6 @@ dependencies = [
  "futures-lite 1.13.0",
  "git2",
  "globset",
- "indoc",
- "isahc",
  "lazy_static",
  "log",
  "rand 0.8.5",
