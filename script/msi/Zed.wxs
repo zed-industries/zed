@@ -1,0 +1,27 @@
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
+    <Package Name="Zed" Manufacturer="todo" Version="1.2.0.0"
+        UpgradeCode="b60cd678-9e93-453f-80ac-a7d602a6356e">
+        <MediaTemplate EmbedCab="true" />
+        <MajorUpgrade
+            AllowSameVersionUpgrades="yes"
+            DowngradeErrorMessage="A newer version of [ProductName] is already installed. If you are sure you want to downgrade, remove the existing installation via the Control Panel" />
+        <Icon Id="icon.ico" SourceFile="crates/zed/resources/windows/app-icon.ico" />
+
+        <StandardDirectory Id="ProgramFilesFolder">
+            <Directory Id="INSTALLFOLDER" Name="!(bind.Property.ProductName)" />
+        </StandardDirectory>
+
+        <Feature Id="Main">
+            <Component Directory="INSTALLFOLDER">
+                <File Source="target/release/Zed.exe" KeyPath="true">
+                    <Shortcut Id="Shortcut"
+                        Name="Zed"
+                        Icon="icon.ico"
+                        Directory="StartMenuFolder"
+                        Advertise="true">
+                    </Shortcut>
+                </File>
+            </Component>
+        </Feature>
+    </Package>
+</Wix>
