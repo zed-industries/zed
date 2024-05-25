@@ -379,8 +379,24 @@
       "r": ["vim::PushOperator", "Replace"],
       "s": "vim::Substitute",
       "shift-s": "vim::SubstituteLine",
-      "> >": "vim::Indent",
-      "< <": "vim::Outdent",
+      // "> >": "vim::Indent",
+      // "< <": "vim::Outdent",
+      ">": [
+        "vim::PushOperator",
+        {
+          "Indent": {
+            "outdent": false
+          }
+        }
+      ],
+      "<": [
+        "vim::PushOperator",
+        {
+          "Indent": {
+            "outdent": true
+          }
+        }
+      ],
       "ctrl-pagedown": "pane::ActivateNextItem",
       "ctrl-pageup": "pane::ActivatePrevItem",
       // tree-sitter related commands
@@ -428,6 +444,18 @@
     "context": "Editor && vim_operator == d",
     "bindings": {
       "d": "vim::CurrentLine"
+    }
+  },
+  {
+    "context": "Editor && vim_operator == indent",
+    "bindings": {
+      ">": "vim::CurrentLine"
+    }
+  },
+  {
+    "context": "Editor && vim_operator == dedent",
+    "bindings": {
+      "<": "vim::CurrentLine"
     }
   },
   {
@@ -547,8 +575,8 @@
       "ctrl-c": ["vim::SwitchMode", "Normal"],
       "escape": ["vim::SwitchMode", "Normal"],
       "ctrl-[": ["vim::SwitchMode", "Normal"],
-      ">": "vim::Indent",
-      "<": "vim::Outdent",
+      // ">": "vim::Indent",
+      // "<": "vim::Outdent",
       "i": [
         "vim::PushOperator",
         {

@@ -533,10 +533,10 @@ impl Vim {
 
     fn push_operator(&mut self, operator: Operator, cx: &mut WindowContext) {
         log::error!("Pushing operator: {operator:?}");
-        
+
         if matches!(
             operator,
-            Operator::Change | Operator::Delete | Operator::Replace
+            Operator::Change | Operator::Indent { .. } | Operator::Delete | Operator::Replace
         ) {
             self.start_recording(cx)
         };

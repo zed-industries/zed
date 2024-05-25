@@ -2,6 +2,7 @@ mod case;
 mod change;
 mod delete;
 mod increment;
+mod indent;
 pub(crate) mod mark;
 mod paste;
 pub(crate) mod repeat;
@@ -32,6 +33,7 @@ use self::{
     case::{change_case, convert_to_lower_case, convert_to_upper_case},
     change::{change_motion, change_object},
     delete::{delete_motion, delete_object},
+    indent::indent_motion,
     yank::{yank_motion, yank_object},
 };
 
@@ -137,17 +139,33 @@ pub(crate) fn register(workspace: &mut Workspace, cx: &mut ViewContext<Workspace
         });
     });
 
-    workspace.register_action(|_: &mut Workspace, _: &Indent, cx| {
-        Vim::update(cx, |vim, cx| {
-            vim.record_current_action(cx);
-            vim.update_active_editor(cx, |_, editor, cx| {
-                editor.transact(cx, |editor, cx| editor.indent(&Default::default(), cx))
-            });
-            if vim.state().mode.is_visual() {
-                vim.switch_mode(Mode::Normal, false, cx)
-            }
-        });
-    });
+    // workspace.register_action(|_: &mut Workspace, _: &Indent, cx| {
+    //     Vim::update(cx, |vim, cx| {
+    //         vim.record_current_action(cx);
+    //         vim.update_active_editor(cx, |_, editor, cx| {
+    //             editor.transact(cx, |editor, cx| {
+    //                 let mut original_columns: HashMap<_, _> = Default::default();
+    //                 editor.change_selections(Some(Autoscroll::fit()), cx, |s| {
+    //                     s.move_with(|map, selection| {
+    //                         let original_head = selection.head();
+    //                         original_columns.insert(selection.id, original_head.column());
+    //                         motion.expand_selection(
+    //                             map,
+    //                             selection,
+    //                             times,
+    //                             true,
+    //                             &text_layout_details,
+    //                         );
+    //                     });
+    //                 });
+    //                 editor.indent(&Default::default(), cx);
+    //             })
+    //         });
+    //         if vim.state().mode.is_visual() {
+    //             vim.switch_mode(Mode::Normal, false, cx)
+    //         }
+    //     });
+    // });
 
     workspace.register_action(|_: &mut Workspace, _: &Outdent, cx| {
         Vim::update(cx, |vim, cx| {
@@ -179,6 +197,7 @@ pub fn normal_motion(
         match operator {
             None => move_cursor(vim, motion, times, cx),
             Some(Operator::Change) => change_motion(vim, motion, times, cx),
+            Some(Operator::Indent { outdent }) => indent_motion(vim, motion, times, outdent, cx),
             Some(Operator::Delete) => delete_motion(vim, motion, times, cx),
             Some(Operator::Yank) => yank_motion(vim, motion, times, cx),
             Some(Operator::AddSurrounds { target: None }) => {}

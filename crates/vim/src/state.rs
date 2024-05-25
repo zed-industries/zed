@@ -51,6 +51,7 @@ impl Default for Mode {
 pub enum Operator {
     Change,
     Delete,
+    Indent { outdent: bool },
     Yank,
     Replace,
     Object { around: bool },
@@ -254,6 +255,8 @@ impl Operator {
             Operator::Object { around: true } => "a",
             Operator::Change => "c",
             Operator::Delete => "d",
+            Operator::Indent { outdent: false } => "indent",
+            Operator::Indent { outdent: true } => "dedent",
             Operator::Yank => "y",
             Operator::Replace => "r",
             Operator::FindForward { before: false } => "f",
