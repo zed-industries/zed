@@ -252,6 +252,7 @@ pub fn register(workspace: &mut Workspace, _: &mut ViewContext<Workspace>) {
     workspace
         .register_action(|_: &mut Workspace, _: &Backspace, cx: _| motion(Motion::Backspace, cx));
     workspace.register_action(|_: &mut Workspace, action: &Down, cx: _| {
+        log::error!("down");
         motion(
             Motion::Down {
                 display_lines: action.display_lines,
@@ -313,6 +314,7 @@ pub fn register(workspace: &mut Workspace, _: &mut ViewContext<Workspace>) {
 
     workspace.register_action(
         |_: &mut Workspace, &NextWordStart { ignore_punctuation }: &NextWordStart, cx: _| {
+            log::error!("next word start");
             motion(Motion::NextWordStart { ignore_punctuation }, cx)
         },
     );

@@ -532,6 +532,8 @@ impl Vim {
     }
 
     fn push_operator(&mut self, operator: Operator, cx: &mut WindowContext) {
+        log::error!("Pushing operator: {operator:?}");
+        
         if matches!(
             operator,
             Operator::Change | Operator::Delete | Operator::Replace
@@ -814,7 +816,9 @@ impl Vim {
             editor.set_autoindent(state.should_autoindent());
             editor.selections.line_mode = matches!(state.mode, Mode::VisualLine);
             if editor.is_focused(cx) || editor.mouse_menu_is_focused(cx) {
-                editor.set_keymap_context_layer::<Self>(state.keymap_context_layer(), cx);
+                let context_layers = state.keymap_context_layer();
+                dbg!(&context_layers);
+                editor.set_keymap_context_layer::<Self>(context_layers, cx);
                 // disable vim mode if a sub-editor (inline assist, rename, etc.) is focused
             } else if editor.focus_handle(cx).contains_focused(cx) {
                 editor.remove_keymap_context_layer::<Self>(cx);
