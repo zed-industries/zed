@@ -585,12 +585,12 @@ impl<'a> BlockMapWriter<'a> {
             if let Some((new_height, render)) = heights_and_renderers.remove(&block.id) {
                 if block.height != new_height {
                     let new_block = Block {
-                        id: block.id.clone(),
-                        position: block.position.clone(),
+                        id: block.id,
+                        position: block.position,
                         height: new_height,
-                        style: block.style.clone(),
+                        style: block.style,
                         render: Mutex::new(render),
-                        disposition: block.disposition.clone(),
+                        disposition: block.disposition,
                     };
                     *block = Arc::new(new_block);
 
@@ -1244,9 +1244,9 @@ mod tests {
         let buffer = cx.update(|cx| MultiBuffer::build_simple(text, cx));
         let buffer_snapshot = cx.update(|cx| buffer.read(cx).snapshot(cx));
         let subscription = buffer.update(cx, |buffer, _| buffer.subscribe());
-        let (mut inlay_map, inlay_snapshot) = InlayMap::new(buffer_snapshot.clone());
-        let (mut fold_map, fold_snapshot) = FoldMap::new(inlay_snapshot);
-        let (mut tab_map, tab_snapshot) = TabMap::new(fold_snapshot, 1.try_into().unwrap());
+        let (inlay_map, inlay_snapshot) = InlayMap::new(buffer_snapshot.clone());
+        let (fold_map, fold_snapshot) = FoldMap::new(inlay_snapshot);
+        let (tab_map, tab_snapshot) = TabMap::new(fold_snapshot, 1.try_into().unwrap());
         let (wrap_map, wraps_snapshot) =
             cx.update(|cx| WrapMap::new(tab_snapshot, font("Helvetica"), px(14.0), None, cx));
         let mut block_map = BlockMap::new(wraps_snapshot.clone(), 1, 1);
