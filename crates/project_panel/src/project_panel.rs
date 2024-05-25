@@ -1768,8 +1768,12 @@ impl ProjectPanel {
                     .indent_step_size(px(settings.indent_size))
                     .selected(is_selected)
                     .when_some(canonical_path, |this, path| {
-                        this.end_slot::<Icon>(Icon::new(IconName::ArrowRight))
-                            .tooltip(move |cx| Tooltip::text(path.clone(), cx))
+                        this.end_slot::<Icon>(
+                            Icon::new(IconName::ArrowRight)
+                                .size(IconSize::XSmall)
+                                .color(filename_text_color),
+                        )
+                        .tooltip(move |cx| Tooltip::text(path.clone(), cx))
                     })
                     .child(if let Some(icon) = &icon {
                         h_flex().child(Icon::from_path(icon.to_string()).color(filename_text_color))
