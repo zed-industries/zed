@@ -24,6 +24,36 @@
                         Advertise="true">
                     </Shortcut>
                 </File>
+                <File Source="crates/zed/resources/windows/app-icon.ico" Name="icon.ico" />
+            </Component>
+        </Feature>
+
+        <Feature Id="OpenWith">
+            <Component>
+                <!-- Add context menu entry for all files -->
+                <RegistryKey Root="HKCR" Key="*\shell\Zed">
+                    <RegistryValue Type="string" Value="Open with Zed" />
+                    <RegistryKey Key="command">
+                        <RegistryValue Type="string" Value='"[INSTALLFOLDER]Zed.exe" "%1"' />
+                    </RegistryKey>
+                    <RegistryValue Type="string" Name="Icon" Value="[INSTALLFOLDER]icon.ico" />
+                </RegistryKey>
+                <!-- Add context menu entry for all directories -->
+                <RegistryKey Root="HKCR" Key="Directory\shell\Zed">
+                    <RegistryValue Type="string" Value="Open with Zed" />
+                    <RegistryKey Key="command">
+                        <RegistryValue Type="string" Value='"[INSTALLFOLDER]Zed.exe" "%1"' />
+                    </RegistryKey>
+                    <RegistryValue Type="string" Name="Icon" Value="[INSTALLFOLDER]icon.ico" />
+                </RegistryKey>
+                <!-- Add context menu entry for background of directories -->
+                <RegistryKey Root="HKCR" Key="Directory\Background\shell\Zed">
+                    <RegistryValue Type="string" Value="Open with Zed" />
+                    <RegistryKey Key="command">
+                        <RegistryValue Type="string" Value='"[INSTALLFOLDER]Zed.exe" .' />
+                    </RegistryKey>
+                    <RegistryValue Type="string" Name="Icon" Value="[INSTALLFOLDER]\icon.ico" />
+                </RegistryKey>
             </Component>
         </Feature>
     </Package>
