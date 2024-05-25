@@ -66,10 +66,8 @@ impl PromptLibrary {
         }
     }
 
-    pub fn new_prompt(&self) -> (PromptId, StaticPrompt) {
-        let prompt = StaticPrompt::default();
-        let id = prompt.id().clone();
-        (id, prompt)
+    pub fn new_prompt(&self) -> StaticPrompt {
+        StaticPrompt::default()
     }
 
     pub fn prompts(&self) -> HashMap<PromptId, StaticPrompt> {

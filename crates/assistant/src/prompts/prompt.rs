@@ -7,6 +7,8 @@ use serde::{Deserialize, Serialize};
 
 use super::prompt_library::PromptId;
 
+pub const PROMPT_DEFAULT_TITLE: &str = "Untitled Prompt";
+
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub struct StaticPromptFrontmatter {
     title: String,
@@ -21,12 +23,48 @@ pub struct StaticPromptFrontmatter {
 impl Default for StaticPromptFrontmatter {
     fn default() -> Self {
         Self {
-            title: "Untitled Prompt".to_string(),
+            title: PROMPT_DEFAULT_TITLE.to_string(),
             version: "1.0".to_string(),
-            author: "No Author".to_string(),
-            languages: vec!["*".to_string()],
+            author: "You <you@email.com>".to_string(),
+            languages: vec![],
             dependencies: vec![],
         }
+    }
+}
+
+impl StaticPromptFrontmatter {
+    /// Returns the frontmatter as a markdown frontmatter string
+    pub fn frontmatter_string(&self) -> String {
+        let mut frontmatter = format!(
+            "---\ntitle: {}\nversion: {}\nauthor: {}\n",
+            self.title.replace("\n", " ").replace("\r", " "),
+            self.version.replace("\n", " ").replace("\r", " "),
+            self.author.replace("\n", " ").replace("\r", " "),
+        );
+
+        if !self.languages.is_empty() {
+            let languages = self
+                .languages
+                .iter()
+                .map(|l| l.replace("\n", " ").replace("\r", " "))
+                .collect::<Vec<String>>()
+                .join(", ");
+            writeln!(frontmatter, "languages: [{}]", languages).unwrap();
+        }
+
+        if !self.dependencies.is_empty() {
+            let dependencies = self
+                .dependencies
+                .iter()
+                .map(|d| d.replace("\n", " ").replace("\r", " "))
+                .collect::<Vec<String>>()
+                .join(", ");
+            writeln!(frontmatter, "dependencies: [{}]", dependencies).unwrap();
+        }
+
+        frontmatter.push_str("---\n");
+
+        frontmatter
     }
 }
 
@@ -74,10 +112,14 @@ pub struct StaticPrompt {
 
 impl Default for StaticPrompt {
     fn default() -> Self {
+        let metadata = StaticPromptFrontmatter::default();
+
+        let content = metadata.clone().frontmatter_string();
+
         Self {
             id: PromptId::new(),
-            metadata: StaticPromptFrontmatter::default(),
-            content: String::new(),
+            metadata,
+            content,
             file_name: None,
         }
     }

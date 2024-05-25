@@ -9,7 +9,10 @@ use ui::{prelude::*, IconButtonShape, ListItem, ListItemSpacing};
 use util::{ResultExt, TryFutureExt};
 use workspace::ModalView;
 
-use super::prompt_library::{PromptId, PromptLibrary, SortOrder};
+use super::{
+    prompt::PROMPT_DEFAULT_TITLE,
+    prompt_library::{PromptId, PromptLibrary, SortOrder},
+};
 use crate::prompts::prompt::StaticPrompt;
 
 actions!(prompt_manager, [NewPrompt]);
@@ -89,29 +92,35 @@ impl PromptManager {
     }
 
     pub fn new_prompt(&mut self, _: &NewPrompt, cx: &mut ViewContext<Self>) {
+        // TODO: Why doesn't this prevent making a new prompt if you
+        // move the picker selection/maybe unfocus the editor?
+
         // Prevent making a new prompt if the last new prompt is still empty
         //
         // Instead, we'll focus the last new prompt
         if let Some(last_new_prompt_id) = self.last_new_prompt_id() {
             if let Some(last_new_prompt) = self.prompt_library.prompt(last_new_prompt_id) {
-                if last_new_prompt.title() == "Untitled Prompt" && last_new_prompt.body().is_empty()
-                {
+                let normalized_body = last_new_prompt
+                    .body()
+                    .trim()
+                    .replace("\r", "")
+                    .replace("\n", "")
+                    .to_string();
+
+                if last_new_prompt.title() == PROMPT_DEFAULT_TITLE && normalized_body.is_empty() {
                     self.set_editor_for_prompt(last_new_prompt_id, cx);
                     self.focus_active_editor(cx);
                 }
             }
         }
 
-        let (id, prompt) = self.prompt_library.new_prompt();
-        self.set_last_new_prompt_id(Some(id));
+        let prompt = self.prompt_library.new_prompt();
+        self.set_last_new_prompt_id(Some(prompt.id().clone()));
 
-        println!("New prompt: {:?}: {}", id, prompt.clone().title());
-
-        println!("Prompt count: {}", self.prompt_library.prompts().len());
         self.prompt_library.add_prompt(prompt.clone());
-        println!("Prompt count: {}", self.prompt_library.prompts().len());
+
         let id = prompt.clone().id().clone();
-        self.picker.update(cx, |picker, cx| {
+        self.picker.update(cx, |picker, _cx| {
             let prompts = self
                 .prompt_library
                 .sorted_prompts(SortOrder::Alphabetical)
@@ -128,8 +137,8 @@ impl PromptManager {
                 .position(|p| p.id().clone() == id.clone())
                 .unwrap_or(0);
         });
+
         self.active_prompt_id = Some(id.clone());
-        println!("Active prompt: {:?}", self.active_prompt_id);
 
         cx.notify();
     }
