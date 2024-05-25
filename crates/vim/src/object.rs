@@ -65,7 +65,6 @@ actions!(
 pub fn register(workspace: &mut Workspace, _: &mut ViewContext<Workspace>) {
     workspace.register_action(
         |_: &mut Workspace, &Word { ignore_punctuation }: &Word, cx: _| {
-            log::error!("word");
             object(Object::Word { ignore_punctuation }, cx)
         },
     );
