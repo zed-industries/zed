@@ -8,6 +8,7 @@ use calloop::channel::{Channel, Sender};
 use calloop::{EventSource, Poll, PostAction, Readiness, Token, TokenFactory};
 use parking_lot::Mutex;
 use smol::stream::StreamExt;
+use util::ResultExt;
 
 use crate::{BackgroundExecutor, WindowAppearance};
 
@@ -36,9 +37,7 @@ impl XDPEventSource {
     ) {
         executor
             .spawn(async move {
-                if let Err(e) = to_spawn.await {
-                    log::error!("{e}");
-                }
+                to_spawn.await.log_err();
             })
             .detach()
     }
