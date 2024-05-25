@@ -811,7 +811,7 @@ mod tests {
             assert!(editor.has_active_inline_completion(cx));
             assert_eq!(
                 editor.display_text(cx),
-                "\n\na = 1\nb = 2 + a\n\n\n\nc = 3\nd = 4\n"
+                "\n\n\na = 1\nb = 2 + a\n\n\n\n\n\nc = 3\nd = 4\n\n"
             );
             assert_eq!(editor.text(cx), "a = 1\nb = 2\n\nc = 3\nd = 4\n");
         });
@@ -833,7 +833,7 @@ mod tests {
             assert!(!editor.has_active_inline_completion(cx));
             assert_eq!(
                 editor.display_text(cx),
-                "\n\na = 1\nb = 2\n\n\n\nc = 3\nd = 4\n"
+                "\n\n\na = 1\nb = 2\n\n\n\n\n\nc = 3\nd = 4\n\n"
             );
             assert_eq!(editor.text(cx), "a = 1\nb = 2\n\nc = 3\nd = 4\n");
 
@@ -842,7 +842,7 @@ mod tests {
             assert!(!editor.has_active_inline_completion(cx));
             assert_eq!(
                 editor.display_text(cx),
-                "\n\na = 1\nb = 2\n\n\n\nc = 3\nd = 4 \n"
+                "\n\n\na = 1\nb = 2\n\n\n\n\n\nc = 3\nd = 4 \n\n"
             );
             assert_eq!(editor.text(cx), "a = 1\nb = 2\n\nc = 3\nd = 4 \n");
         });
@@ -853,7 +853,7 @@ mod tests {
             assert!(editor.has_active_inline_completion(cx));
             assert_eq!(
                 editor.display_text(cx),
-                "\n\na = 1\nb = 2\n\n\n\nc = 3\nd = 4 + c\n"
+                "\n\n\na = 1\nb = 2\n\n\n\n\n\nc = 3\nd = 4 + c\n\n"
             );
             assert_eq!(editor.text(cx), "a = 1\nb = 2\n\nc = 3\nd = 4 \n");
         });

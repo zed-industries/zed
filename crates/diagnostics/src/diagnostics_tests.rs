@@ -159,9 +159,9 @@ async fn test_diagnostics(cx: &mut TestAppContext) {
         editor_blocks(&editor, cx),
         [
             (DisplayRow(0), FILE_HEADER.into()),
-            (DisplayRow(3), DIAGNOSTIC_HEADER.into()),
+            (DisplayRow(2), DIAGNOSTIC_HEADER.into()),
             (DisplayRow(15), EXCERPT_HEADER.into()),
-            (DisplayRow(17), DIAGNOSTIC_HEADER.into()),
+            (DisplayRow(16), DIAGNOSTIC_HEADER.into()),
             (DisplayRow(25), EXCERPT_HEADER.into()),
         ]
     );
