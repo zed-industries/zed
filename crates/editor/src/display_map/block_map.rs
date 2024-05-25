@@ -1349,7 +1349,7 @@ mod tests {
 
     #[gpui::test]
     fn test_replace_with_heights(cx: &mut gpui::TestAppContext) {
-        cx.update(|cx| init_test(cx));
+        let _update = cx.update(|cx| init_test(cx));
 
         let text = "aaa\nbbb\nccc\nddd";
 
@@ -1388,18 +1388,68 @@ mod tests {
             },
         ]);
 
-        let snapshot = block_map.read(wraps_snapshot.clone(), Default::default());
-        assert_eq!(snapshot.text(), "aaa\n\n\n\nbbb\nccc\nddd\n\n\n");
+        {
+            let snapshot = block_map.read(wraps_snapshot.clone(), Default::default());
+            assert_eq!(snapshot.text(), "aaa\n\n\n\nbbb\nccc\nddd\n\n\n");
 
-        let mut block_map_writer = block_map.write(wraps_snapshot.clone(), Default::default());
+            let mut block_map_writer = block_map.write(wraps_snapshot.clone(), Default::default());
 
-        let mut hash_map = HashMap::default();
-        let render: RenderBlock = Box::new(|_| div().into_any());
-        hash_map.insert(block_ids[0], (2_u8, render));
-        block_map_writer.replace(hash_map);
+            let mut hash_map = HashMap::default();
+            let render: RenderBlock = Box::new(|_| div().into_any());
+            hash_map.insert(block_ids[0], (2_u8, render));
+            block_map_writer.replace(hash_map);
+            let snapshot = block_map.read(wraps_snapshot.clone(), Default::default());
+            assert_eq!(snapshot.text(), "aaa\n\n\n\n\nbbb\nccc\nddd\n\n\n");
+        }
 
-        let snapshot = block_map.read(wraps_snapshot.clone(), Default::default());
-        assert_eq!(snapshot.text(), "aaa\n\n\n\n\nbbb\nccc\nddd\n\n\n");
+        {
+            let mut block_map_writer = block_map.write(wraps_snapshot.clone(), Default::default());
+
+            let mut hash_map = HashMap::default();
+            let render: RenderBlock = Box::new(|_| div().into_any());
+            hash_map.insert(block_ids[0], (1_u8, render));
+            block_map_writer.replace(hash_map);
+
+            let snapshot = block_map.read(wraps_snapshot.clone(), Default::default());
+            assert_eq!(snapshot.text(), "aaa\n\n\n\nbbb\nccc\nddd\n\n\n");
+        }
+
+        {
+            let mut block_map_writer = block_map.write(wraps_snapshot.clone(), Default::default());
+
+            let mut hash_map = HashMap::default();
+            let render: RenderBlock = Box::new(|_| div().into_any());
+            hash_map.insert(block_ids[0], (0_u8, render));
+            block_map_writer.replace(hash_map);
+
+            let snapshot = block_map.read(wraps_snapshot.clone(), Default::default());
+            assert_eq!(snapshot.text(), "aaa\n\n\nbbb\nccc\nddd\n\n\n");
+        }
+
+        {
+            let mut block_map_writer = block_map.write(wraps_snapshot.clone(), Default::default());
+
+            let mut hash_map = HashMap::default();
+            let render: RenderBlock = Box::new(|_| div().into_any());
+            hash_map.insert(block_ids[0], (3_u8, render));
+            block_map_writer.replace(hash_map);
+
+            let snapshot = block_map.read(wraps_snapshot.clone(), Default::default());
+            assert_eq!(snapshot.text(), "aaa\n\n\n\n\n\nbbb\nccc\nddd\n\n\n");
+        }
+
+        {
+            let mut block_map_writer = block_map.write(wraps_snapshot.clone(), Default::default());
+
+            let mut hash_map = HashMap::default();
+            let render: RenderBlock = Box::new(|_| div().into_any());
+            hash_map.insert(block_ids[0], (3_u8, render));
+            block_map_writer.replace(hash_map);
+
+            let snapshot = block_map.read(wraps_snapshot.clone(), Default::default());
+            // Same height as before, should remain the same
+            assert_eq!(snapshot.text(), "aaa\n\n\n\n\n\nbbb\nccc\nddd\n\n\n");
+        }
     }
 
     #[gpui::test]
