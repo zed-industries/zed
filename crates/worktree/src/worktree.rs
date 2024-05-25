@@ -468,6 +468,7 @@ impl Worktree {
                         &metadata,
                         &next_entry_id,
                         snapshot.root_char_bag,
+                        None
                     ),
                     fs.as_ref(),
                 );
@@ -3272,6 +3273,7 @@ impl Entry {
         metadata: &fs::Metadata,
         next_entry_id: &AtomicUsize,
         root_char_bag: CharBag,
+        canonical_path: Option<PathBuf>,
     ) -> Self {
         Self {
             id: ProjectEntryId::new(next_entry_id),
@@ -3283,7 +3285,7 @@ impl Entry {
             path,
             inode: metadata.inode,
             mtime: Some(metadata.mtime),
-            canonical_path: None,
+            canonical_path,
             is_ignored: false,
             is_external: false,
             is_private: false,
@@ -4038,6 +4040,7 @@ impl BackgroundScanner {
                 &child_metadata,
                 &next_entry_id,
                 root_char_bag,
+                None,
             );
 
             if job.is_external {
@@ -4237,7 +4240,12 @@ impl BackgroundScanner {
                         metadata,
                         self.next_entry_id.as_ref(),
                         state.snapshot.root_char_bag,
+                        match metadata.is_symlink {
+                            true => Some(canonical_path.to_path_buf()),
+                            false => None,
+                        },
                     );
+
                     let is_dir = fs_entry.is_dir();
                     fs_entry.is_ignored = ignore_stack.is_abs_path_ignored(&abs_path, is_dir);
                     fs_entry.is_external = !canonical_path.starts_with(&root_canonical_path);
@@ -4252,10 +4260,6 @@ impl BackgroundScanner {
                                 }
                             }
                         }
-                    }
-
-                    if metadata.is_symlink {
-                        fs_entry.canonical_path = Some(canonical_path.to_path_buf());
                     }
 
                     if let (Some(scan_queue_tx), true) = (&scan_queue_tx, fs_entry.is_dir()) {
