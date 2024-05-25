@@ -393,11 +393,6 @@ pub fn run(workspace: &mut Workspace, _: &Run, cx: &mut ViewContext<Workspace>) 
                 );
                 editor.replace_blocks(replacements, None, cx);
             })?;
-
-            // runtime_manager.update(&mut cx, |runtime_manager, cx| {
-            //     editor_runtime_block.block_id = block_id;
-            //     // runtime_manager.update_block(editor_runtime_block, update, cx);
-            // });
         }
         anyhow::Ok(())
     })

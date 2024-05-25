@@ -29,8 +29,8 @@ impl ImageView {
         let image = self.image.clone();
 
         div()
-            .h(Pixels(height as f32))
-            .w(Pixels(width as f32))
+            .h(Pixels(height))
+            .w(Pixels(width))
             .child(img(image))
             .into_any_element()
     }
@@ -181,7 +181,7 @@ pub struct ExecutionView {
 }
 
 pub fn extract_image_output(mimetype: &MimeType, value: &Value) -> Result<OutputType> {
-    let media_type = match mimetype {
+    let _media_type = match mimetype {
         // TODO: Introduce From<MimeType> for str in runtimelib
         // We don't necessarily need it since we use guess_format, however we could skip
         // it if we wanted to.
