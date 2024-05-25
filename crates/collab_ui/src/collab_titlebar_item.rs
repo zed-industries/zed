@@ -731,7 +731,7 @@ impl CollabTitlebarItem {
                     ContextMenu::build(cx, |menu, _| {
                         menu.action("Settings", zed_actions::OpenSettings.boxed_clone())
                             .action("Extensions", extensions_ui::Extensions.boxed_clone())
-                            .action("Themes...", theme_selector::Toggle::default().boxed_clone())
+                            .action("Themes…", theme_selector::Toggle::default().boxed_clone())
                             .separator()
                             .action("Sign Out", client::SignOut.boxed_clone())
                     })
@@ -743,7 +743,11 @@ impl CollabTitlebarItem {
                             h_flex()
                                 .gap_0p5()
                                 .child(Avatar::new(user.avatar_uri.clone()))
-                                .child(Icon::new(IconName::ChevronDown).color(Color::Muted)),
+                                .child(
+                                    Icon::new(IconName::ChevronDown)
+                                        .size(IconSize::Small)
+                                        .color(Color::Muted),
+                                ),
                         )
                         .style(ButtonStyle::Subtle)
                         .tooltip(move |cx| Tooltip::text("Toggle User Menu", cx)),
@@ -755,16 +759,18 @@ impl CollabTitlebarItem {
                     ContextMenu::build(cx, |menu, _| {
                         menu.action("Settings", zed_actions::OpenSettings.boxed_clone())
                             .action("Extensions", extensions_ui::Extensions.boxed_clone())
-                            .action("Themes...", theme_selector::Toggle::default().boxed_clone())
+                            .action("Themes…", theme_selector::Toggle::default().boxed_clone())
                     })
                     .into()
                 })
                 .trigger(
                     ButtonLike::new("user-menu")
                         .child(
-                            h_flex()
-                                .gap_0p5()
-                                .child(Icon::new(IconName::ChevronDown).color(Color::Muted)),
+                            h_flex().gap_0p5().child(
+                                Icon::new(IconName::ChevronDown)
+                                    .size(IconSize::Small)
+                                    .color(Color::Muted),
+                            ),
                         )
                         .style(ButtonStyle::Subtle)
                         .tooltip(move |cx| Tooltip::text("Toggle User Menu", cx)),

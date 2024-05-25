@@ -245,7 +245,12 @@ message Envelope {
 
         RegenerateDevServerToken regenerate_dev_server_token = 200;
         RegenerateDevServerTokenResponse regenerate_dev_server_token_response = 201;
-        RenameDevServer rename_dev_server = 202; // Current max
+        RenameDevServer rename_dev_server = 202;
+
+        TaskContextForLocation task_context_for_location = 203;
+        TaskContext task_context = 204;
+        TaskTemplatesResponse task_templates_response = 205;
+        TaskTemplates task_templates = 206; // Current max
     }
 
     reserved 158 to 161;
@@ -510,11 +515,13 @@ message CreateDevServerResponse {
 }
 
 message ShutdownDevServer {
+    optional string reason = 1;
 }
 
 message RenameDevServer {
     uint64 dev_server_id = 1;
     string name = 2;
+    optional string ssh_connection_string = 3;
 }
 
 message DeleteDevServer {
@@ -2115,4 +2122,72 @@ message GetSupermavenApiKey {}
 
 message GetSupermavenApiKeyResponse {
     string api_key = 1;
+}
+
+message TaskContextForLocation {
+    uint64 project_id = 1;
+    Location location = 2;
+}
+
+message TaskContext {
+    optional string cwd = 1;
+    map<string, string> task_variables = 2;
+}
+
+message TaskTemplates {
+    uint64 project_id = 1;
+    optional Location location = 2;
+    optional uint64 worktree_id = 3;
+}
+
+message TaskTemplatesResponse {
+    repeated TemplatePair templates = 1;
+}
+
+message TemplatePair {
+    TaskSourceKind kind = 1;
+    TaskTemplate template = 2;
+}
+
+message TaskTemplate {
+    string label = 1;
+    string command = 2;
+    repeated string args = 3;
+    map<string, string> env = 4;
+    optional string cwd = 5;
+    bool use_new_terminal = 6;
+    bool allow_concurrent_runs = 7;
+    RevealStrategy reveal = 8;
+    repeated string tags = 9;
+}
+
+enum RevealStrategy {
+    Always = 0;
+    Never = 1;
+}
+
+message TaskSourceKind {
+    oneof kind {
+        UserInput user_input = 1;
+        Worktree worktree = 2;
+        AbsPath abs_path = 3;
+        Language language = 4;
+    }
+
+    message UserInput {}
+
+    message Worktree {
+        uint64 id = 1;
+        string abs_path = 2;
+        string id_base = 3;
+    }
+
+    message AbsPath {
+        string id_base = 1;
+        string abs_path = 2;
+    }
+
+    message Language {
+        string name = 1;
+    }
 }

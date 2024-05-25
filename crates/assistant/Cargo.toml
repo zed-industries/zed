@@ -5,6 +5,9 @@ edition = "2021"
 publish = false
 license = "GPL-3.0-or-later"
 
+[lints]
+workspace = true
+
 [lib]
 path = "src/assistant.rs"
 doctest = false
@@ -12,6 +15,7 @@ doctest = false
 [dependencies]
 anyhow.workspace = true
 anthropic = { workspace = true, features = ["schemars"] }
+assistant_slash_command.workspace = true
 cargo_toml.workspace = true
 chrono.workspace = true
 client.workspace = true
@@ -21,6 +25,7 @@ editor.workspace = true
 file_icons.workspace = true
 fs.workspace = true
 futures.workspace = true
+fuzzy.workspace = true
 gpui.workspace = true
 http.workspace = true
 indoc.workspace = true
@@ -49,6 +54,8 @@ ui.workspace = true
 util.workspace = true
 uuid.workspace = true
 workspace.workspace = true
+picker.workspace = true
+gray_matter = "0.2.7"
 
 [dev-dependencies]
 ctor.workspace = true

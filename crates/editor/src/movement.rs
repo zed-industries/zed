@@ -577,10 +577,10 @@ mod tests {
     use crate::{
         display_map::Inlay,
         test::{editor_test_context::EditorTestContext, marked_display_snapshot},
-        DisplayMap, InlayId, MultiBuffer,
+        Buffer, DisplayMap, DisplayRow, ExcerptRange, FoldPlaceholder, InlayId, MultiBuffer,
     };
     use gpui::{font, Context as _};
-    use indoc::indoc;
+    use language::Capability;
     use project::Project;
     use settings::SettingsStore;
     use util::post_inc;
@@ -695,8 +695,21 @@ mod tests {
         let font_size = px(14.0);
         let buffer = MultiBuffer::build_simple(input_text, cx);
         let buffer_snapshot = buffer.read(cx).snapshot(cx);
-        let display_map =
-            cx.new_model(|cx| DisplayMap::new(buffer, font, font_size, None, true, 1, 1, 1, cx));
+
+        let display_map = cx.new_model(|cx| {
+            DisplayMap::new(
+                buffer,
+                font,
+                font_size,
+                None,
+                true,
+                1,
+                1,
+                1,
+                FoldPlaceholder::test(),
+                cx,
+            )
+        });
 
         // add all kinds of inlays between two word boundaries: we should be able to cross them all, when looking for another boundary
         let mut id = 0;
@@ -873,75 +886,175 @@ mod tests {
             init_test(cx);
         });
 
-        let mut cx = EditorTestContext::new_multibuffer(cx, [&"«abc\ndefg»\n«hijkl\nmn»"]);
-        cx.update_editor(|editor, cx| {
-            editor.move_right(&Default::default(), cx);
-            editor.move_right(&Default::default(), cx)
-        });
-        cx.assert_editor_state(indoc! {
-            "abˇc
-            defg
-            hijkl
-            mn"
-        });
-        cx.update_editor(|editor, cx| editor.move_up(&Default::default(), cx));
-        cx.assert_editor_state(indoc! {
-            "ˇabc
-            defg
-            hijkl
-            mn"
-        });
-        cx.update_editor(|editor, cx| editor.move_up(&Default::default(), cx));
-        cx.assert_editor_state(indoc! {
-            "ˇabc
-            defg
-            hijkl
-            mn"
-        });
-        cx.update_editor(|editor, cx| editor.move_down(&Default::default(), cx));
-        cx.assert_editor_state(indoc! {
-            "abc
-            ˇdefg
-            hijkl
-            mn"
-        });
-        cx.update_editor(|editor, cx| editor.move_down(&Default::default(), cx));
-        cx.assert_editor_state(indoc! {
-            "abc
-            defg
-            ˇhijkl
-            mn"
-        });
-        cx.update_editor(|editor, cx| {
-            editor.move_to_end_of_line(&Default::default(), cx);
-            editor.move_up(&Default::default(), cx)
-        });
-        cx.assert_editor_state(indoc! {
-            "abc
-            defgˇ
-            hijkl
-            mn"
-        });
-        cx.update_editor(|editor, cx| editor.move_down(&Default::default(), cx));
-        cx.assert_editor_state(indoc! {
-            "abc
-            defg
-            hijklˇ
-            mn"
-        });
-        cx.update_editor(|editor, cx| editor.move_down(&Default::default(), cx));
-        cx.assert_editor_state(indoc! {
-            "abc
-            defg
-            hijkl
-            mnˇ"
-        });
-        cx.update_editor(|editor, cx| editor.move_down(&Default::default(), cx));
-        cx.assert_editor_state(indoc! {
-            "abc
-            defg
-            hijkl
-            mnˇ"
+        let mut cx = EditorTestContext::new(cx).await;
+        let editor = cx.editor.clone();
+        let window = cx.window;
+        _ = cx.update_window(window, |_, cx| {
+            let text_layout_details =
+                editor.update(cx, |editor, cx| editor.text_layout_details(cx));
+
+            let font = font("Helvetica");
+
+            let buffer = cx.new_model(|cx| Buffer::local("abc\ndefg\nhijkl\nmn", cx));
+            let multibuffer = cx.new_model(|cx| {
+                let mut multibuffer = MultiBuffer::new(0, Capability::ReadWrite);
+                multibuffer.push_excerpts(
+                    buffer.clone(),
+                    [
+                        ExcerptRange {
+                            context: Point::new(0, 0)..Point::new(1, 4),
+                            primary: None,
+                        },
+                        ExcerptRange {
+                            context: Point::new(2, 0)..Point::new(3, 2),
+                            primary: None,
+                        },
+                    ],
+                    cx,
+                );
+                multibuffer
+            });
+            let display_map = cx.new_model(|cx| {
+                DisplayMap::new(
+                    multibuffer,
+                    font,
+                    px(14.0),
+                    None,
+                    true,
+                    2,
+                    2,
+                    0,
+                    FoldPlaceholder::test(),
+                    cx,
+                )
+            });
+            let snapshot = display_map.update(cx, |map, cx| map.snapshot(cx));
+
+            assert_eq!(snapshot.text(), "\n\nabc\ndefg\n\n\nhijkl\nmn");
+
+            let col_2_x = snapshot
+                .x_for_display_point(DisplayPoint::new(DisplayRow(2), 2), &text_layout_details);
+
+            // Can't move up into the first excerpt's header
+            assert_eq!(
+                up(
+                    &snapshot,
+                    DisplayPoint::new(DisplayRow(2), 2),
+                    SelectionGoal::HorizontalPosition(col_2_x.0),
+                    false,
+                    &text_layout_details
+                ),
+                (
+                    DisplayPoint::new(DisplayRow(2), 0),
+                    SelectionGoal::HorizontalPosition(0.0)
+                ),
+            );
+            assert_eq!(
+                up(
+                    &snapshot,
+                    DisplayPoint::new(DisplayRow(2), 0),
+                    SelectionGoal::None,
+                    false,
+                    &text_layout_details
+                ),
+                (
+                    DisplayPoint::new(DisplayRow(2), 0),
+                    SelectionGoal::HorizontalPosition(0.0)
+                ),
+            );
+
+            let col_4_x = snapshot
+                .x_for_display_point(DisplayPoint::new(DisplayRow(3), 4), &text_layout_details);
+
+            // Move up and down within first excerpt
+            assert_eq!(
+                up(
+                    &snapshot,
+                    DisplayPoint::new(DisplayRow(3), 4),
+                    SelectionGoal::HorizontalPosition(col_4_x.0),
+                    false,
+                    &text_layout_details
+                ),
+                (
+                    DisplayPoint::new(DisplayRow(2), 3),
+                    SelectionGoal::HorizontalPosition(col_4_x.0)
+                ),
+            );
+            assert_eq!(
+                down(
+                    &snapshot,
+                    DisplayPoint::new(DisplayRow(2), 3),
+                    SelectionGoal::HorizontalPosition(col_4_x.0),
+                    false,
+                    &text_layout_details
+                ),
+                (
+                    DisplayPoint::new(DisplayRow(3), 4),
+                    SelectionGoal::HorizontalPosition(col_4_x.0)
+                ),
+            );
+
+            let col_5_x = snapshot
+                .x_for_display_point(DisplayPoint::new(DisplayRow(6), 5), &text_layout_details);
+
+            // Move up and down across second excerpt's header
+            assert_eq!(
+                up(
+                    &snapshot,
+                    DisplayPoint::new(DisplayRow(6), 5),
+                    SelectionGoal::HorizontalPosition(col_5_x.0),
+                    false,
+                    &text_layout_details
+                ),
+                (
+                    DisplayPoint::new(DisplayRow(3), 4),
+                    SelectionGoal::HorizontalPosition(col_5_x.0)
+                ),
+            );
+            assert_eq!(
+                down(
+                    &snapshot,
+                    DisplayPoint::new(DisplayRow(3), 4),
+                    SelectionGoal::HorizontalPosition(col_5_x.0),
+                    false,
+                    &text_layout_details
+                ),
+                (
+                    DisplayPoint::new(DisplayRow(6), 5),
+                    SelectionGoal::HorizontalPosition(col_5_x.0)
+                ),
+            );
+
+            let max_point_x = snapshot
+                .x_for_display_point(DisplayPoint::new(DisplayRow(7), 2), &text_layout_details);
+
+            // Can't move down off the end
+            assert_eq!(
+                down(
+                    &snapshot,
+                    DisplayPoint::new(DisplayRow(7), 0),
+                    SelectionGoal::HorizontalPosition(0.0),
+                    false,
+                    &text_layout_details
+                ),
+                (
+                    DisplayPoint::new(DisplayRow(7), 2),
+                    SelectionGoal::HorizontalPosition(max_point_x.0)
+                ),
+            );
+            assert_eq!(
+                down(
+                    &snapshot,
+                    DisplayPoint::new(DisplayRow(7), 2),
+                    SelectionGoal::HorizontalPosition(max_point_x.0),
+                    false,
+                    &text_layout_details
+                ),
+                (
+                    DisplayPoint::new(DisplayRow(7), 2),
+                    SelectionGoal::HorizontalPosition(max_point_x.0)
+                ),
+            );
         });
     }
 
