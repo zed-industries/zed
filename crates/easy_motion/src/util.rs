@@ -4,11 +4,17 @@ use editor::{
     DisplayPoint, RowExt,
 };
 use language::{char_kind, CharKind};
+use text::Bias;
 use vim::utils::coerce_punctuation;
 
 pub(crate) fn manh_distance(point_1: &DisplayPoint, point_2: &DisplayPoint, x_bias: f32) -> f32 {
     x_bias * (point_1.row().as_f32() - point_2.row().as_f32()).abs()
         + (point_1.column() as i32 - point_2.column() as i32).abs() as f32
+}
+
+pub(crate) fn end_of_document(map: &DisplaySnapshot) -> DisplayPoint {
+    let new_point = DisplayPoint::new(DisplayRow(u32::max_value()), u32::max_value());
+    map.clip_point(new_point, Bias::Left)
 }
 
 pub(crate) fn window_top(
@@ -48,7 +54,7 @@ pub(crate) fn word_starts_in_range(
     map: &DisplaySnapshot,
     mut from: DisplayPoint,
     to: DisplayPoint,
-    ignore_punctuation: bool,
+    full_word: bool,
 ) -> Vec<DisplayPoint> {
     let scope = map.buffer_snapshot.language_scope_at(from.to_point(map));
     let mut result = Vec::new();
@@ -64,14 +70,16 @@ pub(crate) fn word_starts_in_range(
     }
 
     while from < to {
-        let mut crossed_newline = false;
         let new_point = find_boundary_range(map, from, to, |left, right| {
-            let left_kind = coerce_punctuation(char_kind(&scope, left), ignore_punctuation);
-            let right_kind = coerce_punctuation(char_kind(&scope, right), ignore_punctuation);
-            let at_newline = right == '\n';
-            let found = (left_kind != right_kind && right_kind != CharKind::Whitespace);
+            let left_kind = coerce_punctuation(char_kind(&scope, left), false);
+            let right_kind = coerce_punctuation(char_kind(&scope, right), false);
+            // TODO ignore just punctuation words i.e. ' {} '?
+            let found = if full_word {
+                left_kind == CharKind::Whitespace && right_kind == CharKind::Word
+            } else {
+                left_kind != right_kind && right_kind == CharKind::Word
+            };
 
-            crossed_newline |= at_newline;
             found
         });
 
@@ -99,31 +107,112 @@ mod tests {
         DisplayPoint::new(DisplayRow(y), x)
     }
 
+    fn test_helper(text: &str, list: Vec<DisplayPoint>, full_word: bool, cx: &mut AppContext) {
+        let (snapshot, display_points) = marked_display_snapshot(text, cx);
+        let point = display_points.first().unwrap().clone();
+        let end = display_points.last().unwrap().clone();
+        let starts = word_starts_in_range(&snapshot, point, end, full_word);
+        assert_eq!(starts, list, "full_word: {:?}, text: {}", full_word, text);
+    }
+
     #[gpui::test]
     fn test_get_word_starts(cx: &mut AppContext) {
         init_test(cx);
 
-        let marked_text = "ˇ lorem ipsuˇm hi hello ";
-        let (snapshot, display_points) = marked_display_snapshot(marked_text, cx);
-        let point = display_points.first().unwrap().clone();
-        let end = display_points.last().unwrap().clone();
-        let starts = word_starts_in_range(&snapshot, point, end, true);
-        assert_eq!(starts, vec![display_point(1, 0), display_point(7, 0)]);
+        let marked_text = "ˇlorem ipsuˇm hi hello ";
+        test_helper(
+            marked_text,
+            vec![display_point(0, 0), display_point(6, 0)],
+            false,
+            cx,
+        );
 
-        let marked_text = "ˇ lorem ipsum hi helloˇ";
-        let (snapshot, display_points) = marked_display_snapshot(marked_text, cx);
-        let point = display_points.first().unwrap().clone();
-        let end = display_points.last().unwrap().clone();
-        let starts = word_starts_in_range(&snapshot, point, end, true);
-        assert_eq!(
-            starts,
+        let marked_text = "ˇlorem ipsum hi helloˇ";
+        test_helper(
+            marked_text,
+            vec![
+                display_point(0, 0),
+                display_point(6, 0),
+                display_point(12, 0),
+                display_point(15, 0),
+            ],
+            false,
+            cx,
+        );
+
+        let marked_text = "ˇlorem.ipsum.hi.helloˇ";
+        test_helper(
+            marked_text,
+            vec![
+                display_point(0, 0),
+                display_point(6, 0),
+                display_point(12, 0),
+                display_point(15, 0),
+            ],
+            false,
+            cx,
+        );
+
+        let marked_text = "ˇ lorem.ipsum.hi.helloˇ";
+        test_helper(
+            marked_text,
             vec![
                 display_point(1, 0),
                 display_point(7, 0),
                 display_point(13, 0),
-                display_point(16, 0)
-            ]
+                display_point(16, 0),
+            ],
+            false,
+            cx,
         );
+
+        let marked_text = "ˇ lorem.ipsum.hi.helloˇ";
+        test_helper(marked_text, vec![display_point(1, 0)], true, cx);
+
+        let marked_text = "ˇlorem.ipsum hi.helloˇ";
+        test_helper(
+            marked_text,
+            vec![display_point(0, 0), display_point(11, 0)],
+            true,
+            cx,
+        );
+
+        let marked_text = "ˇlorem.ipsum\nhi.helloˇ";
+        test_helper(
+            marked_text,
+            vec![display_point(0, 0), display_point(0, 1)],
+            true,
+            cx,
+        );
+
+        let marked_text = "ˇlorem.ipsum \n\n hi.hello \"\"";
+        test_helper(
+            marked_text,
+            vec![display_point(0, 0), display_point(1, 2)],
+            true,
+            cx,
+        );
+
+        let marked_text = "ˇlorem ipsum \n{}\n hi hello \"\"";
+        test_helper(
+            marked_text,
+            vec![
+                display_point(0, 0),
+                display_point(6, 0),
+                display_point(1, 2),
+                display_point(4, 2),
+            ],
+            true,
+            cx,
+        );
+    }
+
+    #[gpui::test]
+    fn test_end_of_document(cx: &mut AppContext) {
+        init_test(cx);
+        let marked_text = "ˇlorem ipsum \n{}\n h";
+        let (snapshot, _) = marked_display_snapshot(marked_text, cx);
+        assert_eq!(end_of_document(&snapshot), display_point(2, 2));
     }
 
     fn init_test(cx: &mut gpui::AppContext) {

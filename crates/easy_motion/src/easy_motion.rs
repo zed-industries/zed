@@ -4,6 +4,7 @@ use serde::Deserialize;
 use settings::Settings;
 use std::cmp::Ordering;
 use theme::ThemeSettings;
+use util::end_of_document;
 
 use editor::scroll::Autoscroll;
 use editor::{DisplayPoint, Editor};
@@ -58,10 +59,17 @@ impl_actions!(easy_motion, [NChar, Pattern, Word, SubWord, FullWord]);
 
 actions!(easy_motion, [Cancel]);
 
+enum WordType {
+    Word,
+    SubWord,
+    FullWord,
+}
+
 #[derive(Default)]
 pub struct EasyMotion {
     active_editor: Option<WeakView<Editor>>,
     editor_subscription: Option<Subscription>,
+    dimming: bool,
     enabled: bool,
     editor_states: HashMap<EntityId, EditorState>,
 }
@@ -71,6 +79,7 @@ impl Global for EasyMotion {}
 pub fn init(cx: &mut AppContext) {
     let mut easy = EasyMotion::default();
     easy.enabled = true;
+    easy.dimming = true;
     cx.set_global(easy);
     cx.observe_keystrokes(observe_keystrokes).detach();
     cx.observe_new_views(|workspace: &mut Workspace, cx| register(workspace, cx))
@@ -80,32 +89,37 @@ pub fn init(cx: &mut AppContext) {
 }
 
 fn register(workspace: &mut Workspace, _cx: &mut ViewContext<Workspace>) {
+    workspace.register_action(|_: &mut Workspace, action: &Word, cx| {
+        EasyMotion::update(cx, |easy, cx| {
+            easy.easy_motion_word(WordType::Word, action.0, cx);
+            easy.sync(cx);
+        });
+    });
+    workspace.register_action(|_: &mut Workspace, action: &SubWord, cx| {
+        EasyMotion::update(cx, |easy, cx| {
+            easy.easy_motion_word(WordType::SubWord, action.0, cx);
+            easy.sync(cx);
+        });
+    });
+    workspace.register_action(|_: &mut Workspace, action: &FullWord, cx| {
+        EasyMotion::update(cx, |easy, cx| {
+            easy.easy_motion_word(WordType::FullWord, action.0, cx);
+            easy.sync(cx);
+        });
+    });
+
     workspace.register_action(|_: &mut Workspace, _action: &NChar, cx| {
         EasyMotion::update(cx, |easy, cx| {
             easy.easy_motion_n_char(cx);
         });
     });
-    workspace.register_action(|_: &mut Workspace, action: &Word, cx| {
-        EasyMotion::update(cx, |easy, cx| {
-            easy.easy_motion_word(action, cx);
-            easy.sync(cx);
-        });
-    });
+
     workspace.register_action(|_: &mut Workspace, _action: &Pattern, cx| {
         EasyMotion::update(cx, |easy, cx| {
             easy.easy_motion_pattern(cx);
         });
     });
-    workspace.register_action(|_: &mut Workspace, _action: &SubWord, cx| {
-        EasyMotion::update(cx, |easy, cx| {
-            easy.easy_motion_sub_word(cx);
-        });
-    });
-    workspace.register_action(|_: &mut Workspace, _action: &FullWord, cx| {
-        EasyMotion::update(cx, |easy, cx| {
-            easy.easy_motion_full_word(cx);
-        });
-    });
+
     workspace.register_action(|_: &mut Workspace, _action: &Cancel, cx| {
         EasyMotion::update(cx, |easy, cx| {
             easy.easy_motion_cancel(cx);
@@ -222,14 +236,18 @@ impl EasyMotion {
     // fn active_editor_input_ignored(text: Arc<str>, cx: &mut WindowContext) {
     fn easy_motion_n_char(&mut self, _cx: &mut WindowContext) {}
 
-    fn easy_motion_word(&mut self, action: &Word, cx: &mut WindowContext) {
+    fn easy_motion_word(
+        &mut self,
+        word_type: WordType,
+        direction: Direction,
+        cx: &mut WindowContext,
+    ) {
         self.update_easy_and_active_editor(cx, |easy, editor, cx| {
             let selections = editor.selections.newest_display(cx);
             let snapshot = editor.snapshot(cx);
             let map = &snapshot.display_snapshot;
             let text_layout_details = editor.text_layout_details(cx);
 
-            let direction = action.0;
             let start = match direction {
                 Direction::BiDirectional | Direction::Backwards => {
                     window_top(map, &text_layout_details)
@@ -243,7 +261,12 @@ impl EasyMotion {
                 Direction::Backwards => selections.start,
             };
 
-            let mut word_starts = util::word_starts_in_range(&map, start, end, true);
+            let full_word = match word_type {
+                WordType::Word => false,
+                WordType::FullWord => true,
+                _ => false,
+            };
+            let mut word_starts = util::word_starts_in_range(&map, start, end, full_word);
             word_starts.sort_unstable_by(|a, b| {
                 let a_distance = manh_distance(a, &selections.start, 2.0);
                 let b_distance = manh_distance(b, &selections.start, 2.0);
@@ -292,20 +315,26 @@ impl EasyMotion {
             })
             .unwrap();
 
-            // -- dimming --
-            let anchor_start = map.display_point_to_anchor(start, Bias::Left);
-            let anchor_end = map.display_point_to_anchor(end, Bias::Left);
-            let highlight = HighlightStyle {
-                fade_out: Some(0.7),
-                ..Default::default()
-            };
-            editor.highlight_text::<EasyMotion>(vec![anchor_start..anchor_end], highlight, cx);
-            // --
+            if easy.dimming {
+                let start = match direction {
+                    Direction::BiDirectional | Direction::Backwards => DisplayPoint::zero(),
+                    Direction::Forwards => selections.start,
+                };
+                let end = match direction {
+                    Direction::BiDirectional | Direction::Forwards => end_of_document(map),
+                    Direction::Backwards => selections.end,
+                };
+                let anchor_start = map.display_point_to_anchor(start, Bias::Left);
+                let anchor_end = map.display_point_to_anchor(end, Bias::Left);
+                let highlight = HighlightStyle {
+                    fade_out: Some(0.7),
+                    ..Default::default()
+                };
+                editor.highlight_text::<EasyMotion>(vec![anchor_start..anchor_end], highlight, cx);
+            }
         });
     }
     fn easy_motion_pattern(&mut self, _cx: &mut WindowContext) {}
-    fn easy_motion_sub_word(&mut self, _cx: &mut WindowContext) {}
-    fn easy_motion_full_word(&mut self, _cx: &mut WindowContext) {}
     fn easy_motion_cancel(&mut self, cx: &mut WindowContext) {
         self.clear_state();
         self.update_active_editor(cx, |_, editor, cx| {
