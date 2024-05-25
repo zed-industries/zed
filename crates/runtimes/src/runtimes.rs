@@ -304,16 +304,10 @@ pub fn run(workspace: &mut Workspace, _: &Run, cx: &mut ViewContext<Workspace>) 
     let entity_id = editor.entity_id();
     let execution_id = ExecutionId::new();
 
-    // Since we don't know the height, in editor terms, we have to calculate it over time
-    // and just create a new block, replacing the old. It would be better if we could
-    // just rely on the view updating and for the height to be calculated automatically.
-    //
-    // We will just handle text for the moment to keep this accurate.
-    // Plots and other images will have to wait.
     let execution_view = cx.new_view(|cx| ExecutionView::new(execution_id.clone(), cx));
 
     // If any block overlaps with the new block, remove it
-    // When inserting a new block, put it in order so that search is efficient
+    // TODO: When inserting a new block, put it in order so that search is efficient
     let blocks_to_remove = runtime_manager.update(cx, |runtime_manager, _cx| {
         // Get the current `EditorRuntimeState` for this runtime_manager, inserting it if it doesn't exist
         let editor_runtime_state = runtime_manager
@@ -322,13 +316,16 @@ pub fn run(workspace: &mut Workspace, _: &Run, cx: &mut ViewContext<Workspace>) 
             .or_insert_with(|| EditorRuntimeState { blocks: Vec::new() });
 
         let mut blocks_to_remove: HashSet<BlockId> = HashSet::default();
-        for (_i, block) in editor_runtime_state.blocks.iter().enumerate() {
-            let other_range: Range<Anchor> = block.code_range.clone();
 
-            if anchor_range.overlaps(&other_range, &buffer) {
+        editor_runtime_state.blocks.retain(|block| {
+            if anchor_range.overlaps(&block.code_range, &buffer) {
                 blocks_to_remove.insert(block.block_id);
+                // Drop this block
+                false
+            } else {
+                true
             }
-        }
+        });
 
         blocks_to_remove
     });
@@ -347,8 +344,6 @@ pub fn run(workspace: &mut Workspace, _: &Run, cx: &mut ViewContext<Workspace>) 
 
         editor.insert_blocks([block], None, cx)[0]
     });
-
-    println!("Created block {block_id:?}");
 
     let receiver = runtime_manager.update(cx, |runtime_manager, cx| {
         let editor_runtime_state = runtime_manager
