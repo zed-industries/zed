@@ -7,6 +7,9 @@
             DowngradeErrorMessage="A newer version of [ProductName] is already installed. If you are sure you want to downgrade, remove the existing installation via the Control Panel" />
         <Icon Id="icon.ico" SourceFile="crates/zed/resources/windows/app-icon.ico" />
 
+        <!-- App icon in Add/Remove Programs-->
+        <Property Id="ARPPRODUCTICON" Value="icon.ico"></Property>
+
         <StandardDirectory Id="ProgramFilesFolder">
             <Directory Id="INSTALLFOLDER" Name="!(bind.Property.ProductName)" />
         </StandardDirectory>
