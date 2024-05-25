@@ -42,27 +42,27 @@ on startup. You can troubleshoot this by switching to manual mode and passing th
 Zed intercepts `ssh` in a way that should make it possible to intercept connections made by most "ssh wrappers". For example you
 can specify:
 
-* `user@host` will assume you meant `ssh user@host`
-* `ssh -J jump target` to connect via a jump-host
-* `gh cs ssh -c example-codespace` to connect to a github codespace
-* `doctl compute ssh example-droplet` to connect to a digital ocean droplet
-* `gcloud compute ssh` for a google cloud instance
+- `user@host` will assume you meant `ssh user@host`
+- `ssh -J jump target` to connect via a jump-host
+- `gh cs ssh -c example-codespace` to connect to a github codespace
+- `doctl compute ssh example-droplet` to connect to a digital ocean droplet
+- `gcloud compute ssh` for a google cloud instance
 
 ### zed --dev-server-token isn't connecting
 
 There are a few likely causes of failure:
 
-* `zed --dev-server-token` runs but outputs nothing. This is probably because the zed background process is crashing on startup. Try running `zed --dev-server-token XX --foreground` to see any output, and [file a bug](https://github.com/zed-industries/zed) so we can debug it together.
-* `zed --dev-server-token` outputs something like "Connection refused" or "Unauthorized" and immediately exits. This is likely due to issues making outbound HTTP requests to https://collab.zed.dev from your host. You can try to debug this with `curl https://collab.zed.dev`, but we have seen cases where curl is whitelisted, but other binaries are not allowed network access.
-* `zed --dev-server-token` outputs "Zed is already running". If you are editing an existing server, it is possible that clicking "Connect" a second time will work, but if not you will have to manually log into the server and kill the zed process.
+- `zed --dev-server-token` runs but outputs nothing. This is probably because the zed background process is crashing on startup. Try running `zed --dev-server-token XX --foreground` to see any output, and [file a bug](https://github.com/zed-industries/zed) so we can debug it together.
+- `zed --dev-server-token` outputs something like "Connection refused" or "Unauthorized" and immediately exits. This is likely due to issues making outbound HTTP requests to https://collab.zed.dev from your host. You can try to debug this with `curl https://collab.zed.dev`, but we have seen cases where curl is whitelisted, but other binaries are not allowed network access.
+- `zed --dev-server-token` outputs "Zed is already running". If you are editing an existing server, it is possible that clicking "Connect" a second time will work, but if not you will have to manually log into the server and kill the zed process.
 
 ## Supported platforms
 
 The remote machine must be able to run Zed. The following platforms should work, though note that we have not exhaustively tested every linux distribution:
 
-* macOS Catalina or later (Intel or Apple Silicon))
-* Linux (x86_64 only). You must have `glibc` installed at version 2.29 (released in 2019) or greater and available globally.
-* Windows is not yet supported.
+- macOS Catalina or later (Intel or Apple Silicon))
+- Linux (x86_64 only). You must have `glibc` installed at version 2.29 (released in 2019) or greater and available globally.
+- Windows is not yet supported.
 
 ## Known Limitations
 
