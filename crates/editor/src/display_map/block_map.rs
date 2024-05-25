@@ -1232,9 +1232,6 @@ mod tests {
         assert_eq!(snapshot.text(), "aaa\n\nb!!!\n\n\nbb\nccc\nddd\n\n\n");
     }
 
-    /// TODO: Write some tests on the unhappy path
-    /// TODO: Write randomization tests
-
     #[gpui::test]
     fn test_resize(cx: &mut gpui::TestAppContext) {
         cx.update(|cx| init_test(cx));
@@ -1462,6 +1459,36 @@ mod tests {
                     });
                     let mut block_map = block_map.write(wraps_snapshot, wrap_edits);
                     block_map.remove(block_ids_to_remove);
+                }
+                60..=79 if !custom_blocks.is_empty() => {
+                    let blocks_to_resize = rng.gen_range(1..=custom_blocks.len().min(4));
+                    let mut heights_and_renderers = HashMap::default();
+
+                    for _ in 0..blocks_to_resize {
+                        let (block_id, block_props) =
+                            &custom_blocks[rng.gen_range(0..custom_blocks.len())];
+                        let new_height = rng.gen_range(1..5);
+                        log::info!(
+                            "resizing block {:?} from height {} to {}",
+                            block_id,
+                            block_props.height,
+                            new_height,
+                        );
+
+                        let render: RenderBlock = Box::new(|_| div().into_any());
+                        heights_and_renderers.insert(*block_id, (new_height, render));
+                    }
+
+                    let (inlay_snapshot, inlay_edits) =
+                        inlay_map.sync(buffer_snapshot.clone(), vec![]);
+                    let (fold_snapshot, fold_edits) = fold_map.read(inlay_snapshot, inlay_edits);
+                    let (tab_snapshot, tab_edits) =
+                        tab_map.sync(fold_snapshot, fold_edits, 4.try_into().unwrap());
+                    let (wraps_snapshot, wrap_edits) = wrap_map.update(cx, |wrap_map, cx| {
+                        wrap_map.sync(tab_snapshot, tab_edits, cx)
+                    });
+                    let mut block_map_writer = block_map.write(wraps_snapshot, wrap_edits);
+                    block_map_writer.resize(heights_and_renderers);
                 }
                 _ => {
                     buffer.update(cx, |buffer, cx| {
