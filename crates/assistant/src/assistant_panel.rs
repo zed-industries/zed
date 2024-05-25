@@ -1132,9 +1132,10 @@ impl AssistantPanel {
 
         let lsp_adapter_delegate = workspace
             .update(cx, |workspace, cx| {
-                make_lsp_adapter_delegate(workspace.project(), cx)
+                make_lsp_adapter_delegate(workspace.project(), cx).log_err()
             })
-            .log_err();
+            .log_err()
+            .flatten();
 
         cx.spawn(|this, mut cx| async move {
             let saved_conversation = SavedConversation::load(&path, fs.as_ref()).await?;
@@ -2749,7 +2750,7 @@ impl ConversationEditor {
     ) -> Self {
         let telemetry = workspace.read(cx).client().telemetry().clone();
         let project = workspace.read(cx).project().clone();
-        let lsp_adapter_delegate = make_lsp_adapter_delegate(&project, cx);
+        let lsp_adapter_delegate = make_lsp_adapter_delegate(&project, cx).log_err();
 
         let conversation = cx.new_model(|cx| {
             Conversation::new(
@@ -2757,7 +2758,7 @@ impl ConversationEditor {
                 language_registry,
                 slash_command_registry,
                 Some(telemetry),
-                Some(lsp_adapter_delegate),
+                lsp_adapter_delegate,
                 cx,
             )
         });
@@ -3934,14 +3935,14 @@ fn merge_ranges(ranges: &mut Vec<Range<Anchor>>, buffer: &MultiBufferSnapshot) {
 fn make_lsp_adapter_delegate(
     project: &Model<Project>,
     cx: &mut AppContext,
-) -> Arc<dyn LspAdapterDelegate> {
+) -> Result<Arc<dyn LspAdapterDelegate>> {
     project.update(cx, |project, cx| {
         // TODO: Find the right worktree.
         let worktree = project
             .worktrees()
             .next()
-            .expect("expected at least one worktree");
-        ProjectLspAdapterDelegate::new(project, &worktree, cx)
+            .ok_or_else(|| anyhow!("no worktrees when constructing ProjectLspAdapterDelegate"))?;
+        Ok(ProjectLspAdapterDelegate::new(project, &worktree, cx) as Arc<dyn LspAdapterDelegate>)
     })
 }
 
