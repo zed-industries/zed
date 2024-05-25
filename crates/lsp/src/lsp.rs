@@ -452,24 +452,27 @@ impl LanguageServer {
             }
 
             if let Ok(msg) = serde_json::from_slice::<AnyNotification>(&buffer) {
-                if let Some(handler) = notification_handlers.lock().get_mut(msg.method) {
+                let mut notification_handlers = notification_handlers.lock();
+                if let Some(handler) = notification_handlers.get_mut(msg.method) {
                     handler(
                         msg.id,
                         msg.params.map(|params| params.get()).unwrap_or("null"),
                         cx.clone(),
                     );
                 } else {
+                    drop(notification_handlers);
                     on_unhandled_notification(msg);
                 }
             } else if let Ok(AnyResponse {
                 id, error, result, ..
             }) = serde_json::from_slice(&buffer)
             {
+                let mut response_handlers = response_handlers.lock();
                 if let Some(handler) = response_handlers
-                    .lock()
                     .as_mut()
                     .and_then(|handlers| handlers.remove(&id))
                 {
+                    drop(response_handlers);
                     if let Some(error) = error {
                         handler(Err(error));
                     } else if let Some(result) = result {
