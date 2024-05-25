@@ -9,3 +9,4 @@ brackets = [
     { start = "\"", end = "\"", close = true, newline = false, not_in = ["string"] },
 ]
 tab_size = 2
+prettier_parser_name = "json"
