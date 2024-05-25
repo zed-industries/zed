@@ -15,13 +15,13 @@ Currently the two instances connect via Zed's servers, but we intend to build pe
 > **Note:** You must be in the alpha program to see this UI. The instructions will likely change as the feature gets closer to launch.
 
 1. Download and install the latest [Zed Preview](https://zed.dev/releases/preview).
-1. Open the remote projects dialogue with `cmd-shift-p remote`
-2. Click "Add Server"
+1. Open the remote projects dialogue with `cmd-shift-p remote`.
+2. Click "Add Server".
 3. Choose whether to setup via SSH, or to follow the manual setup.
    > **Note:** With both options your laptop and the remote machine will communicate
      via https://collab.zed.dev/, so you will need outbound internet access on the remote machine.
 6. On your laptop you can now open folders on the remote machine.
-   > **Note:** Zed does not currently handle opening very large directories (e.g. `/` or `~` that may have >100,000 files) very well. We are working on improving this, but suggest in the meantime opening only specific projects, or subfolders of very large mono-repos.
+   > **Note:** Zed does not currently handle opening very large directories (for example, `/` or `~` that may have >100,000 files) very well. We are working on improving this, but suggest in the meantime opening only specific projects, or subfolders of very large mono-repos.
 
 ## Toubleshooting
 
@@ -34,7 +34,7 @@ This can happen either if you were just added to the alpha, in which case you ne
 If you chose to connect via SSH, the command you specify will be run in a Zed terminal given you an opportunity to type any passwords/keyphrases etc. that you need.
 Once a connection is established, Zed will be downloaded and installed to `~/.local/bin/zed` on the remote machine, and run.
 
-If you don't see any output from the Zed command, it is likely that zed is crashing
+If you don't see any output from the Zed command, it is likely that Zed is crashing
 on startup. You can troubleshoot this by switching to manual mode and passing the `--foreground` flag. Please [file a bug](https://github.com/zed-industries/zed) so we can debug it together.
 
 ### SSH-like connections
@@ -45,7 +45,7 @@ can specify:
 - `user@host` will assume you meant `ssh user@host`
 - `ssh -J jump target` to connect via a jump-host
 - `gh cs ssh -c example-codespace` to connect to a GitHub codespace
-- `doctl compute ssh example-droplet` to connect to a DigitalOcean droplet
+- `doctl compute ssh example-droplet` to connect to a DigitalOcean Droplet
 - `gcloud compute ssh` for a Google Cloud instance
 
 ### zed --dev-server-token isn't connecting
@@ -58,7 +58,7 @@ There are a few likely causes of failure:
 
 ## Supported platforms
 
-The remote machine must be able to run Zed. The following platforms should work, though note that we have not exhaustively tested every linux distribution:
+The remote machine must be able to run Zed. The following platforms should work, though note that we have not exhaustively tested every Linux distribution:
 
 - macOS Catalina or later (Intel or Apple Silicon)
 - Linux (x86_64 only). You must have `glibc` installed at version 2.29 (released in 2019) or greater and available globally.
