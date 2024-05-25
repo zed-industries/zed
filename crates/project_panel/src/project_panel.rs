@@ -2906,6 +2906,81 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn test_rename_create_directory(cx: &mut gpui::TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor().clone());
+        fs.insert_tree(
+            "/root1",
+            json!({
+                "src": {
+                    "file.rs": "",
+                },
+            }),
+        )
+        .await;
+
+        let project = Project::test(fs.clone(), ["/root1".as_ref()], cx).await;
+        let workspace = cx.add_window(|cx| Workspace::test_new(project.clone(), cx));
+        let cx = &mut VisualTestContext::from_window(*workspace, cx);
+        let panel = workspace
+            .update(cx, |workspace, cx| {
+                let panel = ProjectPanel::new(workspace, cx);
+                workspace.add_panel(panel.clone(), cx);
+                panel
+            })
+            .unwrap();
+
+        toggle_expand_dir(&panel, "root1/src", cx);
+        select_path(&panel, "root1/src/file.rs", cx);
+        assert_eq!(
+            visible_entries_as_strings(&panel, 0..10, cx),
+            &["v root1", "    v src", "          file.rs  <== selected"]
+        );
+
+        // Add a file with the root folder selected. The filename editor is placed
+        // before the first file in the root folder.
+        panel.update(cx, |panel, cx| panel.rename(&Rename, cx));
+        panel.update(cx, |panel, cx| {
+            assert!(panel.filename_editor.read(cx).is_focused(cx));
+        });
+        assert_eq!(
+            visible_entries_as_strings(&panel, 0..10, cx),
+            &[
+                "v root1",
+                "    v src",
+                "          [EDITOR: 'file.rs']  <== selected",
+            ]
+        );
+
+        let confirm = panel.update(cx, |panel, cx| {
+            panel
+                .filename_editor
+                .update(cx, |editor, cx| editor.set_text("file/mod.rs", cx));
+            panel.confirm_edit(cx).unwrap()
+        });
+
+        assert_eq!(
+            visible_entries_as_strings(&panel, 0..10, cx),
+            &[
+                "v root1",
+                "    v src",
+                "          [PROCESSING: 'file/mod.rs']  <== selected",
+            ]
+        );
+
+        confirm.await.unwrap();
+        assert_eq!(
+            visible_entries_as_strings(&panel, 0..13, cx),
+            &[
+                "v root1",
+                "    v src",
+                "          file/mod.rs  <== selected",
+            ]
+        );
+    }
+
+    #[gpui::test]
     async fn test_adding_directory_via_file(cx: &mut gpui::TestAppContext) {
         init_test(cx);
 
