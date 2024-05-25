@@ -12799,6 +12799,7 @@ dependencies = [
  "client",
  "clock",
  "collections",
+ "env_logger",
  "fs",
  "futures 0.3.28",
  "fuzzy",
