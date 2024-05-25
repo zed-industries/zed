@@ -1,0 +1,8 @@
+[
+  {
+    "label": "package script $ZED_SYMBOL",
+    "command": "npm run",
+    "args": ["$ZED_SYMBOL"],
+    "tags": ["package-script"]
+  }
+]
