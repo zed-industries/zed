@@ -1243,11 +1243,11 @@ mod tests {
 
         let buffer = cx.update(|cx| MultiBuffer::build_simple(text, cx));
         let buffer_snapshot = cx.update(|cx| buffer.read(cx).snapshot(cx));
-        let subscription = buffer.update(cx, |buffer, _| buffer.subscribe());
-        let (inlay_map, inlay_snapshot) = InlayMap::new(buffer_snapshot.clone());
-        let (fold_map, fold_snapshot) = FoldMap::new(inlay_snapshot);
-        let (tab_map, tab_snapshot) = TabMap::new(fold_snapshot, 1.try_into().unwrap());
-        let (wrap_map, wraps_snapshot) =
+        let _subscription = buffer.update(cx, |buffer, _| buffer.subscribe());
+        let (_inlay_map, inlay_snapshot) = InlayMap::new(buffer_snapshot.clone());
+        let (_fold_map, fold_snapshot) = FoldMap::new(inlay_snapshot);
+        let (_tab_map, tab_snapshot) = TabMap::new(fold_snapshot, 1.try_into().unwrap());
+        let (_wrap_map, wraps_snapshot) =
             cx.update(|cx| WrapMap::new(tab_snapshot, font("Helvetica"), px(14.0), None, cx));
         let mut block_map = BlockMap::new(wraps_snapshot.clone(), 1, 1);
 
@@ -1284,20 +1284,10 @@ mod tests {
         let mut hash_map = HashMap::default();
         let render: RenderBlock = Box::new(|_| div().into_any());
         hash_map.insert(block_ids[0], (2_u8, render));
-
         block_map_writer.resize(hash_map);
+
         let snapshot = block_map.read(wraps_snapshot.clone(), Default::default());
         assert_eq!(snapshot.text(), "aaa\n\n\n\n\nbbb\nccc\nddd\n\n\n");
-
-        // // Resize the second block
-        // block_map.resize(block_ids[1], 1);
-        // let snapshot = block_map.read(wraps_snapshot.clone(), Default::default());
-        // assert_eq!(snapshot.text(), "aaa\n\n\n\nbbb\nccc\nddd\n\n\n");
-
-        // // Resize the third block
-        // block_map.resize(block_ids[2], 4);
-        // let snapshot = block_map.read(wraps_snapshot.clone(), Default::default());
-        // assert_eq!(snapshot.text(), "aaa\n\n\n\nbbb\nccc\nddd\n\n\n\n\n\n");
     }
 
     #[gpui::test]
