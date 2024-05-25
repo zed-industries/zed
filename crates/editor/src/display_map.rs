@@ -282,8 +282,6 @@ impl DisplayMap {
         heights_and_renderers: HashMap<BlockId, (Option<u8>, RenderBlock)>,
         cx: &mut ModelContext<Self>,
     ) {
-        self.block_map.replace(heights_and_renderers);
-
         let snapshot = self.buffer.read(cx).snapshot(cx);
         let edits = self.buffer_subscription.consume().into_inner();
         let tab_size = Self::tab_size(&self.buffer, cx);
@@ -293,7 +291,8 @@ impl DisplayMap {
         let (snapshot, edits) = self
             .wrap_map
             .update(cx, |map, cx| map.sync(snapshot, edits, cx));
-        self.block_map.write(snapshot, edits);
+        let mut block_map = self.block_map.write(snapshot, edits);
+        block_map.replace(heights_and_renderers);
     }
 
     pub fn remove_blocks(&mut self, ids: HashSet<BlockId>, cx: &mut ModelContext<Self>) {

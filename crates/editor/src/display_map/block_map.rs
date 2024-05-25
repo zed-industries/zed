@@ -675,6 +675,48 @@ impl<'a> BlockMapWriter<'a> {
         ids
     }
 
+    pub fn replace(&mut self, mut heights_and_renderers: HashMap<BlockId, (u8, RenderBlock)>) {
+        let wrap_snapshot = &*self.0.wrap_snapshot.borrow();
+        let buffer = wrap_snapshot.buffer_snapshot();
+        let mut edits = Patch::default();
+        let mut last_block_buffer_row = None;
+
+        for block in &mut self.0.blocks {
+            if let Some((new_height, render)) = heights_and_renderers.remove(&block.id) {
+                if block.height != new_height {
+                    let new_block = Block {
+                        id: block.id,
+                        position: block.position,
+                        height: new_height,
+                        style: block.style,
+                        render: Mutex::new(render),
+                        disposition: block.disposition,
+                    };
+                    *block = Arc::new(new_block);
+
+                    let buffer_row = block.position.to_point(buffer).row;
+                    if last_block_buffer_row != Some(buffer_row) {
+                        last_block_buffer_row = Some(buffer_row);
+                        let wrap_row = wrap_snapshot
+                            .make_wrap_point(Point::new(buffer_row, 0), Bias::Left)
+                            .row();
+                        let start_row =
+                            wrap_snapshot.prev_row_boundary(WrapPoint::new(wrap_row, 0));
+                        let end_row = wrap_snapshot
+                            .next_row_boundary(WrapPoint::new(wrap_row, 0))
+                            .unwrap_or(wrap_snapshot.max_point().row() + 1);
+                        edits.push(Edit {
+                            old: start_row..end_row,
+                            new: start_row..end_row,
+                        })
+                    }
+                }
+            }
+        }
+
+        self.0.sync(wrap_snapshot, edits);
+    }
+
     pub fn remove(&mut self, block_ids: HashSet<BlockId>) {
         let wrap_snapshot = &*self.0.wrap_snapshot.borrow();
         let buffer = wrap_snapshot.buffer_snapshot();
