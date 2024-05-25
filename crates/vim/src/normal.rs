@@ -139,33 +139,17 @@ pub(crate) fn register(workspace: &mut Workspace, cx: &mut ViewContext<Workspace
         });
     });
 
-    // workspace.register_action(|_: &mut Workspace, _: &Indent, cx| {
-    //     Vim::update(cx, |vim, cx| {
-    //         vim.record_current_action(cx);
-    //         vim.update_active_editor(cx, |_, editor, cx| {
-    //             editor.transact(cx, |editor, cx| {
-    //                 let mut original_columns: HashMap<_, _> = Default::default();
-    //                 editor.change_selections(Some(Autoscroll::fit()), cx, |s| {
-    //                     s.move_with(|map, selection| {
-    //                         let original_head = selection.head();
-    //                         original_columns.insert(selection.id, original_head.column());
-    //                         motion.expand_selection(
-    //                             map,
-    //                             selection,
-    //                             times,
-    //                             true,
-    //                             &text_layout_details,
-    //                         );
-    //                     });
-    //                 });
-    //                 editor.indent(&Default::default(), cx);
-    //             })
-    //         });
-    //         if vim.state().mode.is_visual() {
-    //             vim.switch_mode(Mode::Normal, false, cx)
-    //         }
-    //     });
-    // });
+    workspace.register_action(|_: &mut Workspace, _: &Indent, cx| {
+        Vim::update(cx, |vim, cx| {
+            vim.record_current_action(cx);
+            vim.update_active_editor(cx, |_, editor, cx| {
+                editor.transact(cx, |editor, cx| editor.indent(&Default::default(), cx))
+            });
+            if vim.state().mode.is_visual() {
+                vim.switch_mode(Mode::Normal, false, cx)
+            }
+        });
+    });
 
     workspace.register_action(|_: &mut Workspace, _: &Outdent, cx| {
         Vim::update(cx, |vim, cx| {
