@@ -60,6 +60,11 @@ Ruby LSP uses pull-based diagnostics which Zed doesn't support yet. We can tell 
         }
       }
     }
+  },
+  "language_overrides": {
+    "Ruby": {
+      "language_servers": ["ruby-lsp"]
+    }
   }
 }
 ```
