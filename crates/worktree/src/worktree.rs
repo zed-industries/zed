@@ -2183,25 +2183,6 @@ impl Snapshot {
         }
     }
 
-    pub fn descendent_entries<'a>(
-        &'a self,
-        include_dirs: bool,
-        include_ignored: bool,
-        parent_path: &'a Path,
-    ) -> DescendentEntriesIter<'a> {
-        let mut cursor = self.entries_by_path.cursor();
-        cursor.seek(&TraversalTarget::Path(parent_path), Bias::Left, &());
-        DescendentEntriesIter {
-            traversal: Traversal {
-                cursor,
-                include_files: true,
-                include_dirs,
-                include_ignored,
-            },
-            parent_path,
-        }
-    }
-
     pub fn root_entry(&self) -> Option<&Entry> {
         self.entry_for_path("")
     }
@@ -5026,25 +5007,6 @@ impl<'a> Iterator for ChildEntriesIter<'a> {
         if let Some(item) = self.traversal.entry() {
             if item.path.starts_with(&self.parent_path) {
                 self.traversal.advance_to_sibling();
-                return Some(item);
-            }
-        }
-        None
-    }
-}
-
-pub struct DescendentEntriesIter<'a> {
-    parent_path: &'a Path,
-    traversal: Traversal<'a>,
-}
-
-impl<'a> Iterator for DescendentEntriesIter<'a> {
-    type Item = &'a Entry;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        if let Some(item) = self.traversal.entry() {
-            if item.path.starts_with(&self.parent_path) {
-                self.traversal.advance();
                 return Some(item);
             }
         }
