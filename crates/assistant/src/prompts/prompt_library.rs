@@ -70,15 +70,15 @@ impl PromptLibrary {
         StaticPrompt::default()
     }
 
-    pub fn prompts(&self) -> HashMap<PromptId, StaticPrompt> {
-        let state = self.state.read();
-        state.prompts.clone()
-    }
-
     pub fn add_prompt(&self, prompt: StaticPrompt) {
         let mut state = self.state.write();
         let id = prompt.id().clone();
         state.prompts.insert(id, prompt);
+    }
+
+    pub fn prompts(&self) -> HashMap<PromptId, StaticPrompt> {
+        let state = self.state.read();
+        state.prompts.clone()
     }
 
     pub fn sorted_prompts(&self, sort_order: SortOrder) -> Vec<(PromptId, StaticPrompt)> {
@@ -97,14 +97,30 @@ impl PromptLibrary {
         prompts
     }
 
+    pub fn prompt_by_id(&self, id: PromptId) -> Option<StaticPrompt> {
+        let state = self.state.read();
+        state.prompts.get(&id).cloned()
+    }
+
     pub fn first_prompt_id(&self) -> Option<PromptId> {
         let state = self.state.read();
         state.prompts.keys().next().cloned()
     }
 
-    pub fn prompt(&self, id: PromptId) -> Option<StaticPrompt> {
+    pub fn is_dirty(&self, id: &PromptId) -> bool {
         let state = self.state.read();
-        state.prompts.get(&id).cloned()
+        state.dirty_prompts.contains(&id)
+    }
+
+    pub fn set_dirty(&self, id: PromptId, dirty: bool) {
+        let mut state = self.state.write();
+        if dirty {
+            if !state.dirty_prompts.contains(&id) {
+                state.dirty_prompts.push(id);
+            }
+        } else {
+            state.dirty_prompts.retain(|&i| i != id);
+        }
     }
 
     /// Save the current state of the prompt library to the

@@ -1,17 +1,17 @@
 use collections::HashMap;
-use editor::Editor;
+use editor::{Editor, EditorEvent};
 use fs::Fs;
 use gpui::{prelude::FluentBuilder, *};
 use language::{language_settings, Buffer, LanguageRegistry};
 use picker::{Picker, PickerDelegate};
 use std::sync::Arc;
-use ui::{prelude::*, IconButtonShape, ListItem, ListItemSpacing};
+use ui::{prelude::*, IconButtonShape, Indicator, ListItem, ListItemSpacing};
 use util::{ResultExt, TryFutureExt};
 use workspace::ModalView;
 
 use super::{
     prompt::PROMPT_DEFAULT_TITLE,
-    prompt_library::{PromptId, PromptLibrary, SortOrder},
+    prompt_library::{self, PromptId, PromptLibrary, SortOrder},
 };
 use crate::prompts::prompt::StaticPrompt;
 
@@ -99,7 +99,7 @@ impl PromptManager {
         //
         // Instead, we'll focus the last new prompt
         if let Some(last_new_prompt_id) = self.last_new_prompt_id() {
-            if let Some(last_new_prompt) = self.prompt_library.prompt(last_new_prompt_id) {
+            if let Some(last_new_prompt) = self.prompt_library.prompt_by_id(last_new_prompt_id) {
                 let normalized_body = last_new_prompt
                     .body()
                     .trim()
@@ -148,6 +148,14 @@ impl PromptManager {
         cx.notify();
     }
 
+    pub fn last_new_prompt_id(&self) -> Option<PromptId> {
+        self.last_new_prompt_id
+    }
+
+    pub fn set_last_new_prompt_id(&mut self, id: Option<PromptId>) {
+        self.last_new_prompt_id = id;
+    }
+
     pub fn focus_active_editor(&self, cx: &mut ViewContext<Self>) {
         if let Some(active_prompt_id) = self.active_prompt_id {
             if let Some(editor) = self.prompt_editors.get(&active_prompt_id) {
@@ -163,12 +171,62 @@ impl PromptManager {
             .and_then(|active_prompt_id| self.prompt_editors.get(&active_prompt_id))
     }
 
-    pub fn last_new_prompt_id(&self) -> Option<PromptId> {
-        self.last_new_prompt_id
+    fn set_editor_for_prompt(
+        &mut self,
+        prompt_id: PromptId,
+        cx: &mut ViewContext<Self>,
+    ) -> impl IntoElement {
+        let prompt_library = self.prompt_library.clone();
+
+        let editor_for_prompt = self.prompt_editors.entry(prompt_id).or_insert_with(|| {
+            cx.new_view(|cx| {
+                let text = if let Some(prompt) = prompt_library.prompt_by_id(prompt_id) {
+                    prompt.content().to_owned()
+                } else {
+                    "".to_string()
+                };
+
+                let buffer = cx.new_model(|cx| {
+                    let mut buffer = Buffer::local(text, cx);
+                    let markdown = self.language_registry.language_for_name("Markdown");
+                    cx.spawn(|buffer, mut cx| async move {
+                        if let Some(markdown) = markdown.await.log_err() {
+                            _ = buffer.update(&mut cx, |buffer, cx| {
+                                buffer.set_language(Some(markdown), cx);
+                            });
+                        }
+                    })
+                    .detach();
+                    buffer.set_language_registry(self.language_registry.clone());
+                    buffer
+                });
+                let mut editor = Editor::for_buffer(buffer, None, cx);
+                editor.set_soft_wrap_mode(language_settings::SoftWrap::EditorWidth, cx);
+                editor.set_show_gutter(false, cx);
+                editor
+            })
+        });
+
+        editor_for_prompt.clone()
     }
 
-    pub fn set_last_new_prompt_id(&mut self, id: Option<PromptId>) {
-        self.last_new_prompt_id = id;
+    fn handle_editor_event(&mut self, prompt: StaticPrompt, cx: &mut ViewContext<Self>) {
+        let prompt_library = self.prompt_library.clone();
+        let prompt_id = prompt.id();
+
+        if let Some(editor) = self.prompt_editors.get(&prompt_id) {
+            let text = editor.read(cx).text(cx);
+
+            if prompt.content().clone() == text {
+                prompt_library.set_dirty(prompt_id.clone(), false);
+            } else {
+                prompt_library.set_dirty(prompt_id.clone(), true);
+            }
+
+            // TODO: Count & update tokens here
+
+            cx.notify();
+        }
     }
 
     fn dismiss(&mut self, _: &menu::Cancel, cx: &mut ViewContext<Self>) {
@@ -209,44 +267,6 @@ impl PromptManager {
                     .justify_start()
                     .child(picker),
             )
-    }
-
-    fn set_editor_for_prompt(
-        &mut self,
-        prompt_id: PromptId,
-        cx: &mut ViewContext<Self>,
-    ) -> impl IntoElement {
-        let prompt_library = self.prompt_library.clone();
-
-        let editor_for_prompt = self.prompt_editors.entry(prompt_id).or_insert_with(|| {
-            cx.new_view(|cx| {
-                let text = if let Some(prompt) = prompt_library.prompt(prompt_id) {
-                    prompt.content().to_owned()
-                } else {
-                    "".to_string()
-                };
-
-                let buffer = cx.new_model(|cx| {
-                    let mut buffer = Buffer::local(text, cx);
-                    let markdown = self.language_registry.language_for_name("Markdown");
-                    cx.spawn(|buffer, mut cx| async move {
-                        if let Some(markdown) = markdown.await.log_err() {
-                            _ = buffer.update(&mut cx, |buffer, cx| {
-                                buffer.set_language(Some(markdown), cx);
-                            });
-                        }
-                    })
-                    .detach();
-                    buffer.set_language_registry(self.language_registry.clone());
-                    buffer
-                });
-                let mut editor = Editor::for_buffer(buffer, None, cx);
-                editor.set_soft_wrap_mode(language_settings::SoftWrap::EditorWidth, cx);
-                editor.set_show_gutter(false, cx);
-                editor
-            })
-        });
-        editor_for_prompt.clone()
     }
 }
 
@@ -310,6 +330,8 @@ impl Render for PromptManager {
 }
 
 impl EventEmitter<DismissEvent> for PromptManager {}
+impl EventEmitter<EditorEvent> for PromptManager {}
+
 impl ModalView for PromptManager {}
 
 impl FocusableView for PromptManager {
@@ -414,15 +436,17 @@ impl PickerDelegate for PromptManagerDelegate {
         selected: bool,
         _cx: &mut ViewContext<Picker<Self>>,
     ) -> Option<Self::ListItem> {
-        let matching_prompt = self.matching_prompts.get(ix)?;
-        let prompt = matching_prompt.clone();
+        let prompt = self.matching_prompts.get(ix)?;
+
+        let is_diry = self.prompt_library.is_dirty(prompt.id());
 
         Some(
             ListItem::new(ix)
                 .inset(true)
                 .spacing(ListItemSpacing::Sparse)
                 .selected(selected)
-                .child(Label::new(prompt.title())),
+                .child(Label::new(prompt.title()))
+                .end_slot(div().when(is_diry, |this| this.child(Indicator::dot()))),
         )
     }
 }
