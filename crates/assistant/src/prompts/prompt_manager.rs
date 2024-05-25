@@ -12,6 +12,8 @@ use workspace::ModalView;
 use super::prompt_library::{PromptId, PromptLibrary, SortOrder};
 use crate::prompts::prompt::StaticPrompt;
 
+actions!(prompt_manager, [NewPrompt]);
+
 pub struct PromptManager {
     focus_handle: FocusHandle,
     prompt_library: Arc<PromptLibrary>,
@@ -21,6 +23,8 @@ pub struct PromptManager {
     picker: View<Picker<PromptManagerDelegate>>,
     prompt_editors: HashMap<PromptId, View<Editor>>,
     active_prompt_id: Option<PromptId>,
+    last_new_prompt_id: Option<PromptId>,
+    _subscriptions: Vec<Subscription>,
 }
 
 impl PromptManager {
@@ -39,6 +43,7 @@ impl PromptManager {
                     matching_prompt_ids: vec![],
                     prompt_library: prompt_library.clone(),
                     selected_index: 0,
+                    _subscriptions: vec![],
                 },
                 cx,
             )
@@ -48,6 +53,11 @@ impl PromptManager {
 
         let focus_handle = picker.focus_handle(cx);
 
+        let subscriptions = vec![
+            // cx.on_focus_in(&focus_handle, Self::focus_in),
+            // cx.on_focus_out(&focus_handle, Self::focus_out),
+        ];
+
         let mut manager = Self {
             focus_handle,
             prompt_library,
@@ -56,11 +66,72 @@ impl PromptManager {
             picker,
             prompt_editors: HashMap::default(),
             active_prompt_id: None,
+            last_new_prompt_id: None,
+            _subscriptions: subscriptions,
         };
 
         manager.active_prompt_id = manager.prompt_library.first_prompt_id();
 
         manager
+    }
+
+    fn dispatch_context(&self, cx: &ViewContext<Self>) -> KeyContext {
+        let mut dispatch_context = KeyContext::new_with_defaults();
+        dispatch_context.add("PromptManager");
+
+        let identifier = match self.active_editor() {
+            Some(active_editor) if active_editor.focus_handle(cx).is_focused(cx) => "editing",
+            _ => "not_editing",
+        };
+
+        dispatch_context.add(identifier);
+        dispatch_context
+    }
+
+    pub fn new_prompt(&mut self, _: &NewPrompt, cx: &mut ViewContext<Self>) {
+        // Prevent making a new prompt if the last new prompt is still empty
+        //
+        // Instead, we'll focus the last new prompt
+        if let Some(last_new_prompt_id) = self.last_new_prompt_id() {
+            if let Some(last_new_prompt) = self.prompt_library.prompt(last_new_prompt_id) {
+                if last_new_prompt.title() == "Untitled Prompt" && last_new_prompt.body().is_empty()
+                {
+                    self.set_editor_for_prompt(last_new_prompt_id, cx);
+                    self.focus_active_editor(cx);
+                }
+            }
+        }
+
+        let (id, prompt) = self.prompt_library.new_prompt();
+        self.set_last_new_prompt_id(Some(id));
+
+        println!("New prompt: {:?}: {}", id, prompt.clone().title());
+
+        println!("Prompt count: {}", self.prompt_library.prompts().len());
+        self.prompt_library.add_prompt(prompt.clone());
+        println!("Prompt count: {}", self.prompt_library.prompts().len());
+        let id = prompt.clone().id().clone();
+        self.picker.update(cx, |picker, cx| {
+            let prompts = self
+                .prompt_library
+                .sorted_prompts(SortOrder::Alphabetical)
+                .clone()
+                .into_iter();
+
+            picker.delegate.prompt_library = self.prompt_library.clone();
+            picker.delegate.matching_prompts = prompts.clone().map(|(_, p)| Arc::new(p)).collect();
+            picker.delegate.matching_prompt_ids = prompts.map(|(id, _)| id).collect();
+            picker.delegate.selected_index = picker
+                .delegate
+                .matching_prompts
+                .iter()
+                .position(|p| p.id().clone() == id.clone())
+                .unwrap_or(0);
+        });
+        self.active_prompt_id = Some(id.clone());
+        println!("Active prompt: {:?}", self.active_prompt_id);
+
+        cx.notify();
     }
 
     pub fn set_active_prompt(&mut self, prompt_id: Option<PromptId>, cx: &mut ViewContext<Self>) {
@@ -76,6 +147,19 @@ impl PromptManager {
                 cx.focus(&focus_handle)
             }
         }
+    }
+
+    pub fn active_editor(&self) -> Option<&View<Editor>> {
+        self.active_prompt_id
+            .and_then(|active_prompt_id| self.prompt_editors.get(&active_prompt_id))
+    }
+
+    pub fn last_new_prompt_id(&self) -> Option<PromptId> {
+        self.last_new_prompt_id
+    }
+
+    pub fn set_last_new_prompt_id(&mut self, id: Option<PromptId>) {
+        self.last_new_prompt_id = id;
     }
 
     fn dismiss(&mut self, _: &menu::Cancel, cx: &mut ViewContext<Self>) {
@@ -101,7 +185,13 @@ impl PromptManager {
                     .flex_none()
                     .justify_between()
                     .child(Label::new("Prompt Library").size(LabelSize::Small))
-                    .child(IconButton::new("new-prompt", IconName::Plus).disabled(true)),
+                    .child(
+                        IconButton::new("new-prompt", IconName::Plus)
+                            .shape(IconButtonShape::Square)
+                            .on_click(|_, cx| {
+                                cx.dispatch_action(NewPrompt.boxed_clone());
+                            }),
+                    ),
             )
             .child(
                 v_flex()
@@ -154,10 +244,11 @@ impl PromptManager {
 impl Render for PromptManager {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         h_flex()
-            .key_context("PromptManager")
+            .id("propmt-manager")
+            .key_context(self.dispatch_context(cx))
             .track_focus(&self.focus_handle)
             .on_action(cx.listener(Self::dismiss))
-            // .on_action(cx.listener(Self::save_active_prompt))
+            .on_action(cx.listener(Self::new_prompt))
             .elevation_3(cx)
             .size_full()
             .flex_none()
@@ -224,6 +315,7 @@ pub struct PromptManagerDelegate {
     matching_prompt_ids: Vec<PromptId>,
     prompt_library: Arc<PromptLibrary>,
     selected_index: usize,
+    _subscriptions: Vec<Subscription>,
 }
 
 impl PickerDelegate for PromptManagerDelegate {

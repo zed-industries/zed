@@ -25,6 +25,16 @@ impl PromptId {
     pub fn new() -> Self {
         Self(Uuid::new_v4())
     }
+
+    pub fn from_str(id: &str) -> anyhow::Result<Self> {
+        Ok(Self(Uuid::parse_str(id)?))
+    }
+}
+
+impl Default for PromptId {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 #[derive(Default, Serialize, Deserialize)]
@@ -56,13 +66,21 @@ impl PromptLibrary {
         }
     }
 
-    pub fn prompts(&self) -> Vec<(PromptId, StaticPrompt)> {
+    pub fn new_prompt(&self) -> (PromptId, StaticPrompt) {
+        let prompt = StaticPrompt::default();
+        let id = prompt.id().clone();
+        (id, prompt)
+    }
+
+    pub fn prompts(&self) -> HashMap<PromptId, StaticPrompt> {
         let state = self.state.read();
-        state
-            .prompts
-            .iter()
-            .map(|(id, prompt)| (*id, prompt.clone()))
-            .collect()
+        state.prompts.clone()
+    }
+
+    pub fn add_prompt(&self, prompt: StaticPrompt) {
+        let mut state = self.state.write();
+        let id = prompt.id().clone();
+        state.prompts.insert(id, prompt);
     }
 
     pub fn sorted_prompts(&self, sort_order: SortOrder) -> Vec<(PromptId, StaticPrompt)> {
@@ -132,9 +150,6 @@ impl PromptLibrary {
     /// Load all prompts from the file system
     /// adding them to the library if they don't already exist
     pub async fn load_prompts(&mut self, fs: Arc<dyn Fs>) -> anyhow::Result<()> {
-        // let current_prompts = self.all_prompt_contents().clone();
-
-        // For now, we'll just clear the prompts and reload them all
         self.state.get_mut().prompts.clear();
 
         let mut prompt_paths = fs.read_dir(&PROMPTS_DIR).await?;

@@ -5,6 +5,8 @@ use ui::SharedString;
 use gray_matter::{engine::YAML, Matter};
 use serde::{Deserialize, Serialize};
 
+use super::prompt_library::PromptId;
+
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub struct StaticPromptFrontmatter {
     title: String,
@@ -62,10 +64,23 @@ impl Default for StaticPromptFrontmatter {
 /// ```
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub struct StaticPrompt {
+    #[serde(skip_deserializing)]
+    id: PromptId,
     #[serde(skip)]
     metadata: StaticPromptFrontmatter,
     content: String,
     file_name: Option<String>,
+}
+
+impl Default for StaticPrompt {
+    fn default() -> Self {
+        Self {
+            id: PromptId::new(),
+            metadata: StaticPromptFrontmatter::default(),
+            content: String::new(),
+            file_name: None,
+        }
+    }
 }
 
 impl StaticPrompt {
@@ -91,7 +106,14 @@ impl StaticPrompt {
                 StaticPromptFrontmatter::default()
             });
 
+        let id = if let Some(file_name) = &file_name {
+            PromptId::from_str(file_name).unwrap_or_default()
+        } else {
+            PromptId::new()
+        };
+
         StaticPrompt {
+            id,
             content,
             file_name,
             metadata,
@@ -100,6 +122,11 @@ impl StaticPrompt {
 }
 
 impl StaticPrompt {
+    /// Returns the prompt's id
+    pub fn id(&self) -> &PromptId {
+        &self.id
+    }
+
     /// Sets the file name of the prompt
     pub fn _file_name(&mut self, file_name: String) -> &mut Self {
         self.file_name = Some(file_name);
