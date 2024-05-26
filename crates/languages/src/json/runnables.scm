@@ -17,4 +17,5 @@
         )
     )
     (#set! tag package-script)
+    (#set! tag composer-script)
 )

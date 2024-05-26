@@ -9,6 +9,6 @@
     "label": "composer script $ZED_CUSTOM_script",
     "command": "composer",
     "args": ["$ZED_CUSTOM_script"],
-    "tags": ["package-script"]
+    "tags": ["composer-script"]
   }
 ]
