@@ -15,6 +15,6 @@
                 )
             )
         )
-    ) @package-script
+    )
     (#set! tag package-script)
 )
