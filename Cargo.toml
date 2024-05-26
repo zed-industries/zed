@@ -492,5 +492,10 @@ non_canonical_partial_ord_impl = "allow"
 reversed_empty_ranges = "allow"
 type_complexity = "allow"
 
+[workspace.lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = [
+    'cfg(gles)' # used in gpui
+] }
+
 [workspace.metadata.cargo-machete]
 ignored = ["bindgen", "cbindgen", "prost_build", "serde"]
