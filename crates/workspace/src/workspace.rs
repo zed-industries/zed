@@ -4123,10 +4123,7 @@ impl Render for Workspace {
         };
         let (ui_font, ui_font_size) = {
             let theme_settings = ThemeSettings::get_global(cx);
-            (
-                theme_settings.ui_font.family.clone(),
-                theme_settings.ui_font_size,
-            )
+            (theme_settings.ui_font.clone(), theme_settings.ui_font_size)
         };
 
         let theme = cx.theme().clone();
@@ -4139,7 +4136,7 @@ impl Render for Workspace {
             .size_full()
             .flex()
             .flex_col()
-            .font_family(ui_font)
+            .font(ui_font)
             .gap_0()
             .justify_start()
             .items_start()

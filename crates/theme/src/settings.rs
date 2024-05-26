@@ -227,6 +227,18 @@ pub struct ThemeSettingsContent {
     /// The OpenType features to enable for text in the UI.
     #[serde(default)]
     pub ui_font_features: Option<FontFeatures>,
+    /// The weight of the font from 100 to 900.
+    /// - **100**: Thin (Hairline)
+    /// - **200**: Extra Light (Ultra Light)
+    /// - **300**: Light
+    /// - **400**: Normal (Regular or Roman)
+    /// - **500**: Medium
+    /// - **600**: Semi Bold (Demi Bold)
+    /// - **700**: Bold
+    /// - **800**: Extra Bold (Ultra Bold)
+    /// - **900**: Black (Heavy)
+    #[serde(default)]
+    pub ui_font_weight: Option<f32>,
     /// The name of a font to use for rendering in text buffers.
     #[serde(default)]
     pub buffer_font_family: Option<String>,
@@ -386,7 +398,7 @@ impl settings::Settings for ThemeSettings {
             ui_font: Font {
                 family: defaults.ui_font_family.clone().unwrap().into(),
                 features: defaults.ui_font_features.clone().unwrap(),
-                weight: Default::default(),
+                weight: defaults.ui_font_weight.clone().map(FontWeight).unwrap(),
                 style: Default::default(),
             },
             buffer_font: Font {
@@ -423,6 +435,9 @@ impl settings::Settings for ThemeSettings {
             }
             if let Some(value) = value.ui_font_features.clone() {
                 this.ui_font.features = value;
+            }
+            if let Some(value) = value.ui_font_weight.clone() {
+                this.ui_font.weight = FontWeight(value);
             }
 
             if let Some(value) = &value.theme {

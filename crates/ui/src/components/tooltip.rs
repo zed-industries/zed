@@ -89,13 +89,13 @@ pub fn tooltip_container<V>(
     cx: &mut ViewContext<V>,
     f: impl FnOnce(Div, &mut ViewContext<V>) -> Div,
 ) -> impl IntoElement {
-    let ui_font = ThemeSettings::get_global(cx).ui_font.family.clone();
+    let ui_font = ThemeSettings::get_global(cx).ui_font.clone();
 
     // padding to avoid tooltip appearing right below the mouse cursor
     div().pl_2().pt_2p5().child(
         v_flex()
             .elevation_2(cx)
-            .font_family(ui_font)
+            .font(ui_font)
             .text_ui(cx)
             .text_color(cx.theme().colors().text)
             .py_1()
