@@ -4,5 +4,11 @@
     "command": "npm run",
     "args": ["$ZED_CUSTOM_script"],
     "tags": ["package-script"]
+  },
+  {
+    "label": "composer script $ZED_CUSTOM_script",
+    "command": "composer",
+    "args": ["$ZED_CUSTOM_script"],
+    "tags": ["package-script"]
   }
 ]
