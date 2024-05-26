@@ -23,6 +23,7 @@ use x11rb::protocol::{randr, render, xinput, xkb, xproto, Event};
 use x11rb::resource_manager::Database;
 use x11rb::xcb_ffi::XCBConnection;
 use xim::{x11rb::X11rbClient, Client};
+use xim::{AHashMap, AttributeName, ClientHandler, InputStyle};
 use xkbc::x11::ffi::{XKB_X11_MIN_MAJOR_XKB_VERSION, XKB_X11_MIN_MINOR_XKB_VERSION};
 use xkbcommon::xkb as xkbc;
 
@@ -108,6 +109,7 @@ pub struct X11ClientState {
 
     pub(crate) compose_state: xkbc::compose::State,
     pub(crate) pre_edit_text: Option<String>,
+    pub(crate) composing: bool,
     pub(crate) cursor_handle: cursor::Handle,
     pub(crate) cursor_styles: HashMap<xproto::Window, CursorStyle>,
     pub(crate) cursor_cache: HashMap<CursorStyle, xproto::Cursor>,
@@ -377,6 +379,7 @@ impl X11Client {
 
             compose_state: compose_state,
             pre_edit_text: None,
+            composing: false,
 
             cursor_handle,
             cursor_styles: HashMap::default(),
@@ -389,6 +392,57 @@ impl X11Client {
             clipboard,
             primary,
         })))
+    }
+
+    pub fn enable_ime(&self) {
+        let mut state = self.0.borrow_mut();
+        if state.ximc.is_none() {
+            return;
+        }
+
+        let mut ximc = state.ximc.take().unwrap();
+        let mut xim_handler = state.xim_handler.take().unwrap();
+        let mut ic_attributes = ximc
+            .build_ic_attributes()
+            .push(
+                AttributeName::InputStyle,
+                InputStyle::PREEDIT_CALLBACKS
+                    | InputStyle::STATUS_NOTHING
+                    | InputStyle::PREEDIT_NONE,
+            )
+            .push(AttributeName::ClientWindow, xim_handler.window)
+            .push(AttributeName::FocusWindow, xim_handler.window);
+
+        let window_id = state.focused_window;
+        drop(state);
+        if let Some(window_id) = window_id {
+            let window = self.get_window(window_id).unwrap();
+            if let Some(area) = window.get_ime_area() {
+                ic_attributes =
+                    ic_attributes.nested_list(xim::AttributeName::PreeditAttributes, |b| {
+                        b.push(
+                            xim::AttributeName::SpotLocation,
+                            xim::Point {
+                                x: u32::from(area.origin.x + area.size.width) as i16,
+                                y: u32::from(area.origin.y + area.size.height) as i16,
+                            },
+                        );
+                    });
+            }
+        }
+        ximc.create_ic(xim_handler.im_id, ic_attributes.build());
+        state = self.0.borrow_mut();
+        state.xim_handler = Some(xim_handler);
+        state.ximc = Some(ximc);
+    }
+
+    pub fn disable_ime(&self) {
+        let mut state = self.0.borrow_mut();
+        if let Some(mut ximc) = state.ximc.take() {
+            let xim_handler = state.xim_handler.as_ref().unwrap();
+            ximc.destroy_ic(xim_handler.im_id, xim_handler.ic_id);
+            state.ximc = Some(ximc);
+        }
     }
 
     fn get_window(&self, win: xproto::Window) -> Option<X11WindowStatePtr> {
@@ -436,7 +490,10 @@ impl X11Client {
             Event::FocusIn(event) => {
                 let window = self.get_window(event.event)?;
                 window.set_focused(true);
-                self.0.borrow_mut().focused_window = Some(event.event);
+                let mut state = self.0.borrow_mut();
+                state.focused_window = Some(event.event);
+                drop(state);
+                self.enable_ime();
             }
             Event::FocusOut(event) => {
                 let window = self.get_window(event.event)?;
@@ -445,7 +502,9 @@ impl X11Client {
                 state.focused_window = None;
                 state.compose_state.reset();
                 state.pre_edit_text.take();
+                state.composing = false;
                 drop(state);
+                self.disable_ime();
                 window.handle_ime_delete();
             }
             Event::XkbStateNotify(event) => {
@@ -547,7 +606,15 @@ impl X11Client {
                     px(event.event_x as f32 / u16::MAX as f32 / state.scale_factor),
                     px(event.event_y as f32 / u16::MAX as f32 / state.scale_factor),
                 );
-                if let Some(text) = state.pre_edit_text.take() {
+
+                if state.composing && state.ximc.is_some() {
+                    state.composing = false;
+                    drop(state);
+                    self.disable_ime();
+                    self.enable_ime();
+                    window.handle_ime_unmark();
+                    state = self.0.borrow_mut();
+                } else if let Some(text) = state.pre_edit_text.take() {
                     state.compose_state.reset();
                     drop(state);
                     window.handle_ime_commit(text);
@@ -734,6 +801,9 @@ impl X11Client {
 
     fn xim_handle_commit(&self, window: xproto::Window, text: String) -> Option<()> {
         let window = self.get_window(window).unwrap();
+        let mut state = self.0.borrow_mut();
+        state.composing = false;
+        drop(state);
 
         window.handle_ime_commit(text);
         Some(())
@@ -746,6 +816,7 @@ impl X11Client {
         let mut state = self.0.borrow_mut();
         let mut ximc = state.ximc.take().unwrap();
         let mut xim_handler = state.xim_handler.take().unwrap();
+        state.composing = true;
         drop(state);
 
         if let Some(area) = window.get_ime_area() {
