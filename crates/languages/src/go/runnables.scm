@@ -36,7 +36,7 @@
               )
             )
           )
-        ) @second_argument
+        ) @_second_argument
       )
     )
   ) @_
