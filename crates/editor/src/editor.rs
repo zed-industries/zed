@@ -100,7 +100,7 @@ pub use multi_buffer::{
     Anchor, AnchorRangeExt, ExcerptId, ExcerptRange, MultiBuffer, MultiBufferSnapshot, ToOffset,
     ToPoint,
 };
-use multi_buffer::{MultiBufferPoint, MultiBufferRow, ToOffsetUtf16};
+use multi_buffer::{ExpandExcerptDirection, MultiBufferPoint, MultiBufferRow, ToOffsetUtf16};
 use ordered_float::OrderedFloat;
 use parking_lot::{Mutex, RwLock};
 use project::project_settings::{GitGutterSetting, ProjectSettings};
@@ -1529,19 +1529,25 @@ impl Editor {
     pub fn single_line(cx: &mut ViewContext<Self>) -> Self {
         let buffer = cx.new_model(|cx| Buffer::local("", cx));
         let buffer = cx.new_model(|cx| MultiBuffer::singleton(buffer, cx));
-        Self::new(EditorMode::SingleLine, buffer, None, cx)
+        Self::new(EditorMode::SingleLine, buffer, None, false, cx)
     }
 
     pub fn multi_line(cx: &mut ViewContext<Self>) -> Self {
         let buffer = cx.new_model(|cx| Buffer::local("", cx));
         let buffer = cx.new_model(|cx| MultiBuffer::singleton(buffer, cx));
-        Self::new(EditorMode::Full, buffer, None, cx)
+        Self::new(EditorMode::Full, buffer, None, false, cx)
     }
 
     pub fn auto_height(max_lines: usize, cx: &mut ViewContext<Self>) -> Self {
         let buffer = cx.new_model(|cx| Buffer::local("", cx));
         let buffer = cx.new_model(|cx| MultiBuffer::singleton(buffer, cx));
-        Self::new(EditorMode::AutoHeight { max_lines }, buffer, None, cx)
+        Self::new(
+            EditorMode::AutoHeight { max_lines },
+            buffer,
+            None,
+            false,
+            cx,
+        )
     }
 
     pub fn for_buffer(
@@ -1550,19 +1556,27 @@ impl Editor {
         cx: &mut ViewContext<Self>,
     ) -> Self {
         let buffer = cx.new_model(|cx| MultiBuffer::singleton(buffer, cx));
-        Self::new(EditorMode::Full, buffer, project, cx)
+        Self::new(EditorMode::Full, buffer, project, false, cx)
     }
 
     pub fn for_multibuffer(
         buffer: Model<MultiBuffer>,
         project: Option<Model<Project>>,
+        show_excerpt_controls: bool,
         cx: &mut ViewContext<Self>,
     ) -> Self {
-        Self::new(EditorMode::Full, buffer, project, cx)
+        Self::new(EditorMode::Full, buffer, project, show_excerpt_controls, cx)
     }
 
     pub fn clone(&self, cx: &mut ViewContext<Self>) -> Self {
-        let mut clone = Self::new(self.mode, self.buffer.clone(), self.project.clone(), cx);
+        let show_excerpt_controls = self.display_map.read(cx).show_excerpt_controls();
+        let mut clone = Self::new(
+            self.mode,
+            self.buffer.clone(),
+            self.project.clone(),
+            show_excerpt_controls,
+            cx,
+        );
         self.display_map.update(cx, |display_map, cx| {
             let snapshot = display_map.snapshot(cx);
             clone.display_map.update(cx, |display_map, cx| {
@@ -1579,6 +1593,7 @@ impl Editor {
         mode: EditorMode,
         buffer: Model<MultiBuffer>,
         project: Option<Model<Project>>,
+        show_excerpt_controls: bool,
         cx: &mut ViewContext<Self>,
     ) -> Self {
         let style = cx.text_style();
@@ -1615,12 +1630,16 @@ impl Editor {
             }),
         };
         let display_map = cx.new_model(|cx| {
+            let file_header_size = if show_excerpt_controls { 3 } else { 2 };
+
             DisplayMap::new(
                 buffer.clone(),
                 style.font(),
                 font_size,
                 None,
-                2,
+                show_excerpt_controls,
+                file_header_size,
+                1,
                 1,
                 fold_placeholder,
                 cx,
@@ -4287,7 +4306,7 @@ impl Editor {
         workspace.update(&mut cx, |workspace, cx| {
             let project = workspace.project().clone();
             let editor =
-                cx.new_view(|cx| Editor::for_multibuffer(excerpt_buffer, Some(project), cx));
+                cx.new_view(|cx| Editor::for_multibuffer(excerpt_buffer, Some(project), true, cx));
             workspace.add_item_to_active_pane(Box::new(editor.clone()), None, cx);
             editor.update(cx, |editor, cx| {
                 editor.highlight_background::<Self>(
@@ -8127,9 +8146,34 @@ impl Editor {
     }
 
     pub fn expand_excerpts(&mut self, action: &ExpandExcerpts, cx: &mut ViewContext<Self>) {
+        self.expand_excerpts_for_direction(action.lines, ExpandExcerptDirection::UpAndDown, cx)
+    }
+
+    pub fn expand_excerpts_down(
+        &mut self,
+        action: &ExpandExcerptsDown,
+        cx: &mut ViewContext<Self>,
+    ) {
+        self.expand_excerpts_for_direction(action.lines, ExpandExcerptDirection::Down, cx)
+    }
+
+    pub fn expand_excerpts_up(&mut self, action: &ExpandExcerptsUp, cx: &mut ViewContext<Self>) {
+        self.expand_excerpts_for_direction(action.lines, ExpandExcerptDirection::Up, cx)
+    }
+
+    pub fn expand_excerpts_for_direction(
+        &mut self,
+        lines: u32,
+        direction: ExpandExcerptDirection,
+        cx: &mut ViewContext<Self>,
+    ) {
         let selections = self.selections.disjoint_anchors();
 
-        let lines = if action.lines == 0 { 3 } else { action.lines };
+        let lines = if lines == 0 {
+            EditorSettings::get_global(cx).expand_excerpt_lines
+        } else {
+            lines
+        };
 
         self.buffer.update(cx, |buffer, cx| {
             buffer.expand_excerpts(
@@ -8138,14 +8182,22 @@ impl Editor {
                     .map(|selection| selection.head().excerpt_id)
                     .dedup(),
                 lines,
+                direction,
                 cx,
             )
         })
     }
 
-    pub fn expand_excerpt(&mut self, excerpt: ExcerptId, cx: &mut ViewContext<Self>) {
-        self.buffer
-            .update(cx, |buffer, cx| buffer.expand_excerpts([excerpt], 3, cx))
+    pub fn expand_excerpt(
+        &mut self,
+        excerpt: ExcerptId,
+        direction: ExpandExcerptDirection,
+        cx: &mut ViewContext<Self>,
+    ) {
+        let lines = EditorSettings::get_global(cx).expand_excerpt_lines;
+        self.buffer.update(cx, |buffer, cx| {
+            buffer.expand_excerpts([excerpt], lines, direction, cx)
+        })
     }
 
     fn go_to_diagnostic(&mut self, _: &GoToDiagnostic, cx: &mut ViewContext<Self>) {
@@ -8792,7 +8844,7 @@ impl Editor {
         });
 
         let editor = cx.new_view(|cx| {
-            Editor::for_multibuffer(excerpt_buffer, Some(workspace.project().clone()), cx)
+            Editor::for_multibuffer(excerpt_buffer, Some(workspace.project().clone()), true, cx)
         });
         editor.update(cx, |editor, cx| {
             editor.highlight_background::<Self>(
