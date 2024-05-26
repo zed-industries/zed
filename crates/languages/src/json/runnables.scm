@@ -1,4 +1,4 @@
-; Add support package.json script runnable
+; Add support `package.json` and `composer.json` script runnable
 
 (
     (document
@@ -11,7 +11,6 @@
                 value: (object
                     (pair
                         key: (string (string_content) @run @script)
-                        value: (string (string_content))
                     )
                 )
             )
