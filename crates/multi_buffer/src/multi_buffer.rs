@@ -1701,17 +1701,18 @@ impl MultiBuffer {
                 0
             };
 
-            let end_point = excerpt.buffer.clip_point(
+            let mut end_point = excerpt.buffer.clip_point(
                 excerpt.range.context.end.to_point(&excerpt.buffer)
                     + Point::new(down_line_count, 0),
                 Bias::Left,
             );
+            end_point.column = excerpt.buffer.line_len(end_point.row);
             excerpt.range.context.end = excerpt.buffer.anchor_after(end_point);
             excerpt.max_buffer_row = end_point.row;
 
             excerpt.text_summary = excerpt
                 .buffer
-                .text_summary_for_range(start_point..end_point);
+                .text_summary_for_range(excerpt.range.context.clone());
 
             let new_start_offset = new_excerpts.summary().text.len;
             let old_start_offset = cursor.start().1;
@@ -5089,6 +5090,26 @@ mod tests {
             )
         });
 
+        let snapshot = multibuffer.read(cx).snapshot(cx);
+
+        assert_eq!(
+            snapshot.text(),
+            concat!(
+                "ccc\n", //
+                "ddd\n", //
+                "eee",   //
+                "\n",    // End of excerpt
+                "ggg\n", //
+                "hhh\n", //
+                "iii",   //
+                "\n",    // End of excerpt
+                "ooo\n", //
+                "ppp\n", //
+                "qqq",   // End of excerpt
+            )
+        );
+        drop(snapshot);
+
         multibuffer.update(cx, |multibuffer, cx| {
             multibuffer.expand_excerpts(
                 multibuffer.excerpt_ids(),
@@ -5106,23 +5127,21 @@ mod tests {
         assert_eq!(
             snapshot.text(),
             concat!(
-                "bbb\n", // Preserve newlines
+                "bbb\n", //
                 "ccc\n", //
                 "ddd\n", //
                 "eee\n", //
-                "fff\n", // <- Same as below
-                "\n",    // Excerpt boundary
-                "fff\n", // <- Same as above
+                "fff\n", // End of excerpt
+                "fff\n", //
                 "ggg\n", //
                 "hhh\n", //
                 "iii\n", //
-                "jjj\n", //
-                "\n",    //
+                "jjj\n", // End of excerpt
                 "nnn\n", //
                 "ooo\n", //
                 "ppp\n", //
                 "qqq\n", //
-                "rrr\n", //
+                "rrr",   // End of excerpt
             )
         );
     }
@@ -5159,12 +5178,11 @@ mod tests {
                 "hhh\n", //
                 "iii\n", //
                 "jjj\n", //
-                "\n",    //
                 "nnn\n", //
                 "ooo\n", //
                 "ppp\n", //
                 "qqq\n", //
-                "rrr\n", //
+                "rrr",   //
             )
         );
 
@@ -5176,7 +5194,7 @@ mod tests {
             vec![
                 Point::new(2, 2)..Point::new(3, 2),
                 Point::new(6, 1)..Point::new(6, 3),
-                Point::new(12, 0)..Point::new(12, 0)
+                Point::new(11, 0)..Point::new(11, 0)
             ]
         );
     }
@@ -5211,12 +5229,11 @@ mod tests {
                 "hhh\n", //
                 "iii\n", //
                 "jjj\n", //
-                "\n",    //
                 "nnn\n", //
                 "ooo\n", //
                 "ppp\n", //
                 "qqq\n", //
-                "rrr\n", //
+                "rrr",   //
             )
         );
 
@@ -5228,7 +5245,7 @@ mod tests {
             vec![
                 Point::new(2, 2)..Point::new(3, 2),
                 Point::new(6, 1)..Point::new(6, 3),
-                Point::new(12, 0)..Point::new(12, 0)
+                Point::new(11, 0)..Point::new(11, 0)
             ]
         );
     }
@@ -5511,6 +5528,7 @@ mod tests {
                                     Point::new(point_range.end.row + line_count, 0),
                                     Bias::Left,
                                 );
+                                point_range.end.column = snapshot.line_len(point_range.end.row);
                                 *range = snapshot.anchor_before(point_range.start)
                                     ..snapshot.anchor_after(point_range.end);
                             }
