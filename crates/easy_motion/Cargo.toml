@@ -19,7 +19,11 @@ test-support = [
 ]
 
 [dependencies]
+project.workspace = true
+sync.workspace = true
+futures.workspace = true
 collections.workspace = true
+search.workspace = true
 editor.workspace = true
 settings.workspace = true
 theme.workspace = true

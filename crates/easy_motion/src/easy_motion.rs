@@ -1,10 +1,7 @@
 use collections::HashMap;
-use editor_state::{EditorState, OverlayState};
+use project::search::SearchQuery;
 use serde::Deserialize;
-use settings::Settings;
 use std::cmp::Ordering;
-use theme::ThemeSettings;
-use util::end_of_document;
 
 use editor::scroll::Autoscroll;
 use editor::{DisplayPoint, Editor};
@@ -13,15 +10,21 @@ use gpui::{
     KeystrokeEvent, Subscription, View, ViewContext, WeakView,
 };
 use perm::{Trie, TrieBuilder, TrimResult};
+use search::SearchOptions;
+use settings::Settings;
 use text::{Bias, SelectionGoal};
-use ui::{BorrowAppContext, WindowContext};
+use theme::ThemeSettings;
+use ui::{BorrowAppContext, Context, WindowContext};
+use workspace::searchable::SearchableItem;
 use workspace::Workspace;
 
-use crate::util::{manh_distance, window_bottom, window_top};
+use editor_state::{EditorState, InputResult, NCharInput, OverlayState, Selection};
+use util::{end_of_document, manh_distance, window_bottom, window_top};
 
 mod editor_events;
 mod editor_state;
 mod perm;
+mod search;
 mod util;
 
 #[derive(Eq, PartialEq, Copy, Clone, Deserialize)]
@@ -89,7 +92,7 @@ pub fn init(cx: &mut AppContext) {
 }
 
 fn register(workspace: &mut Workspace, _cx: &mut ViewContext<Workspace>) {
-    workspace.register_action(|_: &mut Workspace, action: &Word, cx| {
+    workspace.register_action(|_workspace: &mut Workspace, action: &Word, cx| {
         EasyMotion::update(cx, |easy, cx| {
             easy.easy_motion_word(WordType::Word, action.0, cx);
             easy.sync(cx);
@@ -207,7 +210,7 @@ impl EasyMotion {
     }
 
     fn clear_state(&mut self) {
-        self.update_state(|state| *state = EditorState::default());
+        self.insert_state(EditorState::None);
     }
 
     fn state(&self) -> Option<&EditorState> {
@@ -233,8 +236,12 @@ impl EasyMotion {
         Some(())
     }
 
-    // fn active_editor_input_ignored(text: Arc<str>, cx: &mut WindowContext) {
-    fn easy_motion_n_char(&mut self, _cx: &mut WindowContext) {}
+    fn take_state(&mut self) -> Option<EditorState> {
+        self.active_editor
+            .as_ref()
+            .map(|active_editor| self.editor_states.remove(&active_editor.entity_id()))
+            .flatten()
+    }
 
     fn easy_motion_word(
         &mut self,
@@ -309,11 +316,8 @@ impl EasyMotion {
                     });
             EasyMotion::add_overlays(editor, &trie, cx);
 
-            easy.insert_state(EditorState {
-                control: true,
-                current_trie: Some(trie),
-            })
-            .unwrap();
+            let editor_state = EditorState::Selection(Selection::new(trie));
+            easy.insert_state(editor_state).unwrap();
 
             if easy.dimming {
                 let start = match direction {
@@ -334,7 +338,12 @@ impl EasyMotion {
             }
         });
     }
+
     fn easy_motion_pattern(&mut self, _cx: &mut WindowContext) {}
+
+    // fn active_editor_input_ignored(text: Arc<str>, cx: &mut WindowContext) {
+    fn easy_motion_n_char(&mut self, _cx: &mut WindowContext) {}
+
     fn easy_motion_cancel(&mut self, cx: &mut WindowContext) {
         self.clear_state();
         self.update_active_editor(cx, |_, editor, cx| {
@@ -347,54 +356,98 @@ impl EasyMotion {
         let Some(state) = self.state() else {
             return;
         };
-        if !state.control {
+        if !state.easy_motion_controlled() {
             return;
         }
 
-        let res = self.update_state(|state| state.record_str(keys)).unwrap();
+        let state = self.take_state();
+        let Some(state) = state else {
+            return;
+        };
+
+        let state = match state {
+            EditorState::NCharInput(char_input) => self.handle_record_char(char_input, keys, cx),
+            EditorState::Selection(selection) => self.handle_trim(selection, keys, cx),
+            EditorState::None => EditorState::None,
+        };
+        self.insert_state(state).unwrap();
+        self.sync(cx);
+    }
+
+    fn handle_trim(
+        &mut self,
+        selection: Selection,
+        keys: &str,
+        cx: &mut WindowContext,
+    ) -> EditorState {
+        let (selection, res) = selection.record_str(keys);
         match res {
             TrimResult::Found(point) => {
-                self.move_cursor(point, cx);
-                self.clear_state();
-                self.update_active_editor(cx, |_, editor, cx| {
+                self.update_easy_and_active_editor(cx, |easy, editor, cx| {
+                    easy.move_cursor(point, editor, cx);
                     editor.clear_overlays(cx);
                     editor.clear_highlights::<EasyMotion>(cx);
                 });
-                self.sync(cx);
+                EditorState::None
             }
             TrimResult::Changed => {
-                let trie = self
-                    .state()
-                    .map(|state| state.current_trie.as_ref())
-                    .flatten();
+                let trie = selection.trie();
                 self.update_active_editor(cx, |_, editor, cx| {
                     editor.clear_overlays(cx);
-                    if let Some(trie) = trie {
-                        EasyMotion::add_overlays(editor, trie, cx);
-                    } else {
-                        editor.clear_highlights::<EasyMotion>(cx);
-                    };
+                    EasyMotion::add_overlays(editor, trie, cx);
                 });
+                EditorState::Selection(selection)
             }
             TrimResult::Err => {
-                self.clear_state();
                 self.update_active_editor(cx, |_, editor, cx| {
                     editor.clear_overlays(cx);
                     editor.clear_highlights::<EasyMotion>(cx);
                 });
-                self.sync(cx);
+                EditorState::None
             }
-            TrimResult::NoChange => {}
+            TrimResult::NoChange => EditorState::Selection(selection),
         }
     }
 
-    fn move_cursor(&mut self, point: DisplayPoint, cx: &mut WindowContext) {
-        self.update_active_editor(cx, |_, editor, cx| {
-            editor.change_selections(Some(Autoscroll::fit()), cx, |selection| {
-                selection.move_cursors_with(|_, _, _| (point, SelectionGoal::None))
-            });
+    fn handle_record_char(
+        &mut self,
+        n_char: NCharInput,
+        keys: &str,
+        cx: &mut WindowContext,
+    ) -> EditorState {
+        let res = n_char.record_str(keys);
+        match res {
+            InputResult::ShowTrie(query) => {
+                // maybe just have a whole separate struct for the search version?
+                // model? view?
+                let chan = self.update_easy_and_active_editor(cx, |easy, editor, cx| {
+                    cx.spawn(|view, cx| async move {
+                        EasyMotion::update(cx, |easy, window| {});
+                    });
+                });
+
+                // search
+                // create trie
+                // show overlays
+                // etc
+                EditorState::None
+            }
+            InputResult::Recording(n_char) => EditorState::NCharInput(n_char),
+        }
+    }
+
+    fn move_cursor(
+        &mut self,
+        point: DisplayPoint,
+        editor: &mut Editor,
+        cx: &mut ViewContext<Editor>,
+    ) {
+        editor.change_selections(Some(Autoscroll::fit()), cx, |selection| {
+            selection.move_cursors_with(|_, _, _| (point, SelectionGoal::None))
         });
     }
+
+    fn handle_query(&mut self, query: String) {}
 
     fn add_overlays(editor: &mut Editor, trie: &Trie<OverlayState>, cx: &mut ViewContext<Editor>) {
         let settings = ThemeSettings::get_global(cx);

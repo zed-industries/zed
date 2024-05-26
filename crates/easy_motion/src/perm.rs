@@ -358,6 +358,7 @@ impl<T> Trie<T> {
     }
 }
 
+#[derive(Debug)]
 pub(crate) enum TrimResult<T> {
     Found(T),
     Changed,

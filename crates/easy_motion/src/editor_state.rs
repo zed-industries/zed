@@ -10,19 +10,24 @@ pub(crate) struct OverlayState {
 }
 
 #[derive(Debug, Default)]
-pub(crate) struct EditorState {
-    pub control: bool,
-    pub current_trie: Option<Trie<OverlayState>>,
+pub(crate) enum EditorState {
+    #[default]
+    None,
+    NCharInput(NCharInput),
+    Selection(Selection),
 }
 
 impl EditorState {
-    #[allow(dead_code)]
-    pub(crate) fn trie(&self) -> Option<&Trie<OverlayState>> {
-        self.current_trie.as_ref()
+    pub(crate) fn is_none(&self) -> bool {
+        matches!(self, EditorState::None)
+    }
+
+    pub(crate) fn clear(&mut self) {
+        *self = EditorState::None;
     }
 
     pub(crate) fn easy_motion_controlled(&self) -> bool {
-        return self.control;
+        !self.is_none()
     }
 
     pub(crate) fn keymap_context_layer(&self) -> KeyContext {
@@ -33,12 +38,25 @@ impl EditorState {
         }
         return context;
     }
+}
+
+#[derive(Debug)]
+pub(crate) struct Selection {
+    trie: Trie<OverlayState>,
+}
+
+impl Selection {
+    pub(crate) fn new(trie: Trie<OverlayState>) -> Selection {
+        Selection { trie }
+    }
+
+    #[allow(dead_code)]
+    pub(crate) fn trie(&self) -> &Trie<OverlayState> {
+        &self.trie
+    }
 
     pub(crate) fn record_char(&mut self, character: char) -> TrimResult<DisplayPoint> {
-        let Some(trie) = &mut self.current_trie else {
-            return TrimResult::Err;
-        };
-        match trie.trim(character) {
+        match self.trie.trim(character) {
             TrimResult::NoChange => TrimResult::NoChange,
             TrimResult::Changed => TrimResult::Changed,
             TrimResult::Found(overlay) => return TrimResult::Found(overlay.point.clone()),
@@ -46,21 +64,73 @@ impl EditorState {
         }
     }
 
-    pub(crate) fn record_str(&mut self, characters: &str) -> TrimResult<DisplayPoint> {
+    pub(crate) fn record_str(mut self, characters: &str) -> (Self, TrimResult<DisplayPoint>) {
         let mut changed = false;
         for character in characters.chars() {
             let ret = self.record_char(character);
             match ret {
                 TrimResult::NoChange => {}
                 TrimResult::Changed => changed = true,
-                TrimResult::Found(point) => return TrimResult::Found(point),
-                TrimResult::Err => return TrimResult::Err,
+                TrimResult::Found(point) => return (self, TrimResult::Found(point)),
+                TrimResult::Err => return (self, TrimResult::Err),
             };
         }
         if changed {
-            TrimResult::Changed
+            (self, TrimResult::Changed)
         } else {
-            TrimResult::NoChange
+            (self, TrimResult::NoChange)
+        }
+    }
+}
+
+#[derive(Debug, Default)]
+pub(crate) struct NCharInput {
+    n: usize,
+    chars: String,
+}
+
+#[derive(Debug)]
+pub(crate) enum InputResult {
+    Recording(NCharInput),
+    ShowTrie(String),
+}
+
+impl NCharInput {
+    pub(crate) fn record_str(mut self, characters: &str) -> InputResult {
+        if self.chars.len() + characters.len() >= self.n {
+            self.chars
+                .push_str(&characters[0..self.n - self.chars.len()]);
+            InputResult::ShowTrie(self.chars)
+        } else {
+            self.chars.push_str(characters);
+            InputResult::Recording(self)
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{InputResult, NCharInput};
+
+    #[test]
+    fn test_record_str() {
+        let char_input = NCharInput {
+            n: 4,
+            chars: "a".to_string(),
+        };
+        let res = char_input.record_str("b");
+        let char_input = match res {
+            InputResult::Recording(char_input) => {
+                assert_eq!(&char_input.chars, "ab");
+                char_input
+            }
+            InputResult::ShowTrie(_) => panic!("incorrect keystroke resule"),
+        };
+
+        let res = char_input.record_str("characters");
+        match res {
+            InputResult::Recording(_) => panic!("incorrect keystroke resule"),
+            InputResult::ShowTrie(str) => assert_eq!(str, "abch"),
         }
     }
 }
