@@ -43,7 +43,7 @@ use super::{button_from_mask, button_of_key, modifiers_from_state};
 use super::{XimCallbackEvent, XimHandler};
 use crate::platform::linux::is_within_click_distance;
 use crate::platform::linux::platform::DOUBLE_CLICK_INTERVAL;
-use crate::platform::linux::xdg_desktop_portal::{ XDPEventSource, Event as XDPEvent };
+use crate::platform::linux::xdg_desktop_portal::{Event as XDPEvent, XDPEventSource};
 
 pub(crate) struct WindowRef {
     window: X11WindowStatePtr,
@@ -345,17 +345,16 @@ impl X11Client {
                 }
             })
             .expect("Failed to initialize XIM event source");
-        handle
-            .insert_source(XDPEventSource::new(&common.background_executor), {
-                move |event, _, client| match event {
-                    XDPEvent::WindowAppearance(appearance) => {
-                        client.with_common(|common| common.appearance = appearance);
-                        for (_, window) in &mut client.0.borrow_mut().windows {
-                            window.window.set_appearance(appearance);
-                        }
-                    },
+        handle.insert_source(XDPEventSource::new(&common.background_executor), {
+            move |event, _, client| match event {
+                XDPEvent::WindowAppearance(appearance) => {
+                    client.with_common(|common| common.appearance = appearance);
+                    for (_, window) in &mut client.0.borrow_mut().windows {
+                        window.window.set_appearance(appearance);
+                    }
                 }
-            });
+            }
+        });
 
         X11Client(Rc::new(RefCell::new(X11ClientState {
             event_loop: Some(event_loop),

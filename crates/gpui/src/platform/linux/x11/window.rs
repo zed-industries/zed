@@ -26,6 +26,7 @@ use x11rb::{
 };
 
 use std::ops::Deref;
+use std::rc::Weak;
 use std::{
     cell::{Ref, RefCell, RefMut},
     collections::HashMap,
@@ -38,7 +39,6 @@ use std::{
     rc::Rc,
     sync::{self, Arc},
 };
-use std::rc::Weak;
 
 use super::X11Display;
 
