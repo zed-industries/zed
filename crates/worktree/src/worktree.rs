@@ -1462,7 +1462,18 @@ impl LocalWorktree {
                 && abs_old_path_lower == abs_new_path_lower;
 
             if let Some(parent) = abs_new_path.parent() {
-                fs.create_dir(parent).await?;
+                let metadata = fs.metadata(parent).await?;
+                match metadata {
+                    None => fs.create_dir(parent).await?,
+                    Some(metadata) => {
+                        anyhow::ensure!(
+                            metadata.is_dir,
+                            "Cannot rename {} into {} which is not a directory",
+                            abs_old_path.display(),
+                            parent.display()
+                        )
+                    }
+                }
             }
 
             fs.rename(
