@@ -877,7 +877,7 @@ impl LinuxClient for X11Client {
                         .unwrap();
                     let _ = state.xcb_connection.flush().unwrap();
                     // Take into account that some frames have been skipped
-                    let now = time::Instant::now();
+                    let now = Instant::now();
                     while instant < now {
                         instant += refresh_duration;
                     }
