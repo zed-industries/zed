@@ -38,10 +38,12 @@ use super::{
     super::{open_uri_internal, SCROLL_LINES},
     X11Display, X11WindowStatePtr, XcbAtoms,
 };
-use super::{button_from_mask, button_of_key, modifiers_from_state};
+use super::{button_of_key, modifiers_from_state, pressed_button_from_mask};
 use super::{XimCallbackEvent, XimHandler};
 use crate::platform::linux::is_within_click_distance;
 use crate::platform::linux::platform::DOUBLE_CLICK_INTERVAL;
+
+pub(super) const XINPUT_MASTER_DEVICE: u16 = 1;
 
 pub(crate) struct WindowRef {
     window: X11WindowStatePtr,
@@ -183,7 +185,7 @@ impl X11Client {
         );
 
         let master_device_query = xcb_connection
-            .xinput_xi_query_device(1_u16)
+            .xinput_xi_query_device(XINPUT_MASTER_DEVICE)
             .unwrap()
             .reply()
             .unwrap();
@@ -591,7 +593,7 @@ impl X11Client {
             Event::XinputMotion(event) => {
                 let window = self.get_window(event.event)?;
                 let state = self.0.borrow();
-                let pressed_button = button_from_mask(event.button_mask[0]);
+                let pressed_button = pressed_button_from_mask(event.button_mask[0]);
                 let position = point(
                     px(event.event_x as f32 / u16::MAX as f32 / state.scale_factor),
                     px(event.event_y as f32 / u16::MAX as f32 / state.scale_factor),
@@ -674,7 +676,7 @@ impl X11Client {
 
                 let window = self.get_window(event.event)?;
                 let state = self.0.borrow();
-                let pressed_button = button_from_mask(event.buttons[0]);
+                let pressed_button = pressed_button_from_mask(event.buttons[0]);
                 let position = point(
                     px(event.event_x as f32 / u16::MAX as f32 / state.scale_factor),
                     px(event.event_y as f32 / u16::MAX as f32 / state.scale_factor),
