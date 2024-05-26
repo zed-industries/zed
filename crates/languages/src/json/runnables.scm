@@ -5,12 +5,12 @@
         (object
             (pair
                 key: (string
-                    (string_content) @name
-                    (#eq? @name "scripts")
+                    (string_content) @_name
+                    (#eq? @_name "scripts")
                 )
                 value: (object
                     (pair
-                        key: (string (string_content) @run)
+                        key: (string (string_content) @run @script)
                         value: (string (string_content))
                     )
                 )

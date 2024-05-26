@@ -1,8 +1,8 @@
 [
   {
-    "label": "package script $ZED_SYMBOL",
+    "label": "package script $ZED_CUSTOM_script",
     "command": "npm run",
-    "args": ["$ZED_SYMBOL"],
+    "args": ["$ZED_CUSTOM_script"],
     "tags": ["package-script"]
   }
 ]
