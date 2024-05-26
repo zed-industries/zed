@@ -679,4 +679,27 @@ mod tests {
         expected.sort_by_key(|var| var.to_string());
         assert_eq!(resolved_variables, expected)
     }
+
+    #[test]
+    fn substitute_funky_labels() {
+        let faulty_go_test = TaskTemplate {
+            label: format!(
+                "go test {}/{}",
+                VariableName::Symbol.template_value(),
+                VariableName::Symbol.template_value(),
+            ),
+            command: "go".into(),
+            args: vec![format!(
+                "^{}$/^{}$",
+                VariableName::Symbol.template_value(),
+                VariableName::Symbol.template_value()
+            )],
+            ..TaskTemplate::default()
+        };
+        let mut context = TaskContext::default();
+        context
+            .task_variables
+            .insert(VariableName::Symbol, "my-symbol".to_string());
+        assert!(faulty_go_test.resolve_task("base", &context).is_some());
+    }
 }
