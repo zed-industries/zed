@@ -113,6 +113,7 @@ pub fn init(
         vec![Arc::new(go::GoLspAdapter)],
         GoContextProvider
     );
+
     language!(
         "json",
         vec![Arc::new(json::JsonLspAdapter::new(

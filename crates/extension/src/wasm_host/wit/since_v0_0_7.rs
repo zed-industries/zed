@@ -223,6 +223,9 @@ impl platform::Host for WasmState {
 }
 
 #[async_trait]
+impl slash_command::Host for WasmState {}
+
+#[async_trait]
 impl ExtensionImports for WasmState {
     async fn get_settings(
         &mut self,

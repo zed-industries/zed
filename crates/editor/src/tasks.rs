@@ -1,58 +1,34 @@
 use crate::Editor;
 
-use anyhow::Context;
-use gpui::{Model, WindowContext};
-use language::ContextProvider;
-use project::{BasicContextProvider, Location, Project};
+use gpui::{Task as AsyncTask, WindowContext};
+use project::Location;
 use task::{TaskContext, TaskVariables, VariableName};
 use text::{Point, ToOffset, ToPoint};
-use util::ResultExt;
 use workspace::Workspace;
 
-pub(crate) fn task_context_for_location(
-    captured_variables: TaskVariables,
-    workspace: &Workspace,
-    location: Location,
-    cx: &mut WindowContext<'_>,
-) -> Option<TaskContext> {
-    let cwd = workspace::tasks::task_cwd(workspace, cx)
-        .log_err()
-        .flatten();
-
-    let mut task_variables = combine_task_variables(
-        captured_variables,
-        location,
-        workspace.project().clone(),
-        cx,
-    )
-    .log_err()?;
-    // Remove all custom entries starting with _, as they're not intended for use by the end user.
-    task_variables.sweep();
-
-    Some(TaskContext {
-        cwd,
-        task_variables,
-    })
-}
-
 fn task_context_with_editor(
-    workspace: &Workspace,
     editor: &mut Editor,
     cx: &mut WindowContext<'_>,
-) -> Option<TaskContext> {
+) -> AsyncTask<Option<TaskContext>> {
+    let Some(project) = editor.project.clone() else {
+        return AsyncTask::ready(None);
+    };
     let (selection, buffer, editor_snapshot) = {
         let mut selection = editor.selections.newest::<Point>(cx);
         if editor.selections.line_mode {
             selection.start = Point::new(selection.start.row, 0);
             selection.end = Point::new(selection.end.row + 1, 0);
         }
-        let (buffer, _, _) = editor
+        let Some((buffer, _, _)) = editor
             .buffer()
             .read(cx)
-            .point_to_buffer_offset(selection.start, cx)?;
+            .point_to_buffer_offset(selection.start, cx)
+        else {
+            return AsyncTask::ready(None);
+        };
         let snapshot = editor.snapshot(cx);
-        Some((selection, buffer, snapshot))
-    }?;
+        (selection, buffer, snapshot)
+    };
     let selection_range = selection.range();
     let start = editor_snapshot
         .display_snapshot
@@ -94,42 +70,23 @@ fn task_context_with_editor(
         }
         variables
     };
-    task_context_for_location(captured_variables, workspace, location.clone(), cx)
+
+    let context_task = project.update(cx, |project, cx| {
+        project.task_context_for_location(captured_variables, location.clone(), cx)
+    });
+    cx.spawn(|_| context_task)
 }
 
-pub fn task_context(workspace: &Workspace, cx: &mut WindowContext<'_>) -> TaskContext {
+pub fn task_context(workspace: &Workspace, cx: &mut WindowContext<'_>) -> AsyncTask<TaskContext> {
     let Some(editor) = workspace
         .active_item(cx)
         .and_then(|item| item.act_as::<Editor>(cx))
     else {
-        return Default::default();
+        return AsyncTask::ready(TaskContext::default());
     };
     editor.update(cx, |editor, cx| {
-        task_context_with_editor(workspace, editor, cx).unwrap_or_default()
+        let context_task = task_context_with_editor(editor, cx);
+        cx.background_executor()
+            .spawn(async move { context_task.await.unwrap_or_default() })
     })
-}
-
-fn combine_task_variables(
-    mut captured_variables: TaskVariables,
-    location: Location,
-    project: Model<Project>,
-    cx: &mut WindowContext<'_>,
-) -> anyhow::Result<TaskVariables> {
-    let language_context_provider = location
-        .buffer
-        .read(cx)
-        .language()
-        .and_then(|language| language.context_provider());
-    let baseline = BasicContextProvider::new(project)
-        .build_context(&captured_variables, &location, cx)
-        .context("building basic default context")?;
-    captured_variables.extend(baseline);
-    if let Some(provider) = language_context_provider {
-        captured_variables.extend(
-            provider
-                .build_context(&captured_variables, &location, cx)
-                .context("building provider context ")?,
-        );
-    }
-    Ok(captured_variables)
 }

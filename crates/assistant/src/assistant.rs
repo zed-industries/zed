@@ -237,6 +237,7 @@ pub fn init(client: Arc<Client>, cx: &mut AppContext) {
     cx.set_global(Assistant::default());
     AssistantSettings::register(cx);
     completion_provider::init(client, cx);
+    assistant_slash_command::init(cx);
     assistant_panel::init(cx);
 
     CommandPaletteFilter::update_global(cx, |filter, _cx| {
