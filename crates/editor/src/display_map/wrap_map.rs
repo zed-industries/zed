@@ -812,7 +812,7 @@ impl<'a> Iterator for WrapChunks<'a> {
             self.transforms.next(&());
             return Some(Chunk {
                 text: &display_text[start_ix..end_ix],
-                ..self.input_chunk
+                ..self.input_chunk.clone()
             });
         }
 
@@ -842,7 +842,7 @@ impl<'a> Iterator for WrapChunks<'a> {
         self.input_chunk.text = suffix;
         Some(Chunk {
             text: prefix,
-            ..self.input_chunk
+            ..self.input_chunk.clone()
         })
     }
 }

@@ -339,11 +339,11 @@ pub struct LegacyAssistantSettingsContent {
     ///
     /// Default: 320
     pub default_height: Option<f32>,
-    /// The default OpenAI model to use when starting new conversations.
+    /// The default OpenAI model to use when creating new contexts.
     ///
     /// Default: gpt-4-1106-preview
     pub default_open_ai_model: Option<OpenAiModel>,
-    /// OpenAI API base URL to use when starting new conversations.
+    /// OpenAI API base URL to use when creating new contexts.
     ///
     /// Default: https://api.openai.com/v1
     pub openai_api_url: Option<String>,

@@ -713,7 +713,7 @@ impl Database {
                     .find_also_related(user::Entity)
                     .filter(channel_member::Column::ChannelId.eq(channel.root_id()));
 
-                if cfg!(any(test, sqlite)) && self.pool.get_database_backend() == DbBackend::Sqlite {
+                if cfg!(any(test, feature = "sqlite")) && self.pool.get_database_backend() == DbBackend::Sqlite {
                     query = query.filter(Expr::cust_with_values(
                         "UPPER(github_login) LIKE ?",
                         [Self::fuzzy_like_string(&filter.to_uppercase())],

@@ -1,6 +1,6 @@
 name = "Markdown"
 grammar = "markdown"
-path_suffixes = ["md", "mdx"]
+path_suffixes = ["md", "mdx", "mdwn"]
 word_characters = ["-"]
 brackets = [
     { start = "{", end = "}", close = true, newline = true },
@@ -14,3 +14,4 @@ brackets = [
 
 tab_size = 2
 soft_wrap = "preferred_line_length"
+prettier_parser_name = "markdown"

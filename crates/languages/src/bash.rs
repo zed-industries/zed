@@ -1,4 +1,4 @@
-use language::ContextProviderWithTasks;
+use project::ContextProviderWithTasks;
 use task::{TaskTemplate, TaskTemplates, VariableName};
 
 pub(super) fn bash_task_context() -> ContextProviderWithTasks {

@@ -11,7 +11,7 @@ For example, if you have Prettier installed and on your `PATH`, you can use it t
 
 ```json
 {
-  "language_overrides": {
+  "languages": {
     "JavaScript": {
       "format_on_save": {
         "external": {

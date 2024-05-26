@@ -3,6 +3,7 @@ use collections::HashMap;
 use gpui::{
     AnyWindowHandle, AppContext, Context, Entity, Model, ModelContext, SharedString, WeakModel,
 };
+use itertools::Itertools;
 use settings::{Settings, SettingsLocation};
 use smol::channel::bounded;
 use std::{
@@ -34,18 +35,18 @@ pub struct ConnectRemoteTerminal {
 impl Project {
     pub fn terminal_work_dir_for(
         &self,
-        pathbuf: Option<&PathBuf>,
+        pathbuf: Option<&Path>,
         cx: &AppContext,
     ) -> Option<TerminalWorkDir> {
         if self.is_local() {
-            return Some(TerminalWorkDir::Local(pathbuf?.clone()));
+            return Some(TerminalWorkDir::Local(pathbuf?.to_owned()));
         }
         let dev_server_project_id = self.dev_server_project_id()?;
         let projects_store = dev_server_projects::Store::global(cx).read(cx);
         let ssh_command = projects_store
             .dev_server_for_project(dev_server_project_id)?
             .ssh_connection_string
-            .clone()?
+            .as_ref()?
             .to_string();
 
         let path = if let Some(pathbuf) = pathbuf {
@@ -72,9 +73,7 @@ impl Project {
     ) -> anyhow::Result<Model<Terminal>> {
         // used only for TerminalSettings::get
         let worktree = {
-            let terminal_cwd = working_directory
-                .as_ref()
-                .and_then(|cwd| cwd.local_path().clone());
+            let terminal_cwd = working_directory.as_ref().and_then(|cwd| cwd.local_path());
             let task_cwd = spawn_task
                 .as_ref()
                 .and_then(|spawn_task| spawn_task.cwd.as_ref())
@@ -104,88 +103,23 @@ impl Project {
 
         let venv_base_directory = working_directory
             .as_ref()
-            .and_then(|cwd| cwd.local_path().map(|path| path.clone()))
-            .unwrap_or_else(|| PathBuf::new())
-            .clone();
+            .and_then(|cwd| cwd.local_path())
+            .unwrap_or_else(|| Path::new(""));
 
         let (spawn_task, shell) = match working_directory.as_ref() {
             Some(TerminalWorkDir::Ssh { ssh_command, path }) => {
                 log::debug!("Connecting to a remote server: {ssh_command:?}");
-                // Alacritty sets its terminfo to `alacritty`, this requiring hosts to have it installed
-                // to properly display colors.
-                // We do not have the luxury of assuming the host has it installed,
-                // so we set it to a default that does not break the highlighting via ssh.
-                env.entry("TERM".to_string())
-                    .or_insert_with(|| "xterm-256color".to_string());
-
                 let tmp_dir = tempfile::tempdir()?;
-                let real_ssh = which::which("ssh")?;
-                let ssh_path = tmp_dir.path().join("ssh");
-                let mut ssh_file = File::create(ssh_path.clone())?;
-
-                let to_run = if let Some(spawn_task) = spawn_task.as_ref() {
-                    Some(shlex::try_quote(&spawn_task.command)?.to_string())
-                        .into_iter()
-                        .chain(spawn_task.args.iter().filter_map(|arg| {
-                            shlex::try_quote(arg).ok().map(|arg| arg.to_string())
-                        }))
-                        .collect::<Vec<String>>()
-                        .join(" ")
-                } else {
-                    "exec $SHELL -l".to_string()
-                };
-
-                let (port_forward, local_dev_env) =
-                    if env::var("ZED_RPC_URL") == Ok("http://localhost:8080/rpc".to_string()) {
-                        (
-                            "-R 8080:localhost:8080",
-                            "export ZED_RPC_URL=http://localhost:8080/rpc;",
-                        )
-                    } else {
-                        ("", "")
-                    };
-
-                let commands = if let Some(path) = path {
-                    // I've found that `ssh -t dev sh -c 'cd; cd /tmp; pwd'` gives /tmp
-                    // but `ssh -t dev sh -c 'cd /tmp; pwd'` gives /root
-                    format!("cd {}; {} {}", path, local_dev_env, to_run)
-                } else {
-                    format!("cd; {} {}", local_dev_env, to_run)
-                };
-
-                let shell_invocation = &format!("sh -c {}", shlex::try_quote(&commands)?);
-
-                // To support things like `gh cs ssh`/`coder ssh`, we run whatever command
-                // you have configured, but place our custom script on the path so that it will
-                // be run instead.
-                write!(
-                    &mut ssh_file,
-                    "#!/bin/sh\nexec {} \"$@\" {} {} {}",
-                    real_ssh.to_string_lossy(),
-                    if spawn_task.is_none() { "-t" } else { "" },
-                    port_forward,
-                    shlex::try_quote(shell_invocation)?,
-                )?;
-                // todo(windows)
-                #[cfg(not(target_os = "windows"))]
-                std::fs::set_permissions(
-                    ssh_path,
-                    smol::fs::unix::PermissionsExt::from_mode(0o755),
-                )?;
-                let path = format!(
-                    "{}:{}",
-                    tmp_dir.path().to_string_lossy(),
-                    env.get("PATH")
-                        .cloned()
-                        .or(env::var("PATH").ok())
-                        .unwrap_or_default()
+                let ssh_shell_result = prepare_ssh_shell(
+                    &mut env,
+                    tmp_dir.path(),
+                    spawn_task.as_ref(),
+                    ssh_command,
+                    path.as_deref(),
                 );
-                env.insert("PATH".to_string(), path);
-
-                let mut args = shlex::split(&ssh_command).unwrap_or_default();
-                let program = args.drain(0..1).next().unwrap_or("ssh".to_string());
-
                 retained_script = Some(tmp_dir);
+                let ssh_shell = ssh_shell_result?;
+
                 (
                     spawn_task.map(|spawn_task| TaskState {
                         id: spawn_task.id,
@@ -195,7 +129,7 @@ impl Project {
                         status: TaskStatus::Running,
                         completion_rx,
                     }),
-                    Shell::WithArguments { program, args },
+                    ssh_shell,
                 )
             }
             _ => {
@@ -231,11 +165,14 @@ impl Project {
         };
 
         let terminal = TerminalBuilder::new(
-            working_directory.and_then(|cwd| cwd.local_path()).clone(),
+            working_directory
+                .as_ref()
+                .and_then(|cwd| cwd.local_path())
+                .map(ToOwned::to_owned),
             spawn_task,
             shell,
             env,
-            Some(settings.blinking.clone()),
+            Some(settings.blinking),
             settings.alternate_scroll,
             settings.max_scroll_history_lines,
             window,
@@ -374,4 +311,85 @@ impl Project {
     pub fn local_terminal_handles(&self) -> &Vec<WeakModel<terminal::Terminal>> {
         &self.terminals.local_handles
     }
+}
+
+fn prepare_ssh_shell(
+    env: &mut HashMap<String, String>,
+    tmp_dir: &Path,
+    spawn_task: Option<&SpawnInTerminal>,
+    ssh_command: &str,
+    path: Option<&str>,
+) -> anyhow::Result<Shell> {
+    // Alacritty sets its terminfo to `alacritty`, this requiring hosts to have it installed
+    // to properly display colors.
+    // We do not have the luxury of assuming the host has it installed,
+    // so we set it to a default that does not break the highlighting via ssh.
+    env.entry("TERM".to_string())
+        .or_insert_with(|| "xterm-256color".to_string());
+
+    let real_ssh = which::which("ssh")?;
+    let ssh_path = tmp_dir.join("ssh");
+    let mut ssh_file = File::create(&ssh_path)?;
+
+    let to_run = if let Some(spawn_task) = spawn_task {
+        Some(shlex::try_quote(&spawn_task.command)?)
+            .into_iter()
+            .chain(
+                spawn_task
+                    .args
+                    .iter()
+                    .filter_map(|arg| shlex::try_quote(arg).ok()),
+            )
+            .join(" ")
+    } else {
+        "exec $SHELL -l".to_string()
+    };
+
+    let (port_forward, local_dev_env) =
+        if env::var("ZED_RPC_URL").as_deref() == Ok("http://localhost:8080/rpc") {
+            (
+                "-R 8080:localhost:8080",
+                "export ZED_RPC_URL=http://localhost:8080/rpc;",
+            )
+        } else {
+            ("", "")
+        };
+
+    let commands = if let Some(path) = path {
+        // I've found that `ssh -t dev sh -c 'cd; cd /tmp; pwd'` gives /tmp
+        // but `ssh -t dev sh -c 'cd /tmp; pwd'` gives /root
+        format!("cd {path}; {local_dev_env} {to_run}")
+    } else {
+        format!("cd; {local_dev_env} {to_run}")
+    };
+    let shell_invocation = &format!("sh -c {}", shlex::try_quote(&commands)?);
+
+    // To support things like `gh cs ssh`/`coder ssh`, we run whatever command
+    // you have configured, but place our custom script on the path so that it will
+    // be run instead.
+    write!(
+        &mut ssh_file,
+        "#!/bin/sh\nexec {} \"$@\" {} {} {}",
+        real_ssh.to_string_lossy(),
+        if spawn_task.is_none() { "-t" } else { "" },
+        port_forward,
+        shlex::try_quote(shell_invocation)?,
+    )?;
+
+    // todo(windows)
+    #[cfg(not(target_os = "windows"))]
+    std::fs::set_permissions(ssh_path, smol::fs::unix::PermissionsExt::from_mode(0o755))?;
+    let path = format!(
+        "{}:{}",
+        tmp_dir.to_string_lossy(),
+        env.get("PATH")
+            .cloned()
+            .or(env::var("PATH").ok())
+            .unwrap_or_default()
+    );
+    env.insert("PATH".to_string(), path);
+
+    let mut args = shlex::split(&ssh_command).unwrap_or_default();
+    let program = args.drain(0..1).next().unwrap_or("ssh".to_string());
+    Ok(Shell::WithArguments { program, args })
 }
