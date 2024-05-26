@@ -28,11 +28,13 @@ use flume::{Receiver, Sender};
 use futures::channel::oneshot;
 use parking_lot::Mutex;
 use time::UtcOffset;
+use util::ResultExt;
 use wayland_client::Connection;
 use wayland_protocols::wp::cursor_shape::v1::client::wp_cursor_shape_device_v1::Shape;
 use xkbcommon::xkb::{self, Keycode, Keysym, State};
 
 use crate::platform::linux::wayland::WaylandClient;
+use crate::platform::linux::xdg_desktop_portal::window_appearance;
 use crate::{
     px, Action, AnyWindowHandle, BackgroundExecutor, ClipboardItem, CosmicTextSystem, CursorStyle,
     DisplayId, ForegroundExecutor, Keymap, Keystroke, LinuxDispatcher, Menu, MenuItem, Modifiers,
@@ -100,11 +102,16 @@ impl LinuxCommon {
 
         let dispatcher = Arc::new(LinuxDispatcher::new(main_sender.clone()));
 
+        let background_executor = BackgroundExecutor::new(dispatcher.clone());
+        let appearance = window_appearance(&background_executor)
+            .log_err()
+            .unwrap_or(WindowAppearance::Light);
+
         let common = LinuxCommon {
-            background_executor: BackgroundExecutor::new(dispatcher.clone()),
+            background_executor,
             foreground_executor: ForegroundExecutor::new(dispatcher.clone()),
             text_system,
-            appearance: WindowAppearance::Light,
+            appearance,
             callbacks,
             signal,
         };

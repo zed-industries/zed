@@ -67,7 +67,7 @@ use crate::platform::linux::is_within_click_distance;
 use crate::platform::linux::wayland::cursor::Cursor;
 use crate::platform::linux::wayland::serial::{SerialKind, SerialTracker};
 use crate::platform::linux::wayland::window::WaylandWindow;
-use crate::platform::linux::xdg_desktop_portal::{XDPEventSource, Event as XDPEvent};
+use crate::platform::linux::xdg_desktop_portal::{Event as XDPEvent, XDPEventSource};
 use crate::platform::linux::LinuxClient;
 use crate::platform::PlatformWindow;
 use crate::{
@@ -347,20 +347,21 @@ impl WaylandClient {
 
         let cursor = Cursor::new(&conn, &globals, 24);
 
-        handle
-            .insert_source(XDPEventSource::new(&common.background_executor), {
-                move |event, _, client| match event {
-                    XDPEvent::WindowAppearance(appearance) => {
-                        if let Some(client) = client.0.upgrade() {
-                            client.borrow_mut().common.appearance = appearance;
+        handle.insert_source(XDPEventSource::new(&common.background_executor), {
+            move |event, _, client| match event {
+                XDPEvent::WindowAppearance(appearance) => {
+                    if let Some(client) = client.0.upgrade() {
+                        let mut client = client.borrow_mut();
 
-                            for (_, window) in &mut client.borrow_mut().windows {
-                                window.set_appearance(appearance);
-                            }
+                        client.common.appearance = appearance;
+
+                        for (_, window) in &mut client.windows {
+                            window.set_appearance(appearance);
                         }
-                    },
+                    }
                 }
-            });
+            }
+        });
 
         let mut state = Rc::new(RefCell::new(WaylandClientState {
             serial_tracker: SerialTracker::new(),

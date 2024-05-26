@@ -17,23 +17,21 @@ pub enum Event {
 }
 
 pub struct XDPEventSource {
-    channel : Channel<Event>,
+    channel: Channel<Event>,
 }
 
 impl XDPEventSource {
-    pub fn new(executor : &BackgroundExecutor) -> Self {
+    pub fn new(executor: &BackgroundExecutor) -> Self {
         let (sender, channel) = calloop::channel::channel();
 
         Self::spawn_observer(executor, Self::appearance_observer(sender.clone()));
 
-        Self {
-            channel,
-        }
+        Self { channel }
     }
 
     fn spawn_observer(
-        executor : &BackgroundExecutor,
-        to_spawn : impl Future<Output = Result<(), anyhow::Error>> + Send + 'static
+        executor: &BackgroundExecutor,
+        to_spawn: impl Future<Output = Result<(), anyhow::Error>> + Send + 'static,
     ) {
         executor
             .spawn(async move {
@@ -45,14 +43,12 @@ impl XDPEventSource {
     async fn appearance_observer(sender: Sender<Event>) -> Result<(), anyhow::Error> {
         let settings = Settings::new().await?;
 
-        // We get the color set before the initialization of the application
-        let scheme = settings.color_scheme().await?;
-        sender.send(Event::WindowAppearance(WindowAppearance::from_native(scheme)))?;
-
         // We observe the color change during the execution of the application
         let mut stream = settings.receive_color_scheme_changed().await?;
         while let Some(scheme) = stream.next().await {
-            sender.send(Event::WindowAppearance(WindowAppearance::from_native(scheme)))?;
+            sender.send(Event::WindowAppearance(WindowAppearance::from_native(
+                scheme,
+            )))?;
         }
 
         Ok(())
@@ -65,7 +61,15 @@ impl EventSource for XDPEventSource {
     type Ret = ();
     type Error = anyhow::Error;
 
-    fn process_events<F>(&mut self, readiness: Readiness, token: Token, mut callback: F) -> Result<PostAction, Self::Error> where F: FnMut(Self::Event, &mut Self::Metadata) -> Self::Ret {
+    fn process_events<F>(
+        &mut self,
+        readiness: Readiness,
+        token: Token,
+        mut callback: F,
+    ) -> Result<PostAction, Self::Error>
+    where
+        F: FnMut(Self::Event, &mut Self::Metadata) -> Self::Ret,
+    {
         self.channel.process_events(readiness, token, |evt, _| {
             if let calloop::channel::Event::Msg(msg) = evt {
                 (callback)(msg, &mut ())
@@ -75,13 +79,21 @@ impl EventSource for XDPEventSource {
         Ok(PostAction::Continue)
     }
 
-    fn register(&mut self, poll: &mut Poll, token_factory: &mut TokenFactory) -> calloop::Result<()> {
+    fn register(
+        &mut self,
+        poll: &mut Poll,
+        token_factory: &mut TokenFactory,
+    ) -> calloop::Result<()> {
         self.channel.register(poll, token_factory)?;
 
         Ok(())
     }
 
-    fn reregister(&mut self, poll: &mut Poll, token_factory: &mut TokenFactory) -> calloop::Result<()> {
+    fn reregister(
+        &mut self,
+        poll: &mut Poll,
+        token_factory: &mut TokenFactory,
+    ) -> calloop::Result<()> {
         self.channel.reregister(poll, token_factory)?;
 
         Ok(())
@@ -106,4 +118,16 @@ impl WindowAppearance {
     fn set_native(&mut self, cs: ColorScheme) {
         *self = Self::from_native(cs);
     }
+}
+
+pub fn window_appearance(executor: &BackgroundExecutor) -> Result<WindowAppearance, anyhow::Error> {
+    executor.block(async {
+        let settings = Settings::new().await?;
+
+        let scheme = settings.color_scheme().await?;
+
+        let appearance = WindowAppearance::from_native(scheme);
+
+        Ok(appearance)
+    })
 }
