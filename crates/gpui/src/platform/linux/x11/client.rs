@@ -438,6 +438,7 @@ impl X11Client {
 
     pub fn disable_ime(&self) {
         let mut state = self.0.borrow_mut();
+        state.composing = false;
         if let Some(mut ximc) = state.ximc.take() {
             let xim_handler = state.xim_handler.as_ref().unwrap();
             ximc.destroy_ic(xim_handler.im_id, xim_handler.ic_id);
@@ -502,7 +503,6 @@ impl X11Client {
                 state.focused_window = None;
                 state.compose_state.reset();
                 state.pre_edit_text.take();
-                state.composing = false;
                 drop(state);
                 self.disable_ime();
                 window.handle_ime_delete();
@@ -608,7 +608,6 @@ impl X11Client {
                 );
 
                 if state.composing && state.ximc.is_some() {
-                    state.composing = false;
                     drop(state);
                     self.disable_ime();
                     self.enable_ime();
