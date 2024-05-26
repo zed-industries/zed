@@ -2,8 +2,7 @@
   {
     "label": "jest file test",
     "command": "npx jest",
-    "args": ["$ZED_FILE"],
-    "tags": ["js-test"]
+    "args": ["$ZED_FILE"]
   },
   {
     "label": "jest test $ZED_SYMBOL",
