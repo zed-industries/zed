@@ -79,6 +79,9 @@ fn main() -> Result<()> {
     }
     let args = Args::parse();
 
+    #[cfg(target_os = "linux")]
+    let args = flatpak::set_bin_if_no_escape(args);
+
     let app = Detect::detect(args.zed.as_deref()).context("Bundle detection")?;
 
     if args.version {
@@ -290,6 +293,7 @@ mod flatpak {
     use std::{env, process};
 
     const EXTRA_LIB_ENV_NAME: &'static str = "ZED_FLATPAK_LIB_PATH";
+    const NO_ESCAPE_ENV_NAME: &'static str = "ZED_FLATPAK_NO_ESCAPE";
 
     /// Adds bundled libraries to LD_LIBRARY_PATH if running under flatpak
     pub fn ld_extra_libs() {
@@ -338,7 +342,23 @@ mod flatpak {
         }
     }
 
+    pub fn set_bin_if_no_escape(mut args: super::Args) -> super::Args {
+        if env::var(NO_ESCAPE_ENV_NAME).is_ok()
+            && env::var("FLATPAK_ID").map_or(false, |id| id.starts_with("dev.zed.Zed"))
+        {
+            if args.zed.is_none() {
+                args.zed = Some("/app/bin/zed-app".into());
+                env::set_var("ZED_IS_FLATPAK_INSTALL", "1");
+            }
+        }
+        args
+    }
+
     fn get_flatpak_dir() -> Option<PathBuf> {
+        if env::var(NO_ESCAPE_ENV_NAME).is_ok() {
+            return None;
+        }
+
         if let Ok(flatpak_id) = env::var("FLATPAK_ID") {
             if !flatpak_id.starts_with("dev.zed.Zed") {
                 return None;

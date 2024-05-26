@@ -3,9 +3,20 @@
   "runtime": "org.freedesktop.Platform",
   "runtime-version": "23.08",
   "sdk": "org.freedesktop.Sdk",
-  "sdk-extensions": ["org.freedesktop.Sdk.Extension.rust-stable"],
+  "sdk-extensions": [
+    "org.freedesktop.Sdk.Extension.rust-stable"
+  ],
   "command": "zed",
-  "finish-args": ["--talk-name=org.freedesktop.Flatpak"],
+  "finish-args": [
+    "--talk-name=org.freedesktop.Flatpak",
+    "--device=dri",
+    "--share=ipc",
+    "--share=network",
+    "--socket=wayland",
+    "--socket=fallback-x11",
+    "--socket=pulseaudio",
+    "--filesystem=host"
+  ],
   "build-options": {
     "append-path": "/usr/lib/sdk/rust-stable/bin"
   },
