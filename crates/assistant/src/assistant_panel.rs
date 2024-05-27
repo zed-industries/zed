@@ -1,12 +1,10 @@
 use crate::ambient_context::{AmbientContext, ContextUpdated, RecentBuffer};
-use crate::prompts::prompt_library::PromptLibrary;
-use crate::prompts::prompt_manager::PromptManager;
+use crate::prompts::{generate_content_prompt, PromptLibrary, PromptManager};
 use crate::{
     ambient_context::*,
     assistant_settings::{AssistantDockPosition, AssistantSettings, ZedDotDevModel},
     codegen::{self, Codegen, CodegenKind},
     omit_ranges::text_in_range_omitting_ranges,
-    prompts::prompt::generate_content_prompt,
     search::*,
     slash_command::{
         current_file_command, file_command, prompt_command, SlashCommandCleanup,
@@ -148,7 +146,7 @@ impl AssistantPanel {
                 .unwrap_or_default();
 
             let prompt_library = Arc::new(
-                PromptLibrary::load(fs.clone())
+                PromptLibrary::load_index(fs.clone())
                     .await
                     .log_err()
                     .unwrap_or_default(),

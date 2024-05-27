@@ -1,5 +1,5 @@
 use super::{SlashCommand, SlashCommandCleanup, SlashCommandInvocation};
-use crate::prompts::prompt_library::PromptLibrary;
+use crate::prompts::PromptLibrary;
 use anyhow::{anyhow, Context, Result};
 use futures::channel::oneshot;
 use fuzzy::StringMatchCandidate;
