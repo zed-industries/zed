@@ -1,5 +1,5 @@
 use super::{SlashCommand, SlashCommandOutput};
-use crate::prompts::prompt_library::PromptLibrary;
+use crate::prompts::PromptLibrary;
 use anyhow::{anyhow, Context, Result};
 use fuzzy::StringMatchCandidate;
 use gpui::{AppContext, Task};

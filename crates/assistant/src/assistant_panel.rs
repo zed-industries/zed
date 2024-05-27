@@ -1,10 +1,7 @@
+use crate::prompts::{generate_content_prompt, PromptLibrary, PromptManager};
 use crate::{
     assistant_settings::{AssistantDockPosition, AssistantSettings, ZedDotDevModel},
     codegen::{self, Codegen, CodegenKind},
-    prompts::{
-        prompt::generate_content_prompt, prompt_library::PromptLibrary,
-        prompt_manager::PromptManager,
-    },
     search::*,
     slash_command::{
         active_command, file_command, project_command, prompt_command,
@@ -143,7 +140,7 @@ impl AssistantPanel {
                 .unwrap_or_default();
 
             let prompt_library = Arc::new(
-                PromptLibrary::load(fs.clone())
+                PromptLibrary::load_index(fs.clone())
                     .await
                     .log_err()
                     .unwrap_or_default(),
