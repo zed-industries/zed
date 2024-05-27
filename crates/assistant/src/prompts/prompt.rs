@@ -11,6 +11,28 @@ use super::prompt_library::PromptId;
 
 pub const PROMPT_DEFAULT_TITLE: &str = "Untitled Prompt";
 
+fn standardize_value(value: String) -> String {
+    value
+        .replace("\n", " ")
+        .replace('\r', "")
+        .replace('"', "")
+        .replace("'", "")
+}
+
+fn slugify(input: String) -> String {
+    let mut slug = String::new();
+    for c in input.chars() {
+        if c.is_alphanumeric() {
+            slug.push(c.to_ascii_lowercase());
+        } else if c.is_whitespace() {
+            slug.push('-');
+        } else {
+            slug.push('_');
+        }
+    }
+    slug
+}
+
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub struct StaticPromptFrontmatter {
     title: String,
@@ -39,21 +61,9 @@ impl StaticPromptFrontmatter {
     pub fn frontmatter_string(&self) -> String {
         let mut frontmatter = format!(
             "---\ntitle: \"{}\"\nversion: \"{}\"\nauthor: \"{}\"\n",
-            self.title
-                .replace("\n", " ")
-                .replace('\r', "")
-                .replace('"', "")
-                .replace("'", ""),
-            self.version
-                .replace("\n", " ")
-                .replace('\r', "")
-                .replace('"', "")
-                .replace("'", ""),
-            self.author
-                .replace("\n", " ")
-                .replace('\r', "")
-                .replace('"', "")
-                .replace("'", ""),
+            standardize_value(self.title.clone()),
+            standardize_value(self.version.clone()),
+            standardize_value(self.author.clone()),
         );
 
         if !self.languages.is_empty() {
@@ -215,10 +225,21 @@ impl StaticPrompt {
         self.file_name.as_ref()
     }
 
-    /// Sets the file name of the prompt
-    pub fn set_file_name(&mut self, file_name: impl Into<SharedString>) -> &mut Self {
-        self.file_name = Some(file_name.into());
+    pub fn set_file_name(&mut self, file_name: Option<SharedString>) -> &mut Self {
+        self.file_name = file_name;
         self
+    }
+
+    /// Sets the file name of the prompt
+    pub fn new_file_name(&self) -> String {
+        let in_name = format!(
+            "{}_{}_{}",
+            standardize_value(self.metadata.title.clone()),
+            standardize_value(self.metadata.version.clone()),
+            standardize_value(self.id.0.to_string())
+        );
+        let out_name = slugify(in_name);
+        out_name
     }
 
     /// Returns the prompt's content
@@ -244,11 +265,12 @@ impl StaticPrompt {
 
     pub async fn save(&self, fs: Arc<dyn Fs>) -> anyhow::Result<()> {
         let file_name = self.file_name();
+        let new_file_name = self.new_file_name();
 
         let out_name = if let Some(file_name) = file_name {
-            format!("{}.md", file_name.to_owned())
+            file_name.to_owned().to_string()
         } else {
-            format!("{}.md", self.id.0)
+            format!("{}.md", new_file_name)
         };
         let path = PROMPTS_DIR.join(&out_name);
         let json = self.content.clone();
