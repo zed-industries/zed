@@ -169,10 +169,10 @@ pub struct Headline {
 
 impl RenderOnce for Headline {
     fn render(self, cx: &mut WindowContext) -> impl IntoElement {
-        let ui_font = ThemeSettings::get_global(cx).ui_font.family.clone();
+        let ui_font = ThemeSettings::get_global(cx).ui_font.clone();
 
         div()
-            .font_family(ui_font)
+            .font(ui_font)
             .line_height(self.size.line_height())
             .text_size(self.size.size())
             .text_color(cx.theme().colors().text)

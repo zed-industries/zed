@@ -11,3 +11,4 @@ brackets = [
 ]
 word_characters = ["-"]
 block_comment = ["/* ", " */"]
+prettier_parser_name = "css"

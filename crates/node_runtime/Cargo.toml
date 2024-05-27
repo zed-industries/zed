@@ -31,10 +31,10 @@ smol.workspace = true
 tempfile = { workspace = true, optional = true }
 util.workspace = true
 walkdir = "2.5.0"
-windows.workspace = true
 
 [target.'cfg(windows)'.dependencies]
 async-std = { version = "1.12.0", features = ["unstable"] }
+windows.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true

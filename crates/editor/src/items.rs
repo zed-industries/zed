@@ -137,7 +137,7 @@ impl FollowableItem for Editor {
 
                     cx.new_view(|cx| {
                         let mut editor =
-                            Editor::for_multibuffer(multibuffer, Some(project.clone()), cx);
+                            Editor::for_multibuffer(multibuffer, Some(project.clone()), true, cx);
                         editor.remote_id = Some(remote_id);
                         editor
                     })
@@ -1162,23 +1162,26 @@ impl SearchableItem for Editor {
                 }
             } else {
                 for excerpt in buffer.excerpt_boundaries_in_range(0..buffer.len()) {
-                    let excerpt_range = excerpt.range.context.to_offset(&excerpt.buffer);
-                    ranges.extend(
-                        query
-                            .search(&excerpt.buffer, Some(excerpt_range.clone()))
-                            .await
-                            .into_iter()
-                            .map(|range| {
-                                let start = excerpt
-                                    .buffer
-                                    .anchor_after(excerpt_range.start + range.start);
-                                let end = excerpt
-                                    .buffer
-                                    .anchor_before(excerpt_range.start + range.end);
-                                buffer.anchor_in_excerpt(excerpt.id, start).unwrap()
-                                    ..buffer.anchor_in_excerpt(excerpt.id, end).unwrap()
-                            }),
-                    );
+                    if let Some(next_excerpt) = excerpt.next {
+                        let excerpt_range =
+                            next_excerpt.range.context.to_offset(&next_excerpt.buffer);
+                        ranges.extend(
+                            query
+                                .search(&next_excerpt.buffer, Some(excerpt_range.clone()))
+                                .await
+                                .into_iter()
+                                .map(|range| {
+                                    let start = next_excerpt
+                                        .buffer
+                                        .anchor_after(excerpt_range.start + range.start);
+                                    let end = next_excerpt
+                                        .buffer
+                                        .anchor_before(excerpt_range.start + range.end);
+                                    buffer.anchor_in_excerpt(next_excerpt.id, start).unwrap()
+                                        ..buffer.anchor_in_excerpt(next_excerpt.id, end).unwrap()
+                                }),
+                        );
+                    }
                 }
             }
             ranges

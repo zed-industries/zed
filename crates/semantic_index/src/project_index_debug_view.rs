@@ -131,7 +131,7 @@ impl ProjectIndexDebugView {
     }
 
     fn render_chunk(&mut self, ix: usize, cx: &mut ViewContext<Self>) -> AnyElement {
-        let buffer_font = ThemeSettings::get_global(cx).buffer_font.family.clone();
+        let buffer_font = ThemeSettings::get_global(cx).buffer_font.clone();
         let Some(state) = &self.selected_path else {
             return div().into_any();
         };
@@ -142,7 +142,7 @@ impl ProjectIndexDebugView {
         div()
             .text_ui(cx)
             .w_full()
-            .font_family(buffer_font)
+            .font(buffer_font)
             .child(
                 h_flex()
                     .justify_between()

@@ -1961,9 +1961,9 @@ impl Render for ProjectPanel {
 impl Render for DraggedProjectEntryView {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         let settings = ProjectPanelSettings::get_global(cx);
-        let ui_font = ThemeSettings::get_global(cx).ui_font.family.clone();
+        let ui_font = ThemeSettings::get_global(cx).ui_font.clone();
         h_flex()
-            .font_family(ui_font)
+            .font(ui_font)
             .bg(cx.theme().colors().background)
             .w(self.width)
             .child(

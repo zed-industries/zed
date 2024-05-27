@@ -610,6 +610,10 @@ pub struct LanguageConfig {
     /// How to soft-wrap long lines of text.
     #[serde(default)]
     pub soft_wrap: Option<SoftWrap>,
+    /// The name of a Prettier parser that will be used for this language when no file path is available.
+    /// If there's a parser name in the language settings, that will be used instead.
+    #[serde(default)]
+    pub prettier_parser_name: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, Default, JsonSchema)]
@@ -692,9 +696,10 @@ impl Default for LanguageConfig {
             overrides: Default::default(),
             word_characters: Default::default(),
             collapsed_placeholder: Default::default(),
-            hard_tabs: Default::default(),
-            tab_size: Default::default(),
-            soft_wrap: Default::default(),
+            hard_tabs: None,
+            tab_size: None,
+            soft_wrap: None,
+            prettier_parser_name: None,
         }
     }
 }
@@ -1371,6 +1376,10 @@ impl Language {
             "Plain Text" => "plaintext".to_string(),
             language_name => language_name.to_lowercase(),
         }
+    }
+
+    pub fn prettier_parser_name(&self) -> Option<&str> {
+        self.config.prettier_parser_name.as_deref()
     }
 }
 

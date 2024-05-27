@@ -9,11 +9,7 @@ use ui::{prelude::*, IconButtonShape, Indicator, ListItem, ListItemSpacing, Tool
 use util::{ResultExt, TryFutureExt};
 use workspace::ModalView;
 
-use super::{
-    prompt::PROMPT_DEFAULT_TITLE,
-    prompt_library::{PromptId, PromptLibrary, SortOrder},
-};
-use crate::prompts::prompt::StaticPrompt;
+use crate::prompts::{PromptId, PromptLibrary, SortOrder, StaticPrompt, PROMPT_DEFAULT_TITLE};
 
 actions!(prompt_manager, [NewPrompt, SavePrompt]);
 

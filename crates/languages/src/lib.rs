@@ -1,5 +1,6 @@
 use anyhow::Context;
 use gpui::{AppContext, UpdateGlobal};
+use json::json_task_context;
 pub use language::*;
 use node_runtime::NodeRuntime;
 use rust_embed::RustEmbed;
@@ -113,12 +114,14 @@ pub fn init(
         vec![Arc::new(go::GoLspAdapter)],
         GoContextProvider
     );
+
     language!(
         "json",
         vec![Arc::new(json::JsonLspAdapter::new(
             node_runtime.clone(),
             languages.clone(),
-        ))]
+        ))],
+        json_task_context()
     );
     language!("markdown");
     language!(

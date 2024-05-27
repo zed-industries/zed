@@ -58,7 +58,7 @@ if [[ -n $dnf ]]; then
   exit 0
 fi
 
-# openSuse
+# openSUSE
 # https://software.opensuse.org/
 zyp=$(command -v zypper || true)
 if [[ -n $zyp ]]; then
@@ -69,7 +69,7 @@ if [[ -n $zyp ]]; then
     libxkbcommon-x11-devel
     openssl-devel
     libzstd-devel
-    vulkan-loader
+    libvulkan1
   )
   $maysudo "$zyp" install -y "${deps[@]}"
   exit 0
