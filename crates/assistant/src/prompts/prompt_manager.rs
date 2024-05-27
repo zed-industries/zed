@@ -5,7 +5,7 @@ use gpui::{prelude::FluentBuilder, *};
 use language::{language_settings, Buffer, LanguageRegistry};
 use picker::{Picker, PickerDelegate};
 use std::sync::Arc;
-use ui::{prelude::*, IconButtonShape, Indicator, ListItem, ListItemSpacing};
+use ui::{prelude::*, IconButtonShape, Indicator, ListItem, ListItemSpacing, Tooltip};
 use util::{ResultExt, TryFutureExt};
 use workspace::ModalView;
 
@@ -262,7 +262,8 @@ impl PromptManager {
             .id("prompt-list")
             .bg(cx.theme().colors().surface_background)
             .h_full()
-            .w_2_5()
+            .w_1_3()
+            .overflow_hidden()
             .child(
                 h_flex()
                     .bg(cx.theme().colors().background)
@@ -277,6 +278,7 @@ impl PromptManager {
                     .child(
                         IconButton::new("new-prompt", IconName::Plus)
                             .shape(IconButtonShape::Square)
+                            .tooltip(move |cx| Tooltip::text("New Prompt", cx))
                             .on_click(|_, cx| {
                                 cx.dispatch_action(NewPrompt.boxed_clone());
                             }),
@@ -295,6 +297,13 @@ impl PromptManager {
 impl Render for PromptManager {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         let active_prompt_id = self.active_prompt_id.clone();
+        let active_prompt = if let Some(active_prompt_id) = active_prompt_id.clone() {
+            self.prompt_library
+                .clone()
+                .prompt_by_id(active_prompt_id.clone())
+        } else {
+            None
+        };
         let active_editor = self.active_editor().map(|editor| editor.clone());
         let updated_content = if let Some(editor) = active_editor {
             Some(editor.read(cx).text(cx))
@@ -318,7 +327,7 @@ impl Render for PromptManager {
             .overflow_hidden()
             .child(self.render_prompt_list(cx))
             .child(
-                div().w_3_5().h_full().child(
+                div().w_2_3().h_full().child(
                     v_flex()
                         .id("prompt-editor")
                         .border_l_1()
@@ -328,6 +337,7 @@ impl Render for PromptManager {
                         .flex_none()
                         .min_w_64()
                         .h_full()
+                        .overflow_hidden()
                         .child(
                             h_flex()
                                 .bg(cx.theme().colors().background)
@@ -337,34 +347,54 @@ impl Render for PromptManager {
                                 .h_7()
                                 .w_full()
                                 .justify_between()
-                                .child(if can_save {
-                                    IconButton::new("save", IconName::Save)
-                                        .shape(IconButtonShape::Square)
-                                        .disabled(
-                                            active_prompt_id.clone().is_none()
-                                                || updated_content.is_none(),
-                                        )
-                                        .on_click(cx.listener(move |this, _event, cx| {
-                                            if let Some(prompt_id) = active_prompt_id {
-                                                this.save_prompt(
-                                                    fs.clone(),
-                                                    prompt_id,
-                                                    updated_content.clone().unwrap_or(
-                                                        "TODO: make unreachable".to_string(),
-                                                    ),
-                                                    cx,
-                                                )
-                                                .log_err();
-                                            }
-                                        }))
-                                } else {
-                                    IconButton::new("save", IconName::Save)
-                                        .shape(IconButtonShape::Square)
-                                        .disabled(true)
-                                })
+                                .child(
+                                    h_flex()
+                                        .gap(Spacing::XXLarge.rems(cx))
+                                        .child(if can_save {
+                                            IconButton::new("save", IconName::Save)
+                                                .shape(IconButtonShape::Square)
+                                                .tooltip(move |cx| Tooltip::text("Save Prompt", cx))
+                                                .on_click(cx.listener(move |this, _event, cx| {
+                                                    if let Some(prompt_id) = active_prompt_id {
+                                                        this.save_prompt(
+                                                            fs.clone(),
+                                                            prompt_id,
+                                                            updated_content.clone().unwrap_or(
+                                                                "TODO: make unreachable"
+                                                                    .to_string(),
+                                                            ),
+                                                            cx,
+                                                        )
+                                                        .log_err();
+                                                    }
+                                                }))
+                                        } else {
+                                            IconButton::new("save", IconName::Save)
+                                                .shape(IconButtonShape::Square)
+                                                .disabled(true)
+                                        })
+                                        .when_some(active_prompt, |this, active_prompt| {
+                                            let path = active_prompt.path();
+
+                                            this.child(
+                                                IconButton::new("reveal", IconName::Reveal)
+                                                    .shape(IconButtonShape::Square)
+                                                    .disabled(path.is_none())
+                                                    .tooltip(move |cx| {
+                                                        Tooltip::text("Reveal in Finder", cx)
+                                                    })
+                                                    .on_click(cx.listener(move |_, _event, cx| {
+                                                        if let Some(path) = path.clone() {
+                                                            cx.reveal_path(&path);
+                                                        }
+                                                    })),
+                                            )
+                                        }),
+                                )
                                 .child(
                                     IconButton::new("dismiss", IconName::Close)
                                         .shape(IconButtonShape::Square)
+                                        .tooltip(move |cx| Tooltip::text("Close", cx))
                                         .on_click(|_, cx| {
                                             cx.dispatch_action(menu::Cancel.boxed_clone());
                                         }),

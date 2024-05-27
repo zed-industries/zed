@@ -1,6 +1,6 @@
 use fs::Fs;
 use language::BufferSnapshot;
-use std::{fmt::Write, ops::Range, sync::Arc};
+use std::{fmt::Write, ops::Range, path::PathBuf, sync::Arc};
 use ui::SharedString;
 use util::paths::PROMPTS_DIR;
 
@@ -261,6 +261,15 @@ impl StaticPrompt {
         let matter = Matter::<YAML>::new();
         let result = matter.parse(self.content.as_str());
         result.content.clone()
+    }
+
+    pub fn path(&self) -> Option<PathBuf> {
+        if let Some(file_name) = self.file_name() {
+            let path_str = format!("{}", file_name);
+            Some(PROMPTS_DIR.join(path_str))
+        } else {
+            None
+        }
     }
 
     pub async fn save(&self, fs: Arc<dyn Fs>) -> anyhow::Result<()> {
