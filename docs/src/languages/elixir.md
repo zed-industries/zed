@@ -3,7 +3,25 @@
 - Tree Sitter: [tree-sitter-elixir](https://github.com/elixir-lang/tree-sitter-elixir)
 - Language Server: [elixir-ls](https://github.com/elixir-lsp/elixir-ls)
 
-### Setting up `elixir-ls`
+## Choosing a language server
+
+The Elixir extension offers both `elixir-ls`, `next-ls`, and `lexical` language server support.
+
+`elixir-ls` is enabled by default.
+
+To switch to e.g. `next-ls`, add the following to your `settings.json`:
+
+```json
+{
+  "languages": {
+    "Elixir": {
+      "language_servers": ["next-ls", "..."]
+    }
+  }
+}
+```
+
+## Setting up `elixir-ls`
 
 1. Install `elixir`:
 
