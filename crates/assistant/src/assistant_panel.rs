@@ -42,11 +42,11 @@ use gpui::{
     UniformListScrollHandle, View, ViewContext, VisualContext, WeakModel, WeakView, WhiteSpace,
     WindowContext,
 };
-use language::LspAdapterDelegate;
 use language::{
     language_settings::SoftWrap, AutoindentMode, Buffer, BufferSnapshot, LanguageRegistry,
     OffsetRangeExt as _, Point, ToOffset as _,
 };
+use language::{LineEnding, LspAdapterDelegate};
 use multi_buffer::MultiBufferRow;
 use parking_lot::Mutex;
 use project::{Project, ProjectLspAdapterDelegate, ProjectTransaction};
@@ -1966,40 +1966,38 @@ impl Conversation {
         let argument = argument.map(ToString::to_string);
         let id = self.next_invocation_id.post_inc();
 
-        let insert_output_task = cx.spawn({
-            let command_range = command_range.clone();
-            let argument = argument.clone();
-            |this, mut cx| {
-                async move {
-                    let output = cx
-                        .update(|cx| command.run(argument.as_deref(), lsp_adapter_delegate, cx))?
-                        .await?;
+        let insert_output_task = cx.spawn(|this, mut cx| {
+            async move {
+                let output = cx
+                    .update(|cx| command.run(argument.as_deref(), lsp_adapter_delegate, cx))?
+                    .await?;
 
-                    let mut text = output.text;
-                    if !text.ends_with('\n') {
-                        text.push('\n');
-                    }
-
-                    this.update(&mut cx, |this, cx| {
-                        let output_range = this.buffer.update(cx, |buffer, cx| {
-                            let new_start = command_range.start.to_offset(buffer);
-                            let new_end = new_start + text.len();
-                            buffer.edit([(command_range, text)], None, cx);
-                            if buffer.chars_at(new_end).next() != Some('\n') {
-                                buffer.edit([(new_end..new_end, "\n")], None, cx);
-                            }
-                            buffer.anchor_after(new_start)..buffer.anchor_before(new_end)
-                        });
-                        cx.emit(ConversationEvent::SlashCommandFinished {
-                            output_range,
-                            render_placeholder: output.render_placeholder,
-                        });
-                    })?;
-
-                    anyhow::Ok(())
+                let mut text = output.text;
+                LineEnding::normalize(&mut text);
+                if !text.ends_with('\n') {
+                    text.push('\n');
                 }
-                .log_err()
+
+                this.update(&mut cx, |this, cx| {
+                    let output_range = this.buffer.update(cx, |buffer, cx| {
+                        let start = command_range.start.to_offset(buffer);
+                        let old_end = command_range.end.to_offset(buffer);
+                        let new_end = start + text.len();
+                        buffer.edit([(start..old_end, text)], None, cx);
+                        if buffer.chars_at(new_end).next() != Some('\n') {
+                            buffer.edit([(new_end..new_end, "\n")], None, cx);
+                        }
+                        buffer.anchor_after(start)..buffer.anchor_before(new_end)
+                    });
+                    cx.emit(ConversationEvent::SlashCommandFinished {
+                        output_range,
+                        render_placeholder: output.render_placeholder,
+                    });
+                })?;
+
+                anyhow::Ok(())
             }
+            .log_err()
         });
 
         self.invocations.insert(
