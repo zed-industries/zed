@@ -1,7 +1,7 @@
 id = "php"
 name = "PHP"
 description = "PHP support."
-version = "0.0.3"
+version = "0.0.5"
 schema_version = 1
 authors = ["Piotr Osiewicz <piotr@zed.dev>"]
 repository = "https://github.com/zed-industries/zed"

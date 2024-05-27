@@ -16,15 +16,20 @@ use util::ResultExt;
 use x11rb::{
     connection::{Connection as _, RequestConnection as _},
     protocol::{
-        render::{self, ConnectionExt as _},
+        render,
         xinput::{self, ConnectionExt as _},
-        xproto::{self, ConnectionExt as _, CreateWindowAux},
+        xproto::{
+            self, Atom, ClientMessageEvent, ConnectionExt as _, CreateWindowAux, EventMask,
+            TranslateCoordinatesReply,
+        },
     },
     resource_manager::Database,
     wrapper::ConnectionExt as _,
     xcb_ffi::XCBConnection,
 };
 
+use std::ops::Deref;
+use std::rc::Weak;
 use std::{
     cell::{Ref, RefCell, RefMut},
     collections::HashMap,
@@ -38,17 +43,23 @@ use std::{
     sync::{self, Arc},
 };
 
-use super::X11Display;
+use super::{X11Display, XINPUT_MASTER_DEVICE};
 
 x11rb::atom_manager! {
     pub XcbAtoms: AtomsCookie {
         UTF8_STRING,
         WM_PROTOCOLS,
         WM_DELETE_WINDOW,
+        WM_CHANGE_STATE,
         _NET_WM_NAME,
         _NET_WM_STATE,
         _NET_WM_STATE_MAXIMIZED_VERT,
         _NET_WM_STATE_MAXIMIZED_HORZ,
+        _NET_WM_STATE_FULLSCREEN,
+        _NET_WM_STATE_HIDDEN,
+        _NET_WM_STATE_FOCUSED,
+        _NET_WM_MOVERESIZE,
+        _GTK_SHOW_WINDOW_MENU,
     }
 }
 
@@ -158,12 +169,14 @@ pub(crate) struct X11WindowState {
     client: X11ClientStatePtr,
     executor: ForegroundExecutor,
     atoms: XcbAtoms,
+    x_root_window: xproto::Window,
     raw: RawWindow,
     bounds: Bounds<i32>,
     scale_factor: f32,
     renderer: BladeRenderer,
     display: Rc<dyn PlatformDisplay>,
     input_handler: Option<PlatformInputHandler>,
+    appearance: WindowAppearance,
 }
 
 #[derive(Clone)]
@@ -213,6 +226,7 @@ impl X11WindowState {
         x_window: xproto::Window,
         atoms: &XcbAtoms,
         scale_factor: f32,
+        appearance: WindowAppearance,
     ) -> Self {
         let x_screen_index = params
             .display_id
@@ -311,7 +325,7 @@ impl X11WindowState {
             .xinput_xi_select_events(
                 x_window,
                 &[xinput::EventMask {
-                    deviceid: 1,
+                    deviceid: XINPUT_MASTER_DEVICE,
                     mask: vec![
                         xinput::XIEventMask::MOTION
                             | xinput::XIEventMask::BUTTON_PRESS
@@ -359,11 +373,13 @@ impl X11WindowState {
             executor,
             display: Rc::new(X11Display::new(xcb_connection, x_screen_index).unwrap()),
             raw,
+            x_root_window: visual_set.root,
             bounds: params.bounds.map(|v| v.0),
             scale_factor,
             renderer: BladeRenderer::new(gpu, config),
             atoms: *atoms,
             input_handler: None,
+            appearance,
         }
     }
 
@@ -403,6 +419,12 @@ impl Drop for X11Window {
     }
 }
 
+enum WmHintPropertyState {
+    Remove = 0,
+    Add = 1,
+    Toggle = 2,
+}
+
 impl X11Window {
     #[allow(clippy::too_many_arguments)]
     pub fn new(
@@ -414,6 +436,7 @@ impl X11Window {
         x_window: xproto::Window,
         atoms: &XcbAtoms,
         scale_factor: f32,
+        appearance: WindowAppearance,
     ) -> Self {
         Self(X11WindowStatePtr {
             state: Rc::new(RefCell::new(X11WindowState::new(
@@ -425,11 +448,69 @@ impl X11Window {
                 x_window,
                 atoms,
                 scale_factor,
+                appearance,
             ))),
             callbacks: Rc::new(RefCell::new(Callbacks::default())),
             xcb_connection: xcb_connection.clone(),
             x_window,
         })
+    }
+
+    fn set_wm_hints(&self, wm_hint_property_state: WmHintPropertyState, prop1: u32, prop2: u32) {
+        let state = self.0.state.borrow();
+        let message = ClientMessageEvent::new(
+            32,
+            self.0.x_window,
+            state.atoms._NET_WM_STATE,
+            [wm_hint_property_state as u32, prop1, prop2, 1, 0],
+        );
+        self.0
+            .xcb_connection
+            .send_event(
+                false,
+                state.x_root_window,
+                EventMask::SUBSTRUCTURE_REDIRECT | EventMask::SUBSTRUCTURE_NOTIFY,
+                message,
+            )
+            .unwrap();
+    }
+
+    fn get_wm_hints(&self) -> Vec<u32> {
+        let reply = self
+            .0
+            .xcb_connection
+            .get_property(
+                false,
+                self.0.x_window,
+                self.0.state.borrow().atoms._NET_WM_STATE,
+                xproto::AtomEnum::ATOM,
+                0,
+                u32::MAX,
+            )
+            .unwrap()
+            .reply()
+            .unwrap();
+        // Reply is in u8 but atoms are represented as u32
+        reply
+            .value
+            .chunks_exact(4)
+            .map(|chunk| u32::from_ne_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]))
+            .collect()
+    }
+
+    fn get_root_position(&self, position: Point<Pixels>) -> TranslateCoordinatesReply {
+        let state = self.0.state.borrow();
+        self.0
+            .xcb_connection
+            .translate_coordinates(
+                self.0.x_window,
+                state.x_root_window,
+                (position.x.0 * state.scale_factor) as i16,
+                (position.y.0 * state.scale_factor) as i16,
+            )
+            .unwrap()
+            .reply()
+            .unwrap()
     }
 }
 
@@ -498,6 +579,28 @@ impl X11WindowStatePtr {
         }
     }
 
+    pub fn handle_ime_unmark(&self) {
+        let mut state = self.state.borrow_mut();
+        if let Some(mut input_handler) = state.input_handler.take() {
+            drop(state);
+            input_handler.unmark_text();
+            let mut state = self.state.borrow_mut();
+            state.input_handler = Some(input_handler);
+        }
+    }
+
+    pub fn handle_ime_delete(&self) {
+        let mut state = self.state.borrow_mut();
+        if let Some(mut input_handler) = state.input_handler.take() {
+            drop(state);
+            if let Some(marked) = input_handler.marked_text_range() {
+                input_handler.replace_text_in_range(Some(marked), "");
+            }
+            let mut state = self.state.borrow_mut();
+            state.input_handler = Some(input_handler);
+        }
+    }
+
     pub fn get_ime_area(&self) -> Option<Bounds<Pixels>> {
         let mut state = self.state.borrow_mut();
         let mut bounds: Option<Bounds<Pixels>> = None;
@@ -548,6 +651,15 @@ impl X11WindowStatePtr {
             fun(focus);
         }
     }
+
+    pub fn set_appearance(&mut self, appearance: WindowAppearance) {
+        self.state.borrow_mut().appearance = appearance;
+
+        let mut callbacks = self.callbacks.borrow_mut();
+        if let Some(ref mut fun) = callbacks.appearance_changed {
+            (fun)()
+        }
+    }
 }
 
 impl PlatformWindow for X11Window {
@@ -555,12 +667,15 @@ impl PlatformWindow for X11Window {
         self.0.state.borrow().bounds.map(|v| v.into())
     }
 
-    // todo(linux)
     fn is_maximized(&self) -> bool {
-        false
+        let state = self.0.state.borrow();
+        let wm_hints = self.get_wm_hints();
+        // A maximized window that gets minimized will still retain its maximized state.
+        !wm_hints.contains(&state.atoms._NET_WM_STATE_HIDDEN)
+            && wm_hints.contains(&state.atoms._NET_WM_STATE_MAXIMIZED_VERT)
+            && wm_hints.contains(&state.atoms._NET_WM_STATE_MAXIMIZED_HORZ)
     }
 
-    // todo(linux)
     fn window_bounds(&self) -> WindowBounds {
         let state = self.0.state.borrow();
         WindowBounds::Windowed(state.bounds.map(|p| DevicePixels(p)))
@@ -579,9 +694,8 @@ impl PlatformWindow for X11Window {
         self.0.state.borrow().scale_factor
     }
 
-    // todo(linux)
     fn appearance(&self) -> WindowAppearance {
-        WindowAppearance::Light
+        self.0.state.borrow().appearance
     }
 
     fn display(&self) -> Rc<dyn PlatformDisplay> {
@@ -630,9 +744,10 @@ impl PlatformWindow for X11Window {
             .log_err();
     }
 
-    // todo(linux)
     fn is_active(&self) -> bool {
-        false
+        let state = self.0.state.borrow();
+        self.get_wm_hints()
+            .contains(&state.atoms._NET_WM_STATE_FOCUSED)
     }
 
     fn set_title(&mut self, title: &str) {
@@ -665,13 +780,16 @@ impl PlatformWindow for X11Window {
         data.push(b'\0');
         data.extend(app_id.bytes()); // class
 
-        self.0.xcb_connection.change_property8(
-            xproto::PropMode::REPLACE,
-            self.0.x_window,
-            xproto::AtomEnum::WM_CLASS,
-            xproto::AtomEnum::STRING,
-            &data,
-        );
+        self.0
+            .xcb_connection
+            .change_property8(
+                xproto::PropMode::REPLACE,
+                self.0.x_window,
+                xproto::AtomEnum::WM_CLASS,
+                xproto::AtomEnum::STRING,
+                &data,
+            )
+            .unwrap();
     }
 
     // todo(linux)
@@ -693,24 +811,48 @@ impl PlatformWindow for X11Window {
         unimplemented!()
     }
 
-    // todo(linux)
     fn minimize(&self) {
-        unimplemented!()
+        let state = self.0.state.borrow();
+        const WINDOW_ICONIC_STATE: u32 = 3;
+        let message = ClientMessageEvent::new(
+            32,
+            self.0.x_window,
+            state.atoms.WM_CHANGE_STATE,
+            [WINDOW_ICONIC_STATE, 0, 0, 0, 0],
+        );
+        self.0
+            .xcb_connection
+            .send_event(
+                false,
+                state.x_root_window,
+                EventMask::SUBSTRUCTURE_REDIRECT | EventMask::SUBSTRUCTURE_NOTIFY,
+                message,
+            )
+            .unwrap();
     }
 
-    // todo(linux)
     fn zoom(&self) {
-        unimplemented!()
+        let state = self.0.state.borrow();
+        self.set_wm_hints(
+            WmHintPropertyState::Toggle,
+            state.atoms._NET_WM_STATE_MAXIMIZED_VERT,
+            state.atoms._NET_WM_STATE_MAXIMIZED_HORZ,
+        );
     }
 
-    // todo(linux)
     fn toggle_fullscreen(&self) {
-        unimplemented!()
+        let state = self.0.state.borrow();
+        self.set_wm_hints(
+            WmHintPropertyState::Toggle,
+            state.atoms._NET_WM_STATE_FULLSCREEN,
+            xproto::AtomEnum::NONE.into(),
+        );
     }
 
-    // todo(linux)
     fn is_fullscreen(&self) -> bool {
-        false
+        let state = self.0.state.borrow();
+        self.get_wm_hints()
+            .contains(&state.atoms._NET_WM_STATE_FULLSCREEN)
     }
 
     fn on_request_frame(&self, callback: Box<dyn FnMut()>) {
@@ -755,11 +897,64 @@ impl PlatformWindow for X11Window {
         inner.renderer.sprite_atlas().clone()
     }
 
-    // todo(linux)
-    fn show_window_menu(&self, _position: Point<Pixels>) {}
+    fn show_window_menu(&self, position: Point<Pixels>) {
+        let state = self.0.state.borrow();
+        let coords = self.get_root_position(position);
+        let message = ClientMessageEvent::new(
+            32,
+            self.0.x_window,
+            state.atoms._GTK_SHOW_WINDOW_MENU,
+            [
+                XINPUT_MASTER_DEVICE as u32,
+                coords.dst_x as u32,
+                coords.dst_y as u32,
+                0,
+                0,
+            ],
+        );
+        self.0
+            .xcb_connection
+            .send_event(
+                false,
+                state.x_root_window,
+                EventMask::SUBSTRUCTURE_REDIRECT | EventMask::SUBSTRUCTURE_NOTIFY,
+                message,
+            )
+            .unwrap();
+    }
 
-    // todo(linux)
-    fn start_system_move(&self) {}
+    fn start_system_move(&self) {
+        let state = self.0.state.borrow();
+        let pointer = self
+            .0
+            .xcb_connection
+            .query_pointer(self.0.x_window)
+            .unwrap()
+            .reply()
+            .unwrap();
+        const MOVERESIZE_MOVE: u32 = 8;
+        let message = ClientMessageEvent::new(
+            32,
+            self.0.x_window,
+            state.atoms._NET_WM_MOVERESIZE,
+            [
+                pointer.root_x as u32,
+                pointer.root_y as u32,
+                MOVERESIZE_MOVE,
+                1, // Left mouse button
+                1,
+            ],
+        );
+        self.0
+            .xcb_connection
+            .send_event(
+                false,
+                state.x_root_window,
+                EventMask::SUBSTRUCTURE_REDIRECT | EventMask::SUBSTRUCTURE_NOTIFY,
+                message,
+            )
+            .unwrap();
+    }
 
     fn should_render_window_controls(&self) -> bool {
         false

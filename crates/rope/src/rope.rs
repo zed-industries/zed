@@ -619,10 +619,12 @@ impl<'a> Chunks<'a> {
     }
 
     pub fn lines(self) -> Lines<'a> {
+        let reversed = self.reversed;
         Lines {
             chunks: self,
             current_line: String::new(),
             done: false,
+            reversed,
         }
     }
 }
@@ -726,6 +728,7 @@ pub struct Lines<'a> {
     chunks: Chunks<'a>,
     current_line: String,
     done: bool,
+    reversed: bool,
 }
 
 impl<'a> Lines<'a> {
@@ -737,13 +740,26 @@ impl<'a> Lines<'a> {
         self.current_line.clear();
 
         while let Some(chunk) = self.chunks.peek() {
-            let mut lines = chunk.split('\n').peekable();
-            while let Some(line) = lines.next() {
-                self.current_line.push_str(line);
-                if lines.peek().is_some() {
-                    self.chunks
-                        .seek(self.chunks.offset() + line.len() + "\n".len());
-                    return Some(&self.current_line);
+            let lines = chunk.split('\n');
+            if self.reversed {
+                let mut lines = lines.rev().peekable();
+                while let Some(line) = lines.next() {
+                    self.current_line.insert_str(0, line);
+                    if lines.peek().is_some() {
+                        self.chunks
+                            .seek(self.chunks.offset() - line.len() - "\n".len());
+                        return Some(&self.current_line);
+                    }
+                }
+            } else {
+                let mut lines = lines.peekable();
+                while let Some(line) = lines.next() {
+                    self.current_line.push_str(line);
+                    if lines.peek().is_some() {
+                        self.chunks
+                            .seek(self.chunks.offset() + line.len() + "\n".len());
+                        return Some(&self.current_line);
+                    }
                 }
             }
 
@@ -1354,6 +1370,21 @@ mod tests {
         assert_eq!(lines.next(), Some("defg"));
         assert_eq!(lines.next(), Some("hi"));
         assert_eq!(lines.next(), Some(""));
+        assert_eq!(lines.next(), None);
+
+        let rope = Rope::from("abc\ndefg\nhi");
+        let mut lines = rope.reversed_chunks_in_range(0..rope.len()).lines();
+        assert_eq!(lines.next(), Some("hi"));
+        assert_eq!(lines.next(), Some("defg"));
+        assert_eq!(lines.next(), Some("abc"));
+        assert_eq!(lines.next(), None);
+
+        let rope = Rope::from("abc\ndefg\nhi\n");
+        let mut lines = rope.reversed_chunks_in_range(0..rope.len()).lines();
+        assert_eq!(lines.next(), Some(""));
+        assert_eq!(lines.next(), Some("hi"));
+        assert_eq!(lines.next(), Some("defg"));
+        assert_eq!(lines.next(), Some("abc"));
         assert_eq!(lines.next(), None);
     }
 

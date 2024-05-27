@@ -10,4 +10,5 @@ brackets = [
 ]
 
 increase_indent_pattern = ":\\s*[|>]?\\s*$"
+prettier_parser_name = "yaml"
 tab_size = 2

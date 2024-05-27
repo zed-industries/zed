@@ -64,6 +64,19 @@ And to run the tests:
 cargo test --workspace
 ```
 
+## Installing from msys2
+
+[MSYS2](https://msys2.org/) distribution provides Zed as a package. To download the prebuilt binary, run
+
+```
+pacman -S mingw-w64-ucrt-x86_64-zed
+```
+
+then you can run `zed` in a UCRT64 shell.
+
+> [!NOTE]
+> Please, report any issue in https://github.com/msys2/MINGW-packages/issues first.
+
 ## Troubleshooting
 
 ### Can't compile zed

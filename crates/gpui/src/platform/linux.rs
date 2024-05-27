@@ -6,6 +6,7 @@ mod headless;
 mod platform;
 mod wayland;
 mod x11;
+mod xdg_desktop_portal;
 
 pub(crate) use dispatcher::*;
 pub(crate) use headless::*;

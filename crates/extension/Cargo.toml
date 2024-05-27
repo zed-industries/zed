@@ -14,6 +14,7 @@ doctest = false
 
 [dependencies]
 anyhow.workspace = true
+assistant_slash_command.workspace = true
 async-compression.workspace = true
 async-tar.workspace = true
 async-trait.workspace = true
@@ -30,6 +31,7 @@ log.workspace = true
 lsp.workspace = true
 node_runtime.workspace = true
 project.workspace = true
+release_channel.workspace = true
 schemars.workspace = true
 semantic_version.workspace = true
 serde.workspace = true

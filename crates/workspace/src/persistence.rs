@@ -22,7 +22,9 @@ use model::{
     SerializedWorkspace,
 };
 
-use self::model::{DockStructure, SerializedDevServerProject, SerializedWorkspaceLocation};
+use self::model::{
+    DockStructure, LocalPathsOrder, SerializedDevServerProject, SerializedWorkspaceLocation,
+};
 
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub(crate) struct SerializedAxis(pub(crate) gpui::Axis);
@@ -176,6 +178,7 @@ define_connection! {
     // workspaces(
     //   workspace_id: usize, // Primary key for workspaces
     //   local_paths: Bincode<Vec<PathBuf>>,
+    //   local_paths_order: Bincode<Vec<usize>>,
     //   dock_visible: bool, // Deprecated
     //   dock_anchor: DockAnchor, // Deprecated
     //   dock_pane: Option<usize>, // Deprecated
@@ -360,6 +363,9 @@ define_connection! {
         ALTER TABLE workspaces DROP COLUMN remote_project_id;
         ALTER TABLE workspaces ADD COLUMN dev_server_project_id INTEGER;
     ),
+    sql!(
+        ALTER TABLE workspaces ADD COLUMN local_paths_order BLOB;
+    ),
     ];
 }
 
@@ -378,6 +384,7 @@ impl WorkspaceDb {
         let (
             workspace_id,
             local_paths,
+            local_paths_order,
             dev_server_project_id,
             window_bounds,
             display,
@@ -386,6 +393,7 @@ impl WorkspaceDb {
         ): (
             WorkspaceId,
             Option<LocalPaths>,
+            Option<LocalPathsOrder>,
             Option<u64>,
             Option<SerializedWindowBounds>,
             Option<Uuid>,
@@ -396,6 +404,7 @@ impl WorkspaceDb {
                 SELECT
                     workspace_id,
                     local_paths,
+                    local_paths_order,
                     dev_server_project_id,
                     window_state,
                     window_x,
@@ -434,7 +443,13 @@ impl WorkspaceDb {
                 .flatten()?;
             SerializedWorkspaceLocation::DevServer(dev_server_project)
         } else if let Some(local_paths) = local_paths {
-            SerializedWorkspaceLocation::Local(local_paths)
+            match local_paths_order {
+                Some(order) => SerializedWorkspaceLocation::Local(local_paths, order),
+                None => {
+                    let order = LocalPathsOrder::default_for_paths(&local_paths);
+                    SerializedWorkspaceLocation::Local(local_paths, order)
+                }
+            }
         } else {
             return None;
         };
@@ -465,7 +480,7 @@ impl WorkspaceDb {
                 .context("Clearing old panes")?;
 
                 match workspace.location {
-                    SerializedWorkspaceLocation::Local(local_paths) => {
+                    SerializedWorkspaceLocation::Local(local_paths, local_paths_order) => {
                         conn.exec_bound(sql!(
                             DELETE FROM workspaces WHERE local_paths = ? AND workspace_id != ?
                         ))?((&local_paths, workspace.id))
@@ -476,6 +491,7 @@ impl WorkspaceDb {
                             INSERT INTO workspaces(
                                 workspace_id,
                                 local_paths,
+                                local_paths_order,
                                 left_dock_visible,
                                 left_dock_active_panel,
                                 left_dock_zoom,
@@ -487,21 +503,22 @@ impl WorkspaceDb {
                                 bottom_dock_zoom,
                                 timestamp
                             )
-                            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, CURRENT_TIMESTAMP)
+                            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, CURRENT_TIMESTAMP)
                             ON CONFLICT DO
                             UPDATE SET
                                 local_paths = ?2,
-                                left_dock_visible = ?3,
-                                left_dock_active_panel = ?4,
-                                left_dock_zoom = ?5,
-                                right_dock_visible = ?6,
-                                right_dock_active_panel = ?7,
-                                right_dock_zoom = ?8,
-                                bottom_dock_visible = ?9,
-                                bottom_dock_active_panel = ?10,
-                                bottom_dock_zoom = ?11,
+                                local_paths_order = ?3,
+                                left_dock_visible = ?4,
+                                left_dock_active_panel = ?5,
+                                left_dock_zoom = ?6,
+                                right_dock_visible = ?7,
+                                right_dock_active_panel = ?8,
+                                right_dock_zoom = ?9,
+                                bottom_dock_visible = ?10,
+                                bottom_dock_active_panel = ?11,
+                                bottom_dock_zoom = ?12,
                                 timestamp = CURRENT_TIMESTAMP
-                        ))?((workspace.id, &local_paths, workspace.docks))
+                        ))?((workspace.id, &local_paths, &local_paths_order, workspace.docks))
                         .context("Updating workspace")?;
                     }
                     SerializedWorkspaceLocation::DevServer(dev_server_project) => {
@@ -676,7 +693,7 @@ impl WorkspaceDb {
             .await?
             .into_iter()
             .filter_map(|(_, location)| match location {
-                SerializedWorkspaceLocation::Local(local_paths) => Some(local_paths),
+                SerializedWorkspaceLocation::Local(local_paths, _) => Some(local_paths),
                 SerializedWorkspaceLocation::DevServer(_) => None,
             })
             .next())
@@ -1080,7 +1097,10 @@ mod tests {
 
         let workspace = SerializedWorkspace {
             id: WorkspaceId(5),
-            location: LocalPaths::new(["/tmp", "/tmp2"]).into(),
+            location: SerializedWorkspaceLocation::Local(
+                LocalPaths::new(["/tmp", "/tmp2"]),
+                LocalPathsOrder::new([1, 0]),
+            ),
             center_group,
             window_bounds: Default::default(),
             display: Default::default(),
@@ -1089,8 +1109,8 @@ mod tests {
         };
 
         db.save_workspace(workspace.clone()).await;
-        let round_trip_workspace = db.workspace_for_roots(&["/tmp2", "/tmp"]);
 
+        let round_trip_workspace = db.workspace_for_roots(&["/tmp2", "/tmp"]);
         assert_eq!(workspace, round_trip_workspace.unwrap());
 
         // Test guaranteed duplicate IDs
@@ -1109,7 +1129,10 @@ mod tests {
 
         let workspace_1 = SerializedWorkspace {
             id: WorkspaceId(1),
-            location: LocalPaths::new(["/tmp", "/tmp2"]).into(),
+            location: SerializedWorkspaceLocation::Local(
+                LocalPaths::new(["/tmp", "/tmp2"]),
+                LocalPathsOrder::new([0, 1]),
+            ),
             center_group: Default::default(),
             window_bounds: Default::default(),
             display: Default::default(),
@@ -1156,7 +1179,10 @@ mod tests {
         // Test other mechanism for mutating
         let mut workspace_3 = SerializedWorkspace {
             id: WorkspaceId(3),
-            location: LocalPaths::new(&["/tmp", "/tmp2"]).into(),
+            location: SerializedWorkspaceLocation::Local(
+                LocalPaths::new(&["/tmp", "/tmp2"]),
+                LocalPathsOrder::new([1, 0]),
+            ),
             center_group: Default::default(),
             window_bounds: Default::default(),
             display: Default::default(),

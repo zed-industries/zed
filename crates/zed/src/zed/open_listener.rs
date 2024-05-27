@@ -90,30 +90,19 @@ impl OpenRequest {
     }
 }
 
-pub struct OpenListener {
-    tx: UnboundedSender<Vec<String>>,
-}
+#[derive(Clone)]
+pub struct OpenListener(UnboundedSender<Vec<String>>);
 
-struct GlobalOpenListener(Arc<OpenListener>);
-
-impl Global for GlobalOpenListener {}
+impl Global for OpenListener {}
 
 impl OpenListener {
-    pub fn global(cx: &AppContext) -> Arc<Self> {
-        cx.global::<GlobalOpenListener>().0.clone()
-    }
-
-    pub fn set_global(listener: Arc<OpenListener>, cx: &mut AppContext) {
-        cx.set_global(GlobalOpenListener(listener))
-    }
-
     pub fn new() -> (Self, UnboundedReceiver<Vec<String>>) {
         let (tx, rx) = mpsc::unbounded();
-        (OpenListener { tx }, rx)
+        (OpenListener(tx), rx)
     }
 
     pub fn open_urls(&self, urls: Vec<String>) {
-        self.tx
+        self.0
             .unbounded_send(urls)
             .map_err(|_| anyhow!("no listener for open requests"))
             .log_err();
@@ -121,7 +110,7 @@ impl OpenListener {
 }
 
 #[cfg(target_os = "linux")]
-pub fn listen_for_cli_connections(opener: Arc<OpenListener>) -> Result<()> {
+pub fn listen_for_cli_connections(opener: OpenListener) -> Result<()> {
     use release_channel::RELEASE_CHANNEL_NAME;
     use std::os::{linux::net::SocketAddrExt, unix::net::SocketAddr, unix::net::UnixDatagram};
 

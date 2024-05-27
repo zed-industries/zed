@@ -17,8 +17,10 @@ use language::{
     },
     BracketPairConfig,
     Capability::ReadWrite,
-    FakeLspAdapter, LanguageConfig, LanguageConfigOverride, LanguageMatcher, Override, Point,
+    FakeLspAdapter, IndentGuide, LanguageConfig, LanguageConfigOverride, LanguageMatcher, Override,
+    Point,
 };
+use multi_buffer::MultiBufferIndentGuide;
 use parking_lot::Mutex;
 use project::project_settings::{LspSettings, ProjectSettings};
 use project::FakeFs;
@@ -494,8 +496,8 @@ fn test_clone(cx: &mut TestAppContext) {
         editor.change_selections(None, cx, |s| s.select_ranges(selection_ranges.clone()));
         editor.fold_ranges(
             [
-                (Point::new(1, 0)..Point::new(2, 0), "⋯"),
-                (Point::new(3, 0)..Point::new(4, 0), "⋯"),
+                (Point::new(1, 0)..Point::new(2, 0), FoldPlaceholder::test()),
+                (Point::new(3, 0)..Point::new(4, 0), FoldPlaceholder::test()),
             ],
             true,
             cx,
@@ -903,9 +905,9 @@ fn test_move_cursor_multibyte(cx: &mut TestAppContext) {
     _ = view.update(cx, |view, cx| {
         view.fold_ranges(
             vec![
-                (Point::new(0, 6)..Point::new(0, 12), "⋯"),
-                (Point::new(1, 2)..Point::new(1, 4), "⋯"),
-                (Point::new(2, 4)..Point::new(2, 8), "⋯"),
+                (Point::new(0, 6)..Point::new(0, 12), FoldPlaceholder::test()),
+                (Point::new(1, 2)..Point::new(1, 4), FoldPlaceholder::test()),
+                (Point::new(2, 4)..Point::new(2, 8), FoldPlaceholder::test()),
             ],
             true,
             cx,
@@ -3407,9 +3409,9 @@ fn test_move_line_up_down(cx: &mut TestAppContext) {
     _ = view.update(cx, |view, cx| {
         view.fold_ranges(
             vec![
-                (Point::new(0, 2)..Point::new(1, 2), "⋯"),
-                (Point::new(2, 3)..Point::new(4, 1), "⋯"),
-                (Point::new(7, 0)..Point::new(8, 4), "⋯"),
+                (Point::new(0, 2)..Point::new(1, 2), FoldPlaceholder::test()),
+                (Point::new(2, 3)..Point::new(4, 1), FoldPlaceholder::test()),
+                (Point::new(7, 0)..Point::new(8, 4), FoldPlaceholder::test()),
             ],
             true,
             cx,
@@ -3891,9 +3893,9 @@ fn test_split_selection_into_lines(cx: &mut TestAppContext) {
     _ = view.update(cx, |view, cx| {
         view.fold_ranges(
             vec![
-                (Point::new(0, 2)..Point::new(1, 2), "⋯"),
-                (Point::new(2, 3)..Point::new(4, 1), "⋯"),
-                (Point::new(7, 0)..Point::new(8, 4), "⋯"),
+                (Point::new(0, 2)..Point::new(1, 2), FoldPlaceholder::test()),
+                (Point::new(2, 3)..Point::new(4, 1), FoldPlaceholder::test()),
+                (Point::new(7, 0)..Point::new(8, 4), FoldPlaceholder::test()),
             ],
             true,
             cx,
@@ -4290,10 +4292,10 @@ async fn test_select_previous_multibuffer(cx: &mut gpui::TestAppContext) {
     let mut cx = EditorTestContext::new_multibuffer(
         cx,
         [
-            indoc! {
+            &indoc! {
                 "aaa\n«bbb\nccc\n»ddd"
             },
-            indoc! {
+            &indoc! {
                 "aaa\n«bbb\nccc\n»ddd"
             },
         ],
@@ -4548,8 +4550,14 @@ async fn test_select_larger_smaller_syntax_node(cx: &mut gpui::TestAppContext) {
     _ = view.update(cx, |view, cx| {
         view.fold_ranges(
             vec![
-                (Point::new(0, 21)..Point::new(0, 24), "⋯"),
-                (Point::new(3, 20)..Point::new(3, 22), "⋯"),
+                (
+                    Point::new(0, 21)..Point::new(0, 24),
+                    FoldPlaceholder::test(),
+                ),
+                (
+                    Point::new(3, 20)..Point::new(3, 22),
+                    FoldPlaceholder::test(),
+                ),
             ],
             true,
             cx,
@@ -6025,8 +6033,15 @@ async fn test_multibuffer_format_during_save(cx: &mut gpui::TestAppContext) {
         );
         multi_buffer
     });
-    let multi_buffer_editor =
-        cx.new_view(|cx| Editor::new(EditorMode::Full, multi_buffer, Some(project.clone()), cx));
+    let multi_buffer_editor = cx.new_view(|cx| {
+        Editor::new(
+            EditorMode::Full,
+            multi_buffer,
+            Some(project.clone()),
+            true,
+            cx,
+        )
+    });
 
     multi_buffer_editor.update(cx, |editor, cx| {
         editor.change_selections(Some(Autoscroll::Next), cx, |s| s.select_ranges(Some(1..2)));
@@ -9422,8 +9437,15 @@ async fn test_mutlibuffer_in_navigation_history(cx: &mut gpui::TestAppContext) {
     let project = Project::test(fs, ["/a".as_ref()], cx).await;
     let workspace = cx.add_window(|cx| Workspace::test_new(project.clone(), cx));
     let cx = &mut VisualTestContext::from_window(*workspace.deref(), cx);
-    let multi_buffer_editor =
-        cx.new_view(|cx| Editor::new(EditorMode::Full, multi_buffer, Some(project.clone()), cx));
+    let multi_buffer_editor = cx.new_view(|cx| {
+        Editor::new(
+            EditorMode::Full,
+            multi_buffer,
+            Some(project.clone()),
+            true,
+            cx,
+        )
+    });
     let multibuffer_item_id = workspace
         .update(cx, |workspace, cx| {
             assert!(
@@ -10350,28 +10372,18 @@ async fn test_toggle_diff_expand_in_multi_buffer(cx: &mut gpui::TestAppContext) 
     let project = Project::test(fs, ["/a".as_ref()], cx).await;
     let workspace = cx.add_window(|cx| Workspace::test_new(project.clone(), cx));
     let cx = &mut VisualTestContext::from_window(*workspace.deref(), cx);
-    let multi_buffer_editor =
-        cx.new_view(|cx| Editor::new(EditorMode::Full, multi_buffer, Some(project.clone()), cx));
+    let multi_buffer_editor = cx.new_view(|cx| {
+        Editor::new(
+            EditorMode::Full,
+            multi_buffer,
+            Some(project.clone()),
+            true,
+            cx,
+        )
+    });
     cx.executor().run_until_parked();
 
     let expected_all_hunks = vec![
-        (
-            "bbbb\n".to_string(),
-            DiffHunkStatus::Removed,
-            DisplayRow(3)..DisplayRow(3),
-        ),
-        (
-            "nnnn\n".to_string(),
-            DiffHunkStatus::Modified,
-            DisplayRow(16)..DisplayRow(17),
-        ),
-        (
-            "".to_string(),
-            DiffHunkStatus::Added,
-            DisplayRow(31)..DisplayRow(32),
-        ),
-    ];
-    let expected_all_hunks_shifted = vec![
         (
             "bbbb\n".to_string(),
             DiffHunkStatus::Removed,
@@ -10380,12 +10392,29 @@ async fn test_toggle_diff_expand_in_multi_buffer(cx: &mut gpui::TestAppContext) 
         (
             "nnnn\n".to_string(),
             DiffHunkStatus::Modified,
-            DisplayRow(18)..DisplayRow(19),
+            DisplayRow(21)..DisplayRow(22),
         ),
         (
             "".to_string(),
             DiffHunkStatus::Added,
-            DisplayRow(33)..DisplayRow(34),
+            DisplayRow(41)..DisplayRow(42),
+        ),
+    ];
+    let expected_all_hunks_shifted = vec![
+        (
+            "bbbb\n".to_string(),
+            DiffHunkStatus::Removed,
+            DisplayRow(5)..DisplayRow(5),
+        ),
+        (
+            "nnnn\n".to_string(),
+            DiffHunkStatus::Modified,
+            DisplayRow(23)..DisplayRow(24),
+        ),
+        (
+            "".to_string(),
+            DiffHunkStatus::Added,
+            DisplayRow(43)..DisplayRow(44),
         ),
     ];
 
@@ -10410,8 +10439,8 @@ async fn test_toggle_diff_expand_in_multi_buffer(cx: &mut gpui::TestAppContext) 
         assert_eq!(
             expanded_hunks_background_highlights(editor, cx),
             vec![
-                DisplayRow(18)..=DisplayRow(18),
-                DisplayRow(33)..=DisplayRow(33)
+                DisplayRow(23)..=DisplayRow(23),
+                DisplayRow(43)..=DisplayRow(43)
             ],
         );
         assert_eq!(all_hunks, expected_all_hunks_shifted);
@@ -10442,8 +10471,8 @@ async fn test_toggle_diff_expand_in_multi_buffer(cx: &mut gpui::TestAppContext) 
         assert_eq!(
             expanded_hunks_background_highlights(editor, cx),
             vec![
-                DisplayRow(18)..=DisplayRow(18),
-                DisplayRow(33)..=DisplayRow(33)
+                DisplayRow(23)..=DisplayRow(23),
+                DisplayRow(43)..=DisplayRow(43)
             ],
         );
         assert_eq!(all_hunks, expected_all_hunks_shifted);
@@ -11448,6 +11477,532 @@ async fn test_multiple_expanded_hunks_merge(
     );
 }
 
+async fn setup_indent_guides_editor(
+    text: &str,
+    cx: &mut gpui::TestAppContext,
+) -> (BufferId, EditorTestContext) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorTestContext::new(cx).await;
+
+    let buffer_id = cx.update_editor(|editor, cx| {
+        editor.set_text(text, cx);
+        let buffer_ids = editor.buffer().read(cx).excerpt_buffer_ids();
+        let buffer_id = buffer_ids[0];
+        buffer_id
+    });
+
+    (buffer_id, cx)
+}
+
+fn assert_indent_guides(
+    range: Range<u32>,
+    expected: Vec<IndentGuide>,
+    active_indices: Option<Vec<usize>>,
+    cx: &mut EditorTestContext,
+) {
+    let indent_guides = cx.update_editor(|editor, cx| {
+        let snapshot = editor.snapshot(cx).display_snapshot;
+        let mut indent_guides: Vec<_> = crate::indent_guides::indent_guides_in_range(
+            MultiBufferRow(range.start)..MultiBufferRow(range.end),
+            &snapshot,
+            cx,
+        );
+
+        indent_guides.sort_by(|a, b| {
+            a.depth.cmp(&b.depth).then(
+                a.start_row
+                    .cmp(&b.start_row)
+                    .then(a.end_row.cmp(&b.end_row)),
+            )
+        });
+        indent_guides
+    });
+
+    if let Some(expected) = active_indices {
+        let active_indices = cx.update_editor(|editor, cx| {
+            let snapshot = editor.snapshot(cx).display_snapshot;
+            editor.find_active_indent_guide_indices(&indent_guides, &snapshot, cx)
+        });
+
+        assert_eq!(
+            active_indices.unwrap().into_iter().collect::<Vec<_>>(),
+            expected,
+            "Active indent guide indices do not match"
+        );
+    }
+
+    let expected: Vec<_> = expected
+        .into_iter()
+        .map(|guide| MultiBufferIndentGuide {
+            multibuffer_row_range: MultiBufferRow(guide.start_row)..MultiBufferRow(guide.end_row),
+            buffer: guide,
+        })
+        .collect();
+
+    assert_eq!(indent_guides, expected, "Indent guides do not match");
+}
+
+#[gpui::test]
+async fn test_indent_guide_single_line(cx: &mut gpui::TestAppContext) {
+    let (buffer_id, mut cx) = setup_indent_guides_editor(
+        &"
+    fn main() {
+        let a = 1;
+    }"
+        .unindent(),
+        cx,
+    )
+    .await;
+
+    assert_indent_guides(
+        0..3,
+        vec![IndentGuide::new(buffer_id, 1, 1, 0, 4)],
+        None,
+        &mut cx,
+    );
+}
+
+#[gpui::test]
+async fn test_indent_guide_simple_block(cx: &mut gpui::TestAppContext) {
+    let (buffer_id, mut cx) = setup_indent_guides_editor(
+        &"
+    fn main() {
+        let a = 1;
+        let b = 2;
+    }"
+        .unindent(),
+        cx,
+    )
+    .await;
+
+    assert_indent_guides(
+        0..4,
+        vec![IndentGuide::new(buffer_id, 1, 2, 0, 4)],
+        None,
+        &mut cx,
+    );
+}
+
+#[gpui::test]
+async fn test_indent_guide_nested(cx: &mut gpui::TestAppContext) {
+    let (buffer_id, mut cx) = setup_indent_guides_editor(
+        &"
+    fn main() {
+        let a = 1;
+        if a == 3 {
+            let b = 2;
+        } else {
+            let c = 3;
+        }
+    }"
+        .unindent(),
+        cx,
+    )
+    .await;
+
+    assert_indent_guides(
+        0..8,
+        vec![
+            IndentGuide::new(buffer_id, 1, 6, 0, 4),
+            IndentGuide::new(buffer_id, 3, 3, 1, 4),
+            IndentGuide::new(buffer_id, 5, 5, 1, 4),
+        ],
+        None,
+        &mut cx,
+    );
+}
+
+#[gpui::test]
+async fn test_indent_guide_tab(cx: &mut gpui::TestAppContext) {
+    let (buffer_id, mut cx) = setup_indent_guides_editor(
+        &"
+    fn main() {
+        let a = 1;
+            let b = 2;
+        let c = 3;
+    }"
+        .unindent(),
+        cx,
+    )
+    .await;
+
+    assert_indent_guides(
+        0..5,
+        vec![
+            IndentGuide::new(buffer_id, 1, 3, 0, 4),
+            IndentGuide::new(buffer_id, 2, 2, 1, 4),
+        ],
+        None,
+        &mut cx,
+    );
+}
+
+#[gpui::test]
+async fn test_indent_guide_continues_on_empty_line(cx: &mut gpui::TestAppContext) {
+    let (buffer_id, mut cx) = setup_indent_guides_editor(
+        &"
+        fn main() {
+            let a = 1;
+
+            let c = 3;
+        }"
+        .unindent(),
+        cx,
+    )
+    .await;
+
+    assert_indent_guides(
+        0..5,
+        vec![IndentGuide::new(buffer_id, 1, 3, 0, 4)],
+        None,
+        &mut cx,
+    );
+}
+
+#[gpui::test]
+async fn test_indent_guide_complex(cx: &mut gpui::TestAppContext) {
+    let (buffer_id, mut cx) = setup_indent_guides_editor(
+        &"
+        fn main() {
+            let a = 1;
+
+            let c = 3;
+
+            if a == 3 {
+                let b = 2;
+            } else {
+                let c = 3;
+            }
+        }"
+        .unindent(),
+        cx,
+    )
+    .await;
+
+    assert_indent_guides(
+        0..11,
+        vec![
+            IndentGuide::new(buffer_id, 1, 9, 0, 4),
+            IndentGuide::new(buffer_id, 6, 6, 1, 4),
+            IndentGuide::new(buffer_id, 8, 8, 1, 4),
+        ],
+        None,
+        &mut cx,
+    );
+}
+
+#[gpui::test]
+async fn test_indent_guide_starts_off_screen(cx: &mut gpui::TestAppContext) {
+    let (buffer_id, mut cx) = setup_indent_guides_editor(
+        &"
+        fn main() {
+            let a = 1;
+
+            let c = 3;
+
+            if a == 3 {
+                let b = 2;
+            } else {
+                let c = 3;
+            }
+        }"
+        .unindent(),
+        cx,
+    )
+    .await;
+
+    assert_indent_guides(
+        1..11,
+        vec![
+            IndentGuide::new(buffer_id, 1, 9, 0, 4),
+            IndentGuide::new(buffer_id, 6, 6, 1, 4),
+            IndentGuide::new(buffer_id, 8, 8, 1, 4),
+        ],
+        None,
+        &mut cx,
+    );
+}
+
+#[gpui::test]
+async fn test_indent_guide_ends_off_screen(cx: &mut gpui::TestAppContext) {
+    let (buffer_id, mut cx) = setup_indent_guides_editor(
+        &"
+        fn main() {
+            let a = 1;
+
+            let c = 3;
+
+            if a == 3 {
+                let b = 2;
+            } else {
+                let c = 3;
+            }
+        }"
+        .unindent(),
+        cx,
+    )
+    .await;
+
+    assert_indent_guides(
+        1..10,
+        vec![
+            IndentGuide::new(buffer_id, 1, 9, 0, 4),
+            IndentGuide::new(buffer_id, 6, 6, 1, 4),
+            IndentGuide::new(buffer_id, 8, 8, 1, 4),
+        ],
+        None,
+        &mut cx,
+    );
+}
+
+#[gpui::test]
+async fn test_indent_guide_without_brackets(cx: &mut gpui::TestAppContext) {
+    let (buffer_id, mut cx) = setup_indent_guides_editor(
+        &"
+        block1
+            block2
+                block3
+                    block4
+            block2
+        block1
+        block1"
+            .unindent(),
+        cx,
+    )
+    .await;
+
+    assert_indent_guides(
+        1..10,
+        vec![
+            IndentGuide::new(buffer_id, 1, 4, 0, 4),
+            IndentGuide::new(buffer_id, 2, 3, 1, 4),
+            IndentGuide::new(buffer_id, 3, 3, 2, 4),
+        ],
+        None,
+        &mut cx,
+    );
+}
+
+#[gpui::test]
+async fn test_indent_guide_ends_before_empty_line(cx: &mut gpui::TestAppContext) {
+    let (buffer_id, mut cx) = setup_indent_guides_editor(
+        &"
+        block1
+            block2
+                block3
+
+        block1
+        block1"
+            .unindent(),
+        cx,
+    )
+    .await;
+
+    assert_indent_guides(
+        0..6,
+        vec![
+            IndentGuide::new(buffer_id, 1, 2, 0, 4),
+            IndentGuide::new(buffer_id, 2, 2, 1, 4),
+        ],
+        None,
+        &mut cx,
+    );
+}
+
+#[gpui::test]
+async fn test_indent_guide_continuing_off_screen(cx: &mut gpui::TestAppContext) {
+    let (buffer_id, mut cx) = setup_indent_guides_editor(
+        &"
+        block1
+
+
+
+            block2
+        "
+        .unindent(),
+        cx,
+    )
+    .await;
+
+    assert_indent_guides(
+        0..1,
+        vec![IndentGuide::new(buffer_id, 1, 1, 0, 4)],
+        None,
+        &mut cx,
+    );
+}
+
+#[gpui::test]
+async fn test_indent_guide_tabs(cx: &mut gpui::TestAppContext) {
+    let (buffer_id, mut cx) = setup_indent_guides_editor(
+        &"
+        def a:
+        \tb = 3
+        \tif True:
+        \t\tc = 4
+        \t\td = 5
+        \tprint(b)
+        "
+        .unindent(),
+        cx,
+    )
+    .await;
+
+    assert_indent_guides(
+        0..6,
+        vec![
+            IndentGuide::new(buffer_id, 1, 6, 0, 4),
+            IndentGuide::new(buffer_id, 3, 4, 1, 4),
+        ],
+        None,
+        &mut cx,
+    );
+}
+
+#[gpui::test]
+async fn test_active_indent_guide_single_line(cx: &mut gpui::TestAppContext) {
+    let (buffer_id, mut cx) = setup_indent_guides_editor(
+        &"
+    fn main() {
+        let a = 1;
+    }"
+        .unindent(),
+        cx,
+    )
+    .await;
+
+    cx.update_editor(|editor, cx| {
+        editor.change_selections(None, cx, |s| {
+            s.select_ranges([Point::new(1, 0)..Point::new(1, 0)])
+        });
+    });
+
+    assert_indent_guides(
+        0..3,
+        vec![IndentGuide::new(buffer_id, 1, 1, 0, 4)],
+        Some(vec![0]),
+        &mut cx,
+    );
+}
+
+#[gpui::test]
+async fn test_active_indent_guide_respect_indented_range(cx: &mut gpui::TestAppContext) {
+    let (buffer_id, mut cx) = setup_indent_guides_editor(
+        &"
+    fn main() {
+        if 1 == 2 {
+            let a = 1;
+        }
+    }"
+        .unindent(),
+        cx,
+    )
+    .await;
+
+    cx.update_editor(|editor, cx| {
+        editor.change_selections(None, cx, |s| {
+            s.select_ranges([Point::new(1, 0)..Point::new(1, 0)])
+        });
+    });
+
+    assert_indent_guides(
+        0..4,
+        vec![
+            IndentGuide::new(buffer_id, 1, 3, 0, 4),
+            IndentGuide::new(buffer_id, 2, 2, 1, 4),
+        ],
+        Some(vec![1]),
+        &mut cx,
+    );
+
+    cx.update_editor(|editor, cx| {
+        editor.change_selections(None, cx, |s| {
+            s.select_ranges([Point::new(2, 0)..Point::new(2, 0)])
+        });
+    });
+
+    assert_indent_guides(
+        0..4,
+        vec![
+            IndentGuide::new(buffer_id, 1, 3, 0, 4),
+            IndentGuide::new(buffer_id, 2, 2, 1, 4),
+        ],
+        Some(vec![1]),
+        &mut cx,
+    );
+
+    cx.update_editor(|editor, cx| {
+        editor.change_selections(None, cx, |s| {
+            s.select_ranges([Point::new(3, 0)..Point::new(3, 0)])
+        });
+    });
+
+    assert_indent_guides(
+        0..4,
+        vec![
+            IndentGuide::new(buffer_id, 1, 3, 0, 4),
+            IndentGuide::new(buffer_id, 2, 2, 1, 4),
+        ],
+        Some(vec![0]),
+        &mut cx,
+    );
+}
+
+#[gpui::test]
+async fn test_active_indent_guide_empty_line(cx: &mut gpui::TestAppContext) {
+    let (buffer_id, mut cx) = setup_indent_guides_editor(
+        &"
+    fn main() {
+        let a = 1;
+
+        let b = 2;
+    }"
+        .unindent(),
+        cx,
+    )
+    .await;
+
+    cx.update_editor(|editor, cx| {
+        editor.change_selections(None, cx, |s| {
+            s.select_ranges([Point::new(2, 0)..Point::new(2, 0)])
+        });
+    });
+
+    assert_indent_guides(
+        0..5,
+        vec![IndentGuide::new(buffer_id, 1, 3, 0, 4)],
+        Some(vec![0]),
+        &mut cx,
+    );
+}
+
+#[gpui::test]
+async fn test_active_indent_guide_non_matching_indent(cx: &mut gpui::TestAppContext) {
+    let (buffer_id, mut cx) = setup_indent_guides_editor(
+        &"
+    def m:
+        a = 1
+        pass"
+            .unindent(),
+        cx,
+    )
+    .await;
+
+    cx.update_editor(|editor, cx| {
+        editor.change_selections(None, cx, |s| {
+            s.select_ranges([Point::new(1, 0)..Point::new(1, 0)])
+        });
+    });
+
+    assert_indent_guides(
+        0..3,
+        vec![IndentGuide::new(buffer_id, 1, 2, 0, 4)],
+        Some(vec![0]),
+        &mut cx,
+    );
+}
+
 #[gpui::test]
 fn test_flap_insertion_and_rendering(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
@@ -11472,6 +12027,7 @@ fn test_flap_insertion_and_rendering(cx: &mut TestAppContext) {
 
             let flap = Flap::new(
                 range,
+                FoldPlaceholder::test(),
                 {
                     let toggle_callback = render_args.clone();
                     move |row, folded, callback, _cx| {
