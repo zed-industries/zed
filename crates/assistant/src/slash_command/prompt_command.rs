@@ -83,7 +83,7 @@ impl SlashCommand for PromptSlashCommand {
                     .find(|(t, _)| t == &title)
                     .with_context(|| format!("no prompt found with title {:?}", title))?
                     .1;
-                anyhow::Ok(prompt.1.content().to_owned())
+                anyhow::Ok(prompt.1.body())
             }
         });
         cx.foreground_executor().spawn(async move {
@@ -92,8 +92,11 @@ impl SlashCommand for PromptSlashCommand {
                 text: prompt,
                 render_placeholder: Arc::new(move |id, unfold, _cx| {
                     h_flex()
+                        .id(id)
+                        .gap_1()
                         .child(Icon::new(IconName::Library))
                         .child(title.clone())
+                        .on_click(move |_, cx| unfold(cx))
                         .into_any()
                 }),
             })
