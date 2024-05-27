@@ -979,9 +979,7 @@ impl ProjectPanel {
                             if truncated_path_counts == 1 {
                                 paths.push(".. 1 file not shown".into());
                             } else {
-                                paths.push(
-                                    format!(".. {} files not shown", truncated_path_counts).into(),
-                                );
+                                paths.push(format!(".. {} files not shown", truncated_path_counts));
                             }
                             paths
                         } else {
@@ -2840,7 +2838,7 @@ mod tests {
                 assert_eq!(file_name_selection.end, "a-different-filename.tar".len(), "Should not select file extension, but still may select anything up to the last dot..");
 
             });
-            panel.cancel(&Cancel, cx)
+            panel.cancel(&menu::Cancel, cx)
         });
 
         panel.update(cx, |panel, cx| panel.new_directory(&NewDirectory, cx));
