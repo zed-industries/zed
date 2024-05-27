@@ -11014,7 +11014,7 @@ async fn search_ignored_entry(
                 }
             } else if !fs_metadata.is_symlink {
                 if !query.file_matches(Some(&ignored_abs_path))
-                    || snapshot.is_path_excluded(ignored_entry.path.to_path_buf())
+                    || snapshot.is_path_excluded(&ignored_entry.path)
                 {
                     continue;
                 }

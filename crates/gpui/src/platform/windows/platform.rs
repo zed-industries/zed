@@ -435,7 +435,7 @@ impl Platform for WindowsPlatform {
                 if path.is_empty() {
                     return;
                 }
-                open_target(path);
+                open_target_in_explorer(path);
             })
             .detach();
     }
@@ -730,6 +730,25 @@ fn open_target(target: &str) {
         );
         if ret.0 <= 32 {
             log::error!("Unable to open target: {}", std::io::Error::last_os_error());
+        }
+    }
+}
+
+fn open_target_in_explorer(target: &str) {
+    unsafe {
+        let ret = ShellExecuteW(
+            None,
+            windows::core::w!("open"),
+            windows::core::w!("explorer.exe"),
+            &HSTRING::from(format!("/select,{}", target).as_str()),
+            None,
+            SW_SHOWDEFAULT,
+        );
+        if ret.0 <= 32 {
+            log::error!(
+                "Unable to open target in explorer: {}",
+                std::io::Error::last_os_error()
+            );
         }
     }
 }

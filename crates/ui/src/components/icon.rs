@@ -77,9 +77,11 @@ pub enum IconName {
     Ai,
     ArrowCircle,
     ArrowDown,
+    ArrowDownFromLine,
     ArrowLeft,
     ArrowRight,
     ArrowUp,
+    ArrowUpFromLine,
     ArrowUpRight,
     AtSign,
     AudioOff,
@@ -193,6 +195,7 @@ impl IconName {
             IconName::Ai => "icons/ai.svg",
             IconName::ArrowCircle => "icons/arrow_circle.svg",
             IconName::ArrowDown => "icons/arrow_down.svg",
+            IconName::ArrowDownFromLine => "icons/arrow_down_from_line.svg",
             IconName::ArrowLeft => "icons/arrow_left.svg",
             IconName::ArrowRight => "icons/arrow_right.svg",
             IconName::ArrowUp => "icons/arrow_up.svg",
@@ -301,6 +304,7 @@ impl IconName {
             IconName::XCircle => "icons/error.svg",
             IconName::ZedAssistant => "icons/zed_assistant.svg",
             IconName::ZedXCopilot => "icons/zed_x_copilot.svg",
+            IconName::ArrowUpFromLine => "icons/arrow_up_from_line.svg",
         }
     }
 }

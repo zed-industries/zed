@@ -314,7 +314,7 @@ fn handle_keydown_msg(
     lparam: LPARAM,
     state_ptr: Rc<WindowsWindowStatePtr>,
 ) -> Option<isize> {
-    let Some(keystroke) = parse_keydown_msg_keystroke(wparam) else {
+    let Some(keystroke_or_modifier) = parse_keydown_msg_keystroke(wparam) else {
         return Some(1);
     };
     let mut lock = state_ptr.state.borrow_mut();
@@ -322,11 +322,18 @@ fn handle_keydown_msg(
         return Some(1);
     };
     drop(lock);
-    let event = KeyDownEvent {
-        keystroke,
-        is_held: lparam.0 & (0x1 << 30) > 0,
+
+    let event = match keystroke_or_modifier {
+        KeystrokeOrModifier::Keystroke(keystroke) => PlatformInput::KeyDown(KeyDownEvent {
+            keystroke,
+            is_held: lparam.0 & (0x1 << 30) > 0,
+        }),
+        KeystrokeOrModifier::Modifier(modifiers) => {
+            PlatformInput::ModifiersChanged(ModifiersChangedEvent { modifiers })
+        }
     };
-    let result = if func(PlatformInput::KeyDown(event)).default_prevented {
+
+    let result = if func(event).default_prevented {
         Some(0)
     } else {
         Some(1)
@@ -337,7 +344,7 @@ fn handle_keydown_msg(
 }
 
 fn handle_keyup_msg(wparam: WPARAM, state_ptr: Rc<WindowsWindowStatePtr>) -> Option<isize> {
-    let Some(keystroke) = parse_keydown_msg_keystroke(wparam) else {
+    let Some(keystroke_or_modifier) = parse_keydown_msg_keystroke(wparam) else {
         return Some(1);
     };
     let mut lock = state_ptr.state.borrow_mut();
@@ -345,8 +352,15 @@ fn handle_keyup_msg(wparam: WPARAM, state_ptr: Rc<WindowsWindowStatePtr>) -> Opt
         return Some(1);
     };
     drop(lock);
-    let event = KeyUpEvent { keystroke };
-    let result = if func(PlatformInput::KeyUp(event)).default_prevented {
+
+    let event = match keystroke_or_modifier {
+        KeystrokeOrModifier::Keystroke(keystroke) => PlatformInput::KeyUp(KeyUpEvent { keystroke }),
+        KeystrokeOrModifier::Modifier(modifiers) => {
+            PlatformInput::ModifiersChanged(ModifiersChangedEvent { modifiers })
+        }
+    };
+
+    let result = if func(event).default_prevented {
         Some(0)
     } else {
         Some(1)
@@ -1065,24 +1079,34 @@ fn parse_syskeydown_msg_keystroke(wparam: WPARAM) -> Option<Keystroke> {
     }
 }
 
-fn parse_keydown_msg_keystroke(wparam: WPARAM) -> Option<Keystroke> {
+enum KeystrokeOrModifier {
+    Keystroke(Keystroke),
+    Modifier(Modifiers),
+}
+
+fn parse_keydown_msg_keystroke(wparam: WPARAM) -> Option<KeystrokeOrModifier> {
     let vk_code = wparam.loword();
 
     let modifiers = current_modifiers();
+
+    if is_modifier(VIRTUAL_KEY(vk_code)) {
+        return Some(KeystrokeOrModifier::Modifier(modifiers));
+    }
+
     if modifiers.control || modifiers.alt {
         let basic_key = basic_vkcode_to_string(vk_code, modifiers);
-        if basic_key.is_some() {
-            return basic_key;
+        if let Some(basic_key) = basic_key {
+            return Some(KeystrokeOrModifier::Keystroke(basic_key));
         }
     }
 
     if vk_code >= VK_F1.0 && vk_code <= VK_F24.0 {
         let offset = vk_code - VK_F1.0;
-        return Some(Keystroke {
+        return Some(KeystrokeOrModifier::Keystroke(Keystroke {
             modifiers,
             key: format!("f{}", offset + 1),
             ime_key: None,
-        });
+        }));
     }
 
     let key = match VIRTUAL_KEY(vk_code) {
@@ -1104,11 +1128,11 @@ fn parse_keydown_msg_keystroke(wparam: WPARAM) -> Option<Keystroke> {
     };
 
     if let Some(key) = key {
-        Some(Keystroke {
+        Some(KeystrokeOrModifier::Keystroke(Keystroke {
             modifiers,
             key: key.to_string(),
             ime_key: None,
-        })
+        }))
     } else {
         None
     }
@@ -1257,6 +1281,13 @@ fn oemkey_vkcode_to_string(code: u16) -> Option<String> {
 #[inline]
 fn is_virtual_key_pressed(vkey: VIRTUAL_KEY) -> bool {
     unsafe { GetKeyState(vkey.0 as i32) < 0 }
+}
+
+fn is_modifier(virtual_key: VIRTUAL_KEY) -> bool {
+    matches!(
+        virtual_key,
+        VK_CONTROL | VK_MENU | VK_SHIFT | VK_LWIN | VK_RWIN
+    )
 }
 
 #[inline]

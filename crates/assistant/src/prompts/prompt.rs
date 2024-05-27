@@ -19,7 +19,7 @@ pub struct StaticPromptFrontmatter {
 impl Default for StaticPromptFrontmatter {
     fn default() -> Self {
         Self {
-            title: "New Prompt".to_string(),
+            title: "Untitled Prompt".to_string(),
             version: "1.0".to_string(),
             author: "No Author".to_string(),
             languages: vec!["*".to_string()],
@@ -28,37 +28,7 @@ impl Default for StaticPromptFrontmatter {
     }
 }
 
-impl StaticPromptFrontmatter {
-    pub fn title(&self) -> SharedString {
-        self.title.clone().into()
-    }
-
-    // pub fn version(&self) -> SharedString {
-    //     self.version.clone().into()
-    // }
-
-    // pub fn author(&self) -> SharedString {
-    //     self.author.clone().into()
-    // }
-
-    // pub fn languages(&self) -> Vec<SharedString> {
-    //     self.languages
-    //         .clone()
-    //         .into_iter()
-    //         .map(|s| s.into())
-    //         .collect()
-    // }
-
-    // pub fn dependencies(&self) -> Vec<SharedString> {
-    //     self.dependencies
-    //         .clone()
-    //         .into_iter()
-    //         .map(|s| s.into())
-    //         .collect()
-    // }
-}
-
-/// A statuc prompt that can be loaded into the prompt library
+/// A static prompt that can be loaded into the prompt library
 /// from Markdown with a frontmatter header
 ///
 /// Examples:
@@ -92,95 +62,69 @@ impl StaticPromptFrontmatter {
 /// ```
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub struct StaticPrompt {
+    #[serde(skip)]
+    metadata: StaticPromptFrontmatter,
     content: String,
     file_name: Option<String>,
 }
 
 impl StaticPrompt {
-    pub fn new(content: String) -> Self {
+    pub fn new(content: String, file_name: Option<String>) -> Self {
+        let matter = Matter::<YAML>::new();
+        let result = matter.parse(&content);
+
+        let metadata = result
+            .data
+            .map_or_else(
+                || Err(anyhow::anyhow!("Failed to parse frontmatter")),
+                |data| {
+                    let front_matter: StaticPromptFrontmatter = data.deserialize()?;
+                    Ok(front_matter)
+                },
+            )
+            .unwrap_or_else(|e| {
+                if let Some(file_name) = &file_name {
+                    log::error!("Failed to parse frontmatter for {}: {}", file_name, e);
+                } else {
+                    log::error!("Failed to parse frontmatter: {}", e);
+                }
+                StaticPromptFrontmatter::default()
+            });
+
         StaticPrompt {
             content,
-            file_name: None,
+            file_name,
+            metadata,
         }
     }
-
-    pub fn title(&self) -> Option<SharedString> {
-        self.metadata().map(|m| m.title())
-    }
-
-    // pub fn version(&self) -> Option<SharedString> {
-    //     self.metadata().map(|m| m.version())
-    // }
-
-    // pub fn author(&self) -> Option<SharedString> {
-    //     self.metadata().map(|m| m.author())
-    // }
-
-    // pub fn languages(&self) -> Vec<SharedString> {
-    //     self.metadata().map(|m| m.languages()).unwrap_or_default()
-    // }
-
-    // pub fn dependencies(&self) -> Vec<SharedString> {
-    //     self.metadata()
-    //         .map(|m| m.dependencies())
-    //         .unwrap_or_default()
-    // }
-
-    // pub fn load(fs: Arc<Fs>, file_name: String) -> anyhow::Result<Self> {
-    //     todo!()
-    // }
-
-    // pub fn save(&self, fs: Arc<Fs>) -> anyhow::Result<()> {
-    //     todo!()
-    // }
-
-    // pub fn rename(&self, new_file_name: String, fs: Arc<Fs>) -> anyhow::Result<()> {
-    //     todo!()
-    // }
 }
 
 impl StaticPrompt {
-    // pub fn update(&mut self, contents: String) -> &mut Self {
-    //     self.content = contents;
-    //     self
-    // }
-
     /// Sets the file name of the prompt
-    pub fn file_name(&mut self, file_name: String) -> &mut Self {
+    pub fn _file_name(&mut self, file_name: String) -> &mut Self {
         self.file_name = Some(file_name);
         self
     }
-
-    /// Sets the file name of the prompt based on the title
-    // pub fn file_name_from_title(&mut self) -> &mut Self {
-    //     if let Some(title) = self.title() {
-    //         let file_name = title.to_lowercase().replace(" ", "_");
-    //         if !file_name.is_empty() {
-    //             self.file_name = Some(file_name);
-    //         }
-    //     }
-    //     self
-    // }
 
     /// Returns the prompt's content
     pub fn content(&self) -> &String {
         &self.content
     }
-    fn parse(&self) -> anyhow::Result<(StaticPromptFrontmatter, String)> {
-        let matter = Matter::<YAML>::new();
-        let result = matter.parse(self.content.as_str());
-        match result.data {
-            Some(data) => {
-                let front_matter: StaticPromptFrontmatter = data.deserialize()?;
-                let body = result.content;
-                Ok((front_matter, body))
-            }
-            None => Err(anyhow::anyhow!("Failed to parse frontmatter")),
-        }
+
+    /// Returns the prompt's metadata
+    pub fn _metadata(&self) -> &StaticPromptFrontmatter {
+        &self.metadata
     }
 
-    pub fn metadata(&self) -> Option<StaticPromptFrontmatter> {
-        self.parse().ok().map(|(front_matter, _)| front_matter)
+    /// Returns the prompt's title
+    pub fn title(&self) -> SharedString {
+        self.metadata.title.clone().into()
+    }
+
+    pub fn body(&self) -> String {
+        let matter = Matter::<YAML>::new();
+        let result = matter.parse(self.content.as_str());
+        result.content.clone()
     }
 }
 

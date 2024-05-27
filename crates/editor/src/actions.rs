@@ -114,12 +114,26 @@ pub struct ExpandExcerpts {
     pub(super) lines: u32,
 }
 
+#[derive(PartialEq, Clone, Deserialize, Default)]
+pub struct ExpandExcerptsUp {
+    #[serde(default)]
+    pub(super) lines: u32,
+}
+
+#[derive(PartialEq, Clone, Deserialize, Default)]
+pub struct ExpandExcerptsDown {
+    #[serde(default)]
+    pub(super) lines: u32,
+}
+
 impl_actions!(
     editor,
     [
         ConfirmCodeAction,
         ConfirmCompletion,
         ExpandExcerpts,
+        ExpandExcerptsUp,
+        ExpandExcerptsDown,
         FoldAt,
         MoveDownByLines,
         MovePageDown,
