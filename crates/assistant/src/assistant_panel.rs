@@ -9,7 +9,7 @@ use crate::{
     search::*,
     slash_command::{
         current_file_command, file_command, prompt_command, SlashCommandCompletionProvider,
-        SlashCommandRegistry,
+        SlashCommandLine, SlashCommandRegistry,
     },
     ApplyEdit, Assist, CompletionProvider, CycleMessageRole, InlineAssist, LanguageModel,
     LanguageModelRequest, LanguageModelRequestMessage, MessageId, MessageMetadata, MessageStatus,
@@ -20,7 +20,6 @@ use anyhow::{anyhow, Result};
 use assistant_slash_command::RenderFoldPlaceholder;
 use client::telemetry::Telemetry;
 use collections::{hash_map, HashMap, HashSet, VecDeque};
-use editor::FoldPlaceholder;
 use editor::{
     actions::{FoldAt, MoveDown, MoveUp},
     display_map::{
@@ -30,12 +29,13 @@ use editor::{
     Anchor, Editor, EditorElement, EditorEvent, EditorStyle, MultiBufferSnapshot, RowExt,
     ToOffset as _, ToPoint,
 };
+use editor::{display_map::FlapId, FoldPlaceholder};
 use file_icons::FileIcons;
 use fs::Fs;
 use futures::StreamExt;
 use gpui::{
     canvas, div, point, relative, rems, uniform_list, Action, AnyElement, AnyView, AppContext,
-    AsyncAppContext, AsyncWindowContext, AvailableSpace, ClipboardItem, Context, Entity,
+    AsyncAppContext, AsyncWindowContext, AvailableSpace, ClipboardItem, Context, Empty, Entity,
     EventEmitter, FocusHandle, FocusableView, FontStyle, FontWeight, HighlightStyle,
     InteractiveElement, IntoElement, Model, ModelContext, ParentElement, Pixels, Render,
     SharedString, StatefulInteractiveElement, Styled, Subscription, Task, TextStyle,
@@ -1456,7 +1456,11 @@ enum ConversationEvent {
     SummaryChanged,
     EditSuggestionsChanged,
     StreamedCompletion,
-    SlashCommandUpdated {
+    PendingSlashCommandsUpdated {
+        removed: Vec<Range<language::Anchor>>,
+        updated: Vec<PendingSlashCommand>,
+    },
+    SlashCommandFinished {
         output_range: Range<language::Anchor>,
         render_placeholder: RenderFoldPlaceholder,
     },
@@ -1489,6 +1493,7 @@ pub struct Conversation {
     pub(crate) ambient_context: AmbientContext,
     edit_suggestions: Vec<EditSuggestion>,
     pending_slash_commands: Vec<PendingSlashCommand>,
+    edits_since_last_slash_command_parse: language::Subscription,
     message_anchors: Vec<MessageAnchor>,
     messages_metadata: HashMap<MessageId, MessageMetadata>,
     next_message_id: MessageId,
@@ -1527,7 +1532,8 @@ impl Conversation {
             buffer.set_language_registry(language_registry.clone());
             buffer
         });
-
+        let edits_since_last_slash_command_parse =
+            buffer.update(cx, |buffer, _| buffer.subscribe());
         let mut this = Self {
             id: Some(Uuid::new_v4().to_string()),
             message_anchors: Default::default(),
@@ -1536,6 +1542,7 @@ impl Conversation {
             ambient_context: AmbientContext::default(),
             edit_suggestions: Vec::new(),
             pending_slash_commands: Vec::new(),
+            edits_since_last_slash_command_parse,
             summary: None,
             pending_summary: Task::ready(None),
             completion_count: Default::default(),
@@ -1638,6 +1645,8 @@ impl Conversation {
         })?;
 
         cx.new_model(move |cx| {
+            let edits_since_last_slash_command_parse =
+                buffer.update(cx, |buffer, _| buffer.subscribe());
             let mut this = Self {
                 id,
                 message_anchors,
@@ -1646,6 +1655,7 @@ impl Conversation {
                 ambient_context: AmbientContext::default(),
                 edit_suggestions: Vec::new(),
                 pending_slash_commands: Vec::new(),
+                edits_since_last_slash_command_parse,
                 summary: Some(Summary {
                     text: saved_conversation.summary,
                     done: true,
@@ -1750,7 +1760,7 @@ impl Conversation {
         if *event == language::Event::Edited {
             self.count_remaining_tokens(cx);
             self.reparse_edit_suggestions(cx);
-            // self.invalidate_command_invocations(cx);
+            self.reparse_slash_commands(cx);
             cx.emit(ConversationEvent::MessagesEdited);
         }
     }
@@ -1775,6 +1785,93 @@ impl Conversation {
             }
             .log_err()
         });
+    }
+
+    fn reparse_slash_commands(&mut self, cx: &mut ModelContext<Self>) {
+        let buffer = self.buffer.read(cx);
+        let mut row_ranges = self
+            .edits_since_last_slash_command_parse
+            .consume()
+            .into_iter()
+            .map(|edit| {
+                let start_row = buffer.offset_to_point(edit.new.start).row;
+                let end_row = buffer.offset_to_point(edit.new.end).row + 1;
+                start_row..end_row
+            })
+            .peekable();
+
+        let mut removed = Vec::new();
+        let mut updated = Vec::new();
+        while let Some(mut row_range) = row_ranges.next() {
+            while let Some(next_row_range) = row_ranges.peek() {
+                if row_range.end >= next_row_range.start {
+                    row_range.end = next_row_range.end;
+                    row_ranges.next();
+                } else {
+                    break;
+                }
+            }
+
+            let start = buffer.anchor_before(Point::new(row_range.start, 0));
+            let end = buffer.anchor_after(Point::new(
+                row_range.end - 1,
+                buffer.line_len(row_range.end - 1),
+            ));
+
+            let start_ix = match self
+                .pending_slash_commands
+                .binary_search_by(|probe| probe.source_range.start.cmp(&start, buffer))
+            {
+                Ok(ix) | Err(ix) => ix,
+            };
+            let end_ix = match self.pending_slash_commands[start_ix..]
+                .binary_search_by(|probe| probe.source_range.end.cmp(&end, buffer))
+            {
+                Ok(ix) => start_ix + ix + 1,
+                Err(ix) => start_ix + ix,
+            };
+
+            let mut new_commands = Vec::new();
+            let mut lines = buffer.text_for_range(start..end).lines();
+            let mut offset = lines.offset();
+            while let Some(line) = lines.next() {
+                if let Some(command_line) = SlashCommandLine::parse(line) {
+                    let name = &line[command_line.name.clone()];
+                    let argument = command_line.argument.as_ref().and_then(|argument| {
+                        (!argument.is_empty()).then_some(&line[argument.clone()])
+                    });
+                    if let Some(command) = self.slash_command_registry.command(name) {
+                        if !command.requires_argument() || argument.is_some() {
+                            let start_ix = offset + command_line.name.start - 1;
+                            let end_ix = offset
+                                + command_line
+                                    .argument
+                                    .map_or(command_line.name.end, |argument| argument.end);
+                            let source_range =
+                                buffer.anchor_after(start_ix)..buffer.anchor_after(end_ix);
+                            let pending_command = PendingSlashCommand {
+                                name: name.to_string(),
+                                argument: argument.map(ToString::to_string),
+                                source_range,
+                            };
+                            updated.push(pending_command.clone());
+                            new_commands.push(pending_command);
+                        }
+                    }
+                }
+
+                offset = lines.offset();
+            }
+
+            let removed_commands = self
+                .pending_slash_commands
+                .splice(start_ix..end_ix, new_commands);
+            removed.extend(removed_commands.map(|command| command.source_range));
+        }
+
+        if !updated.is_empty() || !removed.is_empty() {
+            cx.emit(ConversationEvent::PendingSlashCommandsUpdated { removed, updated });
+        }
     }
 
     fn reparse_edit_suggestions(&mut self, cx: &mut ModelContext<Self>) {
@@ -1867,9 +1964,12 @@ impl Conversation {
                             let new_start = command_range.start.to_offset(buffer);
                             let new_end = new_start + text.len();
                             buffer.edit([(command_range, text)], None, cx);
+                            if buffer.chars_at(new_end).next() != Some('\n') {
+                                buffer.edit([(new_end..new_end, "\n")], None, cx);
+                            }
                             buffer.anchor_after(new_start)..buffer.anchor_before(new_end)
                         });
-                        cx.emit(ConversationEvent::SlashCommandUpdated {
+                        cx.emit(ConversationEvent::SlashCommandFinished {
                             output_range,
                             render_placeholder: output.render_placeholder,
                         });
@@ -2533,7 +2633,10 @@ fn parse_next_edit_suggestion(lines: &mut rope::Lines) -> Option<ParsedEditSugge
     }
 }
 
+#[derive(Clone)]
 struct PendingSlashCommand {
+    name: String,
+    argument: Option<String>,
     source_range: Range<language::Anchor>,
 }
 
@@ -2559,6 +2662,7 @@ struct ConversationEditor {
     editor: View<Editor>,
     blocks: HashSet<BlockId>,
     scroll_position: Option<ScrollPosition>,
+    pending_slash_command_flaps: HashMap<Range<language::Anchor>, FlapId>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -2624,6 +2728,7 @@ impl ConversationEditor {
             scroll_position: None,
             fs,
             workspace: workspace.downgrade(),
+            pending_slash_command_flaps: HashMap::default(),
             _subscriptions,
         };
         this.update_recent_editors(cx);
@@ -2760,7 +2865,78 @@ impl ConversationEditor {
                     }
                 });
             }
-            ConversationEvent::SlashCommandUpdated {
+            ConversationEvent::PendingSlashCommandsUpdated { removed, updated } => {
+                self.editor.update(cx, |editor, cx| {
+                    let buffer = editor.buffer().read(cx).snapshot(cx);
+                    let excerpt_id = *buffer.as_singleton().unwrap().0;
+
+                    editor.remove_flaps(
+                        removed
+                            .iter()
+                            .filter_map(|range| self.pending_slash_command_flaps.remove(range)),
+                        cx,
+                    );
+
+                    let flap_ids = editor.insert_flaps(
+                        updated.iter().map(|command| {
+                            let confirm_command = Arc::new({
+                                let conversation = self.conversation.clone();
+                                let command = command.clone();
+                                move |cx: &mut WindowContext| {
+                                    conversation.update(cx, |conversation, cx| {
+                                        conversation.confirm_command(
+                                            command.source_range.clone(),
+                                            &command.name,
+                                            command.argument.as_deref(),
+                                            cx,
+                                        );
+                                    })
+                                }
+                            });
+                            let placeholder = FoldPlaceholder {
+                                render: Arc::new(move |_, _, _| Empty.into_any()),
+                                constrain_width: false,
+                            };
+                            let render_toggle = {
+                                let confirm_command = confirm_command.clone();
+                                move |row, _, _, _cx: &mut WindowContext| {
+                                    render_pending_slash_command_toggle(
+                                        row,
+                                        confirm_command.clone(),
+                                    )
+                                }
+                            };
+                            let render_trailer = {
+                                let confirm_command = confirm_command.clone();
+                                move |row, _, cx: &mut WindowContext| {
+                                    render_pending_slash_command_trailer(
+                                        row,
+                                        confirm_command.clone(),
+                                        cx,
+                                    )
+                                }
+                            };
+
+                            let start = buffer
+                                .anchor_in_excerpt(excerpt_id, command.source_range.start)
+                                .unwrap();
+                            let end = buffer
+                                .anchor_in_excerpt(excerpt_id, command.source_range.end)
+                                .unwrap();
+                            Flap::new(start..end, placeholder, render_toggle, render_trailer)
+                        }),
+                        cx,
+                    );
+
+                    self.pending_slash_command_flaps.extend(
+                        updated
+                            .iter()
+                            .map(|command| command.source_range.clone())
+                            .zip(flap_ids),
+                    );
+                })
+            }
+            ConversationEvent::SlashCommandFinished {
                 output_range,
                 render_placeholder,
             } => {
@@ -2802,7 +2978,7 @@ impl ConversationEditor {
                                 constrain_width: false,
                             },
                             render_slash_command_output_toggle,
-                            render_slash_command_output_trailer,
+                            |_, _, _| Empty.into_any_element(),
                         )],
                         cx,
                     );
@@ -3701,12 +3877,38 @@ fn render_slash_command_output_toggle(
     .into_any_element()
 }
 
-fn render_slash_command_output_trailer(
+fn render_pending_slash_command_toggle(
+    row: MultiBufferRow,
+    confirm_command: Arc<dyn Fn(&mut WindowContext)>,
+) -> AnyElement {
+    IconButton::new(
+        ("slash-command-output-fold-indicator", row.0),
+        ui::IconName::Play,
+    )
+    .on_click(move |_e, cx| confirm_command(cx))
+    .icon_color(ui::Color::Success)
+    .icon_size(ui::IconSize::Small)
+    .size(ui::ButtonSize::None)
+    .into_any_element()
+}
+
+fn render_pending_slash_command_trailer(
     _row: MultiBufferRow,
-    _is_folded: bool,
+    _confirm_command: Arc<dyn Fn(&mut WindowContext)>,
     _cx: &mut WindowContext,
 ) -> AnyElement {
-    div().into_any_element()
+    Empty.into_any()
+    // ButtonLike::new(("run_button", row.0))
+    //     .style(ButtonStyle::Filled)
+    //     .size(ButtonSize::Compact)
+    //     .layer(ElevationIndex::ModalSurface)
+    //     .children(
+    //         KeyBinding::for_action(&Confirm, cx)
+    //             .map(|binding| binding.icon_size(IconSize::XSmall).into_any_element()),
+    //     )
+    //     .child(Label::new("Run").size(LabelSize::XSmall))
+    //     .on_click(move |_, cx| confirm_command(cx))
+    //     .into_any_element()
 }
 
 fn merge_ranges(ranges: &mut Vec<Range<Anchor>>, buffer: &MultiBufferSnapshot) {
