@@ -3935,11 +3935,12 @@ fn render_pending_slash_command_toggle(
 ) -> AnyElement {
     IconButton::new(
         ("slash-command-output-fold-indicator", row.0),
-        ui::IconName::Play,
+        ui::IconName::TriangleRight,
     )
     .on_click(move |_e, cx| confirm_command(cx))
     .icon_color(ui::Color::Success)
     .icon_size(ui::IconSize::Small)
+    .selected(true)
     .size(ui::ButtonSize::None)
     .into_any_element()
 }
