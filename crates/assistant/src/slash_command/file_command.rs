@@ -168,6 +168,7 @@ impl RenderOnce for FilePlaceholder {
         };
 
         ButtonLike::new(self.id)
+            .size(ButtonSize::Compact)
             .style(ButtonStyle::Filled)
             .layer(ElevationIndex::ElevatedSurface)
             .child(Icon::new(IconName::File).size(IconSize::XSmall))

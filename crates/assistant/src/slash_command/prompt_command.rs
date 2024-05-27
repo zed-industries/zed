@@ -92,6 +92,7 @@ impl SlashCommand for PromptSlashCommand {
                 text: prompt,
                 render_placeholder: Arc::new(move |id, unfold, _cx| {
                     ButtonLike::new(id)
+                        .size(ButtonSize::Compact)
                         .style(ButtonStyle::Filled)
                         .layer(ElevationIndex::ElevatedSurface)
                         .child(Icon::new(IconName::Library).size(IconSize::XSmall))
