@@ -15,8 +15,9 @@ use std::{
     },
 };
 
-pub mod current_file_command;
+pub mod active_command;
 pub mod file_command;
+pub mod project_command;
 pub mod prompt_command;
 
 pub(crate) struct SlashCommandCompletionProvider {

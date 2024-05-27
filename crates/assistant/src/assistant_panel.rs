@@ -8,8 +8,8 @@ use crate::{
     },
     search::*,
     slash_command::{
-        current_file_command, file_command, prompt_command, SlashCommandCompletionProvider,
-        SlashCommandLine, SlashCommandRegistry,
+        active_command, file_command, project_command, prompt_command,
+        SlashCommandCompletionProvider, SlashCommandLine, SlashCommandRegistry,
     },
     ApplyEdit, Assist, CompletionProvider, ConfirmCommand, CycleMessageRole, InlineAssist,
     LanguageModel, LanguageModelRequest, LanguageModelRequestMessage, MessageId, MessageMetadata,
@@ -214,9 +214,10 @@ impl AssistantPanel {
                         prompt_command::PromptSlashCommand::new(prompt_library.clone()),
                     );
                     if let Some(window) = window {
-                        slash_command_registry.register_command(
-                            current_file_command::CurrentFileSlashCommand::new(window),
-                        );
+                        slash_command_registry
+                            .register_command(active_command::ActiveSlashCommand::new(window));
+                        slash_command_registry
+                            .register_command(project_command::ProjectSlashCommand::new(window));
                     }
 
                     Self {

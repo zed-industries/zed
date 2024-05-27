@@ -8,17 +8,17 @@ use std::{borrow::Cow, sync::Arc};
 use ui::IntoElement;
 use workspace::Workspace;
 
-pub(crate) struct CurrentFileSlashCommand {
+pub(crate) struct ActiveSlashCommand {
     workspace: WindowHandle<Workspace>,
 }
 
-impl CurrentFileSlashCommand {
+impl ActiveSlashCommand {
     pub fn new(workspace: WindowHandle<Workspace>) -> Self {
         Self { workspace }
     }
 }
 
-impl SlashCommand for CurrentFileSlashCommand {
+impl SlashCommand for ActiveSlashCommand {
     fn name(&self) -> String {
         "active".into()
     }
