@@ -3806,11 +3806,8 @@ dependencies = [
  "node_runtime",
  "parking_lot",
  "project",
-<<<<<<< HEAD
  "regex",
-=======
  "release_channel",
->>>>>>> e19339bc1d038b39c5ee69ca728042d13d555fc7
  "schemars",
  "semantic_version",
  "serde",
