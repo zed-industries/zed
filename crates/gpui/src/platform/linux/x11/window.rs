@@ -579,6 +579,28 @@ impl X11WindowStatePtr {
         }
     }
 
+    pub fn handle_ime_unmark(&self) {
+        let mut state = self.state.borrow_mut();
+        if let Some(mut input_handler) = state.input_handler.take() {
+            drop(state);
+            input_handler.unmark_text();
+            let mut state = self.state.borrow_mut();
+            state.input_handler = Some(input_handler);
+        }
+    }
+
+    pub fn handle_ime_delete(&self) {
+        let mut state = self.state.borrow_mut();
+        if let Some(mut input_handler) = state.input_handler.take() {
+            drop(state);
+            if let Some(marked) = input_handler.marked_text_range() {
+                input_handler.replace_text_in_range(Some(marked), "");
+            }
+            let mut state = self.state.borrow_mut();
+            state.input_handler = Some(input_handler);
+        }
+    }
+
     pub fn get_ime_area(&self) -> Option<Bounds<Pixels>> {
         let mut state = self.state.borrow_mut();
         let mut bounds: Option<Bounds<Pixels>> = None;

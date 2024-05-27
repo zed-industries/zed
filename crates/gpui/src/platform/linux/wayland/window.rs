@@ -170,6 +170,7 @@ pub(crate) struct WaylandWindow(pub WaylandWindowStatePtr);
 pub enum ImeInput {
     InsertText(String),
     SetMarkedText(String),
+    UnmarkText,
     DeleteText,
 }
 
@@ -447,6 +448,9 @@ impl WaylandWindowStatePtr {
                 }
                 ImeInput::SetMarkedText(text) => {
                     input_handler.replace_and_mark_text_in_range(None, &text, None);
+                }
+                ImeInput::UnmarkText => {
+                    input_handler.unmark_text();
                 }
                 ImeInput::DeleteText => {
                     if let Some(marked) = input_handler.marked_text_range() {
