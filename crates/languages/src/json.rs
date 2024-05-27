@@ -20,6 +20,28 @@ use util::{maybe, paths, ResultExt};
 
 const SERVER_PATH: &str = "node_modules/vscode-json-languageserver/bin/vscode-json-languageserver";
 
+use project::ContextProviderWithTasks;
+use task::{TaskTemplate, TaskTemplates, VariableName};
+
+pub(super) fn json_task_context() -> ContextProviderWithTasks {
+    ContextProviderWithTasks::new(TaskTemplates(vec![
+        TaskTemplate {
+            label: "package script $ZED_CUSTOM_script".to_owned(),
+            command: "npm run".to_owned(),
+            args: vec![VariableName::Custom("script".into()).template_value()],
+            tags: vec!["package-script".into()],
+            ..TaskTemplate::default()
+        },
+        TaskTemplate {
+            label: "composer script $ZED_CUSTOM_script".to_owned(),
+            command: "composer".to_owned(),
+            args: vec![VariableName::Custom("script".into()).template_value()],
+            tags: vec!["composer-script".into()],
+            ..TaskTemplate::default()
+        },
+    ]))
+}
+
 fn server_binary_arguments(server_path: &Path) -> Vec<OsString> {
     vec![server_path.into(), "--stdio".into()]
 }
