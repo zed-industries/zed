@@ -6,7 +6,10 @@ use gray_matter::{engine::YAML, Matter};
 use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
 use smol::stream::StreamExt;
-use std::sync::Arc;
+use std::{
+    ops::{Deref, DerefMut},
+    sync::Arc,
+};
 use util::paths::PROMPTS_DIR;
 use uuid::Uuid;
 
@@ -74,6 +77,17 @@ impl PromptLibrary {
         let mut state = self.state.write();
         let id = prompt.id().clone();
         state.prompts.insert(id, prompt);
+        state.version += 1;
+    }
+
+    pub fn update_prompt(&self, id: PromptId, content: String) {
+        let mut state = self.state.write();
+
+        if let Some(prompt) = self.prompt_by_id(id) {
+            let mut prompt = prompt.clone();
+            prompt.update(id, content);
+            state.version += 1;
+        }
     }
 
     pub fn prompts(&self) -> HashMap<PromptId, StaticPrompt> {
@@ -118,31 +132,16 @@ impl PromptLibrary {
             if !state.dirty_prompts.contains(&id) {
                 state.dirty_prompts.push(id);
             }
+            state.version += 1;
         } else {
             state.dirty_prompts.retain(|&i| i != id);
+            state.version += 1;
         }
-    }
-
-    /// Save the current state of the prompt library to the
-    /// file system as a JSON file
-    pub async fn save(&self, fs: Arc<dyn Fs>) -> anyhow::Result<()> {
-        fs.create_dir(&PROMPTS_DIR).await?;
-
-        let path = PROMPTS_DIR.join("index.json");
-
-        let json = {
-            let state = self.state.read();
-            serde_json::to_string(&*state)?
-        };
-
-        fs.atomic_write(path, json).await?;
-
-        Ok(())
     }
 
     /// Load the state of the prompt library from the file system
     /// or create a new one if it doesn't exist
-    pub async fn load(fs: Arc<dyn Fs>) -> anyhow::Result<Self> {
+    pub async fn load_index(fs: Arc<dyn Fs>) -> anyhow::Result<Self> {
         let path = PROMPTS_DIR.join("index.json");
 
         let state = if fs.is_file(&path).await {
@@ -211,7 +210,48 @@ impl PromptLibrary {
         }
 
         // Write any changes back to the file system
-        self.save(fs.clone()).await?;
+        self.save_index(fs.clone()).await?;
+
+        Ok(())
+    }
+
+    /// Save the current state of the prompt library to the
+    /// file system as a JSON file
+    pub async fn save_index(&self, fs: Arc<dyn Fs>) -> anyhow::Result<()> {
+        fs.create_dir(&PROMPTS_DIR).await?;
+
+        let path = PROMPTS_DIR.join("index.json");
+
+        let json = {
+            let state = self.state.read();
+            serde_json::to_string(&*state)?
+        };
+
+        fs.atomic_write(path, json).await?;
+
+        Ok(())
+    }
+
+    pub async fn save_prompt(
+        &self,
+        prompt_id: PromptId,
+        updated_content: Option<String>,
+        fs: Arc<dyn Fs>,
+    ) -> anyhow::Result<()> {
+        if let Some(updated_content) = updated_content {
+            let mut state = self.state.write();
+            if let Some(prompt) = state.prompts.get_mut(&prompt_id) {
+                prompt.update(prompt_id, updated_content);
+                state.version += 1;
+            }
+        }
+
+        if let Some(prompt) = self.prompt_by_id(prompt_id) {
+            prompt.save(fs).await?;
+            self.set_dirty(prompt_id, false);
+        } else {
+            log::warn!("Failed to save prompt: {:?}", prompt_id);
+        }
 
         Ok(())
     }

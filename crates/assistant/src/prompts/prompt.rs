@@ -1,6 +1,8 @@
+use fs::Fs;
 use language::BufferSnapshot;
-use std::{fmt::Write, ops::Range};
+use std::{fmt::Write, ops::Range, sync::Arc};
 use ui::SharedString;
+use util::paths::PROMPTS_DIR;
 
 use gray_matter::{engine::YAML, Matter};
 use serde::{Deserialize, Serialize};
@@ -36,17 +38,34 @@ impl StaticPromptFrontmatter {
     /// Returns the frontmatter as a markdown frontmatter string
     pub fn frontmatter_string(&self) -> String {
         let mut frontmatter = format!(
-            "---\ntitle: {}\nversion: {}\nauthor: {}\n",
-            self.title.replace("\n", " ").replace("\r", " "),
-            self.version.replace("\n", " ").replace("\r", " "),
-            self.author.replace("\n", " ").replace("\r", " "),
+            "---\ntitle: \"{}\"\nversion: \"{}\"\nauthor: \"{}\"\n",
+            self.title
+                .replace("\n", " ")
+                .replace('\r', "")
+                .replace('"', "")
+                .replace("'", ""),
+            self.version
+                .replace("\n", " ")
+                .replace('\r', "")
+                .replace('"', "")
+                .replace("'", ""),
+            self.author
+                .replace("\n", " ")
+                .replace('\r', "")
+                .replace('"', "")
+                .replace("'", ""),
         );
 
         if !self.languages.is_empty() {
             let languages = self
                 .languages
                 .iter()
-                .map(|l| l.replace("\n", " ").replace("\r", " "))
+                .map(|l| {
+                    l.replace("\n", " ")
+                        .replace('\r', "")
+                        .replace('"', "")
+                        .replace("'", "")
+                })
                 .collect::<Vec<String>>()
                 .join(", ");
             writeln!(frontmatter, "languages: [{}]", languages).unwrap();
@@ -56,7 +75,12 @@ impl StaticPromptFrontmatter {
             let dependencies = self
                 .dependencies
                 .iter()
-                .map(|d| d.replace("\n", " ").replace("\r", " "))
+                .map(|d| {
+                    d.replace("\n", " ")
+                        .replace('\r', "")
+                        .replace('"', "")
+                        .replace("'", "")
+                })
                 .collect::<Vec<String>>()
                 .join(", ");
             writeln!(frontmatter, "dependencies: [{}]", dependencies).unwrap();
@@ -107,7 +131,7 @@ pub struct StaticPrompt {
     #[serde(skip)]
     metadata: StaticPromptFrontmatter,
     content: String,
-    file_name: Option<String>,
+    file_name: Option<SharedString>,
 }
 
 impl Default for StaticPrompt {
@@ -129,6 +153,12 @@ impl StaticPrompt {
     pub fn new(content: String, file_name: Option<String>) -> Self {
         let matter = Matter::<YAML>::new();
         let result = matter.parse(&content);
+        let file_name = if let Some(file_name) = file_name {
+            let shared_filename: SharedString = file_name.into();
+            Some(shared_filename)
+        } else {
+            None
+        };
 
         let metadata = result
             .data
@@ -161,6 +191,13 @@ impl StaticPrompt {
             metadata,
         }
     }
+
+    pub fn update(&mut self, id: PromptId, content: String) {
+        let mut updated_prompt =
+            StaticPrompt::new(content, self.file_name.clone().map(|s| s.to_string()));
+        updated_prompt.id = id;
+        *self = updated_prompt;
+    }
 }
 
 impl StaticPrompt {
@@ -169,9 +206,18 @@ impl StaticPrompt {
         &self.id
     }
 
+    pub fn set_id(&mut self, id: PromptId) -> &mut Self {
+        self.id = id;
+        self
+    }
+
+    pub fn file_name(&self) -> Option<&SharedString> {
+        self.file_name.as_ref()
+    }
+
     /// Sets the file name of the prompt
-    pub fn _file_name(&mut self, file_name: String) -> &mut Self {
-        self.file_name = Some(file_name);
+    pub fn set_file_name(&mut self, file_name: impl Into<SharedString>) -> &mut Self {
+        self.file_name = Some(file_name.into());
         self
     }
 
@@ -194,6 +240,22 @@ impl StaticPrompt {
         let matter = Matter::<YAML>::new();
         let result = matter.parse(self.content.as_str());
         result.content.clone()
+    }
+
+    pub async fn save(&self, fs: Arc<dyn Fs>) -> anyhow::Result<()> {
+        let file_name = self.file_name();
+
+        let out_name = if let Some(file_name) = file_name {
+            format!("{}.md", file_name.to_owned())
+        } else {
+            format!("{}.md", self.id.0)
+        };
+        let path = PROMPTS_DIR.join(&out_name);
+        let json = self.content.clone();
+
+        fs.atomic_write(path, json).await?;
+
+        Ok(())
     }
 }
 

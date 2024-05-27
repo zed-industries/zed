@@ -11,11 +11,11 @@ use workspace::ModalView;
 
 use super::{
     prompt::PROMPT_DEFAULT_TITLE,
-    prompt_library::{self, PromptId, PromptLibrary, SortOrder},
+    prompt_library::{PromptId, PromptLibrary, SortOrder},
 };
 use crate::prompts::prompt::StaticPrompt;
 
-actions!(prompt_manager, [NewPrompt]);
+actions!(prompt_manager, [NewPrompt, SavePrompt]);
 
 pub struct PromptManager {
     focus_handle: FocusHandle,
@@ -141,6 +141,28 @@ impl PromptManager {
         self.active_prompt_id = Some(id.clone());
 
         cx.notify();
+    }
+
+    pub fn save_prompt(
+        &mut self,
+        fs: Arc<dyn Fs>,
+        prompt_id: PromptId,
+        new_content: String,
+        cx: &mut ViewContext<Self>,
+    ) -> Result<()> {
+        let library = self.prompt_library.clone();
+        if library.prompt_by_id(prompt_id).is_some() {
+            cx.spawn(|_, _| async move {
+                library
+                    .save_prompt(prompt_id, Some(new_content), fs)
+                    .log_err()
+                    .await;
+            })
+            .detach();
+            cx.notify();
+        }
+
+        Ok(())
     }
 
     pub fn set_active_prompt(&mut self, prompt_id: Option<PromptId>, cx: &mut ViewContext<Self>) {
@@ -272,6 +294,16 @@ impl PromptManager {
 
 impl Render for PromptManager {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+        let active_prompt_id = self.active_prompt_id.clone();
+        let active_editor = self.active_editor().map(|editor| editor.clone());
+        let updated_content = if let Some(editor) = active_editor {
+            Some(editor.read(cx).text(cx))
+        } else {
+            None
+        };
+        let can_save = !active_prompt_id.clone().is_none() || !updated_content.is_none();
+        let fs = self.fs.clone();
+
         h_flex()
             .id("propmt-manager")
             .key_context(self.dispatch_context(cx))
@@ -305,7 +337,31 @@ impl Render for PromptManager {
                                 .h_7()
                                 .w_full()
                                 .justify_between()
-                                .child(div())
+                                .child(if can_save {
+                                    IconButton::new("save", IconName::Save)
+                                        .shape(IconButtonShape::Square)
+                                        .disabled(
+                                            active_prompt_id.clone().is_none()
+                                                || updated_content.is_none(),
+                                        )
+                                        .on_click(cx.listener(move |this, _event, cx| {
+                                            if let Some(prompt_id) = active_prompt_id {
+                                                this.save_prompt(
+                                                    fs.clone(),
+                                                    prompt_id,
+                                                    updated_content.clone().unwrap_or(
+                                                        "TODO: make unreachable".to_string(),
+                                                    ),
+                                                    cx,
+                                                )
+                                                .log_err();
+                                            }
+                                        }))
+                                } else {
+                                    IconButton::new("save", IconName::Save)
+                                        .shape(IconButtonShape::Square)
+                                        .disabled(true)
+                                })
                                 .child(
                                     IconButton::new("dismiss", IconName::Close)
                                         .shape(IconButtonShape::Square)
@@ -314,7 +370,7 @@ impl Render for PromptManager {
                                         }),
                                 ),
                         )
-                        .when_some(self.active_prompt_id, |this, active_prompt_id| {
+                        .when_some(active_prompt_id.clone(), |this, active_prompt_id| {
                             this.child(
                                 h_flex()
                                     .flex_1()

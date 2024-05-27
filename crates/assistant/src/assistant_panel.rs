@@ -148,7 +148,7 @@ impl AssistantPanel {
                 .unwrap_or_default();
 
             let prompt_library = Arc::new(
-                PromptLibrary::load(fs.clone())
+                PromptLibrary::load_index(fs.clone())
                     .await
                     .log_err()
                     .unwrap_or_default(),
