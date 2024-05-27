@@ -1769,7 +1769,7 @@ impl ProjectPanel {
                     .selected(is_selected)
                     .when_some(canonical_path, |this, path| {
                         this.end_slot::<Icon>(
-                            Icon::new(IconName::ArrowRight)
+                            Icon::new(IconName::ArrowUpRight)
                                 .size(IconSize::Indicator)
                                 .color(filename_text_color),
                         )
