@@ -10,12 +10,10 @@
   },
   "suffixes": {
     "aac": "audio",
-    "abc": "blender",
     "accdb": "storage",
     "app.src": "erlang",
     "asp": "template",
     "aspx": "template",
-    "asset": "unity",
     "astro": "astro",
     "avi": "video",
     "avif": "image",
@@ -25,7 +23,6 @@
     "bash_logout": "terminal",
     "bash_profile": "terminal",
     "bashrc": "terminal",
-    "blend": "blender",
     "bmp": "image",
     "c": "c",
     "cc": "cpp",
@@ -50,10 +47,8 @@
     "doc": "document",
     "dockerignore": "docker",
     "docx": "document",
-    "dxf": "blender",
     "editorconfig": "settings",
     "eex": "elixir",
-    "egg": "blender",
     "elm": "elm",
     "Emakefile": "erlang",
     "entitlements": "lock",
@@ -65,7 +60,6 @@
     "eslintrc.json": "eslint",
     "ex": "elixir",
     "exs": "elixir",
-    "fbx": "blender",
     "fish": "terminal",
     "flac": "audio",
     "fmp": "storage",
@@ -81,8 +75,6 @@
     "gitignore": "vcs",
     "gitkeep": "vcs",
     "gitmodules": "vcs",
-    "glb": "blender",
-    "gltf": "blender",
     "go": "go",
     "gql": "graphql",
     "graphql": "graphql",
@@ -148,7 +140,6 @@
     "nu": "terminal",
     "numbers": "document",
     "nvmrc": "settings",
-    "obj": "blender",
     "odp": "document",
     "ods": "document",
     "odt": "document",
@@ -163,7 +154,6 @@
     "php4": "php",
     "php5": "php",
     "plist": "template",
-    "ply": "blender",
     "png": "image",
     "ppt": "document",
     "pptx": "document",
@@ -194,7 +184,6 @@
     "shtml": "template",
     "sql": "storage",
     "sqlite": "storage",
-    "stl": "blender",
     "storyboard": "template",
     "svelte": "template",
     "svg": "image",
@@ -210,8 +199,6 @@
     "tsx": "react",
     "ttf": "font",
     "txt": "document",
-    "unity": "unity",
-    "unity.meta": "unity",
     "vcxproj": "settings",
     "vue": "vue",
     "wav": "audio",
@@ -222,7 +209,6 @@
     "woff": "font",
     "woff2": "font",
     "wv": "audio",
-    "x3d": "blender",
     "xcodeproj": "settings",
     "xcscheme": "template",
     "xcworkspacedata": "template",
@@ -248,9 +234,6 @@
     },
     "audio": {
       "icon": "icons/file_icons/audio.svg"
-    },
-    "blender": {
-      "icon": "icons/file_icons/blender.svg"
     },
     "bun": {
       "icon": "icons/file_icons/bun.svg"
@@ -407,9 +390,6 @@
     },
     "typescript": {
       "icon": "icons/file_icons/typescript.svg"
-    },
-    "unity": {
-      "icon": "icons/file_icons/unity.svg"
     },
     "vcs": {
       "icon": "icons/file_icons/git.svg"
