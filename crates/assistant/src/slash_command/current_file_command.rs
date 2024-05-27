@@ -20,11 +20,15 @@ impl CurrentFileSlashCommand {
 
 impl SlashCommand for CurrentFileSlashCommand {
     fn name(&self) -> String {
-        "current_file".into()
+        "active".into()
     }
 
     fn description(&self) -> String {
-        "insert the current file".into()
+        "insert active tab".into()
+    }
+
+    fn tooltip_text(&self) -> String {
+        "insert active tab".into()
     }
 
     fn complete_argument(

@@ -23,6 +23,10 @@ impl SlashCommand for ExtensionSlashCommand {
         self.command.description.clone()
     }
 
+    fn tooltip_text(&self) -> String {
+        self.command.tooltip_text.clone()
+    }
+
     fn requires_argument(&self) -> bool {
         self.command.requires_argument
     }

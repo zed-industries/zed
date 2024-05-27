@@ -1852,6 +1852,7 @@ impl Conversation {
                             let pending_command = PendingSlashCommand {
                                 name: name.to_string(),
                                 argument: argument.map(ToString::to_string),
+                                tooltip_text: command.tooltip_text().into(),
                                 source_range,
                             };
                             updated.push(pending_command.clone());
@@ -2657,6 +2658,7 @@ struct PendingSlashCommand {
     name: String,
     argument: Option<String>,
     source_range: Range<language::Anchor>,
+    tooltip_text: SharedString,
 }
 
 struct PendingCompletion {
@@ -2949,9 +2951,11 @@ impl ConversationEditor {
                             };
                             let render_toggle = {
                                 let confirm_command = confirm_command.clone();
+                                let command = command.clone();
                                 move |row, _, _, _cx: &mut WindowContext| {
                                     render_pending_slash_command_toggle(
                                         row,
+                                        command.tooltip_text.clone(),
                                         confirm_command.clone(),
                                     )
                                 }
@@ -3931,6 +3935,7 @@ fn render_slash_command_output_toggle(
 
 fn render_pending_slash_command_toggle(
     row: MultiBufferRow,
+    tooltip_text: SharedString,
     confirm_command: Arc<dyn Fn(&mut WindowContext)>,
 ) -> AnyElement {
     IconButton::new(
@@ -3942,6 +3947,7 @@ fn render_pending_slash_command_toggle(
     .icon_size(ui::IconSize::Small)
     .selected(true)
     .size(ui::ButtonSize::None)
+    .tooltip(move |cx| Tooltip::text(tooltip_text.clone(), cx))
     .into_any_element()
 }
 

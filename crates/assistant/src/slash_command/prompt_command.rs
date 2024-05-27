@@ -26,6 +26,10 @@ impl SlashCommand for PromptSlashCommand {
         "insert a prompt from the library".into()
     }
 
+    fn tooltip_text(&self) -> String {
+        "insert prompt".into()
+    }
+
     fn requires_argument(&self) -> bool {
         true
     }

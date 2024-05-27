@@ -1183,6 +1183,7 @@ impl ExtensionStore {
                                 command: crate::wit::SlashCommand {
                                     name: slash_command_name.to_string(),
                                     description: slash_command.description.to_string(),
+                                    tooltip_text: slash_command.tooltip_text.to_string(),
                                     requires_argument: slash_command.requires_argument,
                                 },
                                 extension: wasm_extension.clone(),

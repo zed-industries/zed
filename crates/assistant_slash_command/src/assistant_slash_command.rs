@@ -13,6 +13,7 @@ pub fn init(cx: &mut AppContext) {
 pub trait SlashCommand: 'static + Send + Sync {
     fn name(&self) -> String;
     fn description(&self) -> String;
+    fn tooltip_text(&self) -> String;
     fn complete_argument(
         &self,
         query: String,
