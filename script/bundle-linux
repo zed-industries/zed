@@ -109,5 +109,6 @@ else
 fi
 
 rm -rf "${archive}"
-ls target/release | grep -E 'zed(-[a-zA-Z0-9]+)?-linux-x86_64\.tar\.gz' | xargs -d "\n" -I {} rm -f target/release/{} || true
+remove_match="zed(-[a-zA-Z0-9]+)?-linux-$(uname -m)\.tar\.gz"
+ls target/release | grep -E ${remove_match} | xargs -d "\n" -I {} rm -f target/release/{} || true
 tar -czvf target/release/$archive -C ${temp_dir} "zed$suffix.app"

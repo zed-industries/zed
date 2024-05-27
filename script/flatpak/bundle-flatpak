@@ -5,7 +5,8 @@ cd "$(dirname "$0")/../.."
 shopt -s extglob
 
 script/bundle-linux
-archive=$(ls "target/release" | grep -E 'zed(-[a-zA-Z0-9]+)?-linux-x86_64\.tar\.gz')
+archive_match="zed(-[a-zA-Z0-9]+)?-linux-$(uname -m)\.tar\.gz"
+archive=$(ls "target/release" | grep -E ${archive_match})
 channel=$(<crates/zed/RELEASE_CHANNEL)
 
 export CHANNEL="$channel"
