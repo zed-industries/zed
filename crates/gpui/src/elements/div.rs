@@ -291,6 +291,8 @@ impl Interactivity {
                 let action = action.downcast_ref().unwrap();
                 if phase == DispatchPhase::Capture {
                     (listener)(action, cx)
+                } else {
+                    cx.propagate();
                 }
             }),
         ));

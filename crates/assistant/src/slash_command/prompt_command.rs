@@ -1,11 +1,12 @@
-use super::{SlashCommand, SlashCommandCleanup, SlashCommandInvocation};
+use super::{SlashCommand, SlashCommandOutput};
 use crate::prompts::PromptLibrary;
 use anyhow::{anyhow, Context, Result};
-use futures::channel::oneshot;
 use fuzzy::StringMatchCandidate;
-use gpui::{AppContext, Task};
+use gpui::{AppContext, Task, WeakView};
 use language::LspAdapterDelegate;
 use std::sync::{atomic::AtomicBool, Arc};
+use ui::{prelude::*, ButtonLike, ElevationIndex};
+use workspace::Workspace;
 
 pub(crate) struct PromptSlashCommand {
     library: Arc<PromptLibrary>,
@@ -24,6 +25,10 @@ impl SlashCommand for PromptSlashCommand {
 
     fn description(&self) -> String {
         "insert a prompt from the library".into()
+    }
+
+    fn tooltip_text(&self) -> String {
+        "insert prompt".into()
     }
 
     fn requires_argument(&self) -> bool {
@@ -64,32 +69,43 @@ impl SlashCommand for PromptSlashCommand {
     fn run(
         self: Arc<Self>,
         title: Option<&str>,
+        _workspace: WeakView<Workspace>,
         _delegate: Arc<dyn LspAdapterDelegate>,
-        cx: &mut AppContext,
-    ) -> SlashCommandInvocation {
+        cx: &mut WindowContext,
+    ) -> Task<Result<SlashCommandOutput>> {
         let Some(title) = title else {
-            return SlashCommandInvocation {
-                output: Task::ready(Err(anyhow!("missing prompt name"))),
-                invalidated: oneshot::channel().1,
-                cleanup: SlashCommandCleanup::default(),
-            };
+            return Task::ready(Err(anyhow!("missing prompt name")));
         };
 
         let library = self.library.clone();
-        let title = title.to_string();
-        let output = cx.background_executor().spawn(async move {
-            let prompt = library
-                .prompts()
-                .into_iter()
-                .find(|prompt| &prompt.1.title().to_string() == &title)
-                .with_context(|| format!("no prompt found with title {:?}", title))?
-                .1;
-            Ok(prompt.body())
+        let title = SharedString::from(title.to_string());
+        let prompt = cx.background_executor().spawn({
+            let title = title.clone();
+            async move {
+                let prompt = library
+                    .prompts()
+                    .into_iter()
+                    .map(|prompt| (prompt.1.title(), prompt))
+                    .find(|(t, _)| t == &title)
+                    .with_context(|| format!("no prompt found with title {:?}", title))?
+                    .1;
+                anyhow::Ok(prompt.1.body())
+            }
         });
-        SlashCommandInvocation {
-            output,
-            invalidated: oneshot::channel().1,
-            cleanup: SlashCommandCleanup::default(),
-        }
+        cx.foreground_executor().spawn(async move {
+            let prompt = prompt.await?;
+            Ok(SlashCommandOutput {
+                text: prompt,
+                render_placeholder: Arc::new(move |id, unfold, _cx| {
+                    ButtonLike::new(id)
+                        .style(ButtonStyle::Filled)
+                        .layer(ElevationIndex::ElevatedSurface)
+                        .child(Icon::new(IconName::Library))
+                        .child(Label::new(title.clone()))
+                        .on_click(move |_, cx| unfold(cx))
+                        .into_any_element()
+                }),
+            })
+        })
     }
 }

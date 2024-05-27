@@ -1,14 +1,11 @@
 mod slash_command_registry;
 
-use std::sync::atomic::AtomicBool;
-use std::sync::Arc;
-
 use anyhow::Result;
-use futures::channel::oneshot;
-use gpui::{AppContext, Task};
+use gpui::{AnyElement, AppContext, ElementId, Task, WeakView, WindowContext};
 use language::LspAdapterDelegate;
-
 pub use slash_command_registry::*;
+use std::sync::{atomic::AtomicBool, Arc};
+use workspace::Workspace;
 
 pub fn init(cx: &mut AppContext) {
     SlashCommandRegistry::default_global(cx);
@@ -17,6 +14,7 @@ pub fn init(cx: &mut AppContext) {
 pub trait SlashCommand: 'static + Send + Sync {
     fn name(&self) -> String;
     fn description(&self) -> String;
+    fn tooltip_text(&self) -> String;
     fn complete_argument(
         &self,
         query: String,
@@ -27,35 +25,24 @@ pub trait SlashCommand: 'static + Send + Sync {
     fn run(
         self: Arc<Self>,
         argument: Option<&str>,
+        workspace: WeakView<Workspace>,
         // TODO: We're just using the `LspAdapterDelegate` here because that is
         // what the extension API is already expecting.
         //
         // It may be that `LspAdapterDelegate` needs a more general name, or
         // perhaps another kind of delegate is needed here.
         delegate: Arc<dyn LspAdapterDelegate>,
-        cx: &mut AppContext,
-    ) -> SlashCommandInvocation;
+        cx: &mut WindowContext,
+    ) -> Task<Result<SlashCommandOutput>>;
 }
 
-pub struct SlashCommandInvocation {
-    pub output: Task<Result<String>>,
-    pub invalidated: oneshot::Receiver<()>,
-    pub cleanup: SlashCommandCleanup,
-}
+pub type RenderFoldPlaceholder = Arc<
+    dyn Send
+        + Sync
+        + Fn(ElementId, Arc<dyn Fn(&mut WindowContext)>, &mut WindowContext) -> AnyElement,
+>;
 
-#[derive(Default)]
-pub struct SlashCommandCleanup(Option<Box<dyn FnOnce()>>);
-
-impl SlashCommandCleanup {
-    pub fn new(cleanup: impl FnOnce() + 'static) -> Self {
-        Self(Some(Box::new(cleanup)))
-    }
-}
-
-impl Drop for SlashCommandCleanup {
-    fn drop(&mut self) {
-        if let Some(cleanup) = self.0.take() {
-            cleanup();
-        }
-    }
+pub struct SlashCommandOutput {
+    pub text: String,
+    pub render_placeholder: RenderFoldPlaceholder,
 }

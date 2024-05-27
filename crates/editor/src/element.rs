@@ -3908,7 +3908,7 @@ enum LineFragment {
     Text(ShapedLine),
     Element {
         element: Option<AnyElement>,
-        width: Pixels,
+        size: Size<Pixels>,
         len: usize,
     },
 }
@@ -3917,9 +3917,9 @@ impl fmt::Debug for LineFragment {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
             LineFragment::Text(shaped_line) => f.debug_tuple("Text").field(shaped_line).finish(),
-            LineFragment::Element { width, len, .. } => f
+            LineFragment::Element { size, len, .. } => f
                 .debug_struct("Element")
-                .field("width", width)
+                .field("size", size)
                 .field("len", len)
                 .finish(),
         }
@@ -3999,7 +3999,7 @@ impl LineWithInvisibles {
                 len += highlighted_chunk.text.len();
                 fragments.push(LineFragment::Element {
                     element: Some(element),
-                    width: size.width,
+                    size,
                     len: highlighted_chunk.text.len(),
                 });
             } else {
@@ -4112,13 +4112,18 @@ impl LineWithInvisibles {
                 LineFragment::Text(line) => {
                     fragment_origin.x += line.width;
                 }
-                LineFragment::Element { element, width, .. } => {
+                LineFragment::Element { element, size, .. } => {
                     let mut element = element
                         .take()
                         .expect("you can't prepaint LineWithInvisibles twice");
-                    element.prepaint_at(fragment_origin, cx);
+
+                    // Center the element vertically within the line.
+                    let mut element_origin = fragment_origin;
+                    element_origin.y += (line_height - size.height) / 2.;
+                    element.prepaint_at(element_origin, cx);
                     line_elements.push(element);
-                    fragment_origin.x += *width;
+
+                    fragment_origin.x += size.width;
                 }
             }
         }
@@ -4146,8 +4151,8 @@ impl LineWithInvisibles {
                     line.paint(fragment_origin, line_height, cx).log_err();
                     fragment_origin.x += line.width;
                 }
-                LineFragment::Element { width, .. } => {
-                    fragment_origin.x += *width;
+                LineFragment::Element { size, .. } => {
+                    fragment_origin.x += size.width;
                 }
             }
         }
@@ -4225,12 +4230,12 @@ impl LineWithInvisibles {
                     fragment_start_x += shaped_line.width;
                     fragment_start_index = fragment_end_index;
                 }
-                LineFragment::Element { len, width, .. } => {
+                LineFragment::Element { len, size, .. } => {
                     let fragment_end_index = fragment_start_index + len;
                     if index < fragment_end_index {
                         return fragment_start_x;
                     }
-                    fragment_start_x += *width;
+                    fragment_start_x += size.width;
                     fragment_start_index = fragment_end_index;
                 }
             }
@@ -4255,8 +4260,8 @@ impl LineWithInvisibles {
                     fragment_start_x = fragment_end_x;
                     fragment_start_index += shaped_line.len;
                 }
-                LineFragment::Element { len, width, .. } => {
-                    let fragment_end_x = fragment_start_x + *width;
+                LineFragment::Element { len, size, .. } => {
+                    let fragment_end_x = fragment_start_x + size.width;
                     if x < fragment_end_x {
                         return Some(fragment_start_index);
                     }

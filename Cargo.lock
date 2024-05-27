@@ -434,10 +434,10 @@ dependencies = [
  "anyhow",
  "collections",
  "derive_more",
- "futures 0.3.28",
  "gpui",
  "language",
  "parking_lot",
+ "workspace",
 ]
 
 [[package]]
@@ -3823,6 +3823,7 @@ dependencies = [
  "wasmtime",
  "wasmtime-wasi",
  "wit-component",
+ "workspace",
 ]
 
 [[package]]
