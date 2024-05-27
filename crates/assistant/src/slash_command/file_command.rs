@@ -1,14 +1,14 @@
 use super::{SlashCommand, SlashCommandOutput};
 use anyhow::Result;
 use fuzzy::PathMatch;
-use gpui::{prelude::*, AppContext, Model, RenderOnce, SharedString, Task};
+use gpui::{AppContext, Model, RenderOnce, SharedString, Task};
 use language::LspAdapterDelegate;
 use project::{PathMatchCandidateSet, Project};
 use std::{
     path::PathBuf,
     sync::{atomic::AtomicBool, Arc},
 };
-use ui::{h_flex, prelude::WindowContext, ElementId, Icon, IconName, IntoElement};
+use ui::{prelude::*, ButtonLike, ElevationIndex};
 
 pub(crate) struct FileSlashCommand {
     project: Model<Project>,
@@ -167,11 +167,11 @@ impl RenderOnce for FilePlaceholder {
             SharedString::from("untitled")
         };
 
-        h_flex()
-            .id(self.id)
-            .gap_1()
-            .child(Icon::new(IconName::File))
-            .child(title)
+        ButtonLike::new(self.id)
+            .style(ButtonStyle::Filled)
+            .layer(ElevationIndex::ElevatedSurface)
+            .child(Icon::new(IconName::File).size(IconSize::XSmall))
+            .child(Label::new(title).size(LabelSize::Small))
             .on_click(move |_, cx| unfold(cx))
     }
 }

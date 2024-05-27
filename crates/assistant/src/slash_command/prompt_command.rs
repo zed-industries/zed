@@ -2,10 +2,10 @@ use super::{SlashCommand, SlashCommandOutput};
 use crate::prompts::prompt_library::PromptLibrary;
 use anyhow::{anyhow, Context, Result};
 use fuzzy::StringMatchCandidate;
-use gpui::{prelude::*, AppContext, Task};
+use gpui::{AppContext, Task};
 use language::LspAdapterDelegate;
 use std::sync::{atomic::AtomicBool, Arc};
-use ui::{h_flex, Icon, IconName};
+use ui::{prelude::*, ButtonLike, ElevationIndex};
 
 pub(crate) struct PromptSlashCommand {
     library: Arc<PromptLibrary>,
@@ -72,7 +72,7 @@ impl SlashCommand for PromptSlashCommand {
         };
 
         let library = self.library.clone();
-        let title = title.to_string();
+        let title = SharedString::from(title.to_string());
         let prompt = cx.background_executor().spawn({
             let title = title.clone();
             async move {
@@ -91,13 +91,13 @@ impl SlashCommand for PromptSlashCommand {
             Ok(SlashCommandOutput {
                 text: prompt,
                 render_placeholder: Arc::new(move |id, unfold, _cx| {
-                    h_flex()
-                        .id(id)
-                        .gap_1()
-                        .child(Icon::new(IconName::Library))
-                        .child(title.clone())
+                    ButtonLike::new(id)
+                        .style(ButtonStyle::Filled)
+                        .layer(ElevationIndex::ElevatedSurface)
+                        .child(Icon::new(IconName::Library).size(IconSize::XSmall))
+                        .child(Label::new(title.clone()).size(LabelSize::Small))
                         .on_click(move |_, cx| unfold(cx))
-                        .into_any()
+                        .into_any_element()
                 }),
             })
         })
