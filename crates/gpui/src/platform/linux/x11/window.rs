@@ -28,6 +28,8 @@ use x11rb::{
     xcb_ffi::XCBConnection,
 };
 
+use std::ops::Deref;
+use std::rc::Weak;
 use std::{
     cell::{Ref, RefCell, RefMut},
     collections::HashMap,
@@ -174,6 +176,7 @@ pub(crate) struct X11WindowState {
     renderer: BladeRenderer,
     display: Rc<dyn PlatformDisplay>,
     input_handler: Option<PlatformInputHandler>,
+    appearance: WindowAppearance,
 }
 
 #[derive(Clone)]
@@ -223,6 +226,7 @@ impl X11WindowState {
         x_window: xproto::Window,
         atoms: &XcbAtoms,
         scale_factor: f32,
+        appearance: WindowAppearance,
     ) -> Self {
         let x_screen_index = params
             .display_id
@@ -375,6 +379,7 @@ impl X11WindowState {
             renderer: BladeRenderer::new(gpu, config),
             atoms: *atoms,
             input_handler: None,
+            appearance,
         }
     }
 
@@ -431,6 +436,7 @@ impl X11Window {
         x_window: xproto::Window,
         atoms: &XcbAtoms,
         scale_factor: f32,
+        appearance: WindowAppearance,
     ) -> Self {
         Self(X11WindowStatePtr {
             state: Rc::new(RefCell::new(X11WindowState::new(
@@ -442,6 +448,7 @@ impl X11Window {
                 x_window,
                 atoms,
                 scale_factor,
+                appearance,
             ))),
             callbacks: Rc::new(RefCell::new(Callbacks::default())),
             xcb_connection: xcb_connection.clone(),
@@ -622,6 +629,15 @@ impl X11WindowStatePtr {
             fun(focus);
         }
     }
+
+    pub fn set_appearance(&mut self, appearance: WindowAppearance) {
+        self.state.borrow_mut().appearance = appearance;
+
+        let mut callbacks = self.callbacks.borrow_mut();
+        if let Some(ref mut fun) = callbacks.appearance_changed {
+            (fun)()
+        }
+    }
 }
 
 impl PlatformWindow for X11Window {
@@ -656,9 +672,8 @@ impl PlatformWindow for X11Window {
         self.0.state.borrow().scale_factor
     }
 
-    // todo(linux)
     fn appearance(&self) -> WindowAppearance {
-        WindowAppearance::Light
+        self.0.state.borrow().appearance
     }
 
     fn display(&self) -> Rc<dyn PlatformDisplay> {

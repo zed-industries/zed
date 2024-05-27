@@ -2,6 +2,7 @@ use std::cell::RefCell;
 use std::ffi::OsString;
 use std::ops::Deref;
 use std::rc::{Rc, Weak};
+use std::sync::OnceLock;
 use std::time::{Duration, Instant};
 
 use calloop::generic::{FdWrapper, Generic};
@@ -10,6 +11,7 @@ use calloop::{channel, EventLoop, LoopHandle, RegistrationToken};
 use collections::HashMap;
 use copypasta::x11_clipboard::{Clipboard, Primary, X11ClipboardContext};
 use copypasta::ClipboardProvider;
+use parking_lot::Mutex;
 
 use util::ResultExt;
 use x11rb::connection::{Connection, RequestConnection};
@@ -27,11 +29,11 @@ use xkbc::x11::ffi::{XKB_X11_MIN_MAJOR_XKB_VERSION, XKB_X11_MIN_MINOR_XKB_VERSIO
 use xkbcommon::xkb as xkbc;
 
 use crate::platform::linux::LinuxClient;
-use crate::platform::{LinuxCommon, PlatformWindow};
+use crate::platform::{LinuxCommon, PlatformWindow, WaylandClientState};
 use crate::{
     modifiers_from_xinput_info, point, px, AnyWindowHandle, Bounds, CursorStyle, DisplayId,
-    Keystroke, Modifiers, ModifiersChangedEvent, Pixels, PlatformDisplay, PlatformInput, Point,
-    ScrollDelta, Size, TouchPhase, WindowParams, X11Window,
+    ForegroundExecutor, Keystroke, Modifiers, ModifiersChangedEvent, Pixels, PlatformDisplay,
+    PlatformInput, Point, ScrollDelta, Size, TouchPhase, WindowAppearance, WindowParams, X11Window,
 };
 
 use super::{
@@ -42,6 +44,7 @@ use super::{button_of_key, modifiers_from_state, pressed_button_from_mask};
 use super::{XimCallbackEvent, XimHandler};
 use crate::platform::linux::is_within_click_distance;
 use crate::platform::linux::platform::DOUBLE_CLICK_INTERVAL;
+use crate::platform::linux::xdg_desktop_portal::{Event as XDPEvent, XDPEventSource};
 
 pub(super) const XINPUT_MASTER_DEVICE: u16 = 1;
 
@@ -358,6 +361,17 @@ impl X11Client {
                 }
             })
             .expect("Failed to initialize XIM event source");
+        handle.insert_source(XDPEventSource::new(&common.background_executor), {
+            move |event, _, client| match event {
+                XDPEvent::WindowAppearance(appearance) => {
+                    client.with_common(|common| common.appearance = appearance);
+                    for (_, window) in &mut client.0.borrow_mut().windows {
+                        window.window.set_appearance(appearance);
+                    }
+                }
+            }
+        });
+
         X11Client(Rc::new(RefCell::new(X11ClientState {
             event_loop: Some(event_loop),
             loop_handle: handle,
@@ -824,6 +838,7 @@ impl LinuxClient for X11Client {
             x_window,
             &state.atoms,
             state.scale_factor,
+            state.common.appearance,
         );
 
         let screen_resources = state

@@ -1,6 +1,7 @@
 use core::hash;
 use std::cell::{RefCell, RefMut};
 use std::ffi::OsString;
+use std::ops::{Deref, DerefMut};
 use std::os::fd::{AsRawFd, BorrowedFd};
 use std::path::PathBuf;
 use std::rc::{Rc, Weak};
@@ -15,6 +16,7 @@ use collections::HashMap;
 use copypasta::wayland_clipboard::{create_clipboards_from_external, Clipboard, Primary};
 use copypasta::ClipboardProvider;
 use filedescriptor::Pipe;
+use parking_lot::Mutex;
 use smallvec::SmallVec;
 use util::ResultExt;
 use wayland_backend::client::ObjectId;
@@ -65,9 +67,12 @@ use crate::platform::linux::is_within_click_distance;
 use crate::platform::linux::wayland::cursor::Cursor;
 use crate::platform::linux::wayland::serial::{SerialKind, SerialTracker};
 use crate::platform::linux::wayland::window::WaylandWindow;
+use crate::platform::linux::xdg_desktop_portal::{Event as XDPEvent, XDPEventSource};
 use crate::platform::linux::LinuxClient;
 use crate::platform::PlatformWindow;
-use crate::{point, px, FileDropEvent, ForegroundExecutor, MouseExitEvent, SCROLL_LINES};
+use crate::{
+    point, px, FileDropEvent, ForegroundExecutor, MouseExitEvent, WindowAppearance, SCROLL_LINES,
+};
 use crate::{
     AnyWindowHandle, CursorStyle, DisplayId, KeyDownEvent, KeyUpEvent, Keystroke, Modifiers,
     ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent,
@@ -342,6 +347,22 @@ impl WaylandClient {
 
         let cursor = Cursor::new(&conn, &globals, 24);
 
+        handle.insert_source(XDPEventSource::new(&common.background_executor), {
+            move |event, _, client| match event {
+                XDPEvent::WindowAppearance(appearance) => {
+                    if let Some(client) = client.0.upgrade() {
+                        let mut client = client.borrow_mut();
+
+                        client.common.appearance = appearance;
+
+                        for (_, window) in &mut client.windows {
+                            window.set_appearance(appearance);
+                        }
+                    }
+                }
+            }
+        });
+
         let mut state = Rc::new(RefCell::new(WaylandClientState {
             serial_tracker: SerialTracker::new(),
             globals,
@@ -430,6 +451,7 @@ impl LinuxClient for WaylandClient {
             state.globals.clone(),
             WaylandClientStatePtr(Rc::downgrade(&self.0)),
             params,
+            state.common.appearance,
         );
         state.windows.insert(surface_id, window.0.clone());
 
