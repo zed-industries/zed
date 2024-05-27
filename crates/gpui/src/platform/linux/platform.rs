@@ -34,7 +34,7 @@ use wayland_protocols::wp::cursor_shape::v1::client::wp_cursor_shape_device_v1::
 use xkbcommon::xkb::{self, Keycode, Keysym, State};
 
 use crate::platform::linux::wayland::WaylandClient;
-use crate::platform::linux::xdg_desktop_portal::window_appearance;
+use crate::platform::linux::xdg_desktop_portal::{should_auto_hide_scrollbars, window_appearance};
 use crate::{
     px, Action, AnyWindowHandle, BackgroundExecutor, ClipboardItem, CosmicTextSystem, CursorStyle,
     DisplayId, ForegroundExecutor, Keymap, Keystroke, LinuxDispatcher, Menu, MenuItem, Modifiers,
@@ -90,6 +90,7 @@ pub(crate) struct LinuxCommon {
     pub(crate) foreground_executor: ForegroundExecutor,
     pub(crate) text_system: Arc<CosmicTextSystem>,
     pub(crate) appearance: WindowAppearance,
+    pub(crate) auto_hide_scrollbars: bool,
     pub(crate) callbacks: PlatformHandlers,
     pub(crate) signal: LoopSignal,
 }
@@ -106,12 +107,15 @@ impl LinuxCommon {
         let appearance = window_appearance(&background_executor)
             .log_err()
             .unwrap_or(WindowAppearance::Light);
+        let auto_hide_scrollbars =
+            should_auto_hide_scrollbars(&background_executor).unwrap_or(false);
 
         let common = LinuxCommon {
             background_executor,
             foreground_executor: ForegroundExecutor::new(dispatcher.clone()),
             text_system,
             appearance,
+            auto_hide_scrollbars,
             callbacks,
             signal,
         };
@@ -403,19 +407,7 @@ impl<P: LinuxClient + 'static> Platform for P {
     }
 
     fn should_auto_hide_scrollbars(&self) -> bool {
-        let cmd = Command::new("gsettings")
-            .arg("get")
-            .arg("org.gnome.desktop.interface")
-            .arg("overlay-scrolling")
-            .output()
-            .unwrap();
-        let value = String::from_utf8_lossy(&cmd.stdout);
-        let bool_value = match value.trim().to_lowercase().as_str() {
-            "true" => true,
-            "false" => false,
-            _ => false,
-        };
-        bool_value
+        self.with_common(|common| common.auto_hide_scrollbars)
     }
 
     fn write_credentials(&self, url: &str, username: &str, password: &[u8]) -> Task<Result<()>> {
