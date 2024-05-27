@@ -578,10 +578,10 @@
       "cmd-alt-c": "project_panel::CopyPath",
       "alt-cmd-shift-c": "project_panel::CopyRelativePath",
       "enter": "project_panel::Rename",
-      "backspace": "project_panel::Trash",
-      "delete": "project_panel::Trash",
-      "cmd-backspace": ["project_panel::Delete", { "skip_prompt": true }],
-      "cmd-delete": ["project_panel::Delete", { "skip_prompt": true }],
+      "backspace": ["project_panel::Trash", { "skip_prompt": false }],
+      "delete": ["project_panel::Trash", { "skip_prompt": false }],
+      "cmd-backspace": ["project_panel::Delete", { "skip_prompt": false }],
+      "cmd-delete": ["project_panel::Delete", { "skip_prompt": false }],
       "alt-cmd-r": "project_panel::RevealInFinder",
       "alt-shift-f": "project_panel::NewSearchInDirectory"
     }

@@ -516,6 +516,85 @@ pub struct UndoOperation {
     pub counts: HashMap<clock::Lamport, u32>,
 }
 
+/// Stores information about the indentation of a line (tabs and spaces).
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct LineIndent {
+    pub tabs: u32,
+    pub spaces: u32,
+    pub line_blank: bool,
+}
+
+impl LineIndent {
+    /// Constructs a new `LineIndent` which only contains spaces.
+    pub fn spaces(spaces: u32) -> Self {
+        Self {
+            tabs: 0,
+            spaces,
+            line_blank: true,
+        }
+    }
+
+    /// Constructs a new `LineIndent` which only contains tabs.
+    pub fn tabs(tabs: u32) -> Self {
+        Self {
+            tabs,
+            spaces: 0,
+            line_blank: true,
+        }
+    }
+
+    /// Indicates whether the line is empty.
+    pub fn is_line_empty(&self) -> bool {
+        self.tabs == 0 && self.spaces == 0 && self.line_blank
+    }
+
+    /// Indicates whether the line is blank (contains only whitespace).
+    pub fn is_line_blank(&self) -> bool {
+        self.line_blank
+    }
+
+    /// Returns the number of indentation characters (tabs or spaces).
+    pub fn raw_len(&self) -> u32 {
+        self.tabs + self.spaces
+    }
+
+    /// Returns the number of indentation characters (tabs or spaces), taking tab size into account.
+    pub fn len(&self, tab_size: u32) -> u32 {
+        self.tabs * tab_size + self.spaces
+    }
+}
+
+impl From<&str> for LineIndent {
+    fn from(value: &str) -> Self {
+        Self::from_iter(value.chars())
+    }
+}
+
+impl FromIterator<char> for LineIndent {
+    fn from_iter<T: IntoIterator<Item = char>>(chars: T) -> Self {
+        let mut tabs = 0;
+        let mut spaces = 0;
+        let mut line_blank = true;
+        for c in chars {
+            if c == '\t' {
+                tabs += 1;
+            } else if c == ' ' {
+                spaces += 1;
+            } else {
+                if c != '\n' {
+                    line_blank = false;
+                }
+                break;
+            }
+        }
+        Self {
+            tabs,
+            spaces,
+            line_blank,
+        }
+    }
+}
+
 impl Buffer {
     pub fn new(replica_id: u16, remote_id: BufferId, mut base_text: String) -> Buffer {
         let line_ending = LineEnding::detect(&base_text);
@@ -1868,7 +1947,7 @@ impl BufferSnapshot {
     pub fn line_indents_in_row_range(
         &self,
         row_range: Range<u32>,
-    ) -> impl Iterator<Item = (u32, u32, bool)> + '_ {
+    ) -> impl Iterator<Item = (u32, LineIndent)> + '_ {
         let start = Point::new(row_range.start, 0).to_offset(self);
         let end = Point::new(row_range.end, 0).to_offset(self);
 
@@ -1876,20 +1955,9 @@ impl BufferSnapshot {
         let mut row = row_range.start;
         std::iter::from_fn(move || {
             if let Some(line) = lines.next() {
-                let mut indent_size = 0;
-                let mut is_blank = true;
-
-                for c in line.chars() {
-                    is_blank = false;
-                    if c == ' ' || c == '\t' {
-                        indent_size += 1;
-                    } else {
-                        break;
-                    }
-                }
-
+                let indent = LineIndent::from(line);
                 row += 1;
-                Some((row - 1, indent_size, is_blank))
+                Some((row - 1, indent))
             } else {
                 None
             }
@@ -1899,7 +1967,7 @@ impl BufferSnapshot {
     pub fn reversed_line_indents_in_row_range(
         &self,
         row_range: Range<u32>,
-    ) -> impl Iterator<Item = (u32, u32, bool)> + '_ {
+    ) -> impl Iterator<Item = (u32, LineIndent)> + '_ {
         let start = Point::new(row_range.start, 0).to_offset(self);
         let end = Point::new(row_range.end, 0)
             .to_offset(self)
@@ -1909,41 +1977,17 @@ impl BufferSnapshot {
         let mut row = row_range.end;
         std::iter::from_fn(move || {
             if let Some(line) = lines.next() {
-                let mut indent_size = 0;
-                let mut is_blank = true;
-
-                for c in line.chars() {
-                    is_blank = false;
-                    if c == ' ' || c == '\t' {
-                        indent_size += 1;
-                    } else {
-                        break;
-                    }
-                }
-
+                let indent = LineIndent::from(line);
                 row = row.saturating_sub(1);
-                Some((row, indent_size, is_blank))
+                Some((row, indent))
             } else {
                 None
             }
         })
     }
 
-    pub fn line_indent_for_row(&self, row: u32) -> (u32, bool) {
-        let mut indent_size = 0;
-        let mut is_blank = false;
-        for c in self.chars_at(Point::new(row, 0)) {
-            if c == ' ' || c == '\t' {
-                indent_size += 1;
-            } else {
-                if c == '\n' {
-                    is_blank = true;
-                }
-                break;
-            }
-        }
-
-        (indent_size, is_blank)
+    pub fn line_indent_for_row(&self, row: u32) -> LineIndent {
+        LineIndent::from_iter(self.chars_at(Point::new(row, 0)))
     }
 
     pub fn is_line_blank(&self, row: u32) -> bool {

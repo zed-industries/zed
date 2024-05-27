@@ -9,7 +9,8 @@ use crate::{
     prompts::prompt::generate_content_prompt,
     search::*,
     slash_command::{
-        SlashCommandCleanup, SlashCommandCompletionProvider, SlashCommandLine, SlashCommandRegistry,
+        current_file_command, file_command, prompt_command, SlashCommandCleanup,
+        SlashCommandCompletionProvider, SlashCommandLine, SlashCommandRegistry,
     },
     ApplyEdit, Assist, CompletionProvider, CycleMessageRole, InlineAssist, LanguageModel,
     LanguageModelRequest, LanguageModelRequestMessage, MessageId, MessageMetadata, MessageStatus,
@@ -42,13 +43,14 @@ use gpui::{
     UniformListScrollHandle, View, ViewContext, VisualContext, WeakModel, WeakView, WhiteSpace,
     WindowContext,
 };
+use language::LspAdapterDelegate;
 use language::{
     language_settings::SoftWrap, AutoindentMode, Buffer, BufferSnapshot, LanguageRegistry,
     OffsetRangeExt as _, Point, ToOffset as _, ToPoint as _,
 };
 use multi_buffer::MultiBufferRow;
 use parking_lot::Mutex;
-use project::{Project, ProjectTransaction};
+use project::{Project, ProjectLspAdapterDelegate, ProjectTransaction};
 use search::{buffer_search::DivRegistrar, BufferSearchBar};
 use settings::Settings;
 use std::{
@@ -204,11 +206,20 @@ impl AssistantPanel {
                     })
                     .detach();
 
-                    let slash_command_registry = SlashCommandRegistry::new(
+                    let slash_command_registry = SlashCommandRegistry::global(cx);
+                    let window = cx.window_handle().downcast::<Workspace>();
+
+                    slash_command_registry.register_command(file_command::FileSlashCommand::new(
                         workspace.project().clone(),
-                        prompt_library.clone(),
-                        cx.window_handle().downcast::<Workspace>(),
+                    ));
+                    slash_command_registry.register_command(
+                        prompt_command::PromptSlashCommand::new(prompt_library.clone()),
                     );
+                    if let Some(window) = window {
+                        slash_command_registry.register_command(
+                            current_file_command::CurrentFileSlashCommand::new(window),
+                        );
+                    }
 
                     Self {
                         workspace: workspace_handle,
@@ -1118,6 +1129,14 @@ impl AssistantPanel {
         let slash_commands = self.slash_commands.clone();
         let languages = self.languages.clone();
         let telemetry = self.telemetry.clone();
+
+        let lsp_adapter_delegate = workspace
+            .update(cx, |workspace, cx| {
+                make_lsp_adapter_delegate(workspace.project(), cx).log_err()
+            })
+            .log_err()
+            .flatten();
+
         cx.spawn(|this, mut cx| async move {
             let saved_conversation = SavedConversation::load(&path, fs.as_ref()).await?;
             let model = this.update(&mut cx, |this, _| this.model.clone())?;
@@ -1128,6 +1147,7 @@ impl AssistantPanel {
                 languages,
                 slash_commands,
                 Some(telemetry),
+                lsp_adapter_delegate,
                 &mut cx,
             )
             .await?;
@@ -1473,6 +1493,7 @@ pub struct Conversation {
     telemetry: Option<Arc<Telemetry>>,
     slash_command_registry: Arc<SlashCommandRegistry>,
     language_registry: Arc<LanguageRegistry>,
+    lsp_adapter_delegate: Option<Arc<dyn LspAdapterDelegate>>,
 }
 
 impl EventEmitter<ConversationEvent> for Conversation {}
@@ -1483,6 +1504,7 @@ impl Conversation {
         language_registry: Arc<LanguageRegistry>,
         slash_command_registry: Arc<SlashCommandRegistry>,
         telemetry: Option<Arc<Telemetry>>,
+        lsp_adapter_delegate: Option<Arc<dyn LspAdapterDelegate>>,
         cx: &mut ModelContext<Self>,
     ) -> Self {
         let buffer = cx.new_model(|cx| {
@@ -1515,6 +1537,7 @@ impl Conversation {
             telemetry,
             slash_command_registry,
             language_registry,
+            lsp_adapter_delegate,
         };
 
         let message = MessageAnchor {
@@ -1558,6 +1581,7 @@ impl Conversation {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     async fn deserialize(
         saved_conversation: SavedConversation,
         model: LanguageModel,
@@ -1565,6 +1589,7 @@ impl Conversation {
         language_registry: Arc<LanguageRegistry>,
         slash_command_registry: Arc<SlashCommandRegistry>,
         telemetry: Option<Arc<Telemetry>>,
+        lsp_adapter_delegate: Option<Arc<dyn LspAdapterDelegate>>,
         cx: &mut AsyncAppContext,
     ) -> Result<Model<Self>> {
         let id = match saved_conversation.id {
@@ -1624,6 +1649,7 @@ impl Conversation {
                 telemetry,
                 language_registry,
                 slash_command_registry,
+                lsp_adapter_delegate,
             };
             this.set_language(cx);
             this.reparse_edit_suggestions(cx);
@@ -1832,14 +1858,18 @@ impl Conversation {
                         let name = &line[call.name];
                         if let Some(call) = unchanged_call {
                             new_calls.push(call);
-                        } else if let Some(command) = this.slash_command_registry.command(name) {
+                        } else if let Some((command, lsp_adapter_delegate)) = this
+                            .slash_command_registry
+                            .command(name)
+                            .zip(this.lsp_adapter_delegate.clone())
+                        {
                             changed = true;
                             let name = name.to_string();
                             let source_range =
                                 buffer.anchor_after(offset)..buffer.anchor_before(line_end_offset);
 
                             let argument = call.argument.map(|range| &line[range]);
-                            let invocation = command.run(argument, cx);
+                            let invocation = command.run(argument, lsp_adapter_delegate, cx);
 
                             new_calls.push(SlashCommandCall {
                                 name,
@@ -2717,12 +2747,16 @@ impl ConversationEditor {
         cx: &mut ViewContext<Self>,
     ) -> Self {
         let telemetry = workspace.read(cx).client().telemetry().clone();
+        let project = workspace.read(cx).project().clone();
+        let lsp_adapter_delegate = make_lsp_adapter_delegate(&project, cx).log_err();
+
         let conversation = cx.new_model(|cx| {
             Conversation::new(
                 model,
                 language_registry,
                 slash_command_registry,
                 Some(telemetry),
+                lsp_adapter_delegate,
                 cx,
             )
         });
@@ -3896,6 +3930,20 @@ fn merge_ranges(ranges: &mut Vec<Range<Anchor>>, buffer: &MultiBufferSnapshot) {
     }
 }
 
+fn make_lsp_adapter_delegate(
+    project: &Model<Project>,
+    cx: &mut AppContext,
+) -> Result<Arc<dyn LspAdapterDelegate>> {
+    project.update(cx, |project, cx| {
+        // TODO: Find the right worktree.
+        let worktree = project
+            .worktrees()
+            .next()
+            .ok_or_else(|| anyhow!("no worktrees when constructing ProjectLspAdapterDelegate"))?;
+        Ok(ProjectLspAdapterDelegate::new(project, &worktree, cx) as Arc<dyn LspAdapterDelegate>)
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use std::{cell::RefCell, path::Path, rc::Rc};
@@ -3923,6 +3971,7 @@ mod tests {
                 LanguageModel::default(),
                 registry,
                 Default::default(),
+                None,
                 None,
                 cx,
             )
@@ -4063,6 +4112,7 @@ mod tests {
                 registry,
                 Default::default(),
                 None,
+                None,
                 cx,
             )
         });
@@ -4169,6 +4219,7 @@ mod tests {
                 registry,
                 Default::default(),
                 None,
+                None,
                 cx,
             )
         });
@@ -4273,8 +4324,22 @@ mod tests {
 
         let project = Project::test(fs.clone(), ["/test".as_ref()], cx).await;
         let prompt_library = Arc::new(PromptLibrary::default());
-        let slash_command_registry =
-            SlashCommandRegistry::new(project.clone(), prompt_library, None);
+        let slash_command_registry = SlashCommandRegistry::new();
+
+        slash_command_registry
+            .register_command(file_command::FileSlashCommand::new(project.clone()));
+        slash_command_registry.register_command(prompt_command::PromptSlashCommand::new(
+            prompt_library.clone(),
+        ));
+
+        let lsp_adapter_delegate = project.update(cx, |project, cx| {
+            // TODO: Find the right worktree.
+            let worktree = project
+                .worktrees()
+                .next()
+                .expect("expected at least one worktree");
+            ProjectLspAdapterDelegate::new(project, &worktree, cx)
+        });
 
         let registry = Arc::new(LanguageRegistry::test(cx.executor()));
         let conversation = cx.new_model(|cx| {
@@ -4283,6 +4348,7 @@ mod tests {
                 registry.clone(),
                 slash_command_registry,
                 None,
+                Some(lsp_adapter_delegate),
                 cx,
             )
         });
@@ -4583,6 +4649,7 @@ mod tests {
                 registry.clone(),
                 Default::default(),
                 None,
+                None,
                 cx,
             )
         });
@@ -4625,6 +4692,7 @@ mod tests {
             Default::default(),
             registry.clone(),
             Default::default(),
+            None,
             None,
             &mut cx.to_async(),
         )

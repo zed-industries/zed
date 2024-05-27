@@ -569,8 +569,8 @@
       "enter": "project_panel::Rename",
       "backspace": "project_panel::Trash",
       "delete": "project_panel::Trash",
-      "ctrl-backspace": ["project_panel::Delete", { "skip_prompt": true }],
-      "ctrl-delete": ["project_panel::Delete", { "skip_prompt": true }],
+      "ctrl-backspace": ["project_panel::Delete", { "skip_prompt": false }],
+      "ctrl-delete": ["project_panel::Delete", { "skip_prompt": false }],
       "alt-ctrl-r": "project_panel::RevealInFinder",
       "alt-shift-f": "project_panel::NewSearchInDirectory"
     }

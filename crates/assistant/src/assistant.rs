@@ -17,7 +17,6 @@ use client::{proto, Client};
 use command_palette_hooks::CommandPaletteFilter;
 pub(crate) use completion_provider::*;
 use gpui::{actions, AppContext, Global, SharedString, UpdateGlobal};
-pub(crate) use prompts::prompt_library::*;
 pub(crate) use saved_conversation::*;
 use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsStore};
@@ -238,6 +237,7 @@ pub fn init(client: Arc<Client>, cx: &mut AppContext) {
     cx.set_global(Assistant::default());
     AssistantSettings::register(cx);
     completion_provider::init(client, cx);
+    assistant_slash_command::init(cx);
     assistant_panel::init(cx);
 
     CommandPaletteFilter::update_global(cx, |filter, _cx| {

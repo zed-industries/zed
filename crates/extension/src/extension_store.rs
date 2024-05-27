@@ -2,14 +2,17 @@ pub mod extension_builder;
 mod extension_lsp_adapter;
 mod extension_manifest;
 mod extension_settings;
+mod extension_slash_command;
 mod wasm_host;
 
 #[cfg(test)]
 mod extension_store_test;
 
 use crate::extension_manifest::SchemaVersion;
+use crate::extension_slash_command::ExtensionSlashCommand;
 use crate::{extension_lsp_adapter::ExtensionLspAdapter, wasm_host::wit};
 use anyhow::{anyhow, bail, Context as _, Result};
+use assistant_slash_command::SlashCommandRegistry;
 use async_compression::futures::bufread::GzipDecoder;
 use async_tar::Archive;
 use client::{telemetry::Telemetry, Client, ExtensionMetadata, GetExtensionsResponse};
@@ -107,6 +110,7 @@ pub struct ExtensionStore {
     index_path: PathBuf,
     language_registry: Arc<LanguageRegistry>,
     theme_registry: Arc<ThemeRegistry>,
+    slash_command_registry: Arc<SlashCommandRegistry>,
     modified_extensions: HashSet<Arc<str>>,
     wasm_host: Arc<WasmHost>,
     wasm_extensions: Vec<(Arc<ExtensionManifest>, WasmExtension)>,
@@ -183,6 +187,7 @@ pub fn init(
             node_runtime,
             language_registry,
             theme_registry,
+            SlashCommandRegistry::global(cx),
             cx,
         )
     });
@@ -215,6 +220,7 @@ impl ExtensionStore {
         node_runtime: Arc<dyn NodeRuntime>,
         language_registry: Arc<LanguageRegistry>,
         theme_registry: Arc<ThemeRegistry>,
+        slash_command_registry: Arc<SlashCommandRegistry>,
         cx: &mut ModelContext<Self>,
     ) -> Self {
         let work_dir = extensions_dir.join("work");
@@ -245,6 +251,7 @@ impl ExtensionStore {
             telemetry,
             language_registry,
             theme_registry,
+            slash_command_registry,
             reload_tx,
             tasks: Vec::new(),
         };
@@ -1168,6 +1175,19 @@ impl ExtensionStore {
                                 }),
                             );
                         }
+                    }
+
+                    for (slash_command_name, slash_command) in &manifest.slash_commands {
+                        this.slash_command_registry
+                            .register_command(ExtensionSlashCommand {
+                                command: crate::wit::SlashCommand {
+                                    name: slash_command_name.to_string(),
+                                    description: slash_command.description.to_string(),
+                                    requires_argument: slash_command.requires_argument,
+                                },
+                                extension: wasm_extension.clone(),
+                                host: this.wasm_host.clone(),
+                            });
                     }
                 }
                 this.wasm_extensions.extend(wasm_extensions);

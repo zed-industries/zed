@@ -124,6 +124,8 @@
   "wrap_guides": [],
   // Hide the values of in variables from visual display in private files
   "redact_private_values": false,
+  // The default number of lines to expand excerpts in the multibuffer by.
+  "expand_excerpt_lines": 3,
   // Globs to match against file paths to determine if a file is private.
   "private_files": [
     "**/.env*",

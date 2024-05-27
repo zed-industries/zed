@@ -2,6 +2,7 @@ use std::cell::RefCell;
 use std::ffi::OsString;
 use std::ops::Deref;
 use std::rc::{Rc, Weak};
+use std::sync::OnceLock;
 use std::time::{Duration, Instant};
 
 use calloop::generic::{FdWrapper, Generic};
@@ -10,6 +11,7 @@ use calloop::{channel, EventLoop, LoopHandle, RegistrationToken};
 use collections::HashMap;
 use copypasta::x11_clipboard::{Clipboard, Primary, X11ClipboardContext};
 use copypasta::ClipboardProvider;
+use parking_lot::Mutex;
 
 use util::ResultExt;
 use x11rb::connection::{Connection, RequestConnection};
@@ -28,21 +30,24 @@ use xkbc::x11::ffi::{XKB_X11_MIN_MAJOR_XKB_VERSION, XKB_X11_MIN_MINOR_XKB_VERSIO
 use xkbcommon::xkb as xkbc;
 
 use crate::platform::linux::LinuxClient;
-use crate::platform::{LinuxCommon, PlatformWindow};
+use crate::platform::{LinuxCommon, PlatformWindow, WaylandClientState};
 use crate::{
     modifiers_from_xinput_info, point, px, AnyWindowHandle, Bounds, CursorStyle, DisplayId,
-    Keystroke, Modifiers, ModifiersChangedEvent, Pixels, PlatformDisplay, PlatformInput, Point,
-    ScrollDelta, Size, TouchPhase, WindowParams, X11Window,
+    ForegroundExecutor, Keystroke, Modifiers, ModifiersChangedEvent, Pixels, PlatformDisplay,
+    PlatformInput, Point, ScrollDelta, Size, TouchPhase, WindowAppearance, WindowParams, X11Window,
 };
 
 use super::{
     super::{open_uri_internal, SCROLL_LINES},
     X11Display, X11WindowStatePtr, XcbAtoms,
 };
-use super::{button_from_mask, button_of_key, modifiers_from_state};
+use super::{button_of_key, modifiers_from_state, pressed_button_from_mask};
 use super::{XimCallbackEvent, XimHandler};
 use crate::platform::linux::is_within_click_distance;
 use crate::platform::linux::platform::DOUBLE_CLICK_INTERVAL;
+use crate::platform::linux::xdg_desktop_portal::{Event as XDPEvent, XDPEventSource};
+
+pub(super) const XINPUT_MASTER_DEVICE: u16 = 1;
 
 pub(crate) struct WindowRef {
     window: X11WindowStatePtr,
@@ -185,7 +190,7 @@ impl X11Client {
         );
 
         let master_device_query = xcb_connection
-            .xinput_xi_query_device(1_u16)
+            .xinput_xi_query_device(XINPUT_MASTER_DEVICE)
             .unwrap()
             .reply()
             .unwrap();
@@ -358,6 +363,17 @@ impl X11Client {
                 }
             })
             .expect("Failed to initialize XIM event source");
+        handle.insert_source(XDPEventSource::new(&common.background_executor), {
+            move |event, _, client| match event {
+                XDPEvent::WindowAppearance(appearance) => {
+                    client.with_common(|common| common.appearance = appearance);
+                    for (_, window) in &mut client.0.borrow_mut().windows {
+                        window.window.set_appearance(appearance);
+                    }
+                }
+            }
+        });
+
         X11Client(Rc::new(RefCell::new(X11ClientState {
             event_loop: Some(event_loop),
             loop_handle: handle,
@@ -668,7 +684,7 @@ impl X11Client {
             Event::XinputMotion(event) => {
                 let window = self.get_window(event.event)?;
                 let state = self.0.borrow();
-                let pressed_button = button_from_mask(event.button_mask[0]);
+                let pressed_button = pressed_button_from_mask(event.button_mask[0]);
                 let position = point(
                     px(event.event_x as f32 / u16::MAX as f32 / state.scale_factor),
                     px(event.event_y as f32 / u16::MAX as f32 / state.scale_factor),
@@ -751,7 +767,7 @@ impl X11Client {
 
                 let window = self.get_window(event.event)?;
                 let state = self.0.borrow();
-                let pressed_button = button_from_mask(event.buttons[0]);
+                let pressed_button = pressed_button_from_mask(event.buttons[0]);
                 let position = point(
                     px(event.event_x as f32 / u16::MAX as f32 / state.scale_factor),
                     px(event.event_y as f32 / u16::MAX as f32 / state.scale_factor),
@@ -903,6 +919,7 @@ impl LinuxClient for X11Client {
             x_window,
             &state.atoms,
             state.scale_factor,
+            state.common.appearance,
         );
 
         let screen_resources = state
@@ -956,7 +973,7 @@ impl LinuxClient for X11Client {
                         .unwrap();
                     let _ = state.xcb_connection.flush().unwrap();
                     // Take into account that some frames have been skipped
-                    let now = time::Instant::now();
+                    let now = Instant::now();
                     while instant < now {
                         instant += refresh_duration;
                     }
