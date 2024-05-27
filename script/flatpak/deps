@@ -2,9 +2,6 @@
 
 flatpak remote-add --if-not-exists --user flathub https://dl.flathub.org/repo/flathub.flatpakrepo
 
-pip3 install aiohttp
-pip3 install toml
-
 arch=$(arch)
 fd_version=23.08
 flatpak install -y --user org.freedesktop.Platform/${arch}/${fd_version}
