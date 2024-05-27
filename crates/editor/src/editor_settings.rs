@@ -21,6 +21,7 @@ pub struct EditorSettings {
     pub seed_search_query_from_cursor: SeedQuerySetting,
     pub multi_cursor_modifier: MultiCursorModifier,
     pub redact_private_values: bool,
+    pub expand_excerpt_lines: u32,
     #[serde(default)]
     pub double_click_in_multibuffer: DoubleClickInMultibuffer,
 }
@@ -181,6 +182,11 @@ pub struct EditorSettingsContent {
     ///
     /// Default: false
     pub redact_private_values: Option<bool>,
+
+    /// How many lines to expand the multibuffer excerpts by default
+    ///
+    /// Default: 3
+    pub expand_excerpt_lines: Option<u32>,
 
     /// What to do when multibuffer is double clicked in some of its excerpts
     /// (parts of singleton buffers).

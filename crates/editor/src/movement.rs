@@ -695,12 +695,15 @@ mod tests {
         let font_size = px(14.0);
         let buffer = MultiBuffer::build_simple(input_text, cx);
         let buffer_snapshot = buffer.read(cx).snapshot(cx);
+
         let display_map = cx.new_model(|cx| {
             DisplayMap::new(
                 buffer,
                 font,
                 font_size,
                 None,
+                true,
+                1,
                 1,
                 1,
                 FoldPlaceholder::test(),
@@ -917,8 +920,10 @@ mod tests {
                     font,
                     px(14.0),
                     None,
+                    true,
                     2,
                     2,
+                    0,
                     FoldPlaceholder::test(),
                     cx,
                 )

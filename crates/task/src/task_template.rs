@@ -469,14 +469,14 @@ mod tests {
                 (
                     "env_key_2".to_string(),
                     format!(
-                        "env_var_2_{}_{}",
+                        "env_var_2 {} {}",
                         custom_variable_1.template_value(),
                         custom_variable_2.template_value()
                     ),
                 ),
                 (
                     "env_key_3".to_string(),
-                    format!("env_var_3_{}", VariableName::Symbol.template_value()),
+                    format!("env_var_3 {}", VariableName::Symbol.template_value()),
                 ),
             ]),
             ..TaskTemplate::default()
@@ -559,11 +559,11 @@ mod tests {
             );
             assert_eq!(
                 spawn_in_terminal.env.get("env_key_2").map(|s| s.as_str()),
-                Some("env_var_2_test_custom_variable_1_test_custom_variable_2")
+                Some("env_var_2 test_custom_variable_1 test_custom_variable_2")
             );
             assert_eq!(
                 spawn_in_terminal.env.get("env_key_3"),
-                Some(&format!("env_var_3_{long_value}")),
+                Some(&format!("env_var_3 {long_value}")),
                 "Env vars should be substituted with variables and those should not be shortened"
             );
         }

@@ -253,7 +253,7 @@ impl ToolView for AnnotationResultView {
                 MultiBuffer::new(0, language::Capability::ReadWrite).with_title(String::new())
             });
             let editor = cx.new_view(|cx| {
-                Editor::for_multibuffer(multibuffer.clone(), Some(self.project.clone()), cx)
+                Editor::for_multibuffer(multibuffer.clone(), Some(self.project.clone()), true, cx)
             });
 
             self.editor = Some(editor.clone());

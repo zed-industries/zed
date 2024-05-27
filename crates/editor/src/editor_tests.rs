@@ -4292,10 +4292,10 @@ async fn test_select_previous_multibuffer(cx: &mut gpui::TestAppContext) {
     let mut cx = EditorTestContext::new_multibuffer(
         cx,
         [
-            indoc! {
+            &indoc! {
                 "aaa\n«bbb\nccc\n»ddd"
             },
-            indoc! {
+            &indoc! {
                 "aaa\n«bbb\nccc\n»ddd"
             },
         ],
@@ -6033,8 +6033,15 @@ async fn test_multibuffer_format_during_save(cx: &mut gpui::TestAppContext) {
         );
         multi_buffer
     });
-    let multi_buffer_editor =
-        cx.new_view(|cx| Editor::new(EditorMode::Full, multi_buffer, Some(project.clone()), cx));
+    let multi_buffer_editor = cx.new_view(|cx| {
+        Editor::new(
+            EditorMode::Full,
+            multi_buffer,
+            Some(project.clone()),
+            true,
+            cx,
+        )
+    });
 
     multi_buffer_editor.update(cx, |editor, cx| {
         editor.change_selections(Some(Autoscroll::Next), cx, |s| s.select_ranges(Some(1..2)));
@@ -9430,8 +9437,15 @@ async fn test_mutlibuffer_in_navigation_history(cx: &mut gpui::TestAppContext) {
     let project = Project::test(fs, ["/a".as_ref()], cx).await;
     let workspace = cx.add_window(|cx| Workspace::test_new(project.clone(), cx));
     let cx = &mut VisualTestContext::from_window(*workspace.deref(), cx);
-    let multi_buffer_editor =
-        cx.new_view(|cx| Editor::new(EditorMode::Full, multi_buffer, Some(project.clone()), cx));
+    let multi_buffer_editor = cx.new_view(|cx| {
+        Editor::new(
+            EditorMode::Full,
+            multi_buffer,
+            Some(project.clone()),
+            true,
+            cx,
+        )
+    });
     let multibuffer_item_id = workspace
         .update(cx, |workspace, cx| {
             assert!(
@@ -10358,28 +10372,18 @@ async fn test_toggle_diff_expand_in_multi_buffer(cx: &mut gpui::TestAppContext) 
     let project = Project::test(fs, ["/a".as_ref()], cx).await;
     let workspace = cx.add_window(|cx| Workspace::test_new(project.clone(), cx));
     let cx = &mut VisualTestContext::from_window(*workspace.deref(), cx);
-    let multi_buffer_editor =
-        cx.new_view(|cx| Editor::new(EditorMode::Full, multi_buffer, Some(project.clone()), cx));
+    let multi_buffer_editor = cx.new_view(|cx| {
+        Editor::new(
+            EditorMode::Full,
+            multi_buffer,
+            Some(project.clone()),
+            true,
+            cx,
+        )
+    });
     cx.executor().run_until_parked();
 
     let expected_all_hunks = vec![
-        (
-            "bbbb\n".to_string(),
-            DiffHunkStatus::Removed,
-            DisplayRow(3)..DisplayRow(3),
-        ),
-        (
-            "nnnn\n".to_string(),
-            DiffHunkStatus::Modified,
-            DisplayRow(16)..DisplayRow(17),
-        ),
-        (
-            "".to_string(),
-            DiffHunkStatus::Added,
-            DisplayRow(31)..DisplayRow(32),
-        ),
-    ];
-    let expected_all_hunks_shifted = vec![
         (
             "bbbb\n".to_string(),
             DiffHunkStatus::Removed,
@@ -10388,12 +10392,29 @@ async fn test_toggle_diff_expand_in_multi_buffer(cx: &mut gpui::TestAppContext) 
         (
             "nnnn\n".to_string(),
             DiffHunkStatus::Modified,
-            DisplayRow(18)..DisplayRow(19),
+            DisplayRow(21)..DisplayRow(22),
         ),
         (
             "".to_string(),
             DiffHunkStatus::Added,
-            DisplayRow(33)..DisplayRow(34),
+            DisplayRow(41)..DisplayRow(42),
+        ),
+    ];
+    let expected_all_hunks_shifted = vec![
+        (
+            "bbbb\n".to_string(),
+            DiffHunkStatus::Removed,
+            DisplayRow(5)..DisplayRow(5),
+        ),
+        (
+            "nnnn\n".to_string(),
+            DiffHunkStatus::Modified,
+            DisplayRow(23)..DisplayRow(24),
+        ),
+        (
+            "".to_string(),
+            DiffHunkStatus::Added,
+            DisplayRow(43)..DisplayRow(44),
         ),
     ];
 
@@ -10418,8 +10439,8 @@ async fn test_toggle_diff_expand_in_multi_buffer(cx: &mut gpui::TestAppContext) 
         assert_eq!(
             expanded_hunks_background_highlights(editor, cx),
             vec![
-                DisplayRow(18)..=DisplayRow(18),
-                DisplayRow(33)..=DisplayRow(33)
+                DisplayRow(23)..=DisplayRow(23),
+                DisplayRow(43)..=DisplayRow(43)
             ],
         );
         assert_eq!(all_hunks, expected_all_hunks_shifted);
@@ -10450,8 +10471,8 @@ async fn test_toggle_diff_expand_in_multi_buffer(cx: &mut gpui::TestAppContext) 
         assert_eq!(
             expanded_hunks_background_highlights(editor, cx),
             vec![
-                DisplayRow(18)..=DisplayRow(18),
-                DisplayRow(33)..=DisplayRow(33)
+                DisplayRow(23)..=DisplayRow(23),
+                DisplayRow(43)..=DisplayRow(43)
             ],
         );
         assert_eq!(all_hunks, expected_all_hunks_shifted);
