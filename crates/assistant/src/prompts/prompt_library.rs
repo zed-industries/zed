@@ -6,10 +6,7 @@ use gray_matter::{engine::YAML, Matter};
 use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
 use smol::stream::StreamExt;
-use std::{
-    ops::{Deref, DerefMut},
-    sync::Arc,
-};
+use std::sync::Arc;
 use util::paths::PROMPTS_DIR;
 use uuid::Uuid;
 
@@ -78,16 +75,6 @@ impl PromptLibrary {
         let id = prompt.id().clone();
         state.prompts.insert(id, prompt);
         state.version += 1;
-    }
-
-    pub fn update_prompt(&self, id: PromptId, content: String) {
-        let mut state = self.state.write();
-
-        if let Some(prompt) = self.prompt_by_id(id) {
-            let mut prompt = prompt.clone();
-            prompt.update(id, content);
-            state.version += 1;
-        }
     }
 
     pub fn prompts(&self) -> HashMap<PromptId, StaticPrompt> {

@@ -216,18 +216,8 @@ impl StaticPrompt {
         &self.id
     }
 
-    pub fn set_id(&mut self, id: PromptId) -> &mut Self {
-        self.id = id;
-        self
-    }
-
     pub fn file_name(&self) -> Option<&SharedString> {
         self.file_name.as_ref()
-    }
-
-    pub fn set_file_name(&mut self, file_name: Option<SharedString>) -> &mut Self {
-        self.file_name = file_name;
-        self
     }
 
     /// Sets the file name of the prompt

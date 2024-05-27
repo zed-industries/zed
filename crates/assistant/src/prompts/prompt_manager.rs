@@ -232,25 +232,6 @@ impl PromptManager {
         editor_for_prompt.clone()
     }
 
-    fn handle_editor_event(&mut self, prompt: StaticPrompt, cx: &mut ViewContext<Self>) {
-        let prompt_library = self.prompt_library.clone();
-        let prompt_id = prompt.id();
-
-        if let Some(editor) = self.prompt_editors.get(&prompt_id) {
-            let text = editor.read(cx).text(cx);
-
-            if prompt.content().clone() == text {
-                prompt_library.set_dirty(prompt_id.clone(), false);
-            } else {
-                prompt_library.set_dirty(prompt_id.clone(), true);
-            }
-
-            // TODO: Count & update tokens here
-
-            cx.notify();
-        }
-    }
-
     fn dismiss(&mut self, _: &menu::Cancel, cx: &mut ViewContext<Self>) {
         cx.emit(DismissEvent);
     }
