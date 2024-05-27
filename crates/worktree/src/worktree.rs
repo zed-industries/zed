@@ -4240,9 +4240,10 @@ impl BackgroundScanner {
                         metadata,
                         self.next_entry_id.as_ref(),
                         state.snapshot.root_char_bag,
-                        match metadata.is_symlink {
-                            true => Some(canonical_path.to_path_buf()),
-                            false => None,
+                        if metadata.is_symlink {
+                            Some(canonical_path.to_path_buf())
+                        } else {
+                            None
                         },
                     );
 
