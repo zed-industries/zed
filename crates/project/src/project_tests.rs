@@ -14,7 +14,7 @@ use serde_json::json;
 #[cfg(not(windows))]
 use std::os;
 use std::task::Poll;
-use task::{TaskContext, TaskTemplate, TaskTemplates};
+use task::{ResolvedTask, TaskContext, TaskTemplate, TaskTemplates};
 use unindent::Unindent as _;
 use util::{assert_set_eq, paths::PathMatcher, test::temp_tree};
 use worktree::WorktreeModelHandle as _;
@@ -129,101 +129,91 @@ async fn test_managing_project_specific_settings(cx: &mut gpui::TestAppContext) 
     let task_context = TaskContext::default();
 
     cx.executor().run_until_parked();
-    let workree_id = cx.update(|cx| {
+    let worktree_id = cx.update(|cx| {
         project.update(cx, |project, cx| {
             project.worktrees().next().unwrap().read(cx).id()
         })
     });
     let global_task_source_kind = TaskSourceKind::Worktree {
-        id: workree_id,
+        id: worktree_id,
         abs_path: PathBuf::from("/the-root/.zed/tasks.json"),
-        id_base: "local_tasks_for_worktree",
+        id_base: "local_tasks_for_worktree".into(),
     };
-    cx.update(|cx| {
-        let tree = worktree.read(cx);
 
-        let settings_a = language_settings(
-            None,
-            Some(
-                &(File::for_entry(
-                    tree.entry_for_path("a/a.rs").unwrap().clone(),
-                    worktree.clone(),
-                ) as _),
-            ),
-            cx,
-        );
-        let settings_b = language_settings(
-            None,
-            Some(
-                &(File::for_entry(
-                    tree.entry_for_path("b/b.rs").unwrap().clone(),
-                    worktree.clone(),
-                ) as _),
-            ),
-            cx,
-        );
+    let all_tasks = cx
+        .update(|cx| {
+            let tree = worktree.read(cx);
 
-        assert_eq!(settings_a.tab_size.get(), 8);
-        assert_eq!(settings_b.tab_size.get(), 2);
-
-        let all_tasks = project
-            .update(cx, |project, cx| {
-                project.task_inventory().update(cx, |inventory, _| {
-                    let (mut old, new) = inventory.used_and_current_resolved_tasks(
-                        None,
-                        Some(workree_id),
-                        &task_context,
-                    );
-                    old.extend(new);
-                    old
-                })
-            })
-            .into_iter()
-            .map(|(source_kind, task)| {
-                let resolved = task.resolved.unwrap();
-                (
-                    source_kind,
-                    task.resolved_label,
-                    resolved.args,
-                    resolved.env,
-                )
-            })
-            .collect::<Vec<_>>();
-        assert_eq!(
-            all_tasks,
-            vec![
-                (
-                    global_task_source_kind.clone(),
-                    "cargo check".to_string(),
-                    vec!["check".to_string(), "--all".to_string()],
-                    HashMap::default(),
+            let settings_a = language_settings(
+                None,
+                Some(
+                    &(File::for_entry(
+                        tree.entry_for_path("a/a.rs").unwrap().clone(),
+                        worktree.clone(),
+                    ) as _),
                 ),
-                (
-                    TaskSourceKind::Worktree {
-                        id: workree_id,
-                        abs_path: PathBuf::from("/the-root/b/.zed/tasks.json"),
-                        id_base: "local_tasks_for_worktree",
-                    },
-                    "cargo check".to_string(),
-                    vec!["check".to_string()],
-                    HashMap::default(),
+                cx,
+            );
+            let settings_b = language_settings(
+                None,
+                Some(
+                    &(File::for_entry(
+                        tree.entry_for_path("b/b.rs").unwrap().clone(),
+                        worktree.clone(),
+                    ) as _),
                 ),
-            ]
-        );
-    });
+                cx,
+            );
 
-    project.update(cx, |project, cx| {
-        let inventory = project.task_inventory();
-        inventory.update(cx, |inventory, _| {
-            let (mut old, new) =
-                inventory.used_and_current_resolved_tasks(None, Some(workree_id), &task_context);
-            old.extend(new);
-            let (_, resolved_task) = old
-                .into_iter()
-                .find(|(source_kind, _)| source_kind == &global_task_source_kind)
-                .expect("should have one global task");
-            inventory.task_scheduled(global_task_source_kind.clone(), resolved_task);
+            assert_eq!(settings_a.tab_size.get(), 8);
+            assert_eq!(settings_b.tab_size.get(), 2);
+
+            get_all_tasks(&project, Some(worktree_id), &task_context, cx)
         })
+        .await
+        .into_iter()
+        .map(|(source_kind, task)| {
+            let resolved = task.resolved.unwrap();
+            (
+                source_kind,
+                task.resolved_label,
+                resolved.args,
+                resolved.env,
+            )
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        all_tasks,
+        vec![
+            (
+                global_task_source_kind.clone(),
+                "cargo check".to_string(),
+                vec!["check".to_string(), "--all".to_string()],
+                HashMap::default(),
+            ),
+            (
+                TaskSourceKind::Worktree {
+                    id: worktree_id,
+                    abs_path: PathBuf::from("/the-root/b/.zed/tasks.json"),
+                    id_base: "local_tasks_for_worktree".into(),
+                },
+                "cargo check".to_string(),
+                vec!["check".to_string()],
+                HashMap::default(),
+            ),
+        ]
+    );
+
+    let (_, resolved_task) = cx
+        .update(|cx| get_all_tasks(&project, Some(worktree_id), &task_context, cx))
+        .await
+        .into_iter()
+        .find(|(source_kind, _)| source_kind == &global_task_source_kind)
+        .expect("should have one global task");
+    project.update(cx, |project, cx| {
+        project.task_inventory().update(cx, |inventory, _| {
+            inventory.task_scheduled(global_task_source_kind.clone(), resolved_task);
+        });
     });
 
     let tasks = serde_json::to_string(&TaskTemplates(vec![TaskTemplate {
@@ -257,63 +247,52 @@ async fn test_managing_project_specific_settings(cx: &mut gpui::TestAppContext) 
     tx.unbounded_send(tasks).unwrap();
 
     cx.run_until_parked();
-    cx.update(|cx| {
-        let all_tasks = project
-            .update(cx, |project, cx| {
-                project.task_inventory().update(cx, |inventory, _| {
-                    let (mut old, new) = inventory.used_and_current_resolved_tasks(
-                        None,
-                        Some(workree_id),
-                        &task_context,
-                    );
-                    old.extend(new);
-                    old
-                })
-            })
-            .into_iter()
-            .map(|(source_kind, task)| {
-                let resolved = task.resolved.unwrap();
-                (
-                    source_kind,
-                    task.resolved_label,
-                    resolved.args,
-                    resolved.env,
-                )
-            })
-            .collect::<Vec<_>>();
-        assert_eq!(
-            all_tasks,
-            vec![
-                (
-                    TaskSourceKind::Worktree {
-                        id: workree_id,
-                        abs_path: PathBuf::from("/the-root/.zed/tasks.json"),
-                        id_base: "local_tasks_for_worktree",
-                    },
-                    "cargo check".to_string(),
-                    vec![
-                        "check".to_string(),
-                        "--all".to_string(),
-                        "--all-targets".to_string()
-                    ],
-                    HashMap::from_iter(Some((
-                        "RUSTFLAGS".to_string(),
-                        "-Zunstable-options".to_string()
-                    ))),
-                ),
-                (
-                    TaskSourceKind::Worktree {
-                        id: workree_id,
-                        abs_path: PathBuf::from("/the-root/b/.zed/tasks.json"),
-                        id_base: "local_tasks_for_worktree",
-                    },
-                    "cargo check".to_string(),
-                    vec!["check".to_string()],
-                    HashMap::default(),
-                ),
-            ]
-        );
-    });
+    let all_tasks = cx
+        .update(|cx| get_all_tasks(&project, Some(worktree_id), &task_context, cx))
+        .await
+        .into_iter()
+        .map(|(source_kind, task)| {
+            let resolved = task.resolved.unwrap();
+            (
+                source_kind,
+                task.resolved_label,
+                resolved.args,
+                resolved.env,
+            )
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        all_tasks,
+        vec![
+            (
+                TaskSourceKind::Worktree {
+                    id: worktree_id,
+                    abs_path: PathBuf::from("/the-root/.zed/tasks.json"),
+                    id_base: "local_tasks_for_worktree".into(),
+                },
+                "cargo check".to_string(),
+                vec![
+                    "check".to_string(),
+                    "--all".to_string(),
+                    "--all-targets".to_string()
+                ],
+                HashMap::from_iter(Some((
+                    "RUSTFLAGS".to_string(),
+                    "-Zunstable-options".to_string()
+                ))),
+            ),
+            (
+                TaskSourceKind::Worktree {
+                    id: worktree_id,
+                    abs_path: PathBuf::from("/the-root/b/.zed/tasks.json"),
+                    id_base: "local_tasks_for_worktree".into(),
+                },
+                "cargo check".to_string(),
+                vec!["check".to_string()],
+                HashMap::default(),
+            ),
+        ]
+    );
 }
 
 #[gpui::test]
@@ -5224,4 +5203,24 @@ fn tsx_lang() -> Arc<Language> {
         },
         Some(tree_sitter_typescript::language_tsx()),
     ))
+}
+
+fn get_all_tasks(
+    project: &Model<Project>,
+    worktree_id: Option<WorktreeId>,
+    task_context: &TaskContext,
+    cx: &mut AppContext,
+) -> Task<Vec<(TaskSourceKind, ResolvedTask)>> {
+    let resolved_tasks = project.update(cx, |project, cx| {
+        project
+            .task_inventory()
+            .read(cx)
+            .used_and_current_resolved_tasks(None, worktree_id, None, task_context, cx)
+    });
+
+    cx.spawn(|_| async move {
+        let (mut old, new) = resolved_tasks.await;
+        old.extend(new);
+        old
+    })
 }

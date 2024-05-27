@@ -3,6 +3,7 @@ use anyhow::{anyhow, Result};
 use collections::HashMap;
 use editor::Editor;
 use gpui::{AppContext, Entity, Task, WindowHandle};
+use language::LspAdapterDelegate;
 use std::{borrow::Cow, sync::Arc};
 use ui::IntoElement;
 use workspace::Workspace;
@@ -40,8 +41,9 @@ impl SlashCommand for CurrentFileSlashCommand {
     }
 
     fn run(
-        &self,
+        self: Arc<Self>,
         _argument: Option<&str>,
+        _delegate: Arc<dyn LspAdapterDelegate>,
         cx: &mut AppContext,
     ) -> Task<Result<SlashCommandOutput>> {
         let output = self.workspace.update(cx, |workspace, cx| {

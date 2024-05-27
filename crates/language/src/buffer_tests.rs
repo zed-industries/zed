@@ -19,7 +19,7 @@ use std::{
     time::{Duration, Instant},
 };
 use text::network::Network;
-use text::{BufferId, LineEnding};
+use text::{BufferId, LineEnding, LineIndent};
 use text::{Point, ToPoint};
 use unindent::Unindent as _;
 use util::{assert_set_eq, post_inc, test::marked_text_ranges, RandomCharIter};
@@ -2060,7 +2060,7 @@ async fn test_find_matching_indent(cx: &mut TestAppContext) {
         text: impl Into<String>,
         buffer_row: u32,
         cx: &mut TestAppContext,
-    ) -> Option<(Range<u32>, u32)> {
+    ) -> Option<(Range<u32>, LineIndent)> {
         let buffer = cx.new_model(|cx| Buffer::local(text, cx));
         let snapshot = cx.read(|cx| buffer.read(cx).snapshot());
         snapshot.enclosing_indent(buffer_row).await
@@ -2079,7 +2079,14 @@ async fn test_find_matching_indent(cx: &mut TestAppContext) {
             cx,
         )
         .await,
-        Some((1..2, 4))
+        Some((
+            1..2,
+            LineIndent {
+                tabs: 0,
+                spaces: 4,
+                line_blank: false,
+            }
+        ))
     );
 
     assert_eq!(
@@ -2095,7 +2102,14 @@ async fn test_find_matching_indent(cx: &mut TestAppContext) {
             cx,
         )
         .await,
-        Some((1..2, 4))
+        Some((
+            1..2,
+            LineIndent {
+                tabs: 0,
+                spaces: 4,
+                line_blank: false,
+            }
+        ))
     );
 
     assert_eq!(
@@ -2113,7 +2127,14 @@ async fn test_find_matching_indent(cx: &mut TestAppContext) {
             cx,
         )
         .await,
-        Some((1..4, 4))
+        Some((
+            1..4,
+            LineIndent {
+                tabs: 0,
+                spaces: 4,
+                line_blank: false,
+            }
+        ))
     );
 }
 

@@ -2,9 +2,10 @@ use super::{SlashCommand, SlashCommandOutput};
 use anyhow::Result;
 use fuzzy::PathMatch;
 use gpui::{prelude::*, AppContext, Model, RenderOnce, SharedString, Task};
+use language::LspAdapterDelegate;
 use project::{PathMatchCandidateSet, Project};
 use std::{
-    path::{Path, PathBuf},
+    path::PathBuf,
     sync::{atomic::AtomicBool, Arc},
 };
 use ui::{h_flex, prelude::WindowContext, ElementId, Icon, IconName, IntoElement};
@@ -96,7 +97,12 @@ impl SlashCommand for FileSlashCommand {
         })
     }
 
-    fn run(&self, argument: Option<&str>, cx: &mut AppContext) -> Task<Result<SlashCommandOutput>> {
+    fn run(
+        self: Arc<Self>,
+        argument: Option<&str>,
+        _delegate: Arc<dyn LspAdapterDelegate>,
+        cx: &mut AppContext,
+    ) -> Task<Result<SlashCommandOutput>> {
         let project = self.project.read(cx);
         let Some(argument) = argument else {
             return Task::ready(Err(anyhow::anyhow!("missing path")));

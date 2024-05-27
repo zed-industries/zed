@@ -18,6 +18,7 @@ use language::{
 };
 use smallvec::SmallVec;
 use std::{
+    any::type_name,
     borrow::Cow,
     cell::{Ref, RefCell},
     cmp, fmt,
@@ -173,17 +174,40 @@ pub struct MultiBufferSnapshot {
     show_headers: bool,
 }
 
-/// A boundary between [`Excerpt`]s in a [`MultiBuffer`]
-pub struct ExcerptBoundary {
+pub struct ExcerptInfo {
     pub id: ExcerptId,
-    pub row: MultiBufferRow,
     pub buffer: BufferSnapshot,
+    pub buffer_id: BufferId,
     pub range: ExcerptRange<text::Anchor>,
-    /// It's possible to have multiple excerpts in the same buffer,
-    /// and they are rendered together without a new File header.
-    ///
-    /// This flag indicates that the excerpt is the first one in the buffer.
-    pub starts_new_buffer: bool,
+}
+
+impl std::fmt::Debug for ExcerptInfo {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct(type_name::<Self>())
+            .field("id", &self.id)
+            .field("buffer_id", &self.buffer_id)
+            .field("range", &self.range)
+            .finish()
+    }
+}
+
+/// A boundary between [`Excerpt`]s in a [`MultiBuffer`]
+#[derive(Debug)]
+pub struct ExcerptBoundary {
+    pub prev: Option<ExcerptInfo>,
+    pub next: Option<ExcerptInfo>,
+    /// The row in the `MultiBuffer` where the boundary is located
+    pub row: MultiBufferRow,
+}
+
+impl ExcerptBoundary {
+    pub fn starts_new_buffer(&self) -> bool {
+        match (self.prev.as_ref(), self.next.as_ref()) {
+            (None, _) => true,
+            (Some(_), None) => false,
+            (Some(prev), Some(next)) => prev.buffer_id != next.buffer_id,
+        }
+    }
 }
 
 /// A slice into a [`Buffer`] that is being edited in a [`MultiBuffer`].
@@ -279,6 +303,30 @@ struct ExcerptBytes<'a> {
     content_bytes: text::Bytes<'a>,
     padding_height: usize,
     reversed: bool,
+}
+
+pub enum ExpandExcerptDirection {
+    Up,
+    Down,
+    UpAndDown,
+}
+
+impl ExpandExcerptDirection {
+    pub fn should_expand_up(&self) -> bool {
+        match self {
+            ExpandExcerptDirection::Up => true,
+            ExpandExcerptDirection::Down => false,
+            ExpandExcerptDirection::UpAndDown => true,
+        }
+    }
+
+    pub fn should_expand_down(&self) -> bool {
+        match self {
+            ExpandExcerptDirection::Up => false,
+            ExpandExcerptDirection::Down => true,
+            ExpandExcerptDirection::UpAndDown => true,
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -1610,6 +1658,7 @@ impl MultiBuffer {
         &mut self,
         ids: impl IntoIterator<Item = ExcerptId>,
         line_count: u32,
+        direction: ExpandExcerptDirection,
         cx: &mut ModelContext<Self>,
     ) {
         if line_count == 0 {
@@ -1630,26 +1679,40 @@ impl MultiBuffer {
             let mut excerpt = cursor.item().unwrap().clone();
             let old_text_len = excerpt.text_summary.len;
 
+            let up_line_count = if direction.should_expand_up() {
+                line_count
+            } else {
+                0
+            };
+
             let start_row = excerpt
                 .range
                 .context
                 .start
                 .to_point(&excerpt.buffer)
                 .row
-                .saturating_sub(line_count);
+                .saturating_sub(up_line_count);
             let start_point = Point::new(start_row, 0);
             excerpt.range.context.start = excerpt.buffer.anchor_before(start_point);
 
-            let end_point = excerpt.buffer.clip_point(
-                excerpt.range.context.end.to_point(&excerpt.buffer) + Point::new(line_count, 0),
+            let down_line_count = if direction.should_expand_down() {
+                line_count
+            } else {
+                0
+            };
+
+            let mut end_point = excerpt.buffer.clip_point(
+                excerpt.range.context.end.to_point(&excerpt.buffer)
+                    + Point::new(down_line_count, 0),
                 Bias::Left,
             );
+            end_point.column = excerpt.buffer.line_len(end_point.row);
             excerpt.range.context.end = excerpt.buffer.anchor_after(end_point);
             excerpt.max_buffer_row = end_point.row;
 
             excerpt.text_summary = excerpt
                 .buffer
-                .text_summary_for_range(start_point..end_point);
+                .text_summary_for_range(excerpt.range.context.clone());
 
             let new_start_offset = new_excerpts.summary().text.len;
             let old_start_offset = cursor.start().1;
@@ -1920,7 +1983,12 @@ impl MultiBuffer {
 
                 log::info!("Expanding excerpts {excerpts:?} by {line_count} lines");
 
-                self.expand_excerpts(excerpts.iter().cloned(), line_count, cx);
+                self.expand_excerpts(
+                    excerpts.iter().cloned(),
+                    line_count,
+                    ExpandExcerptDirection::UpAndDown,
+                    cx,
+                );
                 continue;
             }
 
@@ -3018,24 +3086,37 @@ impl MultiBufferSnapshot {
             cursor.next(&());
         }
 
-        let mut prev_buffer_id = cursor.prev_item().map(|excerpt| excerpt.buffer_id);
+        let mut visited_end = false;
         std::iter::from_fn(move || {
             if self.singleton {
                 None
             } else if bounds.contains(&cursor.start().0) {
-                let excerpt = cursor.item()?;
-                let starts_new_buffer = Some(excerpt.buffer_id) != prev_buffer_id;
-                let boundary = ExcerptBoundary {
+                let next = cursor.item().map(|excerpt| ExcerptInfo {
                     id: excerpt.id,
-                    row: MultiBufferRow(cursor.start().1.row),
                     buffer: excerpt.buffer.clone(),
+                    buffer_id: excerpt.buffer_id,
                     range: excerpt.range.clone(),
-                    starts_new_buffer,
-                };
+                });
 
-                prev_buffer_id = Some(excerpt.buffer_id);
+                if next.is_none() {
+                    if visited_end {
+                        return None;
+                    } else {
+                        visited_end = true;
+                    }
+                }
+
+                let prev = cursor.prev_item().map(|prev_excerpt| ExcerptInfo {
+                    id: prev_excerpt.id,
+                    buffer: prev_excerpt.buffer.clone(),
+                    buffer_id: prev_excerpt.buffer_id,
+                    range: prev_excerpt.range.clone(),
+                });
+                let row = MultiBufferRow(cursor.start().1.row);
+
                 cursor.next(&());
-                Some(boundary)
+
+                Some(ExcerptBoundary { row, prev, next })
             } else {
                 None
             }
@@ -4537,15 +4618,16 @@ where
         .peekable();
     while let Some(range) = range_iter.next() {
         let excerpt_start = Point::new(range.start.row.saturating_sub(context_line_count), 0);
-        // These + 1s ensure that we select the whole next line
-        let mut excerpt_end = Point::new(range.end.row + 1 + context_line_count, 0).min(max_point);
+        let row = (range.end.row + context_line_count).min(max_point.row);
+        let mut excerpt_end = Point::new(row, buffer.line_len(row));
 
         let mut ranges_in_excerpt = 1;
 
         while let Some(next_range) = range_iter.peek() {
             if next_range.start.row <= excerpt_end.row + context_line_count {
-                excerpt_end =
-                    Point::new(next_range.end.row + 1 + context_line_count, 0).min(max_point);
+                let row = (next_range.end.row + context_line_count).min(max_point.row);
+                excerpt_end = Point::new(row, buffer.line_len(row));
+
                 ranges_in_excerpt += 1;
                 range_iter.next();
             } else {
@@ -4866,15 +4948,17 @@ mod tests {
         ) -> Vec<(MultiBufferRow, String, bool)> {
             snapshot
                 .excerpt_boundaries_in_range(range)
-                .map(|boundary| {
-                    (
-                        boundary.row,
-                        boundary
-                            .buffer
-                            .text_for_range(boundary.range.context)
-                            .collect::<String>(),
-                        boundary.starts_new_buffer,
-                    )
+                .filter_map(|boundary| {
+                    let starts_new_buffer = boundary.starts_new_buffer();
+                    boundary.next.map(|next| {
+                        (
+                            boundary.row,
+                            next.buffer
+                                .text_for_range(next.range.context)
+                                .collect::<String>(),
+                            starts_new_buffer,
+                        )
+                    })
                 })
                 .collect::<Vec<_>>()
         }
@@ -5006,8 +5090,33 @@ mod tests {
             )
         });
 
+        let snapshot = multibuffer.read(cx).snapshot(cx);
+
+        assert_eq!(
+            snapshot.text(),
+            concat!(
+                "ccc\n", //
+                "ddd\n", //
+                "eee",   //
+                "\n",    // End of excerpt
+                "ggg\n", //
+                "hhh\n", //
+                "iii",   //
+                "\n",    // End of excerpt
+                "ooo\n", //
+                "ppp\n", //
+                "qqq",   // End of excerpt
+            )
+        );
+        drop(snapshot);
+
         multibuffer.update(cx, |multibuffer, cx| {
-            multibuffer.expand_excerpts(multibuffer.excerpt_ids(), 1, cx)
+            multibuffer.expand_excerpts(
+                multibuffer.excerpt_ids(),
+                1,
+                ExpandExcerptDirection::UpAndDown,
+                cx,
+            )
         });
 
         let snapshot = multibuffer.read(cx).snapshot(cx);
@@ -5018,23 +5127,21 @@ mod tests {
         assert_eq!(
             snapshot.text(),
             concat!(
-                "bbb\n", // Preserve newlines
+                "bbb\n", //
                 "ccc\n", //
                 "ddd\n", //
                 "eee\n", //
-                "fff\n", // <- Same as below
-                "\n",    // Excerpt boundary
-                "fff\n", // <- Same as above
+                "fff\n", // End of excerpt
+                "fff\n", //
                 "ggg\n", //
                 "hhh\n", //
                 "iii\n", //
-                "jjj\n", //
-                "\n",    //
+                "jjj\n", // End of excerpt
                 "nnn\n", //
                 "ooo\n", //
                 "ppp\n", //
                 "qqq\n", //
-                "rrr\n", //
+                "rrr",   // End of excerpt
             )
         );
     }
@@ -5071,12 +5178,11 @@ mod tests {
                 "hhh\n", //
                 "iii\n", //
                 "jjj\n", //
-                "\n",    //
                 "nnn\n", //
                 "ooo\n", //
                 "ppp\n", //
                 "qqq\n", //
-                "rrr\n", //
+                "rrr",   //
             )
         );
 
@@ -5088,7 +5194,7 @@ mod tests {
             vec![
                 Point::new(2, 2)..Point::new(3, 2),
                 Point::new(6, 1)..Point::new(6, 3),
-                Point::new(12, 0)..Point::new(12, 0)
+                Point::new(11, 0)..Point::new(11, 0)
             ]
         );
     }
@@ -5123,12 +5229,11 @@ mod tests {
                 "hhh\n", //
                 "iii\n", //
                 "jjj\n", //
-                "\n",    //
                 "nnn\n", //
                 "ooo\n", //
                 "ppp\n", //
                 "qqq\n", //
-                "rrr\n", //
+                "rrr",   //
             )
         );
 
@@ -5140,7 +5245,7 @@ mod tests {
             vec![
                 Point::new(2, 2)..Point::new(3, 2),
                 Point::new(6, 1)..Point::new(6, 3),
-                Point::new(12, 0)..Point::new(12, 0)
+                Point::new(11, 0)..Point::new(11, 0)
             ]
         );
     }
@@ -5404,7 +5509,12 @@ mod tests {
                             .map(|id| excerpt_ids.iter().position(|i| i == id).unwrap())
                             .collect::<Vec<_>>();
                         log::info!("Expanding excerpts {excerpt_ixs:?} by {line_count} lines");
-                        multibuffer.expand_excerpts(excerpts.iter().cloned(), line_count, cx);
+                        multibuffer.expand_excerpts(
+                            excerpts.iter().cloned(),
+                            line_count,
+                            ExpandExcerptDirection::UpAndDown,
+                            cx,
+                        );
 
                         if line_count > 0 {
                             for id in excerpts {
@@ -5418,6 +5528,7 @@ mod tests {
                                     Point::new(point_range.end.row + line_count, 0),
                                     Bias::Left,
                                 );
+                                point_range.end.column = snapshot.line_len(point_range.end.row);
                                 *range = snapshot.anchor_before(point_range.start)
                                     ..snapshot.anchor_after(point_range.end);
                             }

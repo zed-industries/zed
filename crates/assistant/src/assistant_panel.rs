@@ -1,21 +1,23 @@
-use crate::ambient_context::{AmbientContext, ContextUpdated, RecentBuffer};
-use crate::prompts::prompt_library::PromptLibrary;
-use crate::prompts::prompt_manager::PromptManager;
-use crate::slash_command::RenderFoldPlaceholder;
 use crate::{
     ambient_context::*,
     assistant_settings::{AssistantDockPosition, AssistantSettings, ZedDotDevModel},
     codegen::{self, Codegen, CodegenKind},
-    omit_ranges::text_in_range_omitting_ranges,
-    prompts::prompt::generate_content_prompt,
+    prompts::{
+        prompt::generate_content_prompt, prompt_library::PromptLibrary,
+        prompt_manager::PromptManager,
+    },
     search::*,
-    slash_command::{SlashCommandCompletionProvider, SlashCommandRegistry},
+    slash_command::{
+        current_file_command, file_command, prompt_command, SlashCommandCompletionProvider,
+        SlashCommandRegistry,
+    },
     ApplyEdit, Assist, CompletionProvider, CycleMessageRole, InlineAssist, LanguageModel,
     LanguageModelRequest, LanguageModelRequestMessage, MessageId, MessageMetadata, MessageStatus,
     QuoteSelection, ResetKey, Role, SavedConversation, SavedConversationMetadata, SavedMessage,
     Split, ToggleFocus, ToggleHistory, ToggleIncludeConversation,
 };
 use anyhow::{anyhow, Context as _, Result};
+use assistant_slash_command::RenderFoldPlaceholder;
 use client::telemetry::Telemetry;
 use collections::{hash_map, HashMap, HashSet, VecDeque};
 use editor::FoldPlaceholder;
@@ -41,13 +43,14 @@ use gpui::{
     UniformListScrollHandle, View, ViewContext, VisualContext, WeakModel, WeakView, WhiteSpace,
     WindowContext,
 };
+use language::LspAdapterDelegate;
 use language::{
     language_settings::SoftWrap, AutoindentMode, Buffer, BufferSnapshot, LanguageRegistry,
     OffsetRangeExt as _, Point, ToOffset as _,
 };
 use multi_buffer::MultiBufferRow;
 use parking_lot::Mutex;
-use project::{Project, ProjectTransaction};
+use project::{Project, ProjectLspAdapterDelegate, ProjectTransaction};
 use search::{buffer_search::DivRegistrar, BufferSearchBar};
 use settings::Settings;
 use std::{
@@ -203,11 +206,20 @@ impl AssistantPanel {
                     })
                     .detach();
 
-                    let slash_command_registry = SlashCommandRegistry::new(
+                    let slash_command_registry = SlashCommandRegistry::global(cx);
+                    let window = cx.window_handle().downcast::<Workspace>();
+
+                    slash_command_registry.register_command(file_command::FileSlashCommand::new(
                         workspace.project().clone(),
-                        prompt_library.clone(),
-                        cx.window_handle().downcast::<Workspace>(),
+                    ));
+                    slash_command_registry.register_command(
+                        prompt_command::PromptSlashCommand::new(prompt_library.clone()),
                     );
+                    if let Some(window) = window {
+                        slash_command_registry.register_command(
+                            current_file_command::CurrentFileSlashCommand::new(window),
+                        );
+                    }
 
                     Self {
                         workspace: workspace_handle,
@@ -1117,6 +1129,14 @@ impl AssistantPanel {
         let slash_commands = self.slash_commands.clone();
         let languages = self.languages.clone();
         let telemetry = self.telemetry.clone();
+
+        let lsp_adapter_delegate = workspace
+            .update(cx, |workspace, cx| {
+                make_lsp_adapter_delegate(workspace.project(), cx).log_err()
+            })
+            .log_err()
+            .flatten();
+
         cx.spawn(|this, mut cx| async move {
             let saved_conversation = SavedConversation::load(&path, fs.as_ref()).await?;
             let model = this.update(&mut cx, |this, _| this.model.clone())?;
@@ -1127,6 +1147,7 @@ impl AssistantPanel {
                 languages,
                 slash_commands,
                 Some(telemetry),
+                lsp_adapter_delegate,
                 &mut cx,
             )
             .await?;
@@ -1445,8 +1466,6 @@ enum ConversationEvent {
     },
     SlashCommandUpdated {
         id: SlashCommandInvocationId,
-        name: String,
-        argument: Option<String>,
         output_range: Range<language::Anchor>,
         render_placeholder: RenderFoldPlaceholder,
     },
@@ -1462,7 +1481,7 @@ struct Summary {
 }
 
 #[derive(Copy, Clone, Default, Eq, PartialEq, Hash)]
-struct SlashCommandInvocationId(usize);
+pub struct SlashCommandInvocationId(usize);
 
 impl SlashCommandInvocationId {
     fn post_inc(&mut self) -> Self {
@@ -1484,7 +1503,7 @@ pub struct Conversation {
     buffer: Model<Buffer>,
     pub(crate) ambient_context: AmbientContext,
     edit_suggestions: Vec<EditSuggestion>,
-    slash_command_calls: Vec<SlashCommandCall>,
+    pending_slash_commands: Vec<PendingSlashCommand>,
     message_anchors: Vec<MessageAnchor>,
     messages_metadata: HashMap<MessageId, MessageMetadata>,
     next_message_id: MessageId,
@@ -1504,6 +1523,7 @@ pub struct Conversation {
     telemetry: Option<Arc<Telemetry>>,
     slash_command_registry: Arc<SlashCommandRegistry>,
     language_registry: Arc<LanguageRegistry>,
+    lsp_adapter_delegate: Option<Arc<dyn LspAdapterDelegate>>,
 }
 
 impl EventEmitter<ConversationEvent> for Conversation {}
@@ -1514,6 +1534,7 @@ impl Conversation {
         language_registry: Arc<LanguageRegistry>,
         slash_command_registry: Arc<SlashCommandRegistry>,
         telemetry: Option<Arc<Telemetry>>,
+        lsp_adapter_delegate: Option<Arc<dyn LspAdapterDelegate>>,
         cx: &mut ModelContext<Self>,
     ) -> Self {
         let buffer = cx.new_model(|cx| {
@@ -1529,7 +1550,7 @@ impl Conversation {
             next_message_id: Default::default(),
             ambient_context: AmbientContext::default(),
             edit_suggestions: Vec::new(),
-            slash_command_calls: Vec::new(),
+            pending_slash_commands: Vec::new(),
             summary: None,
             pending_summary: Task::ready(None),
             completion_count: Default::default(),
@@ -1547,6 +1568,7 @@ impl Conversation {
             telemetry,
             slash_command_registry,
             language_registry,
+            lsp_adapter_delegate,
         };
 
         let message = MessageAnchor {
@@ -1590,6 +1612,7 @@ impl Conversation {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     async fn deserialize(
         saved_conversation: SavedConversation,
         model: LanguageModel,
@@ -1597,6 +1620,7 @@ impl Conversation {
         language_registry: Arc<LanguageRegistry>,
         slash_command_registry: Arc<SlashCommandRegistry>,
         telemetry: Option<Arc<Telemetry>>,
+        lsp_adapter_delegate: Option<Arc<dyn LspAdapterDelegate>>,
         cx: &mut AsyncAppContext,
     ) -> Result<Model<Self>> {
         let id = match saved_conversation.id {
@@ -1636,7 +1660,7 @@ impl Conversation {
                 next_message_id,
                 ambient_context: AmbientContext::default(),
                 edit_suggestions: Vec::new(),
-                slash_command_calls: Vec::new(),
+                pending_slash_commands: Vec::new(),
                 summary: Some(Summary {
                     text: saved_conversation.summary,
                     done: true,
@@ -1657,6 +1681,7 @@ impl Conversation {
                 telemetry,
                 language_registry,
                 slash_command_registry,
+                lsp_adapter_delegate,
             };
             this.set_language(cx);
             this.reparse_edit_suggestions(cx);
@@ -1832,69 +1857,63 @@ impl Conversation {
         name: &str,
         argument: Option<&str>,
         cx: &mut ModelContext<Self>,
-    ) {
-        if let Some(command) = self.slash_command_registry.command(name) {
-            let name = name.to_string();
-            let argument = argument.map(ToString::to_string);
-            let id = self.next_invocation_id.post_inc();
+    ) -> Option<SlashCommandInvocationId> {
+        let command = self.slash_command_registry.command(name)?;
+        let lsp_adapter_delegate = self.lsp_adapter_delegate.clone()?;
+        let name = name.to_string();
+        let argument = argument.map(ToString::to_string);
+        let id = self.next_invocation_id.post_inc();
 
-            let insert_output_task = cx.spawn({
-                let command_range = command_range.clone();
-                let name = name.clone();
-                let argument = argument.clone();
-                let command_registry = self.slash_command_registry.clone();
-                |this, mut cx| {
-                    async move {
-                        let command = command_registry
-                            .command(&name)
-                            .with_context(|| format!("command {name:?} not found"))?;
-                        let output = cx
-                            .update(|cx| command.run(argument.as_deref(), cx))?
-                            .await?;
+        let insert_output_task = cx.spawn({
+            let command_range = command_range.clone();
+            let argument = argument.clone();
+            |this, mut cx| {
+                async move {
+                    let output = cx
+                        .update(|cx| command.run(argument.as_deref(), lsp_adapter_delegate, cx))?
+                        .await?;
 
-                        let mut text = output.text;
-                        if !text.ends_with('\n') {
-                            text.push('\n');
-                        }
-
-                        this.update(&mut cx, |this, cx| {
-                            let output_range = this.buffer.update(cx, |buffer, cx| {
-                                let new_start = command_range.start.to_offset(buffer);
-                                let new_end = new_start + text.len();
-                                buffer.edit([(command_range, text)], None, cx);
-                                buffer.anchor_after(new_start)..buffer.anchor_before(new_end)
-                            });
-                            cx.emit(ConversationEvent::SlashCommandUpdated {
-                                id,
-                                name: name.clone(),
-                                argument: argument.clone(),
-                                output_range,
-                                render_placeholder: output.render_placeholder,
-                            });
-                        })?;
-
-                        anyhow::Ok(())
+                    let mut text = output.text;
+                    if !text.ends_with('\n') {
+                        text.push('\n');
                     }
-                    .log_err()
-                }
-            });
 
-            self.invocations.insert(
-                id,
-                SlashCommandInvocation {
-                    name: name.clone(),
-                    argument: argument.clone(),
-                    range: command_range.clone(),
-                    pending_output: insert_output_task,
-                },
-            );
-            cx.emit(ConversationEvent::SlashCommandStarted {
-                id,
-                name,
-                argument,
-                command_range,
-            });
-        }
+                    this.update(&mut cx, |this, cx| {
+                        let output_range = this.buffer.update(cx, |buffer, cx| {
+                            let new_start = command_range.start.to_offset(buffer);
+                            let new_end = new_start + text.len();
+                            buffer.edit([(command_range, text)], None, cx);
+                            buffer.anchor_after(new_start)..buffer.anchor_before(new_end)
+                        });
+                        cx.emit(ConversationEvent::SlashCommandUpdated {
+                            id,
+                            output_range,
+                            render_placeholder: output.render_placeholder,
+                        });
+                    })?;
+
+                    anyhow::Ok(())
+                }
+                .log_err()
+            }
+        });
+
+        self.invocations.insert(
+            id,
+            SlashCommandInvocation {
+                name: name.clone(),
+                argument: argument.clone(),
+                range: command_range.clone(),
+                pending_output: insert_output_task,
+            },
+        );
+        cx.emit(ConversationEvent::SlashCommandStarted {
+            id,
+            name,
+            argument,
+            command_range,
+        });
+        Some(id)
     }
 
     fn remaining_tokens(&self) -> Option<isize> {
@@ -2355,17 +2374,6 @@ impl Conversation {
 
     fn messages<'a>(&'a self, cx: &'a AppContext) -> impl 'a + Iterator<Item = Message> {
         let buffer = self.buffer.read(cx);
-        let mut slash_command_calls = self
-            .slash_command_calls
-            .iter()
-            .map(|call| {
-                if let Some(output) = &call.output_range {
-                    call.source_range.start.to_offset(buffer)..output.start.to_offset(buffer)
-                } else {
-                    call.source_range.to_offset(buffer)
-                }
-            })
-            .peekable();
         let mut message_anchors = self.message_anchors.iter().enumerate().peekable();
         iter::from_fn(move || {
             if let Some((start_ix, message_anchor)) = message_anchors.next() {
@@ -2386,15 +2394,6 @@ impl Conversation {
                     .unwrap_or(language::Anchor::MAX)
                     .to_offset(buffer);
 
-                let mut slash_command_ranges = Vec::new();
-                while let Some(call_range) = slash_command_calls.peek() {
-                    if call_range.end <= message_end {
-                        slash_command_ranges.push(slash_command_calls.next().unwrap());
-                    } else {
-                        break;
-                    }
-                }
-
                 return Some(Message {
                     index_range: start_ix..end_ix,
                     offset_range: message_start..message_end,
@@ -2402,7 +2401,6 @@ impl Conversation {
                     anchor: message_anchor.start,
                     role: metadata.role,
                     status: metadata.status.clone(),
-                    slash_command_ranges,
                     ambient_context: metadata.ambient_context.clone(),
                 });
             }
@@ -2561,13 +2559,8 @@ fn parse_next_edit_suggestion(lines: &mut rope::Lines) -> Option<ParsedEditSugge
     }
 }
 
-struct SlashCommandCall {
+struct PendingSlashCommand {
     source_range: Range<language::Anchor>,
-    output_range: Option<Range<language::Anchor>>,
-    name: String,
-    argument: Option<String>,
-    should_rerun: bool,
-    _invalidate: Task<()>,
 }
 
 struct PendingCompletion {
@@ -2606,12 +2599,16 @@ impl ConversationEditor {
         cx: &mut ViewContext<Self>,
     ) -> Self {
         let telemetry = workspace.read(cx).client().telemetry().clone();
+        let project = workspace.read(cx).project().clone();
+        let lsp_adapter_delegate = make_lsp_adapter_delegate(&project, cx).log_err();
+
         let conversation = cx.new_model(|cx| {
             Conversation::new(
                 model,
                 language_registry,
                 slash_command_registry,
                 Some(telemetry),
+                lsp_adapter_delegate,
                 cx,
             )
         });
@@ -2799,13 +2796,9 @@ impl ConversationEditor {
             } => {}
             ConversationEvent::SlashCommandUpdated {
                 id,
-                name,
-                argument,
                 output_range,
                 render_placeholder,
             } => {
-                let name = name.clone();
-                let argument = argument.clone();
                 self.editor.update(cx, |editor, cx| {
                     let buffer = editor.buffer().read(cx).snapshot(cx);
                     let excerpt_id = *buffer.as_singleton().unwrap().0;
@@ -3451,21 +3444,14 @@ pub struct Message {
     anchor: language::Anchor,
     role: Role,
     status: MessageStatus,
-    slash_command_ranges: Vec<Range<usize>>,
     ambient_context: AmbientContextSnapshot,
 }
 
 impl Message {
     fn to_request_message(&self, buffer: &Buffer) -> LanguageModelRequestMessage {
-        let mut content = text_in_range_omitting_ranges(
-            buffer.as_rope(),
-            self.offset_range.clone(),
-            &self.slash_command_ranges,
-        );
-        content.truncate(content.trim_end().len());
         LanguageModelRequestMessage {
             role: self.role,
-            content,
+            content: buffer.text_for_range(self.offset_range.clone()).collect(),
         }
     }
 }
@@ -3792,6 +3778,20 @@ fn merge_ranges(ranges: &mut Vec<Range<Anchor>>, buffer: &MultiBufferSnapshot) {
     }
 }
 
+fn make_lsp_adapter_delegate(
+    project: &Model<Project>,
+    cx: &mut AppContext,
+) -> Result<Arc<dyn LspAdapterDelegate>> {
+    project.update(cx, |project, cx| {
+        // TODO: Find the right worktree.
+        let worktree = project
+            .worktrees()
+            .next()
+            .ok_or_else(|| anyhow!("no worktrees when constructing ProjectLspAdapterDelegate"))?;
+        Ok(ProjectLspAdapterDelegate::new(project, &worktree, cx) as Arc<dyn LspAdapterDelegate>)
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use std::{cell::RefCell, path::Path, rc::Rc};
@@ -3819,6 +3819,7 @@ mod tests {
                 LanguageModel::default(),
                 registry,
                 Default::default(),
+                None,
                 None,
                 cx,
             )
@@ -3959,6 +3960,7 @@ mod tests {
                 registry,
                 Default::default(),
                 None,
+                None,
                 cx,
             )
         });
@@ -4065,6 +4067,7 @@ mod tests {
                 registry,
                 Default::default(),
                 None,
+                None,
                 cx,
             )
         });
@@ -4169,8 +4172,22 @@ mod tests {
 
         let project = Project::test(fs.clone(), ["/test".as_ref()], cx).await;
         let prompt_library = Arc::new(PromptLibrary::default());
-        let slash_command_registry =
-            SlashCommandRegistry::new(project.clone(), prompt_library, None);
+        let slash_command_registry = SlashCommandRegistry::new();
+
+        slash_command_registry
+            .register_command(file_command::FileSlashCommand::new(project.clone()));
+        slash_command_registry.register_command(prompt_command::PromptSlashCommand::new(
+            prompt_library.clone(),
+        ));
+
+        let lsp_adapter_delegate = project.update(cx, |project, cx| {
+            // TODO: Find the right worktree.
+            let worktree = project
+                .worktrees()
+                .next()
+                .expect("expected at least one worktree");
+            ProjectLspAdapterDelegate::new(project, &worktree, cx)
+        });
 
         let registry = Arc::new(LanguageRegistry::test(cx.executor()));
         let conversation = cx.new_model(|cx| {
@@ -4179,6 +4196,7 @@ mod tests {
                 registry.clone(),
                 slash_command_registry,
                 None,
+                Some(lsp_adapter_delegate),
                 cx,
             )
         });
@@ -4480,6 +4498,7 @@ mod tests {
                 registry.clone(),
                 Default::default(),
                 None,
+                None,
                 cx,
             )
         });
@@ -4522,6 +4541,7 @@ mod tests {
             Default::default(),
             registry.clone(),
             Default::default(),
+            None,
             None,
             &mut cx.to_async(),
         )

@@ -56,6 +56,7 @@ use std::ops::Add;
 use std::{any::TypeId, borrow::Cow, fmt::Debug, num::NonZeroU32, ops::Range, sync::Arc};
 use sum_tree::{Bias, TreeMap};
 use tab_map::{TabMap, TabSnapshot};
+use text::LineIndent;
 use ui::WindowContext;
 use wrap_map::{WrapMap, WrapSnapshot};
 
@@ -111,8 +112,10 @@ impl DisplayMap {
         font: Font,
         font_size: Pixels,
         wrap_width: Option<Pixels>,
+        show_excerpt_controls: bool,
         buffer_header_height: u8,
         excerpt_header_height: u8,
+        excerpt_footer_height: u8,
         fold_placeholder: FoldPlaceholder,
         cx: &mut ModelContext<Self>,
     ) -> Self {
@@ -123,8 +126,15 @@ impl DisplayMap {
         let (fold_map, snapshot) = FoldMap::new(snapshot);
         let (tab_map, snapshot) = TabMap::new(snapshot, tab_size);
         let (wrap_map, snapshot) = WrapMap::new(snapshot, font, font_size, wrap_width, cx);
-        let block_map = BlockMap::new(snapshot, buffer_header_height, excerpt_header_height);
+        let block_map = BlockMap::new(
+            snapshot,
+            show_excerpt_controls,
+            buffer_header_height,
+            excerpt_header_height,
+            excerpt_footer_height,
+        );
         let flap_map = FlapMap::default();
+
         cx.observe(&wrap_map, |_, _, cx| cx.notify()).detach();
 
         DisplayMap {
@@ -378,6 +388,10 @@ impl DisplayMap {
     #[cfg(test)]
     pub fn is_rewrapping(&self, cx: &gpui::AppContext) -> bool {
         self.wrap_map.read(cx).is_rewrapping()
+    }
+
+    pub fn show_excerpt_controls(&self) -> bool {
+        self.block_map.show_excerpt_controls()
     }
 }
 
@@ -843,7 +857,7 @@ impl DisplaySnapshot {
         result
     }
 
-    pub fn line_indent_for_buffer_row(&self, buffer_row: MultiBufferRow) -> (u32, bool) {
+    pub fn line_indent_for_buffer_row(&self, buffer_row: MultiBufferRow) -> LineIndent {
         let (buffer, range) = self
             .buffer_snapshot
             .buffer_line_for_row(buffer_row)
@@ -866,17 +880,16 @@ impl DisplaySnapshot {
             return false;
         }
 
-        let (indent_size, is_blank) = self.line_indent_for_buffer_row(buffer_row);
-        if is_blank {
+        let line_indent = self.line_indent_for_buffer_row(buffer_row);
+        if line_indent.is_line_blank() {
             return false;
         }
 
         for next_row in (buffer_row.0 + 1)..=max_row.0 {
-            let (next_indent_size, next_line_is_blank) =
-                self.line_indent_for_buffer_row(MultiBufferRow(next_row));
-            if next_indent_size > indent_size {
+            let next_line_indent = self.line_indent_for_buffer_row(MultiBufferRow(next_row));
+            if next_line_indent.raw_len() > line_indent.raw_len() {
                 return true;
-            } else if !next_line_is_blank {
+            } else if !next_line_indent.is_line_blank() {
                 break;
             }
         }
@@ -900,13 +913,15 @@ impl DisplaySnapshot {
         } else if self.starts_indent(MultiBufferRow(start.row))
             && !self.is_line_folded(MultiBufferRow(start.row))
         {
-            let (start_indent, _) = self.line_indent_for_buffer_row(buffer_row);
+            let start_line_indent = self.line_indent_for_buffer_row(buffer_row);
             let max_point = self.buffer_snapshot.max_point();
             let mut end = None;
 
             for row in (buffer_row.0 + 1)..=max_point.row {
-                let (indent, is_blank) = self.line_indent_for_buffer_row(MultiBufferRow(row));
-                if !is_blank && indent <= start_indent {
+                let line_indent = self.line_indent_for_buffer_row(MultiBufferRow(row));
+                if !line_indent.is_line_blank()
+                    && line_indent.raw_len() <= start_line_indent.raw_len()
+                {
                     let prev_row = row - 1;
                     end = Some(Point::new(
                         prev_row,
@@ -1096,8 +1111,10 @@ pub mod tests {
                 font("Helvetica"),
                 font_size,
                 wrap_width,
+                true,
                 buffer_start_excerpt_header_height,
                 excerpt_header_height,
+                0,
                 FoldPlaceholder::test(),
                 cx,
             )
@@ -1342,8 +1359,10 @@ pub mod tests {
                     font("Helvetica"),
                     font_size,
                     wrap_width,
+                    true,
                     1,
                     1,
+                    0,
                     FoldPlaceholder::test(),
                     cx,
                 )
@@ -1451,8 +1470,10 @@ pub mod tests {
                 font("Helvetica"),
                 font_size,
                 None,
+                true,
                 1,
                 1,
+                0,
                 FoldPlaceholder::test(),
                 cx,
             )
@@ -1547,6 +1568,8 @@ pub mod tests {
                 font("Helvetica"),
                 font_size,
                 None,
+                true,
+                1,
                 1,
                 1,
                 FoldPlaceholder::test(),
@@ -1648,8 +1671,10 @@ pub mod tests {
                 font("Courier"),
                 font_size,
                 Some(px(40.0)),
+                true,
                 1,
                 1,
+                0,
                 FoldPlaceholder::test(),
                 cx,
             )
@@ -1730,6 +1755,8 @@ pub mod tests {
                 font("Courier"),
                 font_size,
                 None,
+                true,
+                1,
                 1,
                 1,
                 FoldPlaceholder::test(),
@@ -1854,8 +1881,10 @@ pub mod tests {
                 font("Helvetica"),
                 font_size,
                 None,
+                true,
                 1,
                 1,
+                0,
                 FoldPlaceholder::test(),
                 cx,
             );
@@ -1891,8 +1920,10 @@ pub mod tests {
                 font("Helvetica"),
                 font_size,
                 None,
+                true,
                 1,
                 1,
+                0,
                 FoldPlaceholder::test(),
                 cx,
             )
@@ -1966,8 +1997,10 @@ pub mod tests {
                 font("Helvetica"),
                 font_size,
                 None,
+                true,
                 1,
                 1,
+                0,
                 FoldPlaceholder::test(),
                 cx,
             )

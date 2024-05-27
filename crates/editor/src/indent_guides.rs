@@ -4,7 +4,7 @@ use collections::HashSet;
 use gpui::{AppContext, Task};
 use language::BufferRow;
 use multi_buffer::{MultiBufferIndentGuide, MultiBufferRow};
-use text::{BufferId, Point};
+use text::{BufferId, LineIndent, Point};
 use ui::ViewContext;
 use util::ResultExt;
 
@@ -13,7 +13,7 @@ use crate::{DisplaySnapshot, Editor};
 struct ActiveIndentedRange {
     buffer_id: BufferId,
     row_range: Range<BufferRow>,
-    indent: u32,
+    indent: LineIndent,
 }
 
 #[derive(Default)]
@@ -112,7 +112,8 @@ impl Editor {
             .enumerate()
             .filter(|(_, indent_guide)| {
                 indent_guide.buffer_id == active_indent_range.buffer_id
-                    && indent_guide.indent_width() == active_indent_range.indent
+                    && indent_guide.indent_level()
+                        == active_indent_range.indent.len(indent_guide.tab_size)
             });
 
         let mut matches = HashSet::default();
@@ -189,19 +190,19 @@ fn should_recalculate_indented_range(
             return true;
         }
 
-        let (old_indent, old_is_blank) = snapshot.line_indent_for_row(prev_row.0);
-        let (new_indent, new_is_blank) = snapshot.line_indent_for_row(new_row.0);
+        let old_line_indent = snapshot.line_indent_for_row(prev_row.0);
+        let new_line_indent = snapshot.line_indent_for_row(new_row.0);
 
-        if old_is_blank
-            || new_is_blank
-            || old_indent != new_indent
+        if old_line_indent.is_line_empty()
+            || new_line_indent.is_line_empty()
+            || old_line_indent != new_line_indent
             || snapshot.max_point().row == new_row.0
         {
             return true;
         }
 
-        let (next_line_indent, next_line_is_blank) = snapshot.line_indent_for_row(new_row.0 + 1);
-        next_line_is_blank || next_line_indent != old_indent
+        let next_line_indent = snapshot.line_indent_for_row(new_row.0 + 1);
+        next_line_indent.is_line_empty() || next_line_indent != old_line_indent
     } else {
         true
     }

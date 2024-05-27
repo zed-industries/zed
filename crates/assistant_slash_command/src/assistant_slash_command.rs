@@ -1,0 +1,45 @@
+mod slash_command_registry;
+
+use anyhow::Result;
+use gpui::{AnyElement, AppContext, ElementId, Task, WindowContext};
+use language::LspAdapterDelegate;
+pub use slash_command_registry::*;
+use std::sync::{atomic::AtomicBool, Arc};
+
+pub fn init(cx: &mut AppContext) {
+    SlashCommandRegistry::default_global(cx);
+}
+
+pub trait SlashCommand: 'static + Send + Sync {
+    fn name(&self) -> String;
+    fn description(&self) -> String;
+    fn complete_argument(
+        &self,
+        query: String,
+        cancel: Arc<AtomicBool>,
+        cx: &mut AppContext,
+    ) -> Task<Result<Vec<String>>>;
+    fn requires_argument(&self) -> bool;
+    fn run(
+        self: Arc<Self>,
+        argument: Option<&str>,
+        // TODO: We're just using the `LspAdapterDelegate` here because that is
+        // what the extension API is already expecting.
+        //
+        // It may be that `LspAdapterDelegate` needs a more general name, or
+        // perhaps another kind of delegate is needed here.
+        delegate: Arc<dyn LspAdapterDelegate>,
+        cx: &mut AppContext,
+    ) -> Task<Result<SlashCommandOutput>>;
+}
+
+pub type RenderFoldPlaceholder = Arc<
+    dyn Send
+        + Sync
+        + Fn(ElementId, Arc<dyn Fn(&mut WindowContext)>, &mut WindowContext) -> AnyElement,
+>;
+
+pub struct SlashCommandOutput {
+    pub text: String,
+    pub render_placeholder: RenderFoldPlaceholder,
+}

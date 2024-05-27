@@ -3,6 +3,7 @@ use crate::prompts::prompt_library::PromptLibrary;
 use anyhow::{anyhow, Context, Result};
 use fuzzy::StringMatchCandidate;
 use gpui::{prelude::*, AppContext, Task};
+use language::LspAdapterDelegate;
 use std::sync::{atomic::AtomicBool, Arc};
 use ui::{h_flex, Icon, IconName};
 
@@ -42,12 +43,7 @@ impl SlashCommand for PromptSlashCommand {
                 .prompts()
                 .into_iter()
                 .enumerate()
-                .filter_map(|(ix, prompt)| {
-                    prompt
-                        .1
-                        .title()
-                        .map(|title| StringMatchCandidate::new(ix, title.into()))
-                })
+                .map(|(ix, prompt)| StringMatchCandidate::new(ix, prompt.1.title().to_string()))
                 .collect::<Vec<_>>();
             let matches = fuzzy::match_strings(
                 &candidates,
@@ -65,7 +61,12 @@ impl SlashCommand for PromptSlashCommand {
         })
     }
 
-    fn run(&self, title: Option<&str>, cx: &mut AppContext) -> Task<Result<SlashCommandOutput>> {
+    fn run(
+        self: Arc<Self>,
+        title: Option<&str>,
+        _delegate: Arc<dyn LspAdapterDelegate>,
+        cx: &mut AppContext,
+    ) -> Task<Result<SlashCommandOutput>> {
         let Some(title) = title else {
             return Task::ready(Err(anyhow!("missing prompt name")));
         };
@@ -78,7 +79,7 @@ impl SlashCommand for PromptSlashCommand {
                 let prompt = library
                     .prompts()
                     .into_iter()
-                    .filter_map(|prompt| prompt.1.title().map(|title| (title, prompt)))
+                    .map(|prompt| (prompt.1.title(), prompt))
                     .find(|(t, _)| t == &title)
                     .with_context(|| format!("no prompt found with title {:?}", title))?
                     .1;

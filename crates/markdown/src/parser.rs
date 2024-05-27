@@ -144,7 +144,6 @@ pub enum MarkdownTag {
 
     /// A footnote definition. The value contained is the footnote's label by which it can
     /// be referred to.
-    #[cfg_attr(feature = "serde", serde(borrow))]
     FootnoteDefinition(SharedString),
 
     /// A table. Contains a vector describing the text-alignment for each of its columns.
