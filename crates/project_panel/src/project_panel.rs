@@ -1840,21 +1840,31 @@ impl ProjectPanel {
         let depth = details.depth;
         let worktree_id = details.worktree_id;
         let selections = Arc::new(self.selections.clone());
+        struct DraggedSelection {
+            active_selection: Selection,
+            marked_selections: Arc<BTreeSet<Selection>>,
+        }
+        let selection = DraggedSelection {
+            active_selection: selection,
+            marked_selections: selections,
+        };
         div()
             .id(entry_id.to_proto() as usize)
             .on_drag(selection, move |selection, cx| {
                 cx.new_view(|_| DraggedProjectEntryView {
                     details: details.clone(),
                     width,
-                    selection: *selection,
-                    selections: selections.clone(),
+                    selection: selection.active_selection.clone(),
+                    selections: selection.marked_selections.clone(),
                 })
             })
-            .drag_over::<Selection>(|style, _, cx| {
+            .drag_over::<DraggedSelection>(|style, _, cx| {
                 style.bg(cx.theme().colors().drop_target_background)
             })
-            .on_drop(cx.listener(move |this, dragged_id: &Selection, cx| {
-                this.move_entry(dragged_id.entry_id, entry_id, kind.is_file(), cx);
+            .on_drop(cx.listener(move |this, selections: &DraggedSelection, cx| {
+                for selection in selections.marked_selections.iter() {
+                    this.move_entry(selection.entry_id, entry_id, kind.is_file(), cx);
+                }
             }))
             .child(
                 ListItem::new(entry_id.to_proto() as usize)
