@@ -4003,11 +4003,14 @@ fn make_lsp_adapter_delegate(
 mod tests {
     use super::*;
     use crate::{FakeCompletionProvider, MessageId};
+    use fs::FakeFs;
     use gpui::{AppContext, TestAppContext};
     use rope::Rope;
+    use serde_json::json;
     use settings::SettingsStore;
-    use std::path::Path;
+    use std::{cell::RefCell, path::Path, rc::Rc};
     use unindent::Unindent;
+    use util::test::marked_text_ranges;
 
     #[gpui::test]
     fn test_inserting_and_removing_messages(cx: &mut AppContext) {
@@ -4350,274 +4353,153 @@ mod tests {
         }
     }
 
-    // todo!()
-    // #[gpui::test]
-    // async fn test_slash_commands(cx: &mut TestAppContext) {
-    //     let settings_store = cx.update(SettingsStore::test);
-    //     cx.set_global(settings_store);
-    //     cx.set_global(CompletionProvider::Fake(FakeCompletionProvider::default()));
-    //     cx.update(Project::init_settings);
-    //     cx.update(init);
-    //     let fs = FakeFs::new(cx.background_executor.clone());
+    #[gpui::test]
+    async fn test_slash_commands(cx: &mut TestAppContext) {
+        let settings_store = cx.update(SettingsStore::test);
+        cx.set_global(settings_store);
+        cx.set_global(CompletionProvider::Fake(FakeCompletionProvider::default()));
+        cx.update(Project::init_settings);
+        cx.update(init);
+        let fs = FakeFs::new(cx.background_executor.clone());
 
-    //     fs.insert_tree(
-    //         "/test",
-    //         json!({
-    //             "src": {
-    //                 "lib.rs": "fn one() -> usize { 1 }",
-    //                 "main.rs": "
-    //                     use crate::one;
-    //                     fn main() { one(); }
-    //                 ".unindent(),
-    //             }
-    //         }),
-    //     )
-    //     .await;
+        fs.insert_tree(
+            "/test",
+            json!({
+                "src": {
+                    "lib.rs": "fn one() -> usize { 1 }",
+                    "main.rs": "
+                        use crate::one;
+                        fn main() { one(); }
+                    ".unindent(),
+                }
+            }),
+        )
+        .await;
 
-    //     let project = Project::test(fs.clone(), ["/test".as_ref()], cx).await;
-    //     let prompt_library = Arc::new(PromptLibrary::default());
-    //     let slash_command_registry = SlashCommandRegistry::new();
+        let project = Project::test(fs.clone(), ["/test".as_ref()], cx).await;
+        let prompt_library = Arc::new(PromptLibrary::default());
+        let slash_command_registry = SlashCommandRegistry::new();
 
-    //     slash_command_registry
-    //         .register_command(file_command::FileSlashCommand::new(project.clone()));
-    //     slash_command_registry.register_command(prompt_command::PromptSlashCommand::new(
-    //         prompt_library.clone(),
-    //     ));
+        slash_command_registry
+            .register_command(file_command::FileSlashCommand::new(project.clone()));
+        slash_command_registry.register_command(prompt_command::PromptSlashCommand::new(
+            prompt_library.clone(),
+        ));
 
-    //     let lsp_adapter_delegate = project.update(cx, |project, cx| {
-    //         // TODO: Find the right worktree.
-    //         let worktree = project
-    //             .worktrees()
-    //             .next()
-    //             .expect("expected at least one worktree");
-    //         ProjectLspAdapterDelegate::new(project, &worktree, cx)
-    //     });
+        let lsp_adapter_delegate = project.update(cx, |project, cx| {
+            // TODO: Find the right worktree.
+            let worktree = project
+                .worktrees()
+                .next()
+                .expect("expected at least one worktree");
+            ProjectLspAdapterDelegate::new(project, &worktree, cx)
+        });
 
-    //     let registry = Arc::new(LanguageRegistry::test(cx.executor()));
-    //     let conversation = cx.new_model(|cx| {
-    //         Conversation::new(
-    //             LanguageModel::default(),
-    //             registry.clone(),
-    //             slash_command_registry,
-    //             None,
-    //             Some(lsp_adapter_delegate),
-    //             cx,
-    //         )
-    //     });
+        let registry = Arc::new(LanguageRegistry::test(cx.executor()));
+        let conversation = cx.new_model(|cx| {
+            Conversation::new(
+                LanguageModel::default(),
+                registry.clone(),
+                slash_command_registry,
+                None,
+                Some(lsp_adapter_delegate),
+                cx,
+            )
+        });
 
-    //     let output_ranges = Rc::new(RefCell::new(HashSet::default()));
-    //     conversation.update(cx, |_, cx| {
-    //         cx.subscribe(&conversation, {
-    //             let ranges = output_ranges.clone();
-    //             move |_, _, event, _| todo!()
-    //             // move |_, _, event, _| match event {
-    //             //     // ConversationEvent::SlashCommandOutputAdded(range) => {
-    //             //     //     ranges.borrow_mut().insert(range.clone());
-    //             //     // }
-    //             //     // ConversationEvent::SlashCommandOutputRemoved(range) => {
-    //             //     //     ranges.borrow_mut().remove(range);
-    //             //     // }
-    //             //     _ => {}
-    //             // }
-    //         })
-    //         .detach();
-    //     });
+        let output_ranges = Rc::new(RefCell::new(HashSet::default()));
+        conversation.update(cx, |_, cx| {
+            cx.subscribe(&conversation, {
+                let ranges = output_ranges.clone();
+                move |_, _, event, _| match event {
+                    ConversationEvent::PendingSlashCommandsUpdated { removed, updated } => {
+                        for range in removed {
+                            ranges.borrow_mut().remove(range);
+                        }
+                        for command in updated {
+                            ranges.borrow_mut().insert(command.source_range.clone());
+                        }
+                    }
+                    _ => {}
+                }
+            })
+            .detach();
+        });
 
-    //     let buffer = conversation.read_with(cx, |conversation, _| conversation.buffer.clone());
+        let buffer = conversation.read_with(cx, |conversation, _| conversation.buffer.clone());
 
-    //     // Insert a slash command
-    //     buffer.update(cx, |buffer, cx| {
-    //         buffer.edit([(0..0, "/file src/lib.rs")], None, cx);
-    //     });
-    //     assert_text_and_output_ranges(
-    //         &buffer,
-    //         &output_ranges.borrow(),
-    //         "
-    //         /file src/lib.rs
-    //         "
-    //         .unindent()
-    //         .trim_end(),
-    //         cx,
-    //     );
+        // Insert a slash command
+        buffer.update(cx, |buffer, cx| {
+            buffer.edit([(0..0, "/file src/lib.rs")], None, cx);
+        });
+        assert_text_and_output_ranges(
+            &buffer,
+            &output_ranges.borrow(),
+            "
+            «/file src/lib.rs»
+            "
+            .unindent()
+            .trim_end(),
+            cx,
+        );
 
-    //     // The slash command runs
-    //     cx.executor().advance_clock(SLASH_COMMAND_DEBOUNCE);
-    //     assert_text_and_output_ranges(
-    //         &buffer,
-    //         &output_ranges.borrow(),
-    //         &"
-    //         /file src/lib.rs«
-    //         ```src/lib.rs
-    //         fn one() -> usize { 1 }
-    //         ```»"
-    //             .unindent(),
-    //         cx,
-    //     );
+        // Edit the argument of the slash command.
+        buffer.update(cx, |buffer, cx| {
+            let edit_offset = buffer.text().find("lib.rs").unwrap();
+            buffer.edit([(edit_offset..edit_offset + "lib".len(), "main")], None, cx);
+        });
+        assert_text_and_output_ranges(
+            &buffer,
+            &output_ranges.borrow(),
+            "
+            «/file src/main.rs»
+            "
+            .unindent()
+            .trim_end(),
+            cx,
+        );
 
-    //     // Edit the slash command
-    //     buffer.update(cx, |buffer, cx| {
-    //         let edit_offset = buffer.text().find("lib.rs").unwrap();
-    //         buffer.edit([(edit_offset..edit_offset + "lib".len(), "main")], None, cx);
-    //     });
-    //     assert_text_and_output_ranges(
-    //         &buffer,
-    //         &output_ranges.borrow(),
-    //         &"
-    //         /file src/main.rs«
-    //         ```src/lib.rs
-    //         fn one() -> usize { 1 }
-    //         ```»"
-    //             .unindent(),
-    //         cx,
-    //     );
+        // Edit the name of the slash command, using one that doesn't exist.
+        buffer.update(cx, |buffer, cx| {
+            let edit_offset = buffer.text().find("/file").unwrap();
+            buffer.edit(
+                [(edit_offset..edit_offset + "/file".len(), "/unknown")],
+                None,
+                cx,
+            );
+        });
+        assert_text_and_output_ranges(
+            &buffer,
+            &output_ranges.borrow(),
+            "
+            /unknown src/main.rs
+            "
+            .unindent()
+            .trim_end(),
+            cx,
+        );
 
-    //     cx.executor().advance_clock(SLASH_COMMAND_DEBOUNCE);
-    //     assert_text_and_output_ranges(
-    //         &buffer,
-    //         &output_ranges.borrow(),
-    //         &"
-    //         /file src/main.rs«
-    //         ```src/main.rs
-    //         use crate::one;
-    //         fn main() { one(); }
-    //         ```»"
-    //             .unindent(),
-    //         cx,
-    //     );
+        #[track_caller]
+        fn assert_text_and_output_ranges(
+            buffer: &Model<Buffer>,
+            ranges: &HashSet<Range<language::Anchor>>,
+            expected_marked_text: &str,
+            cx: &mut TestAppContext,
+        ) {
+            let (expected_text, expected_ranges) = marked_text_ranges(expected_marked_text, false);
+            let (actual_text, actual_ranges) = buffer.update(cx, |buffer, _| {
+                let mut ranges = ranges
+                    .iter()
+                    .map(|range| range.to_offset(buffer))
+                    .collect::<Vec<_>>();
+                ranges.sort_by_key(|a| a.start);
+                (buffer.text(), ranges)
+            });
 
-    //     // Insert newlines between the slash command and its output
-    //     buffer.update(cx, |buffer, cx| {
-    //         let edit_offset = buffer.text().find("\n```src/main.rs").unwrap();
-    //         buffer.edit([(edit_offset..edit_offset, "\n")], None, cx);
-    //     });
-    //     assert_text_and_output_ranges(
-    //         &buffer,
-    //         &output_ranges.borrow(),
-    //         &"
-    //         /file src/main.rs«
-
-    //         ```src/main.rs
-    //         use crate::one;
-    //         fn main() { one(); }
-    //         ```»"
-    //             .unindent(),
-    //         cx,
-    //     );
-
-    //     cx.executor().advance_clock(SLASH_COMMAND_DEBOUNCE);
-    //     assert_text_and_output_ranges(
-    //         &buffer,
-    //         &output_ranges.borrow(),
-    //         &"
-    //         /file src/main.rs«
-    //         ```src/main.rs
-    //         use crate::one;
-    //         fn main() { one(); }
-    //         ```»"
-    //             .unindent(),
-    //         cx,
-    //     );
-
-    //     // Insert text at the beginning of the output
-    //     buffer.update(cx, |buffer, cx| {
-    //         let edit_offset = buffer.text().find("```src/main.rs").unwrap();
-    //         buffer.edit([(edit_offset..edit_offset, "!")], None, cx);
-    //     });
-    //     assert_text_and_output_ranges(
-    //         &buffer,
-    //         &output_ranges.borrow(),
-    //         &"
-    //         /file src/main.rs«
-    //         !```src/main.rs
-    //         use crate::one;
-    //         fn main() { one(); }
-    //         ```»"
-    //             .unindent(),
-    //         cx,
-    //     );
-
-    //     cx.executor().advance_clock(SLASH_COMMAND_DEBOUNCE);
-    //     assert_text_and_output_ranges(
-    //         &buffer,
-    //         &output_ranges.borrow(),
-    //         &"
-    //         /file src/main.rs«
-    //         ```src/main.rs
-    //         use crate::one;
-    //         fn main() { one(); }
-    //         ```»"
-    //             .unindent(),
-    //         cx,
-    //     );
-
-    //     // Slash commands are omitted from completion requests. Only their
-    //     // output is included.
-    //     let request = conversation.update(cx, |conversation, cx| {
-    //         conversation.to_completion_request(cx)
-    //     });
-    //     assert_eq!(
-    //         &request.messages[1..],
-    //         &[LanguageModelRequestMessage {
-    //             role: Role::User,
-    //             content: "
-    //             ```src/main.rs
-    //             use crate::one;
-    //             fn main() { one(); }
-    //             ```"
-    //             .unindent()
-    //         }]
-    //     );
-
-    //     buffer.update(cx, |buffer, cx| {
-    //         buffer.edit([(0..0, "hello\n")], None, cx);
-    //     });
-    //     buffer.update(cx, |buffer, cx| {
-    //         buffer.edit(
-    //             [(buffer.len()..buffer.len(), "\ngoodbye\nfarewell\n")],
-    //             None,
-    //             cx,
-    //         );
-    //     });
-    //     let request = conversation.update(cx, |conversation, cx| {
-    //         conversation.to_completion_request(cx)
-    //     });
-    //     assert_eq!(
-    //         &request.messages[1..],
-    //         &[LanguageModelRequestMessage {
-    //             role: Role::User,
-    //             content: "
-    //             hello
-    //             ```src/main.rs
-    //             use crate::one;
-    //             fn main() { one(); }
-    //             ```
-    //             goodbye
-    //             farewell"
-    //                 .unindent()
-    //         }]
-    //     );
-
-    //     #[track_caller]
-    //     fn assert_text_and_output_ranges(
-    //         buffer: &Model<Buffer>,
-    //         ranges: &HashSet<Range<language::Anchor>>,
-    //         expected_marked_text: &str,
-    //         cx: &mut TestAppContext,
-    //     ) {
-    //         let (expected_text, expected_ranges) = marked_text_ranges(expected_marked_text, false);
-    //         let (actual_text, actual_ranges) = buffer.update(cx, |buffer, _| {
-    //             let mut ranges = ranges
-    //                 .iter()
-    //                 .map(|range| range.to_offset(buffer))
-    //                 .collect::<Vec<_>>();
-    //             ranges.sort_by_key(|a| a.start);
-    //             (buffer.text(), ranges)
-    //         });
-
-    //         assert_eq!(actual_text, expected_text);
-    //         assert_eq!(actual_ranges, expected_ranges);
-    //     }
-    // }
+            assert_eq!(actual_text, expected_text);
+            assert_eq!(actual_ranges, expected_ranges);
+        }
+    }
 
     #[test]
     fn test_parse_next_edit_suggestion() {
