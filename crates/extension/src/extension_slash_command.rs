@@ -2,7 +2,7 @@ use crate::wasm_host::{WasmExtension, WasmHost};
 use anyhow::{anyhow, Result};
 use assistant_slash_command::{SlashCommand, SlashCommandOutput};
 use futures::FutureExt;
-use gpui::{AppContext, Task};
+use gpui::{AppContext, IntoElement, Task};
 use language::LspAdapterDelegate;
 use std::sync::{atomic::AtomicBool, Arc};
 use wasmtime_wasi::WasiView;
@@ -77,7 +77,9 @@ impl SlashCommand for ExtensionSlashCommand {
             let output = output.await?;
             Ok(SlashCommandOutput {
                 text: output,
-                render_placeholder: Arc::new(|_, _, _| todo!()),
+                render_placeholder: Arc::new(|_, _, _| {
+                    "TODO: Extension command output".into_any_element()
+                }),
             })
         })
     }

@@ -434,7 +434,6 @@ dependencies = [
  "anyhow",
  "collections",
  "derive_more",
- "futures 0.3.28",
  "gpui",
  "language",
  "parking_lot",

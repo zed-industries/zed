@@ -15,7 +15,6 @@ path = "src/assistant_slash_command.rs"
 anyhow.workspace = true
 collections.workspace = true
 derive_more.workspace = true
-futures.workspace = true
 gpui.workspace = true
 language.workspace = true
 parking_lot.workspace = true
