@@ -301,6 +301,17 @@ impl ProjectPanel {
                             let worktree_id = worktree.read(cx).id();
                             let entry_id = entry.id;
 
+                                project_panel.update(cx, |this, _| {
+                                    if !mark_selected {
+                                        this.selections.clear();
+                                    }
+                                    this.selections.insert(Selection {
+                                        worktree_id,
+                                        entry_id
+                                    });
+                                }).ok();
+
+
                             workspace
                                 .open_path_preview(
                                     ProjectPath {
@@ -802,10 +813,6 @@ impl ProjectPanel {
         allow_preview: bool,
         cx: &mut ViewContext<Self>,
     ) {
-        if !mark_selected {
-            self.selections.clear();
-        }
-
         cx.emit(Event::OpenedEntry {
             entry_id,
             focus_opened_item,
@@ -1598,6 +1605,10 @@ impl ProjectPanel {
                 worktree_id,
                 entry_id,
             });
+            self.selections.insert(Selection {
+                worktree_id,
+                entry_id,
+            });
         }
     }
 
@@ -1710,7 +1721,10 @@ impl ProjectPanel {
                             .map(|name| name.to_string_lossy().into_owned())
                             .unwrap_or_else(|| root_name.to_string_lossy().to_string()),
                     };
-
+                    let selection = Selection {
+                        worktree_id: snapshot.id(),
+                        entry_id: entry.id,
+                    };
                     let mut details = EntryDetails {
                         filename,
                         icon,
@@ -1719,9 +1733,7 @@ impl ProjectPanel {
                         kind: entry.kind,
                         is_ignored: entry.is_ignored,
                         is_expanded,
-                        is_selected: self.selection.map_or(false, |e| {
-                            e.worktree_id == snapshot.id() && e.entry_id == entry.id
-                        }),
+                        is_selected: self.selections.contains(&selection),
                         is_editing: false,
                         is_processing: false,
                         is_cut: self
@@ -1828,6 +1840,7 @@ impl ProjectPanel {
             }
         }
         let depth = details.depth;
+        let worktree_id = details.worktree_id;
         let selections = Arc::new(self.selections.clone());
         div()
             .id(entry_id.to_proto() as usize)
@@ -1875,7 +1888,51 @@ impl ProjectPanel {
                             return;
                         }
                         if !show_editor {
-                            if kind.is_dir() {
+                            if let Some(selection) =
+                                this.selection.filter(|_| event.down.modifiers.shift)
+                            {
+                                let current_selection = this.index_for_selection(selection);
+                                let target_selection = this.index_for_selection(Selection {
+                                    entry_id,
+                                    worktree_id,
+                                });
+                                if let Some(((_, _, source_index), (_, _, target_index))) =
+                                    current_selection.zip(target_selection)
+                                {
+                                    let range_start = source_index.min(target_index);
+                                    let range_end = source_index.max(target_index) + 1; // Make the range inclusive.
+                                    let mut new_selections = BTreeSet::new();
+                                    this.for_each_visible_entry(
+                                        range_start..range_end,
+                                        cx,
+                                        |entry_id, details, _| {
+                                            new_selections.insert(Selection {
+                                                entry_id,
+                                                worktree_id: details.worktree_id,
+                                            });
+                                        },
+                                    );
+
+                                    this.selections = if source_index > target_index {
+                                        this.selections
+                                            .difference(&new_selections)
+                                            .cloned()
+                                            .collect()
+                                    } else {
+                                        this.selections.union(&new_selections).cloned().collect()
+                                    };
+
+                                    this.selection = Some(Selection {
+                                        entry_id,
+                                        worktree_id,
+                                    });
+                                    // Ensure that the current entry is selected.
+                                    this.selections.insert(Selection {
+                                        entry_id,
+                                        worktree_id,
+                                    });
+                                }
+                            } else if kind.is_dir() {
                                 this.toggle_expanded(entry_id, cx);
                             } else {
                                 let click_count = event.up.click_count;
