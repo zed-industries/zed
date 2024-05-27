@@ -37,6 +37,8 @@
   },
   // The default font size for text in the editor
   "buffer_font_size": 15,
+  // The weight of the editor font in standard CSS units from 100 to 900.
+  "buffer_font_weight": 400,
   // Set the buffer's line height.
   // May take 3 values:
   //  1. Use a line height that's comfortable for reading (1.618)
@@ -55,6 +57,8 @@
     // Disable ligatures:
     "calt": false
   },
+  // The weight of the UI font in standard CSS units from 100 to 900.
+  "ui_font_weight": 400,
   // The default font size for text in the UI
   "ui_font_size": 16,
   // The factor to grow the active pane by. Defaults to 1.0

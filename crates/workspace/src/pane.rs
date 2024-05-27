@@ -3027,7 +3027,7 @@ mod tests {
 
 impl Render for DraggedTab {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
-        let ui_font = ThemeSettings::get_global(cx).ui_font.family.clone();
+        let ui_font = ThemeSettings::get_global(cx).ui_font.clone();
         let label = self.item.tab_content(
             TabContentParams {
                 detail: Some(self.detail),
@@ -3040,6 +3040,6 @@ impl Render for DraggedTab {
             .selected(self.is_active)
             .child(label)
             .render(cx)
-            .font_family(ui_font)
+            .font(ui_font)
     }
 }

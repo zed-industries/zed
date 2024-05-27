@@ -3,7 +3,7 @@ use crate::{
     AssistantChat, CompletionProvider,
 };
 use editor::{Editor, EditorElement, EditorStyle};
-use gpui::{AnyElement, FontStyle, FontWeight, ReadGlobal, TextStyle, View, WeakView, WhiteSpace};
+use gpui::{AnyElement, FontStyle, ReadGlobal, TextStyle, View, WeakView, WhiteSpace};
 use settings::Settings;
 use theme::ThemeSettings;
 use ui::{popover_menu, prelude::*, ButtonLike, ContextMenu, Divider, TextSize, Tooltip};
@@ -78,7 +78,7 @@ impl RenderOnce for Composer {
                                     font_family: settings.buffer_font.family.clone(),
                                     font_features: settings.buffer_font.features.clone(),
                                     font_size: font_size.into(),
-                                    font_weight: FontWeight::NORMAL,
+                                    font_weight: settings.buffer_font.weight,
                                     font_style: FontStyle::Normal,
                                     line_height: line_height.into(),
                                     background_color: None,
