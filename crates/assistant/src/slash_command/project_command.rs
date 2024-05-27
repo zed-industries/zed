@@ -141,11 +141,10 @@ impl SlashCommand for ProjectSlashCommand {
                     text,
                     render_placeholder: Arc::new(move |id, unfold, _cx| {
                         ButtonLike::new(id)
-                            .size(ButtonSize::Compact)
                             .style(ButtonStyle::Filled)
                             .layer(ElevationIndex::ElevatedSurface)
-                            .child(Icon::new(IconName::FileTree).size(IconSize::XSmall))
-                            .child(Label::new("Project").size(LabelSize::Small))
+                            .child(Icon::new(IconName::FileTree))
+                            .child(Label::new("Project"))
                             .on_click(move |_, cx| unfold(cx))
                             .into_any_element()
                     }),

@@ -172,11 +172,10 @@ impl RenderOnce for FilePlaceholder {
         };
 
         ButtonLike::new(self.id)
-            .size(ButtonSize::Compact)
             .style(ButtonStyle::Filled)
             .layer(ElevationIndex::ElevatedSurface)
-            .child(Icon::new(IconName::File).size(IconSize::XSmall))
-            .child(Label::new(title).size(LabelSize::Small))
+            .child(Icon::new(IconName::File))
+            .child(Label::new(title))
             .on_click(move |_, cx| unfold(cx))
     }
 }

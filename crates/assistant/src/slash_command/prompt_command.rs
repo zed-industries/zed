@@ -96,11 +96,10 @@ impl SlashCommand for PromptSlashCommand {
                 text: prompt,
                 render_placeholder: Arc::new(move |id, unfold, _cx| {
                     ButtonLike::new(id)
-                        .size(ButtonSize::Compact)
                         .style(ButtonStyle::Filled)
                         .layer(ElevationIndex::ElevatedSurface)
-                        .child(Icon::new(IconName::Library).size(IconSize::XSmall))
-                        .child(Label::new(title.clone()).size(LabelSize::Small))
+                        .child(Icon::new(IconName::Library))
+                        .child(Label::new(title.clone()))
                         .on_click(move |_, cx| unfold(cx))
                         .into_any_element()
                 }),
