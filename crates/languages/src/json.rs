@@ -7,6 +7,7 @@ use gpui::{AppContext, AsyncAppContext};
 use language::{LanguageRegistry, LanguageServerName, LspAdapter, LspAdapterDelegate};
 use lsp::LanguageServerBinary;
 use node_runtime::NodeRuntime;
+use project::ContextProviderWithTasks;
 use serde_json::{json, Value};
 use settings::{KeymapFile, SettingsJsonSchemaParams, SettingsStore};
 use smol::fs;
@@ -16,12 +17,10 @@ use std::{
     path::{Path, PathBuf},
     sync::{Arc, OnceLock},
 };
+use task::{TaskTemplate, TaskTemplates, VariableName};
 use util::{maybe, paths, ResultExt};
 
 const SERVER_PATH: &str = "node_modules/vscode-json-languageserver/bin/vscode-json-languageserver";
-
-use project::ContextProviderWithTasks;
-use task::{TaskTemplate, TaskTemplates, VariableName};
 
 pub(super) fn json_task_context() -> ContextProviderWithTasks {
     ContextProviderWithTasks::new(TaskTemplates(vec![
