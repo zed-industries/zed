@@ -1773,7 +1773,7 @@ impl ProjectPanel {
                                 .size(IconSize::Indicator)
                                 .color(filename_text_color),
                         )
-                        .tooltip(move |cx| Tooltip::text(format!("{} • Symbolic Link", path), cx))
+                        .tooltip(move |cx| Tooltip::text(format!("{path} • Symbolic Link"), cx))
                     })
                     .child(if let Some(icon) = &icon {
                         h_flex().child(Icon::from_path(icon.to_string()).color(filename_text_color))
