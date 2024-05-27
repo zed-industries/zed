@@ -440,7 +440,7 @@ impl AssistantChat {
                     Markdown::new(
                         text,
                         self.markdown_style.clone(),
-                        self.language_registry.clone(),
+                        Some(self.language_registry.clone()),
                         cx,
                     )
                 });
@@ -573,7 +573,7 @@ impl AssistantChat {
                                         Markdown::new(
                                             "".into(),
                                             this.markdown_style.clone(),
-                                            this.language_registry.clone(),
+                                            Some(this.language_registry.clone()),
                                             cx,
                                         )
                                     }),
@@ -667,7 +667,7 @@ impl AssistantChat {
                     Markdown::new(
                         "".into(),
                         self.markdown_style.clone(),
-                        self.language_registry.clone(),
+                        Some(self.language_registry.clone()),
                         cx,
                     )
                 }),
@@ -683,7 +683,7 @@ impl AssistantChat {
                     Markdown::new(
                         "".into(),
                         self.markdown_style.clone(),
-                        self.language_registry.clone(),
+                        Some(self.language_registry.clone()),
                         cx,
                     )
                 }),
@@ -869,7 +869,6 @@ impl AssistantChat {
                             crate::ui::ChatMessage::new(
                                 *id,
                                 UserOrAssistant::User(self.user_store.read(cx).current_user()),
-                                // todo!(): clean up the vec usage
                                 vec![
                                     body.clone().into_any_element(),
                                     h_flex()
@@ -1108,7 +1107,7 @@ impl Render for AssistantChat {
                                     .on_click(cx.listener(move |this, _event, cx| {
                                         this.new_conversation(cx);
                                     }))
-                                    .tooltip(move |cx| Tooltip::text("New Conversation", cx)),
+                                    .tooltip(move |cx| Tooltip::text("New Context", cx)),
                             )
                             .child(
                                 IconButton::new("assistant-menu", IconName::Menu)

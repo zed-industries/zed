@@ -1,6 +1,6 @@
 use gpui::{
     div, AnyElement, Bounds, Div, DivFrameState, Element, ElementId, GlobalElementId, Hitbox,
-    IntoElement, LayoutId, ParentElement, Pixels, WindowContext,
+    IntoElement, LayoutId, ParentElement, Pixels, StyleRefinement, Styled, WindowContext,
 };
 
 /// An element that sets a particular rem size for its children.
@@ -15,6 +15,12 @@ impl WithRemSize {
             div: div(),
             rem_size: rem_size.into(),
         }
+    }
+}
+
+impl Styled for WithRemSize {
+    fn style(&mut self) -> &mut StyleRefinement {
+        self.div.style()
     }
 }
 

@@ -2,7 +2,9 @@ use gpui::{Hsla, WindowBackgroundAppearance};
 use refineable::Refineable;
 use std::sync::Arc;
 
-use crate::{PlayerColors, StatusColors, StatusColorsRefinement, SyntaxTheme, SystemColors};
+use crate::{
+    AccentColors, PlayerColors, StatusColors, StatusColorsRefinement, SyntaxTheme, SystemColors,
+};
 
 #[derive(Refineable, Clone, Debug)]
 #[refineable(Debug, serde::Deserialize)]
@@ -154,6 +156,8 @@ pub struct ThemeColors {
     pub editor_invisible: Hsla,
     pub editor_wrap_guide: Hsla,
     pub editor_active_wrap_guide: Hsla,
+    pub editor_indent_guide: Hsla,
+    pub editor_indent_guide_active: Hsla,
     /// Read-access of a symbol, like reading a variable.
     ///
     /// A document highlight is a range inside a text document which deserves
@@ -242,7 +246,7 @@ pub struct ThemeStyles {
     /// An array of colors used for theme elements that iterate through a series of colors.
     ///
     /// Example: Player colors, rainbow brackets and indent guides, etc.
-    pub accents: Vec<Hsla>,
+    pub accents: AccentColors,
 
     #[refineable]
     pub colors: ThemeColors,
@@ -251,6 +255,7 @@ pub struct ThemeStyles {
     pub status: StatusColors,
 
     pub player: PlayerColors,
+
     pub syntax: Arc<SyntaxTheme>,
 }
 

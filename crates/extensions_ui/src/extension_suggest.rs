@@ -69,6 +69,7 @@ const SUGGESTIONS_BY_EXTENSION_ID: &[(&str, &[&str])] = &[
     ("toml", &["Cargo.lock", "toml"]),
     ("vue", &["vue"]),
     ("wgsl", &["wgsl"]),
+    ("wit", &["wit"]),
     ("zig", &["zig"]),
 ];
 

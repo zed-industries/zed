@@ -8,6 +8,7 @@ use std::io::Read;
 use std::ops::{Deref, DerefMut};
 use std::os::fd::{AsRawFd, FromRawFd};
 use std::panic::Location;
+use std::rc::Weak;
 use std::{
     path::{Path, PathBuf},
     process::Command,
@@ -27,14 +28,16 @@ use flume::{Receiver, Sender};
 use futures::channel::oneshot;
 use parking_lot::Mutex;
 use time::UtcOffset;
+use util::ResultExt;
 use wayland_client::Connection;
 use wayland_protocols::wp::cursor_shape::v1::client::wp_cursor_shape_device_v1::Shape;
 use xkbcommon::xkb::{self, Keycode, Keysym, State};
 
 use crate::platform::linux::wayland::WaylandClient;
+use crate::platform::linux::xdg_desktop_portal::window_appearance;
 use crate::{
     px, Action, AnyWindowHandle, BackgroundExecutor, ClipboardItem, CosmicTextSystem, CursorStyle,
-    DisplayId, ForegroundExecutor, Keymap, Keystroke, LinuxDispatcher, Menu, Modifiers,
+    DisplayId, ForegroundExecutor, Keymap, Keystroke, LinuxDispatcher, Menu, MenuItem, Modifiers,
     PathPromptOptions, Pixels, Platform, PlatformDisplay, PlatformInputHandler, PlatformTextSystem,
     PlatformWindow, Point, PromptLevel, Result, SemanticVersion, Size, Task, WindowAppearance,
     WindowOptions, WindowParams,
@@ -55,6 +58,9 @@ pub trait LinuxClient {
     fn displays(&self) -> Vec<Rc<dyn PlatformDisplay>>;
     fn primary_display(&self) -> Option<Rc<dyn PlatformDisplay>>;
     fn display(&self, id: DisplayId) -> Option<Rc<dyn PlatformDisplay>>;
+    fn can_open_windows(&self) -> anyhow::Result<()> {
+        Ok(())
+    }
     fn open_window(
         &self,
         handle: AnyWindowHandle,
@@ -83,6 +89,7 @@ pub(crate) struct LinuxCommon {
     pub(crate) background_executor: BackgroundExecutor,
     pub(crate) foreground_executor: ForegroundExecutor,
     pub(crate) text_system: Arc<CosmicTextSystem>,
+    pub(crate) appearance: WindowAppearance,
     pub(crate) callbacks: PlatformHandlers,
     pub(crate) signal: LoopSignal,
 }
@@ -93,12 +100,18 @@ impl LinuxCommon {
         let text_system = Arc::new(CosmicTextSystem::new());
         let callbacks = PlatformHandlers::default();
 
-        let dispatcher = Arc::new(LinuxDispatcher::new(main_sender));
+        let dispatcher = Arc::new(LinuxDispatcher::new(main_sender.clone()));
+
+        let background_executor = BackgroundExecutor::new(dispatcher.clone());
+        let appearance = window_appearance(&background_executor)
+            .log_err()
+            .unwrap_or(WindowAppearance::Light);
 
         let common = LinuxCommon {
-            background_executor: BackgroundExecutor::new(dispatcher.clone()),
+            background_executor,
             foreground_executor: ForegroundExecutor::new(dispatcher.clone()),
             text_system,
+            appearance,
             callbacks,
             signal,
         };
@@ -130,6 +143,10 @@ impl<P: LinuxClient + 'static> Platform for P {
                 fun();
             }
         });
+    }
+
+    fn can_open_windows(&self) -> anyhow::Result<()> {
+        self.can_open_windows()
     }
 
     fn quit(&self) {
@@ -368,6 +385,7 @@ impl<P: LinuxClient + 'static> Platform for P {
 
     // todo(linux)
     fn set_menus(&self, menus: Vec<Menu>, keymap: &Keymap) {}
+    fn set_dock_menu(&self, menu: Vec<MenuItem>, keymap: &Keymap) {}
 
     fn local_timezone(&self) -> UtcOffset {
         UtcOffset::UTC
@@ -465,8 +483,8 @@ impl<P: LinuxClient + 'static> Platform for P {
         })
     }
 
-    fn window_appearance(&self) -> crate::WindowAppearance {
-        crate::WindowAppearance::Light
+    fn window_appearance(&self) -> WindowAppearance {
+        self.with_common(|common| common.appearance)
     }
 
     fn register_url_scheme(&self, _: &str) -> Task<anyhow::Result<()>> {
@@ -496,7 +514,7 @@ pub(super) fn open_uri_internal(uri: &str, activation_token: Option<&str>) {
         if let Some(token) = activation_token {
             command.env("XDG_ACTIVATION_TOKEN", token);
         }
-        match command.status() {
+        match command.spawn() {
             Ok(_) => return,
             Err(err) => last_err = Some(err),
         }

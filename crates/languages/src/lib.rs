@@ -1,5 +1,6 @@
 use anyhow::Context;
 use gpui::{AppContext, UpdateGlobal};
+use json::json_task_context;
 pub use language::*;
 use node_runtime::NodeRuntime;
 use rust_embed::RustEmbed;
@@ -8,7 +9,10 @@ use smol::stream::StreamExt;
 use std::{str, sync::Arc};
 use util::{asset_str, ResultExt};
 
-use crate::{bash::bash_task_context, python::python_task_context, rust::RustContextProvider};
+use crate::{
+    bash::bash_task_context, go::GoContextProvider, python::python_task_context,
+    rust::RustContextProvider,
+};
 
 mod bash;
 mod c;
@@ -103,15 +107,21 @@ pub fn init(
         "css",
         vec![Arc::new(css::CssLspAdapter::new(node_runtime.clone())),]
     );
-    language!("go", vec![Arc::new(go::GoLspAdapter)]);
-    language!("gomod");
-    language!("gowork");
+    language!("go", vec![Arc::new(go::GoLspAdapter)], GoContextProvider);
+    language!("gomod", vec![Arc::new(go::GoLspAdapter)], GoContextProvider);
+    language!(
+        "gowork",
+        vec![Arc::new(go::GoLspAdapter)],
+        GoContextProvider
+    );
+
     language!(
         "json",
         vec![Arc::new(json::JsonLspAdapter::new(
             node_runtime.clone(),
             languages.clone(),
-        ))]
+        ))],
+        json_task_context()
     );
     language!("markdown");
     language!(

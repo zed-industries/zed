@@ -516,6 +516,85 @@ pub struct UndoOperation {
     pub counts: HashMap<clock::Lamport, u32>,
 }
 
+/// Stores information about the indentation of a line (tabs and spaces).
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct LineIndent {
+    pub tabs: u32,
+    pub spaces: u32,
+    pub line_blank: bool,
+}
+
+impl LineIndent {
+    /// Constructs a new `LineIndent` which only contains spaces.
+    pub fn spaces(spaces: u32) -> Self {
+        Self {
+            tabs: 0,
+            spaces,
+            line_blank: true,
+        }
+    }
+
+    /// Constructs a new `LineIndent` which only contains tabs.
+    pub fn tabs(tabs: u32) -> Self {
+        Self {
+            tabs,
+            spaces: 0,
+            line_blank: true,
+        }
+    }
+
+    /// Indicates whether the line is empty.
+    pub fn is_line_empty(&self) -> bool {
+        self.tabs == 0 && self.spaces == 0 && self.line_blank
+    }
+
+    /// Indicates whether the line is blank (contains only whitespace).
+    pub fn is_line_blank(&self) -> bool {
+        self.line_blank
+    }
+
+    /// Returns the number of indentation characters (tabs or spaces).
+    pub fn raw_len(&self) -> u32 {
+        self.tabs + self.spaces
+    }
+
+    /// Returns the number of indentation characters (tabs or spaces), taking tab size into account.
+    pub fn len(&self, tab_size: u32) -> u32 {
+        self.tabs * tab_size + self.spaces
+    }
+}
+
+impl From<&str> for LineIndent {
+    fn from(value: &str) -> Self {
+        Self::from_iter(value.chars())
+    }
+}
+
+impl FromIterator<char> for LineIndent {
+    fn from_iter<T: IntoIterator<Item = char>>(chars: T) -> Self {
+        let mut tabs = 0;
+        let mut spaces = 0;
+        let mut line_blank = true;
+        for c in chars {
+            if c == '\t' {
+                tabs += 1;
+            } else if c == ' ' {
+                spaces += 1;
+            } else {
+                if c != '\n' {
+                    line_blank = false;
+                }
+                break;
+            }
+        }
+        Self {
+            tabs,
+            spaces,
+            line_blank,
+        }
+    }
+}
+
 impl Buffer {
     pub fn new(replica_id: u16, remote_id: BufferId, mut base_text: String) -> Buffer {
         let line_ending = LineEnding::detect(&base_text);
@@ -1865,6 +1944,52 @@ impl BufferSnapshot {
         (row_end_offset - row_start_offset) as u32
     }
 
+    pub fn line_indents_in_row_range(
+        &self,
+        row_range: Range<u32>,
+    ) -> impl Iterator<Item = (u32, LineIndent)> + '_ {
+        let start = Point::new(row_range.start, 0).to_offset(self);
+        let end = Point::new(row_range.end, 0).to_offset(self);
+
+        let mut lines = self.as_rope().chunks_in_range(start..end).lines();
+        let mut row = row_range.start;
+        std::iter::from_fn(move || {
+            if let Some(line) = lines.next() {
+                let indent = LineIndent::from(line);
+                row += 1;
+                Some((row - 1, indent))
+            } else {
+                None
+            }
+        })
+    }
+
+    pub fn reversed_line_indents_in_row_range(
+        &self,
+        row_range: Range<u32>,
+    ) -> impl Iterator<Item = (u32, LineIndent)> + '_ {
+        let start = Point::new(row_range.start, 0).to_offset(self);
+        let end = Point::new(row_range.end, 0)
+            .to_offset(self)
+            .saturating_sub(1);
+
+        let mut lines = self.as_rope().reversed_chunks_in_range(start..end).lines();
+        let mut row = row_range.end;
+        std::iter::from_fn(move || {
+            if let Some(line) = lines.next() {
+                let indent = LineIndent::from(line);
+                row = row.saturating_sub(1);
+                Some((row, indent))
+            } else {
+                None
+            }
+        })
+    }
+
+    pub fn line_indent_for_row(&self, row: u32) -> LineIndent {
+        LineIndent::from_iter(self.chars_at(Point::new(row, 0)))
+    }
+
     pub fn is_line_blank(&self, row: u32) -> bool {
         self.text_for_range(Point::new(row, 0)..Point::new(row, self.line_len(row)))
             .all(|chunk| chunk.matches(|c: char| !c.is_whitespace()).next().is_none())
@@ -2164,6 +2289,31 @@ impl BufferSnapshot {
             range: (start_fragment_id, range.start.offset)..(end_fragment_id, range.end.offset),
             buffer_id: self.remote_id,
         }
+    }
+
+    pub fn has_edits_since_in_range(&self, since: &clock::Global, range: Range<Anchor>) -> bool {
+        if *since != self.version {
+            let start_fragment_id = self.fragment_id_for_anchor(&range.start);
+            let end_fragment_id = self.fragment_id_for_anchor(&range.end);
+            let mut cursor = self
+                .fragments
+                .filter::<_, usize>(move |summary| !since.observed_all(&summary.max_version));
+            cursor.next(&None);
+            while let Some(fragment) = cursor.item() {
+                if fragment.id > *end_fragment_id {
+                    break;
+                }
+                if fragment.id > *start_fragment_id {
+                    let was_visible = fragment.was_visible(since, &self.undo_map);
+                    let is_visible = fragment.visible;
+                    if was_visible != is_visible {
+                        return true;
+                    }
+                }
+                cursor.next(&None);
+            }
+        }
+        false
     }
 
     pub fn has_edits_since(&self, since: &clock::Global) -> bool {

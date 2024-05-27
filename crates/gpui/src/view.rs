@@ -280,6 +280,14 @@ impl<V: Render> From<View<V>> for AnyView {
     }
 }
 
+impl PartialEq for AnyView {
+    fn eq(&self, other: &Self) -> bool {
+        self.model == other.model
+    }
+}
+
+impl Eq for AnyView {}
+
 impl Element for AnyView {
     type RequestLayoutState = Option<AnyElement>;
     type PrepaintState = Option<AnyElement>;

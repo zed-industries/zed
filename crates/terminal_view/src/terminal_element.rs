@@ -592,6 +592,8 @@ impl Element for TerminalElement {
                     .clone()
                     .unwrap_or(settings.buffer_font.features.clone());
 
+                let font_weight = terminal_settings.font_weight.unwrap_or_default();
+
                 let line_height = terminal_settings.line_height.value();
                 let font_size = terminal_settings.font_size;
 
@@ -617,6 +619,7 @@ impl Element for TerminalElement {
                 let text_style = TextStyle {
                     font_family,
                     font_features,
+                    font_weight,
                     font_size: font_size.into(),
                     font_style: FontStyle::Normal,
                     line_height: line_height.into(),
@@ -626,7 +629,6 @@ impl Element for TerminalElement {
                     underline: None,
                     strikethrough: None,
                     color: theme.colors().text,
-                    font_weight: FontWeight::NORMAL,
                 };
 
                 let text_system = cx.text_system();

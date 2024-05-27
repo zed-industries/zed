@@ -3,11 +3,14 @@ pub mod assistant_panel;
 pub mod assistant_settings;
 mod codegen;
 mod completion_provider;
-mod prompt_library;
+mod omit_ranges;
 mod prompts;
 mod saved_conversation;
+mod search;
+mod slash_command;
 mod streaming_diff;
 
+use ambient_context::AmbientContextSnapshot;
 pub use assistant_panel::AssistantPanel;
 use assistant_settings::{AnthropicModel, AssistantSettings, OpenAiModel, ZedDotDevModel};
 use client::{proto, Client};
@@ -35,6 +38,7 @@ actions!(
         InsertActivePrompt,
         ToggleIncludeConversation,
         ToggleHistory,
+        ApplyEdit
     ]
 );
 
@@ -184,6 +188,9 @@ pub struct LanguageModelChoiceDelta {
 struct MessageMetadata {
     role: Role,
     status: MessageStatus,
+    // TODO: Delete this
+    #[serde(skip)]
+    ambient_context: AmbientContextSnapshot,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -230,6 +237,7 @@ pub fn init(client: Arc<Client>, cx: &mut AppContext) {
     cx.set_global(Assistant::default());
     AssistantSettings::register(cx);
     completion_provider::init(client, cx);
+    assistant_slash_command::init(cx);
     assistant_panel::init(cx);
 
     CommandPaletteFilter::update_global(cx, |filter, _cx| {

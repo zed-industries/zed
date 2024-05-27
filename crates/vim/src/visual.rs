@@ -30,6 +30,7 @@ actions!(
         ToggleVisualLine,
         ToggleVisualBlock,
         VisualDelete,
+        VisualDeleteLine,
         VisualYank,
         OtherEnd,
         SelectNext,
@@ -55,7 +56,13 @@ pub fn register(workspace: &mut Workspace, _: &mut ViewContext<Workspace>) {
     workspace.register_action(|_, _: &VisualDelete, cx| {
         Vim::update(cx, |vim, cx| {
             vim.record_current_action(cx);
-            delete(vim, cx);
+            delete(vim, false, cx);
+        });
+    });
+    workspace.register_action(|_, _: &VisualDeleteLine, cx| {
+        Vim::update(cx, |vim, cx| {
+            vim.record_current_action(cx);
+            delete(vim, true, cx);
         });
     });
     workspace.register_action(|_, _: &VisualYank, cx| {
@@ -355,10 +362,10 @@ pub fn other_end(_: &mut Workspace, _: &OtherEnd, cx: &mut ViewContext<Workspace
     });
 }
 
-pub fn delete(vim: &mut Vim, cx: &mut WindowContext) {
+pub fn delete(vim: &mut Vim, line_mode: bool, cx: &mut WindowContext) {
     vim.update_active_editor(cx, |vim, editor, cx| {
         let mut original_columns: HashMap<_, _> = Default::default();
-        let line_mode = editor.selections.line_mode;
+        let line_mode = line_mode || editor.selections.line_mode;
 
         editor.transact(cx, |editor, cx| {
             editor.change_selections(Some(Autoscroll::fit()), cx, |s| {
@@ -369,6 +376,17 @@ pub fn delete(vim: &mut Vim, cx: &mut WindowContext) {
                             position = movement::left(map, position);
                         }
                         original_columns.insert(selection.id, position.to_point(map).column);
+                        if vim.state().mode == Mode::VisualBlock {
+                            *selection.end.column_mut() = map.line_len(selection.end.row())
+                        } else if vim.state().mode != Mode::VisualLine {
+                            selection.start = DisplayPoint::new(selection.start.row(), 0);
+                            if selection.end.row() == map.max_point().row() {
+                                selection.end = map.max_point()
+                            } else {
+                                *selection.end.row_mut() += 1;
+                                *selection.end.column_mut() = 0;
+                            }
+                        }
                     }
                     selection.goal = SelectionGoal::None;
                 });
@@ -569,7 +587,7 @@ pub fn select_match(
         Some(Operator::Change) => substitute(vim, None, false, cx),
         Some(Operator::Delete) => {
             vim.stop_recording();
-            delete(vim, cx)
+            delete(vim, false, cx)
         }
         Some(Operator::Yank) => yank(vim, cx),
         _ => {} // Ignoring other operators
@@ -1196,5 +1214,37 @@ mod test {
         cx.shared_state().await.assert_eq("aa ˇx aa aa aa");
         cx.simulate_shared_keystrokes(".").await;
         cx.shared_state().await.assert_eq("aa ˇx aa aa aa");
+    }
+
+    #[gpui::test]
+    async fn test_visual_shift_d(cx: &mut gpui::TestAppContext) {
+        let mut cx = NeovimBackedTestContext::new(cx).await;
+
+        cx.set_shared_state(indoc! {
+            "The ˇquick brown
+            fox jumps over
+            the lazy dog
+            "
+        })
+        .await;
+        cx.simulate_shared_keystrokes("v down shift-d").await;
+        cx.shared_state().await.assert_eq(indoc! {
+            "the ˇlazy dog\n"
+        });
+
+        cx.set_shared_state(indoc! {
+            "The ˇquick brown
+            fox jumps over
+            the lazy dog
+            "
+        })
+        .await;
+        cx.simulate_shared_keystrokes("ctrl-v down shift-d").await;
+        cx.shared_state().await.assert_eq(indoc! {
+            "Theˇ•
+            fox•
+            the lazy dog
+            "
+        });
     }
 }

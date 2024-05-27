@@ -102,7 +102,7 @@ pub struct EntryDetails {
     is_processing: bool,
     is_cut: bool,
     git_status: Option<GitFileStatus>,
-    is_dotenv: bool,
+    is_private: bool,
 }
 
 #[derive(PartialEq, Clone, Default, Debug, Deserialize)]
@@ -130,6 +130,7 @@ actions!(
         Copy,
         CopyPath,
         CopyRelativePath,
+        Duplicate,
         RevealInFinder,
         Cut,
         Paste,
@@ -209,7 +210,9 @@ impl ProjectPanel {
                     this.update_visible_entries(None, cx);
                     cx.notify();
                 }
-                project::Event::WorktreeUpdatedEntries(_, _) | project::Event::WorktreeAdded => {
+                project::Event::WorktreeUpdatedEntries(_, _)
+                | project::Event::WorktreeAdded
+                | project::Event::WorktreeOrderChanged => {
                     this.update_visible_entries(None, cx);
                     cx.notify();
                 }
@@ -460,6 +463,7 @@ impl ProjectPanel {
                             .separator()
                             .action("Cut", Box::new(Cut))
                             .action("Copy", Box::new(Copy))
+                            .action("Duplicate", Box::new(Duplicate))
                             // TODO: Paste should always be visible, but disabled when clipboard is empty
                             .when_some(self.clipboard_entry, |menu, entry| {
                                 menu.when(entry.worktree_id() == worktree_id, |menu| {
@@ -694,10 +698,12 @@ impl ProjectPanel {
 
         let worktree_id = edit_state.worktree_id;
         let is_new_entry = edit_state.is_new_entry;
+        let filename = self.filename_editor.read(cx).text(cx);
+        edit_state.is_dir = edit_state.is_dir
+            || (edit_state.is_new_entry && filename.ends_with(std::path::MAIN_SEPARATOR));
         let is_dir = edit_state.is_dir;
         let worktree = self.project.read(cx).worktree_for_id(worktree_id, cx)?;
         let entry = worktree.read(cx).entry_for_id(edit_state.entry_id)?.clone();
-        let filename = self.filename_editor.read(cx).text(cx);
 
         let path_already_exists = |path| worktree.read(cx).entry_for_path(path).is_some();
         let edit_task;
@@ -1156,6 +1162,11 @@ impl ProjectPanel {
         });
     }
 
+    fn duplicate(&mut self, _: &Duplicate, cx: &mut ViewContext<Self>) {
+        self.copy(&Copy {}, cx);
+        self.paste(&Paste {}, cx);
+    }
+
     fn copy_path(&mut self, _: &CopyPath, cx: &mut ViewContext<Self>) {
         if let Some((worktree, entry)) = self.selected_entry(cx) {
             cx.write_to_clipboard(ClipboardItem::new(
@@ -1227,6 +1238,48 @@ impl ProjectPanel {
     }
 
     fn move_entry(
+        &mut self,
+        entry_to_move: ProjectEntryId,
+        destination: ProjectEntryId,
+        destination_is_file: bool,
+        cx: &mut ViewContext<Self>,
+    ) {
+        if self
+            .project
+            .read(cx)
+            .entry_is_worktree_root(entry_to_move, cx)
+        {
+            self.move_worktree_root(entry_to_move, destination, cx)
+        } else {
+            self.move_worktree_entry(entry_to_move, destination, destination_is_file, cx)
+        }
+    }
+
+    fn move_worktree_root(
+        &mut self,
+        entry_to_move: ProjectEntryId,
+        destination: ProjectEntryId,
+        cx: &mut ViewContext<Self>,
+    ) {
+        self.project.update(cx, |project, cx| {
+            let Some(worktree_to_move) = project.worktree_for_entry(entry_to_move, cx) else {
+                return;
+            };
+            let Some(destination_worktree) = project.worktree_for_entry(destination, cx) else {
+                return;
+            };
+
+            let worktree_id = worktree_to_move.read(cx).id();
+            let destination_id = destination_worktree.read(cx).id();
+
+            project
+                .move_worktree(worktree_id, destination_id, cx)
+                .log_err();
+        });
+        return;
+    }
+
+    fn move_worktree_entry(
         &mut self,
         entry_to_move: ProjectEntryId,
         destination: ProjectEntryId,
@@ -1592,7 +1645,7 @@ impl ProjectPanel {
                             .clipboard_entry
                             .map_or(false, |e| e.is_cut() && e.entry_id() == entry.id),
                         git_status: status,
-                        is_dotenv: entry.is_private,
+                        is_private: entry.is_private,
                     };
 
                     if let Some(edit_state) = &self.edit_state {
@@ -1678,7 +1731,13 @@ impl ProjectPanel {
         let filename_text_color =
             entry_git_aware_label_color(details.git_status, details.is_ignored, is_selected);
         let file_name = details.filename.clone();
-        let icon = details.icon.clone();
+        let mut icon = details.icon.clone();
+        if show_editor && details.kind.is_file() {
+            let filename = self.filename_editor.read(cx).text(cx);
+            if filename.len() > 2 {
+                icon = FileIcons::get_icon(Path::new(&filename), cx);
+            }
+        }
         let depth = details.depth;
         div()
             .id(entry_id.to_proto() as usize)
@@ -1831,6 +1890,7 @@ impl Render for ProjectPanel {
                         .on_action(cx.listener(Self::cut))
                         .on_action(cx.listener(Self::copy))
                         .on_action(cx.listener(Self::paste))
+                        .on_action(cx.listener(Self::duplicate))
                 })
                 .when(project.is_local(), |el| {
                     el.on_action(cx.listener(Self::reveal_in_finder))
@@ -1899,11 +1959,11 @@ impl Render for ProjectPanel {
 }
 
 impl Render for DraggedProjectEntryView {
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl Element {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         let settings = ProjectPanelSettings::get_global(cx);
-        let ui_font = ThemeSettings::get_global(cx).ui_font.family.clone();
+        let ui_font = ThemeSettings::get_global(cx).ui_font.clone();
         h_flex()
-            .font_family(ui_font)
+            .font(ui_font)
             .bg(cx.theme().colors().background)
             .w(self.width)
             .child(
@@ -2841,6 +2901,84 @@ mod tests {
                 "v root2",
                 "    > d",
                 "    > e",
+            ]
+        );
+    }
+
+    #[gpui::test]
+    async fn test_adding_directory_via_file(cx: &mut gpui::TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor().clone());
+        fs.insert_tree(
+            "/root1",
+            json!({
+                ".dockerignore": "",
+                ".git": {
+                    "HEAD": "",
+                },
+            }),
+        )
+        .await;
+
+        let project = Project::test(fs.clone(), ["/root1".as_ref()], cx).await;
+        let workspace = cx.add_window(|cx| Workspace::test_new(project.clone(), cx));
+        let cx = &mut VisualTestContext::from_window(*workspace, cx);
+        let panel = workspace
+            .update(cx, |workspace, cx| {
+                let panel = ProjectPanel::new(workspace, cx);
+                workspace.add_panel(panel.clone(), cx);
+                panel
+            })
+            .unwrap();
+
+        select_path(&panel, "root1", cx);
+        assert_eq!(
+            visible_entries_as_strings(&panel, 0..10, cx),
+            &["v root1  <== selected", "    > .git", "      .dockerignore",]
+        );
+
+        // Add a file with the root folder selected. The filename editor is placed
+        // before the first file in the root folder.
+        panel.update(cx, |panel, cx| panel.new_file(&NewFile, cx));
+        panel.update(cx, |panel, cx| {
+            assert!(panel.filename_editor.read(cx).is_focused(cx));
+        });
+        assert_eq!(
+            visible_entries_as_strings(&panel, 0..10, cx),
+            &[
+                "v root1",
+                "    > .git",
+                "      [EDITOR: '']  <== selected",
+                "      .dockerignore",
+            ]
+        );
+
+        let confirm = panel.update(cx, |panel, cx| {
+            panel
+                .filename_editor
+                .update(cx, |editor, cx| editor.set_text("/new_dir/", cx));
+            panel.confirm_edit(cx).unwrap()
+        });
+
+        assert_eq!(
+            visible_entries_as_strings(&panel, 0..10, cx),
+            &[
+                "v root1",
+                "    > .git",
+                "      [PROCESSING: '/new_dir/']  <== selected",
+                "      .dockerignore",
+            ]
+        );
+
+        confirm.await.unwrap();
+        assert_eq!(
+            visible_entries_as_strings(&panel, 0..13, cx),
+            &[
+                "v root1",
+                "    > .git",
+                "    v new_dir  <== selected",
+                "      .dockerignore",
             ]
         );
     }

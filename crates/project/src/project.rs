@@ -36,7 +36,7 @@ use git::{blame::Blame, repository::GitRepository};
 use globset::{Glob, GlobSet, GlobSetBuilder};
 use gpui::{
     AnyModel, AppContext, AsyncAppContext, BackgroundExecutor, BorrowAppContext, Context, Entity,
-    EventEmitter, Model, ModelContext, PromptLevel, Task, WeakModel,
+    EventEmitter, Model, ModelContext, PromptLevel, SharedString, Task, WeakModel,
 };
 use itertools::Itertools;
 use language::{
@@ -47,17 +47,17 @@ use language::{
         serialize_version, split_operations,
     },
     range_from_lsp, Bias, Buffer, BufferSnapshot, CachedLspAdapter, Capability, CodeLabel,
-    Diagnostic, DiagnosticEntry, DiagnosticSet, Diff, Documentation, Event as BufferEvent,
-    File as _, Language, LanguageRegistry, LanguageServerName, LocalFile, LspAdapterDelegate,
-    Operation, Patch, PendingLanguageServer, PointUtf16, TextBufferSnapshot, ToOffset,
-    ToPointUtf16, Transaction, Unclipped,
+    ContextProvider, Diagnostic, DiagnosticEntry, DiagnosticSet, Diff, Documentation,
+    Event as BufferEvent, File as _, Language, LanguageRegistry, LanguageServerName, LocalFile,
+    LspAdapterDelegate, Operation, Patch, PendingLanguageServer, PointUtf16, TextBufferSnapshot,
+    ToOffset, ToPointUtf16, Transaction, Unclipped,
 };
 use log::error;
 use lsp::{
     DiagnosticSeverity, DiagnosticTag, DidChangeWatchedFilesRegistrationOptions,
-    DocumentHighlightKind, LanguageServer, LanguageServerBinary, LanguageServerId,
-    LspRequestFuture, MessageActionItem, OneOf, ServerCapabilities, ServerHealthStatus,
-    ServerStatus,
+    DocumentHighlightKind, Edit, FileSystemWatcher, LanguageServer, LanguageServerBinary,
+    LanguageServerId, LspRequestFuture, MessageActionItem, OneOf, ServerCapabilities,
+    ServerHealthStatus, ServerStatus, TextEdit,
 };
 use lsp_command::*;
 use node_runtime::NodeRuntime;
@@ -67,6 +67,7 @@ use prettier_support::{DefaultPrettier, PrettierInstance};
 use project_settings::{LspSettings, ProjectSettings};
 use rand::prelude::*;
 use search_history::SearchHistory;
+use snippet::Snippet;
 use worktree::LocalSnapshot;
 
 use http::{HttpClient, Url};
@@ -79,6 +80,7 @@ use similar::{ChangeTag, TextDiff};
 use smol::channel::{Receiver, Sender};
 use smol::lock::Semaphore;
 use std::{
+    borrow::Cow,
     cmp::{self, Ordering},
     convert::TryInto,
     env,
@@ -96,7 +98,10 @@ use std::{
     },
     time::{Duration, Instant},
 };
-use task::static_source::{StaticSource, TrackedFile};
+use task::{
+    static_source::{StaticSource, TrackedFile},
+    RevealStrategy, TaskContext, TaskTemplate, TaskVariables, VariableName,
+};
 use terminals::Terminals;
 use text::{Anchor, BufferId, LineEnding};
 use util::{
@@ -112,7 +117,9 @@ pub use fs::*;
 pub use language::Location;
 #[cfg(any(test, feature = "test-support"))]
 pub use prettier::FORMAT_SUFFIX as TEST_PRETTIER_FORMAT_SUFFIX;
-pub use task_inventory::{Inventory, TaskSourceKind};
+pub use task_inventory::{
+    BasicContextProvider, ContextProviderWithTasks, Inventory, TaskSourceKind,
+};
 pub use worktree::{
     DiagnosticSummary, Entry, EntryKind, File, LocalWorktree, PathChange, ProjectEntryId,
     RepositoryEntry, UpdatedEntriesSet, UpdatedGitRepositoriesSet, Worktree, WorktreeId,
@@ -152,6 +159,7 @@ pub enum OpenedBufferEvent {
 /// Can be either local (for the project opened on the same host) or remote.(for collab projects, browsed by multiple remote users).
 pub struct Project {
     worktrees: Vec<WorktreeHandle>,
+    worktrees_reordered: bool,
     active_entry: Option<ProjectEntryId>,
     buffer_ordered_messages_tx: mpsc::UnboundedSender<BufferOrderedMessage>,
     pending_language_server_update: Option<BufferOrderedMessage>,
@@ -166,6 +174,8 @@ pub struct Project {
     last_formatting_failure: Option<String>,
     last_workspace_edits_by_language_server: HashMap<LanguageServerId, ProjectTransaction>,
     language_server_watched_paths: HashMap<LanguageServerId, HashMap<WorktreeId, GlobSet>>,
+    language_server_watcher_registrations:
+        HashMap<LanguageServerId, HashMap<String, Vec<FileSystemWatcher>>>,
     client: Arc<client::Client>,
     next_entry_id: Arc<AtomicUsize>,
     join_project_response_message_id: u32,
@@ -307,6 +317,7 @@ pub enum Event {
     ActiveEntryChanged(Option<ProjectEntryId>),
     ActivateProjectPanel,
     WorktreeAdded,
+    WorktreeOrderChanged,
     WorktreeRemoved(WorktreeId),
     WorktreeUpdatedEntries(WorktreeId, UpdatedEntriesSet),
     WorktreeUpdatedGitRepositories,
@@ -332,6 +343,7 @@ pub enum Event {
     CollaboratorLeft(proto::PeerId),
     RefreshInlayHints,
     RevealInProjectPanel(ProjectEntryId),
+    SnippetEdit(BufferId, Vec<(lsp::Range, Snippet)>),
 }
 
 pub enum LanguageServerState {
@@ -668,6 +680,8 @@ impl Project {
         client.add_model_request_handler(Self::handle_lsp_command::<lsp_ext_command::ExpandMacro>);
         client.add_model_request_handler(Self::handle_blame_buffer);
         client.add_model_request_handler(Self::handle_multi_lsp_query);
+        client.add_model_request_handler(Self::handle_task_context_for_location);
+        client.add_model_request_handler(Self::handle_task_templates);
     }
 
     pub fn local(
@@ -686,6 +700,7 @@ impl Project {
 
             Self {
                 worktrees: Vec::new(),
+                worktrees_reordered: false,
                 buffer_ordered_messages_tx: tx,
                 flush_language_server_update: None,
                 pending_language_server_update: None,
@@ -723,6 +738,7 @@ impl Project {
                 last_formatting_failure: None,
                 last_workspace_edits_by_language_server: Default::default(),
                 language_server_watched_paths: HashMap::default(),
+                language_server_watcher_registrations: HashMap::default(),
                 buffers_being_formatted: Default::default(),
                 buffers_needing_diff: Default::default(),
                 git_diff_debouncer: DebouncedDelay::new(),
@@ -818,6 +834,7 @@ impl Project {
                 .detach();
             let mut this = Self {
                 worktrees: Vec::new(),
+                worktrees_reordered: false,
                 buffer_ordered_messages_tx: tx,
                 pending_language_server_update: None,
                 flush_language_server_update: None,
@@ -873,6 +890,7 @@ impl Project {
                 last_formatting_failure: None,
                 last_workspace_edits_by_language_server: Default::default(),
                 language_server_watched_paths: HashMap::default(),
+                language_server_watcher_registrations: HashMap::default(),
                 opened_buffers: Default::default(),
                 buffers_being_formatted: Default::default(),
                 buffers_needing_diff: Default::default(),
@@ -1245,6 +1263,19 @@ impl Project {
         self.dev_server_project_id
     }
 
+    pub fn ssh_connection_string(&self, cx: &ModelContext<Self>) -> Option<SharedString> {
+        if self.is_local() {
+            return None;
+        }
+
+        let dev_server_id = self.dev_server_project_id()?;
+        dev_server_projects::Store::global(cx)
+            .read(cx)
+            .dev_server_for_project(dev_server_id)?
+            .ssh_connection_string
+            .clone()
+    }
+
     pub fn replica_id(&self) -> ReplicaId {
         match self.client_state {
             ProjectClientState::Remote { replica_id, .. } => replica_id,
@@ -1281,6 +1312,10 @@ impl Project {
         self.collaborators.values().find(|c| c.replica_id == 0)
     }
 
+    pub fn set_worktrees_reordered(&mut self, worktrees_reordered: bool) {
+        self.worktrees_reordered = worktrees_reordered;
+    }
+
     /// Collect all worktrees, including ones that don't appear in the project panel
     pub fn worktrees(&self) -> impl '_ + DoubleEndedIterator<Item = Model<Worktree>> {
         self.worktrees
@@ -1288,20 +1323,13 @@ impl Project {
             .filter_map(move |worktree| worktree.upgrade())
     }
 
-    /// Collect all user-visible worktrees, the ones that appear in the project panel
+    /// Collect all user-visible worktrees, the ones that appear in the project panel.
     pub fn visible_worktrees<'a>(
         &'a self,
         cx: &'a AppContext,
     ) -> impl 'a + DoubleEndedIterator<Item = Model<Worktree>> {
-        self.worktrees.iter().filter_map(|worktree| {
-            worktree.upgrade().and_then(|worktree| {
-                if worktree.read(cx).is_visible() {
-                    Some(worktree)
-                } else {
-                    None
-                }
-            })
-        })
+        self.worktrees()
+            .filter(|worktree| worktree.read(cx).is_visible())
     }
 
     pub fn worktree_root_names<'a>(&'a self, cx: &'a AppContext) -> impl Iterator<Item = &'a str> {
@@ -1330,6 +1358,18 @@ impl Project {
     ) -> Option<WorktreeId> {
         self.worktree_for_entry(entry_id, cx)
             .map(|worktree| worktree.read(cx).id())
+    }
+
+    /// Checks if the entry is the root of a worktree.
+    pub fn entry_is_worktree_root(&self, entry_id: ProjectEntryId, cx: &AppContext) -> bool {
+        self.worktree_for_entry(entry_id, cx)
+            .map(|worktree| {
+                worktree
+                    .read(cx)
+                    .root_entry()
+                    .is_some_and(|e| e.id == entry_id)
+            })
+            .unwrap_or(false)
     }
 
     pub fn visibility_for_paths(&self, paths: &[PathBuf], cx: &AppContext) -> Option<bool> {
@@ -2694,7 +2734,6 @@ impl Project {
                     };
 
                     let next_version = previous_snapshot.version + 1;
-
                     buffer_snapshots.push(LspBufferSnapshot {
                         version: next_version,
                         snapshot: next_snapshot.clone(),
@@ -3470,10 +3509,31 @@ impl Project {
                                     let options = serde_json::from_value(options)?;
                                     this.update(&mut cx, |this, cx| {
                                         this.on_lsp_did_change_watched_files(
-                                            server_id, options, cx,
+                                            server_id, &reg.id, options, cx,
                                         );
                                     })?;
                                 }
+                            }
+                        }
+                        Ok(())
+                    }
+                }
+            })
+            .detach();
+
+        language_server
+            .on_request::<lsp::request::UnregisterCapability, _, _>({
+                let this = this.clone();
+                move |params, mut cx| {
+                    let this = this.clone();
+                    async move {
+                        for unreg in params.unregisterations.iter() {
+                            if unreg.method == "workspace/didChangeWatchedFiles" {
+                                this.update(&mut cx, |this, cx| {
+                                    this.on_lsp_unregister_did_change_watched_files(
+                                        server_id, &unreg.id, cx,
+                                    );
+                                })?;
                             }
                         }
                         Ok(())
@@ -4207,16 +4267,67 @@ impl Project {
     fn on_lsp_did_change_watched_files(
         &mut self,
         language_server_id: LanguageServerId,
+        registration_id: &str,
         params: DidChangeWatchedFilesRegistrationOptions,
         cx: &mut ModelContext<Self>,
     ) {
+        let registrations = self
+            .language_server_watcher_registrations
+            .entry(language_server_id)
+            .or_default();
+
+        registrations.insert(registration_id.to_string(), params.watchers);
+
+        self.rebuild_watched_paths(language_server_id, cx);
+    }
+
+    fn on_lsp_unregister_did_change_watched_files(
+        &mut self,
+        language_server_id: LanguageServerId,
+        registration_id: &str,
+        cx: &mut ModelContext<Self>,
+    ) {
+        let registrations = self
+            .language_server_watcher_registrations
+            .entry(language_server_id)
+            .or_default();
+
+        if registrations.remove(registration_id).is_some() {
+            log::info!(
+                "language server {}: unregistered workspace/DidChangeWatchedFiles capability with id {}",
+                language_server_id,
+                registration_id
+            );
+        } else {
+            log::warn!(
+                "language server {}: failed to unregister workspace/DidChangeWatchedFiles capability with id {}. not registered.",
+                language_server_id,
+                registration_id
+            );
+        }
+
+        self.rebuild_watched_paths(language_server_id, cx);
+    }
+
+    fn rebuild_watched_paths(
+        &mut self,
+        language_server_id: LanguageServerId,
+        cx: &mut ModelContext<Self>,
+    ) {
+        let Some(watchers) = self
+            .language_server_watcher_registrations
+            .get(&language_server_id)
+        else {
+            return;
+        };
+
         let watched_paths = self
             .language_server_watched_paths
             .entry(language_server_id)
             .or_default();
 
         let mut builders = HashMap::default();
-        for watcher in params.watchers {
+        for watcher in watchers.values().flatten() {
             for worktree in &self.worktrees {
                 if let Some(worktree) = worktree.upgrade() {
                     let glob_is_inside_worktree = worktree.update(cx, |tree, _| {
@@ -4625,11 +4736,11 @@ impl Project {
         if self.is_local() {
             let buffers_with_paths = buffers
                 .into_iter()
-                .filter_map(|buffer_handle| {
+                .map(|buffer_handle| {
                     let buffer = buffer_handle.read(cx);
-                    let file = File::from_dyn(buffer.file())?;
-                    let buffer_abs_path = file.as_local().map(|f| f.abs_path(cx));
-                    Some((buffer_handle, buffer_abs_path))
+                    let buffer_abs_path = File::from_dyn(buffer.file())
+                        .and_then(|file| file.as_local().map(|f| f.abs_path(cx)));
+                    (buffer_handle, buffer_abs_path)
                 })
                 .collect::<Vec<_>>();
 
@@ -6209,7 +6320,7 @@ impl Project {
                         uri,
                         version: None,
                     },
-                    edits: edits.into_iter().map(OneOf::Left).collect(),
+                    edits: edits.into_iter().map(Edit::Plain).collect(),
                 })
             }));
         }
@@ -6287,7 +6398,7 @@ impl Project {
                     let buffer_to_edit = this
                         .update(cx, |this, cx| {
                             this.open_local_buffer_via_lsp(
-                                op.text_document.uri,
+                                op.text_document.uri.clone(),
                                 language_server.server_id(),
                                 lsp_adapter.name.clone(),
                                 cx,
@@ -6297,10 +6408,68 @@ impl Project {
 
                     let edits = this
                         .update(cx, |this, cx| {
-                            let edits = op.edits.into_iter().map(|edit| match edit {
-                                OneOf::Left(edit) => edit,
-                                OneOf::Right(edit) => edit.text_edit,
+                            let path = buffer_to_edit.read(cx).project_path(cx);
+                            let active_entry = this.active_entry;
+                            let is_active_entry = path.clone().map_or(false, |project_path| {
+                                this.entry_for_path(&project_path, cx)
+                                    .map_or(false, |entry| Some(entry.id) == active_entry)
                             });
+
+                            let (mut edits, mut snippet_edits) = (vec![], vec![]);
+                            for edit in op.edits {
+                                match edit {
+                                    Edit::Plain(edit) => edits.push(edit),
+                                    Edit::Annotated(edit) => edits.push(edit.text_edit),
+                                    Edit::Snippet(edit) => {
+                                        let Ok(snippet) = Snippet::parse(&edit.snippet.value)
+                                        else {
+                                            continue;
+                                        };
+
+                                        if is_active_entry {
+                                            snippet_edits.push((edit.range, snippet));
+                                        } else {
+                                            // Since this buffer is not focused, apply a normal edit.
+                                            edits.push(TextEdit {
+                                                range: edit.range,
+                                                new_text: snippet.text,
+                                            });
+                                        }
+                                    }
+                                }
+                            }
+                            if !snippet_edits.is_empty() {
+                                if let Some(buffer_version) = op.text_document.version {
+                                    let buffer_id = buffer_to_edit.read(cx).remote_id();
+                                    // Check if the edit that triggered that edit has been made by this participant.
+                                    let should_apply_edit = this
+                                        .buffer_snapshots
+                                        .get(&buffer_id)
+                                        .and_then(|server_to_snapshots| {
+                                            let all_snapshots = server_to_snapshots
+                                                .get(&language_server.server_id())?;
+                                            all_snapshots
+                                                .binary_search_by_key(&buffer_version, |snapshot| {
+                                                    snapshot.version
+                                                })
+                                                .ok()
+                                                .and_then(|index| all_snapshots.get(index))
+                                        })
+                                        .map_or(false, |lsp_snapshot| {
+                                            let version = lsp_snapshot.snapshot.version();
+                                            let most_recent_edit = version
+                                                .iter()
+                                                .max_by_key(|timestamp| timestamp.value);
+                                            most_recent_edit.map_or(false, |edit| {
+                                                edit.replica_id == this.replica_id()
+                                            })
+                                        });
+                                    if should_apply_edit {
+                                        cx.emit(Event::SnippetEdit(buffer_id, snippet_edits));
+                                    }
+                                }
+                            }
+
                             this.edits_from_lsp(
                                 &buffer_to_edit,
                                 edits,
@@ -7067,6 +7236,67 @@ impl Project {
         })
     }
 
+    /// Move a worktree to a new position in the worktree order.
+    ///
+    /// The worktree will moved to the opposite side of the destination worktree.
+    ///
+    /// # Example
+    ///
+    /// Given the worktree order `[11, 22, 33]` and a call to move worktree `22` to `33`,
+    /// worktree_order will be updated to produce the indexes `[11, 33, 22]`.
+    ///
+    /// Given the worktree order `[11, 22, 33]` and a call to move worktree `22` to `11`,
+    /// worktree_order will be updated to produce the indexes `[22, 11, 33]`.
+    ///
+    /// # Errors
+    ///
+    /// An error will be returned if the worktree or destination worktree are not found.
+    pub fn move_worktree(
+        &mut self,
+        source: WorktreeId,
+        destination: WorktreeId,
+        cx: &mut ModelContext<'_, Self>,
+    ) -> Result<()> {
+        if source == destination {
+            return Ok(());
+        }
+
+        let mut source_index = None;
+        let mut destination_index = None;
+        for (i, worktree) in self.worktrees.iter().enumerate() {
+            if let Some(worktree) = worktree.upgrade() {
+                let worktree_id = worktree.read(cx).id();
+                if worktree_id == source {
+                    source_index = Some(i);
+                    if destination_index.is_some() {
+                        break;
+                    }
+                } else if worktree_id == destination {
+                    destination_index = Some(i);
+                    if source_index.is_some() {
+                        break;
+                    }
+                }
+            }
+        }
+
+        let source_index =
+            source_index.with_context(|| format!("Missing worktree for id {source}"))?;
+        let destination_index =
+            destination_index.with_context(|| format!("Missing worktree for id {destination}"))?;
+
+        if source_index == destination_index {
+            return Ok(());
+        }
+
+        let worktree_to_move = self.worktrees.remove(source_index);
+        self.worktrees.insert(destination_index, worktree_to_move);
+        self.worktrees_reordered = true;
+        cx.emit(Event::WorktreeOrderChanged);
+        cx.notify();
+        Ok(())
+    }
+
     pub fn find_or_create_local_worktree(
         &mut self,
         abs_path: impl AsRef<Path>,
@@ -7235,6 +7465,7 @@ impl Project {
                 false
             }
         });
+
         self.metadata_changed(cx);
     }
 
@@ -7274,12 +7505,22 @@ impl Project {
             let worktree = worktree.read(cx);
             self.is_shared() || worktree.is_visible() || worktree.is_remote()
         };
-        if push_strong_handle {
-            self.worktrees
-                .push(WorktreeHandle::Strong(worktree.clone()));
+        let handle = if push_strong_handle {
+            WorktreeHandle::Strong(worktree.clone())
         } else {
-            self.worktrees
-                .push(WorktreeHandle::Weak(worktree.downgrade()));
+            WorktreeHandle::Weak(worktree.downgrade())
+        };
+        if self.worktrees_reordered {
+            self.worktrees.push(handle);
+        } else {
+            let i = match self
+                .worktrees
+                .binary_search_by_key(&Some(worktree.read(cx).abs_path()), |other| {
+                    other.upgrade().map(|worktree| worktree.read(cx).abs_path())
+                }) {
+                Ok(i) | Err(i) => i,
+            };
+            self.worktrees.insert(i, handle);
         }
 
         let handle_id = worktree.entity_id();
@@ -7670,7 +7911,7 @@ impl Project {
                             TaskSourceKind::Worktree {
                                 id: remote_worktree_id,
                                 abs_path,
-                                id_base: "local_tasks_for_worktree",
+                                id_base: "local_tasks_for_worktree".into(),
                             },
                             |tx, cx| StaticSource::new(TrackedFile::new(tasks_file_rx, tx, cx)),
                             cx,
@@ -7690,7 +7931,7 @@ impl Project {
                             TaskSourceKind::Worktree {
                                 id: remote_worktree_id,
                                 abs_path,
-                                id_base: "local_vscode_tasks_for_worktree",
+                                id_base: "local_vscode_tasks_for_worktree".into(),
                             },
                             |tx, cx| {
                                 StaticSource::new(TrackedFile::new_convertible::<
@@ -9202,6 +9443,122 @@ impl Project {
         })
     }
 
+    async fn handle_task_context_for_location(
+        project: Model<Self>,
+        envelope: TypedEnvelope<proto::TaskContextForLocation>,
+        _: Arc<Client>,
+        mut cx: AsyncAppContext,
+    ) -> Result<proto::TaskContext> {
+        let location = envelope
+            .payload
+            .location
+            .context("no location given for task context handling")?;
+        let location = cx
+            .update(|cx| deserialize_location(&project, location, cx))?
+            .await?;
+        let context_task = project.update(&mut cx, |project, cx| {
+            let captured_variables = {
+                let mut variables = TaskVariables::default();
+                for range in location
+                    .buffer
+                    .read(cx)
+                    .snapshot()
+                    .runnable_ranges(location.range.clone())
+                {
+                    for (capture_name, value) in range.extra_captures {
+                        variables.insert(VariableName::Custom(capture_name.into()), value);
+                    }
+                }
+                variables
+            };
+            project.task_context_for_location(captured_variables, location, cx)
+        })?;
+        let task_context = context_task.await.unwrap_or_default();
+        Ok(proto::TaskContext {
+            cwd: task_context
+                .cwd
+                .map(|cwd| cwd.to_string_lossy().to_string()),
+            task_variables: task_context
+                .task_variables
+                .into_iter()
+                .map(|(variable_name, variable_value)| (variable_name.to_string(), variable_value))
+                .collect(),
+        })
+    }
+
+    async fn handle_task_templates(
+        project: Model<Self>,
+        envelope: TypedEnvelope<proto::TaskTemplates>,
+        _: Arc<Client>,
+        mut cx: AsyncAppContext,
+    ) -> Result<proto::TaskTemplatesResponse> {
+        let worktree = envelope.payload.worktree_id.map(WorktreeId::from_proto);
+        let location = match envelope.payload.location {
+            Some(location) => Some(
+                cx.update(|cx| deserialize_location(&project, location, cx))?
+                    .await
+                    .context("task templates request location deserializing")?,
+            ),
+            None => None,
+        };
+
+        let templates = project
+            .update(&mut cx, |project, cx| {
+                project.task_templates(worktree, location, cx)
+            })?
+            .await
+            .context("receiving task templates")?
+            .into_iter()
+            .map(|(kind, template)| {
+                let kind = Some(match kind {
+                    TaskSourceKind::UserInput => proto::task_source_kind::Kind::UserInput(
+                        proto::task_source_kind::UserInput {},
+                    ),
+                    TaskSourceKind::Worktree {
+                        id,
+                        abs_path,
+                        id_base,
+                    } => {
+                        proto::task_source_kind::Kind::Worktree(proto::task_source_kind::Worktree {
+                            id: id.to_proto(),
+                            abs_path: abs_path.to_string_lossy().to_string(),
+                            id_base: id_base.to_string(),
+                        })
+                    }
+                    TaskSourceKind::AbsPath { id_base, abs_path } => {
+                        proto::task_source_kind::Kind::AbsPath(proto::task_source_kind::AbsPath {
+                            abs_path: abs_path.to_string_lossy().to_string(),
+                            id_base: id_base.to_string(),
+                        })
+                    }
+                    TaskSourceKind::Language { name } => {
+                        proto::task_source_kind::Kind::Language(proto::task_source_kind::Language {
+                            name: name.to_string(),
+                        })
+                    }
+                });
+                let kind = Some(proto::TaskSourceKind { kind });
+                let template = Some(proto::TaskTemplate {
+                    label: template.label,
+                    command: template.command,
+                    args: template.args,
+                    env: template.env.into_iter().collect(),
+                    cwd: template.cwd,
+                    use_new_terminal: template.use_new_terminal,
+                    allow_concurrent_runs: template.allow_concurrent_runs,
+                    reveal: match template.reveal {
+                        RevealStrategy::Always => proto::RevealStrategy::Always as i32,
+                        RevealStrategy::Never => proto::RevealStrategy::Never as i32,
+                    },
+                    tags: template.tags,
+                });
+                proto::TemplatePair { kind, template }
+            })
+            .collect();
+
+        Ok(proto::TaskTemplatesResponse { templates })
+    }
+
     async fn try_resolve_code_action(
         lang_server: &LanguageServer,
         action: &mut CodeAction,
@@ -10188,6 +10545,223 @@ impl Project {
             Vec::new()
         }
     }
+
+    pub fn task_context_for_location(
+        &self,
+        captured_variables: TaskVariables,
+        location: Location,
+        cx: &mut ModelContext<'_, Project>,
+    ) -> Task<Option<TaskContext>> {
+        if self.is_local() {
+            let cwd = self.task_cwd(cx).log_err().flatten();
+
+            cx.spawn(|project, cx| async move {
+                let mut task_variables = cx
+                    .update(|cx| {
+                        combine_task_variables(
+                            captured_variables,
+                            location,
+                            BasicContextProvider::new(project.upgrade()?),
+                            cx,
+                        )
+                        .log_err()
+                    })
+                    .ok()
+                    .flatten()?;
+                // Remove all custom entries starting with _, as they're not intended for use by the end user.
+                task_variables.sweep();
+                Some(TaskContext {
+                    cwd,
+                    task_variables,
+                })
+            })
+        } else if let Some(project_id) = self
+            .remote_id()
+            .filter(|_| self.ssh_connection_string(cx).is_some())
+        {
+            let task_context = self.client().request(proto::TaskContextForLocation {
+                project_id,
+                location: Some(proto::Location {
+                    buffer_id: location.buffer.read(cx).remote_id().into(),
+                    start: Some(serialize_anchor(&location.range.start)),
+                    end: Some(serialize_anchor(&location.range.end)),
+                }),
+            });
+            cx.background_executor().spawn(async move {
+                let task_context = task_context.await.log_err()?;
+                Some(TaskContext {
+                    cwd: task_context.cwd.map(PathBuf::from),
+                    task_variables: task_context
+                        .task_variables
+                        .into_iter()
+                        .filter_map(
+                            |(variable_name, variable_value)| match variable_name.parse() {
+                                Ok(variable_name) => Some((variable_name, variable_value)),
+                                Err(()) => {
+                                    log::error!("Unknown variable name: {variable_name}");
+                                    None
+                                }
+                            },
+                        )
+                        .collect(),
+                })
+            })
+        } else {
+            Task::ready(None)
+        }
+    }
+
+    pub fn task_templates(
+        &self,
+        worktree: Option<WorktreeId>,
+        location: Option<Location>,
+        cx: &mut ModelContext<Self>,
+    ) -> Task<Result<Vec<(TaskSourceKind, TaskTemplate)>>> {
+        if self.is_local() {
+            let language = location
+                .and_then(|location| location.buffer.read(cx).language_at(location.range.start));
+            Task::ready(Ok(self
+                .task_inventory()
+                .read(cx)
+                .list_tasks(language, worktree)))
+        } else if let Some(project_id) = self
+            .remote_id()
+            .filter(|_| self.ssh_connection_string(cx).is_some())
+        {
+            let remote_templates =
+                self.query_remote_task_templates(project_id, worktree, location.as_ref(), cx);
+            cx.background_executor().spawn(remote_templates)
+        } else {
+            Task::ready(Ok(Vec::new()))
+        }
+    }
+
+    pub fn query_remote_task_templates(
+        &self,
+        project_id: u64,
+        worktree: Option<WorktreeId>,
+        location: Option<&Location>,
+        cx: &AppContext,
+    ) -> Task<Result<Vec<(TaskSourceKind, TaskTemplate)>>> {
+        let client = self.client();
+        let location = location.map(|location| serialize_location(location, cx));
+        cx.spawn(|_| async move {
+            let response = client
+                .request(proto::TaskTemplates {
+                    project_id,
+                    worktree_id: worktree.map(|id| id.to_proto()),
+                    location,
+                })
+                .await?;
+
+            Ok(response
+                .templates
+                .into_iter()
+                .filter_map(|template_pair| {
+                    let task_source_kind = match template_pair.kind?.kind? {
+                        proto::task_source_kind::Kind::UserInput(_) => TaskSourceKind::UserInput,
+                        proto::task_source_kind::Kind::Worktree(worktree) => {
+                            TaskSourceKind::Worktree {
+                                id: WorktreeId::from_proto(worktree.id),
+                                abs_path: PathBuf::from(worktree.abs_path),
+                                id_base: Cow::Owned(worktree.id_base),
+                            }
+                        }
+                        proto::task_source_kind::Kind::AbsPath(abs_path) => {
+                            TaskSourceKind::AbsPath {
+                                id_base: Cow::Owned(abs_path.id_base),
+                                abs_path: PathBuf::from(abs_path.abs_path),
+                            }
+                        }
+                        proto::task_source_kind::Kind::Language(language) => {
+                            TaskSourceKind::Language {
+                                name: language.name.into(),
+                            }
+                        }
+                    };
+
+                    let proto_template = template_pair.template?;
+                    let reveal = match proto::RevealStrategy::from_i32(proto_template.reveal)
+                        .unwrap_or(proto::RevealStrategy::Always)
+                    {
+                        proto::RevealStrategy::Always => RevealStrategy::Always,
+                        proto::RevealStrategy::Never => RevealStrategy::Never,
+                    };
+                    let task_template = TaskTemplate {
+                        label: proto_template.label,
+                        command: proto_template.command,
+                        args: proto_template.args,
+                        env: proto_template.env.into_iter().collect(),
+                        cwd: proto_template.cwd,
+                        use_new_terminal: proto_template.use_new_terminal,
+                        allow_concurrent_runs: proto_template.allow_concurrent_runs,
+                        reveal,
+                        tags: proto_template.tags,
+                    };
+                    Some((task_source_kind, task_template))
+                })
+                .collect())
+        })
+    }
+
+    fn task_cwd(&self, cx: &AppContext) -> anyhow::Result<Option<PathBuf>> {
+        let available_worktrees = self
+            .worktrees()
+            .filter(|worktree| {
+                let worktree = worktree.read(cx);
+                worktree.is_visible()
+                    && worktree.is_local()
+                    && worktree.root_entry().map_or(false, |e| e.is_dir())
+            })
+            .collect::<Vec<_>>();
+        let cwd = match available_worktrees.len() {
+            0 => None,
+            1 => Some(available_worktrees[0].read(cx).abs_path()),
+            _ => {
+                let cwd_for_active_entry = self.active_entry().and_then(|entry_id| {
+                    available_worktrees.into_iter().find_map(|worktree| {
+                        let worktree = worktree.read(cx);
+                        if worktree.contains_entry(entry_id) {
+                            Some(worktree.abs_path())
+                        } else {
+                            None
+                        }
+                    })
+                });
+                anyhow::ensure!(
+                    cwd_for_active_entry.is_some(),
+                    "Cannot determine task cwd for multiple worktrees"
+                );
+                cwd_for_active_entry
+            }
+        };
+        Ok(cwd.map(|path| path.to_path_buf()))
+    }
+}
+
+fn combine_task_variables(
+    mut captured_variables: TaskVariables,
+    location: Location,
+    baseline: BasicContextProvider,
+    cx: &mut AppContext,
+) -> anyhow::Result<TaskVariables> {
+    let language_context_provider = location
+        .buffer
+        .read(cx)
+        .language()
+        .and_then(|language| language.context_provider());
+    let baseline = baseline
+        .build_context(&captured_variables, &location, cx)
+        .context("building basic default context")?;
+    captured_variables.extend(baseline);
+    if let Some(provider) = language_context_provider {
+        captured_variables.extend(
+            provider
+                .build_context(&captured_variables, &location, cx)
+                .context("building provider context")?,
+        );
+    }
+    Ok(captured_variables)
 }
 
 async fn populate_labels_for_symbols(
@@ -10440,7 +11014,7 @@ async fn search_ignored_entry(
                 }
             } else if !fs_metadata.is_symlink {
                 if !query.file_matches(Some(&ignored_abs_path))
-                    || snapshot.is_path_excluded(ignored_entry.path.to_path_buf())
+                    || snapshot.is_path_excluded(&ignored_entry.path)
                 {
                     continue;
                 }
@@ -10601,7 +11175,7 @@ impl<P: AsRef<Path>> From<(WorktreeId, P)> for ProjectPath {
     }
 }
 
-struct ProjectLspAdapterDelegate {
+pub struct ProjectLspAdapterDelegate {
     project: WeakModel<Project>,
     worktree: worktree::Snapshot,
     fs: Arc<dyn Fs>,
@@ -10611,7 +11185,11 @@ struct ProjectLspAdapterDelegate {
 }
 
 impl ProjectLspAdapterDelegate {
-    fn new(project: &Project, worktree: &Model<Worktree>, cx: &ModelContext<Project>) -> Arc<Self> {
+    pub fn new(
+        project: &Project,
+        worktree: &Model<Worktree>,
+        cx: &ModelContext<Project>,
+    ) -> Arc<Self> {
         Arc::new(Self {
             project: cx.weak_model(),
             worktree: worktree.read(cx).snapshot(),
@@ -11016,3 +11594,40 @@ impl std::fmt::Display for NoRepositoryError {
 }
 
 impl std::error::Error for NoRepositoryError {}
+
+fn serialize_location(location: &Location, cx: &AppContext) -> proto::Location {
+    proto::Location {
+        buffer_id: location.buffer.read(cx).remote_id().into(),
+        start: Some(serialize_anchor(&location.range.start)),
+        end: Some(serialize_anchor(&location.range.end)),
+    }
+}
+
+fn deserialize_location(
+    project: &Model<Project>,
+    location: proto::Location,
+    cx: &mut AppContext,
+) -> Task<Result<Location>> {
+    let buffer_id = match BufferId::new(location.buffer_id) {
+        Ok(id) => id,
+        Err(e) => return Task::ready(Err(e)),
+    };
+    let buffer_task = project.update(cx, |project, cx| {
+        project.wait_for_remote_buffer(buffer_id, cx)
+    });
+    cx.spawn(|_| async move {
+        let buffer = buffer_task.await?;
+        let start = location
+            .start
+            .and_then(deserialize_anchor)
+            .context("missing task context location start")?;
+        let end = location
+            .end
+            .and_then(deserialize_anchor)
+            .context("missing task context location end")?;
+        Ok(Location {
+            buffer,
+            range: start..end,
+        })
+    })
+}

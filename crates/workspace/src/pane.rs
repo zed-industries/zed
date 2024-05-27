@@ -5,7 +5,7 @@ use crate::{
     },
     toolbar::Toolbar,
     workspace_settings::{AutosaveSetting, TabBarSettings, WorkspaceSettings},
-    NewCenterTerminal, NewFile, NewSearch, OpenInTerminal, OpenTerminal, OpenVisible,
+    CloseWindow, NewCenterTerminal, NewFile, NewSearch, OpenInTerminal, OpenTerminal, OpenVisible,
     SplitDirection, ToggleZoom, Workspace,
 };
 use anyhow::Result;
@@ -948,6 +948,14 @@ impl Pane {
         cx: &mut ViewContext<Self>,
     ) -> Option<Task<Result<()>>> {
         if self.items.is_empty() {
+            // Close the window when there's no active items to close, if configured
+            if WorkspaceSettings::get_global(cx)
+                .when_closing_with_no_tabs
+                .should_close()
+            {
+                cx.dispatch_action(Box::new(CloseWindow));
+            }
+
             return None;
         }
         let active_item_id = self.items[self.active_item_index].item_id();
@@ -3019,7 +3027,7 @@ mod tests {
 
 impl Render for DraggedTab {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
-        let ui_font = ThemeSettings::get_global(cx).ui_font.family.clone();
+        let ui_font = ThemeSettings::get_global(cx).ui_font.clone();
         let label = self.item.tab_content(
             TabContentParams {
                 detail: Some(self.detail),
@@ -3032,6 +3040,6 @@ impl Render for DraggedTab {
             .selected(self.is_active)
             .child(label)
             .render(cx)
-            .font_family(ui_font)
+            .font(ui_font)
     }
 }

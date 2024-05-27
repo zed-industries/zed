@@ -42,13 +42,9 @@ const MIN_INPUT_WIDTH_REMS: f32 = 10.;
 const MAX_INPUT_WIDTH_REMS: f32 = 30.;
 const MAX_BUFFER_SEARCH_HISTORY_SIZE: usize = 50;
 
-const fn true_value() -> bool {
-    true
-}
-
 #[derive(PartialEq, Clone, Deserialize)]
 pub struct Deploy {
-    #[serde(default = "true_value")]
+    #[serde(default = "util::serde::default_true")]
     pub focus: bool,
     #[serde(default)]
     pub replace_enabled: bool,

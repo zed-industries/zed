@@ -90,11 +90,11 @@ pub use workspace_settings::{
     AutosaveSetting, RestoreOnStartupBehaviour, TabBarSettings, WorkspaceSettings,
 };
 
-use crate::notifications::NotificationId;
 use crate::persistence::{
     model::{DockData, DockStructure, SerializedItem, SerializedPane, SerializedPaneGroup},
     SerializedAxis,
 };
+use crate::{notifications::NotificationId, persistence::model::LocalPathsOrder};
 
 lazy_static! {
     static ref ZED_WINDOW_SIZE: Option<Size<DevicePixels>> = env::var("ZED_WINDOW_SIZE")
@@ -904,13 +904,35 @@ impl Workspace {
             let serialized_workspace: Option<SerializedWorkspace> =
                 persistence::DB.workspace_for_roots(abs_paths.as_slice());
 
-            let paths_to_open = Arc::new(abs_paths);
+            let mut paths_to_open = abs_paths;
+
+            let paths_order = serialized_workspace
+                .as_ref()
+                .map(|ws| &ws.location)
+                .and_then(|loc| match loc {
+                    SerializedWorkspaceLocation::Local(_, order) => Some(order.order()),
+                    _ => None,
+                });
+
+            if let Some(paths_order) = paths_order {
+                paths_to_open = paths_order
+                    .iter()
+                    .filter_map(|i| paths_to_open.get(*i).cloned())
+                    .collect::<Vec<_>>();
+                if paths_order.iter().enumerate().any(|(i, &j)| i != j) {
+                    project_handle
+                        .update(&mut cx, |project, _| {
+                            project.set_worktrees_reordered(true);
+                        })
+                        .log_err();
+                }
+            }
 
             // Get project paths for all of the abs_paths
             let mut worktree_roots: HashSet<Arc<Path>> = Default::default();
             let mut project_paths: Vec<(PathBuf, Option<ProjectPath>)> =
                 Vec::with_capacity(paths_to_open.len());
-            for path in paths_to_open.iter().cloned() {
+            for path in paths_to_open.into_iter() {
                 if let Some((worktree, project_entry)) = cx
                     .update(|cx| {
                         Workspace::project_path_for_path(project_handle.clone(), &path, true, cx)
@@ -3488,16 +3510,16 @@ impl Workspace {
         self.database_id
     }
 
-    fn local_paths(&self, cx: &AppContext) -> Option<LocalPaths> {
+    fn local_paths(&self, cx: &AppContext) -> Option<Vec<Arc<Path>>> {
         let project = self.project().read(cx);
 
         if project.is_local() {
-            Some(LocalPaths::new(
+            Some(
                 project
                     .visible_worktrees(cx)
                     .map(|worktree| worktree.read(cx).abs_path())
                     .collect::<Vec<_>>(),
-            ))
+            )
         } else {
             None
         }
@@ -3641,8 +3663,17 @@ impl Workspace {
         }
 
         let location = if let Some(local_paths) = self.local_paths(cx) {
-            if !local_paths.paths().is_empty() {
-                Some(SerializedWorkspaceLocation::Local(local_paths))
+            if !local_paths.is_empty() {
+                let (order, paths): (Vec<_>, Vec<_>) = local_paths
+                    .iter()
+                    .enumerate()
+                    .sorted_by(|a, b| a.1.cmp(b.1))
+                    .unzip();
+
+                Some(SerializedWorkspaceLocation::Local(
+                    LocalPaths::new(paths),
+                    LocalPathsOrder::new(order),
+                ))
             } else {
                 None
             }
@@ -4092,10 +4123,7 @@ impl Render for Workspace {
         };
         let (ui_font, ui_font_size) = {
             let theme_settings = ThemeSettings::get_global(cx);
-            (
-                theme_settings.ui_font.family.clone(),
-                theme_settings.ui_font_size,
-            )
+            (theme_settings.ui_font.clone(), theme_settings.ui_font_size)
         };
 
         let theme = cx.theme().clone();
@@ -4108,7 +4136,7 @@ impl Render for Workspace {
             .size_full()
             .flex()
             .flex_col()
-            .font_family(ui_font)
+            .font(ui_font)
             .gap_0()
             .justify_start()
             .items_start()
@@ -5320,7 +5348,7 @@ mod tests {
         // Add a project folder
         project
             .update(cx, |project, cx| {
-                project.find_or_create_local_worktree("/root2", true, cx)
+                project.find_or_create_local_worktree("root2", true, cx)
             })
             .await
             .unwrap();

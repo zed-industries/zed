@@ -1,5 +1,18 @@
 {
-  // The name of the Zed theme to use for the UI
+  // The name of the Zed theme to use for the UI.
+  //
+  // The theme can also be set to follow system preferences:
+  //
+  // "theme": {
+  //   "mode": "system",
+  //   "light": "One Light",
+  //   "dark": "One Dark"
+  // }
+  //
+  // Where `mode` is one of:
+  // - "system": Use the theme that corresponds to the system's appearance
+  // - "light": Use the theme indicated by the "light" field
+  // - "dark": Use the theme indicated by the "dark" field
   "theme": "One Dark",
   // The name of a base set of key bindings to use.
   // This setting can take four values, each named after another
@@ -24,6 +37,8 @@
   },
   // The default font size for text in the editor
   "buffer_font_size": 15,
+  // The weight of the editor font in standard CSS units from 100 to 900.
+  "buffer_font_weight": 400,
   // Set the buffer's line height.
   // May take 3 values:
   //  1. Use a line height that's comfortable for reading (1.618)
@@ -42,6 +57,8 @@
     // Disable ligatures:
     "calt": false
   },
+  // The weight of the UI font in standard CSS units from 100 to 900.
+  "ui_font_weight": 400,
   // The default font size for text in the UI
   "ui_font_size": 16,
   // The factor to grow the active pane by. Defaults to 1.0
@@ -71,6 +88,15 @@
   "restore_on_startup": "last_workspace",
   // Size of the drop target in the editor.
   "drop_target_size": 0.2,
+  // Whether the window should be closed when using 'close active item' on a window with no tabs.
+  // May take 3 values:
+  //  1. Use the current platform's convention
+  //         "when_closing_with_no_tabs": "platform_default"
+  //  2. Always close the window:
+  //         "when_closing_with_no_tabs": "close_window",
+  //  3. Never close the window
+  //         "when_closing_with_no_tabs": "keep_window_open",
+  "when_closing_with_no_tabs": "platform_default",
   // Whether the cursor blinks in the editor.
   "cursor_blink": true,
   // How to highlight the current line in the editor.
@@ -102,8 +128,17 @@
   "wrap_guides": [],
   // Hide the values of in variables from visual display in private files
   "redact_private_values": false,
+  // The default number of lines to expand excerpts in the multibuffer by.
+  "expand_excerpt_lines": 3,
   // Globs to match against file paths to determine if a file is private.
-  "private_files": ["**/.env*", "**/*.pem", "**/*.key", "**/*.cert", "**/*.crt", "**/secrets.yml"],
+  "private_files": [
+    "**/.env*",
+    "**/*.pem",
+    "**/*.key",
+    "**/*.cert",
+    "**/*.crt",
+    "**/secrets.yml"
+  ],
   // Whether to use additional LSP queries to format (and amend) the code after
   // every "trigger" symbol input, defined by LSP server capabilities.
   "use_on_type_format": true,
@@ -186,6 +221,25 @@
     "code_actions": true,
     // Whether to show fold buttons in the gutter.
     "folds": true
+  },
+  "indent_guides": {
+    /// Whether to show indent guides in the editor.
+    "enabled": true,
+    /// The width of the indent guides in pixels, between 1 and 10.
+    "line_width": 1,
+    /// Determines how indent guides are colored.
+    /// This setting can take the following three values:
+    ///
+    /// 1. "disabled"
+    /// 2. "fixed"
+    /// 3. "indent_aware"
+    "coloring": "fixed",
+    /// Determines how indent guide backgrounds are colored.
+    /// This setting can take the following two values:
+    ///
+    /// 1. "disabled"
+    /// 2. "indent_aware"
+    "background_coloring": "disabled"
   },
   // The number of lines to keep above/below the cursor when scrolling.
   "vertical_scroll_margin": 3,
@@ -287,7 +341,7 @@
     // AI provider.
     "provider": {
       "name": "openai",
-      // The default model to use when starting new conversations. This
+      // The default model to use when creating new contexts. This
       // setting can take three values:
       //
       // 1. "gpt-3.5-turbo"
@@ -802,12 +856,12 @@
   //
   // Supported URI scheme: `http`, `https`, `socks4`, `socks4a`, `socks5`,
   // `socks5h`. `http` will be used when no scheme is specified.
-  // 
+  //
   // By default no proxy will be used, or Zed will try get proxy settings from
   // environment variables.
   //
   // Examples:
-  //   - "proxy" = "socks5://localhost:10808"
-  //   - "proxy" = "http://127.0.0.1:10809"
+  //   - "proxy": "socks5://localhost:10808"
+  //   - "proxy": "http://127.0.0.1:10809"
   "proxy": null
 }

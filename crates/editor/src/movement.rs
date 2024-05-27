@@ -577,7 +577,7 @@ mod tests {
     use crate::{
         display_map::Inlay,
         test::{editor_test_context::EditorTestContext, marked_display_snapshot},
-        Buffer, DisplayMap, DisplayRow, ExcerptRange, InlayId, MultiBuffer,
+        Buffer, DisplayMap, DisplayRow, ExcerptRange, FoldPlaceholder, InlayId, MultiBuffer,
     };
     use gpui::{font, Context as _};
     use language::Capability;
@@ -695,8 +695,21 @@ mod tests {
         let font_size = px(14.0);
         let buffer = MultiBuffer::build_simple(input_text, cx);
         let buffer_snapshot = buffer.read(cx).snapshot(cx);
-        let display_map =
-            cx.new_model(|cx| DisplayMap::new(buffer, font, font_size, None, 1, 1, cx));
+
+        let display_map = cx.new_model(|cx| {
+            DisplayMap::new(
+                buffer,
+                font,
+                font_size,
+                None,
+                true,
+                1,
+                1,
+                1,
+                FoldPlaceholder::test(),
+                cx,
+            )
+        });
 
         // add all kinds of inlays between two word boundaries: we should be able to cross them all, when looking for another boundary
         let mut id = 0;
@@ -901,8 +914,20 @@ mod tests {
                 );
                 multibuffer
             });
-            let display_map =
-                cx.new_model(|cx| DisplayMap::new(multibuffer, font, px(14.0), None, 2, 2, cx));
+            let display_map = cx.new_model(|cx| {
+                DisplayMap::new(
+                    multibuffer,
+                    font,
+                    px(14.0),
+                    None,
+                    true,
+                    2,
+                    2,
+                    0,
+                    FoldPlaceholder::test(),
+                    cx,
+                )
+            });
             let snapshot = display_map.update(cx, |map, cx| map.snapshot(cx));
 
             assert_eq!(snapshot.text(), "\n\nabc\ndefg\n\n\nhijkl\nmn");

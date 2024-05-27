@@ -12,8 +12,9 @@ use refineable::Refineable;
 use util::ResultExt;
 
 use crate::{
-    try_parse_color, Appearance, AppearanceContent, PlayerColors, StatusColors, SyntaxTheme,
-    SystemColors, Theme, ThemeColors, ThemeContent, ThemeFamily, ThemeFamilyContent, ThemeStyles,
+    try_parse_color, AccentColors, Appearance, AppearanceContent, PlayerColors, StatusColors,
+    SyntaxTheme, SystemColors, Theme, ThemeColors, ThemeContent, ThemeFamily, ThemeFamilyContent,
+    ThemeStyles,
 };
 
 #[derive(Debug, Clone)]
@@ -118,10 +119,12 @@ impl ThemeRegistry {
             };
             player_colors.merge(&user_theme.style.players);
 
-            let syntax_theme = match user_theme.appearance {
-                AppearanceContent::Light => SyntaxTheme::light(),
-                AppearanceContent::Dark => SyntaxTheme::dark(),
+            let mut accent_colors = match user_theme.appearance {
+                AppearanceContent::Light => AccentColors::light(),
+                AppearanceContent::Dark => AccentColors::dark(),
             };
+            accent_colors.merge(&user_theme.style.accents);
+
             let syntax_highlights = user_theme
                 .style
                 .syntax
@@ -141,7 +144,8 @@ impl ThemeRegistry {
                     )
                 })
                 .collect::<Vec<_>>();
-            let syntax_theme = SyntaxTheme::merge(Arc::new(syntax_theme), syntax_highlights);
+            let syntax_theme =
+                SyntaxTheme::merge(Arc::new(SyntaxTheme::default()), syntax_highlights);
 
             let window_background_appearance = user_theme
                 .style
@@ -159,11 +163,11 @@ impl ThemeRegistry {
                 styles: ThemeStyles {
                     system: SystemColors::default(),
                     window_background_appearance,
+                    accents: accent_colors,
                     colors: theme_colors,
                     status: status_colors,
                     player: player_colors,
                     syntax: syntax_theme,
-                    accents: Vec::new(),
                 },
             }
         }));

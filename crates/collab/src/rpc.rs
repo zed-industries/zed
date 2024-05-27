@@ -447,6 +447,12 @@ impl Server {
             .add_message_handler(update_diagnostic_summary)
             .add_message_handler(update_worktree_settings)
             .add_request_handler(user_handler(
+                forward_project_request_for_owner::<proto::TaskContextForLocation>,
+            ))
+            .add_request_handler(user_handler(
+                forward_project_request_for_owner::<proto::TaskTemplates>,
+            ))
+            .add_request_handler(user_handler(
                 forward_read_only_project_request::<proto::GetHover>,
             ))
             .add_request_handler(user_handler(
@@ -1140,8 +1146,17 @@ impl Server {
             Principal::DevServer(dev_server) => {
                 {
                     let mut pool = self.connection_pool.lock();
-                    if pool.dev_server_connection_id(dev_server.id).is_some() {
-                        return Err(anyhow!(ErrorCode::DevServerAlreadyOnline))?;
+                    if let Some(stale_connection_id) = pool.dev_server_connection_id(dev_server.id)
+                    {
+                        self.peer.send(
+                            stale_connection_id,
+                            proto::ShutdownDevServer {
+                                reason: Some(
+                                    "another dev server connected with the same token".to_string(),
+                                ),
+                            },
+                        )?;
+                        pool.remove_connection(stale_connection_id)?;
                     };
                     pool.add_dev_server(connection_id, dev_server.id, zed_version);
                 }
@@ -2365,7 +2380,12 @@ async fn create_dev_server(
     let (dev_server, status) = session
         .db()
         .await
-        .create_dev_server(&request.name, &hashed_access_token, session.user_id())
+        .create_dev_server(
+            &request.name,
+            request.ssh_connection_string.as_deref(),
+            &hashed_access_token,
+            session.user_id(),
+        )
         .await?;
 
     send_dev_server_projects_update(session.user_id(), status, &session).await;
@@ -2373,7 +2393,7 @@ async fn create_dev_server(
     response.send(proto::CreateDevServerResponse {
         dev_server_id: dev_server.id.0 as u64,
         access_token: auth::generate_dev_server_token(dev_server.id.0 as usize, access_token),
-        name: request.name.clone(),
+        name: request.name,
     })?;
     Ok(())
 }
@@ -2393,9 +2413,12 @@ async fn regenerate_dev_server_token(
         .dev_server_connection_id(dev_server_id);
     if let Some(connection_id) = connection_id {
         shutdown_dev_server_internal(dev_server_id, connection_id, &session).await?;
-        session
-            .peer
-            .send(connection_id, proto::ShutdownDevServer {})?;
+        session.peer.send(
+            connection_id,
+            proto::ShutdownDevServer {
+                reason: Some("dev server token was regenerated".to_string()),
+            },
+        )?;
         let _ = remove_dev_server_connection(dev_server_id, &session).await;
     }
 
@@ -2434,7 +2457,12 @@ async fn rename_dev_server(
     let status = session
         .db()
         .await
-        .rename_dev_server(dev_server_id, &request.name, session.user_id())
+        .rename_dev_server(
+            dev_server_id,
+            &request.name,
+            request.ssh_connection_string.as_deref(),
+            session.user_id(),
+        )
         .await?;
 
     send_dev_server_projects_update(session.user_id(), status, &session).await;
@@ -2460,9 +2488,12 @@ async fn delete_dev_server(
         .dev_server_connection_id(dev_server_id);
     if let Some(connection_id) = connection_id {
         shutdown_dev_server_internal(dev_server_id, connection_id, &session).await?;
-        session
-            .peer
-            .send(connection_id, proto::ShutdownDevServer {})?;
+        session.peer.send(
+            connection_id,
+            proto::ShutdownDevServer {
+                reason: Some("dev server was deleted".to_string()),
+            },
+        )?;
         let _ = remove_dev_server_connection(dev_server_id, &session).await;
     }
 
@@ -2855,6 +2886,31 @@ where
         .db()
         .await
         .host_for_read_only_project_request(project_id, session.connection_id, session.user_id())
+        .await?;
+    let payload = session
+        .peer
+        .forward_request(session.connection_id, host_connection_id, request)
+        .await?;
+    response.send(payload)?;
+    Ok(())
+}
+
+/// forward a project request to the dev server. Only allowed
+/// if it's your dev server.
+async fn forward_project_request_for_owner<T>(
+    request: T,
+    response: Response<T>,
+    session: UserSession,
+) -> Result<()>
+where
+    T: EntityMessage + RequestMessage,
+{
+    let project_id = ProjectId::from_proto(request.remote_entity_id());
+
+    let host_connection_id = session
+        .db()
+        .await
+        .host_for_owner_project_request(project_id, session.connection_id, session.user_id())
         .await?;
     let payload = session
         .peer

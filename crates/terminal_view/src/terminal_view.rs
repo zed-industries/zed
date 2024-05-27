@@ -14,6 +14,7 @@ use language::Bias;
 use persistence::TERMINAL_DB;
 use project::{search::SearchQuery, Fs, LocalWorktree, Metadata, Project};
 use settings::SettingsStore;
+use task::TerminalWorkDir;
 use terminal::{
     alacritty_terminal::{
         index::Point,
@@ -282,7 +283,7 @@ impl TerminalView {
             cx.spawn(|this, mut cx| async move {
                 Timer::after(CURSOR_BLINK_INTERVAL).await;
                 this.update(&mut cx, |this, cx| this.blink_cursors(epoch, cx))
-                    .log_err();
+                    .ok();
             })
             .detach();
         }
@@ -786,23 +787,23 @@ impl Item for TerminalView {
     fn tab_content(&self, params: TabContentParams, cx: &WindowContext) -> AnyElement {
         let terminal = self.terminal().read(cx);
         let title = terminal.title(true);
-        let icon = match terminal.task() {
+        let (icon, icon_color) = match terminal.task() {
             Some(terminal_task) => match &terminal_task.status {
-                TaskStatus::Unknown => IconName::ExclamationTriangle,
-                TaskStatus::Running => IconName::Play,
+                TaskStatus::Unknown => (IconName::ExclamationTriangle, Color::Warning),
+                TaskStatus::Running => (IconName::Play, Color::Default),
                 TaskStatus::Completed { success } => {
                     if *success {
-                        IconName::Check
+                        (IconName::Check, Color::Success)
                     } else {
-                        IconName::XCircle
+                        (IconName::XCircle, Color::Error)
                     }
                 }
             },
-            None => IconName::Terminal,
+            None => (IconName::Terminal, Color::Muted),
         };
         h_flex()
             .gap_2()
-            .child(Icon::new(icon))
+            .child(Icon::new(icon).color(icon_color))
             .child(Label::new(title).color(if params.selected {
                 Color::Default
             } else {
@@ -878,21 +879,28 @@ impl Item for TerminalView {
     ) -> Task<anyhow::Result<View<Self>>> {
         let window = cx.window_handle();
         cx.spawn(|pane, mut cx| async move {
-            let cwd = TERMINAL_DB
-                .get_working_directory(item_id, workspace_id)
-                .log_err()
-                .flatten()
-                .or_else(|| {
-                    cx.update(|cx| {
+            let cwd = cx
+                .update(|cx| {
+                    let from_db = TERMINAL_DB
+                        .get_working_directory(item_id, workspace_id)
+                        .log_err()
+                        .flatten();
+                    if from_db
+                        .as_ref()
+                        .is_some_and(|from_db| !from_db.as_os_str().is_empty())
+                    {
+                        project
+                            .read(cx)
+                            .terminal_work_dir_for(from_db.as_deref(), cx)
+                    } else {
                         let strategy = TerminalSettings::get_global(cx).working_directory.clone();
                         workspace.upgrade().and_then(|workspace| {
                             get_working_directory(workspace.read(cx), cx, strategy)
                         })
-                    })
-                    .ok()
-                    .flatten()
+                    }
                 })
-                .filter(|cwd| !cwd.as_os_str().is_empty());
+                .ok()
+                .flatten();
 
             let terminal = project.update(&mut cx, |project, cx| {
                 project.create_terminal(cwd, None, window, cx)
@@ -1043,20 +1051,24 @@ pub fn get_working_directory(
     workspace: &Workspace,
     cx: &AppContext,
     strategy: WorkingDirectory,
-) -> Option<PathBuf> {
-    let res = match strategy {
-        WorkingDirectory::CurrentProjectDirectory => current_project_directory(workspace, cx)
-            .or_else(|| first_project_directory(workspace, cx)),
-        WorkingDirectory::FirstProjectDirectory => first_project_directory(workspace, cx),
-        WorkingDirectory::AlwaysHome => None,
-        WorkingDirectory::Always { directory } => {
-            shellexpand::full(&directory) //TODO handle this better
-                .ok()
-                .map(|dir| Path::new(&dir.to_string()).to_path_buf())
-                .filter(|dir| dir.is_dir())
-        }
-    };
-    res.or_else(home_dir)
+) -> Option<TerminalWorkDir> {
+    if workspace.project().read(cx).is_local() {
+        let res = match strategy {
+            WorkingDirectory::CurrentProjectDirectory => current_project_directory(workspace, cx)
+                .or_else(|| first_project_directory(workspace, cx)),
+            WorkingDirectory::FirstProjectDirectory => first_project_directory(workspace, cx),
+            WorkingDirectory::AlwaysHome => None,
+            WorkingDirectory::Always { directory } => {
+                shellexpand::full(&directory) //TODO handle this better
+                    .ok()
+                    .map(|dir| Path::new(&dir.to_string()).to_path_buf())
+                    .filter(|dir| dir.is_dir())
+            }
+        };
+        res.or_else(home_dir).map(|cwd| TerminalWorkDir::Local(cwd))
+    } else {
+        workspace.project().read(cx).terminal_work_dir_for(None, cx)
+    }
 }
 
 ///Gets the first project's home directory, or the home directory
