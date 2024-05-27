@@ -398,7 +398,7 @@ impl settings::Settings for ThemeSettings {
             ui_font: Font {
                 family: defaults.ui_font_family.clone().unwrap().into(),
                 features: defaults.ui_font_features.clone().unwrap(),
-                weight: defaults.ui_font_weight.clone().map(FontWeight).unwrap(),
+                weight: defaults.ui_font_weight.map(FontWeight).unwrap(),
                 style: Default::default(),
             },
             buffer_font: Font {
@@ -436,7 +436,7 @@ impl settings::Settings for ThemeSettings {
             if let Some(value) = value.ui_font_features.clone() {
                 this.ui_font.features = value;
             }
-            if let Some(value) = value.ui_font_weight.clone() {
+            if let Some(value) = value.ui_font_weight {
                 this.ui_font.weight = FontWeight(value);
             }
 
