@@ -227,16 +227,7 @@ pub struct ThemeSettingsContent {
     /// The OpenType features to enable for text in the UI.
     #[serde(default)]
     pub ui_font_features: Option<FontFeatures>,
-    /// The weight of the font from 100 to 900.
-    /// - **100**: Thin (Hairline)
-    /// - **200**: Extra Light (Ultra Light)
-    /// - **300**: Light
-    /// - **400**: Normal (Regular or Roman)
-    /// - **500**: Medium
-    /// - **600**: Semi Bold (Demi Bold)
-    /// - **700**: Bold
-    /// - **800**: Extra Bold (Ultra Bold)
-    /// - **900**: Black (Heavy)
+    /// The weight of the UI font in CSS units from 100 to 900.
     #[serde(default)]
     pub ui_font_weight: Option<f32>,
     /// The name of a font to use for rendering in text buffers.
@@ -245,6 +236,9 @@ pub struct ThemeSettingsContent {
     /// The default font size for rendering in text buffers.
     #[serde(default)]
     pub buffer_font_size: Option<f32>,
+    /// The weight of the editor font in CSS units from 100 to 900.
+    #[serde(default)]
+    pub buffer_font_weight: Option<f32>,
     /// The buffer's line height.
     #[serde(default)]
     pub buffer_line_height: Option<BufferLineHeight>,
@@ -404,7 +398,7 @@ impl settings::Settings for ThemeSettings {
             buffer_font: Font {
                 family: defaults.buffer_font_family.clone().unwrap().into(),
                 features: defaults.buffer_font_features.clone().unwrap(),
-                weight: FontWeight::default(),
+                weight: defaults.buffer_font_weight.map(FontWeight).unwrap(),
                 style: FontStyle::default(),
             },
             buffer_font_size: defaults.buffer_font_size.unwrap().into(),
@@ -428,6 +422,10 @@ impl settings::Settings for ThemeSettings {
             }
             if let Some(value) = value.buffer_font_features.clone() {
                 this.buffer_font.features = value;
+            }
+
+            if let Some(value) = value.buffer_font_weight {
+                this.buffer_font.weight = FontWeight(value);
             }
 
             if let Some(value) = value.ui_font_family.clone() {
