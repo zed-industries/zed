@@ -2947,6 +2947,7 @@ impl ConversationEditor {
                             let placeholder = FoldPlaceholder {
                                 render: Arc::new(move |_, _, _| Empty.into_any()),
                                 constrain_width: false,
+                                merge_adjacent: false,
                             };
                             let render_toggle = {
                                 let confirm_command = confirm_command.clone();
@@ -3027,6 +3028,7 @@ impl ConversationEditor {
                                     }
                                 }),
                                 constrain_width: false,
+                                merge_adjacent: false,
                             },
                             render_slash_command_output_toggle,
                             |_, _, _| Empty.into_any_element(),
