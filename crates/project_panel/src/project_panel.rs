@@ -1752,7 +1752,27 @@ impl ProjectPanel {
                 style.bg(cx.theme().colors().drop_target_background)
             })
             .on_drop(cx.listener(move |this, dragged_id: &ProjectEntryId, cx| {
-                this.move_entry(*dragged_id, entry_id, kind.is_file(), cx);
+                let should_copy = cx.modifiers().alt;
+                if should_copy {
+                    let _ = maybe!({
+                        let project = this.project.read(cx);
+                        let source_path = project.path_for_entry(*dragged_id, cx)?;
+                        let target_path = project.path_for_entry(entry_id, cx)?;
+
+                        this.clipboard_entry = Some(ClipboardEntry::Copied {
+                            worktree_id: source_path.worktree_id,
+                            entry_id: *dragged_id,
+                        });
+                        this.selection = Some(Selection {
+                            worktree_id: target_path.worktree_id,
+                            entry_id,
+                        });
+                        this.paste(&Paste, cx);
+                        Some(())
+                    });
+                } else {
+                    this.move_entry(*dragged_id, entry_id, kind.is_file(), cx);
+                }
             }))
             .child(
                 ListItem::new(entry_id.to_proto() as usize)
