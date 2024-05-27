@@ -37,7 +37,8 @@ actions!(
         InsertActivePrompt,
         ToggleIncludeConversation,
         ToggleHistory,
-        ApplyEdit
+        ApplyEdit,
+        ConfirmCommand
     ]
 );
 

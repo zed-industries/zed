@@ -11,10 +11,10 @@ use crate::{
         current_file_command, file_command, prompt_command, SlashCommandCompletionProvider,
         SlashCommandLine, SlashCommandRegistry,
     },
-    ApplyEdit, Assist, CompletionProvider, CycleMessageRole, InlineAssist, LanguageModel,
-    LanguageModelRequest, LanguageModelRequestMessage, MessageId, MessageMetadata, MessageStatus,
-    QuoteSelection, ResetKey, Role, SavedConversation, SavedConversationMetadata, SavedMessage,
-    Split, ToggleFocus, ToggleHistory, ToggleIncludeConversation,
+    ApplyEdit, Assist, CompletionProvider, ConfirmCommand, CycleMessageRole, InlineAssist,
+    LanguageModel, LanguageModelRequest, LanguageModelRequestMessage, MessageId, MessageMetadata,
+    MessageStatus, QuoteSelection, ResetKey, Role, SavedConversation, SavedConversationMetadata,
+    SavedMessage, Split, ToggleFocus, ToggleHistory, ToggleIncludeConversation,
 };
 use anyhow::{anyhow, Result};
 use assistant_slash_command::RenderFoldPlaceholder;
@@ -1933,6 +1933,27 @@ impl Conversation {
         cx.notify();
     }
 
+    fn pending_command_for_position(
+        &self,
+        position: language::Anchor,
+        cx: &AppContext,
+    ) -> Option<&PendingSlashCommand> {
+        let buffer = self.buffer.read(cx);
+        let ix = self
+            .pending_slash_commands
+            .binary_search_by(|probe| {
+                if probe.source_range.start.cmp(&position, buffer).is_gt() {
+                    Ordering::Less
+                } else if probe.source_range.end.cmp(&position, buffer).is_lt() {
+                    Ordering::Greater
+                } else {
+                    Ordering::Equal
+                }
+            })
+            .ok()?;
+        self.pending_slash_commands.get(ix)
+    }
+
     pub fn confirm_command(
         &mut self,
         command_range: Range<language::Anchor>,
@@ -2798,6 +2819,36 @@ impl ConversationEditor {
             .collect()
     }
 
+    fn confirm_command(&mut self, _: &ConfirmCommand, cx: &mut ViewContext<Self>) {
+        let selections = self.editor.read(cx).selections.disjoint_anchors();
+        let mut commands_by_range = HashMap::default();
+        self.conversation.update(cx, |conversation, cx| {
+            for selection in selections.iter() {
+                if let Some(command) =
+                    conversation.pending_command_for_position(selection.head().text_anchor, cx)
+                {
+                    commands_by_range
+                        .entry(command.source_range.clone())
+                        .or_insert_with(|| command.clone());
+                }
+            }
+
+            if commands_by_range.is_empty() {
+                cx.propagate();
+            } else {
+                for command in commands_by_range.into_values() {
+                    conversation.confirm_command(
+                        command.source_range,
+                        &command.name,
+                        command.argument.as_deref(),
+                        cx,
+                    );
+                }
+                cx.stop_propagation();
+            }
+        })
+    }
+
     fn handle_conversation_event(
         &mut self,
         _: Model<Conversation>,
@@ -3539,6 +3590,7 @@ impl Render for ConversationEditor {
             .capture_action(cx.listener(ConversationEditor::save))
             .capture_action(cx.listener(ConversationEditor::copy))
             .capture_action(cx.listener(ConversationEditor::cycle_message_role))
+            .capture_action(cx.listener(ConversationEditor::confirm_command))
             .on_action(cx.listener(ConversationEditor::assist))
             .on_action(cx.listener(ConversationEditor::split))
             .on_action(cx.listener(ConversationEditor::apply_edit))

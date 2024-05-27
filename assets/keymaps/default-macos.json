@@ -227,7 +227,8 @@
       "cmd-s": "workspace::Save",
       "cmd->": "assistant::QuoteSelection",
       "shift-enter": "assistant::Split",
-      "ctrl-r": "assistant::CycleMessageRole"
+      "ctrl-r": "assistant::CycleMessageRole",
+      "enter": "assistant::ConfirmCommand"
     }
   },
   {
