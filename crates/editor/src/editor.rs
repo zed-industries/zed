@@ -5481,7 +5481,7 @@ impl Editor {
             let project = self.project.as_ref()?.read(cx);
             let entry = project.entry_for_path(&project_path, cx)?;
             let abs_path = project.absolute_path(&project_path, cx)?;
-            let parent = if entry.is_symlink() {
+            let parent = if entry.is_symlink {
                 abs_path.canonicalize().ok()?
             } else {
                 abs_path

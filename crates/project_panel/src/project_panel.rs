@@ -1198,7 +1198,7 @@ impl ProjectPanel {
             let working_directory = if entry.is_dir() {
                 Some(abs_path)
             } else {
-                if entry.is_symlink() {
+                if entry.is_symlink {
                     abs_path.canonicalize().ok()
                 } else {
                     Some(abs_path)
@@ -1450,6 +1450,7 @@ impl ProjectPanel {
                         is_private: false,
                         git_status: entry.git_status,
                         canonical_path: entry.canonical_path.clone(),
+                        is_symlink: entry.is_symlink,
                     });
                 }
                 if expanded_dir_ids.binary_search(&entry.id).is_err()
