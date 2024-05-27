@@ -99,8 +99,7 @@ impl PromptManager {
                 let normalized_body = last_new_prompt
                     .body()
                     .trim()
-                    .replace('\r', "")
-                    .replace('\n', "")
+                    .replace(['\r', '\n'], "")
                     .to_string();
 
                 if last_new_prompt.title() == PROMPT_DEFAULT_TITLE && normalized_body.is_empty() {
