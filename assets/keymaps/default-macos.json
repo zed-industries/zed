@@ -228,7 +228,8 @@
       "cmd->": "assistant::QuoteSelection",
       "shift-enter": "assistant::Split",
       "ctrl-r": "assistant::CycleMessageRole",
-      "enter": "assistant::ConfirmCommand"
+      "enter": "assistant::ConfirmCommand",
+      "alt-enter": "editor::Newline"
     }
   },
   {
