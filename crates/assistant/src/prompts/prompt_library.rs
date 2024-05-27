@@ -72,7 +72,7 @@ impl PromptLibrary {
 
     pub fn add_prompt(&self, prompt: StaticPrompt) {
         let mut state = self.state.write();
-        let id = prompt.id().clone();
+        let id = *prompt.id();
         state.prompts.insert(id, prompt);
         state.version += 1;
     }

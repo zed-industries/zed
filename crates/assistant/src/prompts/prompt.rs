@@ -12,11 +12,7 @@ use super::prompt_library::PromptId;
 pub const PROMPT_DEFAULT_TITLE: &str = "Untitled Prompt";
 
 fn standardize_value(value: String) -> String {
-    value
-        .replace("\n", " ")
-        .replace('\r', "")
-        .replace('"', "")
-        .replace("'", "")
+    value.replace(['\n', '\r', '"', '\''], "")
 }
 
 fn slugify(input: String) -> String {
@@ -70,12 +66,7 @@ impl StaticPromptFrontmatter {
             let languages = self
                 .languages
                 .iter()
-                .map(|l| {
-                    l.replace("\n", " ")
-                        .replace('\r', "")
-                        .replace('"', "")
-                        .replace("'", "")
-                })
+                .map(|l| standardize_value(l.clone()))
                 .collect::<Vec<String>>()
                 .join(", ");
             writeln!(frontmatter, "languages: [{}]", languages).unwrap();
@@ -85,12 +76,7 @@ impl StaticPromptFrontmatter {
             let dependencies = self
                 .dependencies
                 .iter()
-                .map(|d| {
-                    d.replace("\n", " ")
-                        .replace('\r', "")
-                        .replace('"', "")
-                        .replace("'", "")
-                })
+                .map(|d| standardize_value(d.clone()))
                 .collect::<Vec<String>>()
                 .join(", ");
             writeln!(frontmatter, "dependencies: [{}]", dependencies).unwrap();

@@ -103,8 +103,8 @@ impl PromptManager {
                 let normalized_body = last_new_prompt
                     .body()
                     .trim()
-                    .replace("\r", "")
-                    .replace("\n", "")
+                    .replace('\r', "")
+                    .replace('\n', "")
                     .to_string();
 
                 if last_new_prompt.title() == PROMPT_DEFAULT_TITLE && normalized_body.is_empty() {
@@ -115,11 +115,11 @@ impl PromptManager {
         }
 
         let prompt = self.prompt_library.new_prompt();
-        self.set_last_new_prompt_id(Some(prompt.id().clone()));
+        self.set_last_new_prompt_id(Some(prompt.id().to_owned()));
 
         self.prompt_library.add_prompt(prompt.clone());
 
-        let id = prompt.clone().id().clone();
+        let id = *prompt.id();
         self.picker.update(cx, |picker, _cx| {
             let prompts = self
                 .prompt_library
@@ -134,11 +134,11 @@ impl PromptManager {
                 .delegate
                 .matching_prompts
                 .iter()
-                .position(|p| p.id().clone() == id.clone())
+                .position(|p| p.id() == &id)
                 .unwrap_or(0);
         });
 
-        self.active_prompt_id = Some(id.clone());
+        self.active_prompt_id = Some(id);
 
         cx.notify();
     }
@@ -277,11 +277,9 @@ impl PromptManager {
 
 impl Render for PromptManager {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
-        let active_prompt_id = self.active_prompt_id.clone();
-        let active_prompt = if let Some(active_prompt_id) = active_prompt_id.clone() {
-            self.prompt_library
-                .clone()
-                .prompt_by_id(active_prompt_id.clone())
+        let active_prompt_id = self.active_prompt_id;
+        let active_prompt = if let Some(active_prompt_id) = active_prompt_id {
+            self.prompt_library.clone().prompt_by_id(active_prompt_id)
         } else {
             None
         };
@@ -291,7 +289,7 @@ impl Render for PromptManager {
         } else {
             None
         };
-        let can_save = !active_prompt_id.clone().is_none() || !updated_content.is_none();
+        let can_save = active_prompt_id.is_some() && updated_content.is_some();
         let fs = self.fs.clone();
 
         h_flex()
@@ -381,7 +379,7 @@ impl Render for PromptManager {
                                         }),
                                 ),
                         )
-                        .when_some(active_prompt_id.clone(), |this, active_prompt_id| {
+                        .when_some(active_prompt_id, |this, active_prompt_id| {
                             this.child(
                                 h_flex()
                                     .flex_1()
