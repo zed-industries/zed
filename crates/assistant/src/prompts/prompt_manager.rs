@@ -289,7 +289,7 @@ impl Render for PromptManager {
         let fs = self.fs.clone();
 
         h_flex()
-            .id("propmt-manager")
+            .id("prompt-manager")
             .key_context(self.dispatch_context(cx))
             .track_focus(&self.focus_handle)
             .on_action(cx.listener(Self::dismiss))
