@@ -5,7 +5,7 @@ use gpui::{AppContext, Model, RenderOnce, SharedString, Task};
 use language::LspAdapterDelegate;
 use project::{PathMatchCandidateSet, Project};
 use std::{
-    path::PathBuf,
+    path::{Path, PathBuf},
     sync::{atomic::AtomicBool, Arc},
 };
 use ui::{prelude::*, ButtonLike, ElevationIndex};
@@ -30,7 +30,6 @@ impl FileSlashCommand {
             .read(cx)
             .visible_worktrees(cx)
             .collect::<Vec<_>>();
-        let include_root_name = worktrees.len() > 1;
         let candidate_sets = worktrees
             .into_iter()
             .map(|worktree| {
@@ -40,7 +39,7 @@ impl FileSlashCommand {
                     include_ignored: worktree
                         .root_entry()
                         .map_or(false, |entry| entry.is_ignored),
-                    include_root_name,
+                    include_root_name: true,
                     directories_only: false,
                 }
             })
@@ -115,8 +114,9 @@ impl SlashCommand for FileSlashCommand {
         let path = PathBuf::from(argument);
         let abs_path = project.worktrees().find_map(|worktree| {
             let worktree = worktree.read(cx);
-            worktree.entry_for_path(&path)?;
-            worktree.absolutize(&path).ok()
+            let worktree_root_path = Path::new(worktree.root_name());
+            let relative_path = path.strip_prefix(worktree_root_path).ok()?;
+            worktree.absolutize(&relative_path).ok()
         });
 
         let Some(abs_path) = abs_path else {

@@ -2044,6 +2044,30 @@ impl Project {
         })
     }
 
+    pub fn open_buffer_for_full_path(
+        &mut self,
+        path: &Path,
+        cx: &mut ModelContext<Self>,
+    ) -> Task<Result<Model<Buffer>>> {
+        if let Some(worktree_name) = path.components().next() {
+            let worktree = self.worktrees().find(|worktree| {
+                OsStr::new(worktree.read(cx).root_name()) == worktree_name.as_os_str()
+            });
+            if let Some(worktree) = worktree {
+                let worktree = worktree.read(cx);
+                let worktree_root_path = Path::new(worktree.root_name());
+                if let Ok(path) = path.strip_prefix(worktree_root_path) {
+                    let project_path = ProjectPath {
+                        worktree_id: worktree.id(),
+                        path: path.into(),
+                    };
+                    return self.open_buffer(project_path, cx);
+                }
+            }
+        }
+        Task::ready(Err(anyhow!("buffer not found for {:?}", path)))
+    }
+
     pub fn open_local_buffer(
         &mut self,
         abs_path: impl AsRef<Path>,

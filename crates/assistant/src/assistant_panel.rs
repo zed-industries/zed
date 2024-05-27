@@ -1,5 +1,4 @@
 use crate::{
-    ambient_context::*,
     assistant_settings::{AssistantDockPosition, AssistantSettings, ZedDotDevModel},
     codegen::{self, Codegen, CodegenKind},
     prompts::{
@@ -35,7 +34,7 @@ use fs::Fs;
 use futures::StreamExt;
 use gpui::{
     canvas, div, point, relative, rems, uniform_list, Action, AnyElement, AnyView, AppContext,
-    AsyncAppContext, AsyncWindowContext, AvailableSpace, ClipboardItem, Context, Empty, Entity,
+    AsyncAppContext, AsyncWindowContext, AvailableSpace, ClipboardItem, Context, Empty,
     EventEmitter, FocusHandle, FocusableView, FontStyle, FontWeight, HighlightStyle,
     InteractiveElement, IntoElement, Model, ModelContext, ParentElement, Pixels, Render,
     SharedString, StatefulInteractiveElement, Styled, Subscription, Task, TextStyle,
@@ -43,8 +42,8 @@ use gpui::{
     WindowContext,
 };
 use language::{
-    language_settings::SoftWrap, AutoindentMode, Buffer, BufferSnapshot, LanguageRegistry,
-    OffsetRangeExt as _, Point, ToOffset as _,
+    language_settings::SoftWrap, AutoindentMode, Buffer, LanguageRegistry, OffsetRangeExt as _,
+    Point, ToOffset as _,
 };
 use language::{LineEnding, LspAdapterDelegate};
 use multi_buffer::MultiBufferRow;
@@ -72,11 +71,9 @@ use uuid::Uuid;
 use workspace::{
     dock::{DockPosition, Panel, PanelEvent},
     searchable::Direction,
-    Event as WorkspaceEvent, Save, Toast, ToggleZoom, Toolbar, Workspace,
+    Save, Toast, ToggleZoom, Toolbar, Workspace,
 };
 use workspace::{notifications::NotificationId, NewFile};
-
-const MAX_RECENT_BUFFERS: usize = 3;
 
 pub fn init(cx: &mut AppContext) {
     cx.observe_new_views(
@@ -1491,7 +1488,6 @@ struct SlashCommandInvocation {
 pub struct Conversation {
     id: Option<String>,
     buffer: Model<Buffer>,
-    pub(crate) ambient_context: AmbientContext,
     edit_suggestions: Vec<EditSuggestion>,
     pending_slash_commands: Vec<PendingSlashCommand>,
     edits_since_last_slash_command_parse: language::Subscription,
@@ -1540,7 +1536,6 @@ impl Conversation {
             message_anchors: Default::default(),
             messages_metadata: Default::default(),
             next_message_id: Default::default(),
-            ambient_context: AmbientContext::default(),
             edit_suggestions: Vec::new(),
             pending_slash_commands: Vec::new(),
             edits_since_last_slash_command_parse,
@@ -1574,7 +1569,6 @@ impl Conversation {
             MessageMetadata {
                 role: Role::User,
                 status: MessageStatus::Done,
-                ambient_context: AmbientContextSnapshot::default(),
             },
         );
 
@@ -1653,7 +1647,6 @@ impl Conversation {
                 message_anchors,
                 messages_metadata: saved_conversation.message_metadata,
                 next_message_id,
-                ambient_context: AmbientContext::default(),
                 edit_suggestions: Vec::new(),
                 pending_slash_commands: Vec::new(),
                 edits_since_last_slash_command_parse,
@@ -1696,60 +1689,6 @@ impl Conversation {
             })
         })
         .detach_and_log_err(cx);
-    }
-
-    fn toggle_recent_buffers(&mut self, cx: &mut ModelContext<Self>) {
-        self.ambient_context.recent_buffers.enabled = !self.ambient_context.recent_buffers.enabled;
-        match self.ambient_context.recent_buffers.update(cx) {
-            ContextUpdated::Updating => {}
-            ContextUpdated::Disabled => {
-                self.count_remaining_tokens(cx);
-            }
-        }
-    }
-
-    fn toggle_current_project_context(
-        &mut self,
-        fs: Arc<dyn Fs>,
-        project: WeakModel<Project>,
-        cx: &mut ModelContext<Self>,
-    ) {
-        self.ambient_context.current_project.enabled =
-            !self.ambient_context.current_project.enabled;
-        match self.ambient_context.current_project.update(fs, project, cx) {
-            ContextUpdated::Updating => {}
-            ContextUpdated::Disabled => {
-                self.count_remaining_tokens(cx);
-            }
-        }
-    }
-
-    fn set_recent_buffers(
-        &mut self,
-        buffers: impl IntoIterator<Item = Model<Buffer>>,
-        cx: &mut ModelContext<Self>,
-    ) {
-        self.ambient_context.recent_buffers.buffers.clear();
-        self.ambient_context
-            .recent_buffers
-            .buffers
-            .extend(buffers.into_iter().map(|buffer| RecentBuffer {
-                buffer: buffer.downgrade(),
-                _subscription: cx.observe(&buffer, |this, _, cx| {
-                    match this.ambient_context.recent_buffers.update(cx) {
-                        ContextUpdated::Updating => {}
-                        ContextUpdated::Disabled => {
-                            this.count_remaining_tokens(cx);
-                        }
-                    }
-                }),
-            }));
-        match self.ambient_context.recent_buffers.update(cx) {
-            ContextUpdated::Updating => {}
-            ContextUpdated::Disabled => {
-                self.count_remaining_tokens(cx);
-            }
-        }
     }
 
     fn handle_buffer_event(
@@ -2183,18 +2122,11 @@ impl Conversation {
             content: include_str!("./system_prompts/edits.md").to_string(),
         };
 
-        let recent_buffers_context = self.ambient_context.recent_buffers.to_message();
-        let current_project_context = self.ambient_context.current_project.to_message();
-
-        let messages = Some(edits_system_prompt)
-            .into_iter()
-            .chain(recent_buffers_context)
-            .chain(current_project_context)
-            .chain(
-                self.messages(cx)
-                    .filter(|message| matches!(message.status, MessageStatus::Done))
-                    .map(|message| message.to_request_message(self.buffer.read(cx))),
-            );
+        let messages = Some(edits_system_prompt).into_iter().chain(
+            self.messages(cx)
+                .filter(|message| matches!(message.status, MessageStatus::Done))
+                .map(|message| message.to_request_message(self.buffer.read(cx))),
+        );
 
         LanguageModelRequest {
             model: self.model.clone(),
@@ -2253,14 +2185,8 @@ impl Conversation {
             };
             self.message_anchors
                 .insert(next_message_ix, message.clone());
-            self.messages_metadata.insert(
-                message.id,
-                MessageMetadata {
-                    role,
-                    status,
-                    ambient_context: self.ambient_context.snapshot(),
-                },
-            );
+            self.messages_metadata
+                .insert(message.id, MessageMetadata { role, status });
             cx.emit(ConversationEvent::MessagesEdited);
             Some(message)
         } else {
@@ -2318,7 +2244,6 @@ impl Conversation {
                 MessageMetadata {
                     role,
                     status: MessageStatus::Done,
-                    ambient_context: message.ambient_context.clone(),
                 },
             );
 
@@ -2363,7 +2288,6 @@ impl Conversation {
                         MessageMetadata {
                             role,
                             status: MessageStatus::Done,
-                            ambient_context: message.ambient_context,
                         },
                     );
                     (Some(selection), Some(suffix))
@@ -2496,7 +2420,6 @@ impl Conversation {
                     anchor: message_anchor.start,
                     role: metadata.role,
                     status: metadata.status.clone(),
-                    ambient_context: metadata.ambient_context.clone(),
                 });
             }
             None
@@ -2740,7 +2663,6 @@ impl ConversationEditor {
             cx.observe(&conversation, |_, _, cx| cx.notify()),
             cx.subscribe(&conversation, Self::handle_conversation_event),
             cx.subscribe(&editor, Self::handle_editor_event),
-            cx.subscribe(&workspace, Self::handle_workspace_event),
         ];
 
         let mut this = Self {
@@ -2753,7 +2675,6 @@ impl ConversationEditor {
             pending_slash_command_flaps: HashMap::default(),
             _subscriptions,
         };
-        this.update_recent_editors(cx);
         this.update_message_headers(cx);
         this
     }
@@ -3066,62 +2987,6 @@ impl ConversationEditor {
         }
     }
 
-    fn handle_workspace_event(
-        &mut self,
-        _: View<Workspace>,
-        event: &WorkspaceEvent,
-        cx: &mut ViewContext<Self>,
-    ) {
-        match event {
-            WorkspaceEvent::ActiveItemChanged
-            | WorkspaceEvent::ItemAdded
-            | WorkspaceEvent::ItemRemoved
-            | WorkspaceEvent::PaneAdded(_)
-            | WorkspaceEvent::PaneRemoved => self.update_recent_editors(cx),
-            _ => {}
-        }
-    }
-
-    fn update_recent_editors(&mut self, cx: &mut ViewContext<ConversationEditor>) {
-        let Some(workspace) = self.workspace.upgrade() else {
-            return;
-        };
-
-        let mut timestamps_by_entity_id = HashMap::default();
-        for pane in workspace.read(cx).panes() {
-            let pane = pane.read(cx);
-            for entry in pane.activation_history() {
-                timestamps_by_entity_id.insert(entry.entity_id, entry.timestamp);
-            }
-        }
-
-        let mut timestamps_by_buffer = HashMap::default();
-        for editor in workspace.read(cx).items_of_type::<Editor>(cx) {
-            let Some(buffer) = editor.read(cx).buffer().read(cx).as_singleton() else {
-                continue;
-            };
-
-            let new_timestamp = timestamps_by_entity_id
-                .get(&editor.entity_id())
-                .copied()
-                .unwrap_or_default();
-            let timestamp = timestamps_by_buffer.entry(buffer).or_insert(new_timestamp);
-            *timestamp = cmp::max(*timestamp, new_timestamp);
-        }
-
-        let mut recent_buffers = timestamps_by_buffer.into_iter().collect::<Vec<_>>();
-        recent_buffers.sort_unstable_by_key(|(_, timestamp)| *timestamp);
-        if recent_buffers.len() > MAX_RECENT_BUFFERS {
-            let excess = recent_buffers.len() - MAX_RECENT_BUFFERS;
-            recent_buffers.drain(..excess);
-        }
-
-        self.conversation.update(cx, |conversation, cx| {
-            conversation
-                .set_recent_buffers(recent_buffers.into_iter().map(|(buffer, _)| buffer), cx);
-        });
-    }
-
     fn cursor_scroll_position(&self, cx: &mut ViewContext<Self>) -> Option<ScrollPosition> {
         self.editor.update(cx, |editor, cx| {
             let snapshot = editor.snapshot(cx);
@@ -3148,11 +3013,6 @@ impl ConversationEditor {
     }
 
     fn update_message_headers(&mut self, cx: &mut ViewContext<Self>) {
-        let project = self
-            .workspace
-            .update(cx, |workspace, _cx| workspace.project().downgrade())
-            .unwrap();
-
         self.editor.update(cx, |editor, cx| {
             let buffer = editor.buffer().read(cx).snapshot(cx);
             let excerpt_id = *buffer.as_singleton().unwrap().0;
@@ -3161,16 +3021,13 @@ impl ConversationEditor {
                 .conversation
                 .read(cx)
                 .messages(cx)
-                .enumerate()
-                .map(|(ix, message)| BlockProperties {
+                .map(|message| BlockProperties {
                     position: buffer
                         .anchor_in_excerpt(excerpt_id, message.anchor)
                         .unwrap(),
                     height: 2,
                     style: BlockStyle::Sticky,
                     render: Box::new({
-                        let fs = self.fs.clone();
-                        let project = project.clone();
                         let conversation = self.conversation.clone();
                         move |cx| {
                             let message_id = message.id;
@@ -3221,74 +3078,6 @@ impl ConversationEditor {
                                         None
                                     },
                                 )
-                                .children((ix == 0).then(|| {
-                                    div()
-                                        .h_flex()
-                                        .flex_1()
-                                        .justify_end()
-                                        .pr_4()
-                                        .gap_1()
-                                        .child(
-                                            IconButton::new("include_file", IconName::File)
-                                                .icon_size(IconSize::Small)
-                                                .selected(
-                                                    conversation
-                                                        .read(cx)
-                                                        .ambient_context
-                                                        .recent_buffers
-                                                        .enabled,
-                                                )
-                                                .on_click({
-                                                    let conversation = conversation.downgrade();
-                                                    move |_, cx| {
-                                                        conversation
-                                                            .update(cx, |conversation, cx| {
-                                                                conversation
-                                                                    .toggle_recent_buffers(cx);
-                                                            })
-                                                            .ok();
-                                                    }
-                                                })
-                                                .tooltip(|cx| {
-                                                    Tooltip::text("Include Open Files", cx)
-                                                }),
-                                        )
-                                        .child(
-                                            IconButton::new(
-                                                "include_current_project",
-                                                IconName::FileTree,
-                                            )
-                                            .icon_size(IconSize::Small)
-                                            .selected(
-                                                conversation
-                                                    .read(cx)
-                                                    .ambient_context
-                                                    .current_project
-                                                    .enabled,
-                                            )
-                                            .on_click({
-                                                let fs = fs.clone();
-                                                let project = project.clone();
-                                                let conversation = conversation.downgrade();
-                                                move |_, cx| {
-                                                    let fs = fs.clone();
-                                                    let project = project.clone();
-                                                    conversation
-                                                        .update(cx, |conversation, cx| {
-                                                            conversation
-                                                                .toggle_current_project_context(
-                                                                    fs, project, cx,
-                                                                );
-                                                        })
-                                                        .ok();
-                                                }
-                                            })
-                                            .tooltip(
-                                                |cx| Tooltip::text("Include Current Project", cx),
-                                            ),
-                                        )
-                                        .into_any()
-                                }))
                                 .into_any_element()
                         }
                     }),
@@ -3417,6 +3206,11 @@ impl ConversationEditor {
     }
 
     fn apply_edit(&mut self, _: &ApplyEdit, cx: &mut ViewContext<Self>) {
+        let Some(workspace) = self.workspace.upgrade() else {
+            return;
+        };
+        let project = workspace.read(cx).project().clone();
+
         struct Edit {
             old_text: String,
             new_text: String,
@@ -3428,45 +3222,58 @@ impl ConversationEditor {
 
         let selections = self.editor.read(cx).selections.disjoint_anchors();
         let mut selections = selections.iter().peekable();
-        let selected_suggestions = conversation.edit_suggestions.iter().filter(|suggestion| {
-            while let Some(selection) = selections.peek() {
-                if selection
-                    .end
-                    .text_anchor
-                    .cmp(&suggestion.source_range.start, conversation_buffer)
-                    .is_lt()
-                {
-                    selections.next();
-                    continue;
+        let selected_suggestions = conversation
+            .edit_suggestions
+            .iter()
+            .filter(|suggestion| {
+                while let Some(selection) = selections.peek() {
+                    if selection
+                        .end
+                        .text_anchor
+                        .cmp(&suggestion.source_range.start, conversation_buffer)
+                        .is_lt()
+                    {
+                        selections.next();
+                        continue;
+                    }
+                    if selection
+                        .start
+                        .text_anchor
+                        .cmp(&suggestion.source_range.end, conversation_buffer)
+                        .is_gt()
+                    {
+                        break;
+                    }
+                    return true;
                 }
-                if selection
-                    .start
-                    .text_anchor
-                    .cmp(&suggestion.source_range.end, conversation_buffer)
-                    .is_gt()
-                {
-                    break;
-                }
-                return true;
+                false
+            })
+            .cloned()
+            .collect::<Vec<_>>();
+
+        let mut opened_buffers: HashMap<PathBuf, Task<Result<Model<Buffer>>>> = HashMap::default();
+        project.update(cx, |project, cx| {
+            for suggestion in &selected_suggestions {
+                opened_buffers
+                    .entry(suggestion.full_path.clone())
+                    .or_insert_with(|| {
+                        project.open_buffer_for_full_path(&suggestion.full_path, cx)
+                    });
             }
-            false
         });
 
-        let mut suggestions_by_buffer =
-            HashMap::<Model<Buffer>, (BufferSnapshot, Vec<Edit>)>::default();
-        for suggestion in selected_suggestions {
-            let offset = suggestion.source_range.start.to_offset(conversation_buffer);
-            if let Some(message) = conversation.message_for_offset(offset, cx) {
-                if let Some(buffer) = message
-                    .ambient_context
-                    .recent_buffers
-                    .source_buffers
-                    .iter()
-                    .find(|source_buffer| {
-                        source_buffer.full_path.as_ref() == Some(&suggestion.full_path)
-                    })
-                {
-                    if let Some(buffer) = buffer.model.upgrade() {
+        cx.spawn(|this, mut cx| async move {
+            let mut buffers_by_full_path = HashMap::default();
+            for (full_path, buffer) in opened_buffers {
+                if let Some(buffer) = buffer.await.log_err() {
+                    buffers_by_full_path.insert(full_path, buffer);
+                }
+            }
+
+            let mut suggestions_by_buffer = HashMap::default();
+            cx.update(|cx| {
+                for suggestion in selected_suggestions {
+                    if let Some(buffer) = buffers_by_full_path.get(&suggestion.full_path) {
                         let (_, edits) = suggestions_by_buffer
                             .entry(buffer.clone())
                             .or_insert_with(|| (buffer.read(cx).snapshot(), Vec::new()));
@@ -3490,10 +3297,8 @@ impl ConversationEditor {
                         }
                     }
                 }
-            }
-        }
+            })?;
 
-        cx.spawn(|this, mut cx| async move {
             let edits_by_buffer = cx
                 .background_executor()
                 .spawn(async move {
@@ -3630,7 +3435,6 @@ pub struct Message {
     anchor: language::Anchor,
     role: Role,
     status: MessageStatus,
-    ambient_context: AmbientContextSnapshot,
 }
 
 impl Message {
