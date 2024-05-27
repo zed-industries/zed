@@ -1,7 +1,7 @@
 use super::{SlashCommand, SlashCommandOutput};
 use anyhow::Result;
 use fuzzy::PathMatch;
-use gpui::{AppContext, Model, RenderOnce, SharedString, Task};
+use gpui::{AppContext, Model, RenderOnce, SharedString, Task, WeakView};
 use language::LspAdapterDelegate;
 use project::{PathMatchCandidateSet, Project};
 use std::{
@@ -9,6 +9,7 @@ use std::{
     sync::{atomic::AtomicBool, Arc},
 };
 use ui::{prelude::*, ButtonLike, ElevationIndex};
+use workspace::Workspace;
 
 pub(crate) struct FileSlashCommand {
     project: Model<Project>,
@@ -103,8 +104,9 @@ impl SlashCommand for FileSlashCommand {
     fn run(
         self: Arc<Self>,
         argument: Option<&str>,
+        _workspace: WeakView<Workspace>,
         _delegate: Arc<dyn LspAdapterDelegate>,
-        cx: &mut AppContext,
+        cx: &mut WindowContext,
     ) -> Task<Result<SlashCommandOutput>> {
         let project = self.project.read(cx);
         let Some(argument) = argument else {

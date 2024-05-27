@@ -1,10 +1,11 @@
 mod slash_command_registry;
 
 use anyhow::Result;
-use gpui::{AnyElement, AppContext, ElementId, Task, WindowContext};
+use gpui::{AnyElement, AppContext, ElementId, Task, WeakView, WindowContext};
 use language::LspAdapterDelegate;
 pub use slash_command_registry::*;
 use std::sync::{atomic::AtomicBool, Arc};
+use workspace::Workspace;
 
 pub fn init(cx: &mut AppContext) {
     SlashCommandRegistry::default_global(cx);
@@ -24,13 +25,14 @@ pub trait SlashCommand: 'static + Send + Sync {
     fn run(
         self: Arc<Self>,
         argument: Option<&str>,
+        workspace: WeakView<Workspace>,
         // TODO: We're just using the `LspAdapterDelegate` here because that is
         // what the extension API is already expecting.
         //
         // It may be that `LspAdapterDelegate` needs a more general name, or
         // perhaps another kind of delegate is needed here.
         delegate: Arc<dyn LspAdapterDelegate>,
-        cx: &mut AppContext,
+        cx: &mut WindowContext,
     ) -> Task<Result<SlashCommandOutput>>;
 }
 

@@ -2,10 +2,11 @@ use crate::wasm_host::{WasmExtension, WasmHost};
 use anyhow::{anyhow, Result};
 use assistant_slash_command::{SlashCommand, SlashCommandOutput};
 use futures::FutureExt;
-use gpui::{AppContext, IntoElement, Task};
+use gpui::{AppContext, IntoElement, Task, WeakView, WindowContext};
 use language::LspAdapterDelegate;
 use std::sync::{atomic::AtomicBool, Arc};
 use wasmtime_wasi::WasiView;
+use workspace::Workspace;
 
 pub struct ExtensionSlashCommand {
     pub(crate) extension: WasmExtension,
@@ -43,8 +44,9 @@ impl SlashCommand for ExtensionSlashCommand {
     fn run(
         self: Arc<Self>,
         argument: Option<&str>,
+        _workspace: WeakView<Workspace>,
         delegate: Arc<dyn LspAdapterDelegate>,
-        cx: &mut AppContext,
+        cx: &mut WindowContext,
     ) -> Task<Result<SlashCommandOutput>> {
         let argument = argument.map(|arg| arg.to_string());
         let output = cx.background_executor().spawn(async move {

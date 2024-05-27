@@ -1,7 +1,7 @@
 use super::{SlashCommand, SlashCommandOutput};
 use anyhow::{anyhow, Context, Result};
 use fs::Fs;
-use gpui::{AppContext, Model, Task, WindowHandle};
+use gpui::{AppContext, Model, Task, WeakView};
 use language::LspAdapterDelegate;
 use project::{Project, ProjectPath};
 use std::{
@@ -12,15 +12,9 @@ use std::{
 use ui::{prelude::*, ButtonLike, ElevationIndex};
 use workspace::Workspace;
 
-pub(crate) struct ProjectSlashCommand {
-    workspace: WindowHandle<Workspace>,
-}
+pub(crate) struct ProjectSlashCommand;
 
 impl ProjectSlashCommand {
-    pub fn new(workspace: WindowHandle<Workspace>) -> Self {
-        Self { workspace }
-    }
-
     async fn build_message(fs: Arc<dyn Fs>, path_to_cargo_toml: &Path) -> Result<String> {
         let buffer = fs.load(path_to_cargo_toml).await?;
         let cargo_toml: cargo_toml::Manifest = toml::from_str(&buffer)?;
@@ -122,10 +116,11 @@ impl SlashCommand for ProjectSlashCommand {
     fn run(
         self: Arc<Self>,
         _argument: Option<&str>,
+        workspace: WeakView<Workspace>,
         _delegate: Arc<dyn LspAdapterDelegate>,
-        cx: &mut AppContext,
+        cx: &mut WindowContext,
     ) -> Task<Result<SlashCommandOutput>> {
-        let output = self.workspace.update(cx, |workspace, cx| {
+        let output = workspace.update(cx, |workspace, cx| {
             let project = workspace.project().clone();
             let fs = workspace.project().read(cx).fs().clone();
             let path = Self::path_to_cargo_toml(project, cx);

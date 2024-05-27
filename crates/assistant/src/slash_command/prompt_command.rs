@@ -2,10 +2,11 @@ use super::{SlashCommand, SlashCommandOutput};
 use crate::prompts::PromptLibrary;
 use anyhow::{anyhow, Context, Result};
 use fuzzy::StringMatchCandidate;
-use gpui::{AppContext, Task};
+use gpui::{AppContext, Task, WeakView};
 use language::LspAdapterDelegate;
 use std::sync::{atomic::AtomicBool, Arc};
 use ui::{prelude::*, ButtonLike, ElevationIndex};
+use workspace::Workspace;
 
 pub(crate) struct PromptSlashCommand {
     library: Arc<PromptLibrary>,
@@ -68,8 +69,9 @@ impl SlashCommand for PromptSlashCommand {
     fn run(
         self: Arc<Self>,
         title: Option<&str>,
+        _workspace: WeakView<Workspace>,
         _delegate: Arc<dyn LspAdapterDelegate>,
-        cx: &mut AppContext,
+        cx: &mut WindowContext,
     ) -> Task<Result<SlashCommandOutput>> {
         let Some(title) = title else {
             return Task::ready(Err(anyhow!("missing prompt name")));

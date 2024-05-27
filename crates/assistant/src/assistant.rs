@@ -9,6 +9,7 @@ mod slash_command;
 mod streaming_diff;
 
 pub use assistant_panel::AssistantPanel;
+
 use assistant_settings::{AnthropicModel, AssistantSettings, OpenAiModel, ZedDotDevModel};
 use client::{proto, Client};
 use command_palette_hooks::CommandPaletteFilter;

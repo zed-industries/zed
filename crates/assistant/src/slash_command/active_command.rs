@@ -2,21 +2,13 @@ use super::{file_command::FilePlaceholder, SlashCommand, SlashCommandOutput};
 use anyhow::{anyhow, Result};
 use collections::HashMap;
 use editor::Editor;
-use gpui::{AppContext, Entity, Task, WindowHandle};
+use gpui::{AppContext, Entity, Task, WeakView};
 use language::LspAdapterDelegate;
 use std::{borrow::Cow, sync::Arc};
-use ui::IntoElement;
+use ui::{IntoElement, WindowContext};
 use workspace::Workspace;
 
-pub(crate) struct ActiveSlashCommand {
-    workspace: WindowHandle<Workspace>,
-}
-
-impl ActiveSlashCommand {
-    pub fn new(workspace: WindowHandle<Workspace>) -> Self {
-        Self { workspace }
-    }
-}
+pub(crate) struct ActiveSlashCommand;
 
 impl SlashCommand for ActiveSlashCommand {
     fn name(&self) -> String {
@@ -47,10 +39,11 @@ impl SlashCommand for ActiveSlashCommand {
     fn run(
         self: Arc<Self>,
         _argument: Option<&str>,
+        workspace: WeakView<Workspace>,
         _delegate: Arc<dyn LspAdapterDelegate>,
-        cx: &mut AppContext,
+        cx: &mut WindowContext,
     ) -> Task<Result<SlashCommandOutput>> {
-        let output = self.workspace.update(cx, |workspace, cx| {
+        let output = workspace.update(cx, |workspace, cx| {
             let mut timestamps_by_entity_id = HashMap::default();
             for pane in workspace.panes() {
                 let pane = pane.read(cx);

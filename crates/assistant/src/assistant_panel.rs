@@ -13,7 +13,7 @@ use crate::{
     SavedMessage, Split, ToggleFocus, ToggleHistory, ToggleIncludeConversation,
 };
 use anyhow::{anyhow, Result};
-use assistant_slash_command::RenderFoldPlaceholder;
+use assistant_slash_command::{RenderFoldPlaceholder, SlashCommandOutput};
 use client::telemetry::Telemetry;
 use collections::{hash_map, HashMap, HashSet, VecDeque};
 use editor::{
@@ -199,7 +199,6 @@ impl AssistantPanel {
                     .detach();
 
                     let slash_command_registry = SlashCommandRegistry::global(cx);
-                    let window = cx.window_handle().downcast::<Workspace>();
 
                     slash_command_registry.register_command(file_command::FileSlashCommand::new(
                         workspace.project().clone(),
@@ -207,12 +206,8 @@ impl AssistantPanel {
                     slash_command_registry.register_command(
                         prompt_command::PromptSlashCommand::new(prompt_library.clone()),
                     );
-                    if let Some(window) = window {
-                        slash_command_registry
-                            .register_command(active_command::ActiveSlashCommand::new(window));
-                        slash_command_registry
-                            .register_command(project_command::ProjectSlashCommand::new(window));
-                    }
+                    slash_command_registry.register_command(active_command::ActiveSlashCommand);
+                    slash_command_registry.register_command(project_command::ProjectSlashCommand);
 
                     Self {
                         workspace: workspace_handle,
@@ -1140,7 +1135,6 @@ impl AssistantPanel {
                 languages,
                 slash_commands,
                 Some(telemetry),
-                lsp_adapter_delegate,
                 &mut cx,
             )
             .await?;
@@ -1150,7 +1144,13 @@ impl AssistantPanel {
                     .upgrade()
                     .ok_or_else(|| anyhow!("workspace dropped"))?;
                 let editor = cx.new_view(|cx| {
-                    ConversationEditor::for_conversation(conversation, fs, workspace, cx)
+                    ConversationEditor::for_conversation(
+                        conversation,
+                        fs,
+                        workspace,
+                        lsp_adapter_delegate,
+                        cx,
+                    )
                 });
                 this.show_conversation(editor, cx);
                 anyhow::Ok(())
@@ -1507,7 +1507,6 @@ pub struct Conversation {
     telemetry: Option<Arc<Telemetry>>,
     slash_command_registry: Arc<SlashCommandRegistry>,
     language_registry: Arc<LanguageRegistry>,
-    lsp_adapter_delegate: Option<Arc<dyn LspAdapterDelegate>>,
 }
 
 impl EventEmitter<ConversationEvent> for Conversation {}
@@ -1518,7 +1517,6 @@ impl Conversation {
         language_registry: Arc<LanguageRegistry>,
         slash_command_registry: Arc<SlashCommandRegistry>,
         telemetry: Option<Arc<Telemetry>>,
-        lsp_adapter_delegate: Option<Arc<dyn LspAdapterDelegate>>,
         cx: &mut ModelContext<Self>,
     ) -> Self {
         let buffer = cx.new_model(|cx| {
@@ -1551,9 +1549,8 @@ impl Conversation {
             path: None,
             buffer,
             telemetry,
-            slash_command_registry,
             language_registry,
-            lsp_adapter_delegate,
+            slash_command_registry,
         };
 
         let message = MessageAnchor {
@@ -1604,7 +1601,6 @@ impl Conversation {
         language_registry: Arc<LanguageRegistry>,
         slash_command_registry: Arc<SlashCommandRegistry>,
         telemetry: Option<Arc<Telemetry>>,
-        lsp_adapter_delegate: Option<Arc<dyn LspAdapterDelegate>>,
         cx: &mut AsyncAppContext,
     ) -> Result<Model<Self>> {
         let id = match saved_conversation.id {
@@ -1667,7 +1663,6 @@ impl Conversation {
                 telemetry,
                 language_registry,
                 slash_command_registry,
-                lsp_adapter_delegate,
             };
             this.set_language(cx);
             this.reparse_edit_suggestions(cx);
@@ -1892,23 +1887,16 @@ impl Conversation {
         self.pending_slash_commands.get(ix)
     }
 
-    pub fn confirm_command(
+    fn insert_command_output(
         &mut self,
+        invocation_id: SlashCommandInvocationId,
         command_range: Range<language::Anchor>,
-        name: &str,
-        argument: Option<&str>,
+        output: Task<Result<SlashCommandOutput>>,
         cx: &mut ModelContext<Self>,
-    ) -> Option<SlashCommandInvocationId> {
-        let command = self.slash_command_registry.command(name)?;
-        let lsp_adapter_delegate = self.lsp_adapter_delegate.clone()?;
-        let argument = argument.map(ToString::to_string);
-        let id = self.next_invocation_id.post_inc();
-
+    ) {
         let insert_output_task = cx.spawn(|this, mut cx| {
             async move {
-                let output = cx
-                    .update(|cx| command.run(argument.as_deref(), lsp_adapter_delegate, cx))?
-                    .await?;
+                let output = output.await?;
 
                 let mut text = output.text;
                 LineEnding::normalize(&mut text);
@@ -1939,12 +1927,11 @@ impl Conversation {
         });
 
         self.invocations.insert(
-            id,
+            invocation_id,
             SlashCommandInvocation {
                 _pending_output: insert_output_task,
             },
         );
-        Some(id)
     }
 
     fn remaining_tokens(&self) -> Option<isize> {
@@ -2597,10 +2584,12 @@ struct ScrollPosition {
     cursor: Anchor,
 }
 
-struct ConversationEditor {
+pub struct ConversationEditor {
     conversation: Model<Conversation>,
     fs: Arc<dyn Fs>,
     workspace: WeakView<Workspace>,
+    slash_command_registry: Arc<SlashCommandRegistry>,
+    lsp_adapter_delegate: Option<Arc<dyn LspAdapterDelegate>>,
     editor: View<Editor>,
     blocks: HashSet<BlockId>,
     scroll_position: Option<ScrollPosition>,
@@ -2627,22 +2616,27 @@ impl ConversationEditor {
                 language_registry,
                 slash_command_registry,
                 Some(telemetry),
-                lsp_adapter_delegate,
                 cx,
             )
         });
-        Self::for_conversation(conversation, fs, workspace, cx)
+
+        Self::for_conversation(conversation, fs, workspace, lsp_adapter_delegate, cx)
     }
 
     fn for_conversation(
         conversation: Model<Conversation>,
         fs: Arc<dyn Fs>,
         workspace: View<Workspace>,
+        lsp_adapter_delegate: Option<Arc<dyn LspAdapterDelegate>>,
         cx: &mut ViewContext<Self>,
     ) -> Self {
-        let command_registry = conversation.read(cx).slash_command_registry.clone();
-        let completion_provider =
-            SlashCommandCompletionProvider::new(conversation.clone(), command_registry);
+        let slash_command_registry = conversation.read(cx).slash_command_registry.clone();
+
+        let completion_provider = SlashCommandCompletionProvider::new(
+            cx.view().downgrade(),
+            slash_command_registry.clone(),
+            workspace.downgrade(),
+        );
 
         let editor = cx.new_view(|cx| {
             let mut editor = Editor::for_buffer(conversation.read(cx).buffer.clone(), None, cx);
@@ -2665,6 +2659,8 @@ impl ConversationEditor {
         let mut this = Self {
             conversation,
             editor,
+            slash_command_registry,
+            lsp_adapter_delegate,
             blocks: Default::default(),
             scroll_position: None,
             fs,
@@ -2738,9 +2734,10 @@ impl ConversationEditor {
             .collect()
     }
 
-    fn confirm_command(&mut self, _: &ConfirmCommand, cx: &mut ViewContext<Self>) {
+    pub fn confirm_command(&mut self, _: &ConfirmCommand, cx: &mut ViewContext<Self>) {
         let selections = self.editor.read(cx).selections.disjoint_anchors();
         let mut commands_by_range = HashMap::default();
+        let workspace = self.workspace.clone();
         self.conversation.update(cx, |conversation, cx| {
             for selection in selections.iter() {
                 if let Some(command) =
@@ -2751,21 +2748,44 @@ impl ConversationEditor {
                         .or_insert_with(|| command.clone());
                 }
             }
+        });
 
-            if commands_by_range.is_empty() {
-                cx.propagate();
-            } else {
-                for command in commands_by_range.into_values() {
-                    conversation.confirm_command(
-                        command.source_range,
-                        &command.name,
-                        command.argument.as_deref(),
-                        cx,
-                    );
-                }
-                cx.stop_propagation();
+        if commands_by_range.is_empty() {
+            cx.propagate();
+        } else {
+            for command in commands_by_range.into_values() {
+                self.run_command(
+                    command.source_range,
+                    &command.name,
+                    command.argument.as_deref(),
+                    workspace.clone(),
+                    cx,
+                );
             }
-        })
+            cx.stop_propagation();
+        }
+    }
+
+    pub fn run_command(
+        &mut self,
+        command_range: Range<language::Anchor>,
+        name: &str,
+        argument: Option<&str>,
+        workspace: WeakView<Workspace>,
+        cx: &mut ViewContext<Self>,
+    ) -> Option<SlashCommandInvocationId> {
+        let command = self.slash_command_registry.command(name)?;
+        let lsp_adapter_delegate = self.lsp_adapter_delegate.clone()?;
+        let argument = argument.map(ToString::to_string);
+        let id = self.conversation.update(cx, |conversation, _| {
+            conversation.next_invocation_id.post_inc()
+        });
+        let output = command.run(argument.as_deref(), workspace, lsp_adapter_delegate, cx);
+        self.conversation.update(cx, |conversation, cx| {
+            conversation.insert_command_output(id, command_range, output, cx)
+        });
+
+        Some(id)
     }
 
     fn handle_conversation_event(
@@ -2774,6 +2794,8 @@ impl ConversationEditor {
         event: &ConversationEvent,
         cx: &mut ViewContext<Self>,
     ) {
+        let conversation_editor = cx.view().downgrade();
+
         match event {
             ConversationEvent::MessagesEdited => {
                 self.update_message_headers(cx);
@@ -2849,18 +2871,22 @@ impl ConversationEditor {
 
                     let flap_ids = editor.insert_flaps(
                         updated.iter().map(|command| {
+                            let workspace = self.workspace.clone();
                             let confirm_command = Arc::new({
-                                let conversation = self.conversation.clone();
+                                let conversation_editor = conversation_editor.clone();
                                 let command = command.clone();
                                 move |cx: &mut WindowContext| {
-                                    conversation.update(cx, |conversation, cx| {
-                                        conversation.confirm_command(
-                                            command.source_range.clone(),
-                                            &command.name,
-                                            command.argument.as_deref(),
-                                            cx,
-                                        );
-                                    })
+                                    conversation_editor
+                                        .update(cx, |conversation_editor, cx| {
+                                            conversation_editor.run_command(
+                                                command.source_range.clone(),
+                                                &command.name,
+                                                command.argument.as_deref(),
+                                                workspace.clone(),
+                                                cx,
+                                            );
+                                        })
+                                        .ok();
                                 }
                             });
                             let placeholder = FoldPlaceholder {
@@ -3835,7 +3861,6 @@ mod tests {
                 registry,
                 Default::default(),
                 None,
-                None,
                 cx,
             )
         });
@@ -3975,7 +4000,6 @@ mod tests {
                 registry,
                 Default::default(),
                 None,
-                None,
                 cx,
             )
         });
@@ -4081,7 +4105,6 @@ mod tests {
                 LanguageModel::default(),
                 registry,
                 Default::default(),
-                None,
                 None,
                 cx,
             )
@@ -4195,15 +4218,6 @@ mod tests {
             prompt_library.clone(),
         ));
 
-        let lsp_adapter_delegate = project.update(cx, |project, cx| {
-            // TODO: Find the right worktree.
-            let worktree = project
-                .worktrees()
-                .next()
-                .expect("expected at least one worktree");
-            ProjectLspAdapterDelegate::new(project, &worktree, cx)
-        });
-
         let registry = Arc::new(LanguageRegistry::test(cx.executor()));
         let conversation = cx.new_model(|cx| {
             Conversation::new(
@@ -4211,7 +4225,6 @@ mod tests {
                 registry.clone(),
                 slash_command_registry,
                 None,
-                Some(lsp_adapter_delegate),
                 cx,
             )
         });
@@ -4393,7 +4406,6 @@ mod tests {
                 registry.clone(),
                 Default::default(),
                 None,
-                None,
                 cx,
             )
         });
@@ -4436,7 +4448,6 @@ mod tests {
             Default::default(),
             registry.clone(),
             Default::default(),
-            None,
             None,
             &mut cx.to_async(),
         )
