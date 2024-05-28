@@ -1,0 +1,59 @@
+{
+  "id": "$APP_ID",
+  "runtime": "org.freedesktop.Platform",
+  "runtime-version": "23.08",
+  "sdk": "org.freedesktop.Sdk",
+  "sdk-extensions": [
+    "org.freedesktop.Sdk.Extension.rust-stable"
+  ],
+  "command": "zed",
+  "finish-args": [
+    "--talk-name=org.freedesktop.Flatpak",
+    "--device=dri",
+    "--share=ipc",
+    "--share=network",
+    "--socket=wayland",
+    "--socket=fallback-x11",
+    "--socket=pulseaudio",
+    "--filesystem=host"
+  ],
+  "build-options": {
+    "append-path": "/usr/lib/sdk/rust-stable/bin"
+  },
+  "modules": [
+    {
+      "name": "zed",
+      "buildsystem": "simple",
+      "build-options": {
+        "env": {
+          "APP_ID": "$APP_ID",
+          "APP_ICON": "$APP_ID",
+          "APP_NAME": "$APP_NAME",
+          "BRANDING_LIGHT": "$BRANDING_LIGHT",
+          "BRANDING_DARK": "$BRANDING_DARK",
+          "APP_ARGS": "--foreground",
+          "DO_STARTUP_NOTIFY": "false"
+        }
+      },
+      "build-commands": [
+        "install -Dm644 $ICON_FILE.png /app/share/icons/hicolor/512x512/apps/$APP_ID.png",
+        "envsubst < zed.desktop.in > zed.desktop && install -Dm644 zed.desktop /app/share/applications/$APP_ID.desktop",
+        "envsubst < flatpak/zed.metainfo.xml.in > zed.metainfo.xml && install -Dm644 zed.metainfo.xml /app/share/metainfo/$APP_ID.metainfo.xml",
+        "sed -i -e '/@release_info@/{r flatpak/release-info/$CHANNEL' -e 'd}' /app/share/metainfo/$APP_ID.metainfo.xml",
+        "install -Dm755 bin/cli /app/bin/zed",
+        "install -Dm755 bin/zed /app/bin/zed-app",
+        "install -Dm755 lib/* -t /app/lib"
+      ],
+      "sources": [
+        {
+          "type": "archive",
+          "path": "./target/release/$ARCHIVE"
+        },
+        {
+          "type": "dir",
+          "path": "./crates/zed/resources"
+        }
+      ]
+    }
+  ]
+}

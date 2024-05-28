@@ -342,6 +342,16 @@ impl AutoUpdater {
     }
 
     async fn update(this: Model<Self>, mut cx: AsyncAppContext) -> Result<()> {
+        // Skip auto-update for flatpaks
+        #[cfg(target_os = "linux")]
+        if matches!(std::env::var("ZED_IS_FLATPAK_INSTALL"), Ok(_)) {
+            this.update(&mut cx, |this, cx| {
+                this.status = AutoUpdateStatus::Idle;
+                cx.notify();
+            })?;
+            return Ok(());
+        }
+
         let (client, current_version) = this.read_with(&cx, |this, _| {
             (this.http_client.clone(), this.current_version)
         })?;
