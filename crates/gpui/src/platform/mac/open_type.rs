@@ -47,10 +47,10 @@ pub fn apply_features_and_fallbacks(
             .into_iter()
             .filter(|desc| desc.font_path().is_some())
             .for_each(|user_fallback_desc| {
-                CFArrayAppendValue(
-                    fallback_array,
-                    user_fallback_desc.as_concrete_TypeRef() as _,
-                );
+                let desc =
+                    CTFontDescriptor::wrap_under_get_rule(user_fallback_desc.as_concrete_TypeRef());
+                CFArrayAppendValue(fallback_array, desc.as_concrete_TypeRef() as _);
+                CFRelease(desc.as_concrete_TypeRef() as _);
             });
 
         let feature_array = generate_feature_array(features);
