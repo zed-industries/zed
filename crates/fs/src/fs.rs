@@ -3,8 +3,11 @@ use git::GitHostingProviderRegistry;
 
 #[cfg(target_os = "linux")]
 use ashpd::desktop::trash;
+#[cfg(target_os = "linux")]
+use std::{os::fd::AsFd,fs::File};
+
 #[cfg(unix)]
-use std::os::{fd::AsFd, unix::fs::MetadataExt};
+use std::os::unix::fs::MetadataExt;
 
 use async_tar::Archive;
 use futures::{future::BoxFuture, AsyncRead, Stream, StreamExt};
@@ -19,7 +22,6 @@ use smol::io::AsyncWriteExt;
 use std::io::Write;
 use std::sync::Arc;
 use std::{
-    fs::File,
     io,
     path::{Component, Path, PathBuf},
     pin::Pin,
