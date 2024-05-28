@@ -1017,6 +1017,7 @@ mod tests {
         let workspace_1 = cx
             .read(|cx| cx.windows()[0].downcast::<Workspace>())
             .unwrap();
+        cx.run_until_parked();
         workspace_1
             .update(cx, |workspace, cx| {
                 assert_eq!(workspace.worktrees(cx).count(), 2);
