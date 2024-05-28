@@ -29,7 +29,7 @@ use std::{
     sync::Arc,
 };
 use theme::ThemeSettings;
-use ui::{prelude::*, v_flex, ContextMenu, Icon, KeyBinding, Label, ListItem};
+use ui::{prelude::*, v_flex, ContextMenu, Icon, KeyBinding, Label, ListItem, Tooltip};
 use unicase::UniCase;
 use util::{maybe, NumericPrefixWithSuffix, ResultExt, TryFutureExt};
 use workspace::{
@@ -103,6 +103,7 @@ pub struct EntryDetails {
     is_cut: bool,
     git_status: Option<GitFileStatus>,
     is_private: bool,
+    canonical_path: Option<PathBuf>,
 }
 
 #[derive(PartialEq, Clone, Default, Debug, Deserialize)]
@@ -1444,11 +1445,12 @@ impl ProjectPanel {
                         path: entry.path.join("\0").into(),
                         inode: 0,
                         mtime: entry.mtime,
-                        is_symlink: false,
                         is_ignored: entry.is_ignored,
                         is_external: false,
                         is_private: false,
                         git_status: entry.git_status,
+                        canonical_path: entry.canonical_path.clone(),
+                        is_symlink: entry.is_symlink,
                     });
                 }
                 if expanded_dir_ids.binary_search(&entry.id).is_err()
@@ -1646,6 +1648,7 @@ impl ProjectPanel {
                             .map_or(false, |e| e.is_cut() && e.entry_id() == entry.id),
                         git_status: status,
                         is_private: entry.is_private,
+                        canonical_path: entry.canonical_path.clone(),
                     };
 
                     if let Some(edit_state) = &self.edit_state {
@@ -1738,6 +1741,12 @@ impl ProjectPanel {
                 icon = FileIcons::get_icon(Path::new(&filename), cx);
             }
         }
+
+        let canonical_path = details
+            .canonical_path
+            .as_ref()
+            .map(|f| f.to_string_lossy().to_string());
+
         let depth = details.depth;
         div()
             .id(entry_id.to_proto() as usize)
@@ -1759,6 +1768,14 @@ impl ProjectPanel {
                     .indent_level(depth)
                     .indent_step_size(px(settings.indent_size))
                     .selected(is_selected)
+                    .when_some(canonical_path, |this, path| {
+                        this.end_slot::<Icon>(
+                            Icon::new(IconName::ArrowUpRight)
+                                .size(IconSize::Indicator)
+                                .color(filename_text_color),
+                        )
+                        .tooltip(move |cx| Tooltip::text(format!("{path} • Symbolic Link"), cx))
+                    })
                     .child(if let Some(icon) = &icon {
                         h_flex().child(Icon::from_path(icon.to_string()).color(filename_text_color))
                     } else {
