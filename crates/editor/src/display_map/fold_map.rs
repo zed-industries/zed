@@ -20,6 +20,8 @@ pub struct FoldPlaceholder {
     pub render: Arc<dyn Send + Sync + Fn(FoldId, Range<Anchor>, &mut WindowContext) -> AnyElement>,
     /// If true, the element is constrained to the shaped width of an ellipsis.
     pub constrain_width: bool,
+    /// If true, merges the fold with an adjacent one.
+    pub merge_adjacent: bool,
 }
 
 impl FoldPlaceholder {
@@ -30,6 +32,7 @@ impl FoldPlaceholder {
         Self {
             render: Arc::new(|_id, _range, _cx| gpui::Empty.into_any_element()),
             constrain_width: true,
+            merge_adjacent: true,
         }
     }
 }
@@ -374,8 +377,11 @@ impl FoldMap {
 
                     assert!(fold_range.start.0 >= sum.input.len);
 
-                    while folds.peek().map_or(false, |(_, next_fold_range)| {
-                        next_fold_range.start <= fold_range.end
+                    while folds.peek().map_or(false, |(next_fold, next_fold_range)| {
+                        next_fold_range.start < fold_range.end
+                            || (next_fold_range.start == fold_range.end
+                                && fold.placeholder.merge_adjacent
+                                && next_fold.placeholder.merge_adjacent)
                     }) {
                         let (_, next_fold_range) = folds.next().unwrap();
                         if next_fold_range.end > fold_range.end {

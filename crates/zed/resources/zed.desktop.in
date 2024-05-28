@@ -1,13 +1,13 @@
 [Desktop Entry]
 Version=1.0
 Type=Application
-Name=Zed
+Name=$APP_NAME
 GenericName=Text Editor
 Comment=A high-performance, multiplayer code editor.
 TryExec=zed
-StartupNotify=true
-Exec=zed
-Icon=zed
-Categories=TextEditor;Development;IDE;
+StartupNotify=$DO_STARTUP_NOTIFY
+Exec=zed $APP_ARGS
+Icon=$APP_ICON
+Categories=Utility;TextEditor;Development;IDE;
 Keywords=zed;
 MimeType=text/plain;inode/directory;
