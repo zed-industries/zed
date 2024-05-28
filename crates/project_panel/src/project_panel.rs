@@ -939,13 +939,18 @@ impl ProjectPanel {
 
     fn remove(&mut self, trash: bool, skip_prompt: bool, cx: &mut ViewContext<'_, ProjectPanel>) {
         maybe!({
-            let selections = self.selections.clone();
-            if selections.is_empty() {
+            if self.selections.is_empty() && self.selection.is_none() {
                 return None;
             }
+            let only_current_entry = self
+                .selection
+                .as_ref()
+                .map_or(false, |selection| !self.selections.contains(selection));
             let project = self.project.read(cx);
-            let file_paths = selections
-                .into_iter()
+            let items_to_delete = only_current_entry
+                .then(|| Box::new(self.selection.iter()) as Box<dyn Iterator<Item = &Selection>>)
+                .unwrap_or_else(|| Box::new(self.selections.iter()));
+            let file_paths = items_to_delete
                 .filter_map(|selection| {
                     Some((
                         selection.entry_id,
