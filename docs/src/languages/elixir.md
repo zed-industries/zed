@@ -5,17 +5,29 @@
 
 ## Choosing a language server
 
-The Elixir extension offers both `elixir-ls`, `next-ls`, and `lexical` language server support.
+The Elixir extension offers language server support for `elixir-ls`, `next-ls`, and `lexical`.
 
 `elixir-ls` is enabled by default.
 
-To switch to e.g. `next-ls`, add the following to your `settings.json`:
+To switch to `next-ls`, add the following to your `settings.json`:
 
 ```json
 {
   "languages": {
     "Elixir": {
-      "language_servers": ["next-ls", "..."]
+      "language_servers": ["next-ls", "!elixir-ls", "..."]
+    }
+  }
+}
+```
+
+To switch to `lexical`, add the following to your `settings.json`:
+
+```json
+{
+  "languages": {
+    "Elixir": {
+      "language_servers": ["lexical", "!elixir-ls", "..."]
     }
   }
 }
