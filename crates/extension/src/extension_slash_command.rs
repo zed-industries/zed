@@ -1,12 +1,15 @@
-use crate::wasm_host::{WasmExtension, WasmHost};
+use std::sync::{atomic::AtomicBool, Arc};
+
 use anyhow::{anyhow, Result};
 use assistant_slash_command::{SlashCommand, SlashCommandOutput, SlashCommandOutputSection};
 use futures::FutureExt;
 use gpui::{AppContext, IntoElement, Task, WeakView, WindowContext};
 use language::LspAdapterDelegate;
-use std::sync::{atomic::AtomicBool, Arc};
+use ui::{prelude::*, ButtonLike, ElevationIndex};
 use wasmtime_wasi::WasiView;
 use workspace::Workspace;
+
+use crate::wasm_host::{WasmExtension, WasmHost};
 
 pub struct ExtensionSlashCommand {
     pub(crate) extension: WasmExtension,
@@ -48,6 +51,7 @@ impl SlashCommand for ExtensionSlashCommand {
         delegate: Arc<dyn LspAdapterDelegate>,
         cx: &mut WindowContext,
     ) -> Task<Result<SlashCommandOutput>> {
+        let command_name = SharedString::from(self.command.name.clone());
         let argument = argument.map(|arg| arg.to_string());
         let text = cx.background_executor().spawn(async move {
             let output = self
@@ -82,8 +86,17 @@ impl SlashCommand for ExtensionSlashCommand {
                 text,
                 sections: vec![SlashCommandOutputSection {
                     range,
-                    render_placeholder: Arc::new(|_, _, _| {
-                        "TODO: Extension command output".into_any_element()
+                    render_placeholder: Arc::new({
+                        let command_name = command_name.clone();
+                        move |id, unfold, _cx| {
+                            ButtonLike::new(id)
+                                .style(ButtonStyle::Filled)
+                                .layer(ElevationIndex::ElevatedSurface)
+                                .child(Icon::new(IconName::Code))
+                                .child(Label::new(command_name.clone()))
+                                .on_click(move |_event, cx| unfold(cx))
+                                .into_any_element()
+                        }
                     }),
                 }],
             })
