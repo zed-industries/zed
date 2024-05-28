@@ -30,7 +30,8 @@ use editor::{
 use editor::{display_map::FlapId, FoldPlaceholder};
 use file_icons::FileIcons;
 use fs::Fs;
-use futures::StreamExt;
+use futures::future::Shared;
+use futures::{FutureExt, StreamExt};
 use gpui::{
     canvas, div, point, relative, rems, uniform_list, Action, AnyElement, AnyView, AppContext,
     AsyncAppContext, AsyncWindowContext, AvailableSpace, ClipboardItem, Context, Empty,
@@ -1469,21 +1470,6 @@ struct Summary {
     done: bool,
 }
 
-#[derive(Copy, Clone, Default, Eq, PartialEq, Hash)]
-pub struct SlashCommandInvocationId(usize);
-
-impl SlashCommandInvocationId {
-    fn post_inc(&mut self) -> Self {
-        let id = *self;
-        self.0 += 1;
-        id
-    }
-}
-
-struct SlashCommandInvocation {
-    _pending_output: Task<Option<()>>,
-}
-
 pub struct Conversation {
     id: Option<String>,
     buffer: Model<Buffer>,
@@ -1503,8 +1489,6 @@ pub struct Conversation {
     pending_edit_suggestion_parse: Option<Task<()>>,
     pending_save: Task<Result<()>>,
     path: Option<PathBuf>,
-    invocations: HashMap<SlashCommandInvocationId, SlashCommandInvocation>,
-    next_invocation_id: SlashCommandInvocationId,
     _subscriptions: Vec<Subscription>,
     telemetry: Option<Arc<Telemetry>>,
     slash_command_registry: Arc<SlashCommandRegistry>,
@@ -1543,8 +1527,6 @@ impl Conversation {
             token_count: None,
             pending_token_count: Task::ready(None),
             pending_edit_suggestion_parse: None,
-            next_invocation_id: SlashCommandInvocationId::default(),
-            invocations: HashMap::default(),
             model,
             _subscriptions: vec![cx.subscribe(&buffer, Self::handle_buffer_event)],
             pending_save: Task::ready(Ok(())),
@@ -1655,8 +1637,6 @@ impl Conversation {
                 token_count: None,
                 pending_edit_suggestion_parse: None,
                 pending_token_count: Task::ready(None),
-                next_invocation_id: SlashCommandInvocationId::default(),
-                invocations: HashMap::default(),
                 model,
                 _subscriptions: vec![cx.subscribe(&buffer, Self::handle_buffer_event)],
                 pending_save: Task::ready(Ok(())),
@@ -1892,23 +1872,16 @@ impl Conversation {
 
     fn insert_command_output(
         &mut self,
-        invocation_id: SlashCommandInvocationId,
         command_range: Range<language::Anchor>,
         output: Task<Result<SlashCommandOutput>>,
         cx: &mut ModelContext<Self>,
     ) {
-        if let Some(pending_command) = self.pending_command_for_position(command_range.start, cx) {
-            pending_command.status = PendingSlashCommandStatus::Running;
-            cx.emit(ConversationEvent::PendingSlashCommandsUpdated {
-                removed: vec![pending_command.source_range.clone()],
-                updated: vec![pending_command.clone()],
-            });
-        }
+        self.reparse_slash_commands(cx);
 
         let insert_output_task = cx.spawn(|this, mut cx| {
+            let command_range = command_range.clone();
             async move {
                 let output = output.await;
-
                 this.update(&mut cx, |this, cx| match output {
                     Ok(output) => {
                         let sections = this.buffer.update(cx, |buffer, cx| {
@@ -1946,19 +1919,20 @@ impl Conversation {
                             });
                         }
                     }
-                })?;
-
-                anyhow::Ok(())
+                })
+                .ok();
             }
-            .log_err()
         });
 
-        self.invocations.insert(
-            invocation_id,
-            SlashCommandInvocation {
-                _pending_output: insert_output_task,
-            },
-        );
+        if let Some(pending_command) = self.pending_command_for_position(command_range.start, cx) {
+            pending_command.status = PendingSlashCommandStatus::Running {
+                _task: insert_output_task.shared(),
+            };
+            cx.emit(ConversationEvent::PendingSlashCommandsUpdated {
+                removed: vec![pending_command.source_range.clone()],
+                updated: vec![pending_command.clone()],
+            });
+        }
     }
 
     fn remaining_tokens(&self) -> Option<isize> {
@@ -2600,7 +2574,7 @@ struct PendingSlashCommand {
 #[derive(Clone)]
 enum PendingSlashCommandStatus {
     Idle,
-    Running,
+    Running { _task: Shared<Task<()>> },
     Error(String),
 }
 
@@ -2808,19 +2782,16 @@ impl ConversationEditor {
         argument: Option<&str>,
         workspace: WeakView<Workspace>,
         cx: &mut ViewContext<Self>,
-    ) -> Option<SlashCommandInvocationId> {
-        let command = self.slash_command_registry.command(name)?;
-        let lsp_adapter_delegate = self.lsp_adapter_delegate.clone()?;
-        let argument = argument.map(ToString::to_string);
-        let id = self.conversation.update(cx, |conversation, _| {
-            conversation.next_invocation_id.post_inc()
-        });
-        let output = command.run(argument.as_deref(), workspace, lsp_adapter_delegate, cx);
-        self.conversation.update(cx, |conversation, cx| {
-            conversation.insert_command_output(id, command_range, output, cx)
-        });
-
-        Some(id)
+    ) {
+        if let Some(command) = self.slash_command_registry.command(name) {
+            if let Some(lsp_adapter_delegate) = self.lsp_adapter_delegate.clone() {
+                let argument = argument.map(ToString::to_string);
+                let output = command.run(argument.as_deref(), workspace, lsp_adapter_delegate, cx);
+                self.conversation.update(cx, |conversation, cx| {
+                    conversation.insert_command_output(command_range, output, cx)
+                });
+            }
+        }
     }
 
     fn handle_conversation_event(
@@ -3820,8 +3791,7 @@ fn render_pending_slash_command_toggle(
                 .icon_color(Color::Muted)
                 .tooltip(move |cx| Tooltip::text(tooltip_text.clone(), cx));
         }
-        PendingSlashCommandStatus::Running => {
-            // todo!(we wanna animate here i think)
+        PendingSlashCommandStatus::Running { .. } => {
             icon = icon
                 .selected(true)
                 .tooltip(move |cx| Tooltip::text(tooltip_text.clone(), cx));
