@@ -794,7 +794,7 @@ impl Item for TerminalView {
                 TaskStatus::Running => (IconName::Play, Color::Disabled, None),
                 TaskStatus::Completed { success } => {
                     let task_id = terminal_task.id.clone();
-                    let rerun_btn = IconButton::new("rerun-icon", IconName::Rerun)
+                    let rerun_btn = IconButton::new("rerun-icon", IconName::Update)
                         .icon_size(IconSize::Small)
                         .size(ButtonSize::Compact)
                         .icon_color(Color::Default)

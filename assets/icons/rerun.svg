@@ -1,9 +1,0 @@
-<svg width="24px" height="24px" viewBox="0 0 24 24" version="1.1" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink">
-    <g stroke="none" stroke-width="1" fill="none" fill-rule="evenodd" stroke-linecap="round" stroke-linejoin="round">
-        <g id="rotate-ccw" transform="translate(3.000000, 3.000000)" stroke="#000000" stroke-width="2">
-            <path d="M0,9 C0,13.9705627 4.02943725,18 9,18 C13.9705627,18 18,13.9705627 18,9 C18,4.02943725 13.9705627,0 9,0 C6.48395193,0.00946510056 4.06896905,0.991223719 2.26,2.74 L0,5" id="path2"></path>
-            <polyline id="path1" points="0 1 0 5 3.5 5"></polyline>
-        </g>
-        <polygon id="play" stroke="#000000" stroke-width="1.5" points="10 8.5 15.8333333 12 10 15.5"></polygon>
-    </g>
-</svg>
