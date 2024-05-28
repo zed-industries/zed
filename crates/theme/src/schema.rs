@@ -123,6 +123,10 @@ impl ThemeStyleContent {
                         font_weight: style
                             .font_weight
                             .map(|font_weight| FontWeight::from(font_weight)),
+                        background_color: style
+                            .background_color
+                            .as_ref()
+                            .and_then(|color| try_parse_color(color).ok()),
                         ..Default::default()
                     },
                 )
@@ -1309,11 +1313,17 @@ pub struct HighlightStyleContent {
 
     #[serde(deserialize_with = "treat_error_as_none")]
     pub font_weight: Option<FontWeightContent>,
+
+    #[serde(deserialize_with = "treat_error_as_none")]
+    pub background_color: Option<String>,
 }
 
 impl HighlightStyleContent {
     pub fn is_empty(&self) -> bool {
-        self.color.is_none() && self.font_style.is_none() && self.font_weight.is_none()
+        self.color.is_none()
+            && self.font_style.is_none()
+            && self.font_weight.is_none()
+            && self.background_color.is_none()
     }
 }
 
