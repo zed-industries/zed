@@ -66,6 +66,8 @@ pub trait LineHeight: Sized {
 
 fn rank_mime_type(mimetype: &MimeType) -> usize {
     match mimetype {
+        // SVG Rendering is incomplete so we don't show it
+        // MimeType::Svg(_) => 5,
         MimeType::Png(_) => 4,
         MimeType::Jpeg(_) => 3,
         MimeType::Markdown(_) => 2,
@@ -161,6 +163,36 @@ pub struct ExecutionView {
     pub status: ExecutionStatus,
 }
 
+pub struct SvgText {
+    pub text: String,
+}
+
+pub fn svg_to_vec(text: &str, scale: f32) -> Result<OutputType> {
+    let tree = usvg::Tree::from_data(text.as_bytes(), &usvg::Options::default())?;
+
+    let (height, width) = (tree.size().height() * scale, tree.size().width() * scale);
+
+    let mut pixmap = resvg::tiny_skia::Pixmap::new(width as u32, height as u32)
+        .ok_or(usvg::Error::InvalidSize)?;
+
+    let transform = tree.view_box().to_transform(
+        resvg::tiny_skia::Size::from_wh(width, height).ok_or(usvg::Error::InvalidSize)?,
+    );
+
+    resvg::render(&tree, transform, &mut pixmap.as_mut());
+
+    let data = image::load_from_memory_with_format(&pixmap.encode_png()?, image::ImageFormat::Png)?
+        .into_bgra8();
+
+    let gpui_image_data = ImageData::new(data);
+
+    return Ok(OutputType::Image(ImageView {
+        height: height as u32,
+        width: width as u32,
+        image: Arc::new(gpui_image_data),
+    }));
+}
+
 pub fn extract_image_output(base64_encoded_data: &str) -> Result<OutputType> {
     let bytes = base64::decode(base64_encoded_data)?;
 
@@ -195,6 +227,12 @@ impl ExecutionView {
                 match result.data.richest(rank_mime_type) {
                     Some(MimeType::Plain(text)) => OutputType::Plain(TerminalOutput::from(text)),
                     Some(MimeType::Markdown(text)) => OutputType::Plain(TerminalOutput::from(text)),
+                    Some(MimeType::Svg(text)) => match svg_to_vec(text, 1.0) {
+                        Ok(output) => output,
+                        Err(error) => {
+                            OutputType::Message(format!("Failed to load image: {}", error))
+                        }
+                    },
                     Some(MimeType::Png(data)) | Some(MimeType::Jpeg(data)) => {
                         match extract_image_output(&data) {
                             Ok(output) => output,
@@ -211,6 +249,12 @@ impl ExecutionView {
                 match result.data.richest(rank_mime_type) {
                     Some(MimeType::Plain(text)) => OutputType::Plain(TerminalOutput::from(text)),
                     Some(MimeType::Markdown(text)) => OutputType::Plain(TerminalOutput::from(text)),
+                    Some(MimeType::Svg(text)) => match svg_to_vec(text, 1.0) {
+                        Ok(output) => output,
+                        Err(error) => {
+                            OutputType::Message(format!("Failed to load image: {}", error))
+                        }
+                    },
                     Some(MimeType::Png(data)) | Some(MimeType::Jpeg(data)) => {
                         match extract_image_output(&data) {
                             Ok(output) => output,

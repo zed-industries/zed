@@ -26,6 +26,7 @@ image = "0.23"
 language.workspace = true
 log.workspace = true
 project.workspace = true
+resvg = { version = "0.41.0", default-features = false }
 # runtimelib = "0.10.0"
 runtimelib = { path = "../../../../runtimed/runtimed/runtimelib" }
 serde.workspace = true
@@ -38,6 +39,7 @@ terminal_view.workspace = true
 ui.workspace = true
 util.workspace = true
 uuid.workspace = true
+usvg = { version = "0.41.0", default-features = false }
 workspace.workspace = true
 
 [dev-dependencies]
