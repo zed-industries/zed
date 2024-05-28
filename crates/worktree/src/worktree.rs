@@ -3524,6 +3524,15 @@ impl BackgroundScanner {
             })
             .collect::<Vec<_>>();
 
+        {
+            let mut state = self.state.lock();
+            let is_idle = state.snapshot.completed_scan_id == state.snapshot.scan_id;
+            state.snapshot.scan_id += 1;
+            if is_idle {
+                state.snapshot.completed_scan_id = state.snapshot.scan_id;
+            }
+        }
+
         self.reload_entries_for_paths(
             root_path,
             root_canonical_path,
@@ -3532,6 +3541,7 @@ impl BackgroundScanner {
             None,
         )
         .await;
+
         self.send_status_update(scanning, Some(request.done))
     }
 
@@ -3605,18 +3615,22 @@ impl BackgroundScanner {
             }
         });
 
-        let (scan_job_tx, scan_job_rx) = channel::unbounded();
-        if !relative_paths.is_empty() || !dot_git_paths.is_empty() {
-            log::debug!("received fs events {:?}", relative_paths);
-            self.reload_entries_for_paths(
-                root_path,
-                root_canonical_path,
-                &relative_paths,
-                abs_paths,
-                Some(scan_job_tx.clone()),
-            )
-            .await;
+        if relative_paths.is_empty() && dot_git_paths.is_empty() {
+            return;
         }
+
+        self.state.lock().snapshot.scan_id += 1;
+
+        let (scan_job_tx, scan_job_rx) = channel::unbounded();
+        log::debug!("received fs events {:?}", relative_paths);
+        self.reload_entries_for_paths(
+            root_path,
+            root_canonical_path,
+            &relative_paths,
+            abs_paths,
+            Some(scan_job_tx.clone()),
+        )
+        .await;
 
         self.update_ignore_statuses(scan_job_tx).await;
         self.scan_dirs(false, scan_job_rx).await;
@@ -4025,13 +4039,7 @@ impl BackgroundScanner {
         .await;
 
         let mut state = self.state.lock();
-        let snapshot = &mut state.snapshot;
-        let is_idle = snapshot.completed_scan_id == snapshot.scan_id;
         let doing_recursive_update = scan_queue_tx.is_some();
-        snapshot.scan_id += 1;
-        if is_idle && !doing_recursive_update {
-            snapshot.completed_scan_id = snapshot.scan_id;
-        }
 
         // Remove any entries for paths that no longer exist or are being recursively
         // refreshed. Do this before adding any new entries, so that renames can be
