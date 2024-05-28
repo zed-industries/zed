@@ -49,16 +49,14 @@ pub fn apply_features_and_fallbacks(
                 font.native_font().as_concrete_TypeRef(),
                 pref_langs.as_concrete_TypeRef(),
             );
-            let count = CFArrayGetCount(default_fallbacks);
-            for index in 0..count {
-                let desc: CTFontDescriptorRef =
-                    CFArrayGetValueAtIndex(default_fallbacks, index) as _;
-                let desc = CTFontDescriptor::wrap_under_get_rule(desc);
-                if desc.font_path().is_some() {
-                    // let desc = CTFontDescriptor::wrap_under_get_rule(desc.as_concrete_TypeRef());
-                    CFArrayAppendValue(fallback_array, desc.as_concrete_TypeRef() as _);
-                }
-            }
+            let default_fallbacks: CFArray<CTFontDescriptor> =
+                CFArray::wrap_under_create_rule(default_fallbacks);
+            default_fallbacks
+                .iter()
+                .filter(|desc| desc.font_path().is_some())
+                .map(|desc| {
+                    CFArrayAppendValue(fallback_array, desc.as_concrete_TypeRef());
+                });
             CFRelease(default_fallbacks as _);
         }
 
