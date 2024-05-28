@@ -2748,7 +2748,7 @@ mod tests {
                 "    > b",
                 "    > C",
                 "      .dockerignore",
-                "      the-new-filename  <== selected",
+                "      the-new-filename  <== selected  <== marked",
                 "v root2",
                 "    > d",
                 "    > e",
@@ -2791,7 +2791,7 @@ mod tests {
                 "    v b",
                 "        > 3",
                 "        > 4",
-                "          another-filename.txt  <== selected",
+                "          another-filename.txt  <== selected  <== marked",
                 "    > C",
                 "      .dockerignore",
                 "      the-new-filename",
@@ -2809,7 +2809,7 @@ mod tests {
                 "    v b",
                 "        > 3",
                 "        > 4",
-                "          [EDITOR: 'another-filename.txt']  <== selected",
+                "          [EDITOR: 'another-filename.txt']  <== selected  <== marked",
                 "    > C",
                 "      .dockerignore",
                 "      the-new-filename",
@@ -2837,7 +2837,7 @@ mod tests {
                 "    v b",
                 "        > 3",
                 "        > 4",
-                "          [PROCESSING: 'a-different-filename.tar.gz']  <== selected",
+                "          [PROCESSING: 'a-different-filename.tar.gz']  <== selected  <== marked",
                 "    > C",
                 "      .dockerignore",
                 "      the-new-filename",
@@ -3106,7 +3106,7 @@ mod tests {
                 "    > b",
                 "    v bdir1",
                 "        v dir2",
-                "              the-new-filename  <== selected",
+                "              the-new-filename  <== selected  <== marked",
                 "    > C",
                 "      .dockerignore",
                 "v root2",
@@ -4332,12 +4332,16 @@ mod tests {
                 };
                 let selected = if details.is_selected {
                     "  <== selected"
-                } else if details.is_marked {
+                } else {
+                    ""
+                };
+                let marked = if details.is_marked {
                     "  <== marked"
                 } else {
                     ""
                 };
-                result.push(format!("{indent}{icon}{name}{selected}"));
+
+                result.push(format!("{indent}{icon}{name}{selected}{marked}"));
             });
         });
 
