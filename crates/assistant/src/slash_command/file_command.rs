@@ -1,10 +1,12 @@
 use super::{SlashCommand, SlashCommandOutput};
 use anyhow::Result;
+use assistant_slash_command::SlashCommandOutputSection;
 use fuzzy::PathMatch;
 use gpui::{AppContext, Model, RenderOnce, SharedString, Task, WeakView};
-use language::LspAdapterDelegate;
+use language::{LineEnding, LspAdapterDelegate};
 use project::{PathMatchCandidateSet, Project};
 use std::{
+    ops::Range,
     path::{Path, PathBuf},
     sync::{atomic::AtomicBool, Arc},
 };
@@ -128,7 +130,8 @@ impl SlashCommand for FileSlashCommand {
         let fs = project.fs().clone();
         let argument = argument.to_string();
         let text = cx.background_executor().spawn(async move {
-            let content = fs.load(&abs_path).await?;
+            let mut content = fs.load(&abs_path).await?;
+            LineEnding::normalize(&mut content);
             let mut output = String::with_capacity(argument.len() + content.len() + 9);
             output.push_str("```");
             output.push_str(&argument);
@@ -142,16 +145,21 @@ impl SlashCommand for FileSlashCommand {
         });
         cx.foreground_executor().spawn(async move {
             let text = text.await?;
+            let range = 0..text.len();
             Ok(SlashCommandOutput {
                 text,
-                render_placeholder: Arc::new(move |id, unfold, _cx| {
-                    FilePlaceholder {
-                        path: Some(path.clone()),
-                        id,
-                        unfold,
-                    }
-                    .into_any_element()
-                }),
+                sections: vec![SlashCommandOutputSection {
+                    range,
+                    render_placeholder: Arc::new(move |id, unfold, _cx| {
+                        FilePlaceholder {
+                            path: Some(path.clone()),
+                            line_range: None,
+                            id,
+                            unfold,
+                        }
+                        .into_any_element()
+                    }),
+                }],
             })
         })
     }
@@ -160,6 +168,7 @@ impl SlashCommand for FileSlashCommand {
 #[derive(IntoElement)]
 pub struct FilePlaceholder {
     pub path: Option<PathBuf>,
+    pub line_range: Option<Range<u32>>,
     pub id: ElementId,
     pub unfold: Arc<dyn Fn(&mut WindowContext)>,
 }
@@ -178,6 +187,12 @@ impl RenderOnce for FilePlaceholder {
             .layer(ElevationIndex::ElevatedSurface)
             .child(Icon::new(IconName::File))
             .child(Label::new(title))
+            .when_some(self.line_range, |button, line_range| {
+                button.child(Label::new(":")).child(Label::new(format!(
+                    "{}-{}",
+                    line_range.start, line_range.end
+                )))
+            })
             .on_click(move |_, cx| unfold(cx))
     }
 }

@@ -1,5 +1,6 @@
 use super::{file_command::FilePlaceholder, SlashCommand, SlashCommandOutput};
 use anyhow::{anyhow, Result};
+use assistant_slash_command::SlashCommandOutputSection;
 use collections::HashMap;
 use editor::Editor;
 use gpui::{AppContext, Entity, Task, WeakView};
@@ -96,16 +97,22 @@ impl SlashCommand for ActiveSlashCommand {
                     }
                 });
                 cx.foreground_executor().spawn(async move {
+                    let text = text.await;
+                    let range = 0..text.len();
                     Ok(SlashCommandOutput {
-                        text: text.await,
-                        render_placeholder: Arc::new(move |id, unfold, _| {
-                            FilePlaceholder {
-                                id,
-                                path: path.clone(),
-                                unfold,
-                            }
-                            .into_any_element()
-                        }),
+                        text,
+                        sections: vec![SlashCommandOutputSection {
+                            range,
+                            render_placeholder: Arc::new(move |id, unfold, _| {
+                                FilePlaceholder {
+                                    id,
+                                    path: path.clone(),
+                                    line_range: None,
+                                    unfold,
+                                }
+                                .into_any_element()
+                            }),
+                        }],
                     })
                 })
             } else {
