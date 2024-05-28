@@ -4,7 +4,6 @@ members = [
     "crates/anthropic",
     "crates/assets",
     "crates/assistant",
-    "crates/assistant2",
     "crates/assistant_slash_command",
     "crates/assistant_tooling",
     "crates/audio",
@@ -148,7 +147,6 @@ ai = { path = "crates/ai" }
 anthropic = { path = "crates/anthropic" }
 assets = { path = "crates/assets" }
 assistant = { path = "crates/assistant" }
-assistant2 = { path = "crates/assistant2" }
 assistant_slash_command = { path = "crates/assistant_slash_command" }
 assistant_tooling = { path = "crates/assistant_tooling" }
 audio = { path = "crates/audio" }
