@@ -14,9 +14,10 @@ use crate::{
     SavedMessage, Split, ToggleFocus, ToggleHistory, ToggleIncludeConversation,
 };
 use anyhow::{anyhow, Result};
-use assistant_slash_command::{RenderFoldPlaceholder, SlashCommandOutput};
+use assistant_slash_command::{SlashCommandOutput, SlashCommandOutputSection};
 use client::telemetry::Telemetry;
-use collections::{hash_map, HashMap, HashSet, VecDeque};
+use collections::{hash_map, BTreeSet, HashMap, HashSet, VecDeque};
+use editor::actions::UnfoldAt;
 use editor::{
     actions::{FoldAt, MoveDown, MoveUp},
     display_map::{
@@ -39,11 +40,11 @@ use gpui::{
     UniformListScrollHandle, View, ViewContext, VisualContext, WeakModel, WeakView, WhiteSpace,
     WindowContext,
 };
+use language::LspAdapterDelegate;
 use language::{
-    language_settings::SoftWrap, AutoindentMode, Buffer, LanguageRegistry, OffsetRangeExt as _,
-    Point, ToOffset as _,
+    language_settings::SoftWrap, AnchorRangeExt, AutoindentMode, Buffer, LanguageRegistry,
+    OffsetRangeExt as _, Point, ToOffset as _,
 };
-use language::{LineEnding, LspAdapterDelegate};
 use multi_buffer::MultiBufferRow;
 use parking_lot::Mutex;
 use project::{Project, ProjectLspAdapterDelegate, ProjectTransaction};
@@ -1458,8 +1459,7 @@ enum ConversationEvent {
         updated: Vec<PendingSlashCommand>,
     },
     SlashCommandFinished {
-        output_range: Range<language::Anchor>,
-        render_placeholder: RenderFoldPlaceholder,
+        sections: Vec<SlashCommandOutputSection<language::Anchor>>,
     },
 }
 
@@ -1900,27 +1900,29 @@ impl Conversation {
             async move {
                 let output = output.await?;
 
-                let mut text = output.text;
-                LineEnding::normalize(&mut text);
-                if !text.ends_with('\n') {
-                    text.push('\n');
-                }
-
                 this.update(&mut cx, |this, cx| {
-                    let output_range = this.buffer.update(cx, |buffer, cx| {
+                    let sections = this.buffer.update(cx, |buffer, cx| {
                         let start = command_range.start.to_offset(buffer);
                         let old_end = command_range.end.to_offset(buffer);
-                        let new_end = start + text.len();
-                        buffer.edit([(start..old_end, text)], None, cx);
+                        let new_end = start + output.text.len();
+                        buffer.edit([(start..old_end, output.text)], None, cx);
                         if buffer.chars_at(new_end).next() != Some('\n') {
                             buffer.edit([(new_end..new_end, "\n")], None, cx);
                         }
-                        buffer.anchor_after(start)..buffer.anchor_before(new_end)
+
+                        let mut sections = output
+                            .sections
+                            .into_iter()
+                            .map(|section| SlashCommandOutputSection {
+                                range: buffer.anchor_after(start + section.range.start)
+                                    ..buffer.anchor_before(start + section.range.end),
+                                render_placeholder: section.render_placeholder,
+                            })
+                            .collect::<Vec<_>>();
+                        sections.sort_by(|a, b| a.range.cmp(&b.range, buffer));
+                        sections
                     });
-                    cx.emit(ConversationEvent::SlashCommandFinished {
-                        output_range,
-                        render_placeholder: output.render_placeholder,
-                    });
+                    cx.emit(ConversationEvent::SlashCommandFinished { sections });
                 })?;
 
                 anyhow::Ok(())
@@ -2937,39 +2939,38 @@ impl ConversationEditor {
                     );
                 })
             }
-            ConversationEvent::SlashCommandFinished {
-                output_range,
-                render_placeholder,
-            } => {
+            ConversationEvent::SlashCommandFinished { sections } => {
                 self.editor.update(cx, |editor, cx| {
                     let buffer = editor.buffer().read(cx).snapshot(cx);
                     let excerpt_id = *buffer.as_singleton().unwrap().0;
-                    let start = buffer
-                        .anchor_in_excerpt(excerpt_id, output_range.start)
-                        .unwrap();
-                    let end = buffer
-                        .anchor_in_excerpt(excerpt_id, output_range.end)
-                        .unwrap();
-                    let buffer_row = MultiBufferRow(start.to_point(&buffer).row);
-
-                    editor.insert_flaps(
-                        [Flap::new(
+                    let mut buffer_rows_to_fold = BTreeSet::new();
+                    let mut flaps = Vec::new();
+                    for section in sections {
+                        let start = buffer
+                            .anchor_in_excerpt(excerpt_id, section.range.start)
+                            .unwrap();
+                        let end = buffer
+                            .anchor_in_excerpt(excerpt_id, section.range.end)
+                            .unwrap();
+                        let buffer_row = MultiBufferRow(start.to_point(&buffer).row);
+                        buffer_rows_to_fold.insert(buffer_row);
+                        flaps.push(Flap::new(
                             start..end,
                             FoldPlaceholder {
                                 render: Arc::new({
                                     let editor = cx.view().downgrade();
-                                    let render_placeholder = render_placeholder.clone();
+                                    let render_placeholder = section.render_placeholder.clone();
                                     move |fold_id, fold_range, cx| {
                                         let editor = editor.clone();
                                         let unfold = Arc::new(move |cx: &mut WindowContext| {
                                             editor
                                                 .update(cx, |editor, cx| {
-                                                    editor.unfold_ranges(
-                                                        [fold_range.start..fold_range.end],
-                                                        true,
-                                                        false,
-                                                        cx,
+                                                    let buffer_start = fold_range.start.to_point(
+                                                        &editor.buffer().read(cx).read(cx),
                                                     );
+                                                    let buffer_row =
+                                                        MultiBufferRow(buffer_start.row);
+                                                    editor.unfold_at(&UnfoldAt { buffer_row }, cx);
                                                 })
                                                 .ok();
                                         });
@@ -2981,10 +2982,14 @@ impl ConversationEditor {
                             },
                             render_slash_command_output_toggle,
                             |_, _, _| Empty.into_any_element(),
-                        )],
-                        cx,
-                    );
-                    editor.fold_at(&FoldAt { buffer_row }, cx);
+                        ));
+                    }
+
+                    editor.insert_flaps(flaps, cx);
+
+                    for buffer_row in buffer_rows_to_fold.into_iter().rev() {
+                        editor.fold_at(&FoldAt { buffer_row }, cx);
+                    }
                 });
             }
         }

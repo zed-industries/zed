@@ -1,6 +1,6 @@
 use crate::wasm_host::{WasmExtension, WasmHost};
 use anyhow::{anyhow, Result};
-use assistant_slash_command::{SlashCommand, SlashCommandOutput};
+use assistant_slash_command::{SlashCommand, SlashCommandOutput, SlashCommandOutputSection};
 use futures::FutureExt;
 use gpui::{AppContext, IntoElement, Task, WeakView, WindowContext};
 use language::LspAdapterDelegate;
@@ -49,7 +49,7 @@ impl SlashCommand for ExtensionSlashCommand {
         cx: &mut WindowContext,
     ) -> Task<Result<SlashCommandOutput>> {
         let argument = argument.map(|arg| arg.to_string());
-        let output = cx.background_executor().spawn(async move {
+        let text = cx.background_executor().spawn(async move {
             let output = self
                 .extension
                 .call({
@@ -76,12 +76,16 @@ impl SlashCommand for ExtensionSlashCommand {
             output.ok_or_else(|| anyhow!("no output from command: {}", self.command.name))
         });
         cx.foreground_executor().spawn(async move {
-            let output = output.await?;
+            let text = text.await?;
+            let range = 0..text.len();
             Ok(SlashCommandOutput {
-                text: output,
-                render_placeholder: Arc::new(|_, _, _| {
-                    "TODO: Extension command output".into_any_element()
-                }),
+                text,
+                sections: vec![SlashCommandOutputSection {
+                    range,
+                    render_placeholder: Arc::new(|_, _, _| {
+                        "TODO: Extension command output".into_any_element()
+                    }),
+                }],
             })
         })
     }
