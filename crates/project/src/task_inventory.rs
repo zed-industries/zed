@@ -349,7 +349,7 @@ impl Inventory {
     }
 
     /// Returns the last scheduled task by task_id if provided.
-    /// Othewice, returns the last scheduled task.
+    /// Otherwise, returns the last scheduled task.
     pub fn last_scheduled_task(
         &self,
         task_id: Option<&TaskId>,
