@@ -650,6 +650,7 @@ impl ProjectPanel {
                         }
                     }
                 });
+                self.selections.clear();
                 self.update_visible_entries(Some((worktree_id, entry_id)), cx);
                 cx.focus(&self.focus_handle);
                 cx.notify();
@@ -784,6 +785,7 @@ impl ProjectPanel {
                         if selection.entry_id == edited_entry_id {
                             selection.worktree_id = worktree_id;
                             selection.entry_id = new_entry.id;
+                            this.selections.clear();
                             this.expand_to_selection(cx);
                         }
                     }
@@ -872,7 +874,7 @@ impl ProjectPanel {
             } else {
                 return;
             };
-
+            self.selections.clear();
             self.edit_state = Some(EditState {
                 worktree_id,
                 entry_id: directory_id,
@@ -1142,7 +1144,9 @@ impl ProjectPanel {
                     entry_id: root_entry.id,
                 };
                 self.selection = Some(selection);
-                self.selections.insert(selection);
+                if cx.modifiers().shift {
+                    self.selections.insert(selection);
+                }
                 self.autoscroll(cx);
                 cx.notify();
             }
@@ -1738,7 +1742,10 @@ impl ProjectPanel {
                         kind: entry.kind,
                         is_ignored: entry.is_ignored,
                         is_expanded,
-                        is_selected: self.selections.contains(&selection),
+                        is_selected: self
+                            .selection
+                            .map_or(false, |selection| selection.entry_id == entry.id)
+                            || self.selections.contains(&selection),
                         is_editing: false,
                         is_processing: false,
                         is_cut: self
@@ -2037,6 +2044,7 @@ impl ProjectPanel {
             }
 
             let worktree_id = worktree.id();
+            self.selections.clear();
             self.expand_entry(worktree_id, entry_id, cx);
             self.update_visible_entries(Some((worktree_id, entry_id)), cx);
             self.autoscroll(cx);
@@ -2908,7 +2916,7 @@ mod tests {
                 "    > .git",
                 "    > a",
                 "    v b",
-                "        > [PROCESSING: 'new-dir']",
+                "        > [PROCESSING: 'new-dir']  <== selected",
                 "        > 3  <== selected",
                 "        > 4",
                 "          a-different-filename.tar.gz",
@@ -3340,7 +3348,7 @@ mod tests {
                 "    > a copy 1",
                 "    v b",
                 "        v a",
-                "            v inner_dir",
+                "            v inner_dir  <== selected",
                 "                  four.txt",
                 "                  three.txt",
                 "              one.txt",
