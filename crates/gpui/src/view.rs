@@ -166,6 +166,14 @@ pub struct WeakView<V> {
     pub(crate) model: WeakModel<V>,
 }
 
+impl<T> std::fmt::Debug for WeakView<T> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct(&format!("WeakView<{}>", type_name::<T>()))
+            .field("entity_id", &self.model.entity_id)
+            .finish_non_exhaustive()
+    }
+}
+
 impl<V: 'static> WeakView<V> {
     /// Gets the entity id associated with this handle.
     pub fn entity_id(&self) -> EntityId {
