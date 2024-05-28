@@ -129,6 +129,7 @@ impl PromptLibrary {
     /// Load the state of the prompt library from the file system
     /// or create a new one if it doesn't exist
     pub async fn load_index(fs: Arc<dyn Fs>) -> anyhow::Result<Self> {
+        fs.create_dir(&PROMPTS_DIR).await?;
         let path = PROMPTS_DIR.join("index.json");
 
         let state = if fs.is_file(&path).await {
