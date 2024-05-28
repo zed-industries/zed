@@ -1889,13 +1889,13 @@ impl ProjectPanel {
             worktree_id: details.worktree_id,
             entry_id,
         };
-        let is_selected = self.marked_entries.contains(&selection);
+        let is_marked = self.marked_entries.contains(&selection);
         let is_active = self
             .selection
             .map_or(false, |selection| selection.entry_id == entry_id);
         let width = self.size(cx);
         let filename_text_color =
-            entry_git_aware_label_color(details.git_status, details.is_ignored, is_selected);
+            entry_git_aware_label_color(details.git_status, details.is_ignored, is_marked);
         let file_name = details.filename.clone();
         let mut icon = details.icon.clone();
         if show_editor && details.kind.is_file() {
@@ -1938,7 +1938,7 @@ impl ProjectPanel {
                 ListItem::new(entry_id.to_proto() as usize)
                     .indent_level(depth)
                     .indent_step_size(px(settings.indent_size))
-                    .selected(is_selected)
+                    .selected(is_marked)
                     .when_some(canonical_path, |this, path| {
                         this.end_slot::<Icon>(
                             Icon::new(IconName::ArrowUpRight)
@@ -2046,13 +2046,21 @@ impl ProjectPanel {
             )
             .border_1()
             .rounded_none()
-            .hover(|style| style.bg(cx.theme().colors().ghost_element_hover))
-            .when(is_selected, |this| {
+            .hover(|style| {
+                if is_active || is_marked {
+                    style
+                } else {
+                    let hover_color = cx.theme().colors().ghost_element_hover;
+                    style.bg(hover_color).border_color(hover_color)
+                }
+            })
+            .when(is_marked, |this| {
                 this.border_color(cx.theme().colors().ghost_element_selected)
             })
-            .when(is_active, |this| {
-                this.border_color(Color::Selected.color(cx))
-            })
+            .when(
+                is_active && self.focus_handle.contains_focused(cx),
+                |this| this.border_color(Color::Selected.color(cx)),
+            )
     }
 
     fn dispatch_context(&self, cx: &ViewContext<Self>) -> KeyContext {
