@@ -790,15 +790,16 @@ impl Item for TerminalView {
 
         let (icon, icon_color, rerun_btn) = match terminal.task() {
             Some(terminal_task) => match &terminal_task.status {
-                TaskStatus::Unknown => (Some(IconName::ExclamationTriangle), Color::Warning, None),
-                TaskStatus::Running => (None, Color::Disabled, None),
+                TaskStatus::Unknown => (IconName::ExclamationTriangle, Color::Warning, None),
+                TaskStatus::Running => (IconName::Play, Color::Disabled, None),
                 TaskStatus::Completed { success } => {
                     let task_id = terminal_task.id.clone();
 
-                    let rerun_icon = IconButton::new("rerun", IconName::Play)
+                    let rerun_icon = IconButton::new("rerun", IconName::Update)
                         .icon_size(IconSize::Small)
                         .size(ButtonSize::Compact)
                         .icon_color(Color::Default)
+                        .shape(ui::IconButtonShape::Square)
                         .tooltip(|cx| Tooltip::text("Rerun task", cx))
                         .on_click(move |_, cx| {
                             cx.dispatch_action(Box::new(tasks_ui::Rerun {
@@ -808,33 +809,35 @@ impl Item for TerminalView {
                         });
 
                     if *success {
-                        (Some(IconName::Check), Color::Success, Some(rerun_icon))
+                        (IconName::Check, Color::Success, Some(rerun_icon))
                     } else {
-                        (Some(IconName::XCircle), Color::Error, Some(rerun_icon))
+                        (IconName::XCircle, Color::Error, Some(rerun_icon))
                     }
                 }
             },
-            None => (Some(IconName::Terminal), Color::Muted, None),
+            None => (IconName::Terminal, Color::Muted, None),
         };
 
         h_flex()
             .gap_2()
+            .group("term-tab-icon")
             .child(
                 h_flex()
-                    .gap_1()
-                    .map(|this| {
-                        if let Some(icon) = icon {
-                            this.child(Icon::new(icon).color(icon_color))
-                        } else {
-                            this
-                        }
-                    })
-                    .map(|this| {
-                        if let Some(btn) = rerun_btn {
-                            this.child(btn)
-                        } else {
-                            this
-                        }
+                    .group("term-tab-icon")
+                    .child(
+                        div()
+                            .when(terminal.task().is_some(), |this| {
+                                this.hover(|style| style.invisible().w_0())
+                            })
+                            .child(Icon::new(icon).color(icon_color)),
+                    )
+                    .when_some(rerun_btn, |this, rerun_btn| {
+                        this.child(
+                            div()
+                                .absolute()
+                                .visible_on_hover("term-tab-icon")
+                                .child(rerun_btn),
+                        )
                     }),
             )
             .child(Label::new(title).color(if params.selected {
