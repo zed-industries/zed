@@ -15,7 +15,7 @@ To switch to `ruby-lsp`, add the following to your `settings.json`:
 {
   "languages": {
     "Ruby": {
-      "language_servers": ["ruby-lsp", "..."]
+      "language_servers": ["ruby-lsp", "!solargraph", "..."]
     }
   }
 }
