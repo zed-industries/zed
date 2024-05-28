@@ -21,6 +21,7 @@ pub mod file_command;
 pub mod project_command;
 pub mod prompt_command;
 pub mod search_command;
+pub mod tabs_command;
 
 pub(crate) struct SlashCommandCompletionProvider {
     editor: WeakView<ConversationEditor>,

@@ -1,5 +1,5 @@
 use crate::prompts::{generate_content_prompt, PromptLibrary, PromptManager};
-use crate::slash_command::search_command;
+use crate::slash_command::{search_command, tabs_command};
 use crate::{
     assistant_settings::{AssistantDockPosition, AssistantSettings, ZedDotDevModel},
     codegen::{self, Codegen, CodegenKind},
@@ -210,6 +210,7 @@ impl AssistantPanel {
                         prompt_command::PromptSlashCommand::new(prompt_library.clone()),
                     );
                     slash_command_registry.register_command(active_command::ActiveSlashCommand);
+                    slash_command_registry.register_command(tabs_command::TabsSlashCommand);
                     slash_command_registry.register_command(project_command::ProjectSlashCommand);
                     slash_command_registry.register_command(search_command::SearchSlashCommand);
 
@@ -1883,15 +1884,15 @@ impl Conversation {
             async move {
                 let output = output.await;
                 this.update(&mut cx, |this, cx| match output {
-                    Ok(output) => {
+                    Ok(mut output) => {
+                        if !output.text.ends_with('\n') {
+                            output.text.push('\n');
+                        }
+
                         let sections = this.buffer.update(cx, |buffer, cx| {
                             let start = command_range.start.to_offset(buffer);
                             let old_end = command_range.end.to_offset(buffer);
-                            let new_end = start + output.text.len();
                             buffer.edit([(start..old_end, output.text)], None, cx);
-                            if buffer.chars_at(new_end).next() != Some('\n') {
-                                buffer.edit([(new_end..new_end, "\n")], None, cx);
-                            }
 
                             let mut sections = output
                                 .sections
