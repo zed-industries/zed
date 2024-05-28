@@ -40,7 +40,6 @@ pub fn apply_features_and_fallbacks(
             let fallback_desc =
                 CTFontDescriptorCreateWithNameAndSize(name.as_concrete_TypeRef(), 0.0);
             CFArrayAppendValue(fallback_array, fallback_desc as _);
-            CFRelease(fallback_desc as _);
         }
 
         cascade_list_for_languages(&font.native_font(), pref_langs)
