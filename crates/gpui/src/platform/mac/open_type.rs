@@ -40,17 +40,19 @@ pub fn apply_features_and_fallbacks(
             let fallback_desc =
                 CTFontDescriptorCreateWithNameAndSize(name.as_concrete_TypeRef(), 0.0);
             CFArrayAppendValue(fallback_array, fallback_desc as _);
+            CFRelease(fallback_desc as _);
         }
 
-        cascade_list_for_languages(&font.native_font(), pref_langs)
-            .into_iter()
-            .filter(|desc| desc.font_path().is_some())
-            .for_each(|user_fallback_desc| {
-                let desc =
-                    CTFontDescriptor::wrap_under_get_rule(user_fallback_desc.as_concrete_TypeRef());
-                CFArrayAppendValue(fallback_array, desc.as_concrete_TypeRef() as _);
-                CFRelease(desc.as_concrete_TypeRef() as _);
+        {
+            let default_fallbacks = cascade_list_for_languages(&font.native_font(), pref_langs);
+            default_fallbacks.iter().map(|desc| {
+                if desc.font_path().is_some() {
+                    // let desc = CTFontDescriptor::wrap_under_get_rule(desc.as_concrete_TypeRef());
+                    CFArrayAppendValue(fallback_array, desc.as_concrete_TypeRef() as _);
+                }
             });
+            // CFRelease(default_fallbacks.as_concrete_TypeRef() as _);
+        }
 
         let feature_array = generate_feature_array(features);
         let keys = [kCTFontFeatureSettingsAttribute, kCTFontCascadeListAttribute];
