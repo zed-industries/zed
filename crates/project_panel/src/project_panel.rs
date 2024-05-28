@@ -51,8 +51,8 @@ pub struct ProjectPanel {
     expanded_dir_ids: HashMap<WorktreeId, Vec<ProjectEntryId>>,
     unfolded_dir_ids: HashSet<ProjectEntryId>,
     // Currently selected entry in a file tree
-    selection: Option<Selection>,
-    selections: BTreeSet<Selection>,
+    selection: Option<SelectedEntry>,
+    marked_entries: BTreeSet<SelectedEntry>,
     context_menu: Option<(View<ContextMenu>, Point<Pixels>, Subscription)>,
     edit_state: Option<EditState>,
     filename_editor: View<Editor>,
@@ -64,7 +64,7 @@ pub struct ProjectPanel {
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
-struct Selection {
+struct SelectedEntry {
     worktree_id: WorktreeId,
     entry_id: ProjectEntryId,
 }
@@ -100,6 +100,7 @@ pub struct EntryDetails {
     is_ignored: bool,
     is_expanded: bool,
     is_selected: bool,
+    is_marked: bool,
     is_editing: bool,
     is_processing: bool,
     is_cut: bool,
@@ -185,10 +186,10 @@ struct SerializedProjectPanel {
 }
 
 struct DraggedProjectEntryView {
-    selection: Selection,
+    selection: SelectedEntry,
     details: EntryDetails,
     width: Pixels,
-    selections: Arc<BTreeSet<Selection>>,
+    selections: Arc<BTreeSet<SelectedEntry>>,
 }
 
 impl ProjectPanel {
@@ -272,7 +273,7 @@ impl ProjectPanel {
                 expanded_dir_ids: Default::default(),
                 unfolded_dir_ids: Default::default(),
                 selection: None,
-                selections: Default::default(),
+                marked_entries: Default::default(),
                 edit_state: None,
                 context_menu: None,
                 filename_editor,
@@ -304,9 +305,9 @@ impl ProjectPanel {
 
                                 project_panel.update(cx, |this, _| {
                                     if !mark_selected {
-                                        this.selections.clear();
+                                        this.marked_entries.clear();
                                     }
-                                    this.selections.insert(Selection {
+                                    this.marked_entries.insert(SelectedEntry {
                                         worktree_id,
                                         entry_id
                                     });
@@ -337,7 +338,7 @@ impl ProjectPanel {
                             if let Some(project_panel) = project_panel.upgrade() {
                                 // Always select the entry, regardless of whether it is opened or not.
                                 project_panel.update(cx, |project_panel, _| {
-                                    project_panel.selection = Some(Selection {
+                                    project_panel.selection = Some(SelectedEntry {
                                         worktree_id,
                                         entry_id
                                     });
@@ -438,7 +439,7 @@ impl ProjectPanel {
             return;
         };
 
-        self.selection = Some(Selection {
+        self.selection = Some(SelectedEntry {
             worktree_id,
             entry_id,
         });
@@ -650,7 +651,6 @@ impl ProjectPanel {
                         }
                     }
                 });
-                self.selections.clear();
                 self.update_visible_entries(Some((worktree_id, entry_id)), cx);
                 cx.focus(&self.focus_handle);
                 cx.notify();
@@ -672,13 +672,13 @@ impl ProjectPanel {
             }
 
             let (worktree_id, worktree_entries) = &self.visible_entries[worktree_ix];
-            let selection = Selection {
+            let selection = SelectedEntry {
                 worktree_id: *worktree_id,
                 entry_id: worktree_entries[entry_ix].id,
             };
             self.selection = Some(selection);
             if cx.modifiers().shift {
-                self.selections.insert(selection);
+                self.marked_entries.insert(selection);
             }
             self.autoscroll(cx);
             cx.notify();
@@ -740,7 +740,7 @@ impl ProjectPanel {
         let edit_task;
         let edited_entry_id;
         if is_new_entry {
-            self.selection = Some(Selection {
+            self.selection = Some(SelectedEntry {
                 worktree_id,
                 entry_id: NEW_ENTRY_ID,
             });
@@ -785,7 +785,7 @@ impl ProjectPanel {
                         if selection.entry_id == edited_entry_id {
                             selection.worktree_id = worktree_id;
                             selection.entry_id = new_entry.id;
-                            this.selections.clear();
+                            this.marked_entries.clear();
                             this.expand_to_selection(cx);
                         }
                     }
@@ -803,7 +803,7 @@ impl ProjectPanel {
     fn cancel(&mut self, _: &menu::Cancel, cx: &mut ViewContext<Self>) {
         self.edit_state = None;
         self.update_visible_entries(None, cx);
-        self.selections.clear();
+        self.marked_entries.clear();
         cx.focus(&self.focus_handle);
         cx.notify();
     }
@@ -837,7 +837,7 @@ impl ProjectPanel {
     }
 
     fn add_entry(&mut self, is_dir: bool, cx: &mut ViewContext<Self>) {
-        if let Some(Selection {
+        if let Some(SelectedEntry {
             worktree_id,
             entry_id,
         }) = self.selection
@@ -874,7 +874,7 @@ impl ProjectPanel {
             } else {
                 return;
             };
-            self.selections.clear();
+            self.marked_entries.clear();
             self.edit_state = Some(EditState {
                 worktree_id,
                 entry_id: directory_id,
@@ -893,7 +893,7 @@ impl ProjectPanel {
     }
 
     fn rename(&mut self, _: &Rename, cx: &mut ViewContext<Self>) {
-        if let Some(Selection {
+        if let Some(SelectedEntry {
             worktree_id,
             entry_id,
         }) = self.selection
@@ -941,17 +941,19 @@ impl ProjectPanel {
 
     fn remove(&mut self, trash: bool, skip_prompt: bool, cx: &mut ViewContext<'_, ProjectPanel>) {
         maybe!({
-            if self.selections.is_empty() && self.selection.is_none() {
+            if self.marked_entries.is_empty() && self.selection.is_none() {
                 return None;
             }
             let only_current_entry = self
                 .selection
                 .as_ref()
-                .map_or(false, |selection| !self.selections.contains(selection));
+                .map_or(false, |selection| !self.marked_entries.contains(selection));
             let project = self.project.read(cx);
             let items_to_delete = only_current_entry
-                .then(|| Box::new(self.selection.iter()) as Box<dyn Iterator<Item = &Selection>>)
-                .unwrap_or_else(|| Box::new(self.selections.iter()));
+                .then(|| {
+                    Box::new(self.selection.iter()) as Box<dyn Iterator<Item = &SelectedEntry>>
+                })
+                .unwrap_or_else(|| Box::new(self.marked_entries.iter()));
             let file_paths = items_to_delete
                 .filter_map(|selection| {
                     Some((
@@ -1095,13 +1097,13 @@ impl ProjectPanel {
 
             if let Some((worktree_id, worktree_entries)) = self.visible_entries.get(worktree_ix) {
                 if let Some(entry) = worktree_entries.get(entry_ix) {
-                    let selection = Selection {
+                    let selection = SelectedEntry {
                         worktree_id: *worktree_id,
                         entry_id: entry.id,
                     };
                     self.selection = Some(selection);
                     if cx.modifiers().shift {
-                        self.selections.insert(selection);
+                        self.marked_entries.insert(selection);
                     }
 
                     self.autoscroll(cx);
@@ -1117,7 +1119,7 @@ impl ProjectPanel {
         if let Some((worktree, entry)) = self.selected_entry(cx) {
             if let Some(parent) = entry.path.parent() {
                 if let Some(parent_entry) = worktree.entry_for_path(parent) {
-                    self.selection = Some(Selection {
+                    self.selection = Some(SelectedEntry {
                         worktree_id: worktree.id(),
                         entry_id: parent_entry.id,
                     });
@@ -1139,13 +1141,13 @@ impl ProjectPanel {
             let worktree = worktree.read(cx);
             let worktree_id = worktree.id();
             if let Some(root_entry) = worktree.root_entry() {
-                let selection = Selection {
+                let selection = SelectedEntry {
                     worktree_id,
                     entry_id: root_entry.id,
                 };
                 self.selection = Some(selection);
                 if cx.modifiers().shift {
-                    self.selections.insert(selection);
+                    self.marked_entries.insert(selection);
                 }
                 self.autoscroll(cx);
                 cx.notify();
@@ -1162,7 +1164,7 @@ impl ProjectPanel {
             let worktree = worktree.read(cx);
             let worktree_id = worktree.id();
             if let Some(last_entry) = worktree.entries(true).last() {
-                self.selection = Some(Selection {
+                self.selection = Some(SelectedEntry {
                     worktree_id,
                     entry_id: last_entry.id,
                 });
@@ -1408,7 +1410,7 @@ impl ProjectPanel {
         }
     }
 
-    fn index_for_selection(&self, selection: Selection) -> Option<(usize, usize, usize)> {
+    fn index_for_selection(&self, selection: SelectedEntry) -> Option<(usize, usize, usize)> {
         let mut entry_index = 0;
         let mut visible_entries_index = 0;
         for (worktree_index, (worktree_id, worktree_entries)) in
@@ -1610,14 +1612,16 @@ impl ProjectPanel {
         }
 
         if let Some((worktree_id, entry_id)) = new_selected_entry {
-            self.selection = Some(Selection {
+            self.selection = Some(SelectedEntry {
                 worktree_id,
                 entry_id,
             });
-            self.selections.insert(Selection {
-                worktree_id,
-                entry_id,
-            });
+            if cx.modifiers().shift {
+                self.marked_entries.insert(SelectedEntry {
+                    worktree_id,
+                    entry_id,
+                });
+            }
         }
     }
 
@@ -1730,7 +1734,7 @@ impl ProjectPanel {
                             .map(|name| name.to_string_lossy().into_owned())
                             .unwrap_or_else(|| root_name.to_string_lossy().to_string()),
                     };
-                    let selection = Selection {
+                    let selection = SelectedEntry {
                         worktree_id: snapshot.id(),
                         entry_id: entry.id,
                     };
@@ -1742,10 +1746,8 @@ impl ProjectPanel {
                         kind: entry.kind,
                         is_ignored: entry.is_ignored,
                         is_expanded,
-                        is_selected: self
-                            .selection
-                            .map_or(false, |selection| selection.entry_id == entry.id)
-                            || self.selections.contains(&selection),
+                        is_selected: self.selection == Some(selection),
+                        is_marked: self.marked_entries.contains(&selection),
                         is_editing: false,
                         is_processing: false,
                         is_cut: self
@@ -1833,11 +1835,11 @@ impl ProjectPanel {
         let kind = details.kind;
         let settings = ProjectPanelSettings::get_global(cx);
         let show_editor = details.is_editing && !details.is_processing;
-        let selection = Selection {
+        let selection = SelectedEntry {
             worktree_id: details.worktree_id,
             entry_id,
         };
-        let is_selected = self.selections.contains(&selection);
+        let is_selected = self.marked_entries.contains(&selection);
         let is_active = self
             .selection
             .map_or(false, |selection| selection.entry_id == entry_id);
@@ -1860,10 +1862,10 @@ impl ProjectPanel {
 
         let depth = details.depth;
         let worktree_id = details.worktree_id;
-        let selections = Arc::new(self.selections.clone());
+        let selections = Arc::new(self.marked_entries.clone());
         struct DraggedSelection {
-            active_selection: Selection,
-            marked_selections: Arc<BTreeSet<Selection>>,
+            active_selection: SelectedEntry,
+            marked_selections: Arc<BTreeSet<SelectedEntry>>,
         }
         let dragged_selection = DraggedSelection {
             active_selection: selection,
@@ -1929,7 +1931,7 @@ impl ProjectPanel {
                                 this.selection.filter(|_| event.down.modifiers.shift)
                             {
                                 let current_selection = this.index_for_selection(selection);
-                                let target_selection = this.index_for_selection(Selection {
+                                let target_selection = this.index_for_selection(SelectedEntry {
                                     entry_id,
                                     worktree_id,
                                 });
@@ -1943,35 +1945,38 @@ impl ProjectPanel {
                                         range_start..range_end,
                                         cx,
                                         |entry_id, details, _| {
-                                            new_selections.insert(Selection {
+                                            new_selections.insert(SelectedEntry {
                                                 entry_id,
                                                 worktree_id: details.worktree_id,
                                             });
                                         },
                                     );
 
-                                    this.selections = if source_index > target_index {
-                                        this.selections
+                                    this.marked_entries = if source_index > target_index {
+                                        this.marked_entries
                                             .difference(&new_selections)
                                             .cloned()
                                             .collect()
                                     } else {
-                                        this.selections.union(&new_selections).cloned().collect()
+                                        this.marked_entries
+                                            .union(&new_selections)
+                                            .cloned()
+                                            .collect()
                                     };
 
-                                    this.selection = Some(Selection {
+                                    this.selection = Some(SelectedEntry {
                                         entry_id,
                                         worktree_id,
                                     });
                                     // Ensure that the current entry is selected.
-                                    this.selections.insert(Selection {
+                                    this.marked_entries.insert(SelectedEntry {
                                         entry_id,
                                         worktree_id,
                                     });
                                 }
                             } else if event.down.modifiers.secondary() {
-                                if !this.selections.insert(selection) {
-                                    this.selections.remove(&selection);
+                                if !this.marked_entries.insert(selection) {
+                                    this.marked_entries.remove(&selection);
                                 }
                             } else if kind.is_dir() {
                                 this.toggle_expanded(entry_id, cx);
@@ -2044,7 +2049,7 @@ impl ProjectPanel {
             }
 
             let worktree_id = worktree.id();
-            self.selections.clear();
+            self.marked_entries.clear();
             self.expand_entry(worktree_id, entry_id, cx);
             self.update_visible_entries(Some((worktree_id, entry_id)), cx);
             self.autoscroll(cx);
@@ -4257,7 +4262,7 @@ mod tests {
                 let worktree = worktree.read(cx);
                 if let Ok(relative_path) = path.strip_prefix(worktree.root_name()) {
                     let entry_id = worktree.entry_for_path(relative_path).unwrap().id;
-                    panel.selection = Some(crate::Selection {
+                    panel.selection = Some(crate::SelectedEntry {
                         worktree_id: worktree.id(),
                         entry_id,
                     });
@@ -4327,6 +4332,8 @@ mod tests {
                 };
                 let selected = if details.is_selected {
                     "  <== selected"
+                } else if details.is_marked {
+                    "  <== marked"
                 } else {
                     ""
                 };
