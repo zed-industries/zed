@@ -1844,13 +1844,13 @@ impl ProjectPanel {
             active_selection: Selection,
             marked_selections: Arc<BTreeSet<Selection>>,
         }
-        let selection = DraggedSelection {
+        let dragged_selection = DraggedSelection {
             active_selection: selection,
             marked_selections: selections,
         };
         div()
             .id(entry_id.to_proto() as usize)
-            .on_drag(selection, move |selection, cx| {
+            .on_drag(dragged_selection, move |selection, cx| {
                 cx.new_view(|_| DraggedProjectEntryView {
                     details: details.clone(),
                     width,
@@ -1939,6 +1939,10 @@ impl ProjectPanel {
                                         entry_id,
                                         worktree_id,
                                     });
+                                }
+                            } else if event.down.modifiers.secondary() {
+                                if !this.selections.insert(selection) {
+                                    this.selections.remove(&selection);
                                 }
                             } else if kind.is_dir() {
                                 this.toggle_expanded(entry_id, cx);
