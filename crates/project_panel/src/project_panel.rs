@@ -56,7 +56,7 @@ pub struct ProjectPanel {
     context_menu: Option<(View<ContextMenu>, Point<Pixels>, Subscription)>,
     edit_state: Option<EditState>,
     filename_editor: View<Editor>,
-    clipboard_entry: Option<ClipboardEntry>,
+    clipboard: Option<ClipboardEntry>,
     _dragged_entry_destination: Option<Arc<Path>>,
     workspace: WeakView<Workspace>,
     width: Option<Pixels>,
@@ -83,16 +83,10 @@ struct EditState {
     processing_filename: Option<String>,
 }
 
-#[derive(Copy, Clone)]
-pub enum ClipboardEntry {
-    Copied {
-        worktree_id: WorktreeId,
-        entry_id: ProjectEntryId,
-    },
-    Cut {
-        worktree_id: WorktreeId,
-        entry_id: ProjectEntryId,
-    },
+#[derive(Clone, Debug)]
+enum ClipboardEntry {
+    Copied(BTreeSet<SelectedEntry>),
+    Cut(BTreeSet<SelectedEntry>),
 }
 
 #[derive(Debug, PartialEq, Eq, Clone)]
@@ -282,7 +276,7 @@ impl ProjectPanel {
                 edit_state: None,
                 context_menu: None,
                 filename_editor,
-                clipboard_entry: None,
+                clipboard: None,
                 _dragged_entry_destination: None,
                 workspace: workspace.weak_handle(),
                 width: None,
@@ -489,11 +483,14 @@ impl ProjectPanel {
                             .action("Cut", Box::new(Cut))
                             .action("Copy", Box::new(Copy))
                             .action("Duplicate", Box::new(Duplicate))
-                            // TODO: Paste should always be visible, but disabled when clipboard is empty
-                            .when_some(self.clipboard_entry, |menu, entry| {
-                                menu.when(entry.worktree_id() == worktree_id, |menu| {
-                                    menu.action("Paste", Box::new(Paste))
-                                })
+                            // TODO: Paste should always be visible, cbut disabled when clipboard is empty
+                            .when_some(self.clipboard.as_ref(), |menu, entry| {
+                                menu.when(
+                                    self.selection.map_or(false, |selection| {
+                                        entry.items().contains(&selection)
+                                    }),
+                                    |menu| menu.action("Paste", Box::new(Paste)),
+                                )
                             })
                             .separator()
                             .action("Copy Path", Box::new(CopyPath))
@@ -949,17 +946,10 @@ impl ProjectPanel {
             if self.marked_entries.is_empty() && self.selection.is_none() {
                 return None;
             }
-            let only_current_entry = self
-                .selection
-                .as_ref()
-                .map_or(false, |selection| !self.marked_entries.contains(selection));
             let project = self.project.read(cx);
-            let items_to_delete = only_current_entry
-                .then(|| {
-                    Box::new(self.selection.iter()) as Box<dyn Iterator<Item = &SelectedEntry>>
-                })
-                .unwrap_or_else(|| Box::new(self.marked_entries.iter()));
+            let items_to_delete = self.marked_entries();
             let file_paths = items_to_delete
+                .into_iter()
                 .filter_map(|selection| {
                     Some((
                         selection.entry_id,
@@ -1187,82 +1177,85 @@ impl ProjectPanel {
     }
 
     fn cut(&mut self, _: &Cut, cx: &mut ViewContext<Self>) {
-        if let Some((worktree, entry)) = self.selected_entry(cx) {
-            self.clipboard_entry = Some(ClipboardEntry::Cut {
-                worktree_id: worktree.id(),
-                entry_id: entry.id,
-            });
+        let entries = self.marked_entries();
+        if !entries.is_empty() {
+            self.clipboard = Some(ClipboardEntry::Cut(entries));
             cx.notify();
         }
     }
 
     fn copy(&mut self, _: &Copy, cx: &mut ViewContext<Self>) {
-        if let Some((worktree, entry)) = self.selected_entry(cx) {
-            self.clipboard_entry = Some(ClipboardEntry::Copied {
-                worktree_id: worktree.id(),
-                entry_id: entry.id,
-            });
+        let entries = self.marked_entries();
+        if !entries.is_empty() {
+            self.clipboard = Some(ClipboardEntry::Copied(entries));
             cx.notify();
         }
     }
 
     fn paste(&mut self, _: &Paste, cx: &mut ViewContext<Self>) {
         maybe!({
-            let (worktree, entry) = self.selected_entry(cx)?;
-            let clipboard_entry = self.clipboard_entry?;
-            if clipboard_entry.worktree_id() != worktree.id() {
-                return None;
-            }
-
-            let clipboard_entry_file_name = self
-                .project
-                .read(cx)
-                .path_for_entry(clipboard_entry.entry_id(), cx)?
-                .path
-                .file_name()?
-                .to_os_string();
-
-            let mut new_path = entry.path.to_path_buf();
-            // If we're pasting into a file, or a directory into itself, go up one level.
-            if entry.is_file() || (entry.is_dir() && entry.id == clipboard_entry.entry_id()) {
-                new_path.pop();
-            }
-
-            new_path.push(&clipboard_entry_file_name);
-            let extension = new_path.extension().map(|e| e.to_os_string());
-            let file_name_without_extension = Path::new(&clipboard_entry_file_name).file_stem()?;
-            let mut ix = 0;
-            while worktree.entry_for_path(&new_path).is_some() {
-                new_path.pop();
-
-                let mut new_file_name = file_name_without_extension.to_os_string();
-                new_file_name.push(" copy");
-                if ix > 0 {
-                    new_file_name.push(format!(" {}", ix));
-                }
-                if let Some(extension) = extension.as_ref() {
-                    new_file_name.push(".");
-                    new_file_name.push(extension);
+            let (worktree, entry) = self.selected_entry_handle(cx)?;
+            let entry = entry.clone();
+            let worktree_id = worktree.read(cx).id();
+            let clipboard_entries = self.clipboard.as_ref()?;
+            for clipboard_entry in clipboard_entries.items() {
+                if clipboard_entry.worktree_id != worktree_id {
+                    return None;
                 }
 
-                new_path.push(new_file_name);
-                ix += 1;
-            }
+                let clipboard_entry_file_name = self
+                    .project
+                    .read(cx)
+                    .path_for_entry(clipboard_entry.entry_id, cx)?
+                    .path
+                    .file_name()?
+                    .to_os_string();
 
-            if clipboard_entry.is_cut() {
-                self.project
-                    .update(cx, |project, cx| {
-                        project.rename_entry(clipboard_entry.entry_id(), new_path, cx)
-                    })
-                    .detach_and_log_err(cx)
-            } else {
-                self.project
-                    .update(cx, |project, cx| {
-                        project.copy_entry(clipboard_entry.entry_id(), new_path, cx)
-                    })
-                    .detach_and_log_err(cx)
-            }
+                let mut new_path = entry.path.to_path_buf();
+                // If we're pasting into a file, or a directory into itself, go up one level.
+                if entry.is_file() || (entry.is_dir() && entry.id == clipboard_entry.entry_id) {
+                    new_path.pop();
+                }
 
+                new_path.push(&clipboard_entry_file_name);
+                let extension = new_path.extension().map(|e| e.to_os_string());
+                let file_name_without_extension =
+                    Path::new(&clipboard_entry_file_name).file_stem()?;
+                let mut ix = 0;
+                {
+                    let worktree = worktree.read(cx);
+                    while worktree.entry_for_path(&new_path).is_some() {
+                        new_path.pop();
+
+                        let mut new_file_name = file_name_without_extension.to_os_string();
+                        new_file_name.push(" copy");
+                        if ix > 0 {
+                            new_file_name.push(format!(" {}", ix));
+                        }
+                        if let Some(extension) = extension.as_ref() {
+                            new_file_name.push(".");
+                            new_file_name.push(extension);
+                        }
+
+                        new_path.push(new_file_name);
+                        ix += 1;
+                    }
+                }
+
+                if clipboard_entries.is_cut() {
+                    self.project
+                        .update(cx, |project, cx| {
+                            project.rename_entry(clipboard_entry.entry_id, new_path, cx)
+                        })
+                        .detach_and_log_err(cx)
+                } else {
+                    self.project
+                        .update(cx, |project, cx| {
+                            project.copy_entry(clipboard_entry.entry_id, new_path, cx)
+                        })
+                        .detach_and_log_err(cx)
+                }
+            }
             Some(())
         });
     }
@@ -1438,6 +1431,18 @@ impl ProjectPanel {
         None
     }
 
+    // Returns list of entries that should be affected by an operation.
+    // When currently selected entry is not marked, it's treated as the only marked entry.
+    fn marked_entries(&self) -> BTreeSet<SelectedEntry> {
+        let Some(selection) = self.selection else {
+            return Default::default();
+        };
+        if self.marked_entries.contains(&selection) {
+            self.marked_entries.clone()
+        } else {
+            BTreeSet::from_iter([selection])
+        }
+    }
     pub fn selected_entry<'a>(
         &self,
         cx: &'a AppContext,
@@ -1780,8 +1785,9 @@ impl ProjectPanel {
                         is_editing: false,
                         is_processing: false,
                         is_cut: self
-                            .clipboard_entry
-                            .map_or(false, |e| e.is_cut() && e.entry_id() == entry.id),
+                            .clipboard
+                            .as_ref()
+                            .map_or(false, |e| e.is_cut() && e.items().contains(&selection)),
                         git_status: status,
                         is_private: entry.is_private,
                         worktree_id: *worktree_id,
@@ -2294,18 +2300,9 @@ impl ClipboardEntry {
         matches!(self, Self::Cut { .. })
     }
 
-    fn entry_id(&self) -> ProjectEntryId {
+    fn items(&self) -> &BTreeSet<SelectedEntry> {
         match self {
-            ClipboardEntry::Copied { entry_id, .. } | ClipboardEntry::Cut { entry_id, .. } => {
-                *entry_id
-            }
-        }
-    }
-
-    fn worktree_id(&self) -> WorktreeId {
-        match self {
-            ClipboardEntry::Copied { worktree_id, .. }
-            | ClipboardEntry::Cut { worktree_id, .. } => *worktree_id,
+            ClipboardEntry::Copied(entries) | ClipboardEntry::Cut(entries) => entries,
         }
     }
 }
@@ -3864,11 +3861,11 @@ mod tests {
                 "      file_1.py",
             ]
         );
-        let new_modifiers = gpui::Modifiers {
+        let modifiers_with_shift = gpui::Modifiers {
             shift: true,
             ..Default::default()
         };
-        cx.simulate_modifiers_change(new_modifiers);
+        cx.simulate_modifiers_change(modifiers_with_shift);
         cx.update(|cx| {
             panel.update(cx, |this, cx| {
                 this.select_next(&Default::default(), cx);
@@ -3963,20 +3960,34 @@ mod tests {
                 this.cut(&Cut, cx);
                 this.select_prev(&SelectPrev, cx);
                 this.select_prev(&SelectPrev, cx);
-                this.select_prev(&SelectPrev, cx);
+
                 this.paste(&Paste, cx);
-                this.expand_selected_entry(&ExpandSelectedEntry, cx);
+                // this.expand_selected_entry(&ExpandSelectedEntry, cx);
             })
         });
+        cx.run_until_parked();
         assert_eq!(
             visible_entries_as_strings(&panel, 0..10, cx),
             &[
                 "v project_root",
                 "    v dir_1",
                 "        v nested_dir  <== selected",
-                "            file_1.py  <== marked",
-                "            file_a.py  <== marked",
+                "              file_1.py  <== marked",
+                "              file_a.py  <== marked",
             ]
+        );
+        cx.simulate_modifiers_change(modifiers_with_shift);
+        cx.update(|cx| {
+            panel.update(cx, |this, cx| {
+                this.expand_selected_entry(&Default::default(), cx);
+                this.select_next(&SelectNext, cx);
+                this.select_next(&SelectNext, cx);
+            })
+        });
+        submit_deletion(&panel, cx);
+        assert_eq!(
+            visible_entries_as_strings(&panel, 0..10, cx),
+            &["v project_root", "    v dir_1", "        v nested_dir",]
         );
     }
     #[gpui::test]
