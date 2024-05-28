@@ -69,6 +69,11 @@ struct SelectedEntry {
     entry_id: ProjectEntryId,
 }
 
+struct DraggedSelection {
+    active_selection: SelectedEntry,
+    marked_selections: Arc<BTreeSet<SelectedEntry>>,
+}
+
 #[derive(Clone, Debug)]
 struct EditState {
     worktree_id: WorktreeId,
@@ -1658,6 +1663,30 @@ impl ProjectPanel {
         });
     }
 
+    fn drag_onto(
+        &mut self,
+        selections: &DraggedSelection,
+        dragged_entry_id: ProjectEntryId,
+        is_file: bool,
+        cx: &mut ViewContext<Self>,
+    ) {
+        if selections
+            .marked_selections
+            .contains(&selections.active_selection)
+        {
+            for selection in selections.marked_selections.iter() {
+                self.move_entry(selection.entry_id, dragged_entry_id, is_file, cx);
+            }
+        } else {
+            self.move_entry(
+                selections.active_selection.entry_id,
+                dragged_entry_id,
+                is_file,
+                cx,
+            );
+        }
+    }
+
     fn for_each_visible_entry(
         &self,
         range: Range<usize>,
@@ -1863,10 +1892,7 @@ impl ProjectPanel {
         let depth = details.depth;
         let worktree_id = details.worktree_id;
         let selections = Arc::new(self.marked_entries.clone());
-        struct DraggedSelection {
-            active_selection: SelectedEntry,
-            marked_selections: Arc<BTreeSet<SelectedEntry>>,
-        }
+
         let dragged_selection = DraggedSelection {
             active_selection: selection,
             marked_selections: selections,
@@ -1885,9 +1911,7 @@ impl ProjectPanel {
                 style.bg(cx.theme().colors().drop_target_background)
             })
             .on_drop(cx.listener(move |this, selections: &DraggedSelection, cx| {
-                for selection in selections.marked_selections.iter() {
-                    this.move_entry(selection.entry_id, entry_id, kind.is_file(), cx);
-                }
+                this.drag_onto(selections, entry_id, kind.is_file(), cx);
             }))
             .child(
                 ListItem::new(entry_id.to_proto() as usize)
@@ -3795,6 +3819,166 @@ mod tests {
         );
     }
 
+    #[gpui::test]
+    async fn test_multiple_marked_entries(cx: &mut gpui::TestAppContext) {
+        init_test_with_editor(cx);
+        let fs = FakeFs::new(cx.executor().clone());
+        fs.insert_tree(
+            "/project_root",
+            json!({
+                "dir_1": {
+                    "nested_dir": {
+                        "file_a.py": "# File contents",
+                    }
+                },
+                "file_1.py": "# File contents",
+            }),
+        )
+        .await;
+
+        let project = Project::test(fs.clone(), ["/project_root".as_ref()], cx).await;
+        let worktree_id =
+            cx.update(|cx| project.read(cx).worktrees().next().unwrap().read(cx).id());
+        let workspace = cx.add_window(|cx| Workspace::test_new(project.clone(), cx));
+        let cx = &mut VisualTestContext::from_window(*workspace, cx);
+        let panel = workspace
+            .update(cx, |workspace, cx| ProjectPanel::new(workspace, cx))
+            .unwrap();
+        cx.update(|cx| {
+            panel.update(cx, |this, cx| {
+                this.select_next(&Default::default(), cx);
+                this.expand_selected_entry(&Default::default(), cx);
+                this.expand_selected_entry(&Default::default(), cx);
+                this.select_next(&Default::default(), cx);
+                this.expand_selected_entry(&Default::default(), cx);
+                this.select_next(&Default::default(), cx);
+            })
+        });
+        assert_eq!(
+            visible_entries_as_strings(&panel, 0..10, cx),
+            &[
+                "v project_root",
+                "    v dir_1",
+                "        v nested_dir",
+                "              file_a.py  <== selected",
+                "      file_1.py",
+            ]
+        );
+        let new_modifiers = gpui::Modifiers {
+            shift: true,
+            ..Default::default()
+        };
+        cx.simulate_modifiers_change(new_modifiers);
+        cx.update(|cx| {
+            panel.update(cx, |this, cx| {
+                this.select_next(&Default::default(), cx);
+            })
+        });
+        assert_eq!(
+            visible_entries_as_strings(&panel, 0..10, cx),
+            &[
+                "v project_root",
+                "    v dir_1",
+                "        v nested_dir",
+                "              file_a.py",
+                "      file_1.py  <== selected  <== marked",
+            ]
+        );
+        cx.update(|cx| {
+            panel.update(cx, |this, cx| {
+                this.select_prev(&Default::default(), cx);
+            })
+        });
+        assert_eq!(
+            visible_entries_as_strings(&panel, 0..10, cx),
+            &[
+                "v project_root",
+                "    v dir_1",
+                "        v nested_dir",
+                "              file_a.py  <== selected  <== marked",
+                "      file_1.py  <== marked",
+            ]
+        );
+        cx.update(|cx| {
+            panel.update(cx, |this, cx| {
+                let drag = DraggedSelection {
+                    active_selection: this.selection.unwrap(),
+                    marked_selections: Arc::new(this.marked_entries.clone()),
+                };
+                let target_entry = this
+                    .project
+                    .read(cx)
+                    .entry_for_path(&(worktree_id, "").into(), cx)
+                    .unwrap();
+                this.drag_onto(&drag, target_entry.id, false, cx);
+            });
+        });
+        cx.run_until_parked();
+        assert_eq!(
+            visible_entries_as_strings(&panel, 0..10, cx),
+            &[
+                "v project_root",
+                "    v dir_1",
+                "        v nested_dir",
+                "      file_1.py  <== marked",
+                "      file_a.py  <== selected  <== marked",
+            ]
+        );
+        // ESC clears out all marks
+        cx.update(|cx| {
+            panel.update(cx, |this, cx| {
+                this.cancel(&menu::Cancel, cx);
+            })
+        });
+        assert_eq!(
+            visible_entries_as_strings(&panel, 0..10, cx),
+            &[
+                "v project_root",
+                "    v dir_1",
+                "        v nested_dir",
+                "      file_1.py",
+                "      file_a.py  <== selected",
+            ]
+        );
+        // ESC clears out all marks
+        cx.update(|cx| {
+            panel.update(cx, |this, cx| {
+                this.select_prev(&SelectPrev, cx);
+                this.select_next(&SelectNext, cx);
+            })
+        });
+        assert_eq!(
+            visible_entries_as_strings(&panel, 0..10, cx),
+            &[
+                "v project_root",
+                "    v dir_1",
+                "        v nested_dir",
+                "      file_1.py  <== marked",
+                "      file_a.py  <== selected  <== marked",
+            ]
+        );
+        cx.simulate_modifiers_change(Default::default());
+        cx.update(|cx| {
+            panel.update(cx, |this, cx| {
+                this.cut(&Cut, cx);
+                this.select_prev(&SelectPrev, cx);
+                this.select_prev(&SelectPrev, cx);
+                this.select_prev(&SelectPrev, cx);
+                this.paste(&Paste, cx);
+                this.expand_selected_entry(&ExpandSelectedEntry, cx);
+            })
+        });
+        assert_eq!(
+            visible_entries_as_strings(&panel, 0..10, cx),
+            &[
+                "v project_root",
+                "    v dir_1",
+                "        v nested_dir  <== selected",
+                "            file_1.py  <== marked",
+                "            file_a.py  <== marked",
+            ]
+        );
+    }
     #[gpui::test]
     async fn test_autoreveal_and_gitignored_files(cx: &mut gpui::TestAppContext) {
         init_test_with_editor(cx);
