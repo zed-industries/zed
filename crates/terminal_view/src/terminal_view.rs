@@ -794,8 +794,7 @@ impl Item for TerminalView {
                 TaskStatus::Running => (IconName::Play, Color::Disabled, None),
                 TaskStatus::Completed { success } => {
                     let task_id = terminal_task.id.clone();
-
-                    let rerun_icon = IconButton::new("rerun", IconName::Update)
+                    let rerun_btn = IconButton::new("rerun-icon", IconName::Update)
                         .icon_size(IconSize::Small)
                         .size(ButtonSize::Compact)
                         .icon_color(Color::Default)
@@ -809,9 +808,9 @@ impl Item for TerminalView {
                         });
 
                     if *success {
-                        (IconName::Check, Color::Success, Some(rerun_icon))
+                        (IconName::Check, Color::Success, Some(rerun_btn))
                     } else {
-                        (IconName::XCircle, Color::Error, Some(rerun_icon))
+                        (IconName::XCircle, Color::Error, Some(rerun_btn))
                     }
                 }
             },
