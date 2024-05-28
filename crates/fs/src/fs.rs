@@ -4,7 +4,7 @@ use git::GitHostingProviderRegistry;
 #[cfg(target_os = "linux")]
 use ashpd::desktop::trash;
 #[cfg(unix)]
-use std::os::unix::fs::MetadataExt;
+use std::os::{fd::AsFd, unix::fs::MetadataExt};
 
 use async_tar::Archive;
 use futures::{future::BoxFuture, AsyncRead, Stream, StreamExt};
@@ -21,7 +21,6 @@ use std::sync::Arc;
 use std::{
     fs::File,
     io,
-    os::fd::AsFd,
     path::{Component, Path, PathBuf},
     pin::Pin,
     time::{Duration, SystemTime},
@@ -280,8 +279,6 @@ impl Fs for RealFs {
 
     #[cfg(target_os = "linux")]
     async fn trash_file(&self, path: &Path, _options: RemoveOptions) -> Result<()> {
-        use std::fs::File;
-
         let file = File::open(path)?;
         match trash::trash_file(&file.as_fd()).await {
             Ok(_) => Ok(()),
