@@ -825,7 +825,7 @@ impl Item for TerminalView {
                     .group("term-tab-icon")
                     .child(
                         div()
-                            .when(terminal.task().is_some(), |this| {
+                            .when(rerun_btn.is_some(), |this| {
                                 this.hover(|style| style.invisible().w_0())
                             })
                             .child(Icon::new(icon).color(icon_color)),
