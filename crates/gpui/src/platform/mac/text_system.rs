@@ -236,7 +236,7 @@ impl MacTextSystemState {
         for font in family.fonts() {
             let mut font = font.load()?;
 
-            // apply_features_and_fallbacks(&mut font, features, fallbacks, &self.pref_langs)?;
+            apply_features_and_fallbacks(&mut font, features, fallbacks, &self.pref_langs)?;
             // This block contains a precautionary fix to guard against loading fonts
             // that might cause panics due to `.unwrap()`s up the chain.
             {
