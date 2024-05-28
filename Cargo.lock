@@ -8606,8 +8606,6 @@ dependencies = [
 [[package]]
 name = "runtimelib"
 version = "0.10.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "aba6824f46eeb5fb763cd723036e14c00485cc7b067698de094f2e19c09b8cba"
 dependencies = [
  "anyhow",
  "base64 0.22.0",

@@ -2,10 +2,9 @@ use std::sync::Arc;
 
 use crate::stdio::TerminalOutput;
 use crate::ExecutionId;
-use anyhow::{anyhow, Result};
+use anyhow::Result;
 use gpui::{img, AnyElement, FontWeight, ImageData, Render, View};
 use runtimelib::{ExecutionState, JupyterMessageContent, MimeType};
-use serde_json::Value;
 use ui::{div, prelude::*, v_flex, IntoElement, Styled, ViewContext};
 
 pub struct ImageView {
@@ -51,7 +50,6 @@ impl LineHeight for ImageView {
 
 pub enum OutputType {
     Plain(TerminalOutput),
-    Media((MimeType, Value)),
     Stream(TerminalOutput),
     Image(ImageView),
     ErrorOutput {
@@ -66,13 +64,15 @@ pub trait LineHeight: Sized {
     fn num_lines(&self, cx: &mut WindowContext) -> u8;
 }
 
-// Priority order goes from highest to lowest (plaintext is the common fallback)
-const PRIORITY_ORDER: &[MimeType] = &[
-    MimeType::Png,
-    MimeType::Jpeg,
-    MimeType::Markdown,
-    MimeType::Plain,
-];
+fn rank_mime_type(mimetype: &MimeType) -> usize {
+    match mimetype {
+        MimeType::Png(_) => 4,
+        MimeType::Jpeg(_) => 3,
+        MimeType::Markdown(_) => 2,
+        MimeType::Plain(_) => 1,
+        _ => 0,
+    }
+}
 
 impl OutputType {
     fn render(&self, cx: &ViewContext<ExecutionView>) -> Option<AnyElement> {
@@ -81,7 +81,6 @@ impl OutputType {
             // Here we can just handle either
             Self::Plain(stdio) => Some(stdio.render(cx)),
             // Self::Markdown(markdown) => Some(markdown.render(theme)),
-            Self::Media((mimetype, value)) => render_rich(mimetype, value),
             Self::Stream(stdio) => Some(stdio.render(cx)),
             Self::Image(image) => Some(image.render(cx)),
             Self::Message(message) => Some(div().child(message.clone()).into_any_element()),
@@ -101,7 +100,6 @@ impl LineHeight for OutputType {
     fn num_lines(&self, cx: &mut WindowContext) -> u8 {
         match self {
             Self::Plain(stdio) => stdio.num_lines(cx),
-            Self::Media((_mimetype, value)) => value.as_str().unwrap_or("").lines().count() as u8,
             Self::Stream(stdio) => stdio.num_lines(cx),
             Self::Image(image) => image.num_lines(cx),
             Self::Message(message) => message.lines().count() as u8,
@@ -117,23 +115,6 @@ impl LineHeight for OutputType {
                 height
             }
         }
-    }
-}
-
-fn render_rich(mimetype: &MimeType, value: &Value) -> Option<AnyElement> {
-    // TODO: Make the media types be enums that contain their values to make this more readable
-    match mimetype {
-        MimeType::Plain => Some(
-            div()
-                .child(value.as_str().unwrap_or("").to_string())
-                .into_any_element(),
-        ),
-        MimeType::Markdown => Some(
-            div()
-                .child(value.as_str().unwrap_or("").to_string())
-                .into_any_element(),
-        ),
-        _ => None,
     }
 }
 
@@ -180,18 +161,8 @@ pub struct ExecutionView {
     pub status: ExecutionStatus,
 }
 
-pub fn extract_image_output(mimetype: &MimeType, value: &Value) -> Result<OutputType> {
-    let _media_type = match mimetype {
-        // TODO: Introduce From<MimeType> for str in runtimelib
-        // We don't necessarily need it since we use guess_format, however we could skip
-        // it if we wanted to.
-        MimeType::Png => "image/png",
-        MimeType::Jpeg => "image/jpeg",
-        _ => return Err(anyhow::anyhow!("Unsupported image format")),
-    };
-
-    let bytes = value.as_str().ok_or(anyhow!("Invalid image data"))?;
-    let bytes = base64::decode(bytes)?;
+pub fn extract_image_output(base64_encoded_data: &str) -> Result<OutputType> {
+    let bytes = base64::decode(base64_encoded_data)?;
 
     let format = image::guess_format(&bytes)?;
     let data = image::load_from_memory_with_format(&bytes, format)?.into_bgra8();
@@ -221,43 +192,36 @@ impl ExecutionView {
     pub fn push_message(&mut self, message: &JupyterMessageContent, cx: &mut ViewContext<Self>) {
         let output = match message {
             JupyterMessageContent::ExecuteResult(result) => {
-                let (mimetype, value) =
-                    if let Some((mimetype, value)) = result.data.richest(PRIORITY_ORDER) {
-                        (mimetype, value)
-                    } else {
-                        // We don't support this media type, so just ignore it
-                        return;
-                    };
-
-                match mimetype {
-                    MimeType::Plain => {
-                        OutputType::Plain(TerminalOutput::from(value.as_str().unwrap_or("")))
-                    }
-                    MimeType::Markdown => {
-                        OutputType::Plain(TerminalOutput::from(value.as_str().unwrap_or("")))
-                    }
-                    MimeType::Png | MimeType::Jpeg => {
-                        match extract_image_output(&mimetype, &value) {
+                match result.data.richest(rank_mime_type) {
+                    Some(MimeType::Plain(text)) => OutputType::Plain(TerminalOutput::from(text)),
+                    Some(MimeType::Markdown(text)) => OutputType::Plain(TerminalOutput::from(text)),
+                    Some(MimeType::Png(data)) | Some(MimeType::Jpeg(data)) => {
+                        match extract_image_output(&data) {
                             Ok(output) => output,
                             Err(error) => {
                                 OutputType::Message(format!("Failed to load image: {}", error))
                             }
                         }
                     }
-                    // We don't handle this type, but ok
-                    _ => OutputType::Media((mimetype, value)),
+                    // Any other media types are not supported
+                    _ => return,
                 }
             }
             JupyterMessageContent::DisplayData(result) => {
-                let (mimetype, value) =
-                    if let Some((mimetype, value)) = result.data.richest(PRIORITY_ORDER) {
-                        (mimetype, value)
-                    } else {
-                        // We don't support this media type, so just ignore it
-                        return;
-                    };
-
-                OutputType::Media((mimetype, value))
+                match result.data.richest(rank_mime_type) {
+                    Some(MimeType::Plain(text)) => OutputType::Plain(TerminalOutput::from(text)),
+                    Some(MimeType::Markdown(text)) => OutputType::Plain(TerminalOutput::from(text)),
+                    Some(MimeType::Png(data)) | Some(MimeType::Jpeg(data)) => {
+                        match extract_image_output(&data) {
+                            Ok(output) => output,
+                            Err(error) => {
+                                OutputType::Message(format!("Failed to load image: {}", error))
+                            }
+                        }
+                    }
+                    // Any other media types are not supported
+                    _ => return,
+                }
             }
             JupyterMessageContent::StreamContent(result) => {
                 // Previous stream data will combine together, handling colors, carriage returns, etc
