@@ -55,7 +55,7 @@ pub fn apply_features_and_fallbacks(
                 .iter()
                 .filter(|desc| desc.font_path().is_some())
                 .map(|desc| {
-                    CFArrayAppendValue(fallback_array, desc.as_concrete_TypeRef());
+                    CFArrayAppendValue(fallback_array, desc.as_concrete_TypeRef() as _);
                 });
             CFRelease(default_fallbacks.as_concrete_TypeRef() as _);
         }
