@@ -4,7 +4,8 @@ use crate::{FontFallbacks, FontFeatures};
 use cocoa::appkit::CGFloat;
 use core_foundation::{
     array::{
-        kCFTypeArrayCallBacks, CFArray, CFArrayAppendValue, CFArrayCreateMutable, CFMutableArrayRef,
+        kCFTypeArrayCallBacks, CFArray, CFArrayAppendValue, CFArrayCreateMutable, CFArrayGetCount,
+        CFArrayGetValueAtIndex, CFArrayRef, CFMutableArrayRef,
     },
     base::{kCFAllocatorDefault, CFRelease, TCFType},
     dictionary::{
@@ -44,14 +45,21 @@ pub fn apply_features_and_fallbacks(
         }
 
         {
-            let default_fallbacks = cascade_list_for_languages(&font.native_font(), pref_langs);
-            default_fallbacks.iter().map(|desc| {
+            let default_fallbacks = CTFontCopyDefaultCascadeListForLanguages(
+                font.native_font().as_concrete_TypeRef(),
+                pref_langs.as_concrete_TypeRef(),
+            );
+            let count = CFArrayGetCount(default_fallbacks);
+            for index in 0..count {
+                let desc: CTFontDescriptorRef =
+                    CFArrayGetValueAtIndex(default_fallbacks, index) as _;
+                let desc = CTFontDescriptor::wrap_under_get_rule(desc);
                 if desc.font_path().is_some() {
                     // let desc = CTFontDescriptor::wrap_under_get_rule(desc.as_concrete_TypeRef());
                     CFArrayAppendValue(fallback_array, desc.as_concrete_TypeRef() as _);
                 }
-            });
-            // CFRelease(default_fallbacks.as_concrete_TypeRef() as _);
+            }
+            CFRelease(default_fallbacks as _);
         }
 
         let feature_array = generate_feature_array(features);
@@ -114,10 +122,14 @@ extern "C" {
     static kCTFontOpenTypeFeatureTag: CFStringRef;
     static kCTFontOpenTypeFeatureValue: CFStringRef;
 
-    pub fn CTFontCreateCopyWithAttributes(
+    fn CTFontCreateCopyWithAttributes(
         font: CTFontRef,
         size: CGFloat,
         matrix: *const CGAffineTransform,
         attributes: CTFontDescriptorRef,
     ) -> CTFontRef;
+    fn CTFontCopyDefaultCascadeListForLanguages(
+        font: CTFontRef,
+        languagePrefList: CFArrayRef,
+    ) -> CFArrayRef;
 }
