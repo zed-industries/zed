@@ -1863,7 +1863,7 @@ impl ProjectPanel {
                 cx.new_view(|_| DraggedProjectEntryView {
                     details: details.clone(),
                     width,
-                    selection: selection.active_selection.clone(),
+                    selection: selection.active_selection,
                     selections: selection.marked_selections.clone(),
                 })
             })
