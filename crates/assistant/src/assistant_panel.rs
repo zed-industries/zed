@@ -3094,7 +3094,7 @@ impl ConversationEditor {
 
                             h_flex()
                                 .id(("message_header", message_id.0))
-                                .pl(cx.gutter_dimensions.width)
+                                .pl(cx.gutter_dimensions.width + cx.gutter_dimensions.margin)
                                 .h_11()
                                 .w_full()
                                 .relative()
