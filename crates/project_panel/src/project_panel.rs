@@ -3348,7 +3348,6 @@ mod tests {
             "Directories inside pasted directory should have an entry"
         );
 
-        toggle_expand_dir(&panel, "root/b", cx);
         toggle_expand_dir(&panel, "root/b/a", cx);
         toggle_expand_dir(&panel, "root/b/a/inner_dir", cx);
 
