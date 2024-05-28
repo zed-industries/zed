@@ -4564,11 +4564,14 @@ async fn join_channel_internal(
         if room.remote_participants().len() == 0 && !room.local_participant_is_guest() {
             if let Some(workspace) = requesting_window {
                 let project = workspace.update(cx, |workspace, cx| {
-                    if !CallSettings::get_global(cx).share_on_join {
+                    let project = workspace.project.read(cx);
+                    let is_dev_server = project.dev_server_project_id().is_some();
+
+                    if !is_dev_server && !CallSettings::get_global(cx).share_on_join {
                         return None;
                     }
-                    let project = workspace.project.read(cx);
-                    if (project.is_local() || project.dev_server_project_id().is_some())
+
+                    if (project.is_local() || is_dev_server)
                         && project.visible_worktrees(cx).any(|tree| {
                             tree.read(cx)
                                 .root_entry()
