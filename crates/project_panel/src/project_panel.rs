@@ -1982,17 +1982,11 @@ impl ProjectPanel {
                                         },
                                     );
 
-                                    this.marked_entries = if source_index > target_index {
-                                        this.marked_entries
-                                            .difference(&new_selections)
-                                            .cloned()
-                                            .collect()
-                                    } else {
-                                        this.marked_entries
-                                            .union(&new_selections)
-                                            .cloned()
-                                            .collect()
-                                    };
+                                    this.marked_entries = this
+                                        .marked_entries
+                                        .union(&new_selections)
+                                        .cloned()
+                                        .collect();
 
                                     this.selection = Some(SelectedEntry {
                                         entry_id,
