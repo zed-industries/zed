@@ -137,6 +137,10 @@ impl ThemeRegistry {
                                 .color
                                 .as_ref()
                                 .and_then(|color| try_parse_color(color).ok()),
+                            background_color: highlight
+                                .background_color
+                                .as_ref()
+                                .and_then(|color| try_parse_color(color).ok()),
                             font_style: highlight.font_style.map(Into::into),
                             font_weight: highlight.font_weight.map(Into::into),
                             ..Default::default()
