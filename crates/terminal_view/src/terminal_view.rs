@@ -791,7 +791,7 @@ impl Item for TerminalView {
         let (icon, icon_color) = match terminal.task() {
             Some(terminal_task) => match &terminal_task.status {
                 TaskStatus::Unknown => (IconName::ExclamationTriangle, Color::Warning),
-                TaskStatus::Running => (IconName::Spinner, Color::Default),
+                TaskStatus::Running => (IconName::Play, Color::Disabled),
                 TaskStatus::Completed { success } => {
                     if *success {
                         (IconName::Check, Color::Success)
@@ -807,12 +807,10 @@ impl Item for TerminalView {
             Some(terminal_task) => match &terminal_task.status {
                 TaskStatus::Completed { success } => Some(
                     IconButton::new("rerun", IconName::Play)
-                        .size(ButtonSize::Compact)
+                        .size(ButtonSize::None)
                         .icon_color(Color::Default)
                         .tooltip(|cx| Tooltip::text("Rerun task", cx))
-                        .on_click(|_, cx| {
-                            cx.dispatch(TerminalView::rerun_task());
-                        }),
+                        .on_click(|_, cx| {}),
                 ),
                 _ => None,
             },
