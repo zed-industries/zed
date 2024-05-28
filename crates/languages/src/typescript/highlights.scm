@@ -17,7 +17,7 @@
 
 ; Function and method definitions
 
-(function
+(function_expression
   name: (identifier) @function)
 (function_declaration
   name: (identifier) @function)
@@ -26,20 +26,20 @@
 
 (pair
   key: (property_identifier) @function.method
-  value: [(function) (arrow_function)])
+  value: [(function_expression) (arrow_function)])
 
 (assignment_expression
   left: (member_expression
     property: (property_identifier) @function.method)
-  right: [(function) (arrow_function)])
+  right: [(function_expression) (arrow_function)])
 
 (variable_declarator
   name: (identifier) @function
-  value: [(function) (arrow_function)])
+  value: [(function_expression) (arrow_function)])
 
 (assignment_expression
   left: (identifier) @function
-  right: [(function) (arrow_function)])
+  right: [(function_expression) (arrow_function)])
 
 ; Special identifiers
 

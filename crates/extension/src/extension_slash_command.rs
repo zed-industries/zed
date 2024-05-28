@@ -1,15 +1,12 @@
-use std::sync::atomic::AtomicBool;
-use std::sync::Arc;
-
-use anyhow::{anyhow, Result};
-use assistant_slash_command::{SlashCommand, SlashCommandCleanup, SlashCommandInvocation};
-use futures::channel::oneshot;
-use futures::FutureExt;
-use gpui::{AppContext, Task};
-use language::LspAdapterDelegate;
-use wasmtime_wasi::WasiView;
-
 use crate::wasm_host::{WasmExtension, WasmHost};
+use anyhow::{anyhow, Result};
+use assistant_slash_command::{SlashCommand, SlashCommandOutput};
+use futures::FutureExt;
+use gpui::{AppContext, IntoElement, Task, WeakView, WindowContext};
+use language::LspAdapterDelegate;
+use std::sync::{atomic::AtomicBool, Arc};
+use wasmtime_wasi::WasiView;
+use workspace::Workspace;
 
 pub struct ExtensionSlashCommand {
     pub(crate) extension: WasmExtension,
@@ -25,6 +22,10 @@ impl SlashCommand for ExtensionSlashCommand {
 
     fn description(&self) -> String {
         self.command.description.clone()
+    }
+
+    fn tooltip_text(&self) -> String {
+        self.command.tooltip_text.clone()
     }
 
     fn requires_argument(&self) -> bool {
@@ -43,11 +44,11 @@ impl SlashCommand for ExtensionSlashCommand {
     fn run(
         self: Arc<Self>,
         argument: Option<&str>,
+        _workspace: WeakView<Workspace>,
         delegate: Arc<dyn LspAdapterDelegate>,
-        cx: &mut AppContext,
-    ) -> SlashCommandInvocation {
+        cx: &mut WindowContext,
+    ) -> Task<Result<SlashCommandOutput>> {
         let argument = argument.map(|arg| arg.to_string());
-
         let output = cx.background_executor().spawn(async move {
             let output = self
                 .extension
@@ -72,14 +73,16 @@ impl SlashCommand for ExtensionSlashCommand {
                     }
                 })
                 .await?;
-
             output.ok_or_else(|| anyhow!("no output from command: {}", self.command.name))
         });
-
-        SlashCommandInvocation {
-            output,
-            invalidated: oneshot::channel().1,
-            cleanup: SlashCommandCleanup::default(),
-        }
+        cx.foreground_executor().spawn(async move {
+            let output = output.await?;
+            Ok(SlashCommandOutput {
+                text: output,
+                render_placeholder: Arc::new(|_, _, _| {
+                    "TODO: Extension command output".into_any_element()
+                }),
+            })
+        })
     }
 }

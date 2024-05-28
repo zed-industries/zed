@@ -471,6 +471,7 @@ impl Worktree {
                         &metadata,
                         &next_entry_id,
                         snapshot.root_char_bag,
+                        None
                     ),
                     fs.as_ref(),
                 );
@@ -3060,8 +3061,9 @@ pub struct Entry {
     pub path: Arc<Path>,
     pub inode: u64,
     pub mtime: Option<SystemTime>,
-    pub is_symlink: bool,
 
+    pub canonical_path: Option<PathBuf>,
+    pub is_symlink: bool,
     /// Whether this entry is ignored by Git.
     ///
     /// We only scan ignored entries once the directory is expanded and
@@ -3119,6 +3121,7 @@ impl Entry {
         metadata: &fs::Metadata,
         next_entry_id: &AtomicUsize,
         root_char_bag: CharBag,
+        canonical_path: Option<PathBuf>,
     ) -> Self {
         Self {
             id: ProjectEntryId::new(next_entry_id),
@@ -3130,6 +3133,7 @@ impl Entry {
             path,
             inode: metadata.inode,
             mtime: Some(metadata.mtime),
+            canonical_path,
             is_symlink: metadata.is_symlink,
             is_ignored: false,
             is_external: false,
@@ -3861,6 +3865,7 @@ impl BackgroundScanner {
                 &child_metadata,
                 &next_entry_id,
                 root_char_bag,
+                None,
             );
 
             if job.is_external {
@@ -3894,6 +3899,8 @@ impl BackgroundScanner {
                 if !canonical_path.starts_with(root_canonical_path) {
                     child_entry.is_external = true;
                 }
+
+                child_entry.canonical_path = Some(canonical_path);
             }
 
             if child_entry.is_dir() {
@@ -4049,7 +4056,13 @@ impl BackgroundScanner {
                         metadata,
                         self.next_entry_id.as_ref(),
                         state.snapshot.root_char_bag,
+                        if metadata.is_symlink {
+                            Some(canonical_path.to_path_buf())
+                        } else {
+                            None
+                        },
                     );
+
                     let is_dir = fs_entry.is_dir();
                     fs_entry.is_ignored = ignore_stack.is_abs_path_ignored(&abs_path, is_dir);
                     fs_entry.is_external = !canonical_path.starts_with(&root_canonical_path);
@@ -5048,11 +5061,12 @@ impl<'a> TryFrom<(&'a CharBag, proto::Entry)> for Entry {
             path,
             inode: entry.inode,
             mtime: entry.mtime.map(|time| time.into()),
-            is_symlink: entry.is_symlink,
+            canonical_path: None,
             is_ignored: entry.is_ignored,
             is_external: entry.is_external,
             git_status: git_status_from_proto(entry.git_status),
             is_private: false,
+            is_symlink: entry.is_symlink,
         })
     }
 }

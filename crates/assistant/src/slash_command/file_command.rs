@@ -1,14 +1,15 @@
-use super::{SlashCommand, SlashCommandCleanup, SlashCommandInvocation};
+use super::{SlashCommand, SlashCommandOutput};
 use anyhow::Result;
-use futures::channel::oneshot;
 use fuzzy::PathMatch;
-use gpui::{AppContext, Model, Task};
+use gpui::{AppContext, Model, RenderOnce, SharedString, Task, WeakView};
 use language::LspAdapterDelegate;
 use project::{PathMatchCandidateSet, Project};
 use std::{
-    path::Path,
+    path::{Path, PathBuf},
     sync::{atomic::AtomicBool, Arc},
 };
+use ui::{prelude::*, ButtonLike, ElevationIndex};
+use workspace::Workspace;
 
 pub(crate) struct FileSlashCommand {
     project: Model<Project>,
@@ -30,7 +31,6 @@ impl FileSlashCommand {
             .read(cx)
             .visible_worktrees(cx)
             .collect::<Vec<_>>();
-        let include_root_name = worktrees.len() > 1;
         let candidate_sets = worktrees
             .into_iter()
             .map(|worktree| {
@@ -40,7 +40,7 @@ impl FileSlashCommand {
                     include_ignored: worktree
                         .root_entry()
                         .map_or(false, |entry| entry.is_ignored),
-                    include_root_name,
+                    include_root_name: true,
                     directories_only: false,
                 }
             })
@@ -68,7 +68,11 @@ impl SlashCommand for FileSlashCommand {
     }
 
     fn description(&self) -> String {
-        "insert an entire file".into()
+        "insert a file".into()
+    }
+
+    fn tooltip_text(&self) -> String {
+        "insert file".into()
     }
 
     fn requires_argument(&self) -> bool {
@@ -100,36 +104,30 @@ impl SlashCommand for FileSlashCommand {
     fn run(
         self: Arc<Self>,
         argument: Option<&str>,
+        _workspace: WeakView<Workspace>,
         _delegate: Arc<dyn LspAdapterDelegate>,
-        cx: &mut AppContext,
-    ) -> SlashCommandInvocation {
+        cx: &mut WindowContext,
+    ) -> Task<Result<SlashCommandOutput>> {
         let project = self.project.read(cx);
         let Some(argument) = argument else {
-            return SlashCommandInvocation {
-                output: Task::ready(Err(anyhow::anyhow!("missing path"))),
-                invalidated: oneshot::channel().1,
-                cleanup: SlashCommandCleanup::default(),
-            };
+            return Task::ready(Err(anyhow::anyhow!("missing path")));
         };
 
-        let path = Path::new(argument);
+        let path = PathBuf::from(argument);
         let abs_path = project.worktrees().find_map(|worktree| {
             let worktree = worktree.read(cx);
-            worktree.entry_for_path(path)?;
-            worktree.absolutize(path).ok()
+            let worktree_root_path = Path::new(worktree.root_name());
+            let relative_path = path.strip_prefix(worktree_root_path).ok()?;
+            worktree.absolutize(&relative_path).ok()
         });
 
         let Some(abs_path) = abs_path else {
-            return SlashCommandInvocation {
-                output: Task::ready(Err(anyhow::anyhow!("missing path"))),
-                invalidated: oneshot::channel().1,
-                cleanup: SlashCommandCleanup::default(),
-            };
+            return Task::ready(Err(anyhow::anyhow!("missing path")));
         };
 
         let fs = project.fs().clone();
         let argument = argument.to_string();
-        let output = cx.background_executor().spawn(async move {
+        let text = cx.background_executor().spawn(async move {
             let content = fs.load(&abs_path).await?;
             let mut output = String::with_capacity(argument.len() + content.len() + 9);
             output.push_str("```");
@@ -140,12 +138,46 @@ impl SlashCommand for FileSlashCommand {
                 output.push('\n');
             }
             output.push_str("```");
-            Ok(output)
+            anyhow::Ok(output)
         });
-        SlashCommandInvocation {
-            output,
-            invalidated: oneshot::channel().1,
-            cleanup: SlashCommandCleanup::default(),
-        }
+        cx.foreground_executor().spawn(async move {
+            let text = text.await?;
+            Ok(SlashCommandOutput {
+                text,
+                render_placeholder: Arc::new(move |id, unfold, _cx| {
+                    FilePlaceholder {
+                        path: Some(path.clone()),
+                        id,
+                        unfold,
+                    }
+                    .into_any_element()
+                }),
+            })
+        })
+    }
+}
+
+#[derive(IntoElement)]
+pub struct FilePlaceholder {
+    pub path: Option<PathBuf>,
+    pub id: ElementId,
+    pub unfold: Arc<dyn Fn(&mut WindowContext)>,
+}
+
+impl RenderOnce for FilePlaceholder {
+    fn render(self, _cx: &mut WindowContext) -> impl IntoElement {
+        let unfold = self.unfold;
+        let title = if let Some(path) = self.path.as_ref() {
+            SharedString::from(path.to_string_lossy().to_string())
+        } else {
+            SharedString::from("untitled")
+        };
+
+        ButtonLike::new(self.id)
+            .style(ButtonStyle::Filled)
+            .layer(ElevationIndex::ElevatedSurface)
+            .child(Icon::new(IconName::File))
+            .child(Label::new(title))
+            .on_click(move |_, cx| unfold(cx))
     }
 }

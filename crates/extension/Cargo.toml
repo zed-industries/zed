@@ -46,6 +46,7 @@ wasmtime.workspace = true
 wasmtime-wasi.workspace = true
 wasmparser.workspace = true
 wit-component.workspace = true
+workspace.workspace = true
 task.workspace = true
 serde_json_lenient.workspace = true
 
@@ -58,3 +59,4 @@ fs = { workspace = true, features = ["test-support"] }
 gpui = { workspace = true, features = ["test-support"] }
 language = { workspace = true, features = ["test-support"] }
 project = { workspace = true, features = ["test-support"] }
+workspace = { workspace = true, features = ["test-support"] }
