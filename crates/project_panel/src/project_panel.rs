@@ -485,10 +485,20 @@ impl ProjectPanel {
                             .action("Duplicate", Box::new(Duplicate))
                             // TODO: Paste should always be visible, cbut disabled when clipboard is empty
                             .when_some(self.clipboard.as_ref(), |menu, entry| {
+                                let entries_for_worktree_id = (SelectedEntry {
+                                    worktree_id,
+                                    entry_id: ProjectEntryId::MIN,
+                                })
+                                    ..(SelectedEntry {
+                                        worktree_id,
+                                        entry_id: ProjectEntryId::MAX,
+                                    });
                                 menu.when(
-                                    self.selection.map_or(false, |selection| {
-                                        entry.items().contains(&selection)
-                                    }),
+                                    entry
+                                        .items()
+                                        .range(entries_for_worktree_id)
+                                        .next()
+                                        .is_some(),
                                     |menu| menu.action("Paste", Box::new(Paste)),
                                 )
                             })
@@ -1197,7 +1207,11 @@ impl ProjectPanel {
             let (worktree, entry) = self.selected_entry_handle(cx)?;
             let entry = entry.clone();
             let worktree_id = worktree.read(cx).id();
-            let clipboard_entries = self.clipboard.as_ref()?;
+            let clipboard_entries = self
+                .clipboard
+                .as_ref()
+                .filter(|clipboard| !clipboard.items().is_empty())?;
+
             for clipboard_entry in clipboard_entries.items() {
                 if clipboard_entry.worktree_id != worktree_id {
                     return None;
@@ -1256,6 +1270,7 @@ impl ProjectPanel {
                         .detach_and_log_err(cx)
                 }
             }
+            self.expand_entry(worktree_id, entry.id, cx);
             Some(())
         });
     }
