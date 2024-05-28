@@ -1,6 +1,6 @@
 use crate::EasyMotion;
 use editor::{Editor, EditorEvent};
-use gpui::{AppContext, Entity, EntityId, UpdateGlobal, View, ViewContext, WindowContext};
+use gpui::{AppContext, Entity, EntityId, View, ViewContext, WindowContext};
 
 pub fn init(cx: &mut AppContext) {
     cx.observe_new_views(|_, cx: &mut ViewContext<Editor>| {
@@ -18,18 +18,18 @@ pub fn init(cx: &mut AppContext) {
     .detach();
 }
 fn focused(editor: View<Editor>, cx: &mut WindowContext) {
-    EasyMotion::update(cx, |easy, cx| {
+    EasyMotion::update(cx, |easy, _cx| {
         if !easy.enabled {
             return;
         }
-        easy.activate_editor(editor.clone(), cx);
+        easy.activate_editor(editor.clone());
     });
 }
 
 fn blurred(_editor: View<Editor>, _cx: &mut WindowContext) {}
 
 fn released(entity_id: EntityId, cx: &mut AppContext) {
-    EasyMotion::update_global(cx, |easy, _cx| {
+    EasyMotion::update(cx, |easy, _cx| {
         if easy
             .active_editor
             .as_ref()
