@@ -4,18 +4,12 @@ use crate::{
     RenderGlyphParams, Result, ShapedGlyph, ShapedRun, SharedString, Size, SUBPIXEL_VARIANTS,
 };
 use anyhow::anyhow;
-use cocoa::{
-    appkit::{CGFloat, CGPoint},
-    base::id,
-};
+use cocoa::appkit::{CGFloat, CGPoint};
 use collections::{BTreeSet, HashMap};
 use core_foundation::{
-    array::{kCFTypeArrayCallBacks, CFArray, CFArrayAppendValue, CFArrayCreateMutable},
+    array::CFArray,
     attributed_string::CFMutableAttributedString,
-    base::{kCFAllocatorDefault, CFRange, CFRelease, TCFType},
-    dictionary::{
-        kCFTypeDictionaryKeyCallBacks, kCFTypeDictionaryValueCallBacks, CFDictionaryCreate,
-    },
+    base::{CFRange, CFRelease, TCFType},
     number::CFNumber,
     string::CFString,
 };
@@ -25,11 +19,9 @@ use core_graphics::{
     context::CGContext,
 };
 use core_text::{
-    font::{cascade_list_for_languages, CTFont},
+    font::CTFont,
     font_descriptor::{
-        kCTFontCascadeListAttribute, kCTFontFeatureSettingsAttribute, kCTFontSlantTrait,
-        kCTFontSymbolicTrait, kCTFontWeightTrait, kCTFontWidthTrait, CTFontDescriptor,
-        CTFontDescriptorCreateWithAttributes, CTFontDescriptorCreateWithNameAndSize,
+        kCTFontSlantTrait, kCTFontSymbolicTrait, kCTFontWeightTrait, kCTFontWidthTrait,
     },
     line::CTLine,
     string_attributes::kCTFontAttributeName,
@@ -43,7 +35,6 @@ use font_kit::{
     source::SystemSource,
     sources::mem::MemSource,
 };
-use objc::{class, msg_send, sel, sel_impl};
 use parking_lot::{RwLock, RwLockUpgradableReadGuard};
 use pathfinder_geometry::{
     rect::{RectF, RectI},
@@ -53,7 +44,7 @@ use pathfinder_geometry::{
 use smallvec::SmallVec;
 use std::{borrow::Cow, char, cmp, convert::TryFrom, sync::Arc};
 
-use super::open_type::{generate_feature_array, CTFontCreateCopyWithAttributes};
+use super::open_type::apply_features_and_fallbacks;
 
 #[allow(non_upper_case_globals)]
 const kCGImageAlphaOnly: u32 = 7;
@@ -83,14 +74,8 @@ unsafe impl Sync for MacTextSystemState {}
 
 impl MacTextSystem {
     pub(crate) fn new() -> Self {
-        let pref_langs: CFArray<CFString> = unsafe {
-            let user_defaults: id = msg_send![class!(NSUserDefaults), standardUserDefaults];
-            let key = CFString::from_static_string("AppleLanguages");
-            let ret: CFArray<CFString> = msg_send![user_defaults, stringArrayForKey: key];
-            ret
-        };
         Self(RwLock::new(MacTextSystemState {
-            pref_langs,
+            pref_langs: get_pref_langs(),
             memory_source: MemSource::empty(),
             system_source: SystemSource::new(),
             fonts: Vec::new(),
@@ -231,67 +216,6 @@ impl MacTextSystemState {
         Ok(())
     }
 
-    fn configure_font_features_and_fallbacks(
-        &self,
-        font: &mut FontKitFont,
-        features: &FontFeatures,
-        fallbacks: &FontFallbacks,
-    ) -> Result<()> {
-        unsafe {
-            let pref_langs = CFArray::wrap_under_get_rule(self.pref_langs.as_concrete_TypeRef());
-
-            let mut fallback_array =
-                CFArrayCreateMutable(kCFAllocatorDefault, 0, &kCFTypeArrayCallBacks);
-
-            for user_fallback in fallbacks.fallback_list() {
-                let name = CFString::from(user_fallback.as_str());
-                let fallback_desc = {
-                    let desc =
-                        CTFontDescriptorCreateWithNameAndSize(name.as_concrete_TypeRef(), 0.0);
-                    CTFontDescriptor::wrap_under_create_rule(desc)
-                };
-                CFArrayAppendValue(fallback_array, fallback_desc.as_concrete_TypeRef() as _);
-            }
-
-            cascade_list_for_languages(&font.native_font(), &pref_langs)
-                .into_iter()
-                .filter(|desc| desc.font_path().is_some())
-                .for_each(|user_fallback_desc| {
-                    CFArrayAppendValue(
-                        fallback_array,
-                        user_fallback_desc.as_concrete_TypeRef() as _,
-                    );
-                });
-
-            let feature_array = generate_feature_array(features);
-            let keys = [kCTFontFeatureSettingsAttribute, kCTFontCascadeListAttribute];
-            let values = [feature_array, fallback_array];
-            let attrs = CFDictionaryCreate(
-                kCFAllocatorDefault,
-                keys.as_ptr() as _,
-                values.as_ptr() as _,
-                2,
-                &kCFTypeDictionaryKeyCallBacks,
-                &kCFTypeDictionaryValueCallBacks,
-            );
-            CFRelease(feature_array as *const _ as _);
-            CFRelease(fallback_array as *const _ as _);
-            let new_descriptor = CTFontDescriptorCreateWithAttributes(attrs);
-            CFRelease(attrs as _);
-            let new_descriptor = CTFontDescriptor::wrap_under_create_rule(new_descriptor);
-            let new_font = CTFontCreateCopyWithAttributes(
-                font.native_font().as_concrete_TypeRef(),
-                0.0,
-                std::ptr::null(),
-                new_descriptor.as_concrete_TypeRef(),
-            );
-            let new_font = CTFont::wrap_under_create_rule(new_font);
-            *font = font_kit::font::Font::from_native_font(&new_font);
-
-            Ok(())
-        }
-    }
-
     fn load_family(
         &mut self,
         name: &str,
@@ -312,7 +236,7 @@ impl MacTextSystemState {
         for font in family.fonts() {
             let mut font = font.load()?;
 
-            self.configure_font_features_and_fallbacks(&mut font, features, fallbacks)?;
+            apply_features_and_fallbacks(&mut font, features, fallbacks, &self.pref_langs)?;
             // This block contains a precautionary fix to guard against loading fonts
             // that might cause panics due to `.unwrap()`s up the chain.
             {
@@ -603,6 +527,14 @@ impl MacTextSystemState {
     }
 }
 
+impl Drop for MacTextSystemState {
+    fn drop(&mut self) {
+        unsafe {
+            CFRelease(self.pref_langs.as_concrete_TypeRef() as _);
+        }
+    }
+}
+
 #[derive(Clone)]
 struct StringIndexConverter<'a> {
     text: &'a str,
@@ -716,6 +648,35 @@ impl From<FontStyle> for FontkitStyle {
             FontStyle::Italic => FontkitStyle::Italic,
             FontStyle::Oblique => FontkitStyle::Oblique,
         }
+    }
+}
+
+#[cfg(any(test, feature = "test-support"))]
+fn get_pref_langs() -> CFArray<CFString> {
+    use core_foundation::{
+        array::{kCFTypeArrayCallBacks, CFArrayAppendValue, CFArrayCreateMutable},
+        base::kCFAllocatorDefault,
+    };
+
+    unsafe {
+        let array = CFArrayCreateMutable(kCFAllocatorDefault, 0, &kCFTypeArrayCallBacks);
+        let key = CFString::from_static_string("en-US");
+        CFArrayAppendValue(array, key.as_concrete_TypeRef() as _);
+        CFRelease(key.as_concrete_TypeRef() as _);
+        CFArray::wrap_under_create_rule(array)
+    }
+}
+
+#[cfg(not(any(test, feature = "test-support")))]
+fn get_pref_langs() -> CFArray<CFString> {
+    use cocoa::base::id;
+    use objc::{class, msg_send, sel, sel_impl};
+
+    unsafe {
+        let user_defaults: id = msg_send![class!(NSUserDefaults), standardUserDefaults];
+        let key = CFString::from_static_string("AppleLanguages");
+        let ret: CFArray<CFString> = msg_send![user_defaults, stringArrayForKey: key];
+        ret
     }
 }
 
