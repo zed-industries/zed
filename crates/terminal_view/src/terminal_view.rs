@@ -24,7 +24,7 @@ use terminal::{
     Clear, Copy, Event, MaybeNavigationTarget, Paste, ShowCharacterPalette, TaskStatus, Terminal,
 };
 use terminal_element::TerminalElement;
-use ui::{h_flex, prelude::*, ContextMenu, Icon, IconName, Label};
+use ui::{h_flex, prelude::*, ContextMenu, Icon, IconName, Label, Tooltip};
 use util::{paths::PathLikeWithPosition, ResultExt};
 use workspace::{
     item::{BreadcrumbText, Item, ItemEvent, TabContentParams},
@@ -787,10 +787,11 @@ impl Item for TerminalView {
     fn tab_content(&self, params: TabContentParams, cx: &WindowContext) -> AnyElement {
         let terminal = self.terminal().read(cx);
         let title = terminal.title(true);
+
         let (icon, icon_color) = match terminal.task() {
             Some(terminal_task) => match &terminal_task.status {
                 TaskStatus::Unknown => (IconName::ExclamationTriangle, Color::Warning),
-                TaskStatus::Running => (IconName::Play, Color::Default),
+                TaskStatus::Running => (IconName::Spinner, Color::Default),
                 TaskStatus::Completed { success } => {
                     if *success {
                         (IconName::Check, Color::Success)
@@ -801,15 +802,33 @@ impl Item for TerminalView {
             },
             None => (IconName::Terminal, Color::Muted),
         };
-        h_flex()
-            .gap_2()
-            .child(Icon::new(icon).color(icon_color))
-            .child(Label::new(title).color(if params.selected {
-                Color::Default
-            } else {
-                Color::Muted
-            }))
-            .into_any()
+
+        let rerun_button = match terminal.task() {
+            Some(terminal_task) => match &terminal_task.status {
+                TaskStatus::Completed { success } => Some(
+                    IconButton::new("rerun", IconName::Play)
+                        .size(ButtonSize::Compact)
+                        .icon_color(Color::Default)
+                        .tooltip(|cx| Tooltip::text("Rerun task", cx))
+                        .on_click(|_, cx| {
+                            cx.dispatch(TerminalView::rerun_task());
+                        }),
+                ),
+                _ => None,
+            },
+            None => None,
+        };
+
+        let mut el = h_flex().gap_2().child(Icon::new(icon).color(icon_color));
+        if let Some(btn) = rerun_button {
+            el = el.child(btn);
+        }
+        el.child(Label::new(title).color(if params.selected {
+            Color::Default
+        } else {
+            Color::Muted
+        }))
+        .into_any()
     }
 
     fn telemetry_event_text(&self) -> Option<&'static str> {
