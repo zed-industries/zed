@@ -585,7 +585,10 @@
       "cmd-backspace": ["project_panel::Delete", { "skip_prompt": false }],
       "cmd-delete": ["project_panel::Delete", { "skip_prompt": false }],
       "alt-cmd-r": "project_panel::RevealInFinder",
-      "alt-shift-f": "project_panel::NewSearchInDirectory"
+      "alt-shift-f": "project_panel::NewSearchInDirectory",
+      "shift-down": "menu::SelectNext",
+      "shift-up": "menu::SelectPrev",
+      "escape": "menu::Cancel"
     }
   },
   {
