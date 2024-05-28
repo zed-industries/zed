@@ -117,16 +117,16 @@ impl ThemeStyleContent {
                             .color
                             .as_ref()
                             .and_then(|color| try_parse_color(color).ok()),
+                        background_color: style
+                            .background_color
+                            .as_ref()
+                            .and_then(|color| try_parse_color(color).ok()),
                         font_style: style
                             .font_style
                             .map(|font_style| FontStyle::from(font_style)),
                         font_weight: style
                             .font_weight
                             .map(|font_weight| FontWeight::from(font_weight)),
-                        background_color: style
-                            .background_color
-                            .as_ref()
-                            .and_then(|color| try_parse_color(color).ok()),
                         ..Default::default()
                     },
                 )
@@ -1309,21 +1309,21 @@ pub struct HighlightStyleContent {
     pub color: Option<String>,
 
     #[serde(deserialize_with = "treat_error_as_none")]
+    pub background_color: Option<String>,
+
+    #[serde(deserialize_with = "treat_error_as_none")]
     pub font_style: Option<FontStyleContent>,
 
     #[serde(deserialize_with = "treat_error_as_none")]
     pub font_weight: Option<FontWeightContent>,
-
-    #[serde(deserialize_with = "treat_error_as_none")]
-    pub background_color: Option<String>,
 }
 
 impl HighlightStyleContent {
     pub fn is_empty(&self) -> bool {
         self.color.is_none()
+            && self.background_color.is_none()
             && self.font_style.is_none()
             && self.font_weight.is_none()
-            && self.background_color.is_none()
     }
 }
 
