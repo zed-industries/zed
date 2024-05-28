@@ -7,7 +7,7 @@ mod vscode_format;
 
 use collections::{hash_map, HashMap, HashSet};
 use gpui::SharedString;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use std::str::FromStr;
 use std::{borrow::Cow, path::Path};
@@ -17,7 +17,7 @@ pub use vscode_format::VsCodeTaskFile;
 
 /// Task identifier, unique within the application.
 /// Based on it, task reruns and terminal tabs are managed.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Deserialize)]
 pub struct TaskId(pub String);
 
 /// TerminalWorkDir describes where a task should be run

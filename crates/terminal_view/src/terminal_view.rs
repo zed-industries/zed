@@ -788,45 +788,61 @@ impl Item for TerminalView {
         let terminal = self.terminal().read(cx);
         let title = terminal.title(true);
 
-        let (icon, icon_color) = match terminal.task() {
+        let (icon, icon_color, rerun_btn) = match terminal.task() {
             Some(terminal_task) => match &terminal_task.status {
-                TaskStatus::Unknown => (IconName::ExclamationTriangle, Color::Warning),
-                TaskStatus::Running => (IconName::Play, Color::Disabled),
+                TaskStatus::Unknown => (Some(IconName::ExclamationTriangle), Color::Warning, None),
+                TaskStatus::Running => (None, Color::Disabled, None),
                 TaskStatus::Completed { success } => {
+                    let task_id = terminal_task.id.clone();
+
+                    let rerun_icon = IconButton::new("rerun", IconName::Play)
+                        .icon_size(IconSize::Small)
+                        .size(ButtonSize::Compact)
+                        .icon_color(Color::Default)
+                        .tooltip(|cx| Tooltip::text("Rerun task", cx))
+                        .on_click(move |_, cx| {
+                            cx.dispatch_action(Box::new(tasks_ui::Rerun {
+                                task_id: Some(task_id.clone()),
+                                ..Default::default()
+                            }));
+                        });
+
                     if *success {
-                        (IconName::Check, Color::Success)
+                        (Some(IconName::Check), Color::Success, Some(rerun_icon))
                     } else {
-                        (IconName::XCircle, Color::Error)
+                        (Some(IconName::XCircle), Color::Error, Some(rerun_icon))
                     }
                 }
             },
-            None => (IconName::Terminal, Color::Muted),
+            None => (Some(IconName::Terminal), Color::Muted, None),
         };
 
-        let rerun_button = match terminal.task() {
-            Some(terminal_task) => match &terminal_task.status {
-                TaskStatus::Completed { success } => Some(
-                    IconButton::new("rerun", IconName::Play)
-                        .size(ButtonSize::None)
-                        .icon_color(Color::Default)
-                        .tooltip(|cx| Tooltip::text("Rerun task", cx))
-                        .on_click(|_, cx| {}),
-                ),
-                _ => None,
-            },
-            None => None,
-        };
-
-        let mut el = h_flex().gap_2().child(Icon::new(icon).color(icon_color));
-        if let Some(btn) = rerun_button {
-            el = el.child(btn);
-        }
-        el.child(Label::new(title).color(if params.selected {
-            Color::Default
-        } else {
-            Color::Muted
-        }))
-        .into_any()
+        h_flex()
+            .gap_2()
+            .child(
+                h_flex()
+                    .gap_1()
+                    .map(|this| {
+                        if let Some(icon) = icon {
+                            this.child(Icon::new(icon).color(icon_color))
+                        } else {
+                            this
+                        }
+                    })
+                    .map(|this| {
+                        if let Some(btn) = rerun_btn {
+                            this.child(btn)
+                        } else {
+                            this
+                        }
+                    }),
+            )
+            .child(Label::new(title).color(if params.selected {
+                Color::Default
+            } else {
+                Color::Muted
+            }))
+            .into_any()
     }
 
     fn telemetry_event_text(&self) -> Option<&'static str> {
