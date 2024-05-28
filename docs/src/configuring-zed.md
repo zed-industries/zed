@@ -715,7 +715,7 @@ To interpret all `.c` files as C++, files called `MyLockFile` as TOML and files 
 
 ### Indent Guides
 
-- Description: Whether or not to show indent guides (requires Zed `0.138.0`). Indent guides can be configured separately for each language.
+- Description: Configuration related to indent guides (requires Zed `0.138.0`). Indent guides can be configured separately for each language.
 - Setting: `indent_guides`
 - Default:
 
