@@ -175,6 +175,7 @@ impl Project {
             Some(settings.blinking),
             settings.alternate_scroll,
             settings.max_scroll_history_lines,
+            settings.cursor_style,
             window,
             completion_tx,
         )

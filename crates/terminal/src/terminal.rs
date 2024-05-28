@@ -18,7 +18,9 @@ use alacritty_terminal::{
         Config, RenderableCursor, TermMode,
     },
     tty::{self, setup_env},
-    vte::ansi::{ClearMode, Handler, NamedPrivateMode, PrivateMode, Rgb},
+    vte::ansi::{
+        ClearMode, CursorStyle as AlacCursorStyle, Handler, NamedPrivateMode, PrivateMode, Rgb,
+    },
     Term,
 };
 use anyhow::{bail, Result};
@@ -40,7 +42,7 @@ use serde::{Deserialize, Serialize};
 use settings::Settings;
 use smol::channel::{Receiver, Sender};
 use task::TaskId;
-use terminal_settings::{AlternateScroll, Shell, TerminalBlink, TerminalSettings};
+use terminal_settings::{AlternateScroll, CursorStyle, Shell, TerminalBlink, TerminalSettings};
 use theme::{ActiveTheme, Theme};
 use util::truncate_and_trailoff;
 
@@ -305,6 +307,7 @@ impl TerminalBuilder {
         blink_settings: Option<TerminalBlink>,
         alternate_scroll: AlternateScroll,
         max_scroll_history_lines: Option<usize>,
+        cursor_style: CursorStyle,
         window: AnyWindowHandle,
         completion_tx: Sender<()>,
     ) -> Result<TerminalBuilder> {
@@ -346,8 +349,12 @@ impl TerminalBuilder {
                 .unwrap_or(DEFAULT_SCROLL_HISTORY_LINES)
                 .min(MAX_SCROLL_HISTORY_LINES)
         };
+
+        let default_cursor_style = AlacCursorStyle::from(cursor_style);
+
         let config = Config {
             scrolling_history,
+            default_cursor_style,
             ..Config::default()
         };
 

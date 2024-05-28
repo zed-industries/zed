@@ -1171,6 +1171,7 @@ These values take in the same options as the root-level settings with the same n
   "alternate_scroll": "off",
   "blinking": "terminal_controlled",
   "copy_on_select": false,
+  "cursor_style": "block",
   "env": {},
   "font_family": null,
   "font_features": null,
@@ -1248,6 +1249,54 @@ These values take in the same options as the root-level settings with the same n
 **Options**
 
 `boolean` values
+
+### Cursor Style
+
+- Description: Set the cursor style in the terminal.
+- Setting: `cursor_style`
+- Default: `block`
+
+**Options**
+
+1. Cursor is a block like `█`.
+
+```json
+{
+  "cursor_style": "block"
+}
+```
+
+2. Cursor is an underscore like `_`.
+
+```json
+{
+  "cursor_style": "underline"
+}
+```
+
+3. Cursor is a vertical bar like `⎸`.
+
+```json
+{
+  "cursor_style": "beam"
+}
+```
+
+4. Cursor is a box like `▯`.
+
+```json
+{
+  "cursor_style": "hollow_block"
+}
+```
+
+5. Invisible cursor.
+
+```json
+{
+  "cursor_style": "hidden"
+}
+```
 
 ### Env
 
