@@ -4,7 +4,10 @@ use crate::stdio::TerminalOutput;
 use crate::ExecutionId;
 use anyhow::Result;
 use gpui::{img, AnyElement, FontWeight, ImageData, Render, View};
+use runtimelib::datatable::TableSchema;
+use runtimelib::media::datatable::TabularDataResource;
 use runtimelib::{ExecutionState, JupyterMessageContent, MimeType};
+use serde_json::Value;
 use ui::{div, prelude::*, v_flex, IntoElement, Styled, ViewContext};
 
 pub struct ImageView {
@@ -58,6 +61,7 @@ pub enum OutputType {
         traceback: TerminalOutput,
     },
     Message(String),
+    Table(TableView),
 }
 
 pub trait LineHeight: Sized {
@@ -67,12 +71,118 @@ pub trait LineHeight: Sized {
 fn rank_mime_type(mimetype: &MimeType) -> usize {
     match mimetype {
         // SVG Rendering is incomplete so we don't show it
+        MimeType::DataTable(_) => 6,
         // MimeType::Svg(_) => 5,
         MimeType::Png(_) => 4,
         MimeType::Jpeg(_) => 3,
         MimeType::Markdown(_) => 2,
         MimeType::Plain(_) => 1,
         _ => 0,
+    }
+}
+
+pub struct TableView {
+    pub table: TabularDataResource,
+}
+
+impl TableView {
+    pub fn render(&self, cx: &ViewContext<ExecutionView>) -> AnyElement {
+        let data = match &self.table.data {
+            Some(data) => data,
+            None => return div().into_any_element(),
+        };
+
+        // todo!(): compute the width of each column by finding the widest cell in each column
+
+        let mut headings = serde_json::Map::new();
+        for field in &self.table.schema.fields {
+            headings.insert(field.name.clone(), Value::String(field.name.clone()));
+        }
+        let header = self.render_row(&self.table.schema, true, &Value::Object(headings), cx);
+
+        let body = data
+            .iter()
+            .map(|row| self.render_row(&self.table.schema, false, &row, cx));
+
+        v_flex()
+            .w_full()
+            .child(header)
+            .children(body)
+            .into_any_element()
+    }
+
+    pub fn render_row(
+        &self,
+        schema: &TableSchema,
+        is_header: bool,
+        row: &Value,
+        cx: &ViewContext<ExecutionView>,
+    ) -> AnyElement {
+        let theme = cx.theme();
+
+        let row_cells = schema
+            .fields
+            .iter()
+            .map(|field| {
+                let container = match field.field_type {
+                    runtimelib::datatable::FieldType::String => div(),
+
+                    runtimelib::datatable::FieldType::Number
+                    | runtimelib::datatable::FieldType::Integer
+                    | runtimelib::datatable::FieldType::Date
+                    | runtimelib::datatable::FieldType::Time
+                    | runtimelib::datatable::FieldType::Datetime
+                    | runtimelib::datatable::FieldType::Year
+                    | runtimelib::datatable::FieldType::Duration
+                    | runtimelib::datatable::FieldType::Yearmonth => v_flex().items_end(),
+
+                    _ => div(),
+                };
+
+                let value = match row.get(&field.name) {
+                    Some(Value::String(s)) => s.clone(),
+                    Some(Value::Number(n)) => n.to_string(),
+                    Some(Value::Bool(b)) => b.to_string(),
+                    Some(Value::Array(arr)) => format!("{:?}", arr),
+                    Some(Value::Object(obj)) => format!("{:?}", obj),
+                    Some(Value::Null) | None => String::new(),
+                };
+
+                let mut cell = container
+                    .w_full()
+                    .child(value)
+                    .px_2()
+                    .py_1()
+                    .border_color(theme.colors().border);
+
+                if is_header {
+                    cell = cell.border_2().bg(theme.colors().border_focused)
+                } else {
+                    cell = cell.border_1()
+                }
+                cell
+            })
+            .collect::<Vec<_>>();
+
+        h_flex().children(row_cells).into_any_element()
+    }
+
+    pub fn num_rows(&self) -> usize {
+        match &self.table.data {
+            Some(data) => data.len(),
+            // We don't support Path based data sources
+            None => 0,
+        }
+    }
+}
+
+impl LineHeight for TableView {
+    fn num_lines(&self, _cx: &mut WindowContext) -> u8 {
+        // Given that each cell has both `py_1` and a border, we have to estimate
+        // a reasonable size to add on, then round up.
+        let row_heights = (self.num_rows() as f32 * 1.2) + 1.0;
+
+        (row_heights as u8).saturating_add(2)
     }
 }
 
@@ -86,6 +196,7 @@ impl OutputType {
             Self::Stream(stdio) => Some(stdio.render(cx)),
             Self::Image(image) => Some(image.render(cx)),
             Self::Message(message) => Some(div().child(message.clone()).into_any_element()),
+            Self::Table(table) => Some(table.render(cx)),
             Self::ErrorOutput {
                 ename,
                 evalue,
@@ -105,6 +216,7 @@ impl LineHeight for OutputType {
             Self::Stream(stdio) => stdio.num_lines(cx),
             Self::Image(image) => image.num_lines(cx),
             Self::Message(message) => message.lines().count() as u8,
+            Self::Table(table) => table.num_lines(cx),
             Self::ErrorOutput {
                 ename,
                 evalue,
@@ -161,10 +273,6 @@ pub struct ExecutionView {
     pub execution_id: ExecutionId,
     pub outputs: Vec<OutputType>,
     pub status: ExecutionStatus,
-}
-
-pub struct SvgText {
-    pub text: String,
 }
 
 pub fn svg_to_vec(text: &str, scale: f32) -> Result<OutputType> {
@@ -241,6 +349,9 @@ impl ExecutionView {
                             }
                         }
                     }
+                    Some(MimeType::DataTable(data)) => OutputType::Table(TableView {
+                        table: data.clone(),
+                    }),
                     // Any other media types are not supported
                     _ => return,
                 }
@@ -263,6 +374,9 @@ impl ExecutionView {
                             }
                         }
                     }
+                    Some(MimeType::DataTable(data)) => OutputType::Table(TableView {
+                        table: data.clone(),
+                    }),
                     // Any other media types are not supported
                     _ => return,
                 }
