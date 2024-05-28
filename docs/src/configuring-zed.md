@@ -713,6 +713,74 @@ To interpret all `.c` files as C++, files called `MyLockFile` as TOML and files 
 }
 ```
 
+### Indent Guides
+
+- Description: Configuration related to indent guides (requires Zed `0.138.0`). Indent guides can be configured separately for each language.
+- Setting: `indent_guides`
+- Default:
+
+```json
+{
+  "indent_guides": {
+    "enabled": true,
+    "line_width": 1,
+    "coloring": "fixed",
+    "background_coloring": "disabled"
+  }
+}
+```
+
+**Options**
+
+1. Disable indent guides
+
+```json
+{
+  "indent_guides": {
+    "enabled": false
+  }
+}
+```
+
+2. Enable indent guides for a specific language.
+
+```json
+{
+  "languages": {
+    "Python": {
+      "indent_guides": {
+        "enabled": true
+      }
+    }
+  }
+}
+```
+
+3. Enable indent aware coloring ("rainbow indentation").
+The colors that are used for different indentation levels are defined in the theme (theme key: `accents`). They can be customized by using theme overrides.
+
+```json
+{
+  "indent_guides": {
+    "enabled": true,
+    "coloring": "indent_aware"
+  }
+}
+```
+
+4. Enable indent aware background coloring ("rainbow indentation").
+The colors that are used for different indentation levels are defined in the theme (theme key: `accents`). They can be customized by using theme overrides.
+
+```json
+{
+  "indent_guides": {
+    "enabled": true,
+    "coloring": "indent_aware",
+    "background_coloring": "indent_aware"
+  }
+}
+```
+
 ### Inline Git Blame
 
 - Description: Whether or not to show git blame information inline, on the currently focused line (requires Zed `0.132.0`).
