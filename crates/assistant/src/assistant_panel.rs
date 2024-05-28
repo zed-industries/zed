@@ -1,4 +1,5 @@
 use crate::prompts::{generate_content_prompt, PromptLibrary, PromptManager};
+use crate::slash_command::search_command;
 use crate::{
     assistant_settings::{AssistantDockPosition, AssistantSettings, ZedDotDevModel},
     codegen::{self, Codegen, CodegenKind},
@@ -208,6 +209,7 @@ impl AssistantPanel {
                     );
                     slash_command_registry.register_command(active_command::ActiveSlashCommand);
                     slash_command_registry.register_command(project_command::ProjectSlashCommand);
+                    slash_command_registry.register_command(search_command::SearchSlashCommand);
 
                     Self {
                         workspace: workspace_handle,
