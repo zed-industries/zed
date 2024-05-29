@@ -8358,6 +8358,37 @@ dependencies = [
 ]
 
 [[package]]
+name = "repl"
+version = "0.1.0"
+dependencies = [
+ "alacritty_terminal",
+ "anyhow",
+ "base64 0.13.1",
+ "collections",
+ "editor",
+ "env_logger",
+ "futures 0.3.28",
+ "gpui",
+ "http 0.1.0",
+ "image",
+ "language",
+ "log",
+ "project",
+ "runtimelib",
+ "serde",
+ "serde_json",
+ "settings",
+ "smol",
+ "terminal_view",
+ "theme",
+ "tokio",
+ "ui",
+ "util",
+ "uuid",
+ "workspace",
+]
+
+[[package]]
 name = "reqwest"
 version = "0.11.20"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -8624,37 +8655,6 @@ dependencies = [
  "tokio",
  "uuid",
  "zeromq",
-]
-
-[[package]]
-name = "runtimes"
-version = "0.1.0"
-dependencies = [
- "alacritty_terminal",
- "anyhow",
- "base64 0.13.1",
- "collections",
- "editor",
- "env_logger",
- "futures 0.3.28",
- "gpui",
- "http 0.1.0",
- "image",
- "language",
- "log",
- "project",
- "runtimelib",
- "serde",
- "serde_json",
- "settings",
- "smol",
- "terminal_view",
- "theme",
- "tokio",
- "ui",
- "util",
- "uuid",
- "workspace",
 ]
 
 [[package]]
@@ -13345,8 +13345,8 @@ dependencies = [
  "quick_action_bar",
  "recent_projects",
  "release_channel",
+ "repl",
  "rope",
- "runtimes",
  "search",
  "serde",
  "serde_json",

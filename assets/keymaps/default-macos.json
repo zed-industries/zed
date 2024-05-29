@@ -217,8 +217,7 @@
     "context": "Editor",
     "bindings": {
       // Bindings for running code in the editor
-      "cmd-enter": "runtimes::Run"
-      // "cmd-enter": "editor::NewlineAbove"
+      "cmd-enter": "repl::Run"
     }
   },
   {

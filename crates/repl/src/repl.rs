@@ -12,7 +12,6 @@ use futures::{
 };
 use gpui::{actions, AppContext, Context, EntityId, Global, Model, ModelContext, Task, WeakView};
 use gpui::{Entity, View};
-use kernelspecs::{get_runtimes, RunningKernel, Runtime};
 use language::Point;
 use outputs::{ExecutionStatus, ExecutionView, LineHeight as _};
 use project::Fs;
@@ -24,17 +23,19 @@ use tokio_kernel::{ExecutionId, Request, Update};
 use ui::prelude::*;
 use workspace::Workspace;
 
-mod kernelspecs;
 mod outputs;
+mod runtimes;
 mod stdio;
 mod tokio_kernel;
 
-actions!(runtimes, [Run]);
+use runtimes::{get_runtimes, RunningKernel, Runtime};
+
+actions!(repl, [Run]);
 
 #[derive(Clone)]
-pub struct RuntimeGlobal(Model<RuntimeManager>);
+pub struct RuntimeManagerGlobal(Model<RuntimeManager>);
 
-impl Global for RuntimeGlobal {}
+impl Global for RuntimeManagerGlobal {}
 
 pub fn init(fs: Arc<dyn Fs>, cx: &mut AppContext) {
     let runtime_manager = cx.new_model(|cx| RuntimeManager::new(fs.clone(), cx));
@@ -190,10 +191,8 @@ impl RuntimeManager {
                             allow_stdin: false,
                             silent: false,
                             store_history: true,
-                            user_expressions: None,
                             stop_on_error: true,
-                            // TODO(runtimelib): set up Default::default() for the rest of the fields
-                            // ..Default::default()
+                            ..Default::default()
                         },
                     ),
                     iopub_sender: tx,
@@ -205,12 +204,12 @@ impl RuntimeManager {
     }
 
     pub fn global(cx: &AppContext) -> Option<Model<Self>> {
-        cx.try_global::<RuntimeGlobal>()
-            .map(|model| model.0.clone())
+        cx.try_global::<RuntimeManagerGlobal>()
+            .map(|runtime_manager| runtime_manager.0.clone())
     }
 
-    pub fn set_global(runtime: Model<Self>, cx: &mut AppContext) {
-        cx.set_global(RuntimeGlobal(runtime));
+    pub fn set_global(runtime_manager: Model<Self>, cx: &mut AppContext) {
+        cx.set_global(RuntimeManagerGlobal(runtime_manager));
     }
 }
 

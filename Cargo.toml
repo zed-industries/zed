@@ -72,8 +72,8 @@ members = [
     "crates/refineable",
     "crates/refineable/derive_refineable",
     "crates/release_channel",
-    "crates/runtimes",
     "crates/dev_server_projects",
+    "crates/repl",
     "crates/rich_text",
     "crates/rope",
     "crates/rpc",
@@ -219,10 +219,10 @@ quick_action_bar = { path = "crates/quick_action_bar" }
 recent_projects = { path = "crates/recent_projects" }
 release_channel = { path = "crates/release_channel" }
 dev_server_projects = { path = "crates/dev_server_projects" }
+repl = { path = "crates/repl" }
 rich_text = { path = "crates/rich_text" }
 rope = { path = "crates/rope" }
 rpc = { path = "crates/rpc" }
-runtimes = { path = "crates/runtimes" }
 rustdoc_to_markdown = { path = "crates/rustdoc_to_markdown" }
 task = { path = "crates/task" }
 tasks_ui = { path = "crates/tasks_ui" }
