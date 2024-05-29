@@ -36,3 +36,53 @@ pub fn convert_rustdoc_to_markdown(mut html: impl Read) -> Result<String> {
 
     Ok(markdown)
 }
+
+#[cfg(test)]
+mod tests {
+    use indoc::indoc;
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn test_code_blocks() {
+        let html = indoc! {r#"
+            <pre class="rust rust-example-rendered"><code><span class="kw">use </span>axum::extract::{Path, Query, Json};
+            <span class="kw">use </span>std::collections::HashMap;
+
+            <span class="comment">// `Path` gives you the path parameters and deserializes them.
+            </span><span class="kw">async fn </span>path(Path(user_id): Path&lt;u32&gt;) {}
+
+            <span class="comment">// `Query` gives you the query parameters and deserializes them.
+            </span><span class="kw">async fn </span>query(Query(params): Query&lt;HashMap&lt;String, String&gt;&gt;) {}
+
+            <span class="comment">// Buffer the request body and deserialize it as JSON into a
+            // `serde_json::Value`. `Json` supports any type that implements
+            // `serde::Deserialize`.
+            </span><span class="kw">async fn </span>json(Json(payload): Json&lt;serde_json::Value&gt;) {}</code></pre>
+        "#};
+        let expected = indoc! {"
+            ```rs
+            use axum::extract::{Path, Query, Json};
+            use std::collections::HashMap;
+
+            // `Path` gives you the path parameters and deserializes them.
+            async fn path(Path(user_id): Path<u32>) {}
+
+            // `Query` gives you the query parameters and deserializes them.
+            async fn query(Query(params): Query<HashMap<String, String>>) {}
+
+            // Buffer the request body and deserialize it as JSON into a
+            // `serde_json::Value`. `Json` supports any type that implements
+            // `serde::Deserialize`.
+            async fn json(Json(payload): Json<serde_json::Value>) {}
+            ```
+        "}
+        .trim();
+
+        assert_eq!(
+            convert_rustdoc_to_markdown(html.as_bytes()).unwrap(),
+            expected
+        )
+    }
+}
