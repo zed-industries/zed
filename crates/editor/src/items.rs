@@ -625,17 +625,19 @@ impl Item for Editor {
             Some(util::truncate_and_trailoff(&description, MAX_TAB_TITLE_LEN))
         });
 
-        let mut icon = None;
-        if let Some(path) = path_for_buffer(&self.buffer, params.detail.unwrap_or(0), true, cx) {
-            icon = FileIcons::get_icon(&path, cx);
-        }
+        let icon = if ItemSettings::get_global(cx).file_icons {
+            params.detail.and_then(|detail| {
+                let path = path_for_buffer(&self.buffer, detail, true, cx)?;
+                FileIcons::get_icon(&path, cx)
+            })
+        } else {
+            None
+        };
 
         h_flex()
             .gap_2()
-            .when(ItemSettings::get_global(cx).file_icons, |this| {
-                this.when_some(icon, |this, icon| {
-                    this.child(Icon::from_path(icon.to_string()).color(label_color))
-                })
+            .when_some(icon, |this, icon| {
+                this.child(Icon::from_path(icon.to_string()).color(label_color))
             })
             .child(
                 Label::new(self.title(cx).to_string())
