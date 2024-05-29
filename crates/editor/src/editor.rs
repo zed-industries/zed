@@ -9958,17 +9958,15 @@ impl Editor {
             let project = project_handle.read(cx);
 
             let selection = self.selections.newest::<Point>(cx);
+            let selection_range = selection.range();
 
             let (buffer, selection) = if let Some(buffer) = self.buffer().read(cx).as_singleton() {
-                (
-                    buffer,
-                    selection.range().start.row..selection.range().end.row,
-                )
+                (buffer, selection_range.start.row..selection_range.end.row)
             } else {
                 let buffer_ranges = self
                     .buffer()
                     .read(cx)
-                    .range_to_buffer_ranges(selection.range(), cx);
+                    .range_to_buffer_ranges(selection_range, cx);
 
                 let (buffer, range, _) = if selection.reversed {
                     buffer_ranges.first()
