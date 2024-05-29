@@ -10,6 +10,26 @@ use runtimelib::{ExecutionState, JupyterMessageContent, MimeBundle, MimeType};
 use serde_json::Value;
 use ui::{div, prelude::*, v_flex, IntoElement, Styled, ViewContext};
 
+// Given these outputs are destined for the editor with the block decorations API, all of them must report
+// how many lines they will take up in the editor.
+pub trait LineHeight: Sized {
+    fn num_lines(&self, cx: &mut WindowContext) -> u8;
+}
+
+// When deciding what to render from a collection of mediatypes, we need to rank them in order of importance
+fn rank_mime_type(mimetype: &MimeType) -> usize {
+    match mimetype {
+        MimeType::DataTable(_) => 6,
+        MimeType::Png(_) => 4,
+        MimeType::Jpeg(_) => 3,
+        MimeType::Markdown(_) => 2,
+        MimeType::Plain(_) => 1,
+        // All other media types are not supported in Zed at this time
+        _ => 0,
+    }
+}
+
+/// ImageView renders an image inline in an editor, adapting to the line height to fit the image.
 pub struct ImageView {
     height: u32,
     width: u32,
@@ -36,6 +56,24 @@ impl ImageView {
             .child(img(image))
             .into_any_element()
     }
+
+    fn from(base64_encoded_data: &str) -> Result<Self> {
+        let bytes = base64::decode(base64_encoded_data)?;
+
+        let format = image::guess_format(&bytes)?;
+        let data = image::load_from_memory_with_format(&bytes, format)?.into_bgra8();
+
+        let height = data.height();
+        let width = data.width();
+
+        let gpui_image_data = ImageData::new(data);
+
+        return Ok(ImageView {
+            height,
+            width,
+            image: Arc::new(gpui_image_data),
+        });
+    }
 }
 
 impl LineHeight for ImageView {
@@ -51,36 +89,8 @@ impl LineHeight for ImageView {
     }
 }
 
-pub enum OutputType {
-    Plain(TerminalOutput),
-    Stream(TerminalOutput),
-    Image(ImageView),
-    ErrorOutput {
-        ename: String,
-        evalue: String,
-        traceback: TerminalOutput,
-    },
-    Message(String),
-    Table(TableView),
-}
-
-pub trait LineHeight: Sized {
-    fn num_lines(&self, cx: &mut WindowContext) -> u8;
-}
-
-fn rank_mime_type(mimetype: &MimeType) -> usize {
-    match mimetype {
-        MimeType::DataTable(_) => 6,
-        // SVG Rendering is incomplete so we don't show it
-        // MimeType::Svg(_) => 5,
-        MimeType::Png(_) => 4,
-        MimeType::Jpeg(_) => 3,
-        MimeType::Markdown(_) => 2,
-        MimeType::Plain(_) => 1,
-        _ => 0,
-    }
-}
-
+/// TableView renders a static table inline in a buffer.
+/// It uses the https://specs.frictionlessdata.io/tabular-data-resource/ specification for data interchange.
 pub struct TableView {
     pub table: TabularDataResource,
 }
@@ -166,24 +176,72 @@ impl TableView {
 
         h_flex().children(row_cells).into_any_element()
     }
-
-    pub fn num_rows(&self) -> usize {
-        match &self.table.data {
-            Some(data) => data.len(),
-            // We don't support Path based data sources
-            None => 0,
-        }
-    }
 }
 
 impl LineHeight for TableView {
     fn num_lines(&self, _cx: &mut WindowContext) -> u8 {
+        let num_rows = match &self.table.data {
+            Some(data) => data.len(),
+            // We don't support Path based data sources
+            None => 0,
+        };
+
         // Given that each cell has both `py_1` and a border, we have to estimate
         // a reasonable size to add on, then round up.
-        let row_heights = (self.num_rows() as f32 * 1.2) + 1.0;
+        let row_heights = (num_rows as f32 * 1.2) + 1.0;
 
-        (row_heights as u8).saturating_add(2)
+        (row_heights as u8).saturating_add(2) // Header + spacing
     }
+}
+
+// Userspace error from the kernel
+pub struct ErrorView {
+    pub ename: String,
+    pub evalue: String,
+    pub traceback: TerminalOutput,
+}
+
+impl ErrorView {
+    fn render(&self, cx: &ViewContext<ExecutionView>) -> Option<AnyElement> {
+        let theme = cx.theme();
+
+        let colors = cx.theme().colors();
+
+        Some(
+            v_flex()
+                .w_full()
+                .bg(colors.background)
+                .p_4()
+                .border_l_1()
+                .border_color(theme.status().error_border)
+                .child(
+                    h_flex()
+                        .font_weight(FontWeight::BOLD)
+                        .child(format!("{}: {}", self.ename, self.evalue)),
+                )
+                .child(self.traceback.render(cx))
+                .into_any_element(),
+        )
+    }
+}
+
+impl LineHeight for ErrorView {
+    fn num_lines(&self, cx: &mut WindowContext) -> u8 {
+        let mut height: u8 = 0;
+        height = height.saturating_add(self.ename.lines().count() as u8);
+        height = height.saturating_add(self.evalue.lines().count() as u8);
+        height = height.saturating_add(self.traceback.num_lines(cx));
+        height
+    }
+}
+
+pub enum OutputType {
+    Plain(TerminalOutput),
+    Stream(TerminalOutput),
+    Image(ImageView),
+    ErrorOutput(ErrorView),
+    Message(String),
+    Table(TableView),
 }
 
 impl OutputType {
@@ -197,11 +255,7 @@ impl OutputType {
             Self::Image(image) => Some(image.render(cx)),
             Self::Message(message) => Some(div().child(message.clone()).into_any_element()),
             Self::Table(table) => Some(table.render(cx)),
-            Self::ErrorOutput {
-                ename,
-                evalue,
-                traceback,
-            } => render_error_output(ename, evalue, traceback, cx),
+            Self::ErrorOutput(error_view) => error_view.render(cx),
         };
 
         el
@@ -217,46 +271,27 @@ impl LineHeight for OutputType {
             Self::Image(image) => image.num_lines(cx),
             Self::Message(message) => message.lines().count() as u8,
             Self::Table(table) => table.num_lines(cx),
-            Self::ErrorOutput {
-                ename,
-                evalue,
-                traceback,
-            } => {
-                let mut height: u8 = 0;
-                height = height.saturating_add(ename.lines().count() as u8);
-                height = height.saturating_add(evalue.lines().count() as u8);
-                height = height.saturating_add(traceback.num_lines(cx));
-                height
-            }
+            Self::ErrorOutput(error_view) => error_view.num_lines(cx),
         }
     }
 }
 
-fn render_error_output(
-    ename: &String,
-    evalue: &String,
-    traceback: &TerminalOutput,
-    cx: &ViewContext<ExecutionView>,
-) -> Option<AnyElement> {
-    let theme = cx.theme();
-
-    let colors = cx.theme().colors();
-
-    Some(
-        v_flex()
-            .w_full()
-            .bg(colors.background)
-            .p_4()
-            .border_l_1()
-            .border_color(theme.status().error_border)
-            .child(
-                h_flex()
-                    .font_weight(FontWeight::BOLD)
-                    .child(format!("{}: {}", ename, evalue)),
-            )
-            .child(traceback.render(cx))
-            .into_any_element(),
-    )
+impl From<&MimeBundle> for OutputType {
+    fn from(data: &MimeBundle) -> Self {
+        match data.richest(rank_mime_type) {
+            Some(MimeType::Plain(text)) => OutputType::Plain(TerminalOutput::from(text)),
+            Some(MimeType::Markdown(text)) => OutputType::Plain(TerminalOutput::from(text)),
+            Some(MimeType::Png(data)) | Some(MimeType::Jpeg(data)) => match ImageView::from(data) {
+                Ok(view) => OutputType::Image(view),
+                Err(error) => OutputType::Message(format!("Failed to load image: {}", error)),
+            },
+            Some(MimeType::DataTable(data)) => OutputType::Table(TableView {
+                table: data.clone(),
+            }),
+            // Any other media types are not supported
+            _ => OutputType::Message("Unsupported media type".to_string()),
+        }
+    }
 }
 
 #[derive(Default)]
@@ -273,74 +308,6 @@ pub struct ExecutionView {
     pub execution_id: ExecutionId,
     pub outputs: Vec<OutputType>,
     pub status: ExecutionStatus,
-}
-
-pub fn svg_to_vec(text: &str, scale: f32) -> Result<OutputType> {
-    let tree = usvg::Tree::from_data(text.as_bytes(), &usvg::Options::default())?;
-
-    let (height, width) = (tree.size().height() * scale, tree.size().width() * scale);
-
-    let mut pixmap = resvg::tiny_skia::Pixmap::new(width as u32, height as u32)
-        .ok_or(usvg::Error::InvalidSize)?;
-
-    let transform = tree.view_box().to_transform(
-        resvg::tiny_skia::Size::from_wh(width, height).ok_or(usvg::Error::InvalidSize)?,
-    );
-
-    resvg::render(&tree, transform, &mut pixmap.as_mut());
-
-    let data = image::load_from_memory_with_format(&pixmap.encode_png()?, image::ImageFormat::Png)?
-        .into_bgra8();
-
-    let gpui_image_data = ImageData::new(data);
-
-    return Ok(OutputType::Image(ImageView {
-        height: height as u32,
-        width: width as u32,
-        image: Arc::new(gpui_image_data),
-    }));
-}
-
-pub fn extract_image_output(base64_encoded_data: &str) -> Result<OutputType> {
-    let bytes = base64::decode(base64_encoded_data)?;
-
-    let format = image::guess_format(&bytes)?;
-    let data = image::load_from_memory_with_format(&bytes, format)?.into_bgra8();
-
-    let height = data.height();
-    let width = data.width();
-
-    let gpui_image_data = ImageData::new(data);
-
-    return Ok(OutputType::Image(ImageView {
-        height,
-        width,
-        image: Arc::new(gpui_image_data),
-    }));
-}
-
-impl From<&MimeBundle> for OutputType {
-    fn from(data: &MimeBundle) -> Self {
-        match data.richest(rank_mime_type) {
-            Some(MimeType::Plain(text)) => OutputType::Plain(TerminalOutput::from(text)),
-            Some(MimeType::Markdown(text)) => OutputType::Plain(TerminalOutput::from(text)),
-            Some(MimeType::Svg(text)) => match svg_to_vec(text, 1.0) {
-                Ok(output) => output,
-                Err(error) => OutputType::Message(format!("Failed to load image: {}", error)),
-            },
-            Some(MimeType::Png(data)) | Some(MimeType::Jpeg(data)) => {
-                match extract_image_output(&data) {
-                    Ok(output) => output,
-                    Err(error) => OutputType::Message(format!("Failed to load image: {}", error)),
-                }
-            }
-            Some(MimeType::DataTable(data)) => OutputType::Table(TableView {
-                table: data.clone(),
-            }),
-            // Any other media types are not supported
-            _ => OutputType::Message("Unsupported media type".to_string()),
-        }
-    }
 }
 
 impl ExecutionView {
@@ -369,11 +336,11 @@ impl ExecutionView {
                 let mut terminal = TerminalOutput::new();
                 terminal.append_text(&result.traceback.join("\n"));
 
-                OutputType::ErrorOutput {
+                OutputType::ErrorOutput(ErrorView {
                     ename: result.ename.clone(),
                     evalue: result.evalue.clone(),
                     traceback: terminal,
-                }
+                })
             }
             JupyterMessageContent::Status(status) => {
                 match status.execution_state {
