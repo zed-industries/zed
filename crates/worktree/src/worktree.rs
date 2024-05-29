@@ -78,7 +78,7 @@ pub const FS_WATCH_LATENCY: Duration = Duration::from_millis(100);
 #[cfg(not(feature = "test-support"))]
 pub const FS_WATCH_LATENCY: Duration = Duration::from_millis(100);
 
-const GIT_STATUS_UPDATE_BATCH_SIZE: usize = 256;
+const GIT_STATUS_UPDATE_BATCH_SIZE: usize = 1024;
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug, Hash, PartialOrd, Ord)]
 pub struct WorktreeId(usize);
@@ -4422,7 +4422,7 @@ impl BackgroundScanner {
                         loop {
                             select_biased! {
                                 // Process any path refresh requests before moving on to process
-                                // the queue of ignore statuses.
+                                // the queue of git statuses.
                                 request = self.scan_requests_rx.recv().fuse() => {
                                     let Ok(request) = request else { break };
                                     if !self.process_scan_request(request, true).await {
