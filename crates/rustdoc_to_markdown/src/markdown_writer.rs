@@ -1,5 +1,9 @@
 use std::collections::VecDeque;
 
+use markup5ever_rcdom::{Handle, NodeData};
+
+use crate::{walk_node, Visitor};
+
 pub struct MarkdownWriter {
     current_tag_stack: VecDeque<String>,
     /// The Markdown output.
@@ -50,5 +54,40 @@ impl MarkdownWriter {
     /// Appends a newline to the end of the Markdown output.
     pub fn push_newline(&mut self) {
         self.push_str("\n");
+    }
+}
+
+impl Visitor for MarkdownWriter {
+    type Error = ();
+
+    fn visit_node(&mut self, node: &Handle) -> Result<(), Self::Error> {
+        let mut tag_name = String::new();
+
+        match node.data {
+            NodeData::Document
+            | NodeData::Doctype { .. }
+            | NodeData::ProcessingInstruction { .. }
+            | NodeData::Comment { .. } => {}
+            NodeData::Element { ref name, .. } => {
+                tag_name = name.local.to_string();
+            }
+            NodeData::Text { ref contents } => {
+                let text = contents.borrow().to_string();
+
+                if self.is_inside_heading() {
+                    self.push_str(&format!("# {text}"));
+                    self.push_newline();
+                } else {
+                    self.push_str(&format!("{text}"));
+                    self.push_newline();
+                }
+            }
+        }
+
+        self.push_tag(tag_name);
+        walk_node(self, node)?;
+        self.pop_tag();
+
+        Ok(())
     }
 }
