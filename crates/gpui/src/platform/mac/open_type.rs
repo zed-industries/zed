@@ -57,7 +57,9 @@ pub fn apply_features_and_fallbacks(
                 .map(|desc| {
                     CFArrayAppendValue(fallback_array, desc.as_concrete_TypeRef() as _);
                 });
-            CFRelease(default_fallbacks.as_concrete_TypeRef() as _);
+            // This func should be called right?
+            // But calling this will lead to a seg fault.
+            // CFRelease(default_fallbacks.as_concrete_TypeRef() as _);
         }
 
         let feature_array = generate_feature_array(features);
