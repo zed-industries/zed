@@ -76,7 +76,7 @@ pub struct ItemSettingsContent {
     ///
     /// Default: right
     close_position: Option<ClosePosition>,
-    /// Whether to show file icons in a tab.
+    /// Whether to show file icons in tabs.
     ///
     /// Default: true
     file_icons: Option<bool>,

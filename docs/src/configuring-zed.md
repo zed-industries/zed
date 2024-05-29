@@ -425,7 +425,7 @@ List of `string` values
 - Default: `false`
 
 ### File Icons
-- Description: Whether to show the file icons in tabs.
+- Description: Whether to show file icons in tabs.
 - Setting: `file_icons`
 - Default: `true`
 
