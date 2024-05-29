@@ -963,14 +963,10 @@ fn handle_nc_mouse_down_msg(
             HTMINBUTTON => state_ptr.state.borrow_mut().nc_button_pressed = Some(HTMINBUTTON),
             HTMAXBUTTON => state_ptr.state.borrow_mut().nc_button_pressed = Some(HTMAXBUTTON),
             HTCLOSE => state_ptr.state.borrow_mut().nc_button_pressed = Some(HTCLOSE),
-            _ => {
-                state_ptr.state.borrow_mut().nc_button_pressed = None;
-                return None;
-            }
+            _ => return None,
         };
         Some(0)
     } else {
-        state_ptr.state.borrow_mut().nc_button_pressed = None;
         None
     }
 }
