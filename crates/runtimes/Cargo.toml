@@ -27,8 +27,7 @@ language.workspace = true
 log.workspace = true
 project.workspace = true
 resvg = { version = "0.41.0", default-features = false }
-# runtimelib = "0.10.0"
-runtimelib = { path = "../../../../runtimed/runtimed/runtimelib" }
+runtimelib = "0.11.0"
 serde.workspace = true
 serde_json.workspace = true
 settings.workspace = true

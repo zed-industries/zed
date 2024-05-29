@@ -6,7 +6,7 @@ use anyhow::Result;
 use gpui::{img, AnyElement, FontWeight, ImageData, Render, View};
 use runtimelib::datatable::TableSchema;
 use runtimelib::media::datatable::TabularDataResource;
-use runtimelib::{ExecutionState, JupyterMessageContent, MimeType};
+use runtimelib::{ExecutionState, JupyterMessageContent, MimeBundle, MimeType};
 use serde_json::Value;
 use ui::{div, prelude::*, v_flex, IntoElement, Styled, ViewContext};
 
@@ -70,8 +70,8 @@ pub trait LineHeight: Sized {
 
 fn rank_mime_type(mimetype: &MimeType) -> usize {
     match mimetype {
-        // SVG Rendering is incomplete so we don't show it
         MimeType::DataTable(_) => 6,
+        // SVG Rendering is incomplete so we don't show it
         // MimeType::Svg(_) => 5,
         MimeType::Png(_) => 4,
         MimeType::Jpeg(_) => 3,
@@ -319,6 +319,30 @@ pub fn extract_image_output(base64_encoded_data: &str) -> Result<OutputType> {
     }));
 }
 
+impl From<&MimeBundle> for OutputType {
+    fn from(data: &MimeBundle) -> Self {
+        match data.richest(rank_mime_type) {
+            Some(MimeType::Plain(text)) => OutputType::Plain(TerminalOutput::from(text)),
+            Some(MimeType::Markdown(text)) => OutputType::Plain(TerminalOutput::from(text)),
+            Some(MimeType::Svg(text)) => match svg_to_vec(text, 1.0) {
+                Ok(output) => output,
+                Err(error) => OutputType::Message(format!("Failed to load image: {}", error)),
+            },
+            Some(MimeType::Png(data)) | Some(MimeType::Jpeg(data)) => {
+                match extract_image_output(&data) {
+                    Ok(output) => output,
+                    Err(error) => OutputType::Message(format!("Failed to load image: {}", error)),
+                }
+            }
+            Some(MimeType::DataTable(data)) => OutputType::Table(TableView {
+                table: data.clone(),
+            }),
+            // Any other media types are not supported
+            _ => OutputType::Message("Unsupported media type".to_string()),
+        }
+    }
+}
+
 impl ExecutionView {
     pub fn new(execution_id: ExecutionId, _cx: &mut ViewContext<Self>) -> Self {
         Self {
@@ -330,57 +354,9 @@ impl ExecutionView {
 
     /// Accept a Jupyter message belonging to this execution
     pub fn push_message(&mut self, message: &JupyterMessageContent, cx: &mut ViewContext<Self>) {
-        let output = match message {
-            JupyterMessageContent::ExecuteResult(result) => {
-                match result.data.richest(rank_mime_type) {
-                    Some(MimeType::Plain(text)) => OutputType::Plain(TerminalOutput::from(text)),
-                    Some(MimeType::Markdown(text)) => OutputType::Plain(TerminalOutput::from(text)),
-                    Some(MimeType::Svg(text)) => match svg_to_vec(text, 1.0) {
-                        Ok(output) => output,
-                        Err(error) => {
-                            OutputType::Message(format!("Failed to load image: {}", error))
-                        }
-                    },
-                    Some(MimeType::Png(data)) | Some(MimeType::Jpeg(data)) => {
-                        match extract_image_output(&data) {
-                            Ok(output) => output,
-                            Err(error) => {
-                                OutputType::Message(format!("Failed to load image: {}", error))
-                            }
-                        }
-                    }
-                    Some(MimeType::DataTable(data)) => OutputType::Table(TableView {
-                        table: data.clone(),
-                    }),
-                    // Any other media types are not supported
-                    _ => return,
-                }
-            }
-            JupyterMessageContent::DisplayData(result) => {
-                match result.data.richest(rank_mime_type) {
-                    Some(MimeType::Plain(text)) => OutputType::Plain(TerminalOutput::from(text)),
-                    Some(MimeType::Markdown(text)) => OutputType::Plain(TerminalOutput::from(text)),
-                    Some(MimeType::Svg(text)) => match svg_to_vec(text, 1.0) {
-                        Ok(output) => output,
-                        Err(error) => {
-                            OutputType::Message(format!("Failed to load image: {}", error))
-                        }
-                    },
-                    Some(MimeType::Png(data)) | Some(MimeType::Jpeg(data)) => {
-                        match extract_image_output(&data) {
-                            Ok(output) => output,
-                            Err(error) => {
-                                OutputType::Message(format!("Failed to load image: {}", error))
-                            }
-                        }
-                    }
-                    Some(MimeType::DataTable(data)) => OutputType::Table(TableView {
-                        table: data.clone(),
-                    }),
-                    // Any other media types are not supported
-                    _ => return,
-                }
-            }
+        let output: OutputType = match message {
+            JupyterMessageContent::ExecuteResult(result) => (&result.data).into(),
+            JupyterMessageContent::DisplayData(result) => (&result.data).into(),
             JupyterMessageContent::StreamContent(result) => {
                 // Previous stream data will combine together, handling colors, carriage returns, etc
                 if let Some(new_terminal) = self.apply_terminal_text(&result.text) {
