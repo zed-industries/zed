@@ -89,8 +89,10 @@ impl Project {
             path,
         });
 
-        let is_terminal = spawn_task.is_none() && (working_directory.as_ref().is_none())
-            || (working_directory.as_ref().unwrap().is_local());
+        let is_terminal = spawn_task.is_none()
+            && working_directory
+                .as_ref()
+                .map_or(true, |work_dir| work_dir.is_local());
         let settings = TerminalSettings::get(settings_location, cx);
         let python_settings = settings.detect_venv.clone();
         let (completion_tx, completion_rx) = bounded(1);
