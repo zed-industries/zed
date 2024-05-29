@@ -9,7 +9,7 @@ use gpui::{
 };
 use picker::{highlighted_match_with_paths::HighlightedText, Picker, PickerDelegate};
 use project::{Project, TaskSourceKind};
-use task::{ResolvedTask, TaskContext, TaskTemplate};
+use task::{ResolvedTask, TaskContext, TaskId, TaskTemplate};
 use ui::{
     div, h_flex, v_flex, ActiveTheme, Button, ButtonCommon, ButtonSize, Clickable, Color,
     FluentBuilder as _, Icon, IconButton, IconButtonShape, IconName, IconSize, IntoElement,
@@ -54,6 +54,9 @@ pub struct Rerun {
     /// Default: null
     #[serde(default)]
     pub use_new_terminal: Option<bool>,
+
+    /// If present, rerun the task with this ID, otherwise rerun the last task.
+    pub task_id: Option<TaskId>,
 }
 
 impl_actions!(task, [Rerun, Spawn]);
