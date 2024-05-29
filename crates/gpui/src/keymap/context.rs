@@ -344,7 +344,7 @@ const PRECEDENCE_EQ: u32 = 4;
 const PRECEDENCE_NOT: u32 = 5;
 
 fn is_identifier_char(c: char) -> bool {
-    c.is_alphanumeric() || c == '_' || c == '-'
+    c.is_alphanumeric() || c == '_' || c == '-' || c == '>' || c == '<'
 }
 
 fn skip_whitespace(source: &str) -> &str {
