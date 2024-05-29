@@ -1,8 +1,8 @@
-use crate::blame::Blame;
 use crate::GitHostingProviderRegistry;
+use crate::{blame::Blame, status::GitStatus};
 use anyhow::{Context, Result};
 use collections::HashMap;
-use git2::{BranchType, StatusShow};
+use git2::BranchType;
 use parking_lot::Mutex;
 use rope::Rope;
 use serde::{Deserialize, Serialize};
@@ -10,10 +10,9 @@ use std::{
     cmp::Ordering,
     path::{Component, Path, PathBuf},
     sync::Arc,
-    time::SystemTime,
 };
-use sum_tree::{MapSeekTarget, TreeMap};
-use util::{paths::PathExt, ResultExt};
+use sum_tree::MapSeekTarget;
+use util::ResultExt;
 
 pub use git2::Repository as LibGitRepository;
 
@@ -39,23 +38,11 @@ pub trait GitRepository: Send {
     /// Returns the SHA of the current HEAD.
     fn head_sha(&self) -> Option<String>;
 
-    /// Get the statuses of all of the files in the index that start with the given
-    /// path and have changes with respect to the HEAD commit. This is fast because
-    /// the index stores hashes of trees, so that unchanged directories can be skipped.
-    fn staged_statuses(&self, path_prefix: &Path) -> TreeMap<RepoPath, GitFileStatus>;
+    fn statuses(&self, path_prefix: &Path) -> Result<GitStatus>;
 
-    /// Get the status of a given file in the working directory with respect to
-    /// the index. In the common case, when there are no changes, this only requires
-    /// an index lookup. The index stores the mtime of each file when it was added,
-    /// so there's no work to do if the mtime matches.
-    fn unstaged_status(&self, path: &RepoPath, mtime: SystemTime) -> Option<GitFileStatus>;
-
-    /// Get the status of a given file in the working directory with respect to
-    /// the HEAD commit. In the common case, when there are no changes, this only
-    /// requires an index lookup and blob comparison between the index and the HEAD
-    /// commit. The index stores the mtime of each file when it was added, so there's
-    /// no need to consider the working directory file if the mtime matches.
-    fn status(&self, path: &RepoPath, mtime: SystemTime) -> Option<GitFileStatus>;
+    fn status(&self, path: &Path) -> Option<GitFileStatus> {
+        Some(self.statuses(path).ok()?.entries.first()?.1)
+    }
 
     fn branches(&self) -> Result<Vec<Branch>>;
     fn change_branch(&self, _: &str) -> Result<()>;
@@ -137,65 +124,12 @@ impl GitRepository for RealGitRepository {
         head.target().map(|oid| oid.to_string())
     }
 
-    fn staged_statuses(&self, path_prefix: &Path) -> TreeMap<RepoPath, GitFileStatus> {
-        let mut map = TreeMap::default();
-
-        let mut options = git2::StatusOptions::new();
-        options.pathspec(path_prefix);
-        options.show(StatusShow::Index);
-
-        if let Some(statuses) = self.repository.statuses(Some(&mut options)).log_err() {
-            for status in statuses.iter() {
-                let path = RepoPath(PathBuf::try_from_bytes(status.path_bytes()).unwrap());
-                let status = status.status();
-                if !status.contains(git2::Status::IGNORED) {
-                    if let Some(status) = read_status(status) {
-                        map.insert(path, status)
-                    }
-                }
-            }
-        }
-        map
-    }
-
-    fn unstaged_status(&self, path: &RepoPath, mtime: SystemTime) -> Option<GitFileStatus> {
-        // If the file has not changed since it was added to the index, then
-        // there can't be any changes.
-        if matches_index(&self.repository, path, mtime) {
-            return None;
-        }
-
-        let mut options = git2::StatusOptions::new();
-        options.pathspec(&path.0);
-        options.disable_pathspec_match(true);
-        options.include_untracked(true);
-        options.recurse_untracked_dirs(true);
-        options.include_unmodified(true);
-        options.show(StatusShow::Workdir);
-
-        let statuses = self.repository.statuses(Some(&mut options)).log_err()?;
-        let status = statuses.get(0).and_then(|s| read_status(s.status()));
-        status
-    }
-
-    fn status(&self, path: &RepoPath, mtime: SystemTime) -> Option<GitFileStatus> {
-        let mut options = git2::StatusOptions::new();
-        options.pathspec(&path.0);
-        options.disable_pathspec_match(true);
-        options.include_untracked(true);
-        options.recurse_untracked_dirs(true);
-        options.include_unmodified(true);
-
-        // If the file has not changed since it was added to the index, then
-        // there's no need to examine the working directory file: just compare
-        // the blob in the index to the one in the HEAD commit.
-        if matches_index(&self.repository, path, mtime) {
-            options.show(StatusShow::Index);
-        }
-
-        let statuses = self.repository.statuses(Some(&mut options)).log_err()?;
-        let status = statuses.get(0).and_then(|s| read_status(s.status()));
-        status
+    fn statuses(&self, path_prefix: &Path) -> Result<GitStatus> {
+        let working_directory = self
+            .repository
+            .workdir()
+            .context("failed to read git work directory")?;
+        GitStatus::new(&self.git_binary_path, working_directory, path_prefix)
     }
 
     fn branches(&self) -> Result<Vec<Branch>> {
@@ -222,6 +156,7 @@ impl GitRepository for RealGitRepository {
             .collect();
         Ok(valid_branches)
     }
+
     fn change_branch(&self, name: &str) -> Result<()> {
         let revision = self.repository.find_branch(name, BranchType::Local)?;
         let revision = revision.get();
@@ -258,38 +193,6 @@ impl GitRepository for RealGitRepository {
             remote_url,
             self.hosting_provider_registry.clone(),
         )
-    }
-}
-
-fn matches_index(repo: &LibGitRepository, path: &RepoPath, mtime: SystemTime) -> bool {
-    if let Some(index) = repo.index().log_err() {
-        if let Some(entry) = index.get_path(path, 0) {
-            if let Some(mtime) = mtime.duration_since(SystemTime::UNIX_EPOCH).log_err() {
-                if entry.mtime.seconds() == mtime.as_secs() as i32
-                    && entry.mtime.nanoseconds() == mtime.subsec_nanos()
-                {
-                    return true;
-                }
-            }
-        }
-    }
-    false
-}
-
-fn read_status(status: git2::Status) -> Option<GitFileStatus> {
-    if status.contains(git2::Status::CONFLICTED) {
-        Some(GitFileStatus::Conflict)
-    } else if status.intersects(
-        git2::Status::WT_MODIFIED
-            | git2::Status::WT_RENAMED
-            | git2::Status::INDEX_MODIFIED
-            | git2::Status::INDEX_RENAMED,
-    ) {
-        Some(GitFileStatus::Modified)
-    } else if status.intersects(git2::Status::WT_NEW | git2::Status::INDEX_NEW) {
-        Some(GitFileStatus::Added)
-    } else {
-        None
     }
 }
 
@@ -333,24 +236,23 @@ impl GitRepository for FakeGitRepository {
         None
     }
 
-    fn staged_statuses(&self, path_prefix: &Path) -> TreeMap<RepoPath, GitFileStatus> {
-        let mut map = TreeMap::default();
+    fn statuses(&self, path_prefix: &Path) -> Result<GitStatus> {
         let state = self.state.lock();
-        for (repo_path, status) in state.worktree_statuses.iter() {
-            if repo_path.0.starts_with(path_prefix) {
-                map.insert(repo_path.to_owned(), status.to_owned());
-            }
-        }
-        map
-    }
-
-    fn unstaged_status(&self, _path: &RepoPath, _mtime: SystemTime) -> Option<GitFileStatus> {
-        None
-    }
-
-    fn status(&self, path: &RepoPath, _mtime: SystemTime) -> Option<GitFileStatus> {
-        let state = self.state.lock();
-        state.worktree_statuses.get(path).cloned()
+        let mut entries = state
+            .worktree_statuses
+            .iter()
+            .filter_map(|(repo_path, status)| {
+                if repo_path.0.starts_with(path_prefix) {
+                    Some((repo_path.to_owned(), *status))
+                } else {
+                    None
+                }
+            })
+            .collect::<Vec<_>>();
+        entries.sort_unstable_by(|a, b| a.0.cmp(&b.0));
+        Ok(GitStatus {
+            entries: entries.into(),
+        })
     }
 
     fn branches(&self) -> Result<Vec<Branch>> {
