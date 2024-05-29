@@ -74,6 +74,7 @@ ui.workspace = true
 url.workspace = true
 util.workspace = true
 workspace.workspace = true
+file_icons.workspace = true
 
 [dev-dependencies]
 ctor.workspace = true

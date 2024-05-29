@@ -5,6 +5,7 @@ use crate::{
 };
 use anyhow::{anyhow, Context as _, Result};
 use collections::HashSet;
+use file_icons::FileIcons;
 use futures::future::try_join_all;
 use git::repository::GitFileStatus;
 use gpui::{
@@ -612,7 +613,10 @@ impl Item for Editor {
             entry_label_color(params.selected)
         };
 
+        let mut height = 0;
+
         let description = params.detail.and_then(|detail| {
+            height = detail;
             let path = path_for_buffer(&self.buffer, detail, false, cx)?;
             let description = path.to_string_lossy();
             let description = description.trim();
@@ -624,8 +628,18 @@ impl Item for Editor {
             Some(util::truncate_and_trailoff(&description, MAX_TAB_TITLE_LEN))
         });
 
+        let mut icon = None;
+        if let Some(path) = path_for_buffer(&self.buffer, height, true, cx) {
+            icon = FileIcons::get_icon(&path.into_owned(), cx);
+        }
+
         h_flex()
             .gap_2()
+            .when(ItemSettings::get_global(cx).file_icons, |this| {
+                this.when_some(icon, |this, icon| {
+                    this.child(Icon::from_path(icon.to_string()).color(label_color))
+                })
+            })
             .child(
                 Label::new(self.title(cx).to_string())
                     .color(label_color)
