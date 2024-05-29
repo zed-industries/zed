@@ -1711,9 +1711,14 @@ extern "C" fn insert_text(this: &Object, _: Sel, text: id, replacement_range: NS
         } else {
             text
         };
-        let text = CStr::from_ptr(text.UTF8String() as *mut c_char)
-            .to_str()
-            .unwrap();
+
+        let cstr = text.UTF8String();
+        let text = if cstr.is_null() {
+            ""
+        } else {
+            CStr::from_ptr(cstr as *mut c_char).to_str().unwrap()
+        };
+
         let replacement_range = replacement_range.to_range();
         send_to_input_handler(
             this,
