@@ -146,9 +146,7 @@ impl RuntimeManager {
             shell_request_tx
                 .send(Request {
                     execution_id: ExecutionId::new(),
-                    request: runtimelib::JupyterMessageContent::KernelInfoRequest(
-                        runtimelib::KernelInfoRequest {},
-                    ),
+                    request: runtimelib::KernelInfoRequest {}.into(),
                     iopub_sender: tx,
                 })
                 .await?;
@@ -185,16 +183,15 @@ impl RuntimeManager {
             shell_request_tx
                 .unbounded_send(Request {
                     execution_id,
-                    request: runtimelib::JupyterMessageContent::ExecuteRequest(
-                        runtimelib::ExecuteRequest {
-                            code,
-                            allow_stdin: false,
-                            silent: false,
-                            store_history: true,
-                            stop_on_error: true,
-                            ..Default::default()
-                        },
-                    ),
+                    request: runtimelib::ExecuteRequest {
+                        code,
+                        allow_stdin: false,
+                        silent: false,
+                        store_history: true,
+                        stop_on_error: true,
+                        ..Default::default()
+                    }
+                    .into(),
                     iopub_sender: tx,
                 })
                 .context("Failed to send execution request")?;

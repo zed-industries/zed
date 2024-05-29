@@ -131,9 +131,7 @@ impl RunningKernel {
         shell_request_tx
             .send(Request {
                 execution_id: ExecutionId::new(),
-                request: runtimelib::JupyterMessageContent::KernelInfoRequest(
-                    runtimelib::KernelInfoRequest {},
-                ),
+                request: runtimelib::KernelInfoRequest {}.into(),
                 iopub_sender: tx,
             })
             .await?;
