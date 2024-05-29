@@ -18,6 +18,7 @@ client.workspace = true
 collections.workspace = true
 command_palette_hooks.workspace = true
 editor.workspace = true
+feature_flags.workspace = true
 file_icons.workspace = true
 fs.workspace = true
 futures.workspace = true

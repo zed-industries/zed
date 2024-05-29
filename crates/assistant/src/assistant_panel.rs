@@ -22,6 +22,7 @@ use editor::{
     Anchor, Editor, EditorElement, EditorEvent, EditorStyle, MultiBufferSnapshot, RowExt,
     ToOffset as _, ToPoint,
 };
+use feature_flags::{FeatureFlag, FeatureFlagAppExt, FeatureFlagViewExt};
 use file_icons::FileIcons;
 use fs::Fs;
 use futures::StreamExt;
@@ -117,6 +118,12 @@ struct ActiveConversationEditor {
     _subscriptions: Vec<Subscription>,
 }
 
+struct PromptLibraryFeatureFlag;
+
+impl FeatureFlag for PromptLibraryFeatureFlag {
+    const NAME: &'static str = "prompt-library";
+}
+
 impl AssistantPanel {
     const INLINE_PROMPT_HISTORY_MAX_LEN: usize = 20;
 
@@ -142,6 +149,9 @@ impl AssistantPanel {
             let workspace_handle = workspace.clone();
             workspace.update(&mut cx, |workspace, cx| {
                 cx.new_view::<Self>(|cx| {
+                    cx.observe_flag::<PromptLibraryFeatureFlag, _>(|_, _, cx| cx.notify())
+                        .detach();
+
                     const CONVERSATION_WATCH_DURATION: Duration = Duration::from_millis(100);
                     let _watch_saved_conversations = cx.spawn(move |this, mut cx| async move {
                         let mut events = fs
@@ -1129,48 +1139,49 @@ impl AssistantPanel {
     }
 
     fn render_signed_in(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
-        let header =
-            TabBar::new("assistant_header")
-                .start_child(h_flex().gap_1().child(self.render_popover_button(cx)))
-                .children(self.active_conversation_editor().map(|editor| {
-                    h_flex()
-                        .h(rems(Tab::CONTAINER_HEIGHT_IN_REMS))
-                        .flex_1()
-                        .px_2()
-                        .child(Label::new(editor.read(cx).title(cx)).into_element())
-                }))
-                .end_child(
-                    h_flex()
-                        .gap_2()
-                        .when_some(self.active_conversation_editor(), |this, editor| {
-                            let conversation = editor.read(cx).conversation.clone();
-                            this.child(
-                                h_flex()
-                                    .gap_1()
-                                    .child(self.render_model(&conversation, cx))
-                                    .children(self.render_remaining_tokens(&conversation, cx)),
-                            )
-                            .child(
-                                ui::Divider::vertical()
-                                    .inset()
-                                    .color(ui::DividerColor::Border),
-                            )
-                        })
-                        .child(
+        let header = TabBar::new("assistant_header")
+            .start_child(h_flex().gap_1().child(self.render_popover_button(cx)))
+            .children(self.active_conversation_editor().map(|editor| {
+                h_flex()
+                    .h(rems(Tab::CONTAINER_HEIGHT_IN_REMS))
+                    .flex_1()
+                    .px_2()
+                    .child(Label::new(editor.read(cx).title(cx)).into_element())
+            }))
+            .end_child(
+                h_flex()
+                    .gap_2()
+                    .when_some(self.active_conversation_editor(), |this, editor| {
+                        let conversation = editor.read(cx).conversation.clone();
+                        this.child(
                             h_flex()
                                 .gap_1()
-                                .child(self.render_inject_context_menu(cx))
-                                .child(
+                                .child(self.render_model(&conversation, cx))
+                                .children(self.render_remaining_tokens(&conversation, cx)),
+                        )
+                        .child(
+                            ui::Divider::vertical()
+                                .inset()
+                                .color(ui::DividerColor::Border),
+                        )
+                    })
+                    .child(
+                        h_flex()
+                            .gap_1()
+                            .child(self.render_inject_context_menu(cx))
+                            .children(
+                                cx.has_flag::<PromptLibraryFeatureFlag>().then_some(
                                     IconButton::new("show_prompt_manager", IconName::Library)
                                         .icon_size(IconSize::Small)
                                         .on_click(cx.listener(|this, _event, cx| {
                                             this.show_prompt_manager(cx)
                                         }))
                                         .tooltip(|cx| Tooltip::text("Prompt Library…", cx)),
-                                )
-                                .child(Self::render_assist_button(cx)),
-                        ),
-                );
+                                ),
+                            )
+                            .child(Self::render_assist_button(cx)),
+                    ),
+            );
 
         let contents = if self.active_conversation_editor().is_some() {
             let mut registrar = DivRegistrar::new(

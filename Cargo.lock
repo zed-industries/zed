@@ -345,6 +345,7 @@ dependencies = [
  "ctor",
  "editor",
  "env_logger",
+ "feature_flags",
  "file_icons",
  "fs",
  "futures 0.3.28",
@@ -13001,7 +13002,7 @@ dependencies = [
 
 [[package]]
 name = "zed"
-version = "0.137.3"
+version = "0.137.4"
 dependencies = [
  "activity_indicator",
  "anyhow",
