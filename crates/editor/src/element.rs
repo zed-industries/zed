@@ -542,7 +542,7 @@ impl EditorElement {
         text_hitbox: &Hitbox,
         cx: &mut ViewContext<Editor>,
     ) {
-        if cx.default_prevented() {
+        if !text_hitbox.is_hovered(cx) || cx.default_prevented() {
             return;
         }
 
