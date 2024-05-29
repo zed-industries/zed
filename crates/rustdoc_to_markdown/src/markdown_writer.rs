@@ -137,7 +137,23 @@ impl MarkdownWriter {
                     self.push_str("`")
                 }
             }
-            "pre" => self.push_str("\n```\n"),
+            "pre" => {
+                let attrs = tag.attrs.borrow();
+                let classes = attrs
+                    .iter()
+                    .find(|attr| attr.name.local.to_string() == "class")
+                    .map(|attr| {
+                        attr.value
+                            .split(' ')
+                            .map(|class| class.trim())
+                            .collect::<Vec<_>>()
+                    })
+                    .unwrap_or_default();
+                let is_rust = classes.into_iter().any(|class| class == "rust");
+                let language = if is_rust { "rs" } else { "" };
+
+                self.push_str(&format!("\n```{language}\n"))
+            }
             "ul" | "ol" => self.push_newline(),
             "li" => self.push_str("- "),
             "summary" => {
