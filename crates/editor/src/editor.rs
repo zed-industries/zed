@@ -4004,6 +4004,10 @@ impl Editor {
             (confirm)(cx);
         }
 
+        if completion.show_new_completions_on_confirm {
+            self.show_completions(&ShowCompletions, cx);
+        }
+
         let provider = self.completion_provider.as_ref()?;
         let apply_edits = provider.apply_additional_edits_for_completion(
             buffer_handle,

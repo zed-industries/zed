@@ -36,7 +36,6 @@ actions!(
         ResetKey,
         InlineAssist,
         InsertActivePrompt,
-        ToggleIncludeConversation,
         ToggleHistory,
         ApplyEdit,
         ConfirmCommand

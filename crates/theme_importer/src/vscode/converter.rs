@@ -241,6 +241,7 @@ impl VsCodeThemeConverter {
 
             let highlight_style = HighlightStyleContent {
                 color: token_color.settings.foreground.clone(),
+                background_color: token_color.settings.background.clone(),
                 font_style: token_color
                     .settings
                     .font_style

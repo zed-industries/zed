@@ -14,7 +14,7 @@ workspace = true
 default = []
 test-support = ["backtrace", "collections/test-support", "util/test-support", "http/test-support"]
 runtime_shaders = []
-macos-blade = ["blade-graphics", "blade-macros", "bytemuck"]
+macos-blade = ["blade-graphics", "blade-macros", "blade-util", "bytemuck"]
 
 [lib]
 path = "src/gpui.rs"
@@ -26,6 +26,7 @@ async-task = "4.7"
 backtrace = { version = "0.3", optional = true }
 blade-graphics = { workspace = true, optional = true }
 blade-macros = { workspace = true, optional = true }
+blade-util = { workspace = true, optional = true }
 bytemuck = { version = "1", optional = true }
 collections.workspace = true
 ctor.workspace = true
@@ -96,6 +97,7 @@ flume = "0.11"
 #TODO: use these on all platforms
 blade-graphics.workspace = true
 blade-macros.workspace = true
+blade-util.workspace = true
 bytemuck = "1"
 cosmic-text = "0.11.2"
 copypasta = "0.10.1"

@@ -423,6 +423,8 @@ pub struct Completion {
     pub lsp_completion: lsp::CompletionItem,
     /// An optional callback to invoke when this completion is confirmed.
     pub confirm: Option<Arc<dyn Send + Sync + Fn(&mut WindowContext)>>,
+    /// If true, the editor will show a new completion menu after this completion is confirmed.
+    pub show_new_completions_on_confirm: bool,
 }
 
 impl std::fmt::Debug for Completion {
@@ -9252,6 +9254,7 @@ impl Project {
                         filter_range: Default::default(),
                     },
                     confirm: None,
+                    show_new_completions_on_confirm: false,
                 },
                 false,
                 cx,
@@ -10924,6 +10927,7 @@ async fn populate_labels_for_completions(
             documentation,
             lsp_completion,
             confirm: None,
+            show_new_completions_on_confirm: false,
         })
     }
 }

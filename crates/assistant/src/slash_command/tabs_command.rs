@@ -32,6 +32,7 @@ impl SlashCommand for TabsSlashCommand {
         &self,
         _query: String,
         _cancel: Arc<std::sync::atomic::AtomicBool>,
+        _workspace: WeakView<Workspace>,
         _cx: &mut AppContext,
     ) -> Task<Result<Vec<String>>> {
         Task::ready(Err(anyhow!("this command does not require argument")))

@@ -9,7 +9,7 @@ use workspace::{tasks::schedule_resolved_task, Workspace};
 mod modal;
 mod settings;
 
-pub use modal::Spawn;
+pub use modal::{Rerun, Spawn};
 
 pub fn init(cx: &mut AppContext) {
     settings::TaskSettings::register(cx);
@@ -20,7 +20,10 @@ pub fn init(cx: &mut AppContext) {
                 .register_action(move |workspace, action: &modal::Rerun, cx| {
                     if let Some((task_source_kind, mut last_scheduled_task)) =
                         workspace.project().update(cx, |project, cx| {
-                            project.task_inventory().read(cx).last_scheduled_task()
+                            project
+                                .task_inventory()
+                                .read(cx)
+                                .last_scheduled_task(action.task_id.as_ref())
                         })
                     {
                         if action.reevaluate_context {

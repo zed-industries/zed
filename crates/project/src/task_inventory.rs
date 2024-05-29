@@ -348,9 +348,20 @@ impl Inventory {
         })
     }
 
-    /// Returns the last scheduled task, if any of the sources contains one with the matching id.
-    pub fn last_scheduled_task(&self) -> Option<(TaskSourceKind, ResolvedTask)> {
-        self.last_scheduled_tasks.back().cloned()
+    /// Returns the last scheduled task by task_id if provided.
+    /// Otherwise, returns the last scheduled task.
+    pub fn last_scheduled_task(
+        &self,
+        task_id: Option<&TaskId>,
+    ) -> Option<(TaskSourceKind, ResolvedTask)> {
+        if let Some(task_id) = task_id {
+            self.last_scheduled_tasks
+                .iter()
+                .find(|(_, task)| &task.id == task_id)
+                .cloned()
+        } else {
+            self.last_scheduled_tasks.back().cloned()
+        }
     }
 
     /// Registers task "usage" as being scheduled – to be used for LRU sorting when listing all tasks.

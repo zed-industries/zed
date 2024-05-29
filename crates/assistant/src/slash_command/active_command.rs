@@ -27,6 +27,7 @@ impl SlashCommand for ActiveSlashCommand {
         &self,
         _query: String,
         _cancel: std::sync::Arc<std::sync::atomic::AtomicBool>,
+        _workspace: WeakView<Workspace>,
         _cx: &mut AppContext,
     ) -> Task<Result<Vec<String>>> {
         Task::ready(Err(anyhow!("this command does not require argument")))
