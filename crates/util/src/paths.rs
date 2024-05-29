@@ -182,7 +182,7 @@ impl<P> PathLikeWithPosition<P> {
     /// Parses a string that possibly has `:row:column` suffix.
     /// Ignores trailing `:`s, so `test.rs:22:` is parsed as `test.rs:22`.
     /// If any of the row/column component parsing fails, the whole string is then parsed as a path like.
-    /// If on windows, will replace `/` with `\` in the path for compatibility.
+    /// If on Windows, will replace `/` with `\` in the path for compatibility.
     pub fn parse_str<E>(
         s: &str,
         parse_path_like_str: impl Fn(&str) -> Result<P, E>,
