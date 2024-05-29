@@ -11,7 +11,7 @@ use crate::{
     ApplyEdit, Assist, CompletionProvider, ConfirmCommand, CycleMessageRole, InlineAssist,
     LanguageModel, LanguageModelRequest, LanguageModelRequestMessage, MessageId, MessageMetadata,
     MessageStatus, QuoteSelection, ResetKey, Role, SavedConversation, SavedConversationMetadata,
-    SavedMessage, Split, ToggleFocus, ToggleHistory, ToggleIncludeConversation,
+    SavedMessage, Split, ToggleFocus, ToggleHistory,
 };
 use anyhow::{anyhow, Result};
 use assistant_slash_command::{SlashCommandOutput, SlashCommandOutputSection};
@@ -116,7 +116,6 @@ pub struct AssistantPanel {
     next_inline_assist_id: usize,
     pending_inline_assists: HashMap<usize, PendingInlineAssist>,
     pending_inline_assist_ids_by_editor: HashMap<WeakView<Editor>, Vec<usize>>,
-    include_conversation_in_next_inline_assist: bool,
     inline_prompt_history: VecDeque<String>,
     _watch_saved_conversations: Task<Result<()>>,
     model: LanguageModel,
@@ -234,7 +233,6 @@ impl AssistantPanel {
                         next_inline_assist_id: 0,
                         pending_inline_assists: Default::default(),
                         pending_inline_assist_ids_by_editor: Default::default(),
-                        include_conversation_in_next_inline_assist: false,
                         inline_prompt_history: Default::default(),
                         _watch_saved_conversations,
                         model,
@@ -364,7 +362,7 @@ impl AssistantPanel {
         &mut self,
         editor: &View<Editor>,
         project: &Model<Project>,
-        show_include_conversation: bool,
+        include_conversation: bool,
         cx: &mut ViewContext<Self>,
     ) {
         let selection = editor.read(cx).selections.newest_anchor().clone();
@@ -412,8 +410,7 @@ impl AssistantPanel {
             InlineAssistant::new(
                 inline_assist_id,
                 measurements.clone(),
-                show_include_conversation,
-                show_include_conversation && self.include_conversation_in_next_inline_assist,
+                include_conversation,
                 self.inline_prompt_history.clone(),
                 codegen.clone(),
                 cx,
@@ -548,11 +545,6 @@ impl AssistantPanel {
             }
             InlineAssistantEvent::Dismissed => {
                 self.hide_inline_assist(assist_id, cx);
-            }
-            InlineAssistantEvent::IncludeConversationToggled {
-                include_conversation,
-            } => {
-                self.include_conversation_in_next_inline_assist = *include_conversation;
             }
         }
     }
@@ -3481,16 +3473,12 @@ enum InlineAssistantEvent {
     },
     Canceled,
     Dismissed,
-    IncludeConversationToggled {
-        include_conversation: bool,
-    },
 }
 
 struct InlineAssistant {
     id: usize,
     prompt_editor: View<Editor>,
     confirmed: bool,
-    show_include_conversation: bool,
     include_conversation: bool,
     measurements: Arc<Mutex<BlockMeasurements>>,
     prompt_history: VecDeque<String>,
@@ -3513,27 +3501,12 @@ impl Render for InlineAssistant {
             .bg(cx.theme().colors().editor_background)
             .on_action(cx.listener(Self::confirm))
             .on_action(cx.listener(Self::cancel))
-            .on_action(cx.listener(Self::toggle_include_conversation))
             .on_action(cx.listener(Self::move_up))
             .on_action(cx.listener(Self::move_down))
             .child(
                 h_flex()
                     .justify_center()
                     .w(measurements.gutter_width)
-                    .children(self.show_include_conversation.then(|| {
-                        IconButton::new("include_conversation", IconName::Ai)
-                            .on_click(cx.listener(|this, _, cx| {
-                                this.toggle_include_conversation(&ToggleIncludeConversation, cx)
-                            }))
-                            .selected(self.include_conversation)
-                            .tooltip(|cx| {
-                                Tooltip::for_action(
-                                    "Include Conversation",
-                                    &ToggleIncludeConversation,
-                                    cx,
-                                )
-                            })
-                    }))
                     .children(if let Some(error) = self.codegen.read(cx).error() {
                         let error_message = SharedString::from(error.to_string());
                         Some(
@@ -3566,7 +3539,6 @@ impl InlineAssistant {
     fn new(
         id: usize,
         measurements: Arc<Mutex<BlockMeasurements>>,
-        show_include_conversation: bool,
         include_conversation: bool,
         prompt_history: VecDeque<String>,
         codegen: Model<Codegen>,
@@ -3592,7 +3564,6 @@ impl InlineAssistant {
             id,
             prompt_editor,
             confirmed: false,
-            show_include_conversation,
             include_conversation,
             measurements,
             prompt_history,
@@ -3649,18 +3620,6 @@ impl InlineAssistant {
             self.confirmed = true;
             cx.notify();
         }
-    }
-
-    fn toggle_include_conversation(
-        &mut self,
-        _: &ToggleIncludeConversation,
-        cx: &mut ViewContext<Self>,
-    ) {
-        self.include_conversation = !self.include_conversation;
-        cx.emit(InlineAssistantEvent::IncludeConversationToggled {
-            include_conversation: self.include_conversation,
-        });
-        cx.notify();
     }
 
     fn move_up(&mut self, _: &MoveUp, cx: &mut ViewContext<Self>) {
