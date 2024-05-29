@@ -1361,7 +1361,7 @@ mod tests {
         let (_tab_map, tab_snapshot) = TabMap::new(fold_snapshot, 1.try_into().unwrap());
         let (_wrap_map, wraps_snapshot) =
             cx.update(|cx| WrapMap::new(tab_snapshot, font("Helvetica"), px(14.0), None, cx));
-        let mut block_map = BlockMap::new(wraps_snapshot.clone(), 1, 1);
+        let mut block_map = BlockMap::new(wraps_snapshot.clone(), false, 1, 1);
 
         let mut writer = block_map.write(wraps_snapshot.clone(), Default::default());
         let block_ids = writer.insert(vec![
