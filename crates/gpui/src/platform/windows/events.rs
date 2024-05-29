@@ -53,9 +53,15 @@ pub(crate) fn handle_msg(
         WM_NCMBUTTONDOWN => {
             handle_nc_mouse_down_msg(handle, MouseButton::Middle, wparam, lparam, state_ptr)
         }
-        WM_NCLBUTTONUP => handle_nc_mouse_up_msg(handle, MouseButton::Left, lparam, state_ptr),
-        WM_NCRBUTTONUP => handle_nc_mouse_up_msg(handle, MouseButton::Right, lparam, state_ptr),
-        WM_NCMBUTTONUP => handle_nc_mouse_up_msg(handle, MouseButton::Middle, lparam, state_ptr),
+        WM_NCLBUTTONUP => {
+            handle_nc_mouse_up_msg(handle, MouseButton::Left, wparam, lparam, state_ptr)
+        }
+        WM_NCRBUTTONUP => {
+            handle_nc_mouse_up_msg(handle, MouseButton::Right, wparam, lparam, state_ptr)
+        }
+        WM_NCMBUTTONUP => {
+            handle_nc_mouse_up_msg(handle, MouseButton::Middle, wparam, lparam, state_ptr)
+        }
         WM_LBUTTONDOWN => handle_mouse_down_msg(handle, MouseButton::Left, lparam, state_ptr),
         WM_RBUTTONDOWN => handle_mouse_down_msg(handle, MouseButton::Right, lparam, state_ptr),
         WM_MBUTTONDOWN => handle_mouse_down_msg(handle, MouseButton::Middle, lparam, state_ptr),
@@ -953,23 +959,17 @@ fn handle_nc_mouse_down_msg(
 
     if button == MouseButton::Left {
         match wparam.0 as u32 {
-            HTMINBUTTON => unsafe {
-                ShowWindowAsync(handle, SW_MINIMIZE).ok().log_err();
-            },
-            HTMAXBUTTON => unsafe {
-                if state_ptr.state.borrow().is_maximized() {
-                    ShowWindowAsync(handle, SW_NORMAL).ok().log_err();
-                } else {
-                    ShowWindowAsync(handle, SW_MAXIMIZE).ok().log_err();
-                }
-            },
-            HTCLOSE => unsafe {
-                PostMessageW(handle, WM_CLOSE, WPARAM::default(), LPARAM::default()).log_err();
-            },
-            _ => return None,
+            HTMINBUTTON => state_ptr.state.borrow_mut().nc_button_clicked = Some(HTMINBUTTON),
+            HTMAXBUTTON => state_ptr.state.borrow_mut().nc_button_clicked = Some(HTMAXBUTTON),
+            HTCLOSE => state_ptr.state.borrow_mut().nc_button_clicked = Some(HTCLOSE),
+            _ => {
+                state_ptr.state.borrow_mut().nc_button_clicked = None;
+                return None;
+            }
         };
         Some(0)
     } else {
+        state_ptr.state.borrow_mut().nc_button_clicked = None;
         None
     }
 }
@@ -977,6 +977,7 @@ fn handle_nc_mouse_down_msg(
 fn handle_nc_mouse_up_msg(
     handle: HWND,
     button: MouseButton,
+    wparam: WPARAM,
     lparam: LPARAM,
     state_ptr: Rc<WindowsWindowStatePtr>,
 ) -> Option<isize> {
@@ -1010,6 +1011,43 @@ fn handle_nc_mouse_up_msg(
         }
     } else {
         drop(lock);
+    }
+
+    let last_clicked = state_ptr.state.borrow_mut().nc_button_clicked.take();
+    if button == MouseButton::Left && last_clicked.is_some() {
+        let last_button = last_clicked.unwrap();
+        let mut handled = false;
+        match wparam.0 as u32 {
+            HTMINBUTTON => {
+                if last_button == HTMINBUTTON {
+                    unsafe { ShowWindowAsync(handle, SW_MINIMIZE).ok().log_err() };
+                    handled = true;
+                }
+            }
+            HTMAXBUTTON => {
+                if last_button == HTMAXBUTTON {
+                    if state_ptr.state.borrow().is_maximized() {
+                        unsafe { ShowWindowAsync(handle, SW_NORMAL).ok().log_err() };
+                    } else {
+                        unsafe { ShowWindowAsync(handle, SW_MAXIMIZE).ok().log_err() };
+                    }
+                    handled = true;
+                }
+            }
+            HTCLOSE => {
+                if last_button == HTCLOSE {
+                    unsafe {
+                        PostMessageW(handle, WM_CLOSE, WPARAM::default(), LPARAM::default())
+                            .log_err()
+                    };
+                    handled = true;
+                }
+            }
+            _ => {}
+        };
+        if handled {
+            return Some(0);
+        }
     }
 
     None
