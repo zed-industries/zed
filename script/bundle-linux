@@ -79,13 +79,20 @@ mkdir -p "${zed_dir}/share/icons/hicolor/1024x1024/apps"
 cp "crates/zed/resources/app-icon$suffix@2x.png" "${zed_dir}/share/icons/hicolor/1024x1024/apps/zed.png"
 
 # .desktop
-mkdir -p "${zed_dir}/share/applications"
-cp "crates/zed/resources/zed.desktop" "${zed_dir}/share/applications/zed$suffix.desktop"
+export DO_STARTUP_NOTIFY="true"
+export APP_ICON="zed"
 if [[ "$channel" == "preview" ]]; then
-    sed -i "s|Name=Zed|Name=Zed Preview|g" "${zed_dir}/share/applications/zed$suffix.desktop"
+  export APP_NAME="Zed Preview"
 elif [[ "$channel" == "nightly" ]]; then
-    sed -i "s|Name=Zed|Name=Zed Nightly|g" "${zed_dir}/share/applications/zed$suffix.desktop"
+  export APP_NAME="Zed Nightly"
+elif [[ "$channel" == "dev" ]]; then
+  export APP_NAME="Zed Devel"
+else
+  export APP_NAME="Zed"
 fi
+
+mkdir -p "${zed_dir}/share/applications"
+envsubst < "crates/zed/resources/zed.desktop.in" > "${zed_dir}/share/applications/zed$suffix.desktop"
 
 # Licenses
 cp "assets/licenses.md" "${zed_dir}/licenses.md"
@@ -102,4 +109,6 @@ else
 fi
 
 rm -rf "${archive}"
+remove_match="zed(-[a-zA-Z0-9]+)?-linux-$(uname -m)\.tar\.gz"
+ls target/release | grep -E ${remove_match} | xargs -d "\n" -I {} rm -f target/release/{} || true
 tar -czvf target/release/$archive -C ${temp_dir} "zed$suffix.app"

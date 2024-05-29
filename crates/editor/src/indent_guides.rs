@@ -147,7 +147,9 @@ pub fn indent_guides_in_range(
         .into_iter()
         .filter(|indent_guide| {
             // Filter out indent guides that are inside a fold
-            !snapshot.is_line_folded(indent_guide.multibuffer_row_range.start)
+            !snapshot.is_line_folded(MultiBufferRow(
+                indent_guide.multibuffer_row_range.start.0.saturating_sub(1),
+            ))
         })
         .collect()
 }

@@ -36,7 +36,7 @@ use git::{blame::Blame, repository::GitRepository};
 use globset::{Glob, GlobSet, GlobSetBuilder};
 use gpui::{
     AnyModel, AppContext, AsyncAppContext, BackgroundExecutor, BorrowAppContext, Context, Entity,
-    EventEmitter, Model, ModelContext, PromptLevel, SharedString, Task, WeakModel,
+    EventEmitter, Model, ModelContext, PromptLevel, SharedString, Task, WeakModel, WindowContext,
 };
 use itertools::Itertools;
 use language::{
@@ -407,7 +407,7 @@ pub struct InlayHint {
 }
 
 /// A completion provided by a language server
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct Completion {
     /// The range of the buffer that will be replaced.
     pub old_range: Range<Anchor>,
@@ -421,6 +421,21 @@ pub struct Completion {
     pub documentation: Option<Documentation>,
     /// The raw completion provided by the language server.
     pub lsp_completion: lsp::CompletionItem,
+    /// An optional callback to invoke when this completion is confirmed.
+    pub confirm: Option<Arc<dyn Send + Sync + Fn(&mut WindowContext)>>,
+}
+
+impl std::fmt::Debug for Completion {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Completion")
+            .field("old_range", &self.old_range)
+            .field("new_text", &self.new_text)
+            .field("label", &self.label)
+            .field("server_id", &self.server_id)
+            .field("documentation", &self.documentation)
+            .field("lsp_completion", &self.lsp_completion)
+            .finish()
+    }
 }
 
 /// A completion provided by a language server
@@ -2027,6 +2042,30 @@ impl Project {
             let buffer: &AnyModel = &buffer;
             Ok((project_entry_id, buffer.clone()))
         })
+    }
+
+    pub fn open_buffer_for_full_path(
+        &mut self,
+        path: &Path,
+        cx: &mut ModelContext<Self>,
+    ) -> Task<Result<Model<Buffer>>> {
+        if let Some(worktree_name) = path.components().next() {
+            let worktree = self.worktrees().find(|worktree| {
+                OsStr::new(worktree.read(cx).root_name()) == worktree_name.as_os_str()
+            });
+            if let Some(worktree) = worktree {
+                let worktree = worktree.read(cx);
+                let worktree_root_path = Path::new(worktree.root_name());
+                if let Ok(path) = path.strip_prefix(worktree_root_path) {
+                    let project_path = ProjectPath {
+                        worktree_id: worktree.id(),
+                        path: path.into(),
+                    };
+                    return self.open_buffer(project_path, cx);
+                }
+            }
+        }
+        Task::ready(Err(anyhow!("buffer not found for {:?}", path)))
     }
 
     pub fn open_local_buffer(
@@ -9212,6 +9251,7 @@ impl Project {
                         runs: Default::default(),
                         filter_range: Default::default(),
                     },
+                    confirm: None,
                 },
                 false,
                 cx,
@@ -10883,6 +10923,7 @@ async fn populate_labels_for_completions(
             server_id: completion.server_id,
             documentation,
             lsp_completion,
+            confirm: None,
         })
     }
 }

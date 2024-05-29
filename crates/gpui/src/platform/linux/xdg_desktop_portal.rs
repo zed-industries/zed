@@ -131,3 +131,14 @@ pub fn window_appearance(executor: &BackgroundExecutor) -> Result<WindowAppearan
         Ok(appearance)
     })
 }
+
+pub fn should_auto_hide_scrollbars(executor: &BackgroundExecutor) -> Result<bool, anyhow::Error> {
+    executor.block(async {
+        let settings = Settings::new().await?;
+        let auto_hide = settings
+            .read::<bool>("org.gnome.desktop.interface", "overlay-scrolling")
+            .await?;
+
+        Ok(auto_hide)
+    })
+}

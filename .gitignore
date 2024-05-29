@@ -7,6 +7,8 @@
 /script/node_modules
 /crates/theme/schemas/theme.json
 /crates/collab/seed.json
+/crates/zed/resources/flatpak/flatpak-cargo-sources.json
+/dev.zed.Zed*.json
 /assets/*licenses.md
 **/venv
 .build
@@ -25,3 +27,4 @@ DerivedData/
 .blob_store
 .vscode
 .wrangler
+.flatpak-builder

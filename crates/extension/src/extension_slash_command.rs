@@ -1,13 +1,13 @@
-use std::sync::atomic::AtomicBool;
-use std::sync::Arc;
+use std::sync::{atomic::AtomicBool, Arc};
 
 use anyhow::{anyhow, Result};
-use assistant_slash_command::{SlashCommand, SlashCommandCleanup, SlashCommandInvocation};
-use futures::channel::oneshot;
+use assistant_slash_command::{SlashCommand, SlashCommandOutput, SlashCommandOutputSection};
 use futures::FutureExt;
-use gpui::{AppContext, Task};
+use gpui::{AppContext, IntoElement, Task, WeakView, WindowContext};
 use language::LspAdapterDelegate;
+use ui::{prelude::*, ButtonLike, ElevationIndex};
 use wasmtime_wasi::WasiView;
+use workspace::Workspace;
 
 use crate::wasm_host::{WasmExtension, WasmHost};
 
@@ -27,6 +27,10 @@ impl SlashCommand for ExtensionSlashCommand {
         self.command.description.clone()
     }
 
+    fn tooltip_text(&self) -> String {
+        self.command.tooltip_text.clone()
+    }
+
     fn requires_argument(&self) -> bool {
         self.command.requires_argument
     }
@@ -43,12 +47,13 @@ impl SlashCommand for ExtensionSlashCommand {
     fn run(
         self: Arc<Self>,
         argument: Option<&str>,
+        _workspace: WeakView<Workspace>,
         delegate: Arc<dyn LspAdapterDelegate>,
-        cx: &mut AppContext,
-    ) -> SlashCommandInvocation {
+        cx: &mut WindowContext,
+    ) -> Task<Result<SlashCommandOutput>> {
+        let command_name = SharedString::from(self.command.name.clone());
         let argument = argument.map(|arg| arg.to_string());
-
-        let output = cx.background_executor().spawn(async move {
+        let text = cx.background_executor().spawn(async move {
             let output = self
                 .extension
                 .call({
@@ -72,14 +77,29 @@ impl SlashCommand for ExtensionSlashCommand {
                     }
                 })
                 .await?;
-
             output.ok_or_else(|| anyhow!("no output from command: {}", self.command.name))
         });
-
-        SlashCommandInvocation {
-            output,
-            invalidated: oneshot::channel().1,
-            cleanup: SlashCommandCleanup::default(),
-        }
+        cx.foreground_executor().spawn(async move {
+            let text = text.await?;
+            let range = 0..text.len();
+            Ok(SlashCommandOutput {
+                text,
+                sections: vec![SlashCommandOutputSection {
+                    range,
+                    render_placeholder: Arc::new({
+                        let command_name = command_name.clone();
+                        move |id, unfold, _cx| {
+                            ButtonLike::new(id)
+                                .style(ButtonStyle::Filled)
+                                .layer(ElevationIndex::ElevatedSurface)
+                                .child(Icon::new(IconName::Code))
+                                .child(Label::new(command_name.clone()))
+                                .on_click(move |_event, cx| unfold(cx))
+                                .into_any_element()
+                        }
+                    }),
+                }],
+            })
+        })
     }
 }
