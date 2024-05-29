@@ -4,7 +4,7 @@ use git::GitHostingProviderRegistry;
 #[cfg(target_os = "linux")]
 use ashpd::desktop::trash;
 #[cfg(target_os = "linux")]
-use std::{os::fd::AsFd,fs::File};
+use std::{fs::File, os::fd::AsFd};
 
 #[cfg(unix)]
 use std::os::unix::fs::MetadataExt;
