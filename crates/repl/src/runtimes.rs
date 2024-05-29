@@ -19,7 +19,7 @@ use smol::process::Command;
 
 use runtimelib::{dirs, ConnectionInfo, JupyterKernelspec};
 
-use crate::tokio_kernel::{connect_tokio_kernel_interface, ExecutionId, Request};
+use crate::tokio_kernel::{connect_tokio_kernel_interface, Request};
 
 #[derive(Debug, Clone)]
 pub struct Runtime {
@@ -130,9 +130,8 @@ impl RunningKernel {
         let (tx, mut rx) = mpsc::unbounded();
         shell_request_tx
             .send(Request {
-                execution_id: ExecutionId::new(),
                 request: runtimelib::KernelInfoRequest {}.into(),
-                iopub_sender: tx,
+                responses_rx: tx,
             })
             .await?;
 

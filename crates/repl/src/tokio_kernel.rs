@@ -5,62 +5,38 @@ use futures::{SinkExt as _, StreamExt as _};
 use runtimelib::{JupyterMessage, JupyterMessageContent};
 use std::sync::Arc;
 
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
-pub struct ExecutionId(String);
-
-impl ExecutionId {
-    pub fn new() -> Self {
-        ExecutionId(uuid::Uuid::new_v4().to_string())
-    }
-}
-
-impl From<String> for ExecutionId {
-    fn from(id: String) -> Self {
-        ExecutionId(id)
-    }
-}
-
-#[derive(Debug)]
-pub struct Update {
-    #[allow(dead_code)]
-    pub execution_id: ExecutionId,
-    pub content: JupyterMessageContent,
-}
-
 #[derive(Debug)]
 pub struct Request {
-    pub execution_id: ExecutionId,
     pub request: runtimelib::JupyterMessageContent,
-    pub iopub_sender: mpsc::UnboundedSender<Update>,
+    pub responses_rx: mpsc::UnboundedSender<JupyterMessageContent>,
 }
 
 pub async fn connect_tokio_kernel_interface(
     connection_info: &runtimelib::ConnectionInfo,
-    mut shell_request_rx: mpsc::UnboundedReceiver<Request>,
+    mut request_rx: mpsc::UnboundedReceiver<Request>,
 ) -> Result<()> {
+    // This is a one way channel that feeds us message from the kernel
+    // Event Stream --> always emitting
     let mut iopub = connection_info.create_client_iopub_connection("").await?;
+    // Request/Reply
     let mut shell = connection_info.create_client_shell_connection().await?;
+    // Request/Reply
+    // let mut control = connection_info.create_client_control_connection().await?;
 
-    let executions: Arc<tokio::sync::Mutex<HashMap<ExecutionId, mpsc::UnboundedSender<Update>>>> =
-        Default::default();
+    let child_messages: Arc<
+        tokio::sync::Mutex<HashMap<String, mpsc::UnboundedSender<JupyterMessageContent>>>,
+    > = Default::default();
 
     let iopub_handle: tokio::task::JoinHandle<anyhow::Result<()>> = tokio::spawn({
-        let executions = executions.clone();
+        let child_messages = child_messages.clone();
         async move {
             loop {
                 let message = iopub.read().await?;
 
                 if let Some(parent_header) = message.parent_header {
-                    let execution_id = ExecutionId::from(parent_header.msg_id);
-
-                    if let Some(mut execution) = executions.lock().await.get(&execution_id) {
-                        execution
-                            .send(Update {
-                                execution_id,
-                                content: message.content,
-                            })
-                            .await
-                            .ok();
+                    if let Some(mut sender) = child_messages.lock().await.get(&parent_header.msg_id)
+                    {
+                        sender.send(message.content).await.ok();
                     }
                 }
             }
@@ -68,32 +44,23 @@ pub async fn connect_tokio_kernel_interface(
     });
 
     let shell_handle: tokio::task::JoinHandle<anyhow::Result<()>> = tokio::spawn({
-        let executions = executions.clone();
+        let child_messages = child_messages.clone();
         async move {
-            while let Some(request) = shell_request_rx.next().await {
-                let mut message = JupyterMessage::new(request.request, None);
-                message.header.msg_id.clone_from(&request.execution_id.0);
+            while let Some(request) = request_rx.next().await {
+                let message = JupyterMessage::new(request.request, None);
 
-                let sender = request.iopub_sender.clone();
+                let sender = request.responses_rx.clone();
 
-                executions
+                child_messages
                     .lock()
                     .await
-                    .insert(request.execution_id.clone(), sender.clone());
+                    .insert(message.header.msg_id.clone(), sender.clone());
 
                 shell.send(message).await?;
 
                 let mut sender = sender.clone();
-
                 let reply = shell.read().await?;
-
-                sender
-                    .send(Update {
-                        execution_id: request.execution_id,
-                        content: reply.content,
-                    })
-                    .await
-                    .ok();
+                sender.send(reply.content).await.ok();
             }
             anyhow::Ok(())
         }

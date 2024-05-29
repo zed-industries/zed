@@ -15,11 +15,12 @@ use gpui::{Entity, View};
 use language::Point;
 use outputs::{ExecutionStatus, ExecutionView, LineHeight as _};
 use project::Fs;
+use runtimelib::JupyterMessageContent;
 use settings::Settings as _;
 use std::ops::Range;
 use std::sync::Arc;
 use theme::{ActiveTheme, ThemeSettings};
-use tokio_kernel::{ExecutionId, Request, Update};
+use tokio_kernel::Request;
 use ui::prelude::*;
 use workspace::Workspace;
 
@@ -145,9 +146,8 @@ impl RuntimeManager {
             let (tx, mut rx) = mpsc::unbounded();
             shell_request_tx
                 .send(Request {
-                    execution_id: ExecutionId::new(),
                     request: runtimelib::KernelInfoRequest {}.into(),
-                    iopub_sender: tx,
+                    responses_rx: tx,
                 })
                 .await?;
 
@@ -169,10 +169,9 @@ impl RuntimeManager {
         &mut self,
         entity_id: EntityId,
         language_name: Arc<str>,
-        execution_id: ExecutionId,
         code: String,
         cx: &mut ModelContext<Self>,
-    ) -> impl Future<Output = Result<mpsc::UnboundedReceiver<Update>>> {
+    ) -> impl Future<Output = Result<mpsc::UnboundedReceiver<JupyterMessageContent>>> {
         let (tx, rx) = mpsc::unbounded();
 
         let shell_request_tx = self.acquire_shell_request_tx(entity_id, language_name, cx);
@@ -182,7 +181,6 @@ impl RuntimeManager {
 
             shell_request_tx
                 .unbounded_send(Request {
-                    execution_id,
                     request: runtimelib::ExecuteRequest {
                         code,
                         allow_stdin: false,
@@ -192,7 +190,7 @@ impl RuntimeManager {
                         ..Default::default()
                     }
                     .into(),
-                    iopub_sender: tx,
+                    responses_rx: tx,
                 })
                 .context("Failed to send execution request")?;
 
@@ -298,9 +296,8 @@ pub fn run(workspace: &mut Workspace, _: &Run, cx: &mut ViewContext<Workspace>) 
     };
 
     let entity_id = editor.entity_id();
-    let execution_id = ExecutionId::new();
 
-    let execution_view = cx.new_view(|cx| ExecutionView::new(execution_id.clone(), cx));
+    let execution_view = cx.new_view(|cx| ExecutionView::new(cx));
 
     // If any block overlaps with the new block, remove it
     // TODO: When inserting a new block, put it in order so that search is efficient
@@ -357,13 +354,7 @@ pub fn run(workspace: &mut Workspace, _: &Run, cx: &mut ViewContext<Workspace>) 
             .blocks
             .push(editor_runtime_block.clone());
 
-        runtime_manager.execute_code(
-            entity_id,
-            language_name,
-            execution_id.clone(),
-            selected_text.clone(),
-            cx,
-        )
+        runtime_manager.execute_code(entity_id, language_name, selected_text.clone(), cx)
     });
 
     cx.spawn(|_this, mut cx| async move {
@@ -373,9 +364,9 @@ pub fn run(workspace: &mut Workspace, _: &Run, cx: &mut ViewContext<Workspace>) 
         let mut receiver = receiver.await?;
 
         let execution_view = execution_view.clone();
-        while let Some(update) = receiver.next().await {
+        while let Some(content) = receiver.next().await {
             execution_view.update(&mut cx, |execution_view, cx| {
-                execution_view.push_message(&update.content, cx)
+                execution_view.push_message(&content, cx)
             })?;
 
             editor.update(&mut cx, |editor, cx| {

@@ -1,7 +1,6 @@
 use std::sync::Arc;
 
 use crate::stdio::TerminalOutput;
-use crate::ExecutionId;
 use anyhow::Result;
 use gpui::{img, AnyElement, FontWeight, ImageData, Render, View};
 use runtimelib::datatable::TableSchema;
@@ -305,15 +304,13 @@ pub enum ExecutionStatus {
 }
 
 pub struct ExecutionView {
-    pub execution_id: ExecutionId,
     pub outputs: Vec<OutputType>,
     pub status: ExecutionStatus,
 }
 
 impl ExecutionView {
-    pub fn new(execution_id: ExecutionId, _cx: &mut ViewContext<Self>) -> Self {
+    pub fn new(_cx: &mut ViewContext<Self>) -> Self {
         Self {
-            execution_id,
             outputs: Default::default(),
             status: ExecutionStatus::Unknown,
         }
