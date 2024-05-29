@@ -74,6 +74,15 @@ struct DraggedSelection {
     marked_selections: Arc<BTreeSet<SelectedEntry>>,
 }
 
+impl DraggedSelection {
+    fn items<'a>(&'a self) -> Box<dyn Iterator<Item = &'a SelectedEntry> + 'a> {
+        if self.marked_selections.contains(&self.active_selection) {
+            Box::new(self.marked_selections.iter())
+        } else {
+            Box::new(std::iter::once(&self.active_selection))
+        }
+    }
+}
 #[derive(Clone, Debug)]
 struct EditState {
     worktree_id: WorktreeId,
@@ -1202,6 +1211,50 @@ impl ProjectPanel {
         }
     }
 
+    fn create_paste_path(
+        &self,
+        source: &SelectedEntry,
+        (worktree, target_entry): (Model<Worktree>, &Entry),
+        cx: &AppContext,
+    ) -> Option<PathBuf> {
+        let mut new_path = target_entry.path.to_path_buf();
+        // If we're pasting into a file, or a directory into itself, go up one level.
+        if target_entry.is_file() || (target_entry.is_dir() && target_entry.id == source.entry_id) {
+            new_path.pop();
+        }
+        let clipboard_entry_file_name = self
+            .project
+            .read(cx)
+            .path_for_entry(source.entry_id, cx)?
+            .path
+            .file_name()?
+            .to_os_string();
+        new_path.push(&clipboard_entry_file_name);
+        let extension = new_path.extension().map(|e| e.to_os_string());
+        let file_name_without_extension = Path::new(&clipboard_entry_file_name).file_stem()?;
+        let mut ix = 0;
+        {
+            let worktree = worktree.read(cx);
+            while worktree.entry_for_path(&new_path).is_some() {
+                new_path.pop();
+
+                let mut new_file_name = file_name_without_extension.to_os_string();
+                new_file_name.push(" copy");
+                if ix > 0 {
+                    new_file_name.push(format!(" {}", ix));
+                }
+                if let Some(extension) = extension.as_ref() {
+                    new_file_name.push(".");
+                    new_file_name.push(extension);
+                }
+
+                new_path.push(new_file_name);
+                ix += 1;
+            }
+        }
+        Some(new_path)
+    }
+
     fn paste(&mut self, _: &Paste, cx: &mut ViewContext<Self>) {
         maybe!({
             let (worktree, entry) = self.selected_entry_handle(cx)?;
@@ -1216,46 +1269,8 @@ impl ProjectPanel {
                 if clipboard_entry.worktree_id != worktree_id {
                     return None;
                 }
-
-                let clipboard_entry_file_name = self
-                    .project
-                    .read(cx)
-                    .path_for_entry(clipboard_entry.entry_id, cx)?
-                    .path
-                    .file_name()?
-                    .to_os_string();
-
-                let mut new_path = entry.path.to_path_buf();
-                // If we're pasting into a file, or a directory into itself, go up one level.
-                if entry.is_file() || (entry.is_dir() && entry.id == clipboard_entry.entry_id) {
-                    new_path.pop();
-                }
-
-                new_path.push(&clipboard_entry_file_name);
-                let extension = new_path.extension().map(|e| e.to_os_string());
-                let file_name_without_extension =
-                    Path::new(&clipboard_entry_file_name).file_stem()?;
-                let mut ix = 0;
-                {
-                    let worktree = worktree.read(cx);
-                    while worktree.entry_for_path(&new_path).is_some() {
-                        new_path.pop();
-
-                        let mut new_file_name = file_name_without_extension.to_os_string();
-                        new_file_name.push(" copy");
-                        if ix > 0 {
-                            new_file_name.push(format!(" {}", ix));
-                        }
-                        if let Some(extension) = extension.as_ref() {
-                            new_file_name.push(".");
-                            new_file_name.push(extension);
-                        }
-
-                        new_path.push(new_file_name);
-                        ix += 1;
-                    }
-                }
-
+                let new_path =
+                    self.create_paste_path(clipboard_entry, self.selected_entry_handle(cx)?, cx)?;
                 if clipboard_entries.is_cut() {
                     self.project
                         .update(cx, |project, cx| {
@@ -1686,24 +1701,38 @@ impl ProjectPanel {
     fn drag_onto(
         &mut self,
         selections: &DraggedSelection,
-        dragged_entry_id: ProjectEntryId,
+        target_entry_id: ProjectEntryId,
         is_file: bool,
         cx: &mut ViewContext<Self>,
     ) {
-        if selections
-            .marked_selections
-            .contains(&selections.active_selection)
-        {
-            for selection in selections.marked_selections.iter() {
-                self.move_entry(selection.entry_id, dragged_entry_id, is_file, cx);
-            }
+        let should_copy = cx.modifiers().alt;
+        if should_copy {
+            let _ = maybe!({
+                let project = self.project.read(cx);
+                let target_worktree = project.worktree_for_entry(target_entry_id, cx)?;
+                let target_entry = target_worktree
+                    .read(cx)
+                    .entry_for_id(target_entry_id)?
+                    .clone();
+                for selection in selections.items() {
+                    let new_path = self.create_paste_path(
+                        &selection,
+                        (target_worktree.clone(), &target_entry),
+                        cx,
+                    )?;
+                    self.project
+                        .update(cx, |project, cx| {
+                            project.copy_entry(selection.entry_id, new_path, cx)
+                        })
+                        .detach_and_log_err(cx)
+                }
+
+                Some(())
+            });
         } else {
-            self.move_entry(
-                selections.active_selection.entry_id,
-                dragged_entry_id,
-                is_file,
-                cx,
-            );
+            for selection in selections.items() {
+                self.move_entry(selection.entry_id, target_entry_id, is_file, cx);
+            }
         }
     }
 
