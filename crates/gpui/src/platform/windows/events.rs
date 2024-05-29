@@ -949,7 +949,27 @@ fn handle_nc_mouse_down_msg(
     };
 
     // Since these are handled in handle_nc_mouse_up_msg we must prevent the default window proc
-    result.or_else(|| matches!(wparam.0 as u32, HTMINBUTTON | HTMAXBUTTON | HTCLOSE).then_some(0))
+    // result.or_else(|| matches!(wparam.0 as u32, HTMINBUTTON | HTMAXBUTTON | HTCLOSE).then_some(0))
+    if button == MouseButton::Left {
+        match wparam.0 as u32 {
+            HTMINBUTTON => unsafe {
+                ShowWindowAsync(handle, SW_MINIMIZE).ok().log_err();
+            },
+            HTMAXBUTTON => unsafe {
+                if state_ptr.state.borrow().is_maximized() {
+                    ShowWindowAsync(handle, SW_NORMAL).ok().log_err();
+                } else {
+                    ShowWindowAsync(handle, SW_MAXIMIZE).ok().log_err();
+                }
+            },
+            HTCLOSE => unsafe {
+                PostMessageW(handle, WM_CLOSE, WPARAM::default(), LPARAM::default()).log_err();
+            },
+            _ => return None,
+        };
+        return Some(0);
+    }
+    result
 }
 
 fn handle_nc_mouse_up_msg(
@@ -989,26 +1009,6 @@ fn handle_nc_mouse_up_msg(
         }
     } else {
         drop(lock);
-    }
-
-    if button == MouseButton::Left {
-        match wparam.0 as u32 {
-            HTMINBUTTON => unsafe {
-                ShowWindowAsync(handle, SW_MINIMIZE).ok().log_err();
-            },
-            HTMAXBUTTON => unsafe {
-                if state_ptr.state.borrow().is_maximized() {
-                    ShowWindowAsync(handle, SW_NORMAL).ok().log_err();
-                } else {
-                    ShowWindowAsync(handle, SW_MAXIMIZE).ok().log_err();
-                }
-            },
-            HTCLOSE => unsafe {
-                PostMessageW(handle, WM_CLOSE, WPARAM::default(), LPARAM::default()).log_err();
-            },
-            _ => return None,
-        };
-        return Some(0);
     }
 
     None
