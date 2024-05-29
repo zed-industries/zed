@@ -1,10 +1,12 @@
-use std::collections::VecDeque;
+mod markdown_writer;
 
 use html5ever::driver::ParseOpts;
 use html5ever::parse_document;
 use html5ever::tendril::TendrilSink;
 use html5ever::tree_builder::TreeBuilderOpts;
 use markup5ever_rcdom::{Handle, NodeData, RcDom};
+
+pub use crate::markdown_writer::*;
 
 pub fn convert_rustdoc_to_markdown() {
     let parse_options = ParseOpts {
@@ -24,7 +26,7 @@ pub fn convert_rustdoc_to_markdown() {
 
     walk(&dom.document, &mut markdown_writer);
 
-    println!("{}", markdown_writer.markdown);
+    println!("{}", markdown_writer.markdown());
 }
 
 fn walk(node: &Handle, output: &mut MarkdownWriter) {
@@ -58,53 +60,4 @@ fn walk(node: &Handle, output: &mut MarkdownWriter) {
     }
 
     output.pop_tag();
-}
-
-struct MarkdownWriter {
-    current_tag_stack: VecDeque<String>,
-    /// The Markdown output.
-    markdown: String,
-}
-
-impl MarkdownWriter {
-    pub fn new() -> Self {
-        Self {
-            current_tag_stack: VecDeque::new(),
-            markdown: String::new(),
-        }
-    }
-
-    pub fn push_tag(&mut self, tag: String) {
-        if tag.is_empty() {
-            return;
-        }
-
-        self.current_tag_stack.push_back(tag);
-    }
-
-    pub fn pop_tag(&mut self) {
-        self.current_tag_stack.pop_back();
-    }
-
-    pub fn is_inside(&self, tag: &str) -> bool {
-        self.current_tag_stack
-            .iter()
-            .any(|parent_tag| parent_tag.contains(tag))
-    }
-
-    pub fn is_inside_heading(&self) -> bool {
-        ["h1", "h2", "h3", "h4", "h5", "h6"]
-            .into_iter()
-            .any(|heading| self.is_inside(heading))
-    }
-
-    /// Appends the given string slice onto the end of the Markdown output.
-    pub fn push_str(&mut self, str: &str) {
-        self.markdown.push_str(str);
-    }
-
-    /// Appends a newline to the end of the Markdown output.
-    pub fn push_newline(&mut self) {
-        self.push_str("\n");
-    }
 }
