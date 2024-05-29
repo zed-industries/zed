@@ -10,9 +10,9 @@ use anyhow::{anyhow, Result};
 use collections::{hash_map, BTreeSet, HashMap};
 use git::repository::GitFileStatus;
 use gpui::{
-    actions, anchored, deferred, div, impl_actions, px, uniform_list, Action, AppContext,
-    AssetSource, AsyncWindowContext, ClipboardItem, DismissEvent, Div, EventEmitter, FocusHandle,
-    FocusableView, InteractiveElement, KeyContext, Model, MouseButton, MouseDownEvent,
+    actions, anchored, deferred, div, impl_actions, px, uniform_list, Action, AnyElement,
+    AppContext, AssetSource, AsyncWindowContext, ClipboardItem, DismissEvent, Div, EventEmitter,
+    FocusHandle, FocusableView, InteractiveElement, KeyContext, Model, MouseButton, MouseDownEvent,
     ParentElement, Pixels, Point, PromptLevel, Render, Stateful, Styled, Subscription, Task,
     UniformListScrollHandle, View, ViewContext, VisualContext as _, WeakView, WindowContext,
 };
@@ -1940,12 +1940,19 @@ impl ProjectPanel {
                     .indent_step_size(px(settings.indent_size))
                     .selected(is_marked)
                     .when_some(canonical_path, |this, path| {
-                        this.end_slot::<Icon>(
-                            Icon::new(IconName::ArrowUpRight)
-                                .size(IconSize::Indicator)
-                                .color(filename_text_color),
+                        this.end_slot::<AnyElement>(
+                            div()
+                                .id("symlink_icon")
+                                .tooltip(move |cx| {
+                                    Tooltip::text(format!("{path} • Symbolic Link"), cx)
+                                })
+                                .child(
+                                    Icon::new(IconName::ArrowUpRight)
+                                        .size(IconSize::Indicator)
+                                        .color(filename_text_color),
+                                )
+                                .into_any_element(),
                         )
-                        .tooltip(move |cx| Tooltip::text(format!("{path} • Symbolic Link"), cx))
                     })
                     .child(if let Some(icon) = &icon {
                         h_flex().child(Icon::from_path(icon.to_string()).color(filename_text_color))
