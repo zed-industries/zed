@@ -257,6 +257,12 @@ pub struct OpenTerminal {
 #[derive(Clone, Copy, Debug, Default, Hash, PartialEq, Eq, PartialOrd, Ord)]
 pub struct WorkspaceId(i64);
 
+impl WorkspaceId {
+    pub fn is_valid(&self) -> bool {
+        self.0 != 0
+    }
+}
+
 impl StaticColumnCount for WorkspaceId {}
 impl Bind for WorkspaceId {
     fn bind(&self, statement: &Statement, start_index: i32) -> Result<i32> {

@@ -2472,7 +2472,6 @@ impl<'a> WindowContext<'a> {
                 .sprite_atlas
                 .get_or_insert_with(&params.clone().into(), &mut || {
                     let Some(bytes) = self.svg_renderer.render(&params)? else {
-                        dbg!("HERE");
                         return Ok(None);
                     };
                     Ok(Some((params.size, Cow::Owned(bytes))))

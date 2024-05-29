@@ -528,7 +528,6 @@ impl<T: Item> ItemHandle for View<T> {
                     {
                         pane
                     } else {
-                        log::error!("unexpected item event after pane was dropped");
                         return;
                     };
 

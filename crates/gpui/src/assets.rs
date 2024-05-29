@@ -1,5 +1,5 @@
 use crate::{size, DevicePixels, Result, SharedString, Size};
-use anyhow::anyhow;
+
 use image::{Bgra, ImageBuffer};
 use std::{
     borrow::Cow,
@@ -18,7 +18,7 @@ pub trait AssetSource: 'static + Send + Sync {
 }
 
 impl AssetSource for () {
-    fn load(&self, path: &str) -> Result<Option<Cow<'static, [u8]>>> {
+    fn load(&self, _path: &str) -> Result<Option<Cow<'static, [u8]>>> {
         Ok(None)
     }
 
