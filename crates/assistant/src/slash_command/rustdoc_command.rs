@@ -14,9 +14,16 @@ use workspace::Workspace;
 pub(crate) struct RustdocSlashCommand;
 
 impl RustdocSlashCommand {
-    async fn build_message(http_client: Arc<HttpClientWithUrl>) -> Result<String> {
+    async fn build_message(
+        http_client: Arc<HttpClientWithUrl>,
+        crate_name: String,
+    ) -> Result<String> {
         let mut response = http_client
-            .get("https://docs.rs/axum", AsyncBody::default(), true)
+            .get(
+                &format!("https://docs.rs/{crate_name}"),
+                AsyncBody::default(),
+                true,
+            )
             .await?;
 
         let mut body = Vec::new();
@@ -52,7 +59,7 @@ impl SlashCommand for RustdocSlashCommand {
     }
 
     fn requires_argument(&self) -> bool {
-        false
+        true
     }
 
     fn complete_argument(
@@ -69,18 +76,25 @@ impl SlashCommand for RustdocSlashCommand {
         self: Arc<Self>,
         argument: Option<&str>,
         workspace: WeakView<Workspace>,
-        delegate: Arc<dyn LspAdapterDelegate>,
+        _delegate: Arc<dyn LspAdapterDelegate>,
         cx: &mut WindowContext,
     ) -> Task<Result<SlashCommandOutput>> {
+        let Some(argument) = argument else {
+            return Task::ready(Err(anyhow!("missing crate name")));
+        };
         let Some(workspace) = workspace.upgrade() else {
             return Task::ready(Err(anyhow!("workspace was dropped")));
         };
 
         let http_client = workspace.read(cx).client().http_client();
+        let crate_name = argument.to_string();
 
-        let text = cx
-            .background_executor()
-            .spawn(async move { Self::build_message(http_client).await });
+        let text = cx.background_executor().spawn({
+            let crate_name = crate_name.clone();
+            async move { Self::build_message(http_client, crate_name).await }
+        });
+
+        let crate_name = SharedString::from(crate_name);
         cx.foreground_executor().spawn(async move {
             let text = text.await?;
             let range = 0..text.len();
@@ -89,7 +103,12 @@ impl SlashCommand for RustdocSlashCommand {
                 sections: vec![SlashCommandOutputSection {
                     range,
                     render_placeholder: Arc::new(move |id, unfold, _cx| {
-                        RustdocPlaceholder { id, unfold }.into_any_element()
+                        RustdocPlaceholder {
+                            id,
+                            unfold,
+                            crate_name: crate_name.clone(),
+                        }
+                        .into_any_element()
                     }),
                 }],
             })
@@ -101,6 +120,7 @@ impl SlashCommand for RustdocSlashCommand {
 struct RustdocPlaceholder {
     pub id: ElementId,
     pub unfold: Arc<dyn Fn(&mut WindowContext)>,
+    pub crate_name: SharedString,
 }
 
 impl RenderOnce for RustdocPlaceholder {
@@ -111,7 +131,7 @@ impl RenderOnce for RustdocPlaceholder {
             .style(ButtonStyle::Filled)
             .layer(ElevationIndex::ElevatedSurface)
             .child(Icon::new(IconName::FileRust))
-            .child(Label::new("rustdoc"))
+            .child(Label::new(format!("rustdoc: {}", self.crate_name)))
             .on_click(move |_, cx| unfold(cx))
     }
 }
