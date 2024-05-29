@@ -9,6 +9,24 @@ use settings::Settings as _;
 use theme::ThemeSettings;
 use ui::{div, prelude::*, IntoElement, ViewContext, WindowContext};
 
+/// Implements the most basic of terminal output for use by Jupyter outputs
+/// whether:
+///
+/// * stdout
+/// * stderr
+/// * text/plain
+/// * traceback from an error output
+///
+/// Ideally, we would instead use alacritty::vte::Processor to collect the
+/// output and then render up to u8::MAX lines of text. However, it's likely
+/// overkill for 95% of outputs.
+///
+/// Instead, this implementation handles:
+///
+/// * ANSI color codes (background, foreground), including 256 color
+/// * Carriage returns/line feeds
+///
+/// There is no support for cursor movement, clearing the screen, and other text styles
 pub struct TerminalOutput {
     parser: Parser,
     handler: TerminalHandler,
@@ -92,7 +110,6 @@ impl AnsiTextRun {
     }
 }
 
-// This should instead gather `TextRun`s
 struct TerminalHandler {
     text_runs: Vec<AnsiTextRun>,
     current_text_run: AnsiTextRun,
