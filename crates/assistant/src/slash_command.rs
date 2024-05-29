@@ -73,57 +73,58 @@ impl SlashCommandCompletionProvider {
         let command_name = command_name.to_string();
         let editor = self.editor.clone();
         let workspace = self.workspace.clone();
-        let executor = cx.background_executor().clone();
-        executor.clone().spawn(async move {
+        cx.spawn(|mut cx| async move {
             let matches = match_strings(
                 &candidates,
                 &command_name,
                 true,
                 usize::MAX,
                 &Default::default(),
-                executor,
+                cx.background_executor().clone(),
             )
             .await;
 
-            Ok(matches
-                .into_iter()
-                .filter_map(|mat| {
-                    let command = commands.command(&mat.string)?;
-                    let mut new_text = mat.string.clone();
-                    let requires_argument = command.requires_argument();
-                    if requires_argument {
-                        new_text.push(' ');
-                    }
+            cx.update(|cx| {
+                matches
+                    .into_iter()
+                    .filter_map(|mat| {
+                        let command = commands.command(&mat.string)?;
+                        let mut new_text = mat.string.clone();
+                        let requires_argument = command.requires_argument();
+                        if requires_argument {
+                            new_text.push(' ');
+                        }
 
-                    Some(project::Completion {
-                        old_range: name_range.clone(),
-                        documentation: Some(Documentation::SingleLine(command.description())),
-                        new_text,
-                        label: CodeLabel::plain(mat.string.clone(), None),
-                        server_id: LanguageServerId(0),
-                        lsp_completion: Default::default(),
-                        confirm: (!requires_argument).then(|| {
-                            let command_name = mat.string.clone();
-                            let command_range = command_range.clone();
-                            let editor = editor.clone();
-                            let workspace = workspace.clone();
-                            Arc::new(move |cx: &mut WindowContext| {
-                                editor
-                                    .update(cx, |editor, cx| {
-                                        editor.run_command(
-                                            command_range.clone(),
-                                            &command_name,
-                                            None,
-                                            workspace.clone(),
-                                            cx,
-                                        );
-                                    })
-                                    .ok();
-                            }) as Arc<_>
-                        }),
+                        Some(project::Completion {
+                            old_range: name_range.clone(),
+                            documentation: Some(Documentation::SingleLine(command.description())),
+                            new_text,
+                            label: command.label(cx),
+                            server_id: LanguageServerId(0),
+                            lsp_completion: Default::default(),
+                            confirm: (!requires_argument).then(|| {
+                                let command_name = mat.string.clone();
+                                let command_range = command_range.clone();
+                                let editor = editor.clone();
+                                let workspace = workspace.clone();
+                                Arc::new(move |cx: &mut WindowContext| {
+                                    editor
+                                        .update(cx, |editor, cx| {
+                                            editor.run_command(
+                                                command_range.clone(),
+                                                &command_name,
+                                                None,
+                                                workspace.clone(),
+                                                cx,
+                                            );
+                                        })
+                                        .ok();
+                                }) as Arc<_>
+                            }),
+                        })
                     })
-                })
-                .collect())
+                    .collect()
+            })
         })
     }
 

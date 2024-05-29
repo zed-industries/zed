@@ -2,7 +2,7 @@ use super::{file_command::FilePlaceholder, SlashCommand, SlashCommandOutput};
 use anyhow::Result;
 use assistant_slash_command::SlashCommandOutputSection;
 use gpui::{AppContext, Task, WeakView};
-use language::{LineEnding, LspAdapterDelegate};
+use language::{CodeLabel, HighlightId, LineEnding, LspAdapterDelegate};
 use semantic_index::SemanticIndex;
 use std::{
     fmt::Write,
@@ -18,6 +18,17 @@ pub(crate) struct SearchSlashCommand;
 impl SlashCommand for SearchSlashCommand {
     fn name(&self) -> String {
         "search".into()
+    }
+
+    fn label(&self, cx: &AppContext) -> CodeLabel {
+        let mut label = CodeLabel::default();
+        label.push_str("search ", None);
+        label.push_str(
+            "--n",
+            cx.theme().syntax().highlight_id("comment").map(HighlightId),
+        );
+        label.filter_range = 0.."search".len();
+        label
     }
 
     fn description(&self) -> String {

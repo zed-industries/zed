@@ -2,7 +2,7 @@ mod slash_command_registry;
 
 use anyhow::Result;
 use gpui::{AnyElement, AppContext, ElementId, Task, WeakView, WindowContext};
-use language::LspAdapterDelegate;
+use language::{CodeLabel, LspAdapterDelegate};
 pub use slash_command_registry::*;
 use std::{
     ops::Range,
@@ -16,6 +16,9 @@ pub fn init(cx: &mut AppContext) {
 
 pub trait SlashCommand: 'static + Send + Sync {
     fn name(&self) -> String;
+    fn label(&self, _cx: &AppContext) -> CodeLabel {
+        CodeLabel::plain(self.name(), None)
+    }
     fn description(&self) -> String;
     fn tooltip_text(&self) -> String;
     fn complete_argument(
