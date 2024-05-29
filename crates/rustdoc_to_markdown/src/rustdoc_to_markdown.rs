@@ -1,5 +1,4 @@
 mod markdown_writer;
-mod visitor;
 
 use html5ever::driver::ParseOpts;
 use html5ever::parse_document;
@@ -8,7 +7,6 @@ use html5ever::tree_builder::TreeBuilderOpts;
 use markup5ever_rcdom::RcDom;
 
 pub use crate::markdown_writer::*;
-pub use crate::visitor::*;
 
 pub fn convert_rustdoc_to_markdown() {
     let parse_options = ParseOpts {
@@ -24,8 +22,11 @@ pub fn convert_rustdoc_to_markdown() {
         .from_utf8()
         .read_from(&mut html.as_bytes())
         .unwrap();
-    let mut markdown_writer = MarkdownWriter::new();
-    markdown_writer.visit_node(&dom.document).unwrap();
+    let markdown_writer = MarkdownWriter::new();
+    let markdown = markdown_writer.run(&dom.document).unwrap();
 
-    println!("{}", markdown_writer.markdown());
+    println!("{}", markdown);
 }
+
+#[cfg(test)]
+mod tests {}

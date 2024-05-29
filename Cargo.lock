@@ -8621,6 +8621,7 @@ dependencies = [
 name = "rustdoc_to_markdown"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "html5ever",
  "markup5ever_rcdom",
 ]
