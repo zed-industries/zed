@@ -182,11 +182,14 @@ impl<P> PathLikeWithPosition<P> {
     /// Parses a string that possibly has `:row:column` suffix.
     /// Ignores trailing `:`s, so `test.rs:22:` is parsed as `test.rs:22`.
     /// If any of the row/column component parsing fails, the whole string is then parsed as a path like.
-    /// If on Windows, will replace `/` with `\` in the path for compatibility.
+    /// If on Windows, `s` will replace `/` with `\` for compatibility.
     pub fn parse_str<E>(
         s: &str,
         parse_path_like_str: impl Fn(&str, &str) -> Result<P, E>,
     ) -> Result<Self, E> {
+        #[cfg(target_os = "windows")]
+        let s = &s.replace('/', "\\");
+
         let fallback = |fallback_str| {
             Ok(Self {
                 path_like: parse_path_like_str(s, fallback_str)?,
@@ -195,16 +198,13 @@ impl<P> PathLikeWithPosition<P> {
             })
         };
 
-        #[cfg(target_os = "windows")]
-        let s = &s.replace('/', "\\");
-
         let trimmed = s.trim();
 
         #[cfg(target_os = "windows")]
         {
             let is_absolute = trimmed.starts_with(r"\\?\");
             if is_absolute {
-                return Self::parse_absolute_path(trimmed, parse_path_like_str);
+                return Self::parse_absolute_path(trimmed, |p| parse_path_like_str(s, p));
             }
         }
 
@@ -390,11 +390,13 @@ impl PathMatcher {
 mod tests {
     use super::*;
 
-    type TestPath = PathLikeWithPosition<String>;
+    type TestPath = PathLikeWithPosition<(String, String)>;
 
     fn parse_str(s: &str) -> TestPath {
-        TestPath::parse_str(s, |_, s| Ok::<_, std::convert::Infallible>(s.to_string()))
-            .expect("infallible")
+        TestPath::parse_str(s, |normalized, s| {
+            Ok::<_, std::convert::Infallible>((normalized.to_string(), s.to_string()))
+        })
+        .expect("infallible")
     }
 
     #[test]
@@ -403,7 +405,7 @@ mod tests {
             (
                 "test_file.rs",
                 PathLikeWithPosition {
-                    path_like: "test_file.rs".to_string(),
+                    path_like: ("test_file.rs".to_string(), "test_file.rs".to_string()),
                     row: None,
                     column: None,
                 },
@@ -411,7 +413,7 @@ mod tests {
             (
                 "test_file.rs:1",
                 PathLikeWithPosition {
-                    path_like: "test_file.rs".to_string(),
+                    path_like: ("test_file.rs:1".to_string(), "test_file.rs".to_string()),
                     row: Some(1),
                     column: None,
                 },
@@ -419,7 +421,7 @@ mod tests {
             (
                 "test_file.rs:1:2",
                 PathLikeWithPosition {
-                    path_like: "test_file.rs".to_string(),
+                    path_like: ("test_file.rs:1:2".to_string(), "test_file.rs".to_string()),
                     row: Some(1),
                     column: Some(2),
                 },
@@ -451,7 +453,7 @@ mod tests {
             assert_eq!(
                 actual,
                 PathLikeWithPosition {
-                    path_like: "test_file.rs".to_string(),
+                    path_like: (input.to_string(), "test_file.rs".to_string()),
                     row,
                     column,
                 },
@@ -468,7 +470,7 @@ mod tests {
             (
                 "test_file.rs:",
                 PathLikeWithPosition {
-                    path_like: "test_file.rs".to_string(),
+                    path_like: ("test_file.rs:".to_string(), "test_file.rs".to_string()),
                     row: None,
                     column: None,
                 },
@@ -476,7 +478,7 @@ mod tests {
             (
                 "test_file.rs:1:",
                 PathLikeWithPosition {
-                    path_like: "test_file.rs".to_string(),
+                    path_like: ("test_file.rs:1:".to_string(), "test_file.rs".to_string()),
                     row: Some(1),
                     column: None,
                 },
@@ -484,7 +486,10 @@ mod tests {
             (
                 "crates/file_finder/src/file_finder.rs:1902:13:",
                 PathLikeWithPosition {
-                    path_like: "crates/file_finder/src/file_finder.rs".to_string(),
+                    path_like: (
+                        "crates/file_finder/src/file_finder.rs:1902:13:".to_string(),
+                        "crates/file_finder/src/file_finder.rs".to_string(),
+                    ),
                     row: Some(1902),
                     column: Some(13),
                 },
@@ -496,7 +501,7 @@ mod tests {
             (
                 "test_file.rs:",
                 PathLikeWithPosition {
-                    path_like: "test_file.rs".to_string(),
+                    path_like: ("test_file.rs:".to_string(), "test_file.rs".to_string()),
                     row: None,
                     column: None,
                 },
@@ -504,7 +509,7 @@ mod tests {
             (
                 "test_file.rs:1:",
                 PathLikeWithPosition {
-                    path_like: "test_file.rs".to_string(),
+                    path_like: ("test_file.rs:1:".to_string(), "test_file.rs".to_string()),
                     row: Some(1),
                     column: None,
                 },
@@ -512,7 +517,10 @@ mod tests {
             (
                 "\\\\?\\C:\\Users\\someone\\test_file.rs:1902:13:",
                 PathLikeWithPosition {
-                    path_like: "C:\\Users\\someone\\test_file.rs".to_string(),
+                    path_like: (
+                        "\\\\?\\C:\\Users\\someone\\test_file.rs:1902:13:".to_string(),
+                        "C:\\Users\\someone\\test_file.rs".to_string(),
+                    ),
                     row: Some(1902),
                     column: Some(13),
                 },
@@ -520,7 +528,10 @@ mod tests {
             (
                 "\\\\?\\C:\\Users\\someone\\test_file.rs:1902:13:15:",
                 PathLikeWithPosition {
-                    path_like: "C:\\Users\\someone\\test_file.rs".to_string(),
+                    path_like: (
+                        "\\\\?\\C:\\Users\\someone\\test_file.rs:1902:13:15:".to_string(),
+                        "C:\\Users\\someone\\test_file.rs".to_string(),
+                    ),
                     row: Some(1902),
                     column: Some(13),
                 },
@@ -528,7 +539,10 @@ mod tests {
             (
                 "\\\\?\\C:\\Users\\someone\\test_file.rs:1902:::15:",
                 PathLikeWithPosition {
-                    path_like: "C:\\Users\\someone\\test_file.rs".to_string(),
+                    path_like: (
+                        "\\\\?\\C:\\Users\\someone\\test_file.rs:1902:::15:".to_string(),
+                        "C:\\Users\\someone\\test_file.rs".to_string(),
+                    ),
                     row: Some(1902),
                     column: None,
                 },
@@ -536,7 +550,10 @@ mod tests {
             (
                 "crates/utils/paths.rs",
                 PathLikeWithPosition {
-                    path_like: "crates\\utils\\paths.rs".to_string(),
+                    path_like: (
+                        "crates\\utils\\paths.rs".to_string(),
+                        "crates\\utils\\paths.rs".to_string(),
+                    ),
                     row: None,
                     column: None,
                 },
@@ -544,7 +561,10 @@ mod tests {
             (
                 "crates/utils/paths.rs:101",
                 PathLikeWithPosition {
-                    path_like: "crates\\utils\\paths.rs".to_string(),
+                    path_like: (
+                        "crates\\utils\\paths.rs:101".to_string(),
+                        "crates\\utils\\paths.rs".to_string(),
+                    ),
                     row: Some(101),
                     column: None,
                 },
