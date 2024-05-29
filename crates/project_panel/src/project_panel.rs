@@ -1938,7 +1938,7 @@ impl ProjectPanel {
                 ListItem::new(entry_id.to_proto() as usize)
                     .indent_level(depth)
                     .indent_step_size(px(settings.indent_size))
-                    .selected(is_marked)
+                    .selected(is_marked || is_active)
                     .when_some(canonical_path, |this, path| {
                         this.end_slot::<AnyElement>(
                             div()
@@ -2052,17 +2052,20 @@ impl ProjectPanel {
                     )),
             )
             .border_1()
+            .border_r_2()
             .rounded_none()
             .hover(|style| {
-                if is_active || is_marked {
+                if is_active {
                     style
                 } else {
                     let hover_color = cx.theme().colors().ghost_element_hover;
                     style.bg(hover_color).border_color(hover_color)
                 }
             })
-            .when(is_marked, |this| {
-                this.border_color(cx.theme().colors().ghost_element_selected)
+            .when(is_marked || is_active, |this| {
+                let colors = cx.theme().colors();
+                this.when(is_marked, |this| this.bg(colors.ghost_element_selected))
+                    .border_color(colors.ghost_element_selected)
             })
             .when(
                 is_active && self.focus_handle.contains_focused(cx),
