@@ -15,6 +15,7 @@ path = "src/rustdoc_to_markdown.rs"
 anyhow.workspace = true
 html5ever.workspace = true
 markup5ever_rcdom.workspace = true
+regex.workspace = true
 
 [dev-dependencies]
 indoc.workspace = true

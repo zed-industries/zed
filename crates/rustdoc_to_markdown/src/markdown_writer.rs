@@ -1,9 +1,21 @@
 use std::cell::RefCell;
 use std::collections::VecDeque;
+use std::sync::OnceLock;
 
 use anyhow::Result;
 use html5ever::Attribute;
 use markup5ever_rcdom::{Handle, NodeData};
+use regex::Regex;
+
+fn empty_line_regex() -> &'static Regex {
+    static REGEX: OnceLock<Regex> = OnceLock::new();
+    REGEX.get_or_init(|| Regex::new(r"^\s*$").unwrap())
+}
+
+fn more_than_three_newlines_regex() -> &'static Regex {
+    static REGEX: OnceLock<Regex> = OnceLock::new();
+    REGEX.get_or_init(|| Regex::new(r"\n{3,}").unwrap())
+}
 
 #[derive(Debug, Clone)]
 struct HtmlElement {
@@ -48,7 +60,14 @@ impl MarkdownWriter {
 
     pub fn run(mut self, root_node: &Handle) -> Result<String> {
         self.visit_node(&root_node)?;
-        Ok(self.markdown.trim().to_string())
+        Ok(Self::prettify_markdown(self.markdown))
+    }
+
+    fn prettify_markdown(markdown: String) -> String {
+        let markdown = empty_line_regex().replace_all(&markdown, "");
+        let markdown = more_than_three_newlines_regex().replace_all(&markdown, "\n\n");
+
+        markdown.trim().to_string()
     }
 
     fn visit_node(&mut self, node: &Handle) -> Result<()> {
@@ -107,12 +126,12 @@ impl MarkdownWriter {
     fn start_tag(&mut self, tag: &HtmlElement) -> StartTagOutcome {
         match tag.tag.as_str() {
             "head" | "script" | "nav" => return StartTagOutcome::Skip,
-            "h1" => self.push_str("\n# "),
-            "h2" => self.push_str("\n## "),
-            "h3" => self.push_str("\n### "),
-            "h4" => self.push_str("\n#### "),
-            "h5" => self.push_str("\n##### "),
-            "h6" => self.push_str("\n###### "),
+            "h1" => self.push_str("\n\n# "),
+            "h2" => self.push_str("\n\n## "),
+            "h3" => self.push_str("\n\n### "),
+            "h4" => self.push_str("\n\n#### "),
+            "h5" => self.push_str("\n\n##### "),
+            "h6" => self.push_str("\n\n###### "),
             "code" => {
                 if !self.is_inside("pre") {
                     self.push_str("`")
