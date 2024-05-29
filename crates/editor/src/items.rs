@@ -613,10 +613,7 @@ impl Item for Editor {
             entry_label_color(params.selected)
         };
 
-        let mut height = 0;
-
         let description = params.detail.and_then(|detail| {
-            height = detail;
             let path = path_for_buffer(&self.buffer, detail, false, cx)?;
             let description = path.to_string_lossy();
             let description = description.trim();
@@ -629,7 +626,7 @@ impl Item for Editor {
         });
 
         let mut icon = None;
-        if let Some(path) = path_for_buffer(&self.buffer, height, true, cx) {
+        if let Some(path) = path_for_buffer(&self.buffer, params.detail.unwrap_or(0), true, cx) {
             icon = FileIcons::get_icon(&path, cx);
         }
 
