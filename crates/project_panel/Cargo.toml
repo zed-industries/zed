@@ -20,6 +20,7 @@ editor.workspace = true
 file_icons.workspace = true
 git.workspace = true
 gpui.workspace = true
+language.workspace = true
 menu.workspace = true
 pretty_assertions.workspace = true
 project.workspace = true

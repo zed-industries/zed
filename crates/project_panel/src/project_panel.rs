@@ -7,7 +7,7 @@ use db::kvp::KEY_VALUE_STORE;
 use editor::{
     items::entry_git_aware_label_color,
     scroll::{Autoscroll, ScrollAnchor},
-    Editor, MultiBuffer,
+    Editor, EditorEvent,
 };
 use file_icons::FileIcons;
 
@@ -19,11 +19,12 @@ use gpui::{
     AppContext, AssetSource, AsyncWindowContext, ClipboardItem, DismissEvent, Div, EventEmitter,
     FocusHandle, FocusableView, InteractiveElement, KeyContext, Model, MouseButton, MouseDownEvent,
     ParentElement, Pixels, Point, PromptLevel, Render, Stateful, Styled, Subscription, Task,
-    UniformListScrollHandle, View, ViewContext, VisualContext as _, WeakModel, WeakView,
-    WindowContext,
+    UniformListScrollHandle, View, ViewContext, VisualContext as _, WeakView, WindowContext,
 };
 use menu::{Confirm, SelectFirst, SelectLast, SelectNext, SelectPrev};
-use project::{Entry, EntryKind, Fs, Project, ProjectEntryId, ProjectPath, Worktree, WorktreeId};
+use project::{
+    Entry, EntryKind, Fs, Item, Project, ProjectEntryId, ProjectPath, Worktree, WorktreeId,
+};
 use project_panel_settings::{ProjectPanelDockPosition, ProjectPanelSettings};
 use serde::{Deserialize, Serialize};
 use std::{
@@ -71,8 +72,7 @@ pub struct ProjectPanel {
 
 struct ActiveMultiBuffer {
     replica_id: u16,
-    // TODO kb subscribe for selection changes, to update the current project panel item
-    multi_buffer: WeakModel<MultiBuffer>,
+    _editor_subscrpiption: Subscription,
     entries: BTreeMap<WorktreeId, BTreeSet<ProjectEntryId>>,
 }
 
@@ -227,42 +227,39 @@ impl ProjectPanel {
                     .expect("have a &mut Workspace"),
                 move |project_panel, workspace, event, cx| {
                     if let WorkspaceEvent::ActiveItemChanged = event {
-                        if let Some((multi_buffer, mut new_multi_buffer_entries)) =
-                            active_multi_buffer_entries(workspace.read(cx), cx)
+                        if let Some((editor, mut new_entries)) =
+                            active_entries(workspace.read(cx), cx)
                         {
-                            let new_replica_id = multi_buffer.read(cx).replica_id();
+                            let new_replica_id = editor.read(cx).replica_id(cx);
                             let mut added_entries = HashSet::default();
                             if let Some(old_multi_buffer) = &mut project_panel.active_multi_buffer {
                                 if old_multi_buffer.replica_id != new_replica_id {
-                                    added_entries.extend(
-                                        new_multi_buffer_entries.values().flatten().copied(),
-                                    );
+                                    added_entries.extend(new_entries.values().flatten().copied());
                                     project_panel.active_multi_buffer = Some(ActiveMultiBuffer {
                                         replica_id: new_replica_id,
-                                        multi_buffer: multi_buffer.downgrade(),
-                                        entries: new_multi_buffer_entries,
+                                        _editor_subscrpiption: subscribe_for_editor_changes(
+                                            &editor, cx,
+                                        ),
+                                        entries: new_entries,
                                     });
                                 } else {
                                     old_multi_buffer.entries.retain(
-                                        |old_workspace_id, old_entries| {
-                                            match new_multi_buffer_entries.remove(old_workspace_id)
-                                            {
-                                                Some(mut new_entries) => {
-                                                    old_entries.retain(|old_entry| {
-                                                        new_entries.remove(old_entry)
-                                                    });
-                                                    added_entries
-                                                        .extend(new_entries.iter().copied());
-                                                    old_entries.extend(new_entries);
-                                                    !old_entries.is_empty()
-                                                }
-                                                None => false,
+                                        |old_workspace_id, old_entries| match new_entries
+                                            .remove(old_workspace_id)
+                                        {
+                                            Some(mut new_entries) => {
+                                                old_entries.retain(|old_entry| {
+                                                    new_entries.remove(old_entry)
+                                                });
+                                                added_entries.extend(new_entries.iter().copied());
+                                                old_entries.extend(new_entries);
+                                                !old_entries.is_empty()
                                             }
+                                            None => false,
                                         },
                                     );
 
-                                    for (new_workspace_id, new_entries) in new_multi_buffer_entries
-                                    {
+                                    for (new_workspace_id, new_entries) in new_entries {
                                         added_entries.extend(new_entries.iter().copied());
                                         old_multi_buffer
                                             .entries
@@ -270,12 +267,13 @@ impl ProjectPanel {
                                     }
                                 }
                             } else {
-                                added_entries
-                                    .extend(new_multi_buffer_entries.values().flatten().copied());
+                                added_entries.extend(new_entries.values().flatten().copied());
                                 project_panel.active_multi_buffer = Some(ActiveMultiBuffer {
                                     replica_id: new_replica_id,
-                                    multi_buffer: multi_buffer.downgrade(),
-                                    entries: new_multi_buffer_entries,
+                                    _editor_subscrpiption: subscribe_for_editor_changes(
+                                        &editor, cx,
+                                    ),
+                                    entries: new_entries,
                                 });
                             }
                             if !added_entries.is_empty() {
@@ -1584,7 +1582,7 @@ impl ProjectPanel {
 
     fn update_visible_entries(
         &mut self,
-        new_multi_buffer_entries: HashSet<ProjectEntryId>,
+        new_entries: HashSet<ProjectEntryId>,
         new_selected_entry: Option<(WorktreeId, ProjectEntryId)>,
         cx: &mut ViewContext<Self>,
     ) {
@@ -1710,7 +1708,7 @@ impl ProjectPanel {
             if active_multi_buffer_entries.is_some() {
                 let mut dir_entries_to_re_add = HashMap::default();
                 visible_worktree_entries.retain(|entry| {
-                    let is_new_entry = new_multi_buffer_entries.contains(&entry.id);
+                    let is_new_entry = new_entries.contains(&entry.id);
                     let mut retain_visible_entry = true;
                     let mut parent_dir_excluded = false;
                     for parent_dir_entry in
@@ -2331,6 +2329,15 @@ impl ProjectPanel {
             }
 
             let worktree_id = worktree.id();
+            if self.selection
+                == Some(SelectedEntry {
+                    worktree_id,
+                    entry_id,
+                })
+            {
+                return;
+            }
+
             self.marked_entries.clear();
             self.expand_entry(worktree_id, entry_id, cx);
             self.update_visible_entries(HashSet::default(), Some((worktree_id, entry_id)), cx);
@@ -2338,6 +2345,37 @@ impl ProjectPanel {
             cx.notify();
         }
     }
+}
+
+fn subscribe_for_editor_changes(
+    editor: &View<Editor>,
+    cx: &mut ViewContext<ProjectPanel>,
+) -> Subscription {
+    cx.subscribe(editor, |project_panel, editor, e: &EditorEvent, cx| {
+        if let EditorEvent::SelectionsChanged { local: true } = e {
+            if let Some(entry_id) = entry_id_for_selection(&editor, cx) {
+                project_panel.reveal_entry(project_panel.project.clone(), entry_id, false, cx);
+                return;
+            }
+        }
+        cx.propagate();
+    })
+}
+
+fn entry_id_for_selection(
+    editor: &View<Editor>,
+    cx: &mut ViewContext<ProjectPanel>,
+) -> Option<ProjectEntryId> {
+    let selection = editor
+        .read(cx)
+        .selections
+        .newest::<language::Point>(cx)
+        .head();
+    let multi_buffer = editor.read(cx).buffer();
+    let multi_buffer_snapshot = multi_buffer.read(cx).snapshot(cx);
+    let (buffer_snapshot, _) = multi_buffer_snapshot.point_to_buffer_offset(selection)?;
+    let buffer = multi_buffer.read(cx).buffer(buffer_snapshot.remote_id())?;
+    buffer.read(cx).entry_id(cx)
 }
 
 impl Render for ProjectPanel {
@@ -2445,22 +2483,16 @@ impl Render for ProjectPanel {
     }
 }
 
-fn active_multi_buffer_entries(
+fn active_entries(
     workspace: &Workspace,
     cx: &AppContext,
-) -> Option<(
-    Model<MultiBuffer>,
-    BTreeMap<WorktreeId, BTreeSet<ProjectEntryId>>,
-)> {
+) -> Option<(View<Editor>, BTreeMap<WorktreeId, BTreeSet<ProjectEntryId>>)> {
     let active_item = workspace
         .active_item(cx)
         .filter(|item| !item.is_singleton(cx))?;
-    let active_multi_buffer = active_item
-        .act_as::<Editor>(cx)
-        .map(|editor| editor.read(cx).buffer().clone())?;
 
     Some((
-        active_multi_buffer,
+        active_item.act_as::<Editor>(cx)?,
         active_item
             .project_entry_ids(cx)
             .into_iter()
