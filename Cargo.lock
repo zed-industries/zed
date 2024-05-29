@@ -366,6 +366,7 @@ dependencies = [
  "rand 0.8.5",
  "regex",
  "rope",
+ "rustdoc_to_markdown",
  "schemars",
  "search",
  "semantic_index",
