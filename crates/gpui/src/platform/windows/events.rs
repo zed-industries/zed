@@ -957,6 +957,7 @@ fn handle_nc_mouse_down_msg(
         drop(lock);
     };
 
+    // Since these are handled in handle_nc_mouse_up_msg we must prevent the default window proc
     if button == MouseButton::Left {
         match wparam.0 as u32 {
             HTMINBUTTON => state_ptr.state.borrow_mut().nc_button_pressed = Some(HTMINBUTTON),
