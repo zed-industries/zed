@@ -6,7 +6,7 @@ use db::kvp::KEY_VALUE_STORE;
 use editor::{
     items::entry_git_aware_label_color,
     scroll::{Autoscroll, ScrollAnchor},
-    Editor,
+    Editor, MultiBuffer,
 };
 use file_icons::FileIcons;
 
@@ -18,7 +18,8 @@ use gpui::{
     AppContext, AssetSource, AsyncWindowContext, ClipboardItem, DismissEvent, Div, EventEmitter,
     FocusHandle, FocusableView, InteractiveElement, KeyContext, Model, MouseButton, MouseDownEvent,
     ParentElement, Pixels, Point, PromptLevel, Render, Stateful, Styled, Subscription, Task,
-    UniformListScrollHandle, View, ViewContext, VisualContext as _, WeakView, WindowContext,
+    UniformListScrollHandle, View, ViewContext, VisualContext as _, WeakModel, WeakView,
+    WindowContext,
 };
 use menu::{Confirm, SelectFirst, SelectLast, SelectNext, SelectPrev};
 use project::{Entry, EntryKind, Fs, Project, ProjectEntryId, ProjectPath, Worktree, WorktreeId};
@@ -64,7 +65,14 @@ pub struct ProjectPanel {
     workspace: WeakView<Workspace>,
     width: Option<Pixels>,
     pending_serialization: Task<Option<()>>,
-    active_multi_buffer_entries: BTreeMap<WorktreeId, BTreeSet<ProjectEntryId>>,
+    active_multi_buffer: Option<ActiveMultiBuffer>,
+}
+
+struct ActiveMultiBuffer {
+    replica_id: u16,
+    // TODO kb subscribe for selection changes, to update the current project panel item
+    multi_buffer: WeakModel<MultiBuffer>,
+    entries: BTreeMap<WorktreeId, BTreeSet<ProjectEntryId>>,
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -217,14 +225,62 @@ impl ProjectPanel {
                     .upgrade()
                     .expect("have a &mut Workspace"),
                 move |project_panel, workspace, event, cx| {
-                    // TODO kb subscribe for multibuffer events, and select panel items on selection jumping to other buffer's excerpt
                     if let WorkspaceEvent::ActiveItemChanged = event {
-                        let new_multi_buffer_entries =
-                            active_multi_buffer_entries(workspace.read(cx), cx);
-                        if project_panel.active_multi_buffer_entries != new_multi_buffer_entries {
-                            project_panel.active_multi_buffer_entries = new_multi_buffer_entries;
-                            project_panel.update_visible_entries(None, cx);
-                            cx.notify();
+                        if let Some((multi_buffer, mut new_multi_buffer_entries)) =
+                            active_multi_buffer_entries(workspace.read(cx), cx)
+                        {
+                            let new_replica_id = multi_buffer.read(cx).replica_id();
+                            let mut added_entries = HashSet::default();
+                            if let Some(old_multi_buffer) = &mut project_panel.active_multi_buffer {
+                                if old_multi_buffer.replica_id != new_replica_id {
+                                    added_entries.extend(
+                                        new_multi_buffer_entries.values().flatten().copied(),
+                                    );
+                                    project_panel.active_multi_buffer = Some(ActiveMultiBuffer {
+                                        replica_id: new_replica_id,
+                                        multi_buffer: multi_buffer.downgrade(),
+                                        entries: new_multi_buffer_entries,
+                                    });
+                                } else {
+                                    old_multi_buffer.entries.retain(
+                                        |old_workspace_id, old_entries| {
+                                            match new_multi_buffer_entries.remove(old_workspace_id)
+                                            {
+                                                Some(mut new_entries) => {
+                                                    old_entries.retain(|old_entry| {
+                                                        new_entries.remove(old_entry)
+                                                    });
+                                                    added_entries
+                                                        .extend(new_entries.iter().copied());
+                                                    old_entries.extend(new_entries);
+                                                    !old_entries.is_empty()
+                                                }
+                                                None => false,
+                                            }
+                                        },
+                                    );
+
+                                    for (new_workspace_id, new_entries) in new_multi_buffer_entries
+                                    {
+                                        added_entries.extend(new_entries.iter().copied());
+                                        old_multi_buffer
+                                            .entries
+                                            .insert(new_workspace_id, new_entries);
+                                    }
+                                }
+                            } else {
+                                added_entries
+                                    .extend(new_multi_buffer_entries.values().flatten().copied());
+                                project_panel.active_multi_buffer = Some(ActiveMultiBuffer {
+                                    replica_id: new_replica_id,
+                                    multi_buffer: multi_buffer.downgrade(),
+                                    entries: new_multi_buffer_entries,
+                                });
+                            }
+                            if !added_entries.is_empty() {
+                                project_panel.update_visible_entries(added_entries, None, cx);
+                                cx.notify();
+                            }
                         }
                     }
                 },
@@ -246,13 +302,13 @@ impl ProjectPanel {
                 }
                 project::Event::WorktreeRemoved(id) => {
                     this.expanded_dir_ids.remove(id);
-                    this.update_visible_entries(None, cx);
+                    this.update_visible_entries(HashSet::default(), None, cx);
                     cx.notify();
                 }
                 project::Event::WorktreeUpdatedEntries(_, _)
                 | project::Event::WorktreeAdded
                 | project::Event::WorktreeOrderChanged => {
-                    this.update_visible_entries(None, cx);
+                    this.update_visible_entries(HashSet::default(), None, cx);
                     cx.notify();
                 }
                 _ => {}
@@ -273,7 +329,7 @@ impl ProjectPanel {
                         .map_or(false, |state| state.processing_filename.is_none())
                     {
                         this.edit_state = None;
-                        this.update_visible_entries(None, cx);
+                        this.update_visible_entries(HashSet::default(), None, cx);
                     }
                 }
                 _ => {}
@@ -313,9 +369,9 @@ impl ProjectPanel {
                 workspace: workspace.weak_handle(),
                 width: None,
                 pending_serialization: Task::ready(None),
-                active_multi_buffer_entries: BTreeMap::new(),
+                active_multi_buffer: None,
             };
-            this.update_visible_entries(None, cx);
+            this.update_visible_entries(HashSet::default(), None, cx);
 
             this
         });
@@ -628,7 +684,7 @@ impl ProjectPanel {
                     self.project.update(cx, |project, cx| {
                         project.expand_entry(worktree_id, entry_id, cx);
                     });
-                    self.update_visible_entries(None, cx);
+                    self.update_visible_entries(HashSet::default(), None, cx);
                     cx.notify()
                 } else {
                     self.select_next(&SelectNext, cx)
@@ -650,7 +706,11 @@ impl ProjectPanel {
             loop {
                 let entry_id = entry.id;
                 if expanded_dir_ids.remove(&entry_id) {
-                    self.update_visible_entries(Some((worktree_id, entry_id)), cx);
+                    self.update_visible_entries(
+                        HashSet::default(),
+                        Some((worktree_id, entry_id)),
+                        cx,
+                    );
                     cx.notify();
                     break;
                 } else if let Some(parent_entry) =
@@ -669,7 +729,7 @@ impl ProjectPanel {
         // (which is it's default behaviour when there's no entry for a worktree in expanded_dir_ids).
         self.expanded_dir_ids
             .retain(|_, expanded_entries| expanded_entries.is_empty());
-        self.update_visible_entries(None, cx);
+        self.update_visible_entries(HashSet::default(), None, cx);
         cx.notify();
     }
 
@@ -682,7 +742,7 @@ impl ProjectPanel {
                         expanded_dir_ids.insert(entry_id);
                     }
                 });
-                self.update_visible_entries(Some((worktree_id, entry_id)), cx);
+                self.update_visible_entries(HashSet::default(), Some((worktree_id, entry_id)), cx);
                 cx.focus(&self.focus_handle);
                 cx.notify();
             }
@@ -820,7 +880,7 @@ impl ProjectPanel {
                             this.expand_to_selection(cx);
                         }
                     }
-                    this.update_visible_entries(None, cx);
+                    this.update_visible_entries(HashSet::default(), None, cx);
                     if is_new_entry && !is_dir {
                         this.open_entry(new_entry.id, false, true, false, cx);
                     }
@@ -833,7 +893,7 @@ impl ProjectPanel {
 
     fn cancel(&mut self, _: &menu::Cancel, cx: &mut ViewContext<Self>) {
         self.edit_state = None;
-        self.update_visible_entries(None, cx);
+        self.update_visible_entries(HashSet::default(), None, cx);
         self.marked_entries.clear();
         cx.focus(&self.focus_handle);
         cx.notify();
@@ -915,7 +975,7 @@ impl ProjectPanel {
                 editor.clear(cx);
                 editor.focus(cx);
             });
-            self.update_visible_entries(Some((worktree_id, NEW_ENTRY_ID)), cx);
+            self.update_visible_entries(HashSet::default(), Some((worktree_id, NEW_ENTRY_ID)), cx);
             self.autoscroll(cx);
             cx.notify();
         }
@@ -952,7 +1012,7 @@ impl ProjectPanel {
                         });
                         editor.focus(cx);
                     });
-                    self.update_visible_entries(None, cx);
+                    self.update_visible_entries(HashSet::default(), None, cx);
                     self.autoscroll(cx);
                     cx.notify();
                 }
@@ -1072,7 +1132,7 @@ impl ProjectPanel {
                 }
             }
 
-            self.update_visible_entries(None, cx);
+            self.update_visible_entries(HashSet::default(), None, cx);
             self.autoscroll(cx);
             cx.notify();
         }
@@ -1098,7 +1158,7 @@ impl ProjectPanel {
                 }
             }
 
-            self.update_visible_entries(None, cx);
+            self.update_visible_entries(HashSet::default(), None, cx);
             self.autoscroll(cx);
             cx.notify();
         }
@@ -1516,9 +1576,9 @@ impl ProjectPanel {
         Some(())
     }
 
-    // TODO kb indicate new `active_multi_buffer_entries` here and only unfold parents for those
     fn update_visible_entries(
         &mut self,
+        new_multi_buffer_entries: HashSet<ProjectEntryId>,
         new_selected_entry: Option<(WorktreeId, ProjectEntryId)>,
         cx: &mut ViewContext<Self>,
     ) {
@@ -1530,14 +1590,17 @@ impl ProjectPanel {
             .next()
             .and_then(|worktree| {
                 let worktree = worktree.read(cx);
-                if self.active_multi_buffer_entries.is_empty()
-                    || self
-                        .active_multi_buffer_entries
-                        .contains_key(&worktree.id())
-                {
-                    worktree.root_entry()
-                } else {
-                    None
+                match &self.active_multi_buffer {
+                    None => worktree.root_entry(),
+                    Some(active_multi_buffer) => {
+                        if active_multi_buffer.entries.is_empty()
+                            || active_multi_buffer.entries.contains_key(&worktree.id())
+                        {
+                            worktree.root_entry()
+                        } else {
+                            None
+                        }
+                    }
                 }
             })
             .map(|entry| entry.id);
@@ -1547,9 +1610,14 @@ impl ProjectPanel {
             let snapshot = worktree.read(cx).snapshot();
             let worktree_id = snapshot.id();
 
-            let active_multi_buffer_entries = self.active_multi_buffer_entries.get(&worktree_id);
-            if !self.active_multi_buffer_entries.is_empty() && active_multi_buffer_entries.is_none()
-            {
+            let multi_buffer_entries = self
+                .active_multi_buffer
+                .as_ref()
+                .filter(|active_multi_buffer| !active_multi_buffer.entries.is_empty());
+            let active_multi_buffer_entries = multi_buffer_entries
+                .as_ref()
+                .and_then(|active_multi_buffer| active_multi_buffer.entries.get(&worktree_id));
+            if multi_buffer_entries.is_some() && active_multi_buffer_entries.is_none() {
                 continue;
             }
 
@@ -1632,25 +1700,35 @@ impl ProjectPanel {
                 entry_iter.advance();
             }
 
-            // TODO kb can we speed things up? Sort by path before inserting?
-            let mut entries_to_re_add = Vec::with_capacity(maybe_applicable_folder_entries.len());
-            for visible_entry in &visible_worktree_entries {
+            // TODO kb wrong: on the next clear, there will be no new multibuffer entries,
+            // but all their parent dir entries are cleared from the visible ones
+            // if we start to re-add them always, it will not consider toggle again.
+            // Instead, re-add all toggled directories to visible entries?
+            let mut dir_entries_to_re_add =
+                Vec::with_capacity(maybe_applicable_folder_entries.len());
+            for new_visible_entry in visible_worktree_entries
+                .iter()
+                .filter(|entry| new_multi_buffer_entries.contains(&entry.id))
+            {
                 maybe_applicable_folder_entries.retain(|maybe_parent_entry| {
-                    if visible_entry.path.starts_with(&maybe_parent_entry.path) {
-                        entries_to_re_add.push(maybe_parent_entry.clone());
+                    if new_visible_entry.path.starts_with(&maybe_parent_entry.path) {
+                        dir_entries_to_re_add.push(maybe_parent_entry.clone());
                         false
                     } else {
                         true
                     }
                 })
             }
-
-            // TODO kb this always re-adds the entries as open, even if it was toggled
-            self.expanded_dir_ids
-                .entry(worktree_id)
-                .or_default()
-                .extend(entries_to_re_add.iter().map(|entry| entry.id));
-            visible_worktree_entries.extend(entries_to_re_add);
+            if active_multi_buffer_entries.is_some() {
+                self.expanded_dir_ids
+                    .entry(worktree_id)
+                    .or_default()
+                    .extend(dir_entries_to_re_add.iter().map(|entry| entry.id));
+            } else {
+                dir_entries_to_re_add
+                    .retain(|dir_to_re_add| expanded_dir_ids.contains(&dir_to_re_add.id));
+            }
+            visible_worktree_entries.extend(dir_entries_to_re_add.into_iter());
 
             snapshot.propagate_git_statuses(&mut visible_worktree_entries);
 
@@ -2105,7 +2183,14 @@ impl ProjectPanel {
                                     }
                                 } else if kind.is_dir() {
                                     project_panel.toggle_expanded(entry_id, cx);
-                                } else if !project_panel.active_multi_buffer_entries.is_empty() {
+                                } else if !project_panel
+                                    .active_multi_buffer
+                                    .as_ref()
+                                    .filter(|active_multi_buffer| {
+                                        !active_multi_buffer.entries.is_empty()
+                                    })
+                                    .is_some()
+                                {
                                     if let Some(active_editor) = project_panel
                                         .workspace
                                         .update(cx, |workspace, cx| {
@@ -2238,7 +2323,7 @@ impl ProjectPanel {
             let worktree_id = worktree.id();
             self.marked_entries.clear();
             self.expand_entry(worktree_id, entry_id, cx);
-            self.update_visible_entries(Some((worktree_id, entry_id)), cx);
+            self.update_visible_entries(HashSet::default(), Some((worktree_id, entry_id)), cx);
             self.autoscroll(cx);
             cx.notify();
         }
@@ -2353,26 +2438,36 @@ impl Render for ProjectPanel {
 fn active_multi_buffer_entries(
     workspace: &Workspace,
     cx: &AppContext,
-) -> BTreeMap<WorktreeId, BTreeSet<ProjectEntryId>> {
-    workspace
+) -> Option<(
+    Model<MultiBuffer>,
+    BTreeMap<WorktreeId, BTreeSet<ProjectEntryId>>,
+)> {
+    let active_item = workspace
         .active_item(cx)
-        .filter(|item| !item.is_singleton(cx))
-        .map(|item| item.project_entry_ids(cx))
-        .into_iter()
-        .flatten()
-        .filter_map(|entry_id| {
-            let worktree_id = workspace
-                .project()
-                .read(cx)
-                .worktree_for_entry(entry_id, cx)?
-                .read(cx)
-                .id();
-            Some((worktree_id, entry_id))
-        })
-        .fold(BTreeMap::new(), |mut entries, (worktree_id, entry_id)| {
-            entries.entry(worktree_id).or_default().insert(entry_id);
-            entries
-        })
+        .filter(|item| !item.is_singleton(cx))?;
+    let active_multi_buffer = active_item
+        .act_as::<Editor>(cx)
+        .map(|editor| editor.read(cx).buffer().clone())?;
+
+    Some((
+        active_multi_buffer,
+        active_item
+            .project_entry_ids(cx)
+            .into_iter()
+            .filter_map(|entry_id| {
+                let worktree_id = workspace
+                    .project()
+                    .read(cx)
+                    .worktree_for_entry(entry_id, cx)?
+                    .read(cx)
+                    .id();
+                Some((worktree_id, entry_id))
+            })
+            .fold(BTreeMap::new(), |mut entries, (worktree_id, entry_id)| {
+                entries.entry(worktree_id).or_default().insert(entry_id);
+                entries
+            }),
+    ))
 }
 
 impl Render for DraggedProjectEntryView {
