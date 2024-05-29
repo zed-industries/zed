@@ -4,7 +4,6 @@ members = [
     "crates/anthropic",
     "crates/assets",
     "crates/assistant",
-    "crates/assistant2",
     "crates/assistant_slash_command",
     "crates/assistant_tooling",
     "crates/audio",
@@ -148,7 +147,6 @@ ai = { path = "crates/ai" }
 anthropic = { path = "crates/anthropic" }
 assets = { path = "crates/assets" }
 assistant = { path = "crates/assistant" }
-assistant2 = { path = "crates/assistant2" }
 assistant_slash_command = { path = "crates/assistant_slash_command" }
 assistant_tooling = { path = "crates/assistant_tooling" }
 audio = { path = "crates/audio" }
@@ -264,8 +262,8 @@ async-tar = "0.4.2"
 async-trait = "0.1"
 async_zip = { version = "0.0.17", features = ["deflate", "deflate64"] }
 bitflags = "2.4.2"
-blade-graphics = { git = "https://github.com/kvark/blade", rev = "e35b2d41f221a48b75f7cf2e78a81e7ecb7a383c" }
-blade-macros = { git = "https://github.com/kvark/blade", rev = "e35b2d41f221a48b75f7cf2e78a81e7ecb7a383c" }
+blade-graphics = { git = "https://github.com/kvark/blade", rev = "9c9cabf69e869fc7d9aef2fc76f7d5c354d5710a" }
+blade-macros = { git = "https://github.com/kvark/blade", rev = "9c9cabf69e869fc7d9aef2fc76f7d5c354d5710a" }
 cap-std = "3.0"
 cargo_toml = "0.20"
 chrono = { version = "0.4", features = ["serde"] }

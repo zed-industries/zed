@@ -1,5 +1,6 @@
 use super::{SlashCommand, SlashCommandOutput};
 use anyhow::{anyhow, Context, Result};
+use assistant_slash_command::SlashCommandOutputSection;
 use fs::Fs;
 use gpui::{AppContext, Model, Task, WeakView};
 use language::LspAdapterDelegate;
@@ -131,18 +132,21 @@ impl SlashCommand for ProjectSlashCommand {
 
             cx.foreground_executor().spawn(async move {
                 let text = output.await?;
-
+                let range = 0..text.len();
                 Ok(SlashCommandOutput {
                     text,
-                    render_placeholder: Arc::new(move |id, unfold, _cx| {
-                        ButtonLike::new(id)
-                            .style(ButtonStyle::Filled)
-                            .layer(ElevationIndex::ElevatedSurface)
-                            .child(Icon::new(IconName::FileTree))
-                            .child(Label::new("Project"))
-                            .on_click(move |_, cx| unfold(cx))
-                            .into_any_element()
-                    }),
+                    sections: vec![SlashCommandOutputSection {
+                        range,
+                        render_placeholder: Arc::new(move |id, unfold, _cx| {
+                            ButtonLike::new(id)
+                                .style(ButtonStyle::Filled)
+                                .layer(ElevationIndex::ElevatedSurface)
+                                .child(Icon::new(IconName::FileTree))
+                                .child(Label::new("Project"))
+                                .on_click(move |_, cx| unfold(cx))
+                                .into_any_element()
+                        }),
+                    }],
                 })
             })
         });

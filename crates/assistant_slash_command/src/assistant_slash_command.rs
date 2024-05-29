@@ -4,7 +4,10 @@ use anyhow::Result;
 use gpui::{AnyElement, AppContext, ElementId, Task, WeakView, WindowContext};
 use language::LspAdapterDelegate;
 pub use slash_command_registry::*;
-use std::sync::{atomic::AtomicBool, Arc};
+use std::{
+    ops::Range,
+    sync::{atomic::AtomicBool, Arc},
+};
 use workspace::Workspace;
 
 pub fn init(cx: &mut AppContext) {
@@ -44,5 +47,11 @@ pub type RenderFoldPlaceholder = Arc<
 
 pub struct SlashCommandOutput {
     pub text: String,
+    pub sections: Vec<SlashCommandOutputSection<usize>>,
+}
+
+#[derive(Clone)]
+pub struct SlashCommandOutputSection<T> {
+    pub range: Range<T>,
     pub render_placeholder: RenderFoldPlaceholder,
 }

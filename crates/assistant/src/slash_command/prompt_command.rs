@@ -1,6 +1,7 @@
 use super::{SlashCommand, SlashCommandOutput};
 use crate::prompts::PromptLibrary;
 use anyhow::{anyhow, Context, Result};
+use assistant_slash_command::SlashCommandOutputSection;
 use fuzzy::StringMatchCandidate;
 use gpui::{AppContext, Task, WeakView};
 use language::LspAdapterDelegate;
@@ -94,17 +95,21 @@ impl SlashCommand for PromptSlashCommand {
         });
         cx.foreground_executor().spawn(async move {
             let prompt = prompt.await?;
+            let range = 0..prompt.len();
             Ok(SlashCommandOutput {
                 text: prompt,
-                render_placeholder: Arc::new(move |id, unfold, _cx| {
-                    ButtonLike::new(id)
-                        .style(ButtonStyle::Filled)
-                        .layer(ElevationIndex::ElevatedSurface)
-                        .child(Icon::new(IconName::Library))
-                        .child(Label::new(title.clone()))
-                        .on_click(move |_, cx| unfold(cx))
-                        .into_any_element()
-                }),
+                sections: vec![SlashCommandOutputSection {
+                    range,
+                    render_placeholder: Arc::new(move |id, unfold, _cx| {
+                        ButtonLike::new(id)
+                            .style(ButtonStyle::Filled)
+                            .layer(ElevationIndex::ElevatedSurface)
+                            .child(Icon::new(IconName::Library))
+                            .child(Label::new(title.clone()))
+                            .on_click(move |_, cx| unfold(cx))
+                            .into_any_element()
+                    }),
+                }],
             })
         })
     }

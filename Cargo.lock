@@ -368,6 +368,7 @@ dependencies = [
  "rope",
  "schemars",
  "search",
+ "semantic_index",
  "serde",
  "serde_json",
  "settings",
@@ -381,49 +382,6 @@ dependencies = [
  "unindent",
  "util",
  "uuid",
- "workspace",
-]
-
-[[package]]
-name = "assistant2"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "assets",
- "assistant_tooling",
- "chrono",
- "client",
- "collections",
- "editor",
- "env_logger",
- "feature_flags",
- "file_icons",
- "fs",
- "futures 0.3.28",
- "fuzzy",
- "gpui",
- "http 0.1.0",
- "language",
- "languages",
- "log",
- "markdown",
- "node_runtime",
- "open_ai",
- "picker",
- "project",
- "rand 0.8.5",
- "regex",
- "release_channel",
- "schemars",
- "semantic_index",
- "serde",
- "serde_json",
- "settings",
- "story",
- "theme",
- "ui",
- "unindent",
- "util",
  "workspace",
 ]
 
@@ -1551,7 +1509,7 @@ dependencies = [
 [[package]]
 name = "blade-graphics"
 version = "0.4.0"
-source = "git+https://github.com/kvark/blade?rev=e35b2d41f221a48b75f7cf2e78a81e7ecb7a383c#e35b2d41f221a48b75f7cf2e78a81e7ecb7a383c"
+source = "git+https://github.com/kvark/blade?rev=9c9cabf69e869fc7d9aef2fc76f7d5c354d5710a#9c9cabf69e869fc7d9aef2fc76f7d5c354d5710a"
 dependencies = [
  "ash",
  "ash-window",
@@ -1581,7 +1539,7 @@ dependencies = [
 [[package]]
 name = "blade-macros"
 version = "0.2.1"
-source = "git+https://github.com/kvark/blade?rev=e35b2d41f221a48b75f7cf2e78a81e7ecb7a383c#e35b2d41f221a48b75f7cf2e78a81e7ecb7a383c"
+source = "git+https://github.com/kvark/blade?rev=9c9cabf69e869fc7d9aef2fc76f7d5c354d5710a#9c9cabf69e869fc7d9aef2fc76f7d5c354d5710a"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -3816,6 +3774,7 @@ dependencies = [
  "task",
  "theme",
  "toml 0.8.10",
+ "ui",
  "url",
  "util",
  "wasm-encoder",
@@ -13342,7 +13301,7 @@ dependencies = [
 
 [[package]]
 name = "zed_ruby"
-version = "0.0.5"
+version = "0.0.6"
 dependencies = [
  "zed_extension_api 0.0.6",
 ]
