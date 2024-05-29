@@ -195,6 +195,9 @@ impl<P> PathLikeWithPosition<P> {
             })
         };
 
+        #[cfg(target_os = "windows")]
+        let s = &s.replace('/', "\\");
+
         let trimmed = s.trim();
 
         #[cfg(target_os = "windows")]
@@ -203,9 +206,6 @@ impl<P> PathLikeWithPosition<P> {
             if is_absolute {
                 return Self::parse_absolute_path(trimmed, parse_path_like_str);
             }
-
-            // Replace `/` with `\` for compatibility.
-            let trimmed = trimmed.replace('/', "\\");
         }
 
         match trimmed.split_once(FILE_ROW_COLUMN_DELIMITER) {
@@ -538,6 +538,14 @@ mod tests {
                 PathLikeWithPosition {
                     path_like: "crates\\utils\\paths.rs".to_string(),
                     row: None,
+                    column: None,
+                },
+            ),
+            (
+                "crates/utils/paths.rs:101",
+                PathLikeWithPosition {
+                    path_like: "crates\\utils\\paths.rs".to_string(),
+                    row: Some(101),
                     column: None,
                 },
             ),
