@@ -4,6 +4,8 @@
 
 mod markdown_writer;
 
+use std::io::Read;
+
 use anyhow::{Context, Result};
 use html5ever::driver::ParseOpts;
 use html5ever::parse_document;
@@ -14,7 +16,7 @@ use markup5ever_rcdom::RcDom;
 use crate::markdown_writer::MarkdownWriter;
 
 /// Converts the provided rustdoc HTML to Markdown.
-pub fn convert_rustdoc_to_markdown(html: &str) -> Result<String> {
+pub fn convert_rustdoc_to_markdown(mut html: impl Read) -> Result<String> {
     let parse_options = ParseOpts {
         tree_builder: TreeBuilderOpts {
             drop_doctype: true,
@@ -24,7 +26,7 @@ pub fn convert_rustdoc_to_markdown(html: &str) -> Result<String> {
     };
     let dom = parse_document(RcDom::default(), parse_options)
         .from_utf8()
-        .read_from(&mut html.as_bytes())
+        .read_from(&mut html)
         .context("failed to parse rustdoc HTML")?;
 
     let markdown_writer = MarkdownWriter::new();

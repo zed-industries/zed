@@ -36,12 +36,6 @@ impl MarkdownWriter {
             .any(|parent_element| parent_element.tag == tag)
     }
 
-    fn is_inside_heading(&self) -> bool {
-        ["h1", "h2", "h3", "h4", "h5", "h6"]
-            .into_iter()
-            .any(|heading| self.is_inside(heading))
-    }
-
     /// Appends the given string slice onto the end of the Markdown output.
     fn push_str(&mut self, str: &str) {
         self.markdown.push_str(str);
@@ -135,16 +129,14 @@ impl MarkdownWriter {
                 }
             }
             "div" | "span" => {
-                if tag.attrs.borrow().iter().any(|attr| {
-                    attr.name.local.to_string() == "class"
-                        && attr.value.to_string() == "sidebar-elems"
-                }) {
-                    return StartTagOutcome::Skip;
-                }
+                let classes_to_skip = ["nav-container", "sidebar-elems", "out-of-band"];
 
                 if tag.attrs.borrow().iter().any(|attr| {
                     attr.name.local.to_string() == "class"
-                        && attr.value.to_string() == "out-of-band"
+                        && attr
+                            .value
+                            .split(' ')
+                            .any(|class| classes_to_skip.contains(&class.trim()))
                 }) {
                     return StartTagOutcome::Skip;
                 }
@@ -186,10 +178,6 @@ impl MarkdownWriter {
     fn visit_text(&mut self, text: String) -> Result<()> {
         if self.is_inside("pre") {
             self.push_str(&text);
-            return Ok(());
-        }
-
-        if self.is_inside_heading() && self.is_inside("a") {
             return Ok(());
         }
 
