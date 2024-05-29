@@ -3510,6 +3510,7 @@ impl Render for InlineAssistant {
             .py_2()
             .border_y_1()
             .border_color(cx.theme().colors().border)
+            .bg(cx.theme().colors().editor_background)
             .on_action(cx.listener(Self::confirm))
             .on_action(cx.listener(Self::cancel))
             .on_action(cx.listener(Self::toggle_include_conversation))
