@@ -959,17 +959,17 @@ fn handle_nc_mouse_down_msg(
 
     if button == MouseButton::Left {
         match wparam.0 as u32 {
-            HTMINBUTTON => state_ptr.state.borrow_mut().nc_button_clicked = Some(HTMINBUTTON),
-            HTMAXBUTTON => state_ptr.state.borrow_mut().nc_button_clicked = Some(HTMAXBUTTON),
-            HTCLOSE => state_ptr.state.borrow_mut().nc_button_clicked = Some(HTCLOSE),
+            HTMINBUTTON => state_ptr.state.borrow_mut().nc_button_pressed = Some(HTMINBUTTON),
+            HTMAXBUTTON => state_ptr.state.borrow_mut().nc_button_pressed = Some(HTMAXBUTTON),
+            HTCLOSE => state_ptr.state.borrow_mut().nc_button_pressed = Some(HTCLOSE),
             _ => {
-                state_ptr.state.borrow_mut().nc_button_clicked = None;
+                state_ptr.state.borrow_mut().nc_button_pressed = None;
                 return None;
             }
         };
         Some(0)
     } else {
-        state_ptr.state.borrow_mut().nc_button_clicked = None;
+        state_ptr.state.borrow_mut().nc_button_pressed = None;
         None
     }
 }
@@ -1013,9 +1013,9 @@ fn handle_nc_mouse_up_msg(
         drop(lock);
     }
 
-    let last_clicked = state_ptr.state.borrow_mut().nc_button_clicked.take();
-    if button == MouseButton::Left && last_clicked.is_some() {
-        let last_button = last_clicked.unwrap();
+    let last_pressed = state_ptr.state.borrow_mut().nc_button_pressed.take();
+    if button == MouseButton::Left && last_pressed.is_some() {
+        let last_button = last_pressed.unwrap();
         let mut handled = false;
         match wparam.0 as u32 {
             HTMINBUTTON => {
