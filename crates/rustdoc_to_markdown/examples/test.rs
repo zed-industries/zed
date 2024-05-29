@@ -23,7 +23,7 @@ pub fn main() {
     // ```
     // let html = include_str!("/path/to/zed/target/doc/gpui/index.html");
     // ```
-    let markdown = convert_rustdoc_to_markdown(html).unwrap();
+    let markdown = convert_rustdoc_to_markdown(html.as_bytes()).unwrap();
 
     println!("{markdown}");
 }

@@ -135,16 +135,15 @@ impl MarkdownWriter {
                 }
             }
             "div" | "span" => {
-                if tag.attrs.borrow().iter().any(|attr| {
-                    attr.name.local.to_string() == "class"
-                        && attr.value.to_string() == "sidebar-elems"
-                }) {
-                    return StartTagOutcome::Skip;
-                }
+                let classes_to_skip = ["nav-container", "sidebar-elems", "out-of-band"];
 
                 if tag.attrs.borrow().iter().any(|attr| {
                     attr.name.local.to_string() == "class"
-                        && attr.value.to_string() == "out-of-band"
+                        && attr
+                            .value
+                            .to_string()
+                            .split(' ')
+                            .any(|class| classes_to_skip.contains(&class.trim()))
                 }) {
                     return StartTagOutcome::Skip;
                 }

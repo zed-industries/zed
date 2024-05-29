@@ -1,9 +1,11 @@
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 
-use anyhow::Result;
+use anyhow::{anyhow, bail, Context, Result};
 use assistant_slash_command::{SlashCommand, SlashCommandOutput, SlashCommandOutputSection};
+use futures::AsyncReadExt;
 use gpui::{AppContext, Task, WeakView};
+use http::{AsyncBody, HttpClient, HttpClientWithUrl};
 use language::LspAdapterDelegate;
 use rustdoc_to_markdown::convert_rustdoc_to_markdown;
 use ui::{prelude::*, ButtonLike, ElevationIndex};
@@ -12,10 +14,27 @@ use workspace::Workspace;
 pub(crate) struct RustdocSlashCommand;
 
 impl RustdocSlashCommand {
-    async fn build_message() -> Result<String> {
-        let html = include_str!("/Users/maxdeviant/projects/zed/target/doc/gpui/index.html");
+    async fn build_message(http_client: Arc<HttpClientWithUrl>) -> Result<String> {
+        let mut response = http_client
+            .get("https://docs.rs/axum", AsyncBody::default(), true)
+            .await?;
 
-        convert_rustdoc_to_markdown(html)
+        let mut body = Vec::new();
+        response
+            .body_mut()
+            .read_to_end(&mut body)
+            .await
+            .context("error reading docs.rs response body")?;
+
+        if response.status().is_client_error() {
+            let text = String::from_utf8_lossy(body.as_slice());
+            bail!(
+                "status error {}, response: {text:?}",
+                response.status().as_u16()
+            );
+        }
+
+        convert_rustdoc_to_markdown(&body[..])
     }
 }
 
@@ -53,9 +72,15 @@ impl SlashCommand for RustdocSlashCommand {
         delegate: Arc<dyn LspAdapterDelegate>,
         cx: &mut WindowContext,
     ) -> Task<Result<SlashCommandOutput>> {
+        let Some(workspace) = workspace.upgrade() else {
+            return Task::ready(Err(anyhow!("workspace was dropped")));
+        };
+
+        let http_client = workspace.read(cx).client().http_client();
+
         let text = cx
             .background_executor()
-            .spawn(async move { Self::build_message().await });
+            .spawn(async move { Self::build_message(http_client).await });
         cx.foreground_executor().spawn(async move {
             let text = text.await?;
             let range = 0..text.len();
