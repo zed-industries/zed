@@ -2103,16 +2103,10 @@ impl Conversation {
     }
 
     fn to_completion_request(&self, cx: &mut ModelContext<Conversation>) -> LanguageModelRequest {
-        let edits_system_prompt = LanguageModelRequestMessage {
-            role: Role::System,
-            content: include_str!("./system_prompts/edits.md").to_string(),
-        };
-
-        let messages = Some(edits_system_prompt).into_iter().chain(
-            self.messages(cx)
-                .filter(|message| matches!(message.status, MessageStatus::Done))
-                .map(|message| message.to_request_message(self.buffer.read(cx))),
-        );
+        let messages = self
+            .messages(cx)
+            .filter(|message| matches!(message.status, MessageStatus::Done))
+            .map(|message| message.to_request_message(self.buffer.read(cx)));
 
         LanguageModelRequest {
             model: self.model.clone(),
