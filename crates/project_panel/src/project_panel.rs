@@ -1,4 +1,5 @@
 mod project_panel_settings;
+
 use client::{ErrorCode, ErrorExt};
 use settings::{Settings, SettingsStore};
 
@@ -281,6 +282,11 @@ impl ProjectPanel {
                                 project_panel.update_visible_entries(added_entries, None, cx);
                                 cx.notify();
                             }
+                        } else {
+                            // TODO kb also clean up all extra directories expanded due to search results
+                            project_panel.active_multi_buffer = None;
+                            project_panel.update_visible_entries(HashSet::default(), None, cx);
+                            cx.notify();
                         }
                     }
                 },
@@ -1615,8 +1621,8 @@ impl ProjectPanel {
                 .as_ref()
                 .filter(|active_multi_buffer| !active_multi_buffer.entries.is_empty());
             let active_multi_buffer_entries = multi_buffer_entries
-                .as_ref()
-                .and_then(|active_multi_buffer| active_multi_buffer.entries.get(&worktree_id));
+                .and_then(|active_multi_buffer| active_multi_buffer.entries.get(&worktree_id))
+                .filter(|entries| !entries.is_empty());
             if multi_buffer_entries.is_some() && active_multi_buffer_entries.is_none() {
                 continue;
             }
@@ -1700,37 +1706,40 @@ impl ProjectPanel {
                 entry_iter.advance();
             }
 
-            // TODO kb wrong: on the next clear, there will be no new multibuffer entries,
-            // but all their parent dir entries are cleared from the visible ones
-            // if we start to re-add them always, it will not consider toggle again.
-            // Instead, re-add all toggled directories to visible entries?
-            let mut dir_entries_to_re_add =
-                Vec::with_capacity(maybe_applicable_folder_entries.len());
-            for new_visible_entry in visible_worktree_entries
-                .iter()
-                .filter(|entry| new_multi_buffer_entries.contains(&entry.id))
-            {
-                maybe_applicable_folder_entries.retain(|maybe_parent_entry| {
-                    if new_visible_entry.path.starts_with(&maybe_parent_entry.path) {
-                        dir_entries_to_re_add.push(maybe_parent_entry.clone());
-                        false
-                    } else {
-                        true
-                    }
-                })
-            }
+            // TODO kb slow and odd
             if active_multi_buffer_entries.is_some() {
-                self.expanded_dir_ids
-                    .entry(worktree_id)
-                    .or_default()
-                    .extend(dir_entries_to_re_add.iter().map(|entry| entry.id));
-            } else {
-                dir_entries_to_re_add
-                    .retain(|dir_to_re_add| expanded_dir_ids.contains(&dir_to_re_add.id));
+                let mut dir_entries_to_re_add = HashMap::default();
+                visible_worktree_entries.retain(|entry| {
+                    let is_new_entry = new_multi_buffer_entries.contains(&entry.id);
+                    let mut retain_visible_entry = true;
+                    let mut parent_dir_excluded = false;
+                    for parent_dir_entry in
+                        maybe_applicable_folder_entries
+                            .iter()
+                            .filter(|maybe_parent_entry| {
+                                entry.path.starts_with(&maybe_parent_entry.path)
+                            })
+                    {
+                        let mut exclude_parent_dir = false;
+                        if is_new_entry {
+                            expanded_dir_ids.insert(parent_dir_entry.id);
+                        } else if !expanded_dir_ids.contains(&parent_dir_entry.id) {
+                            retain_visible_entry = false;
+                            exclude_parent_dir = true;
+                        }
+                        if !parent_dir_excluded {
+                            dir_entries_to_re_add
+                                .entry(parent_dir_entry.id)
+                                .or_insert_with(|| parent_dir_entry.clone());
+                        }
+                        if exclude_parent_dir {
+                            parent_dir_excluded = true;
+                        }
+                    }
+                    retain_visible_entry
+                });
+                visible_worktree_entries.extend(dir_entries_to_re_add.into_values());
             }
-            visible_worktree_entries.extend(dir_entries_to_re_add.into_iter());
-
-            snapshot.propagate_git_statuses(&mut visible_worktree_entries);
 
             visible_worktree_entries.sort_by(|entry_a, entry_b| {
                 let mut components_a = entry_a.path.components().peekable();
@@ -1777,6 +1786,7 @@ impl ProjectPanel {
                     }
                 }
             });
+            snapshot.propagate_git_statuses(&mut visible_worktree_entries);
             self.visible_entries
                 .push((worktree_id, visible_worktree_entries));
         }
@@ -2183,7 +2193,7 @@ impl ProjectPanel {
                                     }
                                 } else if kind.is_dir() {
                                     project_panel.toggle_expanded(entry_id, cx);
-                                } else if !project_panel
+                                } else if project_panel
                                     .active_multi_buffer
                                     .as_ref()
                                     .filter(|active_multi_buffer| {
