@@ -20,9 +20,10 @@ use wayland_client::event_created_child;
 use wayland_client::globals::{registry_queue_init, GlobalList, GlobalListContents};
 use wayland_client::protocol::wl_callback::{self, WlCallback};
 use wayland_client::protocol::wl_data_device_manager::DndAction;
+use wayland_client::protocol::wl_data_offer::WlDataOffer;
 use wayland_client::protocol::wl_pointer::AxisSource;
 use wayland_client::protocol::{
-    wl_data_device, wl_data_device_manager, wl_data_offer, wl_output, wl_region,
+    wl_data_device, wl_data_device_manager, wl_data_offer, wl_data_source, wl_output, wl_region,
 };
 use wayland_client::{
     delegate_noop,
@@ -37,6 +38,11 @@ use wayland_protocols::wp::cursor_shape::v1::client::{
 };
 use wayland_protocols::wp::fractional_scale::v1::client::{
     wp_fractional_scale_manager_v1, wp_fractional_scale_v1,
+};
+use wayland_protocols::wp::primary_selection::zv1::client::zwp_primary_selection_offer_v1::ZwpPrimarySelectionOfferV1;
+use wayland_protocols::wp::primary_selection::zv1::client::{
+    zwp_primary_selection_device_manager_v1, zwp_primary_selection_device_v1,
+    zwp_primary_selection_source_v1,
 };
 use wayland_protocols::wp::text_input::zv3::client::zwp_text_input_v3::{
     ContentHint, ContentPurpose,
@@ -59,7 +65,7 @@ use super::display::WaylandDisplay;
 use super::window::{ImeInput, WaylandWindowStatePtr};
 use crate::platform::linux::is_within_click_distance;
 use crate::platform::linux::wayland::clipboard::{
-    Clipboard, DataOffer, DataOffersMap, FILE_LIST_MIME_TYPE, TEXT_MIME_TYPE,
+    Clipboard, DataOffer, FILE_LIST_MIME_TYPE, TEXT_MIME_TYPE,
 };
 use crate::platform::linux::wayland::cursor::Cursor;
 use crate::platform::linux::wayland::serial::{SerialKind, SerialTracker};
@@ -91,6 +97,8 @@ pub struct Globals {
     pub compositor: wl_compositor::WlCompositor,
     pub cursor_shape_manager: Option<wp_cursor_shape_manager_v1::WpCursorShapeManagerV1>,
     pub data_device_manager: Option<wl_data_device_manager::WlDataDeviceManager>,
+    pub primary_selection_manager:
+        Option<zwp_primary_selection_device_manager_v1::ZwpPrimarySelectionDeviceManagerV1>,
     pub wm_base: xdg_wm_base::XdgWmBase,
     pub shm: wl_shm::WlShm,
     pub seat: wl_seat::WlSeat,
@@ -128,6 +136,7 @@ impl Globals {
                     (),
                 )
                 .ok(),
+            primary_selection_manager: globals.bind(&qh, 1..=1, ()).ok(),
             shm: globals.bind(&qh, 1..=1, ()).unwrap(),
             seat,
             wm_base: globals.bind(&qh, 1..=1, ()).unwrap(),
@@ -180,6 +189,7 @@ pub(crate) struct WaylandClientState {
     wl_keyboard: Option<wl_keyboard::WlKeyboard>,
     cursor_shape_device: Option<wp_cursor_shape_device_v1::WpCursorShapeDeviceV1>,
     data_device: Option<wl_data_device::WlDataDevice>,
+    primary_selection: Option<zwp_primary_selection_device_v1::ZwpPrimarySelectionDeviceV1>,
     text_input: Option<zwp_text_input_v3::ZwpTextInputV3>,
     pre_edit_text: Option<String>,
     composing: bool,
@@ -208,7 +218,8 @@ pub(crate) struct WaylandClientState {
     loop_handle: LoopHandle<'static, WaylandClientStatePtr>,
     cursor_style: Option<CursorStyle>,
     clipboard: Clipboard,
-    data_offers: DataOffersMap,
+    data_offers: HashMap<ObjectId, DataOffer<WlDataOffer>>,
+    primary_data_offer: Option<DataOffer<ZwpPrimarySelectionOfferV1>>,
     cursor: Cursor,
     event_loop: Option<EventLoop<'static, WaylandClientStatePtr>>,
     common: LinuxCommon,
@@ -395,8 +406,6 @@ impl WaylandClient {
             }
         });
 
-        let display = conn.backend().display_ptr() as *mut std::ffi::c_void;
-
         let event_loop = EventLoop::<WaylandClientStatePtr>::try_new().unwrap();
 
         let (common, main_receiver) = LinuxCommon::new(event_loop.get_signal());
@@ -427,6 +436,11 @@ impl WaylandClient {
             .data_device_manager
             .as_ref()
             .map(|data_device_manager| data_device_manager.get_data_device(&seat, &qh, ()));
+
+        let primary_selection = globals
+            .primary_selection_manager
+            .as_ref()
+            .map(|primary_selection_manager| primary_selection_manager.get_device(&seat, &qh, ()));
 
         let mut cursor = Cursor::new(&conn, &globals, 24);
 
@@ -470,6 +484,7 @@ impl WaylandClient {
             wl_keyboard: None,
             cursor_shape_device: None,
             data_device,
+            primary_selection,
             text_input: None,
             pre_edit_text: None,
             composing: false,
@@ -516,7 +531,8 @@ impl WaylandClient {
             enter_token: None,
             cursor_style: None,
             clipboard: Clipboard::new(conn.clone()),
-            data_offers: DataOffersMap::new(),
+            data_offers: HashMap::default(),
+            primary_data_offer: None,
             cursor,
             event_loop: Some(event_loop),
 
@@ -665,6 +681,21 @@ impl LinuxClient for WaylandClient {
     fn write_to_primary(&self, item: crate::ClipboardItem) {
         println!("write_to_primary: {item:?}");
         // TODO
+        let mut state = self.0.borrow_mut();
+        let (Some(primary_selection_manager), Some(primary_selection)) = (
+            state.globals.primary_selection_manager.clone(),
+            state.primary_selection.clone(),
+        ) else {
+            return;
+        };
+        if state.mouse_focused_window.is_some() || state.keyboard_focused_window.is_some() {
+            let serial = state.serial_tracker.get(SerialKind::KeyEnter);
+            let data_source = primary_selection_manager.create_source(&state.globals.qh, ());
+            data_source.offer(state.clipboard.self_mime());
+            data_source.offer(TEXT_MIME_TYPE.to_string());
+            primary_selection.set_selection(Some(&data_source), serial);
+            state.clipboard.set_primary(item.text);
+        }
     }
 
     fn write_to_clipboard(&self, item: crate::ClipboardItem) {
@@ -682,20 +713,26 @@ impl LinuxClient for WaylandClient {
             data_source.offer(state.clipboard.self_mime());
             data_source.offer(TEXT_MIME_TYPE.to_string());
             data_device.set_selection(Some(&data_source), serial);
-            state.clipboard.set_contents(item.text);
+            state.clipboard.set(item.text);
         }
     }
 
     fn read_from_primary(&self) -> Option<crate::ClipboardItem> {
-        // TODO
-        None
+        self.0
+            .borrow_mut()
+            .clipboard
+            .read_primary()
+            .map(|s| crate::ClipboardItem {
+                text: s,
+                metadata: None,
+            })
     }
 
     fn read_from_clipboard(&self) -> Option<crate::ClipboardItem> {
         self.0
             .borrow_mut()
             .clipboard
-            .handle_read()
+            .read()
             .map(|s| crate::ClipboardItem {
                 text: s,
                 metadata: None,
@@ -775,6 +812,7 @@ delegate_noop!(WaylandClientStatePtr: ignore wl_compositor::WlCompositor);
 delegate_noop!(WaylandClientStatePtr: ignore wp_cursor_shape_device_v1::WpCursorShapeDeviceV1);
 delegate_noop!(WaylandClientStatePtr: ignore wp_cursor_shape_manager_v1::WpCursorShapeManagerV1);
 delegate_noop!(WaylandClientStatePtr: ignore wl_data_device_manager::WlDataDeviceManager);
+delegate_noop!(WaylandClientStatePtr: ignore zwp_primary_selection_device_manager_v1::ZwpPrimarySelectionDeviceManagerV1);
 delegate_noop!(WaylandClientStatePtr: ignore wl_shm::WlShm);
 delegate_noop!(WaylandClientStatePtr: ignore wl_shm_pool::WlShmPool);
 delegate_noop!(WaylandClientStatePtr: ignore wl_buffer::WlBuffer);
@@ -1672,6 +1710,8 @@ impl Dispatch<wl_data_device::WlDataDevice, ()> for WaylandClientStatePtr {
         match event {
             // Clipboard
             wl_data_device::Event::DataOffer { id: data_offer } => {
+                // TODO: maximum 2 offers, remove old ones
+                println!("{}", data_offer.id());
                 state
                     .data_offers
                     .insert(data_offer.id(), DataOffer::new(data_offer));
@@ -1854,10 +1894,74 @@ impl Dispatch<wl_data_source::WlDataSource, ()> for WaylandClientStatePtr {
 
         match event {
             wl_data_source::Event::Send { mime_type, fd } => {
-                state.clipboard.handle_send(mime_type, fd);
+                state.clipboard.send(mime_type, fd);
             }
             wl_data_source::Event::Cancelled => {
                 data_source.destroy();
+            }
+            _ => {}
+        }
+    }
+}
+
+impl Dispatch<zwp_primary_selection_device_v1::ZwpPrimarySelectionDeviceV1, ()>
+    for WaylandClientStatePtr
+{
+    fn event(
+        this: &mut Self,
+        _: &zwp_primary_selection_device_v1::ZwpPrimarySelectionDeviceV1,
+        event: zwp_primary_selection_device_v1::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+        let client = this.get_client();
+        let mut state = client.borrow_mut();
+
+        println!("{event:?}");
+
+        match event {
+            zwp_primary_selection_device_v1::Event::DataOffer { offer } => {
+                println!("primary: {}", offer.id());
+                state.primary_data_offer.replace(DataOffer::new(offer));
+            }
+            zwp_primary_selection_device_v1::Event::Selection { id: data_offer } => {
+                if data_offer.is_some() {
+                    let offer = state.primary_data_offer.clone();
+                    state.clipboard.set_primary_offer(offer);
+                } else {
+                    state.clipboard.set_primary_offer(None);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    event_created_child!(WaylandClientStatePtr, zwp_primary_selection_device_v1::ZwpPrimarySelectionDeviceV1, [
+        zwp_primary_selection_device_v1::EVT_DATA_OFFER_OPCODE => (zwp_primary_selection_source_v1::ZwpPrimarySelectionSourceV1, ()),
+    ]);
+}
+
+impl Dispatch<zwp_primary_selection_source_v1::ZwpPrimarySelectionSourceV1, ()>
+    for WaylandClientStatePtr
+{
+    fn event(
+        this: &mut Self,
+        selection_source: &zwp_primary_selection_source_v1::ZwpPrimarySelectionSourceV1,
+        event: zwp_primary_selection_source_v1::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+        let client = this.get_client();
+        let mut state = client.borrow_mut();
+
+        match event {
+            zwp_primary_selection_source_v1::Event::Send { mime_type, fd } => {
+                state.clipboard.send_primary(mime_type, fd);
+            }
+            zwp_primary_selection_source_v1::Event::Cancelled => {
+                selection_source.destroy();
             }
             _ => {}
         }
