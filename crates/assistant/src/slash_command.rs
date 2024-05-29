@@ -102,6 +102,7 @@ impl SlashCommandCompletionProvider {
                             label: command.label(cx),
                             server_id: LanguageServerId(0),
                             lsp_completion: Default::default(),
+                            show_new_completions_on_confirm: requires_argument,
                             confirm: (!requires_argument).then(|| {
                                 let command_name = mat.string.clone();
                                 let command_range = command_range.clone();
@@ -162,6 +163,7 @@ impl SlashCommandCompletionProvider {
                         documentation: None,
                         server_id: LanguageServerId(0),
                         lsp_completion: Default::default(),
+                        show_new_completions_on_confirm: false,
                         confirm: Some(Arc::new({
                             let command_name = command_name.clone();
                             let command_range = command_range.clone();
