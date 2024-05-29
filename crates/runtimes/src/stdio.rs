@@ -11,14 +11,14 @@ use ui::{div, prelude::*, IntoElement, ViewContext, WindowContext};
 
 pub struct TerminalOutput {
     parser: Parser,
-    state: ParserState,
+    handler: TerminalHandler,
 }
 
 impl TerminalOutput {
     pub fn new() -> Self {
         Self {
             parser: Parser::new(),
-            state: ParserState::new(),
+            handler: TerminalHandler::new(),
         }
     }
 
@@ -30,15 +30,15 @@ impl TerminalOutput {
 
     pub fn append_text(&mut self, text: &str) {
         for byte in text.as_bytes() {
-            self.parser.advance(&mut self.state.handler, *byte);
+            self.parser.advance(&mut self.handler, *byte);
         }
     }
 
     pub fn render(&self, cx: &ViewContext<ExecutionView>) -> AnyElement {
         let theme = cx.theme();
         let buffer_font = ThemeSettings::get_global(cx).buffer_font.family.clone();
-        let mut text_runs = self.state.handler.text_runs.clone();
-        text_runs.push(self.state.handler.current_text_run.clone());
+        let mut text_runs = self.handler.text_runs.clone();
+        text_runs.push(self.handler.current_text_run.clone());
 
         let runs = text_runs
             .iter()
@@ -60,8 +60,7 @@ impl TerminalOutput {
             })
             .collect::<Vec<TextRun>>();
 
-        let text =
-            StyledText::new(self.state.handler.buffer.trim_end().to_string()).with_runs(runs);
+        let text = StyledText::new(self.handler.buffer.trim_end().to_string()).with_runs(runs);
         div()
             .font_family(buffer_font)
             .child(text)
@@ -72,19 +71,7 @@ impl TerminalOutput {
 impl LineHeight for TerminalOutput {
     fn num_lines(&self, _cx: &mut WindowContext) -> u8 {
         // todo!(): Track this over time with our parser and just return it when needed
-        self.state.handler.buffer.lines().count() as u8
-    }
-}
-
-pub struct ParserState {
-    handler: TerminalHandler,
-}
-
-impl ParserState {
-    fn new() -> Self {
-        Self {
-            handler: TerminalHandler::new(),
-        }
+        self.handler.buffer.lines().count() as u8
     }
 }
 
