@@ -39,6 +39,7 @@ impl SlashCommand for ExtensionSlashCommand {
         &self,
         _query: String,
         _cancel: Arc<AtomicBool>,
+        _workspace: WeakView<Workspace>,
         _cx: &mut AppContext,
     ) -> Task<Result<Vec<String>>> {
         Task::ready(Ok(Vec::new()))

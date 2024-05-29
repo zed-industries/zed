@@ -142,7 +142,12 @@ impl SlashCommandCompletionProvider {
         *flag = new_cancel_flag.clone();
 
         if let Some(command) = self.commands.command(command_name) {
-            let completions = command.complete_argument(argument, new_cancel_flag.clone(), cx);
+            let completions = command.complete_argument(
+                argument,
+                new_cancel_flag.clone(),
+                self.workspace.clone(),
+                cx,
+            );
             let command_name: Arc<str> = command_name.into();
             let editor = self.editor.clone();
             let workspace = self.workspace.clone();
