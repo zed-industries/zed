@@ -54,7 +54,7 @@ struct Args {
 fn parse_path_with_position(
     argument_str: &str,
 ) -> Result<PathLikeWithPosition<PathBuf>, std::convert::Infallible> {
-    PathLikeWithPosition::parse_str(argument_str, |path_str| {
+    PathLikeWithPosition::parse_str(argument_str, |_, path_str| {
         Ok(Path::new(path_str).to_path_buf())
     })
 }

@@ -185,11 +185,11 @@ impl<P> PathLikeWithPosition<P> {
     /// If on Windows, will replace `/` with `\` in the path for compatibility.
     pub fn parse_str<E>(
         s: &str,
-        parse_path_like_str: impl Fn(&str) -> Result<P, E>,
+        parse_path_like_str: impl Fn(&str, &str) -> Result<P, E>,
     ) -> Result<Self, E> {
         let fallback = |fallback_str| {
             Ok(Self {
-                path_like: parse_path_like_str(fallback_str)?,
+                path_like: parse_path_like_str(s, fallback_str)?,
                 row: None,
                 column: None,
             })
@@ -229,7 +229,7 @@ impl<P> PathLikeWithPosition<P> {
                         Ok(row) => {
                             if maybe_col_str.is_empty() {
                                 Ok(Self {
-                                    path_like: parse_path_like_str(path_like_str)?,
+                                    path_like: parse_path_like_str(s, path_like_str)?,
                                     row: Some(row),
                                     column: None,
                                 })
@@ -238,12 +238,12 @@ impl<P> PathLikeWithPosition<P> {
                                     maybe_col_str.split_once(':').unwrap_or((maybe_col_str, ""));
                                 match maybe_col_str.parse::<u32>() {
                                     Ok(col) => Ok(Self {
-                                        path_like: parse_path_like_str(path_like_str)?,
+                                        path_like: parse_path_like_str(s, path_like_str)?,
                                         row: Some(row),
                                         column: Some(col),
                                     }),
                                     Err(_) => Ok(Self {
-                                        path_like: parse_path_like_str(path_like_str)?,
+                                        path_like: parse_path_like_str(s, path_like_str)?,
                                         row: Some(row),
                                         column: None,
                                     }),
@@ -251,7 +251,7 @@ impl<P> PathLikeWithPosition<P> {
                             }
                         }
                         Err(_) => Ok(Self {
-                            path_like: parse_path_like_str(path_like_str)?,
+                            path_like: parse_path_like_str(s, path_like_str)?,
                             row: None,
                             column: None,
                         }),
@@ -393,7 +393,7 @@ mod tests {
     type TestPath = PathLikeWithPosition<String>;
 
     fn parse_str(s: &str) -> TestPath {
-        TestPath::parse_str(s, |s| Ok::<_, std::convert::Infallible>(s.to_string()))
+        TestPath::parse_str(s, |_, s| Ok::<_, std::convert::Infallible>(s.to_string()))
             .expect("infallible")
     }
 
