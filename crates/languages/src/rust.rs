@@ -7,7 +7,7 @@ use http::github::{latest_github_release, GitHubLspBinaryVersion};
 pub use language::*;
 use lazy_static::lazy_static;
 use lsp::LanguageServerBinary;
-use project::project_settings::ProjectSettings;
+use project::project_settings::{BinarySettings, ProjectSettings};
 use regex::Regex;
 use settings::Settings;
 use smol::fs::{self, File};
@@ -35,29 +35,39 @@ impl LspAdapter for RustLspAdapter {
 
     async fn check_if_user_installed(
         &self,
-        _delegate: &dyn LspAdapterDelegate,
+        delegate: &dyn LspAdapterDelegate,
         cx: &AsyncAppContext,
     ) -> Option<LanguageServerBinary> {
-        let binary = cx
-            .update(|cx| {
-                ProjectSettings::get_global(cx)
-                    .lsp
-                    .get(Self::SERVER_NAME)
-                    .and_then(|s| s.binary.clone())
-            })
-            .ok()??;
+        let configured_binary = cx.update(|cx| {
+            ProjectSettings::get_global(cx)
+                .lsp
+                .get(Self::SERVER_NAME)
+                .and_then(|s| s.binary.clone())
+        });
 
-        let path = binary.path?;
-        Some(LanguageServerBinary {
-            path: path.into(),
-            arguments: binary
-                .arguments
-                .unwrap_or_default()
-                .iter()
-                .map(|arg| arg.into())
-                .collect(),
-            env: None,
-        })
+        if let Ok(Some(BinarySettings {
+            path: Some(path),
+            arguments,
+        })) = configured_binary
+        {
+            Some(LanguageServerBinary {
+                path: path.into(),
+                arguments: arguments
+                    .unwrap_or_default()
+                    .iter()
+                    .map(|arg| arg.into())
+                    .collect(),
+                env: None,
+            })
+        } else {
+            let env = delegate.shell_env().await;
+            let path = delegate.which(Self::SERVER_NAME.as_ref()).await?;
+            Some(LanguageServerBinary {
+                path,
+                arguments: vec![],
+                env: Some(env),
+            })
+        }
     }
 
     async fn fetch_latest_server_version(
