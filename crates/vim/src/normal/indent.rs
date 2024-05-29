@@ -1,4 +1,4 @@
-use crate::{motion::Motion, object::Object, Vim, SelectionGoal};
+use crate::{motion::Motion, object::Object, Vim};
 use collections::HashMap;
 use gpui::WindowContext;
 
@@ -82,7 +82,7 @@ pub fn indent_object(
                     } else {
                         *cursor.column_mut() -= line_len - map.line_len(cursor.row());
                     }
-                    selection.collapse_to(cursor, SelectionGoal::None);
+                    selection.collapse_to(cursor, selection.goal);
                 });
             });
         });
