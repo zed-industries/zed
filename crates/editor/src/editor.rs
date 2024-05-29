@@ -116,7 +116,7 @@ use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsStore};
 use smallvec::SmallVec;
 use snippet::Snippet;
-use std::ops::Not as _;
+use std::ops::{Not as _, RangeBounds};
 use std::{
     any::TypeId,
     borrow::Cow,
@@ -242,6 +242,7 @@ impl InlayId {
 
 enum DiffRowHighlight {}
 enum DocumentHighlightRead {}
+enum LinkedEditingRangeHighlight {}
 enum DocumentHighlightWrite {}
 enum InputComposition {}
 
@@ -478,6 +479,8 @@ pub struct Editor {
     available_code_actions: Option<(Location, Arc<[CodeAction]>)>,
     code_actions_task: Option<Task<()>>,
     document_highlights_task: Option<Task<()>>,
+    linked_editing_range_task: Option<Task<()>>,
+    linked_edit_ranges: BTreeMap<Range<Anchor>, Vec<Range<Anchor>>>,
     pending_rename: Option<RenameState>,
     searchable: bool,
     cursor_shape: CursorShape,
@@ -1744,6 +1747,7 @@ impl Editor {
             available_code_actions: Default::default(),
             code_actions_task: Default::default(),
             document_highlights_task: Default::default(),
+            linked_editing_range_task: Default::default(),
             pending_rename: Default::default(),
             searchable: true,
             cursor_shape: Default::default(),
@@ -1804,6 +1808,7 @@ impl Editor {
                 }),
             ],
             tasks_update_task: None,
+            linked_edit_ranges: Default::default(),
         };
         this.tasks_update_task = Some(this.refresh_runnables(cx));
         this._subscriptions.extend(project_subscriptions);
@@ -2935,6 +2940,27 @@ impl Editor {
             let anchor = snapshot.anchor_after(selection.end);
             new_selections.push((selection.map(|_| anchor), 0));
             edits.push((selection.start..selection.end, text.clone()));
+            if let Some((_, linked_ranges)) = self
+                .background_highlights
+                .get(&TypeId::of::<LinkedEditingRangeHighlight>())
+            {
+                let is_currently_edited_range = |range: &Range<Anchor>| {
+                    range.start.cmp(&anchor, &snapshot).is_le()
+                        && range.end.cmp(&anchor, &snapshot).is_gt()
+                };
+                dbg!(linked_ranges.len());
+                // This editor has associated linked editing ranges.
+                if linked_ranges.iter().any(is_currently_edited_range) {
+                    // Current range has associated linked ranges.
+                    for range in linked_ranges.iter() {
+                        if !is_currently_edited_range(range) {
+                            dbg!("inserting");
+                            let point = range.start.to_point(&snapshot);
+                            edits.push((point..point, text.clone()));
+                        }
+                    }
+                }
+            }
         }
 
         drop(snapshot);
@@ -4384,11 +4410,96 @@ impl Editor {
         }
     }
 
-    fn refresh_document_highlights(&mut self, cx: &mut ViewContext<Self>) -> Option<()> {
+    fn refresh_linked_ranges(&mut self, cx: &mut ViewContext<Self>) -> Option<()> {
         if self.pending_rename.is_some() {
             return None;
         }
 
+        let project = self.project.clone()?;
+        let buffer = self.buffer.read(cx);
+        let newest_selection = self.selections.newest_anchor().clone();
+        let cursor_position = newest_selection.head();
+        let (cursor_buffer, cursor_buffer_position) =
+            buffer.text_anchor_for_position(cursor_position, cx)?;
+        let (tail_buffer, _) = buffer.text_anchor_for_position(newest_selection.tail(), cx)?;
+        if cursor_buffer != tail_buffer {
+            return None;
+        }
+        self.linked_editing_range_task = Some(cx.spawn(|this, mut cx| async move {
+            let highlights = if let Some(highlights) = project
+                .update(&mut cx, |project, cx| {
+                    project.linked_edit(&cursor_buffer, cursor_buffer_position, cx)
+                })
+                .log_err()
+            {
+                highlights.await.log_err()
+            } else {
+                None
+            };
+
+            if let Some(highlights) = highlights {
+                this.update(&mut cx, |this, cx| {
+                    if this.pending_rename.is_some() {
+                        return;
+                    }
+
+                    let buffer_id = cursor_position.buffer_id;
+                    let buffer = this.buffer.read(cx);
+                    if !buffer
+                        .text_anchor_for_position(cursor_position, cx)
+                        .map_or(false, |(buffer, _)| buffer == cursor_buffer)
+                    {
+                        return;
+                    }
+                    let cursor_buffer_snapshot = cursor_buffer.read(cx);
+                    let mut ranges = vec![];
+                    for highlight in highlights {
+                        for (excerpt_id, excerpt_range) in
+                            buffer.excerpts_for_buffer(&cursor_buffer, cx)
+                        {
+                            let start = highlight
+                                .start
+                                .max(&excerpt_range.context.start, cursor_buffer_snapshot);
+                            let end = highlight
+                                .end
+                                .min(&excerpt_range.context.end, cursor_buffer_snapshot);
+                            if start.cmp(&end, cursor_buffer_snapshot).is_ge() {
+                                continue;
+                            }
+
+                            let range = Anchor {
+                                buffer_id,
+                                excerpt_id,
+                                text_anchor: start,
+                            }..Anchor {
+                                buffer_id,
+                                excerpt_id,
+                                text_anchor: end,
+                            };
+                            ranges.push(range);
+                        }
+                    }
+
+                    // dbg!(read_ranges.len());
+
+                    this.highlight_background::<LinkedEditingRangeHighlight>(
+                        &ranges,
+                        |theme| theme.editor_document_highlight_read_background,
+                        cx,
+                    );
+                    cx.notify();
+                })
+                .log_err();
+            }
+        }));
+        None
+    }
+
+    fn refresh_document_highlights(&mut self, cx: &mut ViewContext<Self>) -> Option<()> {
+        if self.pending_rename.is_some() {
+            return None;
+        }
+        self.refresh_linked_ranges(cx);
         let project = self.project.clone()?;
         let buffer = self.buffer.read(cx);
         let newest_selection = self.selections.newest_anchor().clone();

@@ -17,7 +17,7 @@ use language::{
 };
 use lsp::{
     CompletionListItemDefaultsEditRange, DocumentHighlightKind, LanguageServer, LanguageServerId,
-    OneOf, ServerCapabilities,
+    LinkedEditingRangeServerCapabilities, LinkedEditingRanges, OneOf, ServerCapabilities,
 };
 use std::{cmp::Reverse, ops::Range, path::Path, sync::Arc};
 use text::{BufferId, LineEnding};
@@ -156,6 +156,10 @@ impl From<lsp::FormattingOptions> for FormattingOptions {
             tab_size: value.tab_size,
         }
     }
+}
+
+pub(crate) struct LinkedEditingRange {
+    pub position: PointUtf16,
 }
 
 #[async_trait(?Send)]
@@ -2556,6 +2560,141 @@ impl LspCommand for InlayHints {
     }
 
     fn buffer_id_from_proto(message: &proto::InlayHints) -> Result<BufferId> {
+        BufferId::new(message.buffer_id)
+    }
+}
+
+#[async_trait(?Send)]
+impl LspCommand for LinkedEditingRange {
+    type Response = Vec<Range<Anchor>>;
+    type LspRequest = lsp::request::LinkedEditingRange;
+    type ProtoRequest = proto::OnTypeFormatting;
+
+    fn check_capabilities(&self, server_capabilities: &lsp::ServerCapabilities) -> bool {
+        let Some(linked_editing_options) = &server_capabilities.linked_editing_range_provider
+        else {
+            return false;
+        };
+        if let LinkedEditingRangeServerCapabilities::Simple(false) = linked_editing_options {
+            return false;
+        }
+        return true;
+    }
+
+    fn to_lsp(
+        &self,
+        path: &Path,
+        _: &Buffer,
+        server: &Arc<LanguageServer>,
+        _: &AppContext,
+    ) -> lsp::LinkedEditingRangeParams {
+        lsp::LinkedEditingRangeParams {
+            text_document_position_params: lsp::TextDocumentPositionParams::new(
+                lsp::TextDocumentIdentifier::new(lsp::Url::from_file_path(path).unwrap()),
+                point_to_lsp(self.position),
+            ),
+            work_done_progress_params: Default::default(),
+        }
+    }
+
+    async fn response_from_lsp(
+        self,
+        message: Option<LinkedEditingRanges>,
+        project: Model<Project>,
+        buffer: Model<Buffer>,
+        server_id: LanguageServerId,
+        mut cx: AsyncAppContext,
+    ) -> Result<Vec<Range<Anchor>>> {
+        if let Some(LinkedEditingRanges { ranges, .. }) = message {
+            // let (lsp_adapter, lsp_server) =
+            //     language_server_for_buffer(&project, &buffer, server_id, &mut cx)?;
+            let ranges = buffer.read_with(&cx, |buffer, _| {
+                ranges
+                    .into_iter()
+                    .map(|range| {
+                        buffer.anchor_before(point_from_lsp(range.start))
+                            ..buffer.anchor_before(point_from_lsp(range.end))
+                    })
+                    .collect()
+            });
+
+            ranges
+        } else {
+            Ok(vec![])
+        }
+    }
+
+    fn to_proto(&self, project_id: u64, buffer: &Buffer) -> proto::OnTypeFormatting {
+        todo!();
+        // proto::OnTypeFormatting {
+        //     project_id,
+        //     buffer_id: buffer.remote_id().into(),
+        //     position: Some(language::proto::serialize_anchor(
+        //         &buffer.anchor_before(self.position),
+        //     )),
+        //     trigger: self.trigger.clone(),
+        //     version: serialize_version(&buffer.version()),
+        // }
+    }
+
+    async fn from_proto(
+        message: proto::OnTypeFormatting,
+        _: Model<Project>,
+        buffer: Model<Buffer>,
+        mut cx: AsyncAppContext,
+    ) -> Result<Self> {
+        todo!();
+        // let position = message
+        //     .position
+        //     .and_then(deserialize_anchor)
+        //     .ok_or_else(|| anyhow!("invalid position"))?;
+        // buffer
+        //     .update(&mut cx, |buffer, _| {
+        //         buffer.wait_for_version(deserialize_version(&message.version))
+        //     })?
+        //     .await?;
+
+        // let tab_size = buffer.update(&mut cx, |buffer, cx| {
+        //     language_settings(buffer.language(), buffer.file(), cx).tab_size
+        // })?;
+
+        // Ok(Self {
+        //     position: buffer.update(&mut cx, |buffer, _| position.to_point_utf16(buffer))?,
+        //     trigger: message.trigger.clone(),
+        //     options: lsp_formatting_options(tab_size.get()).into(),
+        //     push_to_history: false,
+        // })
+    }
+
+    fn response_to_proto(
+        response: Vec<Range<Anchor>>,
+        _: &mut Project,
+        _: PeerId,
+        _: &clock::Global,
+        _: &mut AppContext,
+    ) -> proto::OnTypeFormattingResponse {
+        todo!()
+        // proto::OnTypeFormattingResponse {
+        //     transaction: response
+        //         .map(|transaction| language::proto::serialize_transaction(&transaction)),
+        // }
+    }
+
+    async fn response_from_proto(
+        self,
+        message: proto::OnTypeFormattingResponse,
+        _: Model<Project>,
+        _: Model<Buffer>,
+        _: AsyncAppContext,
+    ) -> Result<Vec<Range<Anchor>>> {
+        Ok(vec![])
+        // let Some(transaction) = message.transaction else {
+        //     return Ok(None);
+        // };
+        // Ok(Some(language::proto::deserialize_transaction(transaction)?))
+    }
+
+    fn buffer_id_from_proto(message: &proto::OnTypeFormatting) -> Result<BufferId> {
         BufferId::new(message.buffer_id)
     }
 }

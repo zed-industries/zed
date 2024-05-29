@@ -56,8 +56,8 @@ use log::error;
 use lsp::{
     DiagnosticSeverity, DiagnosticTag, DidChangeWatchedFilesRegistrationOptions,
     DocumentHighlightKind, Edit, FileSystemWatcher, LanguageServer, LanguageServerBinary,
-    LanguageServerId, LspRequestFuture, MessageActionItem, OneOf, ServerCapabilities,
-    ServerHealthStatus, ServerStatus, TextEdit,
+    LanguageServerId, LinkedEditingRangeParams, LspRequestFuture, MessageActionItem, OneOf,
+    ServerCapabilities, ServerHealthStatus, ServerStatus, TextEdit,
 };
 use lsp_command::*;
 use node_runtime::NodeRuntime;
@@ -5627,6 +5627,57 @@ impl Project {
     ) -> Task<Vec<Hover>> {
         let position = position.to_point_utf16(buffer.read(cx));
         self.hover_impl(buffer, position, cx)
+    }
+
+    fn linked_edit_impl(
+        &self,
+        buffer: &Model<Buffer>,
+        position: PointUtf16,
+        cx: &mut ModelContext<Self>,
+    ) -> Task<Result<Vec<Range<Anchor>>>> {
+        if self.is_local() {
+            let snapshot = buffer.read(cx).snapshot();
+            let offset = position.to_offset(&snapshot);
+            let scope = snapshot.language_scope_at(offset);
+            let Some(server_id) = self
+                .language_servers_for_buffer(buffer.read(cx), cx)
+                .filter(|(_, server)| {
+                    server
+                        .capabilities()
+                        .linked_editing_range_provider
+                        .is_some()
+                })
+                .filter(|(adapter, _)| {
+                    scope
+                        .as_ref()
+                        .map(|scope| scope.language_allowed(&adapter.name))
+                        .unwrap_or(true)
+                })
+                .map(|(_, server)| server.server_id())
+                .next()
+            else {
+                return Task::ready(Ok(vec![]));
+            };
+
+            self.request_lsp(
+                buffer.clone(),
+                LanguageServerToQuery::Other(server_id),
+                LinkedEditingRange { position },
+                cx,
+            )
+        } else {
+            Task::ready(Ok(vec![]))
+        }
+    }
+
+    pub fn linked_edit<T: ToPointUtf16>(
+        &self,
+        buffer: &Model<Buffer>,
+        position: T,
+        cx: &mut ModelContext<Self>,
+    ) -> Task<Result<Vec<Range<Anchor>>>> {
+        let position = position.to_point_utf16(buffer.read(cx));
+        self.linked_edit_impl(buffer, position, cx)
     }
 
     #[inline(never)]
