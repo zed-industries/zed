@@ -2911,7 +2911,13 @@ impl EditorElement {
                                 Corners::all(0.05 * line_height),
                             ),
                             DiffHunkStatus::Removed => (
-                                hunk_hitbox.bounds,
+                                Bounds::new(
+                                    point(
+                                        hunk_hitbox.origin.x - hunk_hitbox.size.width,
+                                        hunk_hitbox.origin.y,
+                                    ),
+                                    size(hunk_hitbox.size.width * px(2.), hunk_hitbox.size.height),
+                                ),
                                 cx.theme().status().deleted,
                                 Corners::all(1. * line_height),
                             ),
@@ -2947,8 +2953,8 @@ impl EditorElement {
                 let end_y = start_y + line_height;
 
                 let width = 0.275 * line_height;
-                let highlight_origin = bounds.origin + point(-width, start_y);
-                let highlight_size = size(width * 2., end_y - start_y);
+                let highlight_origin = bounds.origin + point(px(0.), start_y);
+                let highlight_size = size(width, end_y - start_y);
                 Bounds::new(highlight_origin, highlight_size)
             }
             DisplayDiffHunk::Unfolded {
@@ -2980,8 +2986,8 @@ impl EditorElement {
                     let end_y = end_row_in_current_excerpt.as_f32() * line_height - scroll_top;
 
                     let width = 0.275 * line_height;
-                    let highlight_origin = bounds.origin + point(-width, start_y);
-                    let highlight_size = size(width * 2., end_y - start_y);
+                    let highlight_origin = bounds.origin + point(px(0.), start_y);
+                    let highlight_size = size(width, end_y - start_y);
                     Bounds::new(highlight_origin, highlight_size)
                 }
                 DiffHunkStatus::Removed => {
@@ -2992,8 +2998,8 @@ impl EditorElement {
                     let end_y = start_y + line_height;
 
                     let width = 0.35 * line_height;
-                    let highlight_origin = bounds.origin + point(-width, start_y);
-                    let highlight_size = size(width * 2., end_y - start_y);
+                    let highlight_origin = bounds.origin + point(px(0.), start_y);
+                    let highlight_size = size(width, end_y - start_y);
                     Bounds::new(highlight_origin, highlight_size)
                 }
             },
