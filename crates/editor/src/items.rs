@@ -630,7 +630,7 @@ impl Item for Editor {
 
         let mut icon = None;
         if let Some(path) = path_for_buffer(&self.buffer, height, true, cx) {
-            icon = FileIcons::get_icon(&path.into_owned(), cx);
+            icon = FileIcons::get_icon(&path, cx);
         }
 
         h_flex()
