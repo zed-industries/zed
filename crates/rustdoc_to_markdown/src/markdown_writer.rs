@@ -135,7 +135,6 @@ impl MarkdownWriter {
                     attr.name.local.to_string() == "class"
                         && attr
                             .value
-                            .to_string()
                             .split(' ')
                             .any(|class| classes_to_skip.contains(&class.trim()))
                 }) {
