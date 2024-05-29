@@ -390,7 +390,7 @@ List of `string` values
 "tabs": {
   "close_position": "right",
   "git_status": false,
-  "file_icons": false,
+  "file_icons": true,
 },
 ```
 
