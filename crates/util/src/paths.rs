@@ -182,6 +182,7 @@ impl<P> PathLikeWithPosition<P> {
     /// Parses a string that possibly has `:row:column` suffix.
     /// Ignores trailing `:`s, so `test.rs:22:` is parsed as `test.rs:22`.
     /// If any of the row/column component parsing fails, the whole string is then parsed as a path like.
+    /// If on windows, will replace `/` with `\` in the path for compatibility.
     pub fn parse_str<E>(
         s: &str,
         parse_path_like_str: impl Fn(&str) -> Result<P, E>,
@@ -202,6 +203,9 @@ impl<P> PathLikeWithPosition<P> {
             if is_absolute {
                 return Self::parse_absolute_path(trimmed, parse_path_like_str);
             }
+
+            // Replace `/` with `\` for compatibility.
+            let trimmed = trimmed.replace('/', "\\");
         }
 
         match trimmed.split_once(FILE_ROW_COLUMN_DELIMITER) {
@@ -526,6 +530,14 @@ mod tests {
                 PathLikeWithPosition {
                     path_like: "C:\\Users\\someone\\test_file.rs".to_string(),
                     row: Some(1902),
+                    column: None,
+                },
+            ),
+            (
+                "crates/utils/paths.rs",
+                PathLikeWithPosition {
+                    path_like: "crates\\utils\\paths.rs".to_string(),
+                    row: None,
                     column: None,
                 },
             ),
