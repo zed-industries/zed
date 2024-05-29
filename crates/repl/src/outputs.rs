@@ -342,6 +342,21 @@ impl ExecutionView {
                     traceback: terminal,
                 })
             }
+            JupyterMessageContent::ExecuteReply(reply) => {
+                for payload in reply.payload.iter() {
+                    match payload {
+                        runtimelib::Payload::Page { data, .. } => {
+                            let output: OutputType = (data).into();
+                            self.outputs.push(output);
+                        }
+                        // runtimelib::Payload::SetNextInput { text, replace } => todo!(),
+                        // runtimelib::Payload::EditMagic { filename, line_number } => todo!(),
+                        // runtimelib::Payload::AskExit { keepkernel } => todo!(),
+                        _ => {}
+                    }
+                }
+                return;
+            }
             JupyterMessageContent::Status(status) => {
                 match status.execution_state {
                     ExecutionState::Busy => {
