@@ -12,7 +12,12 @@ workspace = true
 
 [features]
 default = []
-test-support = ["backtrace", "collections/test-support", "util/test-support", "http/test-support"]
+test-support = [
+    "backtrace",
+    "collections/test-support",
+    "util/test-support",
+    "http/test-support",
+]
 runtime_shaders = []
 macos-blade = ["blade-graphics", "blade-macros", "blade-util", "bytemuck"]
 
@@ -104,7 +109,7 @@ copypasta = "0.10.1"
 
 [target.'cfg(target_os = "linux")'.dependencies]
 as-raw-xcb-connection = "1"
-ashpd = "0.8.0"
+ashpd.workspace = true
 calloop = "0.12.4"
 calloop-wayland-source = "0.2.0"
 wayland-backend = { version = "0.3.3", features = ["client_system"] }
@@ -128,7 +133,10 @@ x11rb = { version = "0.13.0", features = [
     "resource_manager",
 ] }
 xkbcommon = { version = "0.7", features = ["wayland", "x11"] }
-xim = { git = "https://github.com/npmania/xim-rs", rev = "27132caffc5b9bc9c432ca4afad184ab6e7c16af", features = ["x11rb-xcb", "x11rb-client"] }
+xim = { git = "https://github.com/npmania/xim-rs", rev = "27132caffc5b9bc9c432ca4afad184ab6e7c16af", features = [
+    "x11rb-xcb",
+    "x11rb-client",
+] }
 
 [target.'cfg(windows)'.dependencies]
 windows.workspace = true

@@ -4202,6 +4202,7 @@ name = "fs"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "ashpd",
  "async-tar",
  "async-trait",
  "cocoa",

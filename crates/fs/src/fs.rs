@@ -1,6 +1,11 @@
 use anyhow::{anyhow, Result};
 use git::GitHostingProviderRegistry;
 
+#[cfg(target_os = "linux")]
+use ashpd::desktop::trash;
+#[cfg(target_os = "linux")]
+use std::{fs::File, os::fd::AsFd};
+
 #[cfg(unix)]
 use std::os::unix::fs::MetadataExt;
 
@@ -10,6 +15,7 @@ use git::repository::{GitRepository, RealGitRepository};
 use git2::Repository as LibGitRepository;
 use parking_lot::Mutex;
 use rope::Rope;
+
 #[cfg(any(test, feature = "test-support"))]
 use smol::io::AsyncReadExt;
 use smol::io::AsyncWriteExt;
@@ -273,7 +279,21 @@ impl Fs for RealFs {
         Ok(())
     }
 
+    #[cfg(target_os = "linux")]
+    async fn trash_file(&self, path: &Path, _options: RemoveOptions) -> Result<()> {
+        let file = File::open(path)?;
+        match trash::trash_file(&file.as_fd()).await {
+            Ok(_) => Ok(()),
+            Err(err) => Err(anyhow::Error::new(err)),
+        }
+    }
+
     #[cfg(target_os = "macos")]
+    async fn trash_dir(&self, path: &Path, options: RemoveOptions) -> Result<()> {
+        self.trash_file(path, options).await
+    }
+
+    #[cfg(target_os = "linux")]
     async fn trash_dir(&self, path: &Path, options: RemoveOptions) -> Result<()> {
         self.trash_file(path, options).await
     }

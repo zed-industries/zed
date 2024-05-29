@@ -257,6 +257,7 @@ zed_actions = { path = "crates/zed_actions" }
 
 anyhow = "1.0.57"
 any_vec = "0.13"
+ashpd = "0.8.0"
 async-compression = { version = "0.4", features = ["gzip", "futures-io"] }
 async-fs = "1.6"
 async-recursion = "1.0.0"
@@ -286,9 +287,7 @@ futures-batch = "0.6.1"
 futures-lite = "1.13"
 git2 = { version = "0.18", default-features = false }
 globset = "0.4"
-heed = { version = "0.20.1", features = [
-    "read-txn-no-tls",
-] }
+heed = { version = "0.20.1", features = ["read-txn-no-tls"] }
 hex = "0.4.3"
 html5ever = "0.27.0"
 ignore = "0.4.22"
@@ -497,7 +496,7 @@ type_complexity = "allow"
 
 [workspace.lints.rust]
 unexpected_cfgs = { level = "warn", check-cfg = [
-    'cfg(gles)' # used in gpui
+    'cfg(gles)', # used in gpui
 ] }
 
 [workspace.metadata.cargo-machete]
