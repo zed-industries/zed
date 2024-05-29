@@ -202,9 +202,7 @@ impl AssistantPanel {
 
                     let slash_command_registry = SlashCommandRegistry::global(cx);
 
-                    slash_command_registry.register_command(file_command::FileSlashCommand::new(
-                        workspace.project().clone(),
-                    ));
+                    slash_command_registry.register_command(file_command::FileSlashCommand);
                     slash_command_registry.register_command(
                         prompt_command::PromptSlashCommand::new(prompt_library.clone()),
                     );
@@ -4190,12 +4188,10 @@ mod tests {
         )
         .await;
 
-        let project = Project::test(fs.clone(), ["/test".as_ref()], cx).await;
         let prompt_library = Arc::new(PromptLibrary::default());
         let slash_command_registry = SlashCommandRegistry::new();
 
-        slash_command_registry
-            .register_command(file_command::FileSlashCommand::new(project.clone()));
+        slash_command_registry.register_command(file_command::FileSlashCommand);
         slash_command_registry.register_command(prompt_command::PromptSlashCommand::new(
             prompt_library.clone(),
         ));

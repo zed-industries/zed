@@ -1,10 +1,10 @@
 use super::{SlashCommand, SlashCommandOutput};
-use anyhow::Result;
+use anyhow::{anyhow, Result};
 use assistant_slash_command::SlashCommandOutputSection;
 use fuzzy::PathMatch;
-use gpui::{AppContext, Model, RenderOnce, SharedString, Task, WeakView};
+use gpui::{AppContext, RenderOnce, SharedString, Task, View, WeakView};
 use language::{LineEnding, LspAdapterDelegate};
-use project::{PathMatchCandidateSet, Project};
+use project::PathMatchCandidateSet;
 use std::{
     ops::Range,
     path::{Path, PathBuf},
@@ -13,54 +13,70 @@ use std::{
 use ui::{prelude::*, ButtonLike, ElevationIndex};
 use workspace::Workspace;
 
-pub(crate) struct FileSlashCommand {
-    project: Model<Project>,
-}
+pub(crate) struct FileSlashCommand;
 
 impl FileSlashCommand {
-    pub fn new(project: Model<Project>) -> Self {
-        Self { project }
-    }
-
     fn search_paths(
         &self,
         query: String,
         cancellation_flag: Arc<AtomicBool>,
+        workspace: &View<Workspace>,
         cx: &mut AppContext,
     ) -> Task<Vec<PathMatch>> {
-        let worktrees = self
-            .project
-            .read(cx)
-            .visible_worktrees(cx)
-            .collect::<Vec<_>>();
-        let candidate_sets = worktrees
-            .into_iter()
-            .map(|worktree| {
-                let worktree = worktree.read(cx);
-                PathMatchCandidateSet {
-                    snapshot: worktree.snapshot(),
-                    include_ignored: worktree
-                        .root_entry()
-                        .map_or(false, |entry| entry.is_ignored),
-                    include_root_name: true,
-                    directories_only: false,
-                }
-            })
-            .collect::<Vec<_>>();
-
-        let executor = cx.background_executor().clone();
-        cx.foreground_executor().spawn(async move {
-            fuzzy::match_path_sets(
-                candidate_sets.as_slice(),
-                query.as_str(),
-                None,
-                false,
-                100,
-                &cancellation_flag,
-                executor,
+        if query.is_empty() {
+            let workspace = workspace.read(cx);
+            let project = workspace.project().read(cx);
+            let entries = workspace.recent_navigation_history(Some(10), cx);
+            let path_prefix: Arc<str> = "".into();
+            Task::ready(
+                entries
+                    .into_iter()
+                    .filter_map(|(entry, _)| {
+                        let worktree = project.worktree_for_id(entry.worktree_id, cx)?;
+                        let mut full_path = PathBuf::from(worktree.read(cx).root_name());
+                        full_path.push(&entry.path);
+                        Some(PathMatch {
+                            score: 0.,
+                            positions: Vec::new(),
+                            worktree_id: entry.worktree_id.to_usize(),
+                            path: full_path.into(),
+                            path_prefix: path_prefix.clone(),
+                            distance_to_relative_ancestor: 0,
+                        })
+                    })
+                    .collect(),
             )
-            .await
-        })
+        } else {
+            let worktrees = workspace.read(cx).visible_worktrees(cx).collect::<Vec<_>>();
+            let candidate_sets = worktrees
+                .into_iter()
+                .map(|worktree| {
+                    let worktree = worktree.read(cx);
+                    PathMatchCandidateSet {
+                        snapshot: worktree.snapshot(),
+                        include_ignored: worktree
+                            .root_entry()
+                            .map_or(false, |entry| entry.is_ignored),
+                        include_root_name: true,
+                        directories_only: false,
+                    }
+                })
+                .collect::<Vec<_>>();
+
+            let executor = cx.background_executor().clone();
+            cx.foreground_executor().spawn(async move {
+                fuzzy::match_path_sets(
+                    candidate_sets.as_slice(),
+                    query.as_str(),
+                    None,
+                    false,
+                    100,
+                    &cancellation_flag,
+                    executor,
+                )
+                .await
+            })
+        }
     }
 }
 
@@ -85,9 +101,14 @@ impl SlashCommand for FileSlashCommand {
         &self,
         query: String,
         cancellation_flag: Arc<AtomicBool>,
+        workspace: WeakView<Workspace>,
         cx: &mut AppContext,
-    ) -> gpui::Task<Result<Vec<String>>> {
-        let paths = self.search_paths(query, cancellation_flag, cx);
+    ) -> Task<Result<Vec<String>>> {
+        let Some(workspace) = workspace.upgrade() else {
+            return Task::ready(Err(anyhow!("workspace was dropped")));
+        };
+
+        let paths = self.search_paths(query, cancellation_flag, &workspace, cx);
         cx.background_executor().spawn(async move {
             Ok(paths
                 .await
@@ -106,28 +127,34 @@ impl SlashCommand for FileSlashCommand {
     fn run(
         self: Arc<Self>,
         argument: Option<&str>,
-        _workspace: WeakView<Workspace>,
+        workspace: WeakView<Workspace>,
         _delegate: Arc<dyn LspAdapterDelegate>,
         cx: &mut WindowContext,
     ) -> Task<Result<SlashCommandOutput>> {
-        let project = self.project.read(cx);
+        let Some(workspace) = workspace.upgrade() else {
+            return Task::ready(Err(anyhow!("workspace was dropped")));
+        };
+
         let Some(argument) = argument else {
-            return Task::ready(Err(anyhow::anyhow!("missing path")));
+            return Task::ready(Err(anyhow!("missing path")));
         };
 
         let path = PathBuf::from(argument);
-        let abs_path = project.worktrees().find_map(|worktree| {
-            let worktree = worktree.read(cx);
-            let worktree_root_path = Path::new(worktree.root_name());
-            let relative_path = path.strip_prefix(worktree_root_path).ok()?;
-            worktree.absolutize(&relative_path).ok()
-        });
+        let abs_path = workspace
+            .read(cx)
+            .visible_worktrees(cx)
+            .find_map(|worktree| {
+                let worktree = worktree.read(cx);
+                let worktree_root_path = Path::new(worktree.root_name());
+                let relative_path = path.strip_prefix(worktree_root_path).ok()?;
+                worktree.absolutize(&relative_path).ok()
+            });
 
         let Some(abs_path) = abs_path else {
-            return Task::ready(Err(anyhow::anyhow!("missing path")));
+            return Task::ready(Err(anyhow!("missing path")));
         };
 
-        let fs = project.fs().clone();
+        let fs = workspace.read(cx).app_state().fs.clone();
         let argument = argument.to_string();
         let text = cx.background_executor().spawn(async move {
             let mut content = fs.load(&abs_path).await?;

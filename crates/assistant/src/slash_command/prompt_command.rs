@@ -40,6 +40,7 @@ impl SlashCommand for PromptSlashCommand {
         &self,
         query: String,
         cancellation_flag: Arc<AtomicBool>,
+        _workspace: WeakView<Workspace>,
         cx: &mut AppContext,
     ) -> Task<Result<Vec<String>>> {
         let library = self.library.clone();
