@@ -53,15 +53,9 @@ pub(crate) fn handle_msg(
         WM_NCMBUTTONDOWN => {
             handle_nc_mouse_down_msg(handle, MouseButton::Middle, wparam, lparam, state_ptr)
         }
-        WM_NCLBUTTONUP => {
-            handle_nc_mouse_up_msg(handle, MouseButton::Left, wparam, lparam, state_ptr)
-        }
-        WM_NCRBUTTONUP => {
-            handle_nc_mouse_up_msg(handle, MouseButton::Right, wparam, lparam, state_ptr)
-        }
-        WM_NCMBUTTONUP => {
-            handle_nc_mouse_up_msg(handle, MouseButton::Middle, wparam, lparam, state_ptr)
-        }
+        WM_NCLBUTTONUP => handle_nc_mouse_up_msg(handle, MouseButton::Left, lparam, state_ptr),
+        WM_NCRBUTTONUP => handle_nc_mouse_up_msg(handle, MouseButton::Right, lparam, state_ptr),
+        WM_NCMBUTTONUP => handle_nc_mouse_up_msg(handle, MouseButton::Middle, lparam, state_ptr),
         WM_LBUTTONDOWN => handle_mouse_down_msg(MouseButton::Left, lparam, state_ptr),
         WM_RBUTTONDOWN => handle_mouse_down_msg(MouseButton::Right, lparam, state_ptr),
         WM_MBUTTONDOWN => handle_mouse_down_msg(MouseButton::Middle, lparam, state_ptr),
@@ -976,7 +970,6 @@ fn handle_nc_mouse_down_msg(
 fn handle_nc_mouse_up_msg(
     handle: HWND,
     button: MouseButton,
-    wparam: WPARAM,
     lparam: LPARAM,
     state_ptr: Rc<WindowsWindowStatePtr>,
 ) -> Option<isize> {
