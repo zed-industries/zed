@@ -14,7 +14,7 @@ doctest = false
 
 
 [dependencies]
-alacritty_terminal = "0.23"
+alacritty_terminal.workspace = true
 anyhow.workspace = true
 collections.workspace = true
 dirs = "4.0.0"

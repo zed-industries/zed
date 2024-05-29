@@ -14,20 +14,17 @@ doctest = false
 
 [dependencies]
 anyhow.workspace = true
-# Note: terminal crate doesn't add alacritty to the workspace, so we directly depend on it here
-alacritty_terminal = "0.23"
+alacritty_terminal.workspace = true
 base64.workspace = true
 collections.workspace = true
 editor.workspace = true
 gpui.workspace = true
 futures.workspace = true
-# Note: gpui crate doesn't pull image from the workspace
-image = "0.23"
+image.workspace = true
 language.workspace = true
 log.workspace = true
 project.workspace = true
-resvg = { version = "0.41.0", default-features = false }
-runtimelib = "0.11.0"
+runtimelib.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 settings.workspace = true
@@ -38,7 +35,6 @@ terminal_view.workspace = true
 ui.workspace = true
 util.workspace = true
 uuid.workspace = true
-usvg = { version = "0.41.0", default-features = false }
 workspace.workspace = true
 
 [dev-dependencies]
