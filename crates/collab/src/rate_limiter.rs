@@ -148,9 +148,12 @@ impl RateBucket {
         if elapsed >= self.refill_time_per_token {
             let new_tokens =
                 elapsed.num_milliseconds() / self.refill_time_per_token.num_milliseconds();
-
             self.token_count = (self.token_count + new_tokens as usize).min(self.capacity);
-            self.last_refill = now;
+
+            let unused_refill_time = Duration::milliseconds(
+                elapsed.num_milliseconds() % self.refill_time_per_token.num_milliseconds(),
+            );
+            self.last_refill = now - unused_refill_time;
         }
     }
 }
@@ -218,8 +221,19 @@ mod tests {
             .await
             .unwrap();
 
-        // After one second, user 1 can make another request before being rate-limited again.
-        now += Duration::seconds(1);
+        // After 1.5s, user 1 can make another request before being rate-limited again.
+        now += Duration::milliseconds(1500);
+        rate_limiter
+            .check_internal::<RateLimitA>(user_1, now)
+            .await
+            .unwrap();
+        rate_limiter
+            .check_internal::<RateLimitA>(user_1, now)
+            .await
+            .unwrap_err();
+
+        // After 500ms, user 1 can make another request before being rate-limited again.
+        now += Duration::milliseconds(500);
         rate_limiter
             .check_internal::<RateLimitA>(user_1, now)
             .await
