@@ -33,6 +33,8 @@ impl LocalPaths {
             .into_iter()
             .map(|p| p.as_ref().to_path_buf())
             .collect();
+        // Ensure all future `zed workspace1 workspace2` and `zed workspace2 workspace1` calls are using the same workspace.
+        // The actual workspace order is stored in the `LocalPathsOrder` struct.
         paths.sort();
         Self(Arc::new(paths))
     }
@@ -44,7 +46,8 @@ impl LocalPaths {
 
 impl From<LocalPaths> for SerializedWorkspaceLocation {
     fn from(local_paths: LocalPaths) -> Self {
-        Self::Local(local_paths)
+        let order = LocalPathsOrder::default_for_paths(&local_paths);
+        Self::Local(local_paths, order)
     }
 }
 
@@ -65,6 +68,43 @@ impl Column for LocalPaths {
         };
 
         Ok((Self(paths), start_index + 1))
+    }
+}
+
+#[derive(Debug, PartialEq, Clone)]
+pub struct LocalPathsOrder(Vec<usize>);
+
+impl LocalPathsOrder {
+    pub fn new(order: impl IntoIterator<Item = usize>) -> Self {
+        Self(order.into_iter().collect())
+    }
+
+    pub fn order(&self) -> &[usize] {
+        self.0.as_slice()
+    }
+
+    pub fn default_for_paths(paths: &LocalPaths) -> Self {
+        Self::new(0..paths.0.len())
+    }
+}
+
+impl StaticColumnCount for LocalPathsOrder {}
+impl Bind for &LocalPathsOrder {
+    fn bind(&self, statement: &Statement, start_index: i32) -> Result<i32> {
+        statement.bind(&bincode::serialize(&self.0)?, start_index)
+    }
+}
+
+impl Column for LocalPathsOrder {
+    fn column(statement: &mut Statement, start_index: i32) -> Result<(Self, i32)> {
+        let order_blob = statement.column_blob(start_index)?;
+        let order = if order_blob.is_empty() {
+            Vec::new()
+        } else {
+            bincode::deserialize(order_blob).context("deserializing workspace root order")?
+        };
+
+        Ok((Self(order), start_index + 1))
     }
 }
 
@@ -101,7 +141,7 @@ impl Column for SerializedDevServerProject {
 
 #[derive(Debug, PartialEq, Clone)]
 pub enum SerializedWorkspaceLocation {
-    Local(LocalPaths),
+    Local(LocalPaths, LocalPathsOrder),
     DevServer(SerializedDevServerProject),
 }
 

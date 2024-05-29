@@ -13,3 +13,8 @@ language = "Gleam"
 [grammars.gleam]
 repository = "https://github.com/gleam-lang/tree-sitter-gleam"
 commit = "8432ffe32ccd360534837256747beb5b1c82fca1"
+
+[slash_commands.gleam-project]
+description = "Returns information about the current Gleam project."
+requires_argument = false
+tooltip_text = "Insert Gleam project data"

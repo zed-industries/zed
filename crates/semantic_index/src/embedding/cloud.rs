@@ -24,6 +24,10 @@ impl EmbeddingProvider for CloudEmbeddingProvider {
         // First, fetch any embeddings that are cached based on the requested texts' digests
         // Then compute any embeddings that are missing.
         async move {
+            if !self.client.status().borrow().is_connected() {
+                return Err(anyhow!("sign in required"));
+            }
+
             let cached_embeddings = self.client.request(proto::GetCachedEmbeddings {
                 model: self.model.clone(),
                 digests: texts

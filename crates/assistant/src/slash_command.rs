@@ -1,12 +1,11 @@
+use crate::assistant_panel::ConversationEditor;
 use anyhow::Result;
-use collections::HashMap;
+pub use assistant_slash_command::{SlashCommand, SlashCommandOutput, SlashCommandRegistry};
 use editor::{CompletionProvider, Editor};
-use futures::channel::oneshot;
 use fuzzy::{match_strings, StringMatchCandidate};
-use gpui::{AppContext, Model, Task, ViewContext, WindowHandle};
+use gpui::{Model, Task, ViewContext, WeakView, WindowContext};
 use language::{Anchor, Buffer, CodeLabel, Documentation, LanguageServerId, ToPoint};
 use parking_lot::{Mutex, RwLock};
-use project::Project;
 use rope::Point;
 use std::{
     ops::Range,
@@ -17,56 +16,18 @@ use std::{
 };
 use workspace::Workspace;
 
-use crate::PromptLibrary;
-
-mod current_file_command;
-mod file_command;
-mod prompt_command;
+pub mod active_command;
+pub mod file_command;
+pub mod project_command;
+pub mod prompt_command;
+pub mod search_command;
+pub mod tabs_command;
 
 pub(crate) struct SlashCommandCompletionProvider {
+    editor: WeakView<ConversationEditor>,
     commands: Arc<SlashCommandRegistry>,
     cancel_flag: Mutex<Arc<AtomicBool>>,
-}
-
-#[derive(Default)]
-pub(crate) struct SlashCommandRegistry {
-    commands: HashMap<String, Box<dyn SlashCommand>>,
-}
-
-pub(crate) trait SlashCommand: 'static + Send + Sync {
-    fn name(&self) -> String;
-    fn description(&self) -> String;
-    fn complete_argument(
-        &self,
-        query: String,
-        cancel: Arc<AtomicBool>,
-        cx: &mut AppContext,
-    ) -> Task<Result<Vec<String>>>;
-    fn requires_argument(&self) -> bool;
-    fn run(&self, argument: Option<&str>, cx: &mut AppContext) -> SlashCommandInvocation;
-}
-
-pub(crate) struct SlashCommandInvocation {
-    pub output: Task<Result<String>>,
-    pub invalidated: oneshot::Receiver<()>,
-    pub cleanup: SlashCommandCleanup,
-}
-
-#[derive(Default)]
-pub(crate) struct SlashCommandCleanup(Option<Box<dyn FnOnce()>>);
-
-impl SlashCommandCleanup {
-    pub fn new(cleanup: impl FnOnce() + 'static) -> Self {
-        Self(Some(Box::new(cleanup)))
-    }
-}
-
-impl Drop for SlashCommandCleanup {
-    fn drop(&mut self) {
-        if let Some(cleanup) = self.0.take() {
-            cleanup();
-        }
-    }
+    workspace: WeakView<Workspace>,
 }
 
 pub(crate) struct SlashCommandLine {
@@ -76,95 +37,95 @@ pub(crate) struct SlashCommandLine {
     pub argument: Option<Range<usize>>,
 }
 
-impl SlashCommandRegistry {
-    pub fn new(
-        project: Model<Project>,
-        prompt_library: Arc<PromptLibrary>,
-        window: Option<WindowHandle<Workspace>>,
-    ) -> Arc<Self> {
-        let mut this = Self {
-            commands: HashMap::default(),
-        };
-
-        this.register_command(file_command::FileSlashCommand::new(project));
-        this.register_command(prompt_command::PromptSlashCommand::new(prompt_library));
-        if let Some(window) = window {
-            this.register_command(current_file_command::CurrentFileSlashCommand::new(window));
-        }
-
-        Arc::new(this)
-    }
-
-    fn register_command(&mut self, command: impl SlashCommand) {
-        self.commands.insert(command.name(), Box::new(command));
-    }
-
-    fn command_names(&self) -> impl Iterator<Item = &String> {
-        self.commands.keys()
-    }
-
-    pub(crate) fn command(&self, name: &str) -> Option<&dyn SlashCommand> {
-        self.commands.get(name).map(|b| &**b)
-    }
-}
-
 impl SlashCommandCompletionProvider {
-    pub fn new(commands: Arc<SlashCommandRegistry>) -> Self {
+    pub fn new(
+        editor: WeakView<ConversationEditor>,
+        commands: Arc<SlashCommandRegistry>,
+        workspace: WeakView<Workspace>,
+    ) -> Self {
         Self {
             cancel_flag: Mutex::new(Arc::new(AtomicBool::new(false))),
+            editor,
             commands,
+            workspace,
         }
     }
 
     fn complete_command_name(
         &self,
         command_name: &str,
-        range: Range<Anchor>,
-        cx: &mut AppContext,
+        command_range: Range<Anchor>,
+        name_range: Range<Anchor>,
+        cx: &mut WindowContext,
     ) -> Task<Result<Vec<project::Completion>>> {
         let candidates = self
             .commands
             .command_names()
+            .into_iter()
             .enumerate()
             .map(|(ix, def)| StringMatchCandidate {
                 id: ix,
-                string: def.clone(),
-                char_bag: def.as_str().into(),
+                string: def.to_string(),
+                char_bag: def.as_ref().into(),
             })
             .collect::<Vec<_>>();
         let commands = self.commands.clone();
         let command_name = command_name.to_string();
-        let executor = cx.background_executor().clone();
-        executor.clone().spawn(async move {
+        let editor = self.editor.clone();
+        let workspace = self.workspace.clone();
+        cx.spawn(|mut cx| async move {
             let matches = match_strings(
                 &candidates,
                 &command_name,
                 true,
                 usize::MAX,
                 &Default::default(),
-                executor,
+                cx.background_executor().clone(),
             )
             .await;
 
-            Ok(matches
-                .into_iter()
-                .filter_map(|mat| {
-                    let command = commands.command(&mat.string)?;
-                    let mut new_text = mat.string.clone();
-                    if command.requires_argument() {
-                        new_text.push(' ');
-                    }
+            cx.update(|cx| {
+                matches
+                    .into_iter()
+                    .filter_map(|mat| {
+                        let command = commands.command(&mat.string)?;
+                        let mut new_text = mat.string.clone();
+                        let requires_argument = command.requires_argument();
+                        if requires_argument {
+                            new_text.push(' ');
+                        }
 
-                    Some(project::Completion {
-                        old_range: range.clone(),
-                        documentation: Some(Documentation::SingleLine(command.description())),
-                        new_text,
-                        label: CodeLabel::plain(mat.string, None),
-                        server_id: LanguageServerId(0),
-                        lsp_completion: Default::default(),
+                        Some(project::Completion {
+                            old_range: name_range.clone(),
+                            documentation: Some(Documentation::SingleLine(command.description())),
+                            new_text,
+                            label: command.label(cx),
+                            server_id: LanguageServerId(0),
+                            lsp_completion: Default::default(),
+                            show_new_completions_on_confirm: requires_argument,
+                            confirm: (!requires_argument).then(|| {
+                                let command_name = mat.string.clone();
+                                let command_range = command_range.clone();
+                                let editor = editor.clone();
+                                let workspace = workspace.clone();
+                                Arc::new(move |cx: &mut WindowContext| {
+                                    editor
+                                        .update(cx, |editor, cx| {
+                                            editor.run_command(
+                                                command_range.clone(),
+                                                &command_name,
+                                                None,
+                                                workspace.clone(),
+                                                cx,
+                                            );
+                                        })
+                                        .ok();
+                                }) as Arc<_>
+                            }),
+                        })
                     })
-                })
-                .collect())
+                    .collect()
+            })
         })
     }
 
@@ -172,8 +133,9 @@ impl SlashCommandCompletionProvider {
         &self,
         command_name: &str,
         argument: String,
-        range: Range<Anchor>,
-        cx: &mut AppContext,
+        command_range: Range<Anchor>,
+        argument_range: Range<Anchor>,
+        cx: &mut WindowContext,
     ) -> Task<Result<Vec<project::Completion>>> {
         let new_cancel_flag = Arc::new(AtomicBool::new(false));
         let mut flag = self.cancel_flag.lock();
@@ -181,18 +143,46 @@ impl SlashCommandCompletionProvider {
         *flag = new_cancel_flag.clone();
 
         if let Some(command) = self.commands.command(command_name) {
-            let completions = command.complete_argument(argument, new_cancel_flag.clone(), cx);
+            let completions = command.complete_argument(
+                argument,
+                new_cancel_flag.clone(),
+                self.workspace.clone(),
+                cx,
+            );
+            let command_name: Arc<str> = command_name.into();
+            let editor = self.editor.clone();
+            let workspace = self.workspace.clone();
             cx.background_executor().spawn(async move {
                 Ok(completions
                     .await?
                     .into_iter()
                     .map(|arg| project::Completion {
-                        old_range: range.clone(),
+                        old_range: argument_range.clone(),
                         label: CodeLabel::plain(arg.clone(), None),
                         new_text: arg.clone(),
                         documentation: None,
                         server_id: LanguageServerId(0),
                         lsp_completion: Default::default(),
+                        show_new_completions_on_confirm: false,
+                        confirm: Some(Arc::new({
+                            let command_name = command_name.clone();
+                            let command_range = command_range.clone();
+                            let editor = editor.clone();
+                            let workspace = workspace.clone();
+                            move |cx| {
+                                editor
+                                    .update(cx, |editor, cx| {
+                                        editor.run_command(
+                                            command_range.clone(),
+                                            &command_name,
+                                            Some(&arg),
+                                            workspace.clone(),
+                                            cx,
+                                        );
+                                    })
+                                    .ok();
+                            }
+                        })),
                     })
                     .collect())
             })
@@ -210,25 +200,44 @@ impl CompletionProvider for SlashCommandCompletionProvider {
         buffer_position: Anchor,
         cx: &mut ViewContext<Editor>,
     ) -> Task<Result<Vec<project::Completion>>> {
-        let task = buffer.update(cx, |buffer, cx| {
-            let position = buffer_position.to_point(buffer);
-            let line_start = Point::new(position.row, 0);
-            let mut lines = buffer.text_for_range(line_start..position).lines();
-            let line = lines.next()?;
-            let call = SlashCommandLine::parse(line)?;
+        let Some((name, argument, command_range, argument_range)) =
+            buffer.update(cx, |buffer, _cx| {
+                let position = buffer_position.to_point(buffer);
+                let line_start = Point::new(position.row, 0);
+                let mut lines = buffer.text_for_range(line_start..position).lines();
+                let line = lines.next()?;
+                let call = SlashCommandLine::parse(line)?;
 
-            let name = &line[call.name.clone()];
-            if let Some(argument) = call.argument {
-                let start = buffer.anchor_after(Point::new(position.row, argument.start as u32));
-                let argument = line[argument.clone()].to_string();
-                Some(self.complete_command_argument(name, argument, start..buffer_position, cx))
-            } else {
-                let start = buffer.anchor_after(Point::new(position.row, call.name.start as u32));
-                Some(self.complete_command_name(name, start..buffer_position, cx))
-            }
-        });
+                let command_range_start = Point::new(position.row, call.name.start as u32 - 1);
+                let command_range_end = Point::new(
+                    position.row,
+                    call.argument.as_ref().map_or(call.name.end, |arg| arg.end) as u32,
+                );
+                let command_range = buffer.anchor_after(command_range_start)
+                    ..buffer.anchor_after(command_range_end);
 
-        task.unwrap_or_else(|| Task::ready(Ok(Vec::new())))
+                let name = line[call.name.clone()].to_string();
+
+                Some(if let Some(argument) = call.argument {
+                    let start =
+                        buffer.anchor_after(Point::new(position.row, argument.start as u32));
+                    let argument = line[argument.clone()].to_string();
+                    (name, Some(argument), command_range, start..buffer_position)
+                } else {
+                    let start =
+                        buffer.anchor_after(Point::new(position.row, call.name.start as u32));
+                    (name, None, command_range, start..buffer_position)
+                })
+            })
+        else {
+            return Task::ready(Ok(Vec::new()));
+        };
+
+        if let Some(argument) = argument {
+            self.complete_command_argument(&name, argument, command_range, argument_range, cx)
+        } else {
+            self.complete_command_name(&name, command_range, argument_range, cx)
+        }
     }
 
     fn resolve_completions(

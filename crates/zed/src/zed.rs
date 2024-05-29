@@ -163,7 +163,9 @@ pub fn initialize_workspace(app_state: Arc<AppState>, cx: &mut AppContext) {
         });
 
         let project = workspace.project().clone();
-        if project.read(cx).is_local() {
+        if project.update(cx, |project, cx| {
+            project.is_local() || project.ssh_connection_string(cx).is_some()
+        }) {
             project.update(cx, |project, cx| {
                 let fs = app_state.fs.clone();
                 project.task_inventory().update(cx, |inventory, cx| {
@@ -171,7 +173,7 @@ pub fn initialize_workspace(app_state: Arc<AppState>, cx: &mut AppContext) {
                         watch_config_file(&cx.background_executor(), fs, paths::TASKS.clone());
                     inventory.add_source(
                         TaskSourceKind::AbsPath {
-                            id_base: "global_tasks",
+                            id_base: "global_tasks".into(),
                             abs_path: paths::TASKS.clone(),
                         },
                         |tx, cx| StaticSource::new(TrackedFile::new(tasks_file_rx, tx, cx)),
@@ -599,8 +601,9 @@ fn open_log_file(workspace: &mut Workspace, cx: &mut ViewContext<Workspace>) {
                         let buffer = cx.new_model(|cx| {
                             MultiBuffer::singleton(buffer, cx).with_title("Log".into())
                         });
-                        let editor =
-                            cx.new_view(|cx| Editor::for_multibuffer(buffer, Some(project), cx));
+                        let editor = cx.new_view(|cx| {
+                            Editor::for_multibuffer(buffer, Some(project), true, cx)
+                        });
 
                         editor.update(cx, |editor, cx| {
                             let last_multi_buffer_offset = editor.buffer().read(cx).len(cx);
@@ -829,7 +832,7 @@ fn open_telemetry_log_file(workspace: &mut Workspace, cx: &mut ViewContext<Works
                     MultiBuffer::singleton(buffer, cx).with_title("Telemetry Log".into())
                 });
                 workspace.add_item_to_active_pane(
-                    Box::new(cx.new_view(|cx| Editor::for_multibuffer(buffer, Some(project), cx))),
+                    Box::new(cx.new_view(|cx| Editor::for_multibuffer(buffer, Some(project), true, cx))),
                     None,cx,
                 );
             }).log_err()?;
@@ -862,7 +865,7 @@ fn open_bundled_file(
                     });
                     workspace.add_item_to_active_pane(
                         Box::new(cx.new_view(|cx| {
-                            Editor::for_multibuffer(buffer, Some(project.clone()), cx)
+                            Editor::for_multibuffer(buffer, Some(project.clone()), true, cx)
                         })),
                         None,
                         cx,
@@ -1014,6 +1017,7 @@ mod tests {
         let workspace_1 = cx
             .read(|cx| cx.windows()[0].downcast::<Workspace>())
             .unwrap();
+        cx.run_until_parked();
         workspace_1
             .update(cx, |workspace, cx| {
                 assert_eq!(workspace.worktrees(cx).count(), 2);

@@ -1,6 +1,7 @@
 use core::hash;
 use std::cell::{RefCell, RefMut};
 use std::ffi::OsString;
+use std::ops::{Deref, DerefMut};
 use std::os::fd::{AsRawFd, BorrowedFd};
 use std::path::PathBuf;
 use std::rc::{Rc, Weak};
@@ -15,6 +16,7 @@ use collections::HashMap;
 use copypasta::wayland_clipboard::{create_clipboards_from_external, Clipboard, Primary};
 use copypasta::ClipboardProvider;
 use filedescriptor::Pipe;
+use parking_lot::Mutex;
 use smallvec::SmallVec;
 use util::ResultExt;
 use wayland_backend::client::ObjectId;
@@ -65,9 +67,13 @@ use crate::platform::linux::is_within_click_distance;
 use crate::platform::linux::wayland::cursor::Cursor;
 use crate::platform::linux::wayland::serial::{SerialKind, SerialTracker};
 use crate::platform::linux::wayland::window::WaylandWindow;
+use crate::platform::linux::xdg_desktop_portal::{Event as XDPEvent, XDPEventSource};
 use crate::platform::linux::LinuxClient;
 use crate::platform::PlatformWindow;
-use crate::{point, px, FileDropEvent, ForegroundExecutor, MouseExitEvent, SCROLL_LINES};
+use crate::{
+    point, px, Bounds, FileDropEvent, ForegroundExecutor, MouseExitEvent, WindowAppearance,
+    SCROLL_LINES,
+};
 use crate::{
     AnyWindowHandle, CursorStyle, DisplayId, KeyDownEvent, KeyUpEvent, Keystroke, Modifiers,
     ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent,
@@ -146,6 +152,7 @@ pub(crate) struct WaylandClientState {
     data_device: Option<wl_data_device::WlDataDevice>,
     text_input: Option<zwp_text_input_v3::ZwpTextInputV3>,
     pre_edit_text: Option<String>,
+    composing: bool,
     // Surface to Window mapping
     windows: HashMap<ObjectId, WaylandWindowStatePtr>,
     // Output to scale mapping
@@ -211,6 +218,41 @@ impl WaylandClientStatePtr {
 
     pub fn get_serial(&self, kind: SerialKind) -> u32 {
         self.0.upgrade().unwrap().borrow().serial_tracker.get(kind)
+    }
+
+    pub fn enable_ime(&self) {
+        let client = self.get_client();
+        let mut state = client.borrow_mut();
+        let Some(mut text_input) = state.text_input.take() else {
+            return;
+        };
+
+        text_input.enable();
+        text_input.set_content_type(ContentHint::None, ContentPurpose::Normal);
+        if let Some(window) = state.keyboard_focused_window.clone() {
+            drop(state);
+            if let Some(area) = window.get_ime_area() {
+                text_input.set_cursor_rectangle(
+                    area.origin.x.0 as i32,
+                    area.origin.y.0 as i32,
+                    area.size.width.0 as i32,
+                    area.size.height.0 as i32,
+                );
+            }
+            state = client.borrow_mut();
+        }
+        text_input.commit();
+        state.text_input = Some(text_input);
+    }
+
+    pub fn disable_ime(&self) {
+        let client = self.get_client();
+        let mut state = client.borrow_mut();
+        state.composing = false;
+        if let Some(text_input) = &state.text_input {
+            text_input.disable();
+            text_input.commit();
+        }
     }
 
     pub fn drop_window(&self, surface_id: &ObjectId) {
@@ -342,6 +384,22 @@ impl WaylandClient {
 
         let cursor = Cursor::new(&conn, &globals, 24);
 
+        handle.insert_source(XDPEventSource::new(&common.background_executor), {
+            move |event, _, client| match event {
+                XDPEvent::WindowAppearance(appearance) => {
+                    if let Some(client) = client.0.upgrade() {
+                        let mut client = client.borrow_mut();
+
+                        client.common.appearance = appearance;
+
+                        for (_, window) in &mut client.windows {
+                            window.set_appearance(appearance);
+                        }
+                    }
+                }
+            }
+        });
+
         let mut state = Rc::new(RefCell::new(WaylandClientState {
             serial_tracker: SerialTracker::new(),
             globals,
@@ -351,6 +409,7 @@ impl WaylandClient {
             data_device,
             text_input: None,
             pre_edit_text: None,
+            composing: false,
             output_scales: outputs,
             windows: HashMap::default(),
             common,
@@ -430,6 +489,7 @@ impl LinuxClient for WaylandClient {
             state.globals.clone(),
             WaylandClientStatePtr(Rc::downgrade(&self.0)),
             params,
+            state.common.appearance,
         );
         state.windows.insert(surface_id, window.0.clone());
 
@@ -1028,34 +1088,35 @@ impl Dispatch<zwp_text_input_v3::ZwpTextInputV3, ()> for WaylandClientStatePtr {
         let mut state = client.borrow_mut();
         match event {
             zwp_text_input_v3::Event::Enter { surface } => {
-                text_input.enable();
-                text_input.set_content_type(ContentHint::None, ContentPurpose::Normal);
-
-                if let Some(window) = state.keyboard_focused_window.clone() {
-                    drop(state);
-                    if let Some(area) = window.get_ime_area() {
-                        text_input.set_cursor_rectangle(
-                            area.origin.x.0 as i32,
-                            area.origin.y.0 as i32,
-                            area.size.width.0 as i32,
-                            area.size.height.0 as i32,
-                        );
-                    }
-                }
-                text_input.commit();
+                drop(state);
+                this.enable_ime();
             }
             zwp_text_input_v3::Event::Leave { surface } => {
-                text_input.disable();
-                text_input.commit();
+                drop(state);
+                this.disable_ime();
             }
             zwp_text_input_v3::Event::CommitString { text } => {
+                state.composing = false;
                 let Some(window) = state.keyboard_focused_window.clone() else {
                     return;
                 };
 
                 if let Some(commit_text) = text {
                     drop(state);
-                    window.handle_ime(ImeInput::InsertText(commit_text));
+                    // IBus Intercepts keys like `a`, `b`, but those keys are needed for vim mode.
+                    // We should only send ASCII characters to Zed, otherwise a user could remap a letter like `か` or `相`.
+                    if commit_text.len() == 1 {
+                        window.handle_input(PlatformInput::KeyDown(KeyDownEvent {
+                            keystroke: Keystroke {
+                                modifiers: Modifiers::default(),
+                                key: commit_text.clone(),
+                                ime_key: Some(commit_text),
+                            },
+                            is_held: false,
+                        }));
+                    } else {
+                        window.handle_ime(ImeInput::InsertText(commit_text));
+                    }
                 }
             }
             zwp_text_input_v3::Event::PreeditString {
@@ -1063,6 +1124,7 @@ impl Dispatch<zwp_text_input_v3::ZwpTextInputV3, ()> for WaylandClientStatePtr {
                 cursor_begin,
                 cursor_end,
             } => {
+                state.composing = true;
                 state.pre_edit_text = text;
             }
             zwp_text_input_v3::Event::Done { serial } => {
@@ -1216,15 +1278,23 @@ impl Dispatch<wl_pointer::WlPointer, ()> for WaylandClientStatePtr {
                 }
                 match button_state {
                     wl_pointer::ButtonState::Pressed => {
-                        if let (Some(window), Some(text), Some(compose_state)) = (
-                            state.keyboard_focused_window.clone(),
-                            state.pre_edit_text.take(),
-                            state.compose_state.as_mut(),
-                        ) {
-                            compose_state.reset();
-                            drop(state);
-                            window.handle_ime(ImeInput::InsertText(text));
-                            state = client.borrow_mut();
+                        if let Some(window) = state.keyboard_focused_window.clone() {
+                            if state.composing && state.text_input.is_some() {
+                                let text_input = state.text_input.as_ref().unwrap();
+                                drop(state);
+                                // text_input_v3 don't have something like a reset function
+                                this.disable_ime();
+                                this.enable_ime();
+                                window.handle_ime(ImeInput::UnmarkText);
+                                state = client.borrow_mut();
+                            } else if let (Some(text), Some(compose)) =
+                                (state.pre_edit_text.take(), state.compose_state.as_mut())
+                            {
+                                compose.reset();
+                                drop(state);
+                                window.handle_ime(ImeInput::InsertText(text));
+                                state = client.borrow_mut();
+                            }
                         }
                         let click_elapsed = state.click.last_click.elapsed();
 

@@ -5,6 +5,9 @@ edition = "2021"
 publish = false
 license = "GPL-3.0-or-later"
 
+[lints]
+workspace = true
+
 [lib]
 path = "src/assistant.rs"
 doctest = false
@@ -12,6 +15,7 @@ doctest = false
 [dependencies]
 anyhow.workspace = true
 anthropic = { workspace = true, features = ["schemars"] }
+assistant_slash_command.workspace = true
 cargo_toml.workspace = true
 chrono.workspace = true
 client.workspace = true
@@ -37,6 +41,7 @@ regex.workspace = true
 rope.workspace = true
 schemars.workspace = true
 search.workspace = true
+semantic_index.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 settings.workspace = true

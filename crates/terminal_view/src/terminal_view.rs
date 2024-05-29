@@ -24,7 +24,7 @@ use terminal::{
     Clear, Copy, Event, MaybeNavigationTarget, Paste, ShowCharacterPalette, TaskStatus, Terminal,
 };
 use terminal_element::TerminalElement;
-use ui::{h_flex, prelude::*, ContextMenu, Icon, IconName, Label};
+use ui::{h_flex, prelude::*, ContextMenu, Icon, IconName, Label, Tooltip};
 use util::{paths::PathLikeWithPosition, ResultExt};
 use workspace::{
     item::{BreadcrumbText, Item, ItemEvent, TabContentParams},
@@ -787,23 +787,58 @@ impl Item for TerminalView {
     fn tab_content(&self, params: TabContentParams, cx: &WindowContext) -> AnyElement {
         let terminal = self.terminal().read(cx);
         let title = terminal.title(true);
-        let (icon, icon_color) = match terminal.task() {
+
+        let (icon, icon_color, rerun_btn) = match terminal.task() {
             Some(terminal_task) => match &terminal_task.status {
-                TaskStatus::Unknown => (IconName::ExclamationTriangle, Color::Warning),
-                TaskStatus::Running => (IconName::Play, Color::Default),
+                TaskStatus::Unknown => (IconName::ExclamationTriangle, Color::Warning, None),
+                TaskStatus::Running => (IconName::Play, Color::Disabled, None),
                 TaskStatus::Completed { success } => {
+                    let task_id = terminal_task.id.clone();
+                    let rerun_btn = IconButton::new("rerun-icon", IconName::Rerun)
+                        .icon_size(IconSize::Small)
+                        .size(ButtonSize::Compact)
+                        .icon_color(Color::Default)
+                        .shape(ui::IconButtonShape::Square)
+                        .tooltip(|cx| Tooltip::text("Rerun task", cx))
+                        .on_click(move |_, cx| {
+                            cx.dispatch_action(Box::new(tasks_ui::Rerun {
+                                task_id: Some(task_id.clone()),
+                                ..Default::default()
+                            }));
+                        });
+
                     if *success {
-                        (IconName::Check, Color::Success)
+                        (IconName::Check, Color::Success, Some(rerun_btn))
                     } else {
-                        (IconName::XCircle, Color::Error)
+                        (IconName::XCircle, Color::Error, Some(rerun_btn))
                     }
                 }
             },
-            None => (IconName::Terminal, Color::Muted),
+            None => (IconName::Terminal, Color::Muted, None),
         };
+
         h_flex()
             .gap_2()
-            .child(Icon::new(icon).color(icon_color))
+            .group("term-tab-icon")
+            .child(
+                h_flex()
+                    .group("term-tab-icon")
+                    .child(
+                        div()
+                            .when(rerun_btn.is_some(), |this| {
+                                this.hover(|style| style.invisible().w_0())
+                            })
+                            .child(Icon::new(icon).color(icon_color)),
+                    )
+                    .when_some(rerun_btn, |this, rerun_btn| {
+                        this.child(
+                            div()
+                                .absolute()
+                                .visible_on_hover("term-tab-icon")
+                                .child(rerun_btn),
+                        )
+                    }),
+            )
             .child(Label::new(title).color(if params.selected {
                 Color::Default
             } else {

@@ -36,7 +36,13 @@ impl FlapSnapshot {
         while let Some(item) = cursor.item() {
             match Ord::cmp(&item.flap.range.start.to_point(snapshot).row, &row.0) {
                 Ordering::Less => cursor.next(snapshot),
-                Ordering::Equal => return Some(&item.flap),
+                Ordering::Equal => {
+                    if item.flap.range.start.is_valid(snapshot) {
+                        return Some(&item.flap);
+                    } else {
+                        cursor.next(snapshot);
+                    }
+                }
                 Ordering::Greater => break,
             }
         }
