@@ -56,14 +56,16 @@ pub(crate) fn handle_msg(
         WM_NCLBUTTONUP => handle_nc_mouse_up_msg(handle, MouseButton::Left, lparam, state_ptr),
         WM_NCRBUTTONUP => handle_nc_mouse_up_msg(handle, MouseButton::Right, lparam, state_ptr),
         WM_NCMBUTTONUP => handle_nc_mouse_up_msg(handle, MouseButton::Middle, lparam, state_ptr),
-        WM_LBUTTONDOWN => handle_mouse_down_msg(MouseButton::Left, lparam, state_ptr),
-        WM_RBUTTONDOWN => handle_mouse_down_msg(MouseButton::Right, lparam, state_ptr),
-        WM_MBUTTONDOWN => handle_mouse_down_msg(MouseButton::Middle, lparam, state_ptr),
-        WM_XBUTTONDOWN => handle_xbutton_msg(wparam, lparam, handle_mouse_down_msg, state_ptr),
-        WM_LBUTTONUP => handle_mouse_up_msg(MouseButton::Left, lparam, state_ptr),
-        WM_RBUTTONUP => handle_mouse_up_msg(MouseButton::Right, lparam, state_ptr),
-        WM_MBUTTONUP => handle_mouse_up_msg(MouseButton::Middle, lparam, state_ptr),
-        WM_XBUTTONUP => handle_xbutton_msg(wparam, lparam, handle_mouse_up_msg, state_ptr),
+        WM_LBUTTONDOWN => handle_mouse_down_msg(handle, MouseButton::Left, lparam, state_ptr),
+        WM_RBUTTONDOWN => handle_mouse_down_msg(handle, MouseButton::Right, lparam, state_ptr),
+        WM_MBUTTONDOWN => handle_mouse_down_msg(handle, MouseButton::Middle, lparam, state_ptr),
+        WM_XBUTTONDOWN => {
+            handle_xbutton_msg(handle, wparam, lparam, handle_mouse_down_msg, state_ptr)
+        }
+        WM_LBUTTONUP => handle_mouse_up_msg(handle, MouseButton::Left, lparam, state_ptr),
+        WM_RBUTTONUP => handle_mouse_up_msg(handle, MouseButton::Right, lparam, state_ptr),
+        WM_MBUTTONUP => handle_mouse_up_msg(handle, MouseButton::Middle, lparam, state_ptr),
+        WM_XBUTTONUP => handle_xbutton_msg(handle, wparam, lparam, handle_mouse_up_msg, state_ptr),
         WM_MOUSEWHEEL => handle_mouse_wheel_msg(handle, wparam, lparam, state_ptr),
         WM_MOUSEHWHEEL => handle_mouse_horizontal_wheel_msg(handle, wparam, lparam, state_ptr),
         WM_SYSKEYDOWN => handle_syskeydown_msg(wparam, lparam, state_ptr),
@@ -403,6 +405,7 @@ fn handle_char_msg(
 }
 
 fn handle_mouse_down_msg(
+    handle: HWND,
     button: MouseButton,
     lparam: LPARAM,
     state_ptr: Rc<WindowsWindowStatePtr>,
@@ -428,6 +431,7 @@ fn handle_mouse_down_msg(
         } else {
             Some(1)
         };
+        unsafe { SetCapture(handle) };
         state_ptr.state.borrow_mut().callbacks.input = Some(callback);
 
         result
@@ -437,6 +441,7 @@ fn handle_mouse_down_msg(
 }
 
 fn handle_mouse_up_msg(
+    _handle: HWND,
     button: MouseButton,
     lparam: LPARAM,
     state_ptr: Rc<WindowsWindowStatePtr>,
@@ -460,6 +465,7 @@ fn handle_mouse_up_msg(
         } else {
             Some(1)
         };
+        unsafe { ReleaseCapture().log_err() };
         state_ptr.state.borrow_mut().callbacks.input = Some(callback);
 
         result
@@ -469,9 +475,10 @@ fn handle_mouse_up_msg(
 }
 
 fn handle_xbutton_msg(
+    handle: HWND,
     wparam: WPARAM,
     lparam: LPARAM,
-    handler: impl Fn(MouseButton, LPARAM, Rc<WindowsWindowStatePtr>) -> Option<isize>,
+    handler: impl Fn(HWND, MouseButton, LPARAM, Rc<WindowsWindowStatePtr>) -> Option<isize>,
     state_ptr: Rc<WindowsWindowStatePtr>,
 ) -> Option<isize> {
     let nav_dir = match wparam.hiword() {
@@ -479,7 +486,7 @@ fn handle_xbutton_msg(
         XBUTTON2 => NavigationDirection::Forward,
         _ => return Some(1),
     };
-    handler(MouseButton::Navigate(nav_dir), lparam, state_ptr)
+    handler(handle, MouseButton::Navigate(nav_dir), lparam, state_ptr)
 }
 
 fn handle_mouse_wheel_msg(
