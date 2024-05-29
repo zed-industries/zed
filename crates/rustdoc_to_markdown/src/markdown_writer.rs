@@ -25,6 +25,12 @@ impl MarkdownWriter {
             .any(|parent_tag| parent_tag.contains(tag))
     }
 
+    fn is_inside_heading(&self) -> bool {
+        ["h1", "h2", "h3", "h4", "h5", "h6"]
+            .into_iter()
+            .any(|heading| self.is_inside(heading))
+    }
+
     /// Appends the given string slice onto the end of the Markdown output.
     fn push_str(&mut self, str: &str) {
         self.markdown.push_str(str);
@@ -57,7 +63,9 @@ impl MarkdownWriter {
                 ..
             } => {
                 tag_name = name.local.to_string();
-                self.start_tag(&tag_name, attrs);
+                if !tag_name.is_empty() {
+                    self.start_tag(&tag_name, attrs);
+                }
             }
             NodeData::Text { ref contents } => {
                 let text = contents.borrow().to_string();
@@ -66,14 +74,16 @@ impl MarkdownWriter {
         }
 
         if !tag_name.is_empty() {
-            self.current_tag_stack.push_back(tag_name);
+            self.current_tag_stack.push_back(tag_name.clone());
         }
 
         for child in node.children.borrow().iter() {
             self.visit_node(child)?;
         }
 
-        if let Some(tag_name) = self.current_tag_stack.pop_back() {
+        self.current_tag_stack.pop_back();
+
+        if !tag_name.is_empty() {
             self.end_tag(&tag_name);
         }
 
@@ -82,14 +92,19 @@ impl MarkdownWriter {
 
     fn start_tag(&mut self, tag: &str, _attrs: &RefCell<Vec<Attribute>>) {
         match tag {
-            "h1" => self.push_str("# "),
-            "h2" => self.push_str("## "),
-            "h3" => self.push_str("### "),
-            "h4" => self.push_str("#### "),
-            "h5" => self.push_str("##### "),
-            "h6" => self.push_str("###### "),
-            "code" => self.push_str("`"),
+            "h1" => self.push_str("\n# "),
+            "h2" => self.push_str("\n## "),
+            "h3" => self.push_str("\n### "),
+            "h4" => self.push_str("\n#### "),
+            "h5" => self.push_str("\n##### "),
+            "h6" => self.push_str("\n###### "),
+            "code" => {
+                if !self.is_inside("pre") {
+                    self.push_str("`")
+                }
+            }
             "pre" => self.push_str("\n```\n"),
+            "ul" | "ol" => self.push_newline(),
             "li" => self.push_str("- "),
             _ => {}
         }
@@ -97,9 +112,14 @@ impl MarkdownWriter {
 
     fn end_tag(&mut self, tag: &str) {
         match tag {
-            "h1" | "h2" | "h3" | "h4" | "h5" | "h6" => self.push_newline(),
-            "code" => self.push_str("`"),
+            "h1" | "h2" | "h3" | "h4" | "h5" | "h6" => self.push_str("\n\n"),
+            "code" => {
+                if !self.is_inside("pre") {
+                    self.push_str("`")
+                }
+            }
             "pre" => self.push_str("\n```\n"),
+            "ul" | "ol" => self.push_newline(),
             "li" => self.push_newline(),
             _ => {}
         }
@@ -115,7 +135,12 @@ impl MarkdownWriter {
             return Ok(());
         }
 
-        self.push_str(&format!("{text}"));
+        if self.is_inside_heading() && self.is_inside("a") {
+            return Ok(());
+        }
+
+        let trimmed_text = text.trim_matches(|char| char == '\n' || char == '\r' || char == '§');
+        self.push_str(trimmed_text);
 
         Ok(())
     }
