@@ -800,7 +800,7 @@ impl PickerDelegate for FileFinderDelegate {
             cx.notify();
             Task::ready(())
         } else {
-            let query = PathLikeWithPosition::parse_str(&raw_query, |path_like_str| {
+            let query = PathLikeWithPosition::parse_str(raw_query, |path_like_str| {
                 Ok::<_, std::convert::Infallible>(FileSearchQuery {
                     raw_query: raw_query.to_owned(),
                     file_query_end: if path_like_str == raw_query {
