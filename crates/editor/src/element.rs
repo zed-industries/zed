@@ -2911,7 +2911,13 @@ impl EditorElement {
                                 Corners::all(0.05 * line_height),
                             ),
                             DiffHunkStatus::Removed => (
-                                hunk_hitbox.bounds,
+                                Bounds::new(
+                                    point(
+                                        hunk_hitbox.origin.x - hunk_hitbox.size.width,
+                                        hunk_hitbox.origin.y,
+                                    ),
+                                    size(hunk_hitbox.size.width * px(2.), hunk_hitbox.size.height),
+                                ),
                                 cx.theme().status().deleted,
                                 Corners::all(1. * line_height),
                             ),
