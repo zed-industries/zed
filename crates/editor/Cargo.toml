@@ -36,6 +36,7 @@ collections.workspace = true
 convert_case = "0.6.0"
 db.workspace = true
 emojis.workspace = true
+file_icons.workspace = true
 futures.workspace = true
 fuzzy.workspace = true
 git.workspace = true
@@ -74,7 +75,6 @@ ui.workspace = true
 url.workspace = true
 util.workspace = true
 workspace.workspace = true
-file_icons.workspace = true
 
 [dev-dependencies]
 ctor.workspace = true
