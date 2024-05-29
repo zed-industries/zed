@@ -114,9 +114,8 @@ impl MarkdownWriter {
             self.visit_node(child)?;
         }
 
-        self.current_element_stack.pop_back();
-
         if let Some(current_element) = current_element {
+            self.current_element_stack.pop_back();
             self.end_tag(&current_element);
         }
 
