@@ -196,6 +196,19 @@ pub(super) fn python_task_context() -> ContextProviderWithTasks {
             args: vec![VariableName::File.template_value()],
             ..TaskTemplate::default()
         },
+        TaskTemplate {
+            label: "unittest $ZED_SYMBOL class".to_owned(),
+            command: "python3".to_owned(),
+            args: vec![
+                "-m".to_owned(),
+                "unittest".to_owned(),
+                VariableName::RelativeFile.template_value(),
+                "-k".to_owned(),
+                "$ZED_SYMBOL".to_owned(),
+            ],
+            tags: vec!["python-unittest-class".to_owned()],
+            ..TaskTemplate::default()
+        },
     ]))
 }
 
