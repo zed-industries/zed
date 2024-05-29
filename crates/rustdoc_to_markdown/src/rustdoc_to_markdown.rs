@@ -5,7 +5,7 @@ use html5ever::driver::ParseOpts;
 use html5ever::parse_document;
 use html5ever::tendril::TendrilSink;
 use html5ever::tree_builder::TreeBuilderOpts;
-use markup5ever_rcdom::{Handle, NodeData, RcDom};
+use markup5ever_rcdom::RcDom;
 
 pub use crate::markdown_writer::*;
 pub use crate::visitor::*;
@@ -25,41 +25,7 @@ pub fn convert_rustdoc_to_markdown() {
         .read_from(&mut html.as_bytes())
         .unwrap();
     let mut markdown_writer = MarkdownWriter::new();
-
-    walk(&dom.document, &mut markdown_writer);
+    markdown_writer.visit_node(&dom.document).unwrap();
 
     println!("{}", markdown_writer.markdown());
-}
-
-fn walk(node: &Handle, output: &mut MarkdownWriter) {
-    let mut tag_name = String::new();
-
-    match node.data {
-        NodeData::Document
-        | NodeData::Doctype { .. }
-        | NodeData::ProcessingInstruction { .. }
-        | NodeData::Comment { .. } => {}
-        NodeData::Element { ref name, .. } => {
-            tag_name = name.local.to_string();
-        }
-        NodeData::Text { ref contents } => {
-            let text = contents.borrow().to_string();
-
-            if output.is_inside_heading() {
-                output.push_str(&format!("# {text}"));
-                output.push_newline();
-            } else {
-                output.push_str(&format!("{text}"));
-                output.push_newline();
-            }
-        }
-    }
-
-    output.push_tag(tag_name);
-
-    for child in node.children.borrow().iter() {
-        walk(child, output);
-    }
-
-    output.pop_tag();
 }
