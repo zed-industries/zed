@@ -366,6 +366,17 @@ pub(crate) enum TrimResult<T> {
     Err,
 }
 
+impl<T: Clone> TrimResult<&T> {
+    pub fn cloned(&self) -> TrimResult<T> {
+        match *self {
+            TrimResult::Found(t) => TrimResult::Found(t.clone()),
+            TrimResult::NoChange => TrimResult::NoChange,
+            TrimResult::Changed => TrimResult::Changed,
+            TrimResult::Err => TrimResult::Err,
+        }
+    }
+}
+
 pub struct TrieIterator<'a, T> {
     keys: &'a str,
     stack: Vec<(&'a TrieNode<T>, String)>,

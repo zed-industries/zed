@@ -21,7 +21,7 @@ const VERTICAL_MIN_SIZE: f32 = 100.;
 /// Single-pane group is a regular pane.
 #[derive(Clone)]
 pub struct PaneGroup {
-    pub(crate) root: Member,
+    pub root: Member,
 }
 
 impl PaneGroup {
@@ -126,7 +126,7 @@ impl PaneGroup {
 }
 
 #[derive(Clone)]
-pub(crate) enum Member {
+pub enum Member {
     Axis(PaneAxis),
     Pane(View<Pane>),
 }
@@ -316,7 +316,7 @@ impl Member {
 }
 
 #[derive(Clone)]
-pub(crate) struct PaneAxis {
+pub struct PaneAxis {
     pub axis: Axis,
     pub members: Vec<Member>,
     pub flexes: Arc<Mutex<Vec<f32>>>,

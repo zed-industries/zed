@@ -1,11 +1,12 @@
 use editor::DisplayPoint;
-use gpui::{HighlightStyle, KeyContext};
+use gpui::{EntityId, HighlightStyle, KeyContext};
 
 use crate::perm::{Trie, TrimResult};
 
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone)]
 pub(crate) struct OverlayState {
     pub style: HighlightStyle,
+    pub editor_id: EntityId,
     pub point: DisplayPoint,
 }
 
@@ -55,16 +56,11 @@ impl Selection {
         &self.trie
     }
 
-    pub(crate) fn record_char(&mut self, character: char) -> TrimResult<DisplayPoint> {
-        match self.trie.trim(character) {
-            TrimResult::NoChange => TrimResult::NoChange,
-            TrimResult::Changed => TrimResult::Changed,
-            TrimResult::Found(overlay) => return TrimResult::Found(overlay.point.clone()),
-            TrimResult::Err => return TrimResult::Err,
-        }
+    pub(crate) fn record_char(&mut self, character: char) -> TrimResult<OverlayState> {
+        self.trie.trim(character).cloned()
     }
 
-    pub(crate) fn record_str(mut self, characters: &str) -> (Self, TrimResult<DisplayPoint>) {
+    pub(crate) fn record_str(mut self, characters: &str) -> (Self, TrimResult<OverlayState>) {
         let mut changed = false;
         for character in characters.chars() {
             let ret = self.record_char(character);

@@ -3,8 +3,10 @@ use editor::{
     movement::{find_boundary_range, TextLayoutDetails},
     DisplayPoint, RowExt,
 };
+use gpui::Point;
 use language::{char_kind, CharKind};
 use text::Bias;
+use ui::Pixels;
 use vim::utils::coerce_punctuation;
 
 pub(crate) fn manh_distance(point_1: &DisplayPoint, point_2: &DisplayPoint, x_bias: f32) -> f32 {
@@ -12,8 +14,21 @@ pub(crate) fn manh_distance(point_1: &DisplayPoint, point_2: &DisplayPoint, x_bi
         + (point_1.column() as i32 - point_2.column() as i32).abs() as f32
 }
 
+pub(crate) fn manh_distance_pixels(
+    point_1: &Point<Pixels>,
+    point_2: &Point<Pixels>,
+    x_bias: f32,
+) -> f32 {
+    x_bias * (point_1.x.0 - point_2.x.0).abs() + (point_1.y.0 - point_2.y.0).abs() as f32
+}
+
 pub(crate) fn end_of_document(map: &DisplaySnapshot) -> DisplayPoint {
     let new_point = DisplayPoint::new(DisplayRow(u32::max_value()), u32::max_value());
+    map.clip_point(new_point, Bias::Left)
+}
+
+pub(crate) fn start_of_document(map: &DisplaySnapshot) -> DisplayPoint {
+    let new_point = DisplayPoint::zero();
     map.clip_point(new_point, Bias::Left)
 }
 
