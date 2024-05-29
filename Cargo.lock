@@ -8639,6 +8639,7 @@ dependencies = [
  "html5ever",
  "indoc",
  "markup5ever_rcdom",
+ "regex",
 ]
 
 [[package]]
