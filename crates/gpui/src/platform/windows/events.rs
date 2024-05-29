@@ -919,7 +919,7 @@ fn handle_nc_mouse_down_msg(
     }
 
     let mut lock = state_ptr.state.borrow_mut();
-    let result = if let Some(mut callback) = lock.callbacks.input.take() {
+    if let Some(mut callback) = lock.callbacks.input.take() {
         let scale_factor = lock.scale_factor;
         let mut cursor_point = POINT {
             x: lparam.signed_loword().into(),
@@ -943,13 +943,13 @@ fn handle_nc_mouse_down_msg(
         };
         state_ptr.state.borrow_mut().callbacks.input = Some(callback);
 
-        result
+        if result.is_some() {
+            return result;
+        }
     } else {
-        None
+        drop(lock);
     };
 
-    // Since these are handled in handle_nc_mouse_up_msg we must prevent the default window proc
-    // result.or_else(|| matches!(wparam.0 as u32, HTMINBUTTON | HTMAXBUTTON | HTCLOSE).then_some(0))
     if button == MouseButton::Left {
         match wparam.0 as u32 {
             HTMINBUTTON => unsafe {
@@ -967,9 +967,10 @@ fn handle_nc_mouse_down_msg(
             },
             _ => return None,
         };
-        return Some(0);
+        Some(0)
+    } else {
+        None
     }
-    result
 }
 
 fn handle_nc_mouse_up_msg(
