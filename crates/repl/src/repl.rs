@@ -70,6 +70,7 @@ pub fn init(fs: Arc<dyn Fs>, cx: &mut AppContext) {
 pub enum Kernel {
     RunningKernel(RunningKernel),
     StartingKernel(Shared<Task<()>>),
+    FailedLaunch,
 }
 
 // Per workspace
@@ -123,7 +124,7 @@ impl RuntimeManager {
                 return Task::ready(anyhow::Ok(running_kernel.shell_request_tx.clone()));
             }
             Some(Kernel::StartingKernel(task)) => task.clone(),
-            None => {
+            Some(Kernel::FailedLaunch) | None => {
                 let kernel = self.launch_kernel(entity_id, language_name, cx);
                 let pending_kernel = cx
                     .spawn(|this, mut cx| async move {
@@ -131,15 +132,15 @@ impl RuntimeManager {
 
                         match running_kernel {
                             Ok(running_kernel) => {
-                                this.update(&mut cx, |this, _cx| {
+                                let _ = this.update(&mut cx, |this, _cx| {
                                     this.instances
                                         .insert(entity_id, Kernel::RunningKernel(running_kernel));
                                 });
                             }
                             // todo!(): Consider a failed launch state
-                            Err(err) => {
-                                this.update(&mut cx, |this, _cx| {
-                                    this.instances.remove(&entity_id);
+                            Err(_err) => {
+                                let _ = this.update(&mut cx, |this, _cx| {
+                                    this.instances.insert(entity_id, Kernel::FailedLaunch);
                                 });
                             }
                         }
@@ -203,6 +204,9 @@ impl RuntimeManager {
         cx.spawn(|_, _cx| async move {
             let running_kernel =
                 RunningKernel::new(runtime_specification, &entity_id, fs.clone()).await?;
+
+            // At this point, we can now feed all updates to the execution views
+            // that are associated with this entity_id
 
             let mut shell_request_tx = running_kernel.shell_request_tx.clone();
             let (tx, mut rx) = mpsc::unbounded();
