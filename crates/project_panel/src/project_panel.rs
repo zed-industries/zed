@@ -76,6 +76,7 @@ struct ActiveMultiBuffer {
     item_id: EntityId,
     _editor_subscrpiption: Option<Subscription>,
     entries: BTreeMap<WorktreeId, BTreeSet<ProjectEntryId>>,
+    original_expanded_dir_ids: HashMap<WorktreeId, BTreeSet<ProjectEntryId>>,
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -243,6 +244,9 @@ impl ProjectPanel {
                                             &editor, cx,
                                         ),
                                         entries: new_entries,
+                                        original_expanded_dir_ids: std::mem::take(
+                                            &mut old_multi_buffer.original_expanded_dir_ids,
+                                        ),
                                     });
                                 } else {
                                     old_multi_buffer.entries.retain(
@@ -276,6 +280,9 @@ impl ProjectPanel {
                                         &editor, cx,
                                     ),
                                     entries: new_entries,
+                                    original_expanded_dir_ids: project_panel
+                                        .expanded_dir_ids
+                                        .clone(),
                                 });
                             }
                             if !added_entries.is_empty() {
@@ -283,9 +290,11 @@ impl ProjectPanel {
                                 cx.notify();
                             }
                         } else {
-                            // TODO kb also clean up all extra directories expanded due to search results
-                            // + reset them when another multi buffer gets active
-                            project_panel.active_multi_buffer = None;
+                            if let Some(old_multi_buffer) = project_panel.active_multi_buffer.take()
+                            {
+                                project_panel.expanded_dir_ids =
+                                    old_multi_buffer.original_expanded_dir_ids;
+                            }
                             project_panel.update_visible_entries(HashSet::default(), None, cx);
                             cx.notify();
                         }
