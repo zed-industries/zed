@@ -1,4 +1,4 @@
-use anyhow::{Context as _, Result};
+use anyhow::{anyhow, Context as _, Result};
 use collections::{HashMap, HashSet};
 use editor::{
     display_map::{
@@ -8,7 +8,8 @@ use editor::{
 };
 use futures::{
     channel::mpsc::{self, UnboundedSender},
-    Future, SinkExt as _, StreamExt as _,
+    future::Shared,
+    Future, FutureExt as _, SinkExt as _, StreamExt as _,
 };
 use gpui::{actions, AppContext, Context, EntityId, Global, Model, ModelContext, Task, WeakView};
 use gpui::{Entity, View};
@@ -62,17 +63,25 @@ pub fn init(fs: Arc<dyn Fs>, cx: &mut AppContext) {
     .detach();
 }
 
+// Next steps:
+//
+// Instances will carry EntityId => KernelEnum
+
+pub enum Kernel {
+    RunningKernel(RunningKernel),
+    StartingKernel(Shared<Task<()>>),
+}
+
 // Per workspace
 pub struct RuntimeManager {
     fs: Arc<dyn Fs>,
     runtime_specifications: Vec<RuntimeSpecification>,
 
-    instances: HashMap<EntityId, RunningKernel>,
+    instances: HashMap<EntityId, Kernel>,
     editors: HashMap<WeakView<Editor>, EditorRuntimeState>,
     // todo!(): Next
     // To reduce the number of open tasks and channels we have, let's feed the response
     // messages by ID over to the paired ExecutionView
-    #[allow(unused)]
     execution_views_by_id: HashMap<String, View<ExecutionView>>,
 }
 
@@ -86,7 +95,6 @@ struct EditorRuntimeState {
 #[derive(Debug, Clone)]
 struct EditorRuntimeBlock {
     code_range: Range<Anchor>,
-    #[allow(unused)]
     execution_id: String,
     block_id: BlockId,
     _execution_view: View<ExecutionView>,
@@ -103,18 +111,73 @@ impl RuntimeManager {
         }
     }
 
-    fn acquire_shell_request_tx(
+    fn get_or_launch_kernel(
         &mut self,
         entity_id: EntityId,
         language_name: Arc<str>,
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<UnboundedSender<Request>>> {
-        let running_kernel = self.instances.get(&entity_id);
-        if let Some(running_kernel) = running_kernel {
-            return Task::ready(anyhow::Ok(running_kernel.shell_request_tx.clone()));
-        }
-        // TODO: Track that a kernel is (possibly) starting up so we don't relaunch without tearing down the old one
+        let kernel = self.instances.get(&entity_id);
+        let pending_kernel_start = match kernel {
+            Some(Kernel::RunningKernel(running_kernel)) => {
+                return Task::ready(anyhow::Ok(running_kernel.shell_request_tx.clone()));
+            }
+            Some(Kernel::StartingKernel(task)) => task.clone(),
+            None => {
+                let kernel = self.launch_kernel(entity_id, language_name, cx);
+                let pending_kernel = cx
+                    .spawn(|this, mut cx| async move {
+                        let running_kernel = kernel.await;
 
+                        match running_kernel {
+                            Ok(running_kernel) => {
+                                this.update(&mut cx, |this, _cx| {
+                                    this.instances
+                                        .insert(entity_id, Kernel::RunningKernel(running_kernel));
+                                });
+                            }
+                            // todo!(): Consider a failed launch state
+                            Err(err) => {
+                                this.update(&mut cx, |this, _cx| {
+                                    this.instances.remove(&entity_id);
+                                });
+                            }
+                        }
+                    })
+                    .shared();
+
+                self.instances
+                    .insert(entity_id, Kernel::StartingKernel(pending_kernel.clone()));
+
+                pending_kernel
+            }
+        };
+
+        cx.spawn(|this, mut cx| async move {
+            pending_kernel_start.await;
+
+            this.update(&mut cx, |this, _cx| {
+                let kernel = this
+                    .instances
+                    .get(&entity_id)
+                    .ok_or(anyhow!("unable to get a running kernel"))?;
+
+                match kernel {
+                    Kernel::RunningKernel(running_kernel) => {
+                        Ok(running_kernel.shell_request_tx.clone())
+                    }
+                    _ => Err(anyhow!("unable to get a running kernel")),
+                }
+            })?
+        })
+    }
+
+    fn launch_kernel(
+        &mut self,
+        entity_id: EntityId,
+        language_name: Arc<str>,
+        cx: &mut ModelContext<Self>,
+    ) -> Task<Result<RunningKernel>> {
         // Get first runtime that matches the language name (for now)
         let runtime_specification =
             self.runtime_specifications
@@ -137,7 +200,7 @@ impl RuntimeManager {
 
         let fs = self.fs.clone();
 
-        cx.spawn(|this, mut cx| async move {
+        cx.spawn(|_, _cx| async move {
             let running_kernel =
                 RunningKernel::new(runtime_specification, &entity_id, fs.clone()).await?;
 
@@ -154,13 +217,7 @@ impl RuntimeManager {
             let timeout = smol::Timer::after(std::time::Duration::from_secs(1));
             futures::future::select(rx.next(), timeout).await;
 
-            let shell_request_tx = running_kernel.shell_request_tx.clone();
-            this.update(&mut cx, |this, _cx| {
-                this.instances.insert(entity_id, running_kernel);
-                anyhow::Ok(())
-            })??;
-
-            anyhow::Ok(shell_request_tx)
+            anyhow::Ok(running_kernel)
         })
     }
 
@@ -173,7 +230,7 @@ impl RuntimeManager {
     ) -> impl Future<Output = Result<mpsc::UnboundedReceiver<JupyterMessageContent>>> {
         let (tx, rx) = mpsc::unbounded();
 
-        let shell_request_tx = self.acquire_shell_request_tx(entity_id, language_name, cx);
+        let shell_request_tx = self.get_or_launch_kernel(entity_id, language_name, cx);
 
         async move {
             let shell_request_tx = shell_request_tx.await?;
