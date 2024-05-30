@@ -705,11 +705,11 @@ impl EasyMotion {
         keys: &str,
         cx: &mut WindowContext,
     ) -> EditorState {
-        let handle = cx.window_handle().downcast::<Workspace>();
-        let Some(handle) = handle else {
-            return EditorState::None;
-        };
-        let Ok(workspace_view) = handle.root(cx) else {
+        let handle = cx
+            .window_handle()
+            .downcast::<Workspace>()
+            .and_then(|handle| handle.root(cx).ok());
+        let Some(workspace_view) = handle else {
             return EditorState::None;
         };
         workspace_view.update(cx, |workspace, cx| {
@@ -739,8 +739,29 @@ impl EasyMotion {
                     }
                     EditorState::None
                 }
-                TrimResult::Changed => EditorState::None,
-                TrimResult::Err => EditorState::None,
+                TrimResult::Changed => {
+                    let trie = selection.trie();
+                    for editor in editors {
+                        let iter = trie
+                            .iter()
+                            .filter(|(_, overlay)| overlay.editor_id == editor.entity_id());
+                        editor.update(cx, |editor, cx| {
+                            editor.clear_overlays(cx);
+                            EasyMotion::add_overlays(editor, iter, cx);
+                        });
+                    }
+                    EditorState::Selection(selection)
+                }
+                TrimResult::Err => {
+                    for editor in editors {
+                        editor.update(cx, |editor, cx| {
+                            editor.clear_overlays(cx);
+                            editor.clear_highlights::<EasyMotion>(cx);
+                            editor.remove_keymap_context_layer::<Self>(cx);
+                        });
+                    }
+                    EditorState::None
+                }
                 TrimResult::NoChange => EditorState::Selection(selection),
             }
         })
