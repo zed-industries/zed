@@ -447,8 +447,8 @@ impl AssistantPanel {
                         let inline_assistant = inline_assistant.clone();
                         move |cx: &mut BlockContext| {
                             *measurements.lock() = BlockMeasurements {
-                                anchor_x: cx.anchor_x,
                                 gutter_width: cx.gutter_dimensions.width,
+                                gutter_margin: cx.gutter_dimensions.margin,
                             };
                             inline_assistant.clone().into_any_element()
                         }
@@ -3465,8 +3465,7 @@ impl Render for InlineAssistant {
             .on_action(cx.listener(Self::move_down))
             .child(
                 h_flex()
-                    .justify_center()
-                    .w(measurements.gutter_width)
+                    .w(measurements.gutter_width + measurements.gutter_margin)
                     .children(if let Some(error) = self.codegen.read(cx).error() {
                         let error_message = SharedString::from(error.to_string());
                         Some(
@@ -3479,12 +3478,7 @@ impl Render for InlineAssistant {
                         None
                     }),
             )
-            .child(
-                h_flex()
-                    .w_full()
-                    .ml(measurements.anchor_x - measurements.gutter_width)
-                    .child(self.render_prompt_editor(cx)),
-            )
+            .child(h_flex().flex_1().child(self.render_prompt_editor(cx)))
     }
 }
 
@@ -3653,8 +3647,8 @@ impl InlineAssistant {
 // This wouldn't need to exist if we could pass parameters when rendering child views.
 #[derive(Copy, Clone, Default)]
 struct BlockMeasurements {
-    anchor_x: Pixels,
     gutter_width: Pixels,
+    gutter_margin: Pixels,
 }
 
 struct PendingInlineAssist {
