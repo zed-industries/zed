@@ -1,6 +1,5 @@
 use crate::prompts::{generate_content_prompt, PromptLibrary, PromptManager};
 use crate::slash_command::{rustdoc_command, search_command, tabs_command};
-use crate::ModelSelector;
 use crate::{
     assistant_settings::{AssistantDockPosition, AssistantSettings},
     codegen::{self, Codegen, CodegenKind},
@@ -14,6 +13,7 @@ use crate::{
     QuoteSelection, ResetKey, Role, SavedConversation, SavedConversationMetadata, SavedMessage,
     Split, ToggleFocus, ToggleHistory,
 };
+use crate::{ModelSelector, ToggleModelSelector};
 use anyhow::{anyhow, Result};
 use assistant_slash_command::{SlashCommandOutput, SlashCommandOutputSection};
 use client::telemetry::Telemetry;
@@ -65,8 +65,8 @@ use std::{
 use telemetry_events::AssistantKind;
 use theme::ThemeSettings;
 use ui::{
-    popover_menu, prelude::*, ButtonLike, ContextMenu, ElevationIndex, KeyBinding, Tab, TabBar,
-    Tooltip,
+    popover_menu, prelude::*, ButtonLike, ContextMenu, ElevationIndex, KeyBinding,
+    PopoverMenuHandle, Tab, TabBar, Tooltip,
 };
 use util::{paths::CONVERSATIONS_DIR, post_inc, ResultExt, TryFutureExt};
 use uuid::Uuid;
@@ -121,6 +121,7 @@ pub struct AssistantPanel {
     inline_prompt_history: VecDeque<String>,
     _watch_saved_conversations: Task<Result<()>>,
     authentication_prompt: Option<AnyView>,
+    model_menu_handle: PopoverMenuHandle<ContextMenu>,
 }
 
 struct ActiveConversationEditor {
@@ -244,6 +245,7 @@ impl AssistantPanel {
                         inline_prompt_history: Default::default(),
                         _watch_saved_conversations,
                         authentication_prompt: None,
+                        model_menu_handle: PopoverMenuHandle::default(),
                     }
                 })
             })
@@ -937,6 +939,10 @@ impl AssistantPanel {
             .detach_and_log_err(cx);
     }
 
+    fn toggle_model_selector(&mut self, _: &ToggleModelSelector, cx: &mut ViewContext<Self>) {
+        self.model_menu_handle.toggle(cx);
+    }
+
     fn active_conversation_editor(&self) -> Option<&View<ConversationEditor>> {
         Some(&self.active_conversation_editor.as_ref()?.editor)
     }
@@ -1163,7 +1169,10 @@ impl AssistantPanel {
                         this.child(
                             h_flex()
                                 .gap_1()
-                                .child(ModelSelector::new(self.fs.clone()))
+                                .child(ModelSelector::new(
+                                    self.model_menu_handle.clone(),
+                                    self.fs.clone(),
+                                ))
                                 .children(self.render_remaining_tokens(&conversation, cx)),
                         )
                         .child(
@@ -1213,6 +1222,7 @@ impl AssistantPanel {
             .on_action(cx.listener(AssistantPanel::select_prev_match))
             .on_action(cx.listener(AssistantPanel::handle_editor_cancel))
             .on_action(cx.listener(AssistantPanel::reset_credentials))
+            .on_action(cx.listener(AssistantPanel::toggle_model_selector))
             .track_focus(&self.focus_handle)
             .child(header)
             .children(if self.toolbar.read(cx).hidden() {

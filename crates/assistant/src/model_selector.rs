@@ -1,24 +1,26 @@
 use std::sync::Arc;
 
-use crate::{assistant_settings::AssistantSettings, CompletionProvider};
+use crate::{assistant_settings::AssistantSettings, CompletionProvider, ToggleModelSelector};
 use fs::Fs;
 use settings::update_settings_file;
-use ui::{popover_menu, prelude::*, ButtonLike, ContextMenu, Tooltip};
+use ui::{popover_menu, prelude::*, ButtonLike, ContextMenu, PopoverMenuHandle, Tooltip};
 
 #[derive(IntoElement)]
 pub struct ModelSelector {
+    handle: PopoverMenuHandle<ContextMenu>,
     fs: Arc<dyn Fs>,
 }
 
 impl ModelSelector {
-    pub fn new(fs: Arc<dyn Fs>) -> Self {
-        ModelSelector { fs }
+    pub fn new(handle: PopoverMenuHandle<ContextMenu>, fs: Arc<dyn Fs>) -> Self {
+        ModelSelector { handle, fs }
     }
 }
 
 impl RenderOnce for ModelSelector {
     fn render(self, cx: &mut WindowContext) -> impl IntoElement {
         popover_menu("model-switcher")
+            .with_handle(self.handle)
             .menu(move |cx| {
                 ContextMenu::build(cx, |mut menu, cx| {
                     for model in CompletionProvider::global(cx).available_models() {
@@ -73,7 +75,9 @@ impl RenderOnce for ModelSelector {
                             ),
                     )
                     .style(ButtonStyle::Subtle)
-                    .tooltip(move |cx| Tooltip::text("Change Model", cx)),
+                    .tooltip(move |cx| {
+                        Tooltip::for_action("Change Model", &ToggleModelSelector, cx)
+                    }),
             )
             .anchor(gpui::AnchorCorner::BottomRight)
     }

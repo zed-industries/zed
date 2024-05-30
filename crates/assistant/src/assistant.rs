@@ -40,7 +40,8 @@ actions!(
         InsertActivePrompt,
         ToggleHistory,
         ApplyEdit,
-        ConfirmCommand
+        ConfirmCommand,
+        ToggleModelSelector
     ]
 );
 
