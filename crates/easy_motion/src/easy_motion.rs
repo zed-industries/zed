@@ -117,7 +117,12 @@ fn register(workspace: &mut Workspace, _: &mut ViewContext<Workspace>) {
     workspace.register_action(|workspace: &mut Workspace, action: &Word, cx| {
         let Word(direction) = *action;
         // TODO other directions
-        if workspace.is_split() && matches!(direction, Direction::BiDirectional) {
+        // not sure if check for multiple editors is totally necessary
+        if matches!(direction, Direction::BiDirectional)
+            && workspace.is_split()
+            && workspace_has_multiple_editors(workspace, cx)
+        {
+            println!("multipane");
             EasyMotion::word_multipane(WordType::Word, workspace, cx);
         } else {
             EasyMotion::word(WordType::Word, direction, cx);
@@ -351,10 +356,9 @@ impl EasyMotion {
             .iter()
             .filter_map(|pane| {
                 pane.update(cx, |pane, _cx| {
-                    let active_item = pane.active_item();
-                    active_item.map(|item| item.downcast::<Editor>())
+                    pane.active_item()
+                        .and_then(|item| item.downcast::<Editor>())
                 })
-                .flatten()
                 .map(|editor| {
                     let bounding_box = workspace.center().bounding_box_for_pane(pane).unwrap();
                     (editor, pane.clone(), bounding_box)
@@ -756,16 +760,30 @@ impl EasyMotion {
     }
 }
 
+fn workspace_has_multiple_editors(workspace: &Workspace, cx: &mut WindowContext) -> bool {
+    let panes = workspace.panes();
+    panes
+        .iter()
+        .filter(|pane| {
+            pane.update(cx, |pane, _cx| {
+                pane.active_item()
+                    .and_then(|item| item.downcast::<Editor>())
+            })
+            .is_some()
+        })
+        .take(2)
+        .count()
+        == 2
+}
+
 fn active_editor_views(workspace: &Workspace, cx: &mut WindowContext) -> Vec<View<Editor>> {
     let panes = workspace.panes();
     panes
         .iter()
         .filter_map(|pane| {
-            pane.update(cx, |pane, _cx| {
-                let active_item = pane.active_item();
-                active_item.map(|item| item.downcast::<Editor>())
-            })
-            .flatten()
+            pane.read(cx)
+                .active_item()
+                .and_then(|item| item.downcast::<Editor>())
         })
         .collect()
 }
