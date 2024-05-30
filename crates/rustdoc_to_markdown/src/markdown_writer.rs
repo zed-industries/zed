@@ -134,7 +134,7 @@ impl MarkdownWriter {
         if tag.is_inline() && self.is_inside("p") {
             if let Some(parent) = self.current_element_stack.iter().last() {
                 if !parent.is_inline() {
-                    if !self.markdown.ends_with(' ') {
+                    if !(self.markdown.ends_with(' ') || self.markdown.ends_with('\n')) {
                         self.push_str(" ");
                     }
                 }
