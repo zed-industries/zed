@@ -204,6 +204,13 @@ impl MarkdownWriter {
                     return StartTagOutcome::Skip;
                 }
             }
+            "button" => {
+                if tag.attrs.borrow().iter().any(|attr| {
+                    attr.name.local.to_string() == "id" && attr.value.to_string() == "copy-path"
+                }) {
+                    return StartTagOutcome::Skip;
+                }
+            }
             "div" | "span" => {
                 let classes_to_skip = ["nav-container", "sidebar-elems", "out-of-band"];
 
