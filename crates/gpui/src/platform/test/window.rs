@@ -269,6 +269,8 @@ impl PlatformWindow for TestWindow {
     fn should_render_window_controls(&self) -> bool {
         false
     }
+
+    fn update_ime_position(&self) {}
 }
 
 pub(crate) struct TestAtlasState {

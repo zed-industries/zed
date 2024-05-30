@@ -693,6 +693,7 @@ impl Window {
                             .update(&mut cx, |_, cx| {
                                 cx.draw();
                                 cx.present();
+                                #[cfg(target_os = "linux")]
                                 cx.update_ime_position();
                             })
                             .log_err();
