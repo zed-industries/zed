@@ -87,6 +87,52 @@ mod tests {
     }
 
     #[test]
+    fn test_multiple_paragraphs() {
+        let html = indoc! {r##"
+            <h2 id="serde"><a class="doc-anchor" href="#serde">§</a>Serde</h2>
+            <p>Serde is a framework for <em><strong>ser</strong></em>ializing and <em><strong>de</strong></em>serializing Rust data
+            structures efficiently and generically.</p>
+            <p>The Serde ecosystem consists of data structures that know how to serialize
+            and deserialize themselves along with data formats that know how to
+            serialize and deserialize other things. Serde provides the layer by which
+            these two groups interact with each other, allowing any supported data
+            structure to be serialized and deserialized using any supported data format.</p>
+            <p>See the Serde website <a href="https://serde.rs/">https://serde.rs/</a> for additional documentation and
+            usage examples.</p>
+            <h3 id="design"><a class="doc-anchor" href="#design">§</a>Design</h3>
+            <p>Where many other languages rely on runtime reflection for serializing data,
+            Serde is instead built on Rust’s powerful trait system. A data structure
+            that knows how to serialize and deserialize itself is one that implements
+            Serde’s <code>Serialize</code> and <code>Deserialize</code> traits (or uses Serde’s derive
+            attribute to automatically generate implementations at compile time). This
+            avoids any overhead of reflection or runtime type information. In fact in
+            many situations the interaction between data structure and data format can
+            be completely optimized away by the Rust compiler, leaving Serde
+            serialization to perform the same speed as a handwritten serializer for the
+            specific selection of data structure and data format.</p>
+        "##};
+        let expected = indoc! {"
+            ## Serde
+
+            Serde is a framework for serializing and deserializing Rust data structures efficiently and generically.
+
+            The Serde ecosystem consists of data structures that know how to serialize and deserialize themselves along with data formats that know how to serialize and deserialize other things. Serde provides the layer by which these two groups interact with each other, allowing any supported data structure to be serialized and deserialized using any supported data format.
+
+            See the Serde website https://serde.rs/ for additional documentation and usage examples.
+
+            ### Design
+
+            Where many other languages rely on runtime reflection for serializing data, Serde is instead built on Rust’s powerful trait system. A data structure that knows how to serialize and deserialize itself is one that implements Serde’s `Serialize` and `Deserialize` traits (or uses Serde’s derive attribute to automatically generate implementations at compile time). This avoids any overhead of reflection or runtime type information. In fact in many situations the interaction between data structure and data format can be completely optimized away by the Rust compiler, leaving Serde serialization to perform the same speed as a handwritten serializer for the specific selection of data structure and data format.
+        "}
+        .trim();
+
+        assert_eq!(
+            convert_rustdoc_to_markdown(html.as_bytes()).unwrap(),
+            expected
+        )
+    }
+
+    #[test]
     fn test_rust_code_block() {
         let html = indoc! {r#"
             <pre class="rust rust-example-rendered"><code><span class="kw">use </span>axum::extract::{Path, Query, Json};
