@@ -20,16 +20,14 @@ use settings::Settings as _;
 use std::ops::Range;
 use std::sync::Arc;
 use theme::{ActiveTheme, ThemeSettings};
-use tokio_kernel::Request;
 use ui::prelude::*;
 use workspace::Workspace;
 
 mod outputs;
 mod runtimes;
 mod stdio;
-mod tokio_kernel;
 
-use runtimes::{get_runtimes, RunningKernel, Runtime};
+use runtimes::{get_runtimes, Request, RunningKernel, Runtime};
 
 actions!(repl, [Run]);
 
