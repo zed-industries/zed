@@ -45,7 +45,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_code_blocks() {
+    fn test_rust_code_block() {
         let html = indoc! {r#"
             <pre class="rust rust-example-rendered"><code><span class="kw">use </span>axum::extract::{Path, Query, Json};
             <span class="kw">use </span>std::collections::HashMap;
@@ -78,6 +78,38 @@ mod tests {
             async fn json(Json(payload): Json<serde_json::Value>) {}
             ```
         "}
+        .trim();
+
+        assert_eq!(
+            convert_rustdoc_to_markdown(html.as_bytes()).unwrap(),
+            expected
+        )
+    }
+
+    #[test]
+    fn test_toml_code_block() {
+        let html = indoc! {r##"
+            <h2 id="required-dependencies"><a class="doc-anchor" href="#required-dependencies">§</a>Required dependencies</h2>
+            <p>To use axum there are a few dependencies you have to pull in as well:</p>
+            <div class="example-wrap"><pre class="language-toml"><code>[dependencies]
+            axum = &quot;&lt;latest-version&gt;&quot;
+            tokio = { version = &quot;&lt;latest-version&gt;&quot;, features = [&quot;full&quot;] }
+            tower = &quot;&lt;latest-version&gt;&quot;
+            </code></pre></div>
+        "##};
+        let expected = indoc! {r#"
+            ## Required dependencies
+
+            To use axum there are a few dependencies you have to pull in as well:
+
+            ```toml
+            [dependencies]
+            axum = "<latest-version>"
+            tokio = { version = "<latest-version>", features = ["full"] }
+            tower = "<latest-version>"
+
+            ```
+        "#}
         .trim();
 
         assert_eq!(
