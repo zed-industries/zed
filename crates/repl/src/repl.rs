@@ -74,6 +74,9 @@ pub struct RuntimeManager {
     // Connections
     instances: HashMap<EntityId, RunningKernel>, // actually running kernels
     editors: HashMap<WeakView<Editor>, EditorRuntimeState>,
+    // To reduce the number of open tasks and channels we have, let's feed the response
+    // messages by ID over to the paired ExecutionView
+    execution_views_by_id: HashMap<String, View<ExecutionView>>,
 }
 
 // We will store the blocks
@@ -93,6 +96,7 @@ struct EditorRuntimeState {
 #[derive(Debug, Clone)]
 struct EditorRuntimeBlock {
     code_range: Range<Anchor>,
+    execution_id: String,
     block_id: BlockId,
     _execution_view: View<ExecutionView>,
 }
@@ -104,6 +108,7 @@ impl RuntimeManager {
             runtimes: Default::default(),
             instances: Default::default(),
             editors: Default::default(),
+            execution_views_by_id: Default::default(),
         }
     }
 
@@ -348,6 +353,7 @@ pub fn run(workspace: &mut Workspace, _: &Run, cx: &mut ViewContext<Workspace>) 
             code_range: anchor_range.clone(),
             block_id,
             _execution_view: execution_view.clone(),
+            execution_id: Default::default(),
         };
 
         editor_runtime_state
