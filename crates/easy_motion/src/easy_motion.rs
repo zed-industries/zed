@@ -273,8 +273,8 @@ impl EasyMotion {
 
         let mut word_starts = Self::word_starts(word_type, direction, map, &selections, editor, cx);
         word_starts.sort_unstable_by(|a, b| {
-            let a_distance = manh_distance(a, &selections.start, 2.0);
-            let b_distance = manh_distance(b, &selections.start, 2.0);
+            let a_distance = manh_distance(a, &selections.start, 2.5);
+            let b_distance = manh_distance(b, &selections.start, 2.5);
             if a_distance == b_distance {
                 Ordering::Equal
             } else if a_distance < b_distance {
@@ -287,20 +287,7 @@ impl EasyMotion {
             return EditorState::None;
         }
 
-        let settings = ThemeSettings::get_global(cx);
-        let players = &settings.active_theme.players().0;
-        let style_0 = HighlightStyle {
-            color: Some(players[0].cursor),
-            ..HighlightStyle::default()
-        };
-        let style_1 = HighlightStyle {
-            color: Some(players[2].cursor),
-            ..HighlightStyle::default()
-        };
-        let style_2 = HighlightStyle {
-            color: Some(players[3].cursor),
-            ..HighlightStyle::default()
-        };
+        let (style_0, style_1, style_2) = get_highlights(cx);
         let trie = TrieBuilder::new("asdghklqwertyuiopzxcvbnmfj".to_string(), word_starts.len())
             .populate_with(true, word_starts.into_iter(), |seq, point| {
                 let style = match seq.len() {
@@ -484,8 +471,8 @@ impl EasyMotion {
             .collect::<Vec<_>>();
 
         word_starts.sort_unstable_by(|a, b| {
-            let a_distance = manh_distance_pixels(&a.2, &cursor, 2.0);
-            let b_distance = manh_distance_pixels(&b.2, &cursor, 2.0);
+            let a_distance = manh_distance_pixels(&a.2, &cursor, 2.5);
+            let b_distance = manh_distance_pixels(&b.2, &cursor, 2.5);
             if a_distance == b_distance {
                 Ordering::Equal
             } else if a_distance < b_distance {
@@ -495,21 +482,7 @@ impl EasyMotion {
             }
         });
 
-        let settings = ThemeSettings::get_global(cx);
-        let players = &settings.active_theme.players().0;
-        let style_0 = HighlightStyle {
-            color: Some(players[0].cursor),
-            ..HighlightStyle::default()
-        };
-        let style_1 = HighlightStyle {
-            color: Some(players[2].cursor),
-            ..HighlightStyle::default()
-        };
-        let style_2 = HighlightStyle {
-            color: Some(players[3].cursor),
-            ..HighlightStyle::default()
-        };
-
+        let (style_0, style_1, style_2) = get_highlights(cx);
         let word_starts = word_starts.into_iter().map(|(point, id, _)| (point, id));
         let trie = TrieBuilder::new("asdghklqwertyuiopzxcvbnmfj".to_string(), word_starts.len())
             .populate_with(true, word_starts, |seq, point| {
@@ -800,23 +773,12 @@ impl EasyMotion {
         trie_iter: impl Iterator<Item = (String, &'a OverlayState)>,
         cx: &mut ViewContext<Editor>,
     ) {
-        let settings = ThemeSettings::get_global(cx);
-        // if not doing direct overlays
-        // let background = None;
-        let background = settings.active_theme.colors().background;
         for (seq, overlay) in trie_iter {
-            let mut highlights = vec![(
-                0..1,
-                HighlightStyle {
-                    background_color: Some(background),
-                    ..overlay.style.clone()
-                },
-            )];
+            let mut highlights = vec![(0..1, overlay.style.clone())];
             if seq.len() > 1 {
                 highlights.push((
                     1..seq.len(),
                     HighlightStyle {
-                        background_color: Some(background),
                         fade_out: Some(0.3),
                         ..overlay.style.clone()
                     },
@@ -839,4 +801,26 @@ fn active_editor_views(workspace: &Workspace, cx: &mut WindowContext) -> Vec<Vie
             .flatten()
         })
         .collect()
+}
+
+fn get_highlights(cx: &AppContext) -> (HighlightStyle, HighlightStyle, HighlightStyle) {
+    let theme = &ThemeSettings::get_global(cx).active_theme;
+    let players = &theme.players().0;
+    let bg = theme.colors().background;
+    let style_0 = HighlightStyle {
+        color: Some(players[0].cursor),
+        background_color: Some(bg),
+        ..HighlightStyle::default()
+    };
+    let style_1 = HighlightStyle {
+        color: Some(players[2].cursor),
+        background_color: Some(bg),
+        ..HighlightStyle::default()
+    };
+    let style_2 = HighlightStyle {
+        color: Some(players[3].cursor),
+        background_color: Some(bg),
+        ..HighlightStyle::default()
+    };
+    (style_0, style_1, style_2)
 }
