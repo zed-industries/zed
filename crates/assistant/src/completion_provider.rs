@@ -229,7 +229,7 @@ impl CompletionProvider {
             CompletionProvider::Anthropic(provider) => LanguageModel::Anthropic(provider.model()),
             CompletionProvider::ZedDotDev(provider) => LanguageModel::ZedDotDev(provider.model()),
             #[cfg(test)]
-            CompletionProvider::Fake(_) => unimplemented!(),
+            CompletionProvider::Fake(_) => LanguageModel::default(),
         }
     }
 

@@ -602,7 +602,7 @@ mod tests {
                             "version": "1",
                             "provider": {
                                 "name": "zed.dev",
-                                "model": "custom"
+                                "default_model": "custom"
                             }
                         }
                     }"#,
