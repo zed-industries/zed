@@ -57,7 +57,15 @@ impl OpenAiCompletionProvider {
     }
 
     pub fn available_models(&self) -> impl Iterator<Item = OpenAiModel> {
-        OpenAiModel::iter()
+        // If the current model is a custom model, only show that model
+        let models = if matches!(self.model, OpenAiModel::Custom { .. }) {
+            vec![self.model.clone()]
+        } else {
+            OpenAiModel::iter()
+                .filter(|model| !matches!(model, OpenAiModel::Custom { .. }))
+                .collect()
+        };
+        models.into_iter()
     }
 
     pub fn settings_version(&self) -> usize {
@@ -215,6 +223,10 @@ pub fn count_open_ai_tokens(
                 | LanguageModel::ZedDotDev(ZedDotDevModel::Claude3Haiku) => {
                     // Tiktoken doesn't yet support these models, so we manually use the
                     // same tokenizer as GPT-4.
+                    tiktoken_rs::num_tokens_from_messages("gpt-4", &messages)
+                }
+                LanguageModel::OpenAi(OpenAiModel::Custom { .. }) => {
+                    // TODO: support custom tokenizer, for now we use the same tokenizer as GPT-4
                     tiktoken_rs::num_tokens_from_messages("gpt-4", &messages)
                 }
                 _ => tiktoken_rs::num_tokens_from_messages(request.model.id(), &messages),
