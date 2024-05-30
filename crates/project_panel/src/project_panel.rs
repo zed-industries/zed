@@ -16,10 +16,11 @@ use collections::{hash_map, BTreeMap, BTreeSet, HashMap};
 use git::repository::GitFileStatus;
 use gpui::{
     actions, anchored, deferred, div, impl_actions, px, uniform_list, Action, AnyElement,
-    AppContext, AssetSource, AsyncWindowContext, ClipboardItem, DismissEvent, Div, EventEmitter,
-    FocusHandle, FocusableView, InteractiveElement, KeyContext, Model, MouseButton, MouseDownEvent,
-    ParentElement, Pixels, Point, PromptLevel, Render, Stateful, Styled, Subscription, Task,
-    UniformListScrollHandle, View, ViewContext, VisualContext as _, WeakView, WindowContext,
+    AppContext, AssetSource, AsyncWindowContext, ClipboardItem, DismissEvent, Div, EntityId,
+    EventEmitter, FocusHandle, FocusableView, InteractiveElement, KeyContext, Model, MouseButton,
+    MouseDownEvent, ParentElement, Pixels, Point, PromptLevel, Render, Stateful, Styled,
+    Subscription, Task, UniformListScrollHandle, View, ViewContext, VisualContext as _, WeakView,
+    WindowContext,
 };
 use menu::{Confirm, SelectFirst, SelectLast, SelectNext, SelectPrev};
 use project::{
@@ -41,6 +42,7 @@ use unicase::UniCase;
 use util::{maybe, NumericPrefixWithSuffix, ResultExt, TryFutureExt};
 use workspace::{
     dock::{DockPosition, Panel, PanelEvent},
+    item::ItemHandle,
     notifications::DetachAndPromptErr,
     Event as WorkspaceEvent, OpenInTerminal, Workspace,
 };
@@ -71,7 +73,7 @@ pub struct ProjectPanel {
 }
 
 struct ActiveMultiBuffer {
-    replica_id: u16,
+    item_id: EntityId,
     _editor_subscrpiption: Option<Subscription>,
     entries: BTreeMap<WorktreeId, BTreeSet<ProjectEntryId>>,
 }
@@ -230,13 +232,13 @@ impl ProjectPanel {
                         if let Some((editor, mut new_entries)) =
                             active_entries(workspace.read(cx), cx)
                         {
-                            let new_replica_id = editor.read(cx).replica_id(cx);
+                            let new_item_id = editor.item_id();
                             let mut added_entries = HashSet::default();
                             if let Some(old_multi_buffer) = &mut project_panel.active_multi_buffer {
-                                if old_multi_buffer.replica_id != new_replica_id {
+                                if old_multi_buffer.item_id != new_item_id {
                                     added_entries.extend(new_entries.values().flatten().copied());
                                     project_panel.active_multi_buffer = Some(ActiveMultiBuffer {
-                                        replica_id: new_replica_id,
+                                        item_id: new_item_id,
                                         _editor_subscrpiption: subscribe_for_editor_changes(
                                             &editor, cx,
                                         ),
@@ -269,7 +271,7 @@ impl ProjectPanel {
                             } else {
                                 added_entries.extend(new_entries.values().flatten().copied());
                                 project_panel.active_multi_buffer = Some(ActiveMultiBuffer {
-                                    replica_id: new_replica_id,
+                                    item_id: new_item_id,
                                     _editor_subscrpiption: subscribe_for_editor_changes(
                                         &editor, cx,
                                     ),
@@ -282,6 +284,7 @@ impl ProjectPanel {
                             }
                         } else {
                             // TODO kb also clean up all extra directories expanded due to search results
+                            // + reset them when another multi buffer gets active
                             project_panel.active_multi_buffer = None;
                             project_panel.update_visible_entries(HashSet::default(), None, cx);
                             cx.notify();
