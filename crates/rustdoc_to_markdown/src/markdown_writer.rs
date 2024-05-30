@@ -187,7 +187,13 @@ impl MarkdownWriter {
             "h4" => self.push_str("\n\n#### "),
             "h5" => self.push_str("\n\n##### "),
             "h6" => self.push_str("\n\n###### "),
+            "p" => self.push_blank_line(),
             "code" => {
+                // TODO: This should probably extend to to all inline elements.
+                if !self.markdown.ends_with(" ") {
+                    self.push_str(" ");
+                }
+
                 if !self.is_inside("pre") {
                     self.push_str("`");
                 }
@@ -305,14 +311,16 @@ impl MarkdownWriter {
             return Ok(());
         }
 
-        let trimmed_text = text.trim_matches(|char| char == '\n' || char == '\r' || char == '§');
+        let text = text
+            .trim_matches(|char| char == '\n' || char == '\r' || char == '§')
+            .replace('\n', " ");
 
         if self.is_inside_item_name() && !self.is_inside("span") && !self.is_inside("code") {
-            self.push_str(&format!("`{trimmed_text}`"));
+            self.push_str(&format!("`{text}`"));
             return Ok(());
         }
 
-        self.push_str(trimmed_text);
+        self.push_str(&text);
 
         Ok(())
     }

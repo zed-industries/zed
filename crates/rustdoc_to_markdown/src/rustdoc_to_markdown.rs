@@ -66,6 +66,26 @@ mod tests {
     }
 
     #[test]
+    fn test_single_paragraph() {
+        let html = indoc! {r#"
+            <p>In particular, the last point is what sets <code>axum</code> apart from other frameworks.
+            <code>axum</code> doesn’t have its own middleware system but instead uses
+            <a href="https://docs.rs/tower-service/0.3.2/x86_64-unknown-linux-gnu/tower_service/trait.Service.html" title="trait tower_service::Service"><code>tower::Service</code></a>. This means <code>axum</code> gets timeouts, tracing, compression,
+            authorization, and more, for free. It also enables you to share middleware with
+            applications written using <a href="http://crates.io/crates/hyper"><code>hyper</code></a> or <a href="http://crates.io/crates/tonic"><code>tonic</code></a>.</p>
+        "#};
+        let expected = indoc! {"
+            In particular, the last point is what sets `axum` apart from other frameworks. `axum` doesn’t have its own middleware system but instead uses `tower::Service`. This means `axum` gets timeouts, tracing, compression, authorization, and more, for free. It also enables you to share middleware with applications written using `hyper` or `tonic`.
+        "}
+        .trim();
+
+        assert_eq!(
+            convert_rustdoc_to_markdown(html.as_bytes()).unwrap(),
+            expected
+        )
+    }
+
+    #[test]
     fn test_rust_code_block() {
         let html = indoc! {r#"
             <pre class="rust rust-example-rendered"><code><span class="kw">use </span>axum::extract::{Path, Query, Json};
@@ -202,7 +222,9 @@ mod tests {
             ## Feature flags
 
             axum uses a set of feature flags to reduce the amount of compiled and
-            optional dependencies.The following optional features are available:
+            optional dependencies.
+
+            The following optional features are available:
 
             | Name | Description | Default? |
             | --- | --- | --- |
