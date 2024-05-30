@@ -91,7 +91,7 @@ pub struct TerminalView {
     blinking_paused: bool,
     blink_epoch: usize,
     can_navigate_to_selected_word: bool,
-    workspace_id: WorkspaceId,
+    workspace_id: Option<WorkspaceId>,
     show_title: bool,
     _subscriptions: Vec<Subscription>,
     _terminal_subscriptions: Vec<Subscription>,
@@ -142,7 +142,7 @@ impl TerminalView {
     pub fn new(
         terminal: Model<Terminal>,
         workspace: WeakView<Workspace>,
-        workspace_id: WorkspaceId,
+        workspace_id: Option<WorkspaceId>,
         cx: &mut ViewContext<Self>,
     ) -> Self {
         let workspace_handle = workspace.clone();
@@ -458,15 +458,16 @@ fn subscribe_for_terminal_events(
                 if terminal.task().is_none() {
                     if let Some(cwd) = terminal.get_cwd() {
                         let item_id = cx.entity_id();
-                        let workspace_id = this.workspace_id;
-                        cx.background_executor()
-                            .spawn(async move {
-                                TERMINAL_DB
-                                    .save_working_directory(item_id.as_u64(), workspace_id, cwd)
-                                    .await
-                                    .log_err();
-                            })
-                            .detach();
+                        if let Some(workspace_id) = this.workspace_id {
+                            cx.background_executor()
+                                .spawn(async move {
+                                    TERMINAL_DB
+                                        .save_working_directory(item_id.as_u64(), workspace_id, cwd)
+                                        .await
+                                        .log_err();
+                                })
+                                .detach();
+                        }
                     }
                 }
             }
@@ -853,7 +854,7 @@ impl Item for TerminalView {
 
     fn clone_on_split(
         &self,
-        _workspace_id: WorkspaceId,
+        _workspace_id: Option<WorkspaceId>,
         _cx: &mut ViewContext<Self>,
     ) -> Option<View<Self>> {
         //From what I can tell, there's no  way to tell the current working
@@ -941,20 +942,18 @@ impl Item for TerminalView {
                 project.create_terminal(cwd, None, window, cx)
             })??;
             pane.update(&mut cx, |_, cx| {
-                cx.new_view(|cx| TerminalView::new(terminal, workspace, workspace_id, cx))
+                cx.new_view(|cx| TerminalView::new(terminal, workspace, Some(workspace_id), cx))
             })
         })
     }
 
     fn added_to_workspace(&mut self, workspace: &mut Workspace, cx: &mut ViewContext<Self>) {
         if self.terminal().read(cx).task().is_none() {
-            cx.background_executor()
-                .spawn(TERMINAL_DB.update_workspace_id(
-                    workspace.database_id(),
-                    self.workspace_id,
-                    cx.entity_id().as_u64(),
-                ))
-                .detach();
+            if let Some((new_id, old_id)) = workspace.database_id().zip(self.workspace_id) {
+                cx.background_executor()
+                    .spawn(TERMINAL_DB.update_workspace_id(new_id, old_id, cx.entity_id().as_u64()))
+                    .detach();
+            }
             self.workspace_id = workspace.database_id();
         }
     }

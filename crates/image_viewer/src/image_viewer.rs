@@ -95,17 +95,19 @@ impl Item for ImageView {
         let workspace_id = workspace.database_id();
         let image_path = self.path.clone();
 
-        cx.background_executor()
-            .spawn({
-                let image_path = image_path.clone();
-                async move {
-                    IMAGE_VIEWER
-                        .save_image_path(item_id, workspace_id, image_path)
-                        .await
-                        .log_err();
-                }
-            })
-            .detach();
+        if let Some(workspace_id) = workspace_id {
+            cx.background_executor()
+                .spawn({
+                    let image_path = image_path.clone();
+                    async move {
+                        IMAGE_VIEWER
+                            .save_image_path(item_id, workspace_id, image_path)
+                            .await
+                            .log_err();
+                    }
+                })
+                .detach();
+        }
     }
 
     fn serialized_item_kind() -> Option<&'static str> {
@@ -133,7 +135,7 @@ impl Item for ImageView {
 
     fn clone_on_split(
         &self,
-        _workspace_id: WorkspaceId,
+        _workspace_id: Option<WorkspaceId>,
         cx: &mut ViewContext<Self>,
     ) -> Option<View<Self>>
     where
