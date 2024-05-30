@@ -180,7 +180,7 @@ async fn test_indent_outdent(cx: &mut gpui::TestAppContext) {
     // works in visual mode
     cx.simulate_keystrokes("shift-v down >");
     cx.assert_editor_state("aa\n    bb\n    cˇc");
-    
+
     // works as operator
     cx.set_state("aa\nbˇb\ncc\n", Mode::Normal);
     cx.simulate_keystrokes("> j");

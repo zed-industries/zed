@@ -309,7 +309,7 @@ impl KeyBindingContextPredicate {
                 source = skip_whitespace(rest);
                 Ok((
                     KeyBindingContextPredicate::Identifier(operator.to_string().into()),
-                    source
+                    source,
                 ))
             }
             _ => Err(anyhow!("unexpected character {next:?}")),

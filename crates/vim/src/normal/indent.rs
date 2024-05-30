@@ -5,7 +5,7 @@ use gpui::WindowContext;
 #[derive(PartialEq, Eq)]
 pub(super) enum IndentDirection {
     In,
-    Out
+    Out,
 }
 
 pub fn indent_motion(
@@ -13,7 +13,7 @@ pub fn indent_motion(
     motion: Motion,
     times: Option<usize>,
     dir: IndentDirection,
-    cx: &mut WindowContext
+    cx: &mut WindowContext,
 ) {
     vim.stop_recording();
     vim.update_active_editor(cx, |_, editor, cx| {
@@ -34,9 +34,7 @@ pub fn indent_motion(
             }
             editor.change_selections(None, cx, |s| {
                 s.move_with(|map, selection| {
-                    let (mut cursor, line_len) = original_positions.remove(
-                        &selection.id
-                    ).unwrap();
+                    let (mut cursor, line_len) = original_positions.remove(&selection.id).unwrap();
                     if dir == IndentDirection::In {
                         *cursor.column_mut() += map.line_len(cursor.row()) - line_len;
                     } else {
@@ -54,7 +52,7 @@ pub fn indent_object(
     object: Object,
     around: bool,
     dir: IndentDirection,
-    cx: &mut WindowContext
+    cx: &mut WindowContext,
 ) {
     vim.stop_recording();
     vim.update_active_editor(cx, |_, editor, cx| {
@@ -74,9 +72,7 @@ pub fn indent_object(
             }
             editor.change_selections(None, cx, |s| {
                 s.move_with(|map, selection| {
-                    let (mut cursor, line_len) = original_positions.remove(
-                        &selection.id
-                    ).unwrap();
+                    let (mut cursor, line_len) = original_positions.remove(&selection.id).unwrap();
                     if dir == IndentDirection::In {
                         *cursor.column_mut() += map.line_len(cursor.row()) - line_len;
                     } else {
