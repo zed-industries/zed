@@ -101,7 +101,7 @@ impl Model {
             Self::Four => "gpt-4",
             Self::FourTurbo => "gpt-4-turbo",
             Self::FourOmni => "gpt-4o",
-            Self::Custom { name, .. } => &name,
+            Self::Custom { name, .. } => name,
         }
     }
 
