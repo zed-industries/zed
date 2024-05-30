@@ -7,7 +7,7 @@ use std::{fmt, mem};
 use editor::scroll::Autoscroll;
 use editor::{DisplayPoint, Editor};
 use gpui::{
-    actions, impl_actions, AppContext, Bounds, Entity, EntityId, Global, HighlightStyle,
+    actions, impl_actions, saturate, AppContext, Bounds, Entity, EntityId, Global, HighlightStyle,
     KeystrokeEvent, Model, ModelContext, Point, Subscription, View, ViewContext, WeakView,
 };
 use perm::{TrieBuilder, TrimResult};
@@ -808,17 +808,17 @@ fn get_highlights(cx: &AppContext) -> (HighlightStyle, HighlightStyle, Highlight
     let players = &theme.players().0;
     let bg = theme.colors().background;
     let style_0 = HighlightStyle {
-        color: Some(players[0].cursor),
+        color: Some(saturate(players[0].cursor, 1.0)),
         background_color: Some(bg),
         ..HighlightStyle::default()
     };
     let style_1 = HighlightStyle {
-        color: Some(players[2].cursor),
+        color: Some(saturate(players[2].cursor, 1.0)),
         background_color: Some(bg),
         ..HighlightStyle::default()
     };
     let style_2 = HighlightStyle {
-        color: Some(players[3].cursor),
+        color: Some(saturate(players[3].cursor, 1.0)),
         background_color: Some(bg),
         ..HighlightStyle::default()
     };

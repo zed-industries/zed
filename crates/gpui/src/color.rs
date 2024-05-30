@@ -357,6 +357,12 @@ pub fn yellow() -> Hsla {
     }
 }
 
+/// substitutes saturation with given value
+pub fn saturate(mut color: Hsla, s: f32) -> Hsla {
+    color.s = s;
+    color
+}
+
 impl Hsla {
     /// Converts this HSLA color to an RGBA color.
     pub fn to_rgb(self) -> Rgba {
