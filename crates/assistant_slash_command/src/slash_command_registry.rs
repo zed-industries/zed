@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use collections::HashMap;
+use collections::{BTreeSet, HashMap};
 use derive_more::{Deref, DerefMut};
 use gpui::Global;
 use gpui::{AppContext, ReadGlobal};
@@ -16,6 +16,7 @@ impl Global for GlobalSlashCommandRegistry {}
 #[derive(Default)]
 struct SlashCommandRegistryState {
     commands: HashMap<Arc<str>, Arc<dyn SlashCommand>>,
+    featured_commands: BTreeSet<Arc<str>>,
 }
 
 #[derive(Default)]
@@ -40,21 +41,34 @@ impl SlashCommandRegistry {
         Arc::new(Self {
             state: RwLock::new(SlashCommandRegistryState {
                 commands: HashMap::default(),
+                featured_commands: BTreeSet::default(),
             }),
         })
     }
 
     /// Registers the provided [`SlashCommand`].
-    pub fn register_command(&self, command: impl SlashCommand) {
-        self.state
-            .write()
-            .commands
-            .insert(command.name().into(), Arc::new(command));
+    pub fn register_command(&self, command: impl SlashCommand, is_featured: bool) {
+        let mut state = self.state.write();
+        let command_name: Arc<str> = command.name().into();
+        if is_featured {
+            state.featured_commands.insert(command_name.clone());
+        }
+        state.commands.insert(command_name, Arc::new(command));
     }
 
     /// Returns the names of registered [`SlashCommand`]s.
     pub fn command_names(&self) -> Vec<Arc<str>> {
         self.state.read().commands.keys().cloned().collect()
+    }
+
+    /// Returns the names of registered, featured [`SlashCommand`]s.
+    pub fn featured_command_names(&self) -> Vec<Arc<str>> {
+        self.state
+            .read()
+            .featured_commands
+            .iter()
+            .cloned()
+            .collect()
     }
 
     /// Returns the [`SlashCommand`] with the given name.

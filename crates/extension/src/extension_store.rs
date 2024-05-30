@@ -1178,8 +1178,8 @@ impl ExtensionStore {
                     }
 
                     for (slash_command_name, slash_command) in &manifest.slash_commands {
-                        this.slash_command_registry
-                            .register_command(ExtensionSlashCommand {
+                        this.slash_command_registry.register_command(
+                            ExtensionSlashCommand {
                                 command: crate::wit::SlashCommand {
                                     name: slash_command_name.to_string(),
                                     description: slash_command.description.to_string(),
@@ -1188,7 +1188,9 @@ impl ExtensionStore {
                                 },
                                 extension: wasm_extension.clone(),
                                 host: this.wasm_host.clone(),
-                            });
+                            },
+                            false,
+                        );
                     }
                 }
                 this.wasm_extensions.extend(wasm_extensions);

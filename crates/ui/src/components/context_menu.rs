@@ -357,7 +357,7 @@ impl Render for ContextMenu {
                                                         .unwrap_or_else(|| {
                                                             KeyBinding::for_action(&**action, cx)
                                                         })
-                                                        .map(|binding| div().ml_1().child(binding))
+                                                        .map(|binding| div().ml_4().child(binding))
                                                 })),
                                         )
                                         .on_click(move |_, cx| {

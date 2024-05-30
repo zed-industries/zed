@@ -51,11 +51,11 @@ impl SlashCommand for RustdocSlashCommand {
     }
 
     fn description(&self) -> String {
-        "insert the docs for a Rust crate".into()
+        "insert Rust docs".into()
     }
 
-    fn tooltip_text(&self) -> String {
-        "insert rustdoc".into()
+    fn menu_text(&self) -> String {
+        "Insert Rust Documentation".into()
     }
 
     fn requires_argument(&self) -> bool {
