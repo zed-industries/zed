@@ -1050,7 +1050,7 @@ impl ChannelStore {
 
     fn handle_disconnect(&mut self, wait_for_reconnect: bool, cx: &mut ModelContext<Self>) {
         cx.notify();
-
+        self.did_subscribe = false;
         self.disconnect_channel_buffers_task.get_or_insert_with(|| {
             cx.spawn(move |this, mut cx| async move {
                 if wait_for_reconnect {
