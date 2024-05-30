@@ -4260,7 +4260,7 @@ impl Project {
         language_server_id: LanguageServerId,
         token: String,
         progress: LanguageServerProgress,
-        cx: &mut ModelContext<Self>,
+        _cx: &mut ModelContext<Self>,
     ) {
         if let Some(status) = self.language_server_statuses.get_mut(&language_server_id) {
             let entry = status
@@ -4278,7 +4278,6 @@ impl Project {
                 entry.percentage = progress.percentage;
             }
             entry.last_update_at = progress.last_update_at;
-            cx.notify();
         }
     }
 
