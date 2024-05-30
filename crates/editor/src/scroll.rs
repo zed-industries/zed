@@ -389,11 +389,7 @@ impl Editor {
         cx: &mut ViewContext<Self>,
     ) {
         hide_hover(self, cx);
-        let workspace_id = self
-            .workspace
-            .as_ref()
-            .map(|workspace| workspace.1)
-            .flatten();
+        let workspace_id = self.workspace.as_ref().and_then(|workspace| workspace.1);
 
         self.scroll_manager.set_scroll_position(
             scroll_position,
@@ -414,11 +410,7 @@ impl Editor {
 
     pub fn set_scroll_anchor(&mut self, scroll_anchor: ScrollAnchor, cx: &mut ViewContext<Self>) {
         hide_hover(self, cx);
-        let workspace_id = self
-            .workspace
-            .as_ref()
-            .map(|workspace| workspace.1)
-            .flatten();
+        let workspace_id = self.workspace.as_ref().and_then(|workspace| workspace.1);
         let top_row = scroll_anchor
             .anchor
             .to_point(&self.buffer().read(cx).snapshot(cx))
@@ -433,11 +425,7 @@ impl Editor {
         cx: &mut ViewContext<Self>,
     ) {
         hide_hover(self, cx);
-        let workspace_id = self
-            .workspace
-            .as_ref()
-            .map(|workspace| workspace.1)
-            .flatten();
+        let workspace_id = self.workspace.as_ref().and_then(|workspace| workspace.1);
         let snapshot = &self.buffer().read(cx).snapshot(cx);
         if !scroll_anchor.anchor.is_valid(snapshot) {
             log::warn!("Invalid scroll anchor: {:?}", scroll_anchor);
