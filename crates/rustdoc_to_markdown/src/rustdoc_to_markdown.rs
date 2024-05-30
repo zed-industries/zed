@@ -117,4 +117,57 @@ mod tests {
             expected
         )
     }
+
+    #[test]
+    fn test_table() {
+        let html = indoc! {r##"
+            <h2 id="feature-flags"><a class="doc-anchor" href="#feature-flags">§</a>Feature flags</h2>
+            <p>axum uses a set of <a href="https://doc.rust-lang.org/cargo/reference/features.html#the-features-section">feature flags</a> to reduce the amount of compiled and
+            optional dependencies.</p>
+            <p>The following optional features are available:</p>
+            <div><table><thead><tr><th>Name</th><th>Description</th><th>Default?</th></tr></thead><tbody>
+            <tr><td><code>http1</code></td><td>Enables hyper’s <code>http1</code> feature</td><td>Yes</td></tr>
+            <tr><td><code>http2</code></td><td>Enables hyper’s <code>http2</code> feature</td><td>No</td></tr>
+            <tr><td><code>json</code></td><td>Enables the <a href="struct.Json.html" title="struct axum::Json"><code>Json</code></a> type and some similar convenience functionality</td><td>Yes</td></tr>
+            <tr><td><code>macros</code></td><td>Enables optional utility macros</td><td>No</td></tr>
+            <tr><td><code>matched-path</code></td><td>Enables capturing of every request’s router path and the <a href="extract/struct.MatchedPath.html" title="struct axum::extract::MatchedPath"><code>MatchedPath</code></a> extractor</td><td>Yes</td></tr>
+            <tr><td><code>multipart</code></td><td>Enables parsing <code>multipart/form-data</code> requests with <a href="extract/struct.Multipart.html" title="struct axum::extract::Multipart"><code>Multipart</code></a></td><td>No</td></tr>
+            <tr><td><code>original-uri</code></td><td>Enables capturing of every request’s original URI and the <a href="extract/struct.OriginalUri.html" title="struct axum::extract::OriginalUri"><code>OriginalUri</code></a> extractor</td><td>Yes</td></tr>
+            <tr><td><code>tokio</code></td><td>Enables <code>tokio</code> as a dependency and <code>axum::serve</code>, <code>SSE</code> and <code>extract::connect_info</code> types.</td><td>Yes</td></tr>
+            <tr><td><code>tower-log</code></td><td>Enables <code>tower</code>’s <code>log</code> feature</td><td>Yes</td></tr>
+            <tr><td><code>tracing</code></td><td>Log rejections from built-in extractors</td><td>Yes</td></tr>
+            <tr><td><code>ws</code></td><td>Enables WebSockets support via <a href="extract/ws/index.html" title="mod axum::extract::ws"><code>extract::ws</code></a></td><td>No</td></tr>
+            <tr><td><code>form</code></td><td>Enables the <code>Form</code> extractor</td><td>Yes</td></tr>
+            <tr><td><code>query</code></td><td>Enables the <code>Query</code> extractor</td><td>Yes</td></tr>
+            </tbody></table>
+        "##};
+        let expected = indoc! {r#"
+            ## Feature flags
+
+            axum uses a set of feature flags to reduce the amount of compiled and
+            optional dependencies.The following optional features are available:
+
+            | Name | Description | Default? |
+            | --- | --- | --- |
+            | `http1` | Enables hyper’s `http1` feature | Yes |
+            | `http2` | Enables hyper’s `http2` feature | No |
+            | `json` | Enables the `Json` type and some similar convenience functionality | Yes |
+            | `macros` | Enables optional utility macros | No |
+            | `matched-path` | Enables capturing of every request’s router path and the `MatchedPath` extractor | Yes |
+            | `multipart` | Enables parsing `multipart/form-data` requests with `Multipart` | No |
+            | `original-uri` | Enables capturing of every request’s original URI and the `OriginalUri` extractor | Yes |
+            | `tokio` | Enables `tokio` as a dependency and `axum::serve`, `SSE` and `extract::connect_info` types. | Yes |
+            | `tower-log` | Enables `tower`’s `log` feature | Yes |
+            | `tracing` | Log rejections from built-in extractors | Yes |
+            | `ws` | Enables WebSockets support via `extract::ws` | No |
+            | `form` | Enables the `Form` extractor | Yes |
+            | `query` | Enables the `Query` extractor | Yes |
+        "#}
+        .trim();
+
+        assert_eq!(
+            convert_rustdoc_to_markdown(html.as_bytes()).unwrap(),
+            expected
+        )
+    }
 }
