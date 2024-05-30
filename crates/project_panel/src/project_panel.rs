@@ -72,7 +72,7 @@ pub struct ProjectPanel {
 
 struct ActiveMultiBuffer {
     replica_id: u16,
-    _editor_subscrpiption: Subscription,
+    _editor_subscrpiption: Option<Subscription>,
     entries: BTreeMap<WorktreeId, BTreeSet<ProjectEntryId>>,
 }
 
@@ -2367,16 +2367,27 @@ impl ProjectPanel {
 fn subscribe_for_editor_changes(
     editor: &View<Editor>,
     cx: &mut ViewContext<ProjectPanel>,
-) -> Subscription {
-    cx.subscribe(editor, |project_panel, editor, e: &EditorEvent, cx| {
-        if let EditorEvent::SelectionsChanged { local: true } = e {
-            if let Some(entry_id) = entry_id_for_selection(&editor, cx) {
-                project_panel.reveal_entry(project_panel.project.clone(), entry_id, false, cx);
-                return;
-            }
-        }
-        cx.propagate();
-    })
+) -> Option<Subscription> {
+    if ProjectPanelSettings::get_global(cx).auto_reveal_entries {
+        Some(
+            cx.subscribe(editor, |project_panel, editor, e: &EditorEvent, cx| {
+                if let EditorEvent::SelectionsChanged { local: true } = e {
+                    if let Some(entry_id) = entry_id_for_selection(&editor, cx) {
+                        project_panel.reveal_entry(
+                            project_panel.project.clone(),
+                            entry_id,
+                            false,
+                            cx,
+                        );
+                        return;
+                    }
+                }
+                cx.propagate();
+            }),
+        )
+    } else {
+        None
+    }
 }
 
 fn entry_id_for_selection(
