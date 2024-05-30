@@ -862,7 +862,6 @@ impl PlatformWindow for WaylandWindow {
     fn update_ime_position(&self) {
         let state = self.borrow();
         let client = state.client.clone();
-        let state_ptr = client.clone();
         state
             .globals
             .executor

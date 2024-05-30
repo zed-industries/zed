@@ -11623,7 +11623,7 @@ impl ViewInputHandler for Editor {
     fn selected_text_range(&mut self, cx: &mut ViewContext<Self>) -> Option<Range<usize>> {
         // Prevent the IME menu from appearing when holding down an alphabetic key
         // while input is disabled.
-        #[cfg(target_os = "macos")]
+        #[cfg(not(target_os = "linux"))]
         if !self.input_enabled {
             return None;
         }
