@@ -277,11 +277,7 @@ impl TestServer {
             node_runtime: FakeNodeRuntime::new(),
         });
 
-        let os_keymap = if cfg!(target_os = "linux") {
-            "keymaps/default-linux.json"
-        } else {
-            "keymaps/default-macos.json"
-        };
+        let os_keymap = "keymaps/default-macos.json";
 
         cx.update(|cx| {
             theme::init(theme::LoadThemes::JustBase, cx);
