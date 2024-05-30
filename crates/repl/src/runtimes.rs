@@ -16,16 +16,16 @@ pub struct Request {
 }
 
 #[derive(Debug, Clone)]
-pub struct Runtime {
+pub struct RuntimeSpecification {
     pub name: String,
     pub path: PathBuf,
-    pub spec: JupyterKernelspec,
+    pub kernelspec: JupyterKernelspec,
 }
 
-impl Runtime {
+impl RuntimeSpecification {
     #[must_use]
-    pub fn command(&self, connection_path: &PathBuf) -> Result<Command> {
-        let argv = &self.spec.argv;
+    fn command(&self, connection_path: &PathBuf) -> Result<Command> {
+        let argv = &self.kernelspec.argv;
 
         if argv.is_empty() {
             return Err(anyhow::anyhow!("Empty argv in kernelspec {}", self.name));
@@ -52,7 +52,7 @@ impl Runtime {
             }
         }
 
-        if let Some(env) = &self.spec.env {
+        if let Some(env) = &self.kernelspec.env {
             cmd.envs(env);
         }
 
@@ -76,7 +76,7 @@ async fn peek_ports(ip: IpAddr) -> anyhow::Result<[u16; 5]> {
 
 pub struct RunningKernel {
     #[allow(unused)]
-    runtime: Runtime,
+    runtime: RuntimeSpecification,
     #[allow(unused)]
     process: smol::process::Child,
     pub shell_request_tx: mpsc::UnboundedSender<Request>,
@@ -85,7 +85,7 @@ pub struct RunningKernel {
 
 impl RunningKernel {
     pub async fn new(
-        runtime: Runtime,
+        runtime: RuntimeSpecification,
         entity_id: &EntityId,
         fs: Arc<dyn Fs>,
     ) -> anyhow::Result<Self> {
@@ -141,7 +141,7 @@ impl RunningKernel {
     }
 }
 
-pub fn connect_kernel(
+fn connect_kernel(
     connection_info: ConnectionInfo,
 ) -> Result<(mpsc::UnboundedSender<Request>, std::thread::JoinHandle<()>)> {
     let (shell_request_tx, shell_request_rx) = mpsc::unbounded::<Request>();
@@ -170,7 +170,7 @@ pub fn connect_kernel(
     Ok((shell_request_tx.clone(), _runtime_handle))
 }
 
-pub async fn connect_tokio_kernel_interface(
+async fn connect_tokio_kernel_interface(
     connection_info: &runtimelib::ConnectionInfo,
     mut request_rx: mpsc::UnboundedReceiver<Request>,
 ) -> Result<()> {
@@ -239,12 +239,12 @@ pub async fn connect_tokio_kernel_interface(
     anyhow::Ok(())
 }
 
-pub async fn read_kernelspec_at(
+async fn read_kernelspec_at(
     // Path should be a directory to a jupyter kernelspec, as in
     // /usr/local/share/jupyter/kernels/python3
     kernel_dir: PathBuf,
     fs: Arc<dyn Fs>,
-) -> anyhow::Result<Runtime> {
+) -> anyhow::Result<RuntimeSpecification> {
     let path = kernel_dir;
     let kernel_name = if let Some(kernel_name) = path.file_name() {
         kernel_name.to_string_lossy().to_string()
@@ -260,15 +260,18 @@ pub async fn read_kernelspec_at(
     let spec = fs.load(expected_kernel_json.as_path()).await?;
     let spec = serde_json::from_str::<JupyterKernelspec>(&spec)?;
 
-    Ok(Runtime {
+    Ok(RuntimeSpecification {
         name: kernel_name,
         path,
-        spec,
+        kernelspec: spec,
     })
 }
 
 /// Read a directory of kernelspec directories
-pub async fn read_kernels_dir(path: PathBuf, fs: Arc<dyn Fs>) -> anyhow::Result<Vec<Runtime>> {
+async fn read_kernels_dir(
+    path: PathBuf,
+    fs: Arc<dyn Fs>,
+) -> anyhow::Result<Vec<RuntimeSpecification>> {
     let mut kernelspec_dirs = fs.read_dir(&path).await?;
 
     let mut valid_kernelspecs = Vec::new();
@@ -291,7 +294,9 @@ pub async fn read_kernels_dir(path: PathBuf, fs: Arc<dyn Fs>) -> anyhow::Result<
     Ok(valid_kernelspecs)
 }
 
-pub async fn get_runtimes(fs: Arc<dyn Fs>) -> anyhow::Result<Vec<Runtime>> {
+pub async fn get_runtime_specifications(
+    fs: Arc<dyn Fs>,
+) -> anyhow::Result<Vec<RuntimeSpecification>> {
     let data_dirs = dirs::data_dirs();
     let kernel_dirs = data_dirs
         .iter()

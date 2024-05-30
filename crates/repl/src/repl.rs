@@ -27,7 +27,7 @@ mod outputs;
 mod runtimes;
 mod stdio;
 
-use runtimes::{get_runtimes, Request, RunningKernel, Runtime};
+use runtimes::{get_runtime_specifications, Request, RunningKernel, RuntimeSpecification};
 
 actions!(repl, [Run]);
 
@@ -43,10 +43,10 @@ pub fn init(fs: Arc<dyn Fs>, cx: &mut AppContext) {
     cx.spawn(|mut cx| async move {
         let fs = fs.clone();
 
-        let runtimes = get_runtimes(fs).await?;
+        let runtime_specifications = get_runtime_specifications(fs).await?;
 
         runtime_manager.update(&mut cx, |this, _cx| {
-            this.runtimes = runtimes;
+            this.runtime_specifications = runtime_specifications;
         })?;
 
         anyhow::Ok(())
@@ -65,12 +65,14 @@ pub fn init(fs: Arc<dyn Fs>, cx: &mut AppContext) {
 // Per workspace
 pub struct RuntimeManager {
     fs: Arc<dyn Fs>,
-    runtimes: Vec<Runtime>,
+    runtime_specifications: Vec<RuntimeSpecification>,
 
-    instances: HashMap<EntityId, RunningKernel>, // actually running kernels
+    instances: HashMap<EntityId, RunningKernel>,
     editors: HashMap<WeakView<Editor>, EditorRuntimeState>,
+    // todo!(): Next
     // To reduce the number of open tasks and channels we have, let's feed the response
     // messages by ID over to the paired ExecutionView
+    #[allow(unused)]
     execution_views_by_id: HashMap<String, View<ExecutionView>>,
 }
 
@@ -84,6 +86,7 @@ struct EditorRuntimeState {
 #[derive(Debug, Clone)]
 struct EditorRuntimeBlock {
     code_range: Range<Anchor>,
+    #[allow(unused)]
     execution_id: String,
     block_id: BlockId,
     _execution_view: View<ExecutionView>,
@@ -93,7 +96,7 @@ impl RuntimeManager {
     pub fn new(fs: Arc<dyn Fs>, _cx: &mut AppContext) -> Self {
         Self {
             fs,
-            runtimes: Default::default(),
+            runtime_specifications: Default::default(),
             instances: Default::default(),
             editors: Default::default(),
             execution_views_by_id: Default::default(),
@@ -113,13 +116,15 @@ impl RuntimeManager {
         // TODO: Track that a kernel is (possibly) starting up so we don't relaunch without tearing down the old one
 
         // Get first runtime that matches the language name (for now)
-        let runtime = self
-            .runtimes
-            .iter()
-            .find(|runtime| runtime.spec.language == language_name.to_string());
+        let runtime_specification =
+            self.runtime_specifications
+                .iter()
+                .find(|runtime_specification| {
+                    runtime_specification.kernelspec.language == language_name.to_string()
+                });
 
-        let runtime = match runtime {
-            Some(runtime) => runtime,
+        let runtime_specification = match runtime_specification {
+            Some(runtime_specification) => runtime_specification,
             None => {
                 return Task::ready(Err(anyhow::anyhow!(
                     "No runtime found for language {}",
@@ -128,12 +133,13 @@ impl RuntimeManager {
             }
         };
 
-        let runtime = runtime.clone();
+        let runtime_specification = runtime_specification.clone();
 
         let fs = self.fs.clone();
 
         cx.spawn(|this, mut cx| async move {
-            let running_kernel = RunningKernel::new(runtime, &entity_id, fs.clone()).await?;
+            let running_kernel =
+                RunningKernel::new(runtime_specification, &entity_id, fs.clone()).await?;
 
             let mut shell_request_tx = running_kernel.shell_request_tx.clone();
             let (tx, mut rx) = mpsc::unbounded();
