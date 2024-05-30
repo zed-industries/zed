@@ -228,8 +228,8 @@ impl PickerDelegate for RecentProjectsDelegate {
         let candidates = self
             .workspaces
             .iter()
-            .filter(|(id, _)| !self.is_current_workspace(*id, cx))
             .enumerate()
+            .filter(|(_, (id, _))| !self.is_current_workspace(*id, cx))
             .map(|(id, (_, location))| {
                 let combined_string = match location {
                     SerializedWorkspaceLocation::Local(paths, _) => paths
