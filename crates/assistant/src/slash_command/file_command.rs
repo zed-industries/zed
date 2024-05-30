@@ -86,11 +86,11 @@ impl SlashCommand for FileSlashCommand {
     }
 
     fn description(&self) -> String {
-        "insert a file".into()
+        "insert file".into()
     }
 
-    fn tooltip_text(&self) -> String {
-        "insert file".into()
+    fn menu_text(&self) -> String {
+        "Insert File".into()
     }
 
     fn requires_argument(&self) -> bool {

@@ -3761,7 +3761,7 @@ impl Editor {
         }))
     }
 
-    fn show_completions(&mut self, _: &ShowCompletions, cx: &mut ViewContext<Self>) {
+    pub fn show_completions(&mut self, _: &ShowCompletions, cx: &mut ViewContext<Self>) {
         if self.pending_rename.is_some() {
             return;
         }

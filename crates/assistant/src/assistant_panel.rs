@@ -18,9 +18,9 @@ use anyhow::{anyhow, Result};
 use assistant_slash_command::{SlashCommandOutput, SlashCommandOutputSection};
 use client::telemetry::Telemetry;
 use collections::{hash_map, BTreeSet, HashMap, HashSet, VecDeque};
-use editor::actions::UnfoldAt;
+use editor::actions::ShowCompletions;
 use editor::{
-    actions::{FoldAt, MoveDown, MoveUp},
+    actions::{FoldAt, MoveDown, MoveToEndOfLine, MoveUp, Newline, UnfoldAt},
     display_map::{
         BlockContext, BlockDisposition, BlockId, BlockProperties, BlockStyle, Flap, ToDisplayPoint,
     },
@@ -212,15 +212,20 @@ impl AssistantPanel {
 
                     let slash_command_registry = SlashCommandRegistry::global(cx);
 
-                    slash_command_registry.register_command(file_command::FileSlashCommand);
+                    slash_command_registry.register_command(file_command::FileSlashCommand, true);
                     slash_command_registry.register_command(
                         prompt_command::PromptSlashCommand::new(prompt_library.clone()),
+                        true,
                     );
-                    slash_command_registry.register_command(active_command::ActiveSlashCommand);
-                    slash_command_registry.register_command(tabs_command::TabsSlashCommand);
-                    slash_command_registry.register_command(project_command::ProjectSlashCommand);
-                    slash_command_registry.register_command(search_command::SearchSlashCommand);
-                    slash_command_registry.register_command(rustdoc_command::RustdocSlashCommand);
+                    slash_command_registry
+                        .register_command(active_command::ActiveSlashCommand, true);
+                    slash_command_registry.register_command(tabs_command::TabsSlashCommand, true);
+                    slash_command_registry
+                        .register_command(project_command::ProjectSlashCommand, true);
+                    slash_command_registry
+                        .register_command(search_command::SearchSlashCommand, true);
+                    slash_command_registry
+                        .register_command(rustdoc_command::RustdocSlashCommand, false);
 
                     Self {
                         workspace: workspace_handle,
@@ -943,6 +948,14 @@ impl AssistantPanel {
         self.model_menu_handle.toggle(cx);
     }
 
+    fn insert_command(&mut self, name: &str, cx: &mut ViewContext<Self>) {
+        if let Some(conversation_editor) = self.active_conversation_editor() {
+            conversation_editor.update(cx, |conversation_editor, cx| {
+                conversation_editor.insert_command(name, cx)
+            });
+        }
+    }
+
     fn active_conversation_editor(&self) -> Option<&View<ConversationEditor>> {
         Some(&self.active_conversation_editor.as_ref()?.editor)
     }
@@ -980,52 +993,65 @@ impl AssistantPanel {
             })
     }
 
-    fn render_inject_context_menu(&self, _cx: &mut ViewContext<Self>) -> impl Element {
-        let workspace = self.workspace.clone();
+    fn render_inject_context_menu(&self, cx: &mut ViewContext<Self>) -> impl Element {
+        let commands = self.slash_commands.clone();
+        let assistant_panel = cx.view().downgrade();
+        let active_editor_focus_handle = self.workspace.upgrade().and_then(|workspace| {
+            Some(
+                workspace
+                    .read(cx)
+                    .active_item_as::<Editor>(cx)?
+                    .focus_handle(cx),
+            )
+        });
 
         popover_menu("inject-context-menu")
             .trigger(IconButton::new("trigger", IconName::Quote).tooltip(|cx| {
-                // Tooltip::with_meta("Insert Context", None, "Type # to insert via keyboard", cx)
-                Tooltip::text("Insert Context", cx)
+                Tooltip::with_meta("Insert Context", None, "Type / to insert via keyboard", cx)
             }))
             .menu(move |cx| {
-                ContextMenu::build(cx, |menu, _cx| {
-                    // menu.entry("Insert Search", None, {
-                    //     let assistant = assistant.clone();
-                    //     move |_cx| {}
-                    // })
-                    // .entry("Insert Docs", None, {
-                    //     let assistant = assistant.clone();
-                    //     move |cx| {}
-                    // })
-                    menu.entry("Quote Selection", None, {
-                        let workspace = workspace.clone();
-                        move |cx| {
-                            workspace
-                                .update(cx, |workspace, cx| {
-                                    ConversationEditor::quote_selection(
-                                        workspace,
-                                        &Default::default(),
-                                        cx,
-                                    )
-                                })
-                                .ok();
+                ContextMenu::build(cx, |mut menu, _cx| {
+                    for command_name in commands.featured_command_names() {
+                        if let Some(command) = commands.command(&command_name) {
+                            let menu_text = SharedString::from(Arc::from(command.menu_text()));
+                            menu = menu.custom_entry(
+                                {
+                                    let command_name = command_name.clone();
+                                    move |_cx| {
+                                        h_flex()
+                                            .w_full()
+                                            .justify_between()
+                                            .child(Label::new(menu_text.clone()))
+                                            .child(
+                                                div().ml_4().child(
+                                                    Label::new(format!("/{command_name}"))
+                                                        .color(Color::Muted),
+                                                ),
+                                            )
+                                            .into_any()
+                                    }
+                                },
+                                {
+                                    let assistant_panel = assistant_panel.clone();
+                                    move |cx| {
+                                        assistant_panel
+                                            .update(cx, |assistant_panel, cx| {
+                                                assistant_panel.insert_command(&command_name, cx)
+                                            })
+                                            .ok();
+                                    }
+                                },
+                            )
                         }
-                    })
-                    // .entry("Insert Active Prompt", None, {
-                    //     let workspace = workspace.clone();
-                    //     move |cx| {
-                    //         workspace
-                    //             .update(cx, |workspace, cx| {
-                    //                 ConversationEditor::insert_active_prompt(
-                    //                     workspace,
-                    //                     &Default::default(),
-                    //                     cx,
-                    //                 )
-                    //             })
-                    //             .ok();
-                    //     }
-                    // })
+                    }
+
+                    if let Some(active_editor_focus_handle) = active_editor_focus_handle.clone() {
+                        menu = menu
+                            .context(active_editor_focus_handle)
+                            .action("Quote Selection", Box::new(QuoteSelection));
+                    }
+
+                    menu
                 })
                 .into()
             })
@@ -1720,7 +1746,6 @@ impl Conversation {
                             let pending_command = PendingSlashCommand {
                                 name: name.to_string(),
                                 argument: argument.map(ToString::to_string),
-                                tooltip_text: command.tooltip_text().into(),
                                 source_range,
                                 status: PendingSlashCommandStatus::Idle,
                             };
@@ -2517,7 +2542,6 @@ struct PendingSlashCommand {
     argument: Option<String>,
     status: PendingSlashCommandStatus,
     source_range: Range<language::Anchor>,
-    tooltip_text: SharedString,
 }
 
 #[derive(Clone)]
@@ -2690,11 +2714,47 @@ impl ConversationEditor {
             .collect()
     }
 
+    fn insert_command(&mut self, name: &str, cx: &mut ViewContext<Self>) {
+        if let Some(command) = self.slash_command_registry.command(name) {
+            self.editor.update(cx, |editor, cx| {
+                editor.transact(cx, |editor, cx| {
+                    editor.change_selections(Some(Autoscroll::fit()), cx, |s| s.try_cancel());
+                    let snapshot = editor.buffer().read(cx).snapshot(cx);
+                    let newest_cursor = editor.selections.newest::<Point>(cx).head();
+                    if newest_cursor.column > 0
+                        || snapshot
+                            .chars_at(newest_cursor)
+                            .next()
+                            .map_or(false, |ch| ch != '\n')
+                    {
+                        editor.move_to_end_of_line(
+                            &MoveToEndOfLine {
+                                stop_at_soft_wraps: false,
+                            },
+                            cx,
+                        );
+                        editor.newline(&Newline, cx);
+                    }
+
+                    editor.insert(&format!("/{name}"), cx);
+                    if command.requires_argument() {
+                        editor.insert(" ", cx);
+                        editor.show_completions(&ShowCompletions, cx);
+                    }
+                });
+            });
+            if !command.requires_argument() {
+                self.confirm_command(&ConfirmCommand, cx);
+            }
+        }
+    }
+
     pub fn confirm_command(&mut self, _: &ConfirmCommand, cx: &mut ViewContext<Self>) {
         let selections = self.editor.read(cx).selections.disjoint_anchors();
         let mut commands_by_range = HashMap::default();
         let workspace = self.workspace.clone();
         self.conversation.update(cx, |conversation, cx| {
+            conversation.reparse_slash_commands(cx);
             for selection in selections.iter() {
                 if let Some(command) =
                     conversation.pending_command_for_position(selection.head().text_anchor, cx)
@@ -2851,9 +2911,8 @@ impl ConversationEditor {
                                 let confirm_command = confirm_command.clone();
                                 let command = command.clone();
                                 move |row, _, _, _cx: &mut WindowContext| {
-                                    render_pending_slash_command_toggle(
+                                    render_pending_slash_command_gutter_decoration(
                                         row,
-                                        command.tooltip_text.clone(),
                                         command.status.clone(),
                                         confirm_command.clone(),
                                     )
@@ -3680,14 +3739,13 @@ fn render_slash_command_output_toggle(
     .into_any_element()
 }
 
-fn render_pending_slash_command_toggle(
+fn render_pending_slash_command_gutter_decoration(
     row: MultiBufferRow,
-    tooltip_text: SharedString,
     status: PendingSlashCommandStatus,
     confirm_command: Arc<dyn Fn(&mut WindowContext)>,
 ) -> AnyElement {
     let mut icon = IconButton::new(
-        ("slash-command-output-fold-indicator", row.0),
+        ("slash-command-gutter-decoration", row.0),
         ui::IconName::TriangleRight,
     )
     .on_click(move |_e, cx| confirm_command(cx))
@@ -3696,14 +3754,10 @@ fn render_pending_slash_command_toggle(
 
     match status {
         PendingSlashCommandStatus::Idle => {
-            icon = icon
-                .icon_color(Color::Muted)
-                .tooltip(move |cx| Tooltip::text(tooltip_text.clone(), cx));
+            icon = icon.icon_color(Color::Muted);
         }
         PendingSlashCommandStatus::Running { .. } => {
-            icon = icon
-                .selected(true)
-                .tooltip(move |cx| Tooltip::text(tooltip_text.clone(), cx));
+            icon = icon.selected(true);
         }
         PendingSlashCommandStatus::Error(error) => {
             icon = icon
@@ -4126,10 +4180,11 @@ mod tests {
         let prompt_library = Arc::new(PromptLibrary::default());
         let slash_command_registry = SlashCommandRegistry::new();
 
-        slash_command_registry.register_command(file_command::FileSlashCommand);
-        slash_command_registry.register_command(prompt_command::PromptSlashCommand::new(
-            prompt_library.clone(),
-        ));
+        slash_command_registry.register_command(file_command::FileSlashCommand, false);
+        slash_command_registry.register_command(
+            prompt_command::PromptSlashCommand::new(prompt_library.clone()),
+            false,
+        );
 
         let registry = Arc::new(LanguageRegistry::test(cx.executor()));
         let conversation = cx
