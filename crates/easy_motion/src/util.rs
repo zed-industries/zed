@@ -4,10 +4,9 @@ use editor::{
     DisplayPoint, RowExt,
 };
 use gpui::Point;
-use language::{char_kind, CharKind};
+use language::{char_kind, coerce_punctuation, CharKind};
 use text::Bias;
 use ui::Pixels;
-use vim::utils::coerce_punctuation;
 
 pub(crate) fn manh_distance(point_1: &DisplayPoint, point_2: &DisplayPoint, x_bias: f32) -> f32 {
     x_bias * (point_1.row().as_f32() - point_2.row().as_f32()).abs()

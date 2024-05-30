@@ -2,7 +2,7 @@ use std::time::Duration;
 
 use editor::{ClipboardSelection, Editor};
 use gpui::{ClipboardItem, ViewContext};
-use language::{CharKind, Point};
+use language::Point;
 use multi_buffer::MultiBufferRow;
 use settings::Settings;
 
@@ -136,12 +136,4 @@ fn copy_selections_content_internal(
         .ok();
     })
     .detach();
-}
-
-pub fn coerce_punctuation(kind: CharKind, treat_punctuation_as_word: bool) -> CharKind {
-    if treat_punctuation_as_word && kind == CharKind::Punctuation {
-        CharKind::Word
-    } else {
-        kind
-    }
 }

@@ -21,7 +21,7 @@ const VERTICAL_MIN_SIZE: f32 = 100.;
 /// Single-pane group is a regular pane.
 #[derive(Clone)]
 pub struct PaneGroup {
-    pub root: Member,
+    pub(crate) root: Member,
 }
 
 impl PaneGroup {
@@ -126,7 +126,7 @@ impl PaneGroup {
 }
 
 #[derive(Clone)]
-pub enum Member {
+pub(crate) enum Member {
     Axis(PaneAxis),
     Pane(View<Pane>),
 }
@@ -164,7 +164,7 @@ impl Member {
     }
 
     #[allow(clippy::too_many_arguments)]
-    pub fn render(
+    fn render(
         &self,
         project: &Model<Project>,
         basis: usize,
@@ -316,7 +316,7 @@ impl Member {
 }
 
 #[derive(Clone)]
-pub struct PaneAxis {
+pub(crate) struct PaneAxis {
     pub axis: Axis,
     pub members: Vec<Member>,
     pub flexes: Arc<Mutex<Vec<f32>>>,

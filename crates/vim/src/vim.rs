@@ -14,7 +14,7 @@ mod object;
 mod replace;
 mod state;
 mod surrounds;
-pub mod utils;
+mod utils;
 mod visual;
 
 use anyhow::Result;

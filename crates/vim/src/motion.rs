@@ -7,7 +7,7 @@ use editor::{
     Anchor, Bias, DisplayPoint, RowExt, ToOffset,
 };
 use gpui::{actions, impl_actions, px, ViewContext, WindowContext};
-use language::{char_kind, CharKind, Point, Selection, SelectionGoal};
+use language::{char_kind, coerce_punctuation, CharKind, Point, Selection, SelectionGoal};
 use multi_buffer::MultiBufferRow;
 use serde::Deserialize;
 use std::ops::Range;
@@ -17,7 +17,6 @@ use crate::{
     normal::{mark, normal_motion},
     state::{Mode, Operator},
     surrounds::SurroundsType,
-    utils::coerce_punctuation,
     visual::visual_motion,
     Vim,
 };
