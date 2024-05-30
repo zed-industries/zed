@@ -1705,7 +1705,7 @@ impl ProjectPanel {
             }
 
             // TODO kb slow and odd
-            if active_multi_buffer_entries.is_some() {
+            let sort_before_the_propagation = if active_multi_buffer_entries.is_some() {
                 let mut dir_entries_to_re_add = HashMap::default();
                 visible_worktree_entries.retain(|entry| {
                     let is_new_entry = new_entries.contains(&entry.id);
@@ -1737,8 +1737,14 @@ impl ProjectPanel {
                     retain_visible_entry
                 });
                 visible_worktree_entries.extend(dir_entries_to_re_add.into_values());
-            }
+                true
+            } else {
+                false
+            };
 
+            if !sort_before_the_propagation {
+                snapshot.propagate_git_statuses(&mut visible_worktree_entries);
+            }
             visible_worktree_entries.sort_by(|entry_a, entry_b| {
                 let mut components_a = entry_a.path.components().peekable();
                 let mut components_b = entry_b.path.components().peekable();
@@ -1784,7 +1790,9 @@ impl ProjectPanel {
                     }
                 }
             });
-            snapshot.propagate_git_statuses(&mut visible_worktree_entries);
+            if sort_before_the_propagation {
+                snapshot.propagate_git_statuses(&mut visible_worktree_entries);
+            }
             self.visible_entries
                 .push((worktree_id, visible_worktree_entries));
         }
