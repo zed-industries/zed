@@ -228,6 +228,7 @@ impl PickerDelegate for RecentProjectsDelegate {
         let candidates = self
             .workspaces
             .iter()
+            .filter(|(id, _)| !self.is_current_workspace(*id, cx))
             .enumerate()
             .map(|(id, (_, location))| {
                 let combined_string = match location {
@@ -393,8 +394,7 @@ impl PickerDelegate for RecentProjectsDelegate {
             return None;
         };
 
-        let (workspace_id, location) = &self.workspaces[hit.candidate_id];
-        let is_current_workspace = self.is_current_workspace(*workspace_id, cx);
+        let (_, location) = self.workspaces.get(hit.candidate_id)?;
 
         let is_remote = matches!(location, SerializedWorkspaceLocation::DevServer(_));
         let dev_server_status =
@@ -487,7 +487,7 @@ impl PickerDelegate for RecentProjectsDelegate {
                             highlighted.render(cx)
                         }),
                 )
-                .when(!is_current_workspace, |el| {
+                .map(|el| {
                     let delete_button = div()
                         .child(
                             IconButton::new("delete", IconName::Close)
