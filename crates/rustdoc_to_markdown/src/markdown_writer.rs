@@ -148,10 +148,21 @@ impl MarkdownWriter {
                             .collect::<Vec<_>>()
                     })
                     .unwrap_or_default();
-                let is_rust = classes.into_iter().any(|class| class == "rust");
-                let language = if is_rust { "rs" } else { "" };
+                let is_rust = classes.iter().any(|class| class == &"rust");
+                let language = is_rust
+                    .then(|| "rs")
+                    .or_else(|| {
+                        classes.iter().find_map(|class| {
+                            if let Some((_, language)) = class.split_once("language-") {
+                                Some(language.trim())
+                            } else {
+                                None
+                            }
+                        })
+                    })
+                    .unwrap_or("");
 
-                self.push_str(&format!("\n```{language}\n"))
+                self.push_str(&format!("\n\n```{language}\n"))
             }
             "ul" | "ol" => self.push_newline(),
             "li" => self.push_str("- "),
