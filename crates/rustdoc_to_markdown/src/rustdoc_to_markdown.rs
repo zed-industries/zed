@@ -2,6 +2,7 @@
 
 #![deny(missing_docs)]
 
+mod html_element;
 mod markdown_writer;
 
 use std::io::Read;
@@ -221,8 +222,7 @@ mod tests {
         let expected = indoc! {r#"
             ## Feature flags
 
-            axum uses a set of feature flags to reduce the amount of compiled and
-            optional dependencies.
+            axum uses a set of feature flags to reduce the amount of compiled and optional dependencies.
 
             The following optional features are available:
 

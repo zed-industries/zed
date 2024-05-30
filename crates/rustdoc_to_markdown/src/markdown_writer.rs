@@ -1,11 +1,11 @@
-use std::cell::RefCell;
 use std::collections::VecDeque;
 use std::sync::OnceLock;
 
 use anyhow::Result;
-use html5ever::Attribute;
 use markup5ever_rcdom::{Handle, NodeData};
 use regex::Regex;
+
+use crate::html_element::HtmlElement;
 
 fn empty_line_regex() -> &'static Regex {
     static REGEX: OnceLock<Regex> = OnceLock::new();
@@ -15,54 +15,6 @@ fn empty_line_regex() -> &'static Regex {
 fn more_than_three_newlines_regex() -> &'static Regex {
     static REGEX: OnceLock<Regex> = OnceLock::new();
     REGEX.get_or_init(|| Regex::new(r"\n{3,}").unwrap())
-}
-
-#[derive(Debug, Clone)]
-struct HtmlElement {
-    tag: String,
-    attrs: RefCell<Vec<Attribute>>,
-}
-
-impl HtmlElement {
-    /// Returns the attribute with the specified name.
-    pub fn attr(&self, name: &str) -> Option<String> {
-        self.attrs
-            .borrow()
-            .iter()
-            .find(|attr| attr.name.local.to_string() == name)
-            .map(|attr| attr.value.to_string())
-    }
-
-    /// Returns the list of classes on this [`HtmlElement`].
-    pub fn classes(&self) -> Vec<String> {
-        self.attrs
-            .borrow()
-            .iter()
-            .find(|attr| attr.name.local.to_string() == "class")
-            .map(|attr| {
-                attr.value
-                    .split(' ')
-                    .map(|class| class.trim().to_string())
-                    .collect::<Vec<_>>()
-            })
-            .unwrap_or_default()
-    }
-
-    /// Returns whether this [`HtmlElement`] has the specified class.
-    pub fn has_class(&self, class: &str) -> bool {
-        self.has_any_classes(&[class])
-    }
-
-    /// Returns whether this [`HtmlElement`] has any of the specified classes.
-    pub fn has_any_classes(&self, classes: &[&str]) -> bool {
-        self.attrs.borrow().iter().any(|attr| {
-            attr.name.local.to_string() == "class"
-                && attr
-                    .value
-                    .split(' ')
-                    .any(|class| classes.contains(&class.trim()))
-        })
-    }
 }
 
 const RUSTDOC_ITEM_NAME_CLASS: &str = "item-name";
@@ -179,6 +131,12 @@ impl MarkdownWriter {
     }
 
     fn start_tag(&mut self, tag: &HtmlElement) -> StartTagOutcome {
+        if tag.is_inline() && self.is_inside("p") {
+            if !self.markdown.ends_with(" ") {
+                self.push_str(" ");
+            }
+        }
+
         match tag.tag.as_str() {
             "head" | "script" | "nav" => return StartTagOutcome::Skip,
             "h1" => self.push_str("\n\n# "),
@@ -189,11 +147,6 @@ impl MarkdownWriter {
             "h6" => self.push_str("\n\n###### "),
             "p" => self.push_blank_line(),
             "code" => {
-                // TODO: This should probably extend to to all inline elements.
-                if !self.markdown.ends_with(" ") {
-                    self.push_str(" ");
-                }
-
                 if !self.is_inside("pre") {
                     self.push_str("`");
                 }
