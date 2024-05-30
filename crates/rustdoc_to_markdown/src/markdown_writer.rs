@@ -132,8 +132,12 @@ impl MarkdownWriter {
 
     fn start_tag(&mut self, tag: &HtmlElement) -> StartTagOutcome {
         if tag.is_inline() && self.is_inside("p") {
-            if !self.markdown.ends_with(' ') {
-                self.push_str(" ");
+            if let Some(parent) = self.current_element_stack.iter().last() {
+                if !parent.is_inline() {
+                    if !self.markdown.ends_with(' ') {
+                        self.push_str(" ");
+                    }
+                }
             }
         }
 
@@ -146,6 +150,8 @@ impl MarkdownWriter {
             "h5" => self.push_str("\n\n##### "),
             "h6" => self.push_str("\n\n###### "),
             "p" => self.push_blank_line(),
+            "strong" => self.push_str("**"),
+            "em" => self.push_str("_"),
             "code" => {
                 if !self.is_inside("pre") {
                     self.push_str("`");
@@ -219,6 +225,8 @@ impl MarkdownWriter {
     fn end_tag(&mut self, tag: &HtmlElement) {
         match tag.tag.as_str() {
             "h1" | "h2" | "h3" | "h4" | "h5" | "h6" => self.push_str("\n\n"),
+            "strong" => self.push_str("**"),
+            "em" => self.push_str("_"),
             "code" => {
                 if !self.is_inside("pre") {
                     self.push_str("`");
