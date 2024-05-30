@@ -1202,50 +1202,20 @@ impl EditorElement {
                 .row,
         );
 
-        let expanded_hunk_display_rows = self.editor.update(cx, |editor, _| {
-            editor
-                .expanded_hunks
-                .hunks(false)
-                .map(|expanded_hunk| {
-                    let start_row = expanded_hunk
-                        .hunk_range
-                        .start
-                        .to_display_point(snapshot)
-                        .row();
-                    let end_row = expanded_hunk
-                        .hunk_range
-                        .end
-                        .to_display_point(snapshot)
-                        .row();
-                    (start_row, end_row)
-                })
-                .collect::<HashMap<_, _>>()
-        });
-
         buffer_snapshot
             .git_diff_hunks_in_range(buffer_start_row..buffer_end_row)
             .map(|hunk| diff_hunk_to_display(&hunk, snapshot))
             .dedup()
             .map(|hunk| {
-                let hitbox = if let DisplayDiffHunk::Unfolded {
-                    display_row_range, ..
-                } = &hunk
+                let hitbox = if let DisplayDiffHunk::Unfolded { .. } = &hunk
                 {
-                    let was_expanded = expanded_hunk_display_rows
-                        .get(&display_row_range.start)
-                        .map(|expanded_end_row| expanded_end_row == &display_row_range.end)
-                        .unwrap_or(false);
-                    if was_expanded {
-                        None
-                    } else {
-                        let hunk_bounds = Self::diff_hunk_bounds(
-                            &snapshot,
-                            line_height,
-                            gutter_hitbox.bounds,
-                            &hunk,
-                        );
-                        Some(cx.insert_hitbox(hunk_bounds, true))
-                    }
+                    let hunk_bounds = Self::diff_hunk_bounds(
+                        &snapshot,
+                        line_height,
+                        gutter_hitbox.bounds,
+                        &hunk,
+                    );
+                    Some(cx.insert_hitbox(hunk_bounds, false))
                 } else {
                     None
                 };
