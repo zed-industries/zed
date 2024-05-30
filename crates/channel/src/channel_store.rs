@@ -62,6 +62,7 @@ pub struct ChannelStore {
     opened_buffers: HashMap<ChannelId, OpenedModelHandle<ChannelBuffer>>,
     opened_chats: HashMap<ChannelId, OpenedModelHandle<ChannelChat>>,
     client: Arc<Client>,
+    did_subscribe: bool,
     user_store: Model<UserStore>,
     _rpc_subscriptions: [Subscription; 2],
     _watch_connection_status: Task<Option<()>>,
@@ -243,6 +244,20 @@ impl ChannelStore {
                 .log_err();
             }),
             channel_states: Default::default(),
+            did_subscribe: false,
+        }
+    }
+
+    pub fn initialize(&mut self) {
+        if !self.did_subscribe {
+            if self
+                .client
+                .send(proto::SubscribeToChannels {})
+                .log_err()
+                .is_some()
+            {
+                self.did_subscribe = true;
+            }
         }
     }
 
