@@ -165,7 +165,7 @@ impl EasyMotion {
     }
 
     pub fn read_with<S>(
-        cx: &mut ViewContext<Workspace>,
+        cx: &ViewContext<Workspace>,
         f: impl FnOnce(&EasyMotion, &AppContext) -> S,
     ) -> Option<S> {
         EasyMotion::global(cx).map(|easy| easy.read_with(cx, f))
@@ -186,6 +186,13 @@ impl EasyMotion {
         self.active_editor = Some(editor.downgrade());
     }
 
+    fn active_editor(cx: &mut ViewContext<Workspace>) -> Option<View<Editor>> {
+        Self::read_with(cx, |easy, _| {
+            easy.active_editor.as_ref().and_then(|weak| weak.upgrade())
+        })
+        .flatten()
+    }
+
     #[allow(dead_code)]
     fn new_state(&mut self) -> &EditorState {
         self.active_editor
@@ -198,28 +205,8 @@ impl EasyMotion {
             .unwrap()
     }
 
-    #[allow(dead_code)]
     fn clear_state(&mut self) {
         self.insert_state(EditorState::None);
-    }
-
-    #[allow(dead_code)]
-    fn state(&self) -> Option<&EditorState> {
-        self.active_editor
-            .as_ref()
-            .map(|active_editor| self.editor_states.get(&active_editor.entity_id()))
-            .flatten()
-    }
-
-    #[allow(dead_code)]
-    fn update_state<T>(&mut self, func: impl FnOnce(&mut EditorState) -> T) -> Option<T> {
-        let state = self
-            .active_editor
-            .as_ref()
-            .map(|active_editor| self.editor_states.get_mut(&active_editor.entity_id()))
-            .flatten()?;
-        let ret = func(state);
-        Some(ret)
     }
 
     fn insert_state(&mut self, state: EditorState) -> Option<()> {
@@ -238,25 +225,19 @@ impl EasyMotion {
     }
 
     fn word(word_type: WordType, direction: Direction, cx: &mut ViewContext<Workspace>) {
-        let weak_editor = EasyMotion::read_with(cx, |easy, _| easy.active_editor.clone()).flatten();
-        let Some(weak_editor) = weak_editor else {
+        let Some(active_editor) = Self::active_editor(cx) else {
             return;
         };
-        let entity_id = weak_editor.entity_id();
+        let entity_id = active_editor.entity_id();
 
-        let editor = weak_editor.upgrade();
-        let Some(editor) = editor else {
-            return;
-        };
-
-        let new_state = editor.update(cx, |editor, cx| {
-            let new_state = EasyMotion::word_impl(true, word_type, direction, editor, cx);
+        let new_state = active_editor.update(cx, |editor, cx| {
+            let new_state = Self::word_impl(true, word_type, direction, editor, cx);
             let ctx = new_state.keymap_context_layer();
-            editor.set_keymap_context_layer::<EasyMotion>(ctx, cx);
+            editor.set_keymap_context_layer::<Self>(ctx, cx);
             new_state
         });
 
-        EasyMotion::update(cx, move |easy, _cx| {
+        Self::update(cx, move |easy, _cx| {
             easy.editor_states.insert(entity_id, new_state);
         });
     }
@@ -301,7 +282,7 @@ impl EasyMotion {
                     editor_id: cx.entity_id(),
                 }
             });
-        EasyMotion::add_overlays(editor, trie.iter(), cx);
+        Self::add_overlays(editor, trie.iter(), cx);
 
         if dimming {
             let start = match direction {
@@ -318,7 +299,7 @@ impl EasyMotion {
                 fade_out: Some(0.7),
                 ..Default::default()
             };
-            editor.highlight_text::<EasyMotion>(vec![anchor_start..anchor_end], highlight, cx);
+            editor.highlight_text::<Self>(vec![anchor_start..anchor_end], highlight, cx);
         }
 
         EditorState::Selection(Selection::new(trie))
@@ -359,9 +340,7 @@ impl EasyMotion {
         workspace: &mut Workspace,
         cx: &mut ViewContext<Workspace>,
     ) {
-        let weak_editor =
-            EasyMotion::read_with(cx, |easy, _cx| easy.active_editor.clone()).flatten();
-        let Some(active_editor) = weak_editor.map(|weak| weak.upgrade()).flatten() else {
+        let Some(active_editor) = Self::active_editor(cx) else {
             return;
         };
         let active_editor_id = active_editor.entity_id();
@@ -388,11 +367,11 @@ impl EasyMotion {
         for (editor, _, _) in editors {
             editor.update(cx, |editor, cx| {
                 let ctx = new_state.keymap_context_layer();
-                editor.set_keymap_context_layer::<EasyMotion>(ctx, cx);
+                editor.set_keymap_context_layer::<Self>(ctx, cx);
             });
         }
 
-        EasyMotion::update(cx, move |easy, _cx| {
+        Self::update(cx, move |easy, _cx| {
             easy.multipane_state = Some(new_state);
         });
     }
@@ -504,7 +483,7 @@ impl EasyMotion {
                 .filter(|(_seq, overlay)| overlay.editor_id == editor.entity_id());
 
             editor.update(cx, |editor, cx| {
-                EasyMotion::add_overlays(editor, trie_iter, cx);
+                Self::add_overlays(editor, trie_iter, cx);
                 if dimming {
                     let map = &editor.snapshot(cx).display_snapshot;
                     let start = start_of_document(map);
@@ -515,11 +494,7 @@ impl EasyMotion {
                         fade_out: Some(0.7),
                         ..Default::default()
                     };
-                    editor.highlight_text::<EasyMotion>(
-                        vec![anchor_start..anchor_end],
-                        highlight,
-                        cx,
-                    );
+                    editor.highlight_text::<Self>(vec![anchor_start..anchor_end], highlight, cx);
                 }
             });
         }
@@ -527,26 +502,16 @@ impl EasyMotion {
         EditorState::Selection(Selection::new(trie))
     }
 
-    fn word_starts_multipane(
-        word_type: WordType,
-        direction: Direction,
-        active_editor_id: EntityId,
-        workspace: &mut Workspace,
-        cx: &mut ViewContext<Workspace>,
-    ) -> Vec<(DisplayPoint, EntityId)> {
+    fn pattern(_action: &Pattern, _cx: &mut WindowContext) {
         todo!()
     }
 
-    fn pattern(action: &Pattern, cx: &mut WindowContext) {
-        todo!()
-    }
-
-    fn n_char(action: &NChar, cx: &mut WindowContext) {
+    fn n_char(_action: &NChar, _cx: &mut WindowContext) {
         todo!()
     }
 
     fn cancel(workspace: &mut Workspace, cx: &mut WindowContext) {
-        let editor = EasyMotion::update(cx, |easy, _| {
+        let editor = Self::update(cx, |easy, _| {
             if let Some(state) = easy.multipane_state.as_mut() {
                 state.clear();
                 None
@@ -562,14 +527,14 @@ impl EasyMotion {
             for editor in editors {
                 editor.update(cx, |editor, cx| {
                     editor.clear_overlays(cx);
-                    editor.clear_highlights::<EasyMotion>(cx);
+                    editor.clear_highlights::<Self>(cx);
                     editor.remove_keymap_context_layer::<Self>(cx);
                 });
             }
         } else if let Some(editor) = editor.map(|editor| editor.upgrade()).flatten() {
             editor.update(cx, |editor, cx| {
                 editor.clear_overlays(cx);
-                editor.clear_highlights::<EasyMotion>(cx);
+                editor.clear_highlights::<Self>(cx);
                 editor.remove_keymap_context_layer::<Self>(cx);
             });
         }
@@ -585,9 +550,11 @@ impl EasyMotion {
         if let Some(state) = Self::update(cx, |easy, _| easy.multipane_state.take()).flatten() {
             Self::observe_keystrokes_impl_multipane(keystroke_event, state, cx)
         } else {
-            return;
+            Self::observe_keystrokes_impl(keystroke_event, cx);
         };
+    }
 
+    fn observe_keystrokes_impl(keystroke_event: &KeystrokeEvent, cx: &mut WindowContext) {
         let Some((state, weak_editor)) = Self::update(cx, |easy, _| {
             let state = easy.take_state();
             let weak_editor = easy.active_editor.clone();
@@ -653,19 +620,19 @@ impl EasyMotion {
                     selection.move_cursors_with(|_, _, _| (overlay.point, SelectionGoal::None))
                 });
                 editor.clear_overlays(cx);
-                editor.clear_highlights::<EasyMotion>(cx);
+                editor.clear_highlights::<Self>(cx);
                 editor.remove_keymap_context_layer::<Self>(cx);
                 EditorState::None
             }
             TrimResult::Changed => {
                 let trie = selection.trie();
                 editor.clear_overlays(cx);
-                EasyMotion::add_overlays(editor, trie.iter(), cx);
+                Self::add_overlays(editor, trie.iter(), cx);
                 EditorState::Selection(selection)
             }
             TrimResult::Err => {
                 editor.clear_overlays(cx);
-                editor.clear_highlights::<EasyMotion>(cx);
+                editor.clear_highlights::<Self>(cx);
                 editor.remove_keymap_context_layer::<Self>(cx);
                 EditorState::None
             }
@@ -706,7 +673,7 @@ impl EasyMotion {
                     for editor in editors {
                         editor.update(cx, |editor, cx| {
                             editor.clear_overlays(cx);
-                            editor.clear_highlights::<EasyMotion>(cx);
+                            editor.clear_highlights::<Self>(cx);
                             editor.remove_keymap_context_layer::<Self>(cx);
                         });
                     }
@@ -720,7 +687,7 @@ impl EasyMotion {
                             .filter(|(_, overlay)| overlay.editor_id == editor.entity_id());
                         editor.update(cx, |editor, cx| {
                             editor.clear_overlays(cx);
-                            EasyMotion::add_overlays(editor, iter, cx);
+                            Self::add_overlays(editor, iter, cx);
                         });
                     }
                     EditorState::Selection(selection)
@@ -729,7 +696,7 @@ impl EasyMotion {
                     for editor in editors {
                         editor.update(cx, |editor, cx| {
                             editor.clear_overlays(cx);
-                            editor.clear_highlights::<EasyMotion>(cx);
+                            editor.clear_highlights::<Self>(cx);
                             editor.remove_keymap_context_layer::<Self>(cx);
                         });
                     }
@@ -748,7 +715,7 @@ impl EasyMotion {
                 // model? view?
                 // let chan = self.update_easy_and_active_editor(cx, |easy, editor, cx| {
                 //     cx.spawn(|view, cx| async move {
-                //         EasyMotion::update(cx, |easy, window| {});
+                //         Self::update(cx, |easy, window| {});
                 //     });
                 // });
 
