@@ -338,12 +338,14 @@ dependencies = [
  "anthropic",
  "anyhow",
  "assistant_slash_command",
+ "async-watch",
  "cargo_toml",
  "chrono",
  "client",
  "collections",
  "command_palette_hooks",
  "ctor",
+ "dashmap",
  "editor",
  "env_logger",
  "feature_flags",
@@ -353,6 +355,7 @@ dependencies = [
  "fuzzy",
  "gpui",
  "gray_matter",
+ "heed",
  "http 0.1.0",
  "indoc",
  "language",
@@ -820,6 +823,15 @@ dependencies = [
  "log",
  "pin-project-lite",
  "tungstenite 0.16.0",
+]
+
+[[package]]
+name = "async-watch"
+version = "0.3.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a078faf4e27c0c6cc0efb20e5da59dcccc04968ebf2801d8e0b2195124cdcdb2"
+dependencies = [
+ "event-listener 2.5.3",
 ]
 
 [[package]]
@@ -3391,7 +3403,7 @@ version = "0.5.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "330c60081dcc4c72131f8eb70510f1ac07223e5d4163db481a04a0befcffa412"
 dependencies = [
- "libloading 0.7.4",
+ "libloading 0.8.0",
 ]
 
 [[package]]
