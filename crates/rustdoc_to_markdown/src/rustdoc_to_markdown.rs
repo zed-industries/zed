@@ -45,6 +45,27 @@ mod tests {
     use super::*;
 
     #[test]
+    fn test_main_heading_buttons_get_removed() {
+        let html = indoc! {r##"
+            <div class="main-heading">
+                <h1>Crate <a class="mod" href="#">serde</a><button id="copy-path" title="Copy item path to clipboard">Copy item path</button></h1>
+                <span class="out-of-band">
+                    <a class="src" href="../src/serde/lib.rs.html#1-340">source</a> · <button id="toggle-all-docs" title="collapse all docs">[<span>−</span>]</button>
+                </span>
+            </div>
+        "##};
+        let expected = indoc! {"
+            # Crate serde
+        "}
+        .trim();
+
+        assert_eq!(
+            convert_rustdoc_to_markdown(html.as_bytes()).unwrap(),
+            expected
+        )
+    }
+
+    #[test]
     fn test_rust_code_block() {
         let html = indoc! {r#"
             <pre class="rust rust-example-rendered"><code><span class="kw">use </span>axum::extract::{Path, Query, Json};
