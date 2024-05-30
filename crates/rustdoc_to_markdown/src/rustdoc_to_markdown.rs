@@ -140,6 +140,42 @@ mod tests {
     }
 
     #[test]
+    fn test_item_table() {
+        let html = indoc! {r##"
+            <h2 id="structs" class="section-header">Structs<a href="#structs" class="anchor">§</a></h2>
+            <ul class="item-table">
+            <li><div class="item-name"><a class="struct" href="struct.Error.html" title="struct axum::Error">Error</a></div><div class="desc docblock-short">Errors that can happen when using axum.</div></li>
+            <li><div class="item-name"><a class="struct" href="struct.Extension.html" title="struct axum::Extension">Extension</a></div><div class="desc docblock-short">Extractor and response for extensions.</div></li>
+            <li><div class="item-name"><a class="struct" href="struct.Form.html" title="struct axum::Form">Form</a><span class="stab portability" title="Available on crate feature `form` only"><code>form</code></span></div><div class="desc docblock-short">URL encoded extractor and response.</div></li>
+            <li><div class="item-name"><a class="struct" href="struct.Json.html" title="struct axum::Json">Json</a><span class="stab portability" title="Available on crate feature `json` only"><code>json</code></span></div><div class="desc docblock-short">JSON Extractor / Response.</div></li>
+            <li><div class="item-name"><a class="struct" href="struct.Router.html" title="struct axum::Router">Router</a></div><div class="desc docblock-short">The router type for composing handlers and services.</div></li></ul>
+            <h2 id="functions" class="section-header">Functions<a href="#functions" class="anchor">§</a></h2>
+            <ul class="item-table">
+            <li><div class="item-name"><a class="fn" href="fn.serve.html" title="fn axum::serve">serve</a><span class="stab portability" title="Available on crate feature `tokio` and (crate features `http1` or `http2`) only"><code>tokio</code> and (<code>http1</code> or <code>http2</code>)</span></div><div class="desc docblock-short">Serve the service with the supplied listener.</div></li>
+            </ul>
+        "##};
+        let expected = indoc! {r#"
+            ## Structs
+
+            - `Error`: Errors that can happen when using axum.
+            - `Extension`: Extractor and response for extensions.
+            - `Form` [`form`]: URL encoded extractor and response.
+            - `Json` [`json`]: JSON Extractor / Response.
+            - `Router`: The router type for composing handlers and services.
+
+            ## Functions
+
+            - `serve` [`tokio` and (`http1` or `http2`)]: Serve the service with the supplied listener.
+        "#}
+        .trim();
+
+        assert_eq!(
+            convert_rustdoc_to_markdown(html.as_bytes()).unwrap(),
+            expected
+        )
+    }
+
+    #[test]
     fn test_table() {
         let html = indoc! {r##"
             <h2 id="feature-flags"><a class="doc-anchor" href="#feature-flags">§</a>Feature flags</h2>
