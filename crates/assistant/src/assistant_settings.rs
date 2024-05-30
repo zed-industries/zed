@@ -12,8 +12,11 @@ use serde::{
     Deserialize, Deserializer, Serialize, Serializer,
 };
 use settings::{Settings, SettingsSources};
+use strum::{EnumIter, IntoEnumIterator};
 
-#[derive(Clone, Debug, Default, PartialEq)]
+use crate::LanguageModel;
+
+#[derive(Clone, Debug, Default, PartialEq, EnumIter)]
 pub enum ZedDotDevModel {
     Gpt3Point5Turbo,
     Gpt4,
@@ -53,13 +56,10 @@ impl<'de> Deserialize<'de> for ZedDotDevModel {
             where
                 E: de::Error,
             {
-                match value {
-                    "gpt-3.5-turbo" => Ok(ZedDotDevModel::Gpt3Point5Turbo),
-                    "gpt-4" => Ok(ZedDotDevModel::Gpt4),
-                    "gpt-4-turbo-preview" => Ok(ZedDotDevModel::Gpt4Turbo),
-                    "gpt-4o" => Ok(ZedDotDevModel::Gpt4Omni),
-                    _ => Ok(ZedDotDevModel::Custom(value.to_owned())),
-                }
+                let model = ZedDotDevModel::iter()
+                    .find(|model| model.id() == value)
+                    .unwrap_or_else(|| ZedDotDevModel::Custom(value.to_string()));
+                Ok(model)
             }
         }
 
@@ -73,24 +73,23 @@ impl JsonSchema for ZedDotDevModel {
     }
 
     fn json_schema(_generator: &mut schemars::gen::SchemaGenerator) -> Schema {
-        let variants = vec![
-            "gpt-3.5-turbo".to_owned(),
-            "gpt-4".to_owned(),
-            "gpt-4-turbo-preview".to_owned(),
-            "gpt-4o".to_owned(),
-        ];
+        let variants = ZedDotDevModel::iter()
+            .filter_map(|model| {
+                let id = model.id();
+                if id.is_empty() {
+                    None
+                } else {
+                    Some(id.to_string())
+                }
+            })
+            .collect::<Vec<_>>();
         Schema::Object(SchemaObject {
             instance_type: Some(InstanceType::String.into()),
-            enum_values: Some(variants.into_iter().map(|s| s.into()).collect()),
+            enum_values: Some(variants.iter().map(|s| s.clone().into()).collect()),
             metadata: Some(Box::new(Metadata {
                 title: Some("ZedDotDevModel".to_owned()),
-                default: Some(serde_json::json!("gpt-4-turbo-preview")),
-                examples: vec![
-                    serde_json::json!("gpt-3.5-turbo"),
-                    serde_json::json!("gpt-4"),
-                    serde_json::json!("gpt-4-turbo-preview"),
-                    serde_json::json!("custom-model-name"),
-                ],
+                default: Some(ZedDotDevModel::default().id().into()),
+                examples: variants.into_iter().map(Into::into).collect(),
                 ..Default::default()
             })),
             ..Default::default()
@@ -150,13 +149,13 @@ pub enum AssistantDockPosition {
 pub enum AssistantProvider {
     #[serde(rename = "zed.dev")]
     ZedDotDev {
-        #[serde(default)]
-        default_model: ZedDotDevModel,
+        #[serde(default, alias = "default_model")]
+        model: ZedDotDevModel,
     },
     #[serde(rename = "openai")]
     OpenAi {
-        #[serde(default)]
-        default_model: OpenAiModel,
+        #[serde(default, alias = "default_model")]
+        model: OpenAiModel,
         #[serde(default = "open_ai_url")]
         api_url: String,
         #[serde(default)]
@@ -164,8 +163,8 @@ pub enum AssistantProvider {
     },
     #[serde(rename = "anthropic")]
     Anthropic {
-        #[serde(default)]
-        default_model: AnthropicModel,
+        #[serde(default, alias = "default_model")]
+        model: AnthropicModel,
         #[serde(default = "anthropic_api_url")]
         api_url: String,
         #[serde(default)]
@@ -175,8 +174,10 @@ pub enum AssistantProvider {
 
 impl Default for AssistantProvider {
     fn default() -> Self {
-        Self::ZedDotDev {
-            default_model: ZedDotDevModel::default(),
+        Self::OpenAi {
+            model: OpenAiModel::default(),
+            api_url: open_ai_url(),
+            low_speed_timeout_in_seconds: None,
         }
     }
 }
@@ -241,14 +242,14 @@ impl AssistantSettingsContent {
                 default_height: settings.default_height,
                 provider: if let Some(open_ai_api_url) = settings.openai_api_url.as_ref() {
                     Some(AssistantProvider::OpenAi {
-                        default_model: settings.default_open_ai_model.clone().unwrap_or_default(),
+                        model: settings.default_open_ai_model.clone().unwrap_or_default(),
                         api_url: open_ai_api_url.clone(),
                         low_speed_timeout_in_seconds: None,
                     })
                 } else {
                     settings.default_open_ai_model.clone().map(|open_ai_model| {
                         AssistantProvider::OpenAi {
-                            default_model: open_ai_model,
+                            model: open_ai_model,
                             api_url: open_ai_url(),
                             low_speed_timeout_in_seconds: None,
                         }
@@ -267,6 +268,40 @@ impl AssistantSettingsContent {
             },
             AssistantSettingsContent::Legacy(settings) => {
                 settings.dock = Some(dock);
+            }
+        }
+    }
+
+    pub fn set_model(&mut self, new_model: LanguageModel) {
+        match self {
+            AssistantSettingsContent::Versioned(settings) => match settings {
+                VersionedAssistantSettingsContent::V1(settings) => {
+                    let provider = settings
+                        .provider
+                        .get_or_insert_with(AssistantProvider::default);
+                    match provider {
+                        AssistantProvider::ZedDotDev { model } => {
+                            if let LanguageModel::ZedDotDev(new_model) = new_model {
+                                *model = new_model;
+                            }
+                        }
+                        AssistantProvider::OpenAi { model, .. } => {
+                            if let LanguageModel::OpenAi(new_model) = new_model {
+                                *model = new_model;
+                            }
+                        }
+                        AssistantProvider::Anthropic { model, .. } => {
+                            if let LanguageModel::Anthropic(new_model) = new_model {
+                                *model = new_model;
+                            }
+                        }
+                    }
+                }
+            },
+            AssistantSettingsContent::Legacy(settings) => {
+                if let LanguageModel::OpenAi(model) = new_model {
+                    settings.default_open_ai_model = Some(model);
+                }
             }
         }
     }
@@ -376,26 +411,26 @@ impl Settings for AssistantSettings {
             if let Some(provider) = value.provider.clone() {
                 match (&mut settings.provider, provider) {
                     (
-                        AssistantProvider::ZedDotDev { default_model },
+                        AssistantProvider::ZedDotDev { model },
                         AssistantProvider::ZedDotDev {
-                            default_model: default_model_override,
+                            model: model_override,
                         },
                     ) => {
-                        *default_model = default_model_override;
+                        *model = model_override;
                     }
                     (
                         AssistantProvider::OpenAi {
-                            default_model,
+                            model,
                             api_url,
                             low_speed_timeout_in_seconds,
                         },
                         AssistantProvider::OpenAi {
-                            default_model: default_model_override,
+                            model: model_override,
                             api_url: api_url_override,
                             low_speed_timeout_in_seconds: low_speed_timeout_in_seconds_override,
                         },
                     ) => {
-                        *default_model = default_model_override;
+                        *model = model_override;
                         *api_url = api_url_override;
                         *low_speed_timeout_in_seconds = low_speed_timeout_in_seconds_override;
                     }
@@ -433,7 +468,7 @@ mod tests {
         assert_eq!(
             AssistantSettings::get_global(cx).provider,
             AssistantProvider::OpenAi {
-                default_model: OpenAiModel::FourOmni,
+                model: OpenAiModel::FourOmni,
                 api_url: open_ai_url(),
                 low_speed_timeout_in_seconds: None,
             }
@@ -455,7 +490,7 @@ mod tests {
         assert_eq!(
             AssistantSettings::get_global(cx).provider,
             AssistantProvider::OpenAi {
-                default_model: OpenAiModel::FourOmni,
+                model: OpenAiModel::FourOmni,
                 api_url: "test-url".into(),
                 low_speed_timeout_in_seconds: None,
             }
@@ -475,7 +510,7 @@ mod tests {
         assert_eq!(
             AssistantSettings::get_global(cx).provider,
             AssistantProvider::OpenAi {
-                default_model: OpenAiModel::Four,
+                model: OpenAiModel::Four,
                 api_url: open_ai_url(),
                 low_speed_timeout_in_seconds: None,
             }
@@ -490,7 +525,7 @@ mod tests {
                             "version": "1",
                             "provider": {
                                 "name": "zed.dev",
-                                "default_model": "custom"
+                                "model": "custom"
                             }
                         }
                     }"#,
@@ -501,7 +536,7 @@ mod tests {
         assert_eq!(
             AssistantSettings::get_global(cx).provider,
             AssistantProvider::ZedDotDev {
-                default_model: ZedDotDevModel::Custom("custom".into())
+                model: ZedDotDevModel::Custom("custom".into())
             }
         );
     }

@@ -49,6 +49,7 @@ serde_json.workspace = true
 settings.workspace = true
 smol.workspace = true
 strsim = "0.11"
+strum.workspace = true
 telemetry_events.workspace = true
 theme.workspace = true
 tiktoken-rs.workspace = true

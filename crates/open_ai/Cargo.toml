@@ -20,3 +20,4 @@ isahc.workspace = true
 schemars = { workspace = true, optional = true }
 serde.workspace = true
 serde_json.workspace = true
+strum.workspace = true
