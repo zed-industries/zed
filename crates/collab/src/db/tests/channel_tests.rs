@@ -176,23 +176,23 @@ async fn test_channel_invites(db: &Arc<Database>) {
         .unwrap();
 
     let user_2_invites = db
-        .get_channel_invites_for_user(user_2) // -> [channel_1_1, channel_1_2]
+        .get_channels_for_user(user_2)
         .await
         .unwrap()
+        .invited_channels
         .into_iter()
         .map(|channel| channel.id)
         .collect::<Vec<_>>();
-
     assert_eq!(user_2_invites, &[channel_1_1, channel_1_2]);
 
     let user_3_invites = db
-        .get_channel_invites_for_user(user_3) // -> [channel_1_1]
+        .get_channels_for_user(user_3)
         .await
         .unwrap()
+        .invited_channels
         .into_iter()
         .map(|channel| channel.id)
         .collect::<Vec<_>>();
-
     assert_eq!(user_3_invites, &[channel_1_1]);
 
     let (mut members, _) = db
