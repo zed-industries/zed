@@ -3043,8 +3043,14 @@ mod tests {
     fn test_bundled_settings_and_themes(cx: &mut AppContext) {
         cx.text_system()
             .add_fonts(vec![
-                Assets.load("fonts/zed-sans/zed-sans-extended.ttf").unwrap(),
-                Assets.load("fonts/zed-mono/zed-mono-extended.ttf").unwrap(),
+                Assets
+                    .load("fonts/zed-sans/zed-sans-extended.ttf")
+                    .unwrap()
+                    .unwrap(),
+                Assets
+                    .load("fonts/zed-mono/zed-mono-extended.ttf")
+                    .unwrap()
+                    .unwrap(),
             ])
             .unwrap();
         let themes = ThemeRegistry::default();

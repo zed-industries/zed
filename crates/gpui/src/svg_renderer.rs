@@ -24,13 +24,15 @@ impl SvgRenderer {
         Self { asset_source }
     }
 
-    pub fn render(&self, params: &RenderSvgParams) -> Result<Vec<u8>> {
+    pub fn render(&self, params: &RenderSvgParams) -> Result<Option<Vec<u8>>> {
         if params.size.is_zero() {
             return Err(anyhow!("can't render at a zero size"));
         }
 
         // Load the tree.
-        let bytes = self.asset_source.load(&params.path)?;
+        let Some(bytes) = self.asset_source.load(&params.path)? else {
+            return Ok(None);
+        };
 
         let pixmap = self.render_pixmap(&bytes, SvgSize::Size(params.size))?;
 
@@ -40,7 +42,7 @@ impl SvgRenderer {
             .iter()
             .map(|p| p.alpha())
             .collect::<Vec<_>>();
-        Ok(alpha_mask)
+        Ok(Some(alpha_mask))
     }
 
     pub fn render_pixmap(&self, bytes: &[u8], size: SvgSize) -> Result<Pixmap, usvg::Error> {
