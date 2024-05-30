@@ -30,6 +30,10 @@ enum StartTagOutcome {
 
 pub struct MarkdownWriter {
     current_element_stack: VecDeque<HtmlElement>,
+    /// The number of columns in the current `<table>`.
+    current_table_columns: usize,
+    is_first_th: bool,
+    is_first_td: bool,
     /// The Markdown output.
     markdown: String,
 }
@@ -38,6 +42,9 @@ impl MarkdownWriter {
     pub fn new() -> Self {
         Self {
             current_element_stack: VecDeque::new(),
+            current_table_columns: 0,
+            is_first_th: true,
+            is_first_td: true,
             markdown: String::new(),
         }
     }
@@ -56,6 +63,11 @@ impl MarkdownWriter {
     /// Appends a newline to the end of the Markdown output.
     fn push_newline(&mut self) {
         self.push_str("\n");
+    }
+
+    /// Appends a blank line to the end of the Markdown output.
+    fn push_blank_line(&mut self) {
+        self.push_str("\n\n");
     }
 
     pub fn run(mut self, root_node: &Handle) -> Result<String> {
@@ -166,6 +178,25 @@ impl MarkdownWriter {
             }
             "ul" | "ol" => self.push_newline(),
             "li" => self.push_str("- "),
+            "thead" => self.push_blank_line(),
+            "tr" => self.push_newline(),
+            "th" => {
+                self.current_table_columns += 1;
+                if self.is_first_th {
+                    self.is_first_th = false;
+                } else {
+                    self.push_str(" ");
+                }
+                self.push_str("| ");
+            }
+            "td" => {
+                if self.is_first_td {
+                    self.is_first_td = false;
+                } else {
+                    self.push_str(" ");
+                }
+                self.push_str("| ");
+            }
             "summary" => {
                 if tag.attrs.borrow().iter().any(|attr| {
                     attr.name.local.to_string() == "class" && attr.value.to_string() == "hideme"
@@ -209,6 +240,24 @@ impl MarkdownWriter {
             "pre" => self.push_str("\n```\n"),
             "ul" | "ol" => self.push_newline(),
             "li" => self.push_newline(),
+            "thead" => {
+                self.push_newline();
+                for ix in 0..self.current_table_columns {
+                    if ix > 0 {
+                        self.push_str(" ");
+                    }
+                    self.push_str("| ---");
+                }
+                self.push_str(" |");
+                self.is_first_th = true;
+            }
+            "tr" => {
+                self.push_str(" |");
+                self.is_first_td = true;
+            }
+            "table" => {
+                self.current_table_columns = 0;
+            }
             "div" => {
                 if tag.attrs.borrow().iter().any(|attr| {
                     attr.name.local.to_string() == "class" && attr.value.to_string() == "item-name"
