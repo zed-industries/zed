@@ -224,10 +224,13 @@ impl MarkdownWriter {
                     return StartTagOutcome::Skip;
                 }
 
-                if tag.attrs.borrow().iter().any(|attr| {
-                    attr.name.local.to_string() == "class" && attr.value.to_string() == "item-name"
-                }) {
-                    self.push_str("`");
+                if self.is_inside_item_name() {
+                    if tag.attrs.borrow().iter().any(|attr| {
+                        attr.name.local.to_string() == "class"
+                            && attr.value.split(' ').any(|class| class.trim() == "stab")
+                    }) {
+                        self.push_str(" [");
+                    }
                 }
             }
             _ => {}
@@ -265,11 +268,20 @@ impl MarkdownWriter {
             "table" => {
                 self.current_table_columns = 0;
             }
-            "div" => {
+            "div" | "span" => {
                 if tag.attrs.borrow().iter().any(|attr| {
                     attr.name.local.to_string() == "class" && attr.value.to_string() == "item-name"
                 }) {
-                    self.push_str("`: ");
+                    self.push_str(": ");
+                }
+
+                if self.is_inside_item_name() {
+                    if tag.attrs.borrow().iter().any(|attr| {
+                        attr.name.local.to_string() == "class"
+                            && attr.value.split(' ').any(|class| class.trim() == "stab")
+                    }) {
+                        self.push_str("]");
+                    }
                 }
             }
             _ => {}
@@ -283,8 +295,24 @@ impl MarkdownWriter {
         }
 
         let trimmed_text = text.trim_matches(|char| char == '\n' || char == '\r' || char == '§');
+
+        if self.is_inside_item_name() && !self.is_inside("span") && !self.is_inside("code") {
+            self.push_str(&format!("`{trimmed_text}`"));
+            return Ok(());
+        }
+
         self.push_str(trimmed_text);
 
         Ok(())
+    }
+
+    /// Returns whether we're currently inside of an `.item-name` element, which
+    /// rustdoc uses to display Rust items in a list.
+    fn is_inside_item_name(&self) -> bool {
+        self.current_element_stack.iter().any(|element| {
+            element.attrs.borrow().iter().any(|attr| {
+                attr.name.local.to_string() == "class" && attr.value.to_string() == "item-name"
+            })
+        })
     }
 }
