@@ -1,4 +1,5 @@
 use anyhow::{anyhow, Result};
+use chrono::{DateTime, Utc};
 use collections::HashMap;
 use editor::Editor;
 use futures::{
@@ -11,7 +12,12 @@ use gpui::{
 };
 use heed::{types::SerdeBincode, Database};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
-use std::{path::PathBuf, sync::Arc, time::Instant};
+use std::{
+    cmp::Reverse,
+    path::PathBuf,
+    sync::Arc,
+    time::{Duration, SystemTime, UNIX_EPOCH},
+};
 use ui::{
     div, prelude::IntoElement, ParentElement, Render, SharedString, Styled, StyledExt, ViewContext,
     VisualContext,
@@ -55,7 +61,7 @@ impl PromptLibrary {
         let metadata = store.load_metadata();
         cx.spawn(|this, mut cx| async move {
             let mut metadata = metadata.await.log_err()?;
-            metadata.sort_by_key(|m| m.mtime);
+            metadata.sort_by_key(|m| m.saved_at);
             this.update(&mut cx, |this, cx| {
                 this.active_prompt = metadata.first().map(|m| m.id);
                 this.metadata = metadata;
@@ -99,9 +105,9 @@ impl PromptLibrary {
                 .iter_mut()
                 .find(|m| m.id == active_prompt_id)
                 .unwrap();
-            metadata.mtime = Instant::now();
+            metadata.saved_at = Utc::now();
             metadata.title = title;
-            self.metadata.sort_by_key(|m| m.mtime);
+            self.metadata.sort_by_key(|m| Reverse(m.saved_at));
             cx.notify();
         }
     }
@@ -145,11 +151,7 @@ impl Render for PromptLibrary {
 pub struct PromptMetadata {
     pub id: PromptId,
     pub title: Option<SharedString>,
-    #[serde(
-        serialize_with = "serialize_instant",
-        deserialize_with = "deserialize_instant"
-    )]
-    pub mtime: Instant,
+    pub saved_at: DateTime<Utc>,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -238,7 +240,7 @@ impl PromptStore {
                 &PromptMetadata {
                     id,
                     title,
-                    mtime: Instant::now(),
+                    saved_at: Utc::now(),
                 },
             )?;
             bodies.put(&mut txn, &id, &body)?;
@@ -260,10 +262,8 @@ fn title_from_body<'a>(body: impl IntoIterator<Item = char>) -> Option<SharedStr
     let mut chars = body.into_iter().take_while(|c| *c != '\n').peekable();
 
     let mut level = 0;
-    let mut start = 0;
     while let Some('#') = chars.peek() {
         level += 1;
-        start += '#'.len_utf8();
         chars.next();
     }
 
@@ -274,17 +274,20 @@ fn title_from_body<'a>(body: impl IntoIterator<Item = char>) -> Option<SharedStr
     }
 }
 
-fn serialize_instant<S>(instant: &Instant, serializer: S) -> Result<S::Ok, S::Error>
+fn serialize_system_time<S>(time: &SystemTime, serializer: S) -> Result<S::Ok, S::Error>
 where
     S: Serializer,
 {
-    serializer.serialize_u64(instant.elapsed().as_nanos() as u64)
+    time.duration_since(UNIX_EPOCH)
+        .map_err(serde::ser::Error::custom)?
+        .as_secs()
+        .serialize(serializer)
 }
 
-fn deserialize_instant<'de, D>(deserializer: D) -> Result<Instant, D::Error>
+fn deserialize_system_time<'de, D>(deserializer: D) -> Result<SystemTime, D::Error>
 where
     D: Deserializer<'de>,
 {
-    let nanos = u64::deserialize(deserializer)?;
-    Ok(Instant::now() - std::time::Duration::from_nanos(nanos))
+    let seconds_since_epoch: u64 = Deserialize::deserialize(deserializer)?;
+    Ok(UNIX_EPOCH + Duration::from_secs(seconds_since_epoch))
 }
