@@ -1235,17 +1235,13 @@ impl EditorElement {
                         .get(&display_row_range.start)
                         .map(|expanded_end_row| expanded_end_row == &display_row_range.end)
                         .unwrap_or(false);
-                    if was_expanded {
-                        None
-                    } else {
-                        let hunk_bounds = Self::diff_hunk_bounds(
+                    let hunk_bounds = Self::diff_hunk_bounds(
                             &snapshot,
                             line_height,
                             gutter_hitbox.bounds,
                             &hunk,
                         );
-                        Some(cx.insert_hitbox(hunk_bounds, true))
-                    }
+                    Some(cx.insert_hitbox(hunk_bounds, true))
                 } else {
                     None
                 };
