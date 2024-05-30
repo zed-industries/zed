@@ -311,14 +311,14 @@ struct BackgroundScannerState {
 #[derive(Debug, Clone)]
 pub struct LocalRepositoryEntry {
     pub(crate) git_dir_scan_id: usize,
-    pub(crate) repo_ptr: Arc<Mutex<dyn GitRepository>>,
+    pub(crate) repo_ptr: Arc<dyn GitRepository>,
     /// Path to the actual .git folder.
     /// Note: if .git is a file, this points to the folder indicated by the .git file
     pub(crate) git_dir_path: Arc<Path>,
 }
 
 impl LocalRepositoryEntry {
-    pub fn repo(&self) -> &Arc<Mutex<dyn GitRepository>> {
+    pub fn repo(&self) -> &Arc<dyn GitRepository> {
         &self.repo_ptr
     }
 }
@@ -1145,7 +1145,7 @@ impl LocalWorktree {
                                 if abs_path_metadata.is_dir || abs_path_metadata.is_symlink {
                                     None
                                 } else {
-                                    git_repo.lock().load_index_text(&repo_path)
+                                    git_repo.load_index_text(&repo_path)
                                 }
                             }
                         }));
@@ -2236,7 +2236,7 @@ impl LocalSnapshot {
         Some((repo_entry, self.git_repositories.get(&work_directory_id)?))
     }
 
-    pub fn local_git_repo(&self, path: &Path) -> Option<Arc<Mutex<dyn GitRepository>>> {
+    pub fn local_git_repo(&self, path: &Path) -> Option<Arc<dyn GitRepository>> {
         self.repo_for_path(path)
             .map(|(_, entry)| entry.repo_ptr.clone())
     }
@@ -2556,7 +2556,6 @@ impl BackgroundScannerState {
                             work_directory: workdir_path,
                             statuses: repo
                                 .repo_ptr
-                                .lock()
                                 .statuses(&repo_path)
                                 .log_err()
                                 .unwrap_or_default(),
@@ -2704,7 +2703,7 @@ impl BackgroundScannerState {
         &mut self,
         dot_git_path: Arc<Path>,
         fs: &dyn Fs,
-    ) -> Option<(RepositoryWorkDirectory, Arc<Mutex<dyn GitRepository>>)> {
+    ) -> Option<(RepositoryWorkDirectory, Arc<dyn GitRepository>)> {
         let work_dir_path: Arc<Path> = match dot_git_path.parent() {
             Some(parent_dir) => {
                 // Guard against repositories inside the repository metadata
@@ -2739,7 +2738,7 @@ impl BackgroundScannerState {
         dot_git_path: Arc<Path>,
         location_in_repo: Option<Arc<Path>>,
         fs: &dyn Fs,
-    ) -> Option<(RepositoryWorkDirectory, Arc<Mutex<dyn GitRepository>>)> {
+    ) -> Option<(RepositoryWorkDirectory, Arc<dyn GitRepository>)> {
         let work_dir_id = self
             .snapshot
             .entry_for_path(work_dir_path.clone())
@@ -2759,7 +2758,7 @@ impl BackgroundScannerState {
             work_directory.clone(),
             RepositoryEntry {
                 work_directory: work_dir_id.into(),
-                branch: repository.lock().branch_name().map(Into::into),
+                branch: repository.branch_name().map(Into::into),
                 location_in_repo,
             },
         );
@@ -3836,7 +3835,6 @@ impl BackgroundScanner {
                 if let Some((work_directory, repository)) = repo {
                     let t0 = Instant::now();
                     let statuses = repository
-                        .lock()
                         .statuses(Path::new(""))
                         .log_err()
                         .unwrap_or_default();
@@ -4081,7 +4079,7 @@ impl BackgroundScanner {
                     if !is_dir && !fs_entry.is_ignored && !fs_entry.is_external {
                         if let Some((repo_entry, repo)) = state.snapshot.repo_for_path(path) {
                             if let Ok(repo_path) = repo_entry.relativize(&state.snapshot, path) {
-                                fs_entry.git_status = repo.repo_ptr.lock().status(&repo_path);
+                                fs_entry.git_status = repo.repo_ptr.status(&repo_path);
                             }
                         }
                     }
@@ -4267,7 +4265,7 @@ impl BackgroundScanner {
                 if !entry.is_dir() && !entry.is_ignored && !entry.is_external {
                     if let Some((ref repo_entry, local_repo)) = repo {
                         if let Ok(repo_path) = repo_entry.relativize(&snapshot, &entry.path) {
-                            entry.git_status = local_repo.repo_ptr.lock().status(&repo_path);
+                            entry.git_status = local_repo.repo_ptr.status(&repo_path);
                         }
                     }
                 }
@@ -4330,7 +4328,7 @@ impl BackgroundScanner {
                         };
 
                         log::info!("reload git repository {dot_git_dir:?}");
-                        let repo = repository.repo_ptr.lock();
+                        let repo = &repository.repo_ptr;
                         let branch = repo.branch_name();
                         repo.reload_index();
 
@@ -4348,7 +4346,6 @@ impl BackgroundScanner {
                 };
 
                 let statuses = repository
-                    .lock()
                     .statuses(Path::new(""))
                     .log_err()
                     .unwrap_or_default();

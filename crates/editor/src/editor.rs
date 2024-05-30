@@ -9975,11 +9975,9 @@ impl Editor {
 
         const REMOTE_NAME: &str = "origin";
         let origin_url = repo
-            .lock()
             .remote_url(REMOTE_NAME)
             .ok_or_else(|| anyhow!("remote \"{REMOTE_NAME}\" not found"))?;
         let sha = repo
-            .lock()
             .head_sha()
             .ok_or_else(|| anyhow!("failed to read HEAD SHA"))?;
         let selections = self.selections.all::<Point>(cx);
