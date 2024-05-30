@@ -2172,6 +2172,9 @@ impl Editor {
         show_completions: bool,
         cx: &mut ViewContext<Self>,
     ) {
+        #[cfg(target_os = "linux")]
+        cx.update_ime_position();
+
         // Copy selections to primary selection buffer
         #[cfg(target_os = "linux")]
         if local {
@@ -11620,6 +11623,7 @@ impl ViewInputHandler for Editor {
     fn selected_text_range(&mut self, cx: &mut ViewContext<Self>) -> Option<Range<usize>> {
         // Prevent the IME menu from appearing when holding down an alphabetic key
         // while input is disabled.
+        #[cfg(target_os = "macos")]
         if !self.input_enabled {
             return None;
         }

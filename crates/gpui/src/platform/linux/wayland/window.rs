@@ -858,6 +858,19 @@ impl PlatformWindow for WaylandWindow {
     fn should_render_window_controls(&self) -> bool {
         self.borrow().decoration_state == WaylandDecorationState::Client
     }
+
+    fn update_ime_position(&self) {
+        let state = self.borrow();
+        let client = state.client.clone();
+        let state_ptr = client.clone();
+        state
+            .globals
+            .executor
+            .spawn(async move {
+                client.update_ime_position();
+            })
+            .detach();
+    }
 }
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Hash)]

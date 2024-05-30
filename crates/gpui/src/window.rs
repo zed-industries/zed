@@ -693,6 +693,7 @@ impl Window {
                             .update(&mut cx, |_, cx| {
                                 cx.draw();
                                 cx.present();
+                                cx.update_ime_position();
                             })
                             .log_err();
                     })
@@ -3569,6 +3570,14 @@ impl WindowContext<'_> {
     /// Returns the raw HWND handle for the window.
     pub fn get_raw_handle(&self) -> windows::Win32::Foundation::HWND {
         self.window.platform_window.get_raw_handle()
+    }
+}
+
+#[cfg(target_os = "linux")]
+impl WindowContext<'_> {
+    /// Updates the IME panel position suggestions for languages like japanese, chinese.
+    pub fn update_ime_position(&self) {
+        self.window.platform_window.update_ime_position();
     }
 }
 

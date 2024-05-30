@@ -958,4 +958,15 @@ impl PlatformWindow for X11Window {
     fn should_render_window_controls(&self) -> bool {
         false
     }
+
+    fn update_ime_position(&self) {
+        let mut state = self.0.state.borrow_mut();
+        let client = state.client.clone();
+        state
+            .executor
+            .spawn(async move {
+                client.update_ime_position();
+            })
+            .detach();
+    }
 }
