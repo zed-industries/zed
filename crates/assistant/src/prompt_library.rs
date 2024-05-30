@@ -273,21 +273,3 @@ fn title_from_body<'a>(body: impl IntoIterator<Item = char>) -> Option<SharedStr
         None
     }
 }
-
-fn serialize_system_time<S>(time: &SystemTime, serializer: S) -> Result<S::Ok, S::Error>
-where
-    S: Serializer,
-{
-    time.duration_since(UNIX_EPOCH)
-        .map_err(serde::ser::Error::custom)?
-        .as_secs()
-        .serialize(serializer)
-}
-
-fn deserialize_system_time<'de, D>(deserializer: D) -> Result<SystemTime, D::Error>
-where
-    D: Deserializer<'de>,
-{
-    let seconds_since_epoch: u64 = Deserialize::deserialize(deserializer)?;
-    Ok(UNIX_EPOCH + Duration::from_secs(seconds_since_epoch))
-}
