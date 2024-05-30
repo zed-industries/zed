@@ -2750,7 +2750,9 @@ impl BackgroundScannerState {
         }
 
         let abs_path = self.snapshot.abs_path.join(&dot_git_path);
+        let t0 = Instant::now();
         let repository = fs.open_repo(&abs_path)?;
+        log::trace!("constructed libgit2 repo in {:?}", t0.elapsed());
         let work_directory = RepositoryWorkDirectory(work_dir_path.clone());
 
         self.snapshot.repository_entries.insert(
@@ -3827,16 +3829,18 @@ impl BackgroundScanner {
             let child_path: Arc<Path> = job.path.join(child_name).into();
 
             if child_name == *DOT_GIT {
-                if let Some((work_directory, repository)) = self
+                let repo = self
                     .state
                     .lock()
-                    .build_git_repository(child_path.clone(), self.fs.as_ref())
-                {
+                    .build_git_repository(child_path.clone(), self.fs.as_ref());
+                if let Some((work_directory, repository)) = repo {
+                    let t0 = Instant::now();
                     let statuses = repository
                         .lock()
                         .statuses(Path::new(""))
                         .log_err()
                         .unwrap_or_default();
+                    log::trace!("computed git status in {:?}", t0.elapsed());
                     containing_repository = Some(ScanJobContainingRepository {
                         work_directory,
                         statuses,
