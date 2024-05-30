@@ -132,7 +132,7 @@ impl MarkdownWriter {
 
     fn start_tag(&mut self, tag: &HtmlElement) -> StartTagOutcome {
         if tag.is_inline() && self.is_inside("p") {
-            if !self.markdown.ends_with(" ") {
+            if !self.markdown.ends_with(' ') {
                 self.push_str(" ");
             }
         }
