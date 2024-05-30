@@ -6,24 +6,28 @@ use futures::{
     future::{self, BoxFuture, Shared},
     FutureExt,
 };
+use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{
-    uniform_list, AppContext, BackgroundExecutor, Global, ReadGlobal, Task, View, WindowHandle,
+    actions, AppContext, BackgroundExecutor, Global, ReadGlobal, Task, View, WindowHandle,
     WindowOptions,
 };
 use heed::{types::SerdeBincode, Database};
-use serde::{Deserialize, Deserializer, Serialize, Serializer};
+use parking_lot::Mutex;
+use picker::{Picker, PickerDelegate};
+use serde::{Deserialize, Serialize};
 use std::{
     cmp::Reverse,
     path::PathBuf,
-    sync::Arc,
-    time::{Duration, SystemTime, UNIX_EPOCH},
+    sync::{atomic::AtomicBool, Arc},
 };
 use ui::{
-    div, prelude::IntoElement, ParentElement, Render, SharedString, Styled, StyledExt, ViewContext,
-    VisualContext,
+    div, prelude::*, IconButtonShape, ListItem, ListItemSpacing, ParentElement, Render,
+    SharedString, Styled, StyledExt, Tooltip, ViewContext, VisualContext,
 };
-use util::{paths::PROMPTS_DIR, ResultExt};
+use util::paths::PROMPTS_DIR;
 use uuid::Uuid;
+
+actions!(prompt_library, [NewPrompt, SavePrompt]);
 
 /// Init starts loading the PromptStore in the background and assigns
 /// a shared future to a global.
@@ -49,38 +53,95 @@ pub fn open_prompt_library(cx: &mut AppContext) -> Task<Result<WindowHandle<Prom
 }
 
 pub struct PromptLibrary {
-    metadata: Vec<PromptMetadata>,
     store: Arc<PromptStore>,
     prompt_editors: HashMap<PromptId, View<Editor>>,
     active_prompt: Option<PromptId>,
+    picker: View<Picker<PromptPickerDelegate>>,
+}
+
+struct PromptPickerDelegate {
+    store: Arc<PromptStore>,
+    selected_index: usize,
+    matches: Vec<PromptMetadata>,
+}
+
+impl PickerDelegate for PromptPickerDelegate {
+    type ListItem = ListItem;
+
+    fn match_count(&self) -> usize {
+        self.matches.len()
+    }
+
+    fn selected_index(&self) -> usize {
+        self.selected_index
+    }
+
+    fn set_selected_index(&mut self, ix: usize, cx: &mut ViewContext<Picker<Self>>) {
+        self.selected_index = ix;
+    }
+
+    fn placeholder_text(&self, _cx: &mut WindowContext) -> Arc<str> {
+        "Search prompts".into()
+    }
+
+    fn update_matches(&mut self, query: String, cx: &mut ViewContext<Picker<Self>>) -> Task<()> {
+        let search = self.store.search(query);
+        cx.spawn(|this, mut cx| async move {
+            let matches = search.await;
+            this.update(&mut cx, |this, cx| {
+                this.delegate.matches = matches;
+                cx.notify();
+            })
+            .ok();
+        })
+    }
+
+    fn confirm(&mut self, secondary: bool, cx: &mut ViewContext<Picker<Self>>) {
+        todo!()
+    }
+
+    fn dismissed(&mut self, _cx: &mut ViewContext<Picker<Self>>) {}
+
+    fn render_match(
+        &self,
+        ix: usize,
+        selected: bool,
+        cx: &mut ViewContext<Picker<Self>>,
+    ) -> Option<Self::ListItem> {
+        let prompt = self.matches.get(ix)?;
+        Some(
+            ListItem::new(ix)
+                .inset(true)
+                .spacing(ListItemSpacing::Sparse)
+                .selected(selected)
+                .child(Label::new(
+                    prompt.title.clone().unwrap_or("Untitled".into()),
+                )),
+        )
+        // .end_slot(div().when(is_dirty, |this| this.child(Indicator::dot()))),
+    }
 }
 
 impl PromptLibrary {
     pub fn new(store: Arc<PromptStore>, cx: &mut ViewContext<Self>) -> Self {
-        // Fetch metadata from database in background upon construction
-        let metadata = store.load_metadata();
-        cx.spawn(|this, mut cx| async move {
-            let mut metadata = metadata.await.log_err()?;
-            metadata.sort_by_key(|m| m.saved_at);
-            this.update(&mut cx, |this, cx| {
-                this.active_prompt = metadata.first().map(|m| m.id);
-                this.metadata = metadata;
-                cx.notify();
-            })
-            .ok()
-        })
-        .detach();
-
+        let delegate = PromptPickerDelegate {
+            store: store.clone(),
+            selected_index: 0,
+            matches: Vec::new(),
+        };
+        let active_prompt = store.most_recently_saved();
         Self {
             store,
-            metadata: Vec::new(),
             prompt_editors: HashMap::default(),
-            active_prompt: None,
+            active_prompt,
+            picker: cx.new_view(|cx| Picker::uniform_list(delegate, cx).modal(false)),
         }
     }
 
     pub fn new_prompt(&mut self, cx: &mut ViewContext<Self>) {
         let id = PromptId::new();
+        self.store.save(id, None, "".into()).detach_and_log_err(cx);
+
         let editor = cx.new_view(|cx| Editor::multi_line(cx));
         self.prompt_editors.insert(id, editor);
         self.active_prompt = Some(id);
@@ -97,38 +158,49 @@ impl PromptLibrary {
 
             let title = title_from_body(body.buffer_chars_at(0).map(|(c, _)| c));
             self.store
-                .save_prompt(active_prompt_id, title.clone(), body.text())
+                .save(active_prompt_id, title.clone(), body.text())
                 .detach_and_log_err(cx);
 
-            let metadata = self
-                .metadata
-                .iter_mut()
-                .find(|m| m.id == active_prompt_id)
-                .unwrap();
-            metadata.saved_at = Utc::now();
-            metadata.title = title;
-            self.metadata.sort_by_key(|m| Reverse(m.saved_at));
             cx.notify();
         }
     }
 
-    fn render_list(&self, cx: &mut ViewContext<Self>) -> impl IntoElement {
-        uniform_list(
-            cx.view().clone(),
-            "prompt-list",
-            self.metadata.len(),
-            |view, range, _cx| {
-                view.metadata[range]
-                    .iter()
-                    .map(|metadata| {
-                        metadata
-                            .title
-                            .clone()
-                            .unwrap_or_else(|| SharedString::from("Untitled"))
-                    })
-                    .collect()
-            },
-        )
+    fn render_prompt_list(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+        let picker = self.picker.clone();
+
+        v_flex()
+            .id("prompt-list")
+            .bg(cx.theme().colors().surface_background)
+            .h_full()
+            .w_1_3()
+            .overflow_hidden()
+            .child(
+                h_flex()
+                    .bg(cx.theme().colors().background)
+                    .p(Spacing::Small.rems(cx))
+                    .border_b_1()
+                    .border_color(cx.theme().colors().border)
+                    .h(rems(1.75))
+                    .w_full()
+                    .flex_none()
+                    .justify_between()
+                    .child(Label::new("Prompt Library").size(LabelSize::Small))
+                    .child(
+                        IconButton::new("new-prompt", IconName::Plus)
+                            .shape(IconButtonShape::Square)
+                            .tooltip(move |cx| Tooltip::text("New Prompt", cx))
+                            .on_click(|_, cx| {
+                                // cx.dispatch_action(NewPrompt.boxed_clone());
+                            }),
+                    ),
+            )
+            .child(
+                v_flex()
+                    .h(rems(38.25))
+                    .flex_grow()
+                    .justify_start()
+                    .child(picker),
+            )
     }
 
     fn active_prompt_editor(&self) -> Option<View<Editor>> {
@@ -139,11 +211,38 @@ impl PromptLibrary {
 
 impl Render for PromptLibrary {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
-        div()
+        h_flex()
+            .id("prompt-manager")
+            .key_context("PromptLibrary")
+            // .track_focus(&self.focus_handle)
+            .on_action(cx.listener(|this, &NewPrompt, cx| this.new_prompt(cx)))
+            .on_action(cx.listener(|this, &SavePrompt, cx| this.save_active_prompt(cx)))
+            .elevation_3(cx)
             .size_full()
-            .h_flex()
-            .child(self.render_list(cx))
-            .children(self.active_prompt_editor())
+            .flex_none()
+            .overflow_hidden()
+            .child(self.render_prompt_list(cx))
+            .child(
+                div()
+                    .w_2_3()
+                    .h_full()
+                    .id("prompt-editor")
+                    .border_l_1()
+                    .border_color(cx.theme().colors().border)
+                    .bg(cx.theme().colors().editor_background)
+                    .size_full()
+                    .flex_none()
+                    .min_w_64()
+                    .h_full()
+                    .overflow_hidden()
+                    .children(self.active_prompt_editor().map(|editor| {
+                        div()
+                            .flex_1()
+                            .py(Spacing::Large.rems(cx))
+                            .px(Spacing::XLarge.rems(cx))
+                            .child(editor)
+                    })),
+            )
     }
 }
 
@@ -168,6 +267,7 @@ struct PromptStore {
     env: heed::Env,
     bodies: Database<SerdeBincode<PromptId>, SerdeBincode<String>>,
     metadata: Database<SerdeBincode<PromptId>, SerdeBincode<PromptMetadata>>,
+    cached_metadata: Mutex<Vec<PromptMetadata>>,
 }
 
 impl PromptStore {
@@ -175,42 +275,42 @@ impl PromptStore {
         executor.spawn({
             let executor = executor.clone();
             async move {
+                std::fs::create_dir_all(&db_path)?;
+
                 let db_env = unsafe {
                     heed::EnvOpenOptions::new()
                         .map_size(1024 * 1024 * 1024) // 1GB
-                        .max_dbs(1)
+                        .max_dbs(2) // bodies and metadata
                         .open(db_path)?
                 };
 
                 let mut txn = db_env.write_txn()?;
                 let bodies = db_env.create_database(&mut txn, Some("bodies"))?;
                 let metadata = db_env.create_database(&mut txn, Some("metadata"))?;
+
+                let iter = metadata.iter(&txn)?;
+                let cached_metadata = iter
+                    .map(|result| Ok(result?.1))
+                    .collect::<Result<Vec<_>>>()?;
+
                 txn.commit()?;
+
                 Ok(PromptStore {
                     executor,
                     env: db_env,
                     bodies,
                     metadata,
+                    cached_metadata: Mutex::new(cached_metadata),
                 })
             }
         })
     }
-}
 
-impl PromptStore {
-    fn load_metadata(&self) -> Task<Result<Vec<PromptMetadata>>> {
-        let env = self.env.clone();
-        let metadata = self.metadata.clone();
-        self.executor.spawn(async move {
-            let txn = env.read_txn()?;
-            let iter = metadata.iter(&txn)?;
-            Ok(iter
-                .map(|result| Ok(result?.1))
-                .collect::<Result<Vec<_>>>()?)
-        })
+    fn count(&self) -> usize {
+        self.cached_metadata.lock().len()
     }
 
-    fn load_prompt_body(&self, id: PromptId) -> Task<Result<String>> {
+    fn load(&self, id: PromptId) -> Task<Result<String>> {
         let env = self.env.clone();
         let bodies = self.bodies;
         self.executor.spawn(async move {
@@ -221,12 +321,51 @@ impl PromptStore {
         })
     }
 
-    fn save_prompt(
-        &self,
-        id: PromptId,
-        title: Option<SharedString>,
-        body: String,
-    ) -> Task<Result<()>> {
+    fn search(&self, query: String) -> Task<Vec<PromptMetadata>> {
+        let cached_metadata = self.cached_metadata.lock().clone();
+        let executor = self.executor.clone();
+        self.executor.spawn(async move {
+            let candidates = cached_metadata
+                .iter()
+                .enumerate()
+                .filter_map(|(ix, metadata)| {
+                    Some(StringMatchCandidate::new(
+                        ix,
+                        metadata.title.as_ref()?.to_string(),
+                    ))
+                })
+                .collect::<Vec<_>>();
+            let matches = fuzzy::match_strings(
+                &candidates,
+                &query,
+                false,
+                100,
+                &AtomicBool::default(),
+                executor,
+            )
+            .await;
+
+            matches
+                .into_iter()
+                .map(|mat| cached_metadata[mat.candidate_id].clone())
+                .collect()
+        })
+    }
+
+    fn save(&self, id: PromptId, title: Option<SharedString>, body: String) -> Task<Result<()>> {
+        let mut cached_metadata = self.cached_metadata.lock();
+        if let Some(metadata) = cached_metadata.iter_mut().find(|m| m.id == id) {
+            metadata.saved_at = Utc::now();
+            metadata.title = title.clone();
+        } else {
+            cached_metadata.push(PromptMetadata {
+                id,
+                title: title.clone(),
+                saved_at: Utc::now(),
+            })
+        }
+        cached_metadata.sort_by_key(|m| Reverse(m.saved_at));
+
         let db_connection = self.env.clone();
         let bodies = self.bodies;
         let metadata = self.metadata;
@@ -248,6 +387,13 @@ impl PromptStore {
             txn.commit()?;
             Ok(())
         })
+    }
+
+    fn most_recently_saved(&self) -> Option<PromptId> {
+        self.cached_metadata
+            .lock()
+            .first()
+            .map(|metadata| metadata.id)
     }
 }
 

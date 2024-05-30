@@ -234,6 +234,13 @@
     }
   },
   {
+    "context": "PromptLibrary",
+    "bindings": {
+      "cmd-n": "prompt_library::NewPrompt",
+      "cmd-s": "prompt_library::SavePrompt"
+    }
+  },
+  {
     "context": "BufferSearchBar",
     "bindings": {
       "escape": "buffer_search::Dismiss",

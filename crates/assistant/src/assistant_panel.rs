@@ -1,3 +1,4 @@
+use crate::prompt_library::open_prompt_library;
 use crate::prompts::{generate_content_prompt, PromptLibrary, PromptManager};
 use crate::slash_command::{rustdoc_command, search_command, tabs_command};
 use crate::{
@@ -29,7 +30,7 @@ use editor::{
     ToOffset as _, ToPoint,
 };
 use editor::{display_map::FlapId, FoldPlaceholder};
-use feature_flags::{FeatureFlag, FeatureFlagAppExt, FeatureFlagViewExt};
+use feature_flags::{FeatureFlag, FeatureFlagViewExt};
 use file_icons::FileIcons;
 use fs::Fs;
 use futures::future::Shared;
@@ -1211,15 +1212,15 @@ impl AssistantPanel {
                         h_flex()
                             .gap_1()
                             .child(self.render_inject_context_menu(cx))
-                            .children(
-                                cx.has_flag::<PromptLibraryFeatureFlag>().then_some(
-                                    IconButton::new("show_prompt_manager", IconName::Library)
-                                        .icon_size(IconSize::Small)
-                                        .on_click(cx.listener(|this, _event, cx| {
-                                            this.show_prompt_manager(cx)
-                                        }))
-                                        .tooltip(|cx| Tooltip::text("Prompt Library…", cx)),
-                                ),
+                            .child(
+                                // cx.has_flag::<PromptLibraryFeatureFlag>().then_some(
+                                IconButton::new("show-prompt-library", IconName::Library)
+                                    .icon_size(IconSize::Small)
+                                    .on_click(cx.listener(|_this, _event, cx| {
+                                        open_prompt_library(cx).detach_and_log_err(cx);
+                                    }))
+                                    .tooltip(|cx| Tooltip::text("Prompt Library…", cx)),
+                                // ),
                             ),
                     ),
             );

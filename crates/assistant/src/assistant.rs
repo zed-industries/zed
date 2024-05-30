@@ -252,6 +252,8 @@ pub fn init(client: Arc<Client>, cx: &mut AppContext) {
         }
     })
     .detach();
+
+    prompt_library::init(cx);
     completion_provider::init(client, cx);
     assistant_slash_command::init(cx);
     assistant_panel::init(cx);
