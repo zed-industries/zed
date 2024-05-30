@@ -241,7 +241,7 @@ pub enum OutputType {
     ErrorOutput(ErrorView),
     Message(String),
     Table(TableView),
-    ClearOutputMarker,
+    ClearOutputWaitMarker,
 }
 
 impl OutputType {
@@ -256,7 +256,7 @@ impl OutputType {
             Self::Message(message) => Some(div().child(message.clone()).into_any_element()),
             Self::Table(table) => Some(table.render(cx)),
             Self::ErrorOutput(error_view) => error_view.render(cx),
-            Self::ClearOutputMarker => None,
+            Self::ClearOutputWaitMarker => None,
         };
 
         el
@@ -273,7 +273,7 @@ impl LineHeight for OutputType {
             Self::Message(message) => message.lines().count() as u8,
             Self::Table(table) => table.num_lines(cx),
             Self::ErrorOutput(error_view) => error_view.num_lines(cx),
-            Self::ClearOutputMarker => 0,
+            Self::ClearOutputWaitMarker => 0,
         }
     }
 }
@@ -376,7 +376,7 @@ impl ExecutionView {
                 }
 
                 // Create a marker to clear the output after we get in a new output
-                OutputType::ClearOutputMarker
+                OutputType::ClearOutputWaitMarker
             }
             JupyterMessageContent::Status(status) => {
                 match status.execution_state {
@@ -394,7 +394,7 @@ impl ExecutionView {
         };
 
         // Check for a clear output marker as the previous output, so we can clear it out
-        if let Some(OutputType::ClearOutputMarker) = self.outputs.last() {
+        if let Some(OutputType::ClearOutputWaitMarker) = self.outputs.last() {
             self.outputs.clear();
         }
 
@@ -412,7 +412,7 @@ impl ExecutionView {
                     return None;
                 }
                 // Edge case note: a clear output marker
-                OutputType::ClearOutputMarker => {
+                OutputType::ClearOutputWaitMarker => {
                     // Edge case note: a clear output marker is handled by the caller
                     // since we will return a new output at the end here as a new terminal output
                 }
