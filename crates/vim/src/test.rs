@@ -168,18 +168,18 @@ async fn test_end_of_line_with_times(cx: &mut gpui::TestAppContext) {
 
 #[gpui::test]
 async fn test_indent_outdent(cx: &mut gpui::TestAppContext) {
-    let mut cx = VimTestContext::new(cx, true).await;
+    let mut cx = NeovimBackedTestContext::new(cx).await;
 
     // works in normal mode
     cx.set_state(indoc! {"aa\nbˇb\ncc"}, Mode::Normal);
     cx.simulate_keystrokes("> >");
-    cx.assert_editor_state("aa\n    bˇb\ncc");
+    cx.assert_editor_state("aa\n ˇ   bb\ncc");
     cx.simulate_keystrokes("< <");
     cx.assert_editor_state("aa\nbˇb\ncc");
 
     // works in visual mode
     cx.simulate_keystrokes("shift-v down >");
-    cx.assert_editor_state("aa\n    bb\n    cˇc");
+    cx.assert_editor_state("aa\n    bb\n ˇ   cc");
 }
 
 #[gpui::test]

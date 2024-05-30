@@ -139,9 +139,33 @@ pub(crate) fn register(workspace: &mut Workspace, cx: &mut ViewContext<Workspace
 
     workspace.register_action(|_: &mut Workspace, _: &Indent, cx| {
         Vim::update(cx, |vim, cx| {
+            let times = vim.take_count(cx);
             vim.record_current_action(cx);
             vim.update_active_editor(cx, |_, editor, cx| {
-                editor.transact(cx, |editor, cx| editor.indent(&Default::default(), cx))
+                let text_layout_details = editor.text_layout_details(cx);
+                let mut original_positions: std::collections::HashMap<_, _> = Default::default();
+                editor.transact(cx, |editor, cx| {
+                    editor.change_selections(None, cx, |s| {
+                        s.move_with(|map, selection| {
+                            let original_position = (selection.head(), selection.goal);
+                            original_positions.insert(selection.id, original_position);
+                            motion::Motion::CurrentLine.expand_selection(
+                                map,
+                                selection,
+                                times,
+                                true,
+                                &text_layout_details,
+                            );
+                        });
+                    });
+                    editor.indent(&Default::default(), cx);
+                    editor.change_selections(None, cx, |s| {
+                        s.move_with(|_, selection| {
+                            let (head, goal) = original_positions.remove(&selection.id).unwrap();
+                            selection.collapse_to(head, goal);
+                        });
+                    });
+                });
             });
             if vim.state().mode.is_visual() {
                 vim.switch_mode(Mode::Normal, false, cx)
@@ -151,9 +175,33 @@ pub(crate) fn register(workspace: &mut Workspace, cx: &mut ViewContext<Workspace
 
     workspace.register_action(|_: &mut Workspace, _: &Outdent, cx| {
         Vim::update(cx, |vim, cx| {
+            let times = vim.take_count(cx);
             vim.record_current_action(cx);
             vim.update_active_editor(cx, |_, editor, cx| {
-                editor.transact(cx, |editor, cx| editor.outdent(&Default::default(), cx))
+                let text_layout_details = editor.text_layout_details(cx);
+                let mut original_positions: std::collections::HashMap<_, _> = Default::default();
+                editor.transact(cx, |editor, cx| {
+                    editor.change_selections(None, cx, |s| {
+                        s.move_with(|map, selection| {
+                            let original_position = (selection.head(), selection.goal);
+                            original_positions.insert(selection.id, original_position);
+                            motion::Motion::CurrentLine.expand_selection(
+                                map,
+                                selection,
+                                times,
+                                true,
+                                &text_layout_details,
+                            );
+                        });
+                    });
+                    editor.outdent(&Default::default(), cx);
+                    editor.change_selections(None, cx, |s| {
+                        s.move_with(|_, selection| {
+                            let (head, goal) = original_positions.remove(&selection.id).unwrap();
+                            selection.collapse_to(head, goal);
+                        });
+                    });
+                });
             });
             if vim.state().mode.is_visual() {
                 vim.switch_mode(Mode::Normal, false, cx)
