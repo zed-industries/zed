@@ -2234,6 +2234,15 @@ impl ProjectPanel {
                                                 )
                                             });
                                         if let Some(anchor) = scroll_target {
+                                            project_panel.marked_entries.clear();
+                                            project_panel.marked_entries.insert(SelectedEntry {
+                                                worktree_id,
+                                                entry_id,
+                                            });
+                                            project_panel.selection = Some(SelectedEntry {
+                                                worktree_id,
+                                                entry_id,
+                                            });
                                             active_editor.update(cx, |editor, cx| {
                                                 editor.set_scroll_anchor(
                                                     ScrollAnchor {
