@@ -5,6 +5,7 @@
 
 mod reliability;
 mod zed;
+mod zed_prompts;
 
 use anyhow::{anyhow, Context as _, Result};
 use clap::{command, Parser};
@@ -326,6 +327,8 @@ fn main() {
     });
 
     app.run(move |cx| {
+        cx.set_prompt_builder(zed_prompts::build);
+
         release_channel::init(env!("CARGO_PKG_VERSION"), cx);
         if let Some(build_sha) = option_env!("ZED_COMMIT_SHA") {
             AppCommitSha::set_global(AppCommitSha(build_sha.into()), cx);

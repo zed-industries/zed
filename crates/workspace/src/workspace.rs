@@ -627,6 +627,17 @@ impl Workspace {
         app_state: Arc<AppState>,
         cx: &mut ViewContext<Self>,
     ) -> Self {
+        let prompt = cx.prompt(
+            PromptLevel::Info,
+            "TEST PROMPT",
+            Some("Test detail"),
+            &["ok", "no"],
+        );
+        cx.spawn(|_, _cx| async {
+            prompt.await.ok();
+        })
+        .detach();
+
         cx.observe(&project, |_, _, cx| cx.notify()).detach();
         cx.subscribe(&project, move |this, _, event, cx| {
             match event {
