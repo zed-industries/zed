@@ -283,7 +283,7 @@ impl Item for ProjectIndexDebugView {
 
     fn clone_on_split(
         &self,
-        _: workspace::WorkspaceId,
+        _: Option<workspace::WorkspaceId>,
         cx: &mut ViewContext<Self>,
     ) -> Option<View<Self>>
     where

@@ -230,6 +230,7 @@ dependencies = [
  "schemars",
  "serde",
  "serde_json",
+ "strum",
  "tokio",
 ]
 
@@ -379,6 +380,7 @@ dependencies = [
  "settings",
  "smol",
  "strsim 0.11.1",
+ "strum",
  "telemetry_events",
  "theme",
  "tiktoken-rs",
@@ -6995,6 +6997,7 @@ dependencies = [
  "schemars",
  "serde",
  "serde_json",
+ "strum",
 ]
 
 [[package]]
@@ -8652,6 +8655,7 @@ dependencies = [
  "html5ever",
  "indoc",
  "markup5ever_rcdom",
+ "pretty_assertions",
  "regex",
 ]
 

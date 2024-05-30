@@ -7,11 +7,12 @@ use client::{proto, Client};
 use futures::{future::BoxFuture, stream::BoxStream, FutureExt, StreamExt, TryFutureExt};
 use gpui::{AnyView, AppContext, Task};
 use std::{future, sync::Arc};
+use strum::IntoEnumIterator;
 use ui::prelude::*;
 
 pub struct ZedDotDevCompletionProvider {
     client: Arc<Client>,
-    default_model: ZedDotDevModel,
+    model: ZedDotDevModel,
     settings_version: usize,
     status: client::Status,
     _maintain_client_status: Task<()>,
@@ -19,7 +20,7 @@ pub struct ZedDotDevCompletionProvider {
 
 impl ZedDotDevCompletionProvider {
     pub fn new(
-        default_model: ZedDotDevModel,
+        model: ZedDotDevModel,
         client: Arc<Client>,
         settings_version: usize,
         cx: &mut AppContext,
@@ -39,24 +40,39 @@ impl ZedDotDevCompletionProvider {
         });
         Self {
             client,
-            default_model,
+            model,
             settings_version,
             status,
             _maintain_client_status: maintain_client_status,
         }
     }
 
-    pub fn update(&mut self, default_model: ZedDotDevModel, settings_version: usize) {
-        self.default_model = default_model;
+    pub fn update(&mut self, model: ZedDotDevModel, settings_version: usize) {
+        self.model = model;
         self.settings_version = settings_version;
+    }
+
+    pub fn available_models(&self) -> impl Iterator<Item = ZedDotDevModel> {
+        let mut custom_model = if let ZedDotDevModel::Custom(custom_model) = self.model.clone() {
+            Some(custom_model)
+        } else {
+            None
+        };
+        ZedDotDevModel::iter().filter_map(move |model| {
+            if let ZedDotDevModel::Custom(_) = model {
+                Some(ZedDotDevModel::Custom(custom_model.take()?))
+            } else {
+                Some(model)
+            }
+        })
     }
 
     pub fn settings_version(&self) -> usize {
         self.settings_version
     }
 
-    pub fn default_model(&self) -> ZedDotDevModel {
-        self.default_model.clone()
+    pub fn model(&self) -> ZedDotDevModel {
+        self.model.clone()
     }
 
     pub fn is_authenticated(&self) -> bool {

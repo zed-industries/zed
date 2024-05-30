@@ -2,6 +2,7 @@ pub mod assistant_panel;
 pub mod assistant_settings;
 mod codegen;
 mod completion_provider;
+mod model_selector;
 mod prompt_library;
 mod prompts;
 mod saved_conversation;
@@ -16,6 +17,7 @@ use client::{proto, Client};
 use command_palette_hooks::CommandPaletteFilter;
 pub(crate) use completion_provider::*;
 use gpui::{actions, AppContext, Global, SharedString, UpdateGlobal};
+pub(crate) use model_selector::*;
 pub(crate) use saved_conversation::*;
 use semantic_index::{CloudEmbeddingProvider, SemanticIndex};
 use serde::{Deserialize, Serialize};
@@ -39,7 +41,8 @@ actions!(
         InsertActivePrompt,
         ToggleHistory,
         ApplyEdit,
-        ConfirmCommand
+        ConfirmCommand,
+        ToggleModelSelector
     ]
 );
 

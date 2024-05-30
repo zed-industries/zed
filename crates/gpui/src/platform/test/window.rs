@@ -291,24 +291,25 @@ impl PlatformAtlas for TestAtlas {
     fn get_or_insert_with<'a>(
         &self,
         key: &crate::AtlasKey,
-        build: &mut dyn FnMut() -> anyhow::Result<(
-            Size<crate::DevicePixels>,
-            std::borrow::Cow<'a, [u8]>,
-        )>,
-    ) -> anyhow::Result<crate::AtlasTile> {
+        build: &mut dyn FnMut() -> anyhow::Result<
+            Option<(Size<crate::DevicePixels>, std::borrow::Cow<'a, [u8]>)>,
+        >,
+    ) -> anyhow::Result<Option<crate::AtlasTile>> {
         let mut state = self.0.lock();
         if let Some(tile) = state.tiles.get(key) {
-            return Ok(tile.clone());
+            return Ok(Some(tile.clone()));
         }
+        drop(state);
 
+        let Some((size, _)) = build()? else {
+            return Ok(None);
+        };
+
+        let mut state = self.0.lock();
         state.next_id += 1;
         let texture_id = state.next_id;
         state.next_id += 1;
         let tile_id = state.next_id;
-
-        drop(state);
-        let (size, _) = build()?;
-        let mut state = self.0.lock();
 
         state.tiles.insert(
             key.clone(),
@@ -326,6 +327,6 @@ impl PlatformAtlas for TestAtlas {
             },
         );
 
-        Ok(state.tiles[key].clone())
+        Ok(Some(state.tiles[key].clone()))
     }
 }

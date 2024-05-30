@@ -484,7 +484,7 @@ pub struct Editor {
     current_line_highlight: CurrentLineHighlight,
     collapse_matches: bool,
     autoindent_mode: Option<AutoindentMode>,
-    workspace: Option<(WeakView<Workspace>, WorkspaceId)>,
+    workspace: Option<(WeakView<Workspace>, Option<WorkspaceId>)>,
     keymap_context_layers: BTreeMap<TypeId, KeyContext>,
     input_enabled: bool,
     use_modal_editing: bool,
@@ -3761,7 +3761,7 @@ impl Editor {
         }))
     }
 
-    fn show_completions(&mut self, _: &ShowCompletions, cx: &mut ViewContext<Self>) {
+    pub fn show_completions(&mut self, _: &ShowCompletions, cx: &mut ViewContext<Self>) {
         if self.pending_rename.is_some() {
             return;
         }

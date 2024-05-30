@@ -657,7 +657,7 @@ impl Item for Editor {
 
     fn clone_on_split(
         &self,
-        _workspace_id: WorkspaceId,
+        _workspace_id: Option<WorkspaceId>,
         cx: &mut ViewContext<Self>,
     ) -> Option<View<Editor>>
     where
@@ -846,9 +846,12 @@ impl Item for Editor {
     }
 
     fn added_to_workspace(&mut self, workspace: &mut Workspace, cx: &mut ViewContext<Self>) {
-        let workspace_id = workspace.database_id();
-        let item_id = cx.view().item_id().as_u64() as ItemId;
         self.workspace = Some((workspace.weak_handle(), workspace.database_id()));
+        let Some(workspace_id) = workspace.database_id() else {
+            return;
+        };
+
+        let item_id = cx.view().item_id().as_u64() as ItemId;
 
         fn serialize(
             buffer: Model<Buffer>,
@@ -873,7 +876,7 @@ impl Item for Editor {
             serialize(buffer.clone(), workspace_id, item_id, cx);
 
             cx.subscribe(&buffer, |this, buffer, event, cx| {
-                if let Some((_, workspace_id)) = this.workspace.as_ref() {
+                if let Some((_, Some(workspace_id))) = this.workspace.as_ref() {
                     if let language::Event::FileHandleChanged = event {
                         serialize(
                             buffer,

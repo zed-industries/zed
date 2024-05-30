@@ -832,7 +832,7 @@ fn load_embedded_fonts(cx: &AppContext) {
             }
 
             scope.spawn(async {
-                let font_bytes = asset_source.load(font_path).unwrap();
+                let font_bytes = asset_source.load(font_path).unwrap().unwrap();
                 embedded_fonts.lock().push(font_bytes);
             });
         }

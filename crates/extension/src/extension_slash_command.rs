@@ -27,7 +27,7 @@ impl SlashCommand for ExtensionSlashCommand {
         self.command.description.clone()
     }
 
-    fn tooltip_text(&self) -> String {
+    fn menu_text(&self) -> String {
         self.command.tooltip_text.clone()
     }
 
