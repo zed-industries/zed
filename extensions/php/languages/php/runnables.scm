@@ -94,7 +94,10 @@
         arguments: (arguments
             .
             (argument
-                (encapsed_string (string_value) @run)
+                [
+                  (encapsed_string (string_value) @run)
+                  (string (string_value) @run)
+                ]
             )
         )
     ) @pest-test
