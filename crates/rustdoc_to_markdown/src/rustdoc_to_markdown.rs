@@ -114,7 +114,7 @@ mod tests {
         let expected = indoc! {"
             ## Serde
 
-            Serde is a framework for serializing and deserializing Rust data structures efficiently and generically.
+            Serde is a framework for _**ser**_ializing and _**de**_serializing Rust data structures efficiently and generically.
 
             The Serde ecosystem consists of data structures that know how to serialize and deserialize themselves along with data formats that know how to serialize and deserialize other things. Serde provides the layer by which these two groups interact with each other, allowing any supported data structure to be serialized and deserialized using any supported data format.
 
@@ -123,6 +123,25 @@ mod tests {
             ### Design
 
             Where many other languages rely on runtime reflection for serializing data, Serde is instead built on Rust’s powerful trait system. A data structure that knows how to serialize and deserialize itself is one that implements Serde’s `Serialize` and `Deserialize` traits (or uses Serde’s derive attribute to automatically generate implementations at compile time). This avoids any overhead of reflection or runtime type information. In fact in many situations the interaction between data structure and data format can be completely optimized away by the Rust compiler, leaving Serde serialization to perform the same speed as a handwritten serializer for the specific selection of data structure and data format.
+        "}
+        .trim();
+
+        assert_eq!(
+            convert_rustdoc_to_markdown(html.as_bytes()).unwrap(),
+            expected
+        )
+    }
+
+    #[test]
+    fn test_styled_text() {
+        let html = indoc! {r#"
+            <p>This text is <strong>bolded</strong>.</p>
+            <p>This text is <em>italicized</em>.</p>
+        "#};
+        let expected = indoc! {"
+            This text is **bolded**.
+
+            This text is _italicized_.
         "}
         .trim();
 
