@@ -60,9 +60,9 @@ impl TrieBuilder {
             p = builder.next_perm(p);
         }
         builder
-        // replace the points with the actual points
     }
 
+    #[allow(dead_code)]
     pub fn populate<T>(self, reverse: bool, iter: impl IntoIterator<Item = T>) -> Trie<T> {
         let (node, _) = TrieBuilder::new_rec(self.root, reverse, iter.into_iter());
         Trie {
@@ -218,6 +218,7 @@ pub(crate) struct Trie<T> {
 }
 
 impl<T> Trie<T> {
+    #[allow(dead_code)]
     pub fn new_from_vec(keys: String, values: Vec<T>, reverse: bool) -> Self {
         TrieBuilder::new(keys, values.len()).populate(reverse, values.into_iter())
     }
@@ -436,6 +437,7 @@ mod tests {
         );
     }
 
+    #[allow(dead_code)]
     fn perms_helper_rev(trie: &Trie<i32>, perms: Vec<(&str, i32)>) {
         let trie_perms = trie.trie_to_perms_rev();
         assert_eq!(

@@ -1,15 +1,15 @@
 use futures::channel::oneshot;
-use std::sync::Arc;
 
 use editor::Editor;
-use project::search::SearchQuery;
 use ui::ViewContext;
 
+#[allow(dead_code)]
 struct Search {}
 
+#[allow(dead_code)]
 impl Search {
-    pub fn search(query: String, cx: &mut ViewContext<Editor>) -> oneshot::Receiver<()> {
-        let (done_tx, done_rx) = oneshot::channel();
+    pub fn search(_query: String, _cx: &mut ViewContext<Editor>) -> oneshot::Receiver<()> {
+        let (_done_tx, done_rx) = oneshot::channel();
         // let query: Arc<_> =
         //     match SearchQuery::text(query, true, false, false, Vec::new(), Vec::new()) {
         //         Ok(query) => query.with_replacement(self.replacement(cx)),
