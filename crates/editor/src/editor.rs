@@ -484,7 +484,7 @@ pub struct Editor {
     current_line_highlight: CurrentLineHighlight,
     collapse_matches: bool,
     autoindent_mode: Option<AutoindentMode>,
-    workspace: Option<(WeakView<Workspace>, WorkspaceId)>,
+    workspace: Option<(WeakView<Workspace>, Option<WorkspaceId>)>,
     keymap_context_layers: BTreeMap<TypeId, KeyContext>,
     input_enabled: bool,
     use_modal_editing: bool,
@@ -3761,7 +3761,7 @@ impl Editor {
         }))
     }
 
-    fn show_completions(&mut self, _: &ShowCompletions, cx: &mut ViewContext<Self>) {
+    pub fn show_completions(&mut self, _: &ShowCompletions, cx: &mut ViewContext<Self>) {
         if self.pending_rename.is_some() {
             return;
         }
@@ -9957,10 +9957,33 @@ impl Editor {
     }
 
     fn get_permalink_to_line(&mut self, cx: &mut ViewContext<Self>) -> Result<url::Url> {
-        let (path, repo) = maybe!({
+        let (path, selection, repo) = maybe!({
             let project_handle = self.project.as_ref()?.clone();
             let project = project_handle.read(cx);
-            let buffer = self.buffer().read(cx).as_singleton()?;
+
+            let selection = self.selections.newest::<Point>(cx);
+            let selection_range = selection.range();
+
+            let (buffer, selection) = if let Some(buffer) = self.buffer().read(cx).as_singleton() {
+                (buffer, selection_range.start.row..selection_range.end.row)
+            } else {
+                let buffer_ranges = self
+                    .buffer()
+                    .read(cx)
+                    .range_to_buffer_ranges(selection_range, cx);
+
+                let (buffer, range, _) = if selection.reversed {
+                    buffer_ranges.first()
+                } else {
+                    buffer_ranges.last()
+                }?;
+
+                let snapshot = buffer.read(cx).snapshot();
+                let selection = text::ToPoint::to_point(&range.start, &snapshot).row
+                    ..text::ToPoint::to_point(&range.end, &snapshot).row;
+                (buffer.clone(), selection)
+            };
+
             let path = buffer
                 .read(cx)
                 .file()?
@@ -9969,21 +9992,17 @@ impl Editor {
                 .to_str()?
                 .to_string();
             let repo = project.get_repo(&buffer.read(cx).project_path(cx)?, cx)?;
-            Some((path, repo))
+            Some((path, selection, repo))
         })
         .ok_or_else(|| anyhow!("unable to open git repository"))?;
 
         const REMOTE_NAME: &str = "origin";
         let origin_url = repo
-            .lock()
             .remote_url(REMOTE_NAME)
             .ok_or_else(|| anyhow!("remote \"{REMOTE_NAME}\" not found"))?;
         let sha = repo
-            .lock()
             .head_sha()
             .ok_or_else(|| anyhow!("failed to read HEAD SHA"))?;
-        let selections = self.selections.all::<Point>(cx);
-        let selection = selections.iter().peekable().next();
 
         let (provider, remote) =
             parse_git_remote_url(GitHostingProviderRegistry::default_global(cx), &origin_url)
@@ -9994,12 +10013,7 @@ impl Editor {
             BuildPermalinkParams {
                 sha: &sha,
                 path: &path,
-                selection: selection.map(|selection| {
-                    let range = selection.range();
-                    let start = range.start.row;
-                    let end = range.end.row;
-                    start..end
-                }),
+                selection: Some(selection),
             },
         ))
     }

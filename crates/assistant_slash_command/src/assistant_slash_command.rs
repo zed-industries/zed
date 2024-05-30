@@ -20,7 +20,7 @@ pub trait SlashCommand: 'static + Send + Sync {
         CodeLabel::plain(self.name(), None)
     }
     fn description(&self) -> String;
-    fn tooltip_text(&self) -> String;
+    fn menu_text(&self) -> String;
     fn complete_argument(
         &self,
         query: String,

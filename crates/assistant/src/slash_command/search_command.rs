@@ -32,11 +32,11 @@ impl SlashCommand for SearchSlashCommand {
     }
 
     fn description(&self) -> String {
-        "semantically search files".into()
+        "semantic search".into()
     }
 
-    fn tooltip_text(&self) -> String {
-        "search".into()
+    fn menu_text(&self) -> String {
+        "Semantic Search".into()
     }
 
     fn requires_argument(&self) -> bool {

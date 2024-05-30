@@ -1,5 +1,5 @@
-use std::path::Path;
 use std::sync::Arc;
+use std::{fmt::Debug, path::Path};
 
 use anyhow::{anyhow, Context, Result};
 use collections::HashMap;
@@ -226,7 +226,7 @@ impl ThemeRegistry {
             .filter(|path| path.ends_with(".json"));
 
         for path in theme_paths {
-            let Some(theme) = self.assets.load(&path).log_err() else {
+            let Some(theme) = self.assets.load(&path).log_err().flatten() else {
                 continue;
             };
 

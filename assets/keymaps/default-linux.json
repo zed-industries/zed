@@ -201,7 +201,8 @@
     "context": "AssistantPanel",
     "bindings": {
       "ctrl-g": "search::SelectNextMatch",
-      "ctrl-shift-g": "search::SelectPrevMatch"
+      "ctrl-shift-g": "search::SelectPrevMatch",
+      "alt-m": "assistant::ToggleModelSelector"
     }
   },
   {

@@ -35,7 +35,10 @@
     arguments: (arguments
         .
         (argument
-            (encapsed_string (string_value) @name)
+            [
+              (encapsed_string (string_value) @name)
+              (string (string_value) @name)
+            ]
         )
     )
 ) @item

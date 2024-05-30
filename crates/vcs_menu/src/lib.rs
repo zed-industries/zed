@@ -109,7 +109,7 @@ impl BranchListDelegate {
             .get_first_worktree_root_repo(cx)
             .context("failed to get root repository for first worktree")?;
 
-        let all_branches = repo.lock().branches()?;
+        let all_branches = repo.branches()?;
         Ok(Self {
             matches: vec![],
             workspace: handle,
@@ -237,7 +237,6 @@ impl PickerDelegate for BranchListDelegate {
                         .get_first_worktree_root_repo(cx)
                         .context("failed to get root repository for first worktree")?;
                     let status = repo
-                        .lock()
                         .change_branch(&current_pick);
                     if status.is_err() {
                         this.delegate.display_error_toast(format!("Failed to checkout branch '{current_pick}', check for conflicts or unstashed files"), cx);
@@ -316,8 +315,6 @@ impl PickerDelegate for BranchListDelegate {
                                             let repo = project
                                                 .get_first_worktree_root_repo(cx)
                                                 .context("failed to get root repository for first worktree")?;
-                                            let repo = repo
-                                                .lock();
                                             let status = repo
                                                 .create_branch(&current_pick);
                                             if status.is_err() {

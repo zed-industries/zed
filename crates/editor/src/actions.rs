@@ -41,7 +41,7 @@ pub struct MovePageDown {
 #[derive(PartialEq, Clone, Deserialize, Default)]
 pub struct MoveToEndOfLine {
     #[serde(default = "default_true")]
-    pub(super) stop_at_soft_wraps: bool,
+    pub stop_at_soft_wraps: bool,
 }
 
 #[derive(PartialEq, Clone, Deserialize, Default)]

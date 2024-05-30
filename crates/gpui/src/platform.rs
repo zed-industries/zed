@@ -344,8 +344,8 @@ pub(crate) trait PlatformAtlas: Send + Sync {
     fn get_or_insert_with<'a>(
         &self,
         key: &AtlasKey,
-        build: &mut dyn FnMut() -> Result<(Size<DevicePixels>, Cow<'a, [u8]>)>,
-    ) -> Result<AtlasTile>;
+        build: &mut dyn FnMut() -> Result<Option<(Size<DevicePixels>, Cow<'a, [u8]>)>>,
+    ) -> Result<Option<AtlasTile>>;
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

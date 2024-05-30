@@ -287,7 +287,7 @@ impl PickerDelegate for RecentProjectsDelegate {
             };
             workspace
                 .update(cx, |workspace, cx| {
-                    if workspace.database_id() == *candidate_workspace_id {
+                    if workspace.database_id() == Some(*candidate_workspace_id) {
                         Task::ready(Ok(()))
                     } else {
                         match candidate_workspace_location {
@@ -675,7 +675,7 @@ impl RecentProjectsDelegate {
     ) -> bool {
         if let Some(workspace) = self.workspace.upgrade() {
             let workspace = workspace.read(cx);
-            if workspace_id == workspace.database_id() {
+            if Some(workspace_id) == workspace.database_id() {
                 return true;
             }
         }
