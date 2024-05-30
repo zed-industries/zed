@@ -1144,9 +1144,9 @@ mod tests {
     use std::ops::Range;
 
     use super::*;
-    use editor::{display_map::DisplayRow, DisplayPoint, Editor};
+    use editor::{display_map::DisplayRow, AnchorRangeExt, DisplayPoint, Editor, MultiBuffer};
     use gpui::{Context, Hsla, TestAppContext, VisualTestContext};
-    use language::Buffer;
+    use language::{Buffer, Point};
     use project::Project;
     use smol::stream::StreamExt as _;
     use unindent::Unindent as _;
@@ -1459,6 +1459,15 @@ mod tests {
         });
     }
 
+    fn display_points_of(
+        background_highlights: Vec<(Range<DisplayPoint>, Hsla)>,
+    ) -> Vec<Range<DisplayPoint>> {
+        background_highlights
+            .into_iter()
+            .map(|(range, _)| range)
+            .collect::<Vec<_>>()
+    }
+
     #[gpui::test]
     async fn test_search_option_handling(cx: &mut TestAppContext) {
         let (editor, search_bar, cx) = init_test(cx);
@@ -1471,12 +1480,6 @@ mod tests {
             })
             .await
             .unwrap();
-        let display_points_of = |background_highlights: Vec<(Range<DisplayPoint>, Hsla)>| {
-            background_highlights
-                .into_iter()
-                .map(|(range, _)| range)
-                .collect::<Vec<_>>()
-        };
         editor.update(cx, |editor, cx| {
             assert_eq!(
                 display_points_of(editor.all_text_background_highlights(cx)),
@@ -2086,35 +2089,156 @@ mod tests {
         .await;
     }
 
-    //    // cargo test -p search test_query_suggestion
-    //    #[gpui::test]
-    //    async fn test_query_suggestion(cx: &mut TestAppContext) {
-    //        let (editor, search_bar, cx) = init_test(cx);
-    //
-    //        editor.update(cx, |editor, cx| {
-    //            editor.change_selections(None, cx, |s| {
-    //                s.select_range(Point::new(1, 0)..Point::new(2, 4))
-    //            })
-    //        });
-    //
-    //        search_bar.update(cx, |search_bar, cx| {
-    //            search_bar.deploy(&Default::default(), cx);
-    //        });
-    //
-    //        cx.run_until_parked();
-    //
-    //        search_bar.update(cx, |search_bar, cx| assert_eq!(search_bar.query(cx), ""));
-    //    }
+    #[gpui::test]
+    async fn test_find_matches_in_selections_singleton_buffer_multiple_selections(
+        cx: &mut TestAppContext,
+    ) {
+        init_globals(cx);
+        let buffer = cx.new_model(|cx| {
+            Buffer::local(
+                r#"
+                aaa bbb aaa ccc
+                aaa bbb aaa ccc
+                aaa bbb aaa ccc
+                aaa bbb aaa ccc
+                aaa bbb aaa ccc
+                aaa bbb aaa ccc
+                "#
+                .unindent(),
+                cx,
+            )
+        });
+        let cx = cx.add_empty_window();
+        let editor = cx.new_view(|cx| Editor::for_buffer(buffer.clone(), None, cx));
+
+        let search_bar = cx.new_view(|cx| {
+            let mut search_bar = BufferSearchBar::new(cx);
+            search_bar.set_active_pane_item(Some(&editor), cx);
+            search_bar.show(cx);
+            search_bar
+        });
+
+        editor.update(cx, |editor, cx| {
+            editor.change_selections(None, cx, |s| {
+                s.select_ranges(vec![Point::new(1, 0)..Point::new(2, 4)])
+            })
+        });
+
+        search_bar.update(cx, |search_bar, cx| {
+            let deploy = Deploy {
+                focus: true,
+                replace_enabled: false,
+                selection_search_enabled: true,
+            };
+            search_bar.deploy(&deploy, cx);
+        });
+
+        cx.run_until_parked();
+
+        search_bar
+            .update(cx, |search_bar, cx| search_bar.search("aaa", None, cx))
+            .await
+            .unwrap();
+
+        editor.update(cx, |editor, cx| {
+            assert_eq!(
+                editor.search_background_highlights(cx),
+                &[
+                    Point::new(1, 0)..Point::new(1, 3),
+                    Point::new(1, 8)..Point::new(1, 11),
+                    Point::new(2, 0)..Point::new(2, 3),
+                ]
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_find_matches_in_selections_multiple_excerpts_buffer_multiple_selections(
+        cx: &mut TestAppContext,
+    ) {
+        init_globals(cx);
+        let text = r#"
+            aaa bbb aaa ccc
+            aaa bbb aaa ccc
+            aaa bbb aaa ccc
+            aaa bbb aaa ccc
+            aaa bbb aaa ccc
+            aaa bbb aaa ccc
+
+            aaa bbb aaa ccc
+            aaa bbb aaa ccc
+            aaa bbb aaa ccc
+            aaa bbb aaa ccc
+            aaa bbb aaa ccc
+            aaa bbb aaa ccc
+            "#
+        .unindent();
+
+        let cx = cx.add_empty_window();
+        let editor = cx.new_view(|cx| {
+            let multibuffer = MultiBuffer::build_multi(
+                [
+                    (
+                        &text,
+                        vec![
+                            Point::new(0, 0)..Point::new(2, 0),
+                            Point::new(4, 0)..Point::new(5, 0),
+                        ],
+                    ),
+                    (&text, vec![Point::new(9, 0)..Point::new(11, 0)]),
+                ],
+                cx,
+            );
+            Editor::for_multibuffer(multibuffer, None, false, cx)
+        });
+
+        let search_bar = cx.new_view(|cx| {
+            let mut search_bar = BufferSearchBar::new(cx);
+            search_bar.set_active_pane_item(Some(&editor), cx);
+            search_bar.show(cx);
+            search_bar
+        });
+
+        editor.update(cx, |editor, cx| {
+            editor.change_selections(None, cx, |s| {
+                s.select_ranges(vec![
+                    Point::new(1, 0)..Point::new(1, 4),
+                    Point::new(5, 3)..Point::new(6, 4),
+                ])
+            })
+        });
+
+        search_bar.update(cx, |search_bar, cx| {
+            let deploy = Deploy {
+                focus: true,
+                replace_enabled: false,
+                selection_search_enabled: true,
+            };
+            search_bar.deploy(&deploy, cx);
+        });
+
+        cx.run_until_parked();
+
+        search_bar
+            .update(cx, |search_bar, cx| search_bar.search("aaa", None, cx))
+            .await
+            .unwrap();
+
+        editor.update(cx, |editor, cx| {
+            assert_eq!(
+                editor.search_background_highlights(cx),
+                &[
+                    Point::new(1, 0)..Point::new(1, 3),
+                    Point::new(5, 8)..Point::new(5, 11),
+                    Point::new(6, 0)..Point::new(6, 3),
+                ]
+            );
+        });
+    }
 
     #[gpui::test]
     async fn test_invalid_regexp_search_after_valid(cx: &mut TestAppContext) {
         let (editor, search_bar, cx) = init_test(cx);
-        let display_points_of = |background_highlights: Vec<(Range<DisplayPoint>, Hsla)>| {
-            background_highlights
-                .into_iter()
-                .map(|(range, _)| range)
-                .collect::<Vec<_>>()
-        };
         // Search using valid regexp
         search_bar
             .update(cx, |search_bar, cx| {
