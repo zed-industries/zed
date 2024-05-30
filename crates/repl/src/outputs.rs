@@ -326,6 +326,7 @@ impl ExecutionView {
                 if let Some(new_terminal) = self.apply_terminal_text(&result.text) {
                     new_terminal
                 } else {
+                    cx.notify();
                     return;
                 }
             }
@@ -342,16 +343,26 @@ impl ExecutionView {
             JupyterMessageContent::ExecuteReply(reply) => {
                 for payload in reply.payload.iter() {
                     match payload {
+                        // Pager data comes in via `?` at the end of a statement in Python, used for showing documentation.
+                        // Some UI will show this as a popup. For ease of implementation, it's included as an output here.
                         runtimelib::Payload::Page { data, .. } => {
                             let output: OutputType = (data).into();
                             self.outputs.push(output);
                         }
+
+                        // Set next input adds text to the next cell. Not required to support.
+                        // However, this could be implemented by
                         // runtimelib::Payload::SetNextInput { text, replace } => todo!(),
+
+                        // Not likely to be used in the context of Zed, where someone could just open the buffer themselves
                         // runtimelib::Payload::EditMagic { filename, line_number } => todo!(),
+
+                        //
                         // runtimelib::Payload::AskExit { keepkernel } => todo!(),
                         _ => {}
                     }
                 }
+                cx.notify();
                 return;
             }
             JupyterMessageContent::Status(status) => {

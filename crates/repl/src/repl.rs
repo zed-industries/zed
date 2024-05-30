@@ -67,11 +67,8 @@ pub fn init(fs: Arc<dyn Fs>, cx: &mut AppContext) {
 // Per workspace
 pub struct RuntimeManager {
     fs: Arc<dyn Fs>,
-    // Things we can connect to
-    runtimes: Vec<Runtime>, // specification for what's available to run (kernelspec)
+    runtimes: Vec<Runtime>,
 
-    // Editor -> Running Kernel
-    // Connections
     instances: HashMap<EntityId, RunningKernel>, // actually running kernels
     editors: HashMap<WeakView<Editor>, EditorRuntimeState>,
     // To reduce the number of open tasks and channels we have, let's feed the response
@@ -79,17 +76,10 @@ pub struct RuntimeManager {
     execution_views_by_id: HashMap<String, View<ExecutionView>>,
 }
 
-// We will store the blocks
-
-// Store all the blocks we're working with so that we can
-// * Remove them when
-
 #[derive(Debug, Clone)]
 struct EditorRuntimeState {
-    // Could keep this as a sorted list of blocks so that we can eliminate
-    // blocks that overlap with each other
     blocks: Vec<EditorRuntimeBlock>,
-    // Store a subscription to the editor so we can drop them when the editor is dropped
+    // todo!(): Store a subscription to the editor so we can drop them when the editor is dropped
     // subscription: gpui::Subscription,
 }
 
