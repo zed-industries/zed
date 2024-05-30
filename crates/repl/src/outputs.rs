@@ -241,6 +241,7 @@ pub enum OutputType {
     ErrorOutput(ErrorView),
     Message(String),
     Table(TableView),
+    ClearOutputMarker,
 }
 
 impl OutputType {
@@ -255,6 +256,7 @@ impl OutputType {
             Self::Message(message) => Some(div().child(message.clone()).into_any_element()),
             Self::Table(table) => Some(table.render(cx)),
             Self::ErrorOutput(error_view) => error_view.render(cx),
+            Self::ClearOutputMarker => None,
         };
 
         el
@@ -271,6 +273,7 @@ impl LineHeight for OutputType {
             Self::Message(message) => message.lines().count() as u8,
             Self::Table(table) => table.num_lines(cx),
             Self::ErrorOutput(error_view) => error_view.num_lines(cx),
+            Self::ClearOutputMarker => 0,
         }
     }
 }
@@ -365,6 +368,16 @@ impl ExecutionView {
                 cx.notify();
                 return;
             }
+            JupyterMessageContent::ClearOutput(options) => {
+                if !options.wait {
+                    self.outputs.clear();
+                    cx.notify();
+                    return;
+                }
+
+                // Create a marker to clear the output after we get in a new output
+                OutputType::ClearOutputMarker
+            }
             JupyterMessageContent::Status(status) => {
                 match status.execution_state {
                     ExecutionState::Busy => {
@@ -380,6 +393,11 @@ impl ExecutionView {
             }
         };
 
+        // Check for a clear output marker as the previous output, so we can clear it out
+        if let Some(OutputType::ClearOutputMarker) = self.outputs.last() {
+            self.outputs.clear();
+        }
+
         self.outputs.push(output);
 
         cx.notify();
@@ -387,13 +405,21 @@ impl ExecutionView {
 
     fn apply_terminal_text(&mut self, text: &str) -> Option<OutputType> {
         if let Some(last_output) = self.outputs.last_mut() {
-            if let OutputType::Stream(last_stream) = last_output {
-                last_stream.append_text(text);
-                // Don't need to add a new output, we already have a terminal output
-                return None;
+            match last_output {
+                OutputType::Stream(last_stream) => {
+                    last_stream.append_text(text);
+                    // Don't need to add a new output, we already have a terminal output
+                    return None;
+                }
+                // Edge case note: a clear output marker
+                OutputType::ClearOutputMarker => {
+                    // Edge case note: a clear output marker is handled by the caller
+                    // since we will return a new output at the end here as a new terminal output
+                }
+                // A different output type is "in the way", so we need to create a new output,
+                // which is the same as having no prior output
+                _ => {}
             }
-            // A different output type is "in the way", so we need to create a new output,
-            // which is the same as having no prior output
         }
 
         let mut new_terminal = TerminalOutput::new();
