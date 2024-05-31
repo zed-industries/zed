@@ -14,6 +14,7 @@ pub(crate) struct OverlayState {
 pub(crate) enum EditorState {
     #[default]
     None,
+    PendingSearch,
     NCharInput(NCharInput),
     Selection(Selection),
 }
@@ -45,6 +46,14 @@ impl EditorState {
             context.add("EasyMotionControlled");
             context.add("menu");
         }
+        return context;
+    }
+
+    #[allow(dead_code)]
+    pub(crate) fn selection_context_layer() -> KeyContext {
+        let mut context = KeyContext::new_with_defaults();
+        context.add("EasyMotionControlled");
+        context.add("menu");
         return context;
     }
 }

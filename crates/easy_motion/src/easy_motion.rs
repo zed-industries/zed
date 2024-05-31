@@ -1,6 +1,7 @@
 use collections::HashMap;
 use editor::display_map::DisplaySnapshot;
-use search::search;
+use futures::future::join_all;
+use search::{search, search_multipane};
 use serde::Deserialize;
 use std::cmp::Ordering;
 use std::{fmt, mem};
@@ -9,17 +10,17 @@ use editor::scroll::Autoscroll;
 use editor::{DisplayPoint, Editor};
 use gpui::{
     actions, impl_actions, saturate, AppContext, AsyncAppContext, Bounds, Entity, EntityId, Global,
-    HighlightStyle, KeystrokeEvent, Model, ModelContext, Point, Subscription, View, ViewContext,
-    WeakView,
+    HighlightStyle, Hsla, KeystrokeEvent, Model, ModelContext, Point, Subscription, View,
+    ViewContext, WeakView,
 };
 use perm::{TrieBuilder, TrimResult};
 use settings::Settings;
 use text::{Bias, Selection as TextSelection, SelectionGoal};
 use theme::ThemeSettings;
-use ui::{Context, Pixels, WindowContext};
-use workspace::{Pane, Workspace};
+use ui::{Context, Pixels, VisualContext, WindowContext};
+use workspace::Workspace;
 
-use editor_state::{EditorState, InputResult, NCharInput, OverlayState, Selection};
+use editor_state::{EditorState, InputResult, OverlayState, Selection};
 use util::{end_of_document, manh_distance, start_of_document, window_bottom, window_top};
 
 use crate::util::manh_distance_pixels;
@@ -117,32 +118,17 @@ pub fn init(cx: &mut AppContext) {
 
 fn register(workspace: &mut Workspace, _: &mut ViewContext<Workspace>) {
     workspace.register_action(|workspace: &mut Workspace, action: &Word, cx| {
-        let Word(direction) = *action;
-        // TODO other directions?
-        // not sure if check for multiple editors is totally necessary
-        if matches!(direction, Direction::BiDirectional)
-            && workspace.is_split()
-            && workspace_has_multiple_editors(workspace, cx)
-        {
-            println!("multipane");
-            EasyMotion::word_multipane(WordType::Word, workspace, cx);
-        } else {
-            EasyMotion::word(WordType::Word, direction, cx);
-        }
+        EasyMotion::word(action, workspace, cx);
     });
-    workspace.register_action(|_: &mut Workspace, action: &SubWord, cx| {
-        let direction = action.0;
-        // TODO multipane
-        EasyMotion::word(WordType::SubWord, direction, cx);
+    workspace.register_action(|workspace: &mut Workspace, action: &SubWord, cx| {
+        EasyMotion::sub_word(action, workspace, cx);
     });
-    workspace.register_action(|_: &mut Workspace, action: &FullWord, cx| {
-        let direction = action.0;
-        // TODO multipane
-        EasyMotion::word(WordType::FullWord, direction, cx);
+    workspace.register_action(|workspace: &mut Workspace, action: &FullWord, cx| {
+        EasyMotion::full_word(action, workspace, cx);
     });
 
-    workspace.register_action(|_: &mut Workspace, action: &NChar, cx| {
-        EasyMotion::n_char(action, cx);
+    workspace.register_action(|workspace: &mut Workspace, action: &NChar, cx| {
+        EasyMotion::n_char(action, workspace, cx);
     });
 
     workspace.register_action(|_: &mut Workspace, action: &Pattern, cx| {
@@ -242,7 +228,49 @@ impl EasyMotion {
         })
     }
 
-    fn word(word_type: WordType, direction: Direction, cx: &mut WindowContext) {
+    fn word(action: &Word, workspace: &mut Workspace, cx: &mut WindowContext) {
+        let Word(direction) = *action;
+        // TODO other directions?
+        // not sure if check for multiple editors is totally necessary
+        if matches!(direction, Direction::BiDirectional)
+            && workspace.is_split()
+            && workspace_has_multiple_editors(workspace, cx)
+        {
+            EasyMotion::word_multipane(WordType::Word, workspace, cx);
+        } else {
+            EasyMotion::word_single_pane(WordType::Word, direction, cx);
+        }
+    }
+
+    fn sub_word(action: &SubWord, workspace: &mut Workspace, cx: &mut WindowContext) {
+        let SubWord(direction) = *action;
+        // TODO other directions?
+        // not sure if check for multiple editors is totally necessary
+        if matches!(direction, Direction::BiDirectional)
+            && workspace.is_split()
+            && workspace_has_multiple_editors(workspace, cx)
+        {
+            // todo?
+        } else {
+            EasyMotion::word_single_pane(WordType::SubWord, direction, cx);
+        }
+    }
+
+    fn full_word(action: &FullWord, workspace: &mut Workspace, cx: &mut WindowContext) {
+        let FullWord(direction) = *action;
+        // TODO other directions?
+        // not sure if check for multiple editors is totally necessary
+        if matches!(direction, Direction::BiDirectional)
+            && workspace.is_split()
+            && workspace_has_multiple_editors(workspace, cx)
+        {
+            // todo?
+        } else {
+            EasyMotion::word_single_pane(WordType::FullWord, direction, cx);
+        }
+    }
+
+    fn word_single_pane(word_type: WordType, direction: Direction, cx: &mut WindowContext) {
         let Some(active_editor) = Self::active_editor(cx) else {
             return;
         };
@@ -274,17 +302,8 @@ impl EasyMotion {
         if word_starts.is_empty() {
             return EditorState::None;
         }
-        word_starts.sort_unstable_by(|a, b| {
-            let a_distance = manh_distance(a, &selections.start, 2.5);
-            let b_distance = manh_distance(b, &selections.start, 2.5);
-            if a_distance == b_distance {
-                Ordering::Equal
-            } else if a_distance < b_distance {
-                Ordering::Less
-            } else {
-                Ordering::Greater
-            }
-        });
+
+        sort_matches_display(&mut word_starts, &selections.start);
 
         let (style_0, style_1, style_2) = get_highlights(cx);
         let trie = TrieBuilder::new("asdghklqwertyuiopzxcvbnmfj".to_string(), word_starts.len())
@@ -353,11 +372,7 @@ impl EasyMotion {
         util::word_starts_in_range(&map, start, end, full_word)
     }
 
-    fn word_multipane(
-        word_type: WordType,
-        workspace: &mut Workspace,
-        cx: &mut ViewContext<Workspace>,
-    ) {
+    fn word_multipane(word_type: WordType, workspace: &mut Workspace, cx: &mut WindowContext) {
         let Some(active_editor) = Self::active_editor(cx) else {
             return;
         };
@@ -379,30 +394,9 @@ impl EasyMotion {
             })
             .collect::<Vec<_>>();
 
-        let new_state = Self::word_multipane_impl(word_type, true, active_editor_id, &editors, cx);
-
-        for (editor, _) in editors {
-            editor.update(cx, |editor, cx| {
-                let ctx = new_state.keymap_context_layer();
-                editor.set_keymap_context_layer::<Self>(ctx, cx);
-            });
-        }
-
-        Self::update(cx, move |easy, _cx| {
-            easy.multipane_state = Some(new_state);
-        });
-    }
-
-    fn word_multipane_impl(
-        word_type: WordType,
-        dimming: bool,
-        active_editor_id: EntityId,
-        editors: &[(View<Editor>, Bounds<Pixels>)],
-        cx: &mut ViewContext<Workspace>,
-    ) -> EditorState {
         // get words along with their display points within their editors
         // as well as a rough absolute position for sorting purposes
-        let mut word_starts = editors
+        let mut matches = editors
             .iter()
             .map(|(editor_view, bounding_box)| {
                 editor_view.update(cx, |editor, cx| {
@@ -445,42 +439,20 @@ impl EasyMotion {
             .find(|(editor_view, _)| editor_view.entity_id() == active_editor_id)
             .map(|(editor_view, bounding_box)| {
                 editor_view.update(cx, |editor, cx| {
-                    let style = cx.text_style();
-                    let line_height = style
-                        .line_height
-                        .to_pixels(style.font_size, cx.rem_size())
-                        .0;
-                    let selections = editor.selections.newest_display(cx);
-                    let start = selections.start;
-                    let text_layout_details = editor.text_layout_details(cx);
-                    let map = editor.snapshot(cx).display_snapshot;
-                    let window_top = window_top(&map, &text_layout_details);
-                    let x = bounding_box.origin.x.0 + start.column() as f32 * line_height * 0.5;
-                    let y = bounding_box.origin.y.0
-                        + (start.row().0 as f32 - window_top.row().0 as f32) * line_height;
-                    let x = Pixels(x);
-                    let y = Pixels(y);
-                    Point::new(x, y)
+                    Self::get_cursor_pixels(bounding_box, editor, cx)
                 })
             })
             .unwrap();
 
-        word_starts.sort_unstable_by(|(_, _, a), (_, _, b)| {
-            let a_distance = manh_distance_pixels(a, &cursor, 2.5);
-            let b_distance = manh_distance_pixels(b, &cursor, 2.5);
-            if a_distance == b_distance {
-                Ordering::Equal
-            } else if a_distance < b_distance {
-                Ordering::Less
-            } else {
-                Ordering::Greater
-            }
-        });
+        sort_matches_pixel(&mut matches, &cursor);
 
+        let len = matches.len();
+        let matches = matches.into_iter().map(|(point, id, _)| (point, id));
         let (style_0, style_1, style_2) = get_highlights(cx);
-        let word_starts = word_starts.into_iter().map(|(point, id, _)| (point, id));
-        let trie = TrieBuilder::new("asdghklqwertyuiopzxcvbnmfj".to_string(), word_starts.len())
-            .populate_with(true, word_starts, |seq, point| {
+        let trie = TrieBuilder::new("asdghklqwertyuiopzxcvbnmfj".to_string(), len).populate_with(
+            true,
+            matches,
+            |seq, point| {
                 let style = match seq.len() {
                     0 | 1 => style_0,
                     2 => style_1,
@@ -491,82 +463,82 @@ impl EasyMotion {
                     point: point.0,
                     editor_id: point.1,
                 }
-            });
+            },
+        );
 
-        for (editor, _) in editors {
-            let trie_iter = trie
-                .iter()
-                .filter(|(_seq, overlay)| overlay.editor_id == editor.entity_id());
+        let new_state = EditorState::new_selection(trie);
+        let just_editors = editors.into_iter().map(|(editor, _)| editor);
+        Self::update_editors(&new_state, true, just_editors, cx);
 
-            editor.update(cx, |editor, cx| {
-                Self::add_overlays(editor, trie_iter, cx);
-                if dimming {
-                    let map = &editor.snapshot(cx).display_snapshot;
-                    let start = start_of_document(map);
-                    let end = end_of_document(map);
-                    let anchor_start = map.display_point_to_anchor(start, Bias::Left);
-                    let anchor_end = map.display_point_to_anchor(end, Bias::Left);
-                    let highlight = HighlightStyle {
-                        fade_out: Some(0.7),
-                        ..Default::default()
-                    };
-                    editor.highlight_text::<Self>(vec![anchor_start..anchor_end], highlight, cx);
-                }
-            });
-        }
+        Self::update(cx, move |easy, _cx| {
+            easy.multipane_state = Some(new_state);
+        });
+    }
 
-        EditorState::Selection(Selection::new(trie))
+    fn get_cursor_pixels(
+        bounding_box: &Bounds<Pixels>,
+        editor: &Editor,
+        cx: &mut ViewContext<Editor>,
+    ) -> Point<Pixels> {
+        let style = cx.text_style();
+        let line_height = style
+            .line_height
+            .to_pixels(style.font_size, cx.rem_size())
+            .0;
+        let selections = editor.selections.newest_display(cx);
+        let start = selections.start;
+        let text_layout_details = editor.text_layout_details(cx);
+        let map = editor.snapshot(cx).display_snapshot;
+        let window_top = window_top(&map, &text_layout_details);
+        let x = bounding_box.origin.x.0 + start.column() as f32 * line_height * 0.5;
+        let y = bounding_box.origin.y.0
+            + (start.row().0 as f32 - window_top.row().0 as f32) * line_height;
+        let x = Pixels(x);
+        let y = Pixels(y);
+        Point::new(x, y)
     }
 
     fn pattern(_action: &Pattern, _cx: &mut WindowContext) {
         todo!()
     }
 
-    fn n_char(action: &NChar, cx: &mut WindowContext) {
-        let Some(active_editor) = Self::active_editor(cx) else {
-            return;
-        };
-        let entity_id = active_editor.entity_id();
+    fn n_char(action: &NChar, workspace: &mut Workspace, cx: &mut WindowContext) {
+        let n = action.n;
+        if workspace.is_split() && workspace_has_multiple_editors(workspace, cx) {
+            let panes = workspace.panes();
 
-        let new_state = active_editor.update(cx, |editor, cx| {
-            let new_state = EditorState::new_n_char(action.n as usize);
-            let ctx = new_state.keymap_context_layer();
-            editor.set_keymap_context_layer::<Self>(ctx, cx);
-            new_state
-        });
+            let editors = panes
+                .into_iter()
+                .filter_map(|pane| {
+                    pane.update(cx, |pane, _cx| {
+                        pane.active_item()
+                            .and_then(|item| item.downcast::<Editor>())
+                    })
+                    .map(|editor| editor)
+                })
+                .collect::<Vec<_>>();
 
-        Self::update(cx, move |easy, _cx| {
-            easy.editor_states.insert(entity_id, new_state);
-        });
-        dbg!("n_char setup complete");
-    }
+            let new_state = EditorState::new_n_char(n as usize);
+            Self::update_editors(&new_state, true, editors.into_iter(), cx);
 
-    fn cancel(workspace: &mut Workspace, cx: &mut WindowContext) {
-        let editor = Self::update(cx, |easy, _| {
-            if let Some(state) = easy.multipane_state.as_mut() {
-                state.clear();
-                None
-            } else {
-                easy.clear_state();
-                easy.active_editor.clone()
-            }
-        })
-        .flatten();
+            Self::update(cx, move |easy, _cx| {
+                easy.multipane_state = Some(new_state);
+            });
+        } else {
+            let Some(active_editor) = Self::active_editor(cx) else {
+                return;
+            };
+            let entity_id = active_editor.entity_id();
 
-        if workspace.panes().len() > 1 {
-            let editors = active_editor_views(workspace, cx);
-            for editor in editors {
-                editor.update(cx, |editor, cx| {
-                    editor.clear_overlays(cx);
-                    editor.clear_highlights::<Self>(cx);
-                    editor.remove_keymap_context_layer::<Self>(cx);
-                });
-            }
-        } else if let Some(editor) = editor.map(|editor| editor.upgrade()).flatten() {
-            editor.update(cx, |editor, cx| {
-                editor.clear_overlays(cx);
-                editor.clear_highlights::<Self>(cx);
-                editor.remove_keymap_context_layer::<Self>(cx);
+            let new_state = active_editor.update(cx, |editor, cx| {
+                let new_state = EditorState::new_n_char(action.n as usize);
+                let ctx = new_state.keymap_context_layer();
+                editor.set_keymap_context_layer::<Self>(ctx, cx);
+                new_state
+            });
+
+            Self::update(cx, move |easy, _cx| {
+                easy.editor_states.insert(entity_id, new_state);
             });
         }
     }
@@ -608,9 +580,15 @@ impl EasyMotion {
         let keys = keystroke_event.keystroke.key.as_str();
         let new_state = editor.update(cx, |editor, cx| match state {
             EditorState::NCharInput(char_input) => {
-                Self::handle_record_char(char_input, keys, editor, cx)
+                let res = char_input.record_str(keys);
+                match res {
+                    InputResult::ShowTrie(query) => Self::show_trie(query, editor, cx),
+                    // do nothing
+                    InputResult::Recording(n_char) => EditorState::NCharInput(n_char),
+                }
             }
             EditorState::Selection(selection) => Self::handle_trim(selection, keys, editor, cx),
+            EditorState::PendingSearch => EditorState::PendingSearch,
             EditorState::None => EditorState::None,
         });
 
@@ -631,9 +609,15 @@ impl EasyMotion {
         let keys = keystroke_event.keystroke.key.as_str();
         let new_state = match state {
             EditorState::NCharInput(char_input) => {
-                Self::handle_record_char_multipane(char_input, keys, cx)
+                let res = char_input.record_str(keys);
+                match res {
+                    InputResult::ShowTrie(query) => Self::show_trie_multipane(query, cx),
+                    // do nothing
+                    InputResult::Recording(n_char) => EditorState::NCharInput(n_char),
+                }
             }
             EditorState::Selection(selection) => Self::handle_trim_multipane(selection, keys, cx),
+            EditorState::PendingSearch => EditorState::PendingSearch,
             EditorState::None => EditorState::None,
         };
 
@@ -797,75 +781,232 @@ impl EasyMotion {
         EditorState::new_selection(trie)
     }
 
-    fn handle_record_char(
-        n_char: NCharInput,
-        keys: &str,
-        editor: &mut Editor,
-        cx: &mut ViewContext<Editor>,
-    ) -> EditorState {
-        let res = n_char.record_str(keys);
-        match res {
-            InputResult::ShowTrie(query) => {
-                let task = search(query, editor, cx);
-                let Some(task) = task else {
-                    return EditorState::None;
-                };
-                cx.spawn(|editor, mut cx| async move {
-                    let entity_id = editor.entity_id();
-                    let Some(editor) = editor.upgrade() else {
-                        return;
-                    };
-                    let matches = task.await;
-                    let res = editor.update(&mut cx, move |editor, cx| {
-                        editor.clear_search_within_ranges(cx);
-                        let new_state = Self::handle_record_char_impl(matches, editor, cx);
-                        // should already be set
-                        // let ctx = new_state.keymap_context_layer();
-                        // editor.set_keymap_context_layer::<Self>(ctx, cx);
-                        new_state
+    fn show_trie(query: String, editor: &mut Editor, cx: &mut ViewContext<Editor>) -> EditorState {
+        let task = search(query.as_str(), editor, cx);
+        let Some(task) = task else {
+            return EditorState::None;
+        };
+        cx.spawn(|editor, mut cx| async move {
+            let entity_id = editor.entity_id();
+            let Some(editor) = editor.upgrade() else {
+                return;
+            };
+            let matches = task.await;
+            let res = editor.update(&mut cx, move |editor, cx| {
+                editor.clear_search_within_ranges(cx);
+                let new_state = Self::handle_record_char_impl(matches, editor, cx);
+                // should already be set
+                // let ctx = new_state.keymap_context_layer();
+                // editor.set_keymap_context_layer::<Self>(ctx, cx);
+                new_state
+            });
+            match res {
+                Ok(state) => {
+                    Self::update_async(&mut cx, move |easy, _cx| {
+                        easy.editor_states.insert(entity_id, state);
                     });
-                    match res {
-                        Ok(state) => {
-                            Self::update_async(&mut cx, move |easy, _cx| {
-                                easy.editor_states.insert(entity_id, state);
-                            });
-                        }
-                        Err(err) => {
-                            dbg!(err);
-                        }
-                    }
-                })
-                .detach();
-                // show overlays
-                // etc
-                EditorState::None
+                }
+                Err(err) => {
+                    dbg!(err);
+                }
             }
-            // do nothing
-            InputResult::Recording(n_char) => EditorState::NCharInput(n_char),
+        })
+        .detach();
+
+        EditorState::None
+    }
+
+    fn show_trie_multipane(query: String, cx: &mut WindowContext) -> EditorState {
+        let Some(active_editor_id) = Self::active_editor(cx).map(|editor| editor.entity_id())
+        else {
+            return EditorState::None;
+        };
+
+        let handle = cx
+            .window_handle()
+            .downcast::<Workspace>()
+            .and_then(|handle| handle.root(cx).ok());
+        let Some(workspace_view) = handle else {
+            return EditorState::None;
+        };
+
+        let state = workspace_view.update(cx, |workspace, cx| {
+            let panes = workspace.panes();
+
+            let editors = panes
+                .iter()
+                .filter_map(|pane| {
+                    pane.update(cx, |pane, _cx| {
+                        pane.active_item()
+                            .and_then(|item| item.downcast::<Editor>())
+                    })
+                    .map(|editor| {
+                        let bounding_box = workspace.center().bounding_box_for_pane(pane).unwrap();
+                        (editor, bounding_box)
+                    })
+                })
+                .collect::<Vec<_>>();
+
+            let tasks = editors
+                .iter()
+                .map(|(editor, bounding_box)| {
+                    let entity_id = editor.entity_id();
+                    editor.update(cx, |editor, cx| {
+                        search_multipane(
+                            query.as_str(),
+                            bounding_box.clone(),
+                            entity_id,
+                            editor,
+                            cx,
+                        )
+                    })
+                })
+                .collect::<Option<Vec<_>>>();
+            let Some(tasks) = tasks else {
+                // there was an issue with at least one of the searches
+                // todo need to remove search highlights if there's an issue
+                return EditorState::None;
+            };
+
+            // downgrade before spawn?
+            let cursor = editors
+                .iter()
+                .find(|(editor_view, _)| editor_view.entity_id() == active_editor_id)
+                .map(|(editor_view, bounding_box)| {
+                    editor_view.update(cx, |editor, cx| {
+                        Self::get_cursor_pixels(bounding_box, editor, cx)
+                    })
+                })
+                .unwrap();
+
+            cx.spawn(move |_view, mut cx| async move {
+                // let matches = tasks.
+                let cursor = cursor;
+                let tasks = join_all(tasks).await;
+
+                let mut matches = tasks.into_iter().flatten().collect::<Vec<_>>();
+                sort_matches_pixel(&mut matches, &cursor);
+
+                let len = matches.len();
+                let matches = matches.into_iter().map(|(point, id, _)| (point, id));
+                let (style_0, style_1, style_2) = get_highlights_async(&mut cx);
+                let trie = TrieBuilder::new("asdghklqwertyuiopzxcvbnmfj".to_string(), len)
+                    .populate_with(true, matches, |seq, point| {
+                        let style = match seq.len() {
+                            0 | 1 => style_0,
+                            2 => style_1,
+                            3.. => style_2,
+                        };
+                        OverlayState {
+                            style,
+                            point: point.0,
+                            editor_id: point.1,
+                        }
+                    });
+
+                let new_state = EditorState::new_selection(trie);
+                let just_editors = editors.into_iter().map(|(editor, _)| editor);
+                Self::update_editors(&new_state, true, just_editors, &mut cx);
+
+                Self::update_async(&mut cx, move |easy, _cx| {
+                    easy.multipane_state = Some(new_state);
+                });
+            })
+            .detach();
+            EditorState::PendingSearch
+        });
+        state
+    }
+
+    fn update_editors(
+        state: &EditorState,
+        dimming: bool,
+        editors: impl Iterator<Item = View<Editor>>,
+        cx: &mut impl VisualContext,
+    ) {
+        // filter trie entries by editor and add overlays
+        let ctx = state.keymap_context_layer();
+        match state {
+            EditorState::None => {
+                for editor in editors {
+                    editor.update(cx, |editor, cx| {
+                        editor.clear_highlights::<Self>(cx);
+                        editor.set_keymap_context_layer::<Self>(ctx.clone(), cx);
+                    });
+                }
+            }
+            EditorState::Selection(selection) => {
+                for editor in editors {
+                    let trie = selection.trie();
+                    let trie_iter = trie
+                        .iter()
+                        .filter(|(_seq, overlay)| overlay.editor_id == editor.entity_id());
+
+                    editor.update(cx, |editor, cx| {
+                        editor.clear_search_within_ranges(cx);
+                        Self::add_overlays(editor, trie_iter, cx);
+
+                        if dimming {
+                            let map = &editor.snapshot(cx).display_snapshot;
+                            let start = start_of_document(map);
+                            let end = end_of_document(map);
+                            let anchor_start = map.display_point_to_anchor(start, Bias::Left);
+                            let anchor_end = map.display_point_to_anchor(end, Bias::Left);
+                            let highlight = HighlightStyle {
+                                fade_out: Some(0.7),
+                                ..Default::default()
+                            };
+                            editor.highlight_text::<Self>(
+                                vec![anchor_start..anchor_end],
+                                highlight,
+                                cx,
+                            );
+                        }
+
+                        editor.set_keymap_context_layer::<Self>(ctx.clone(), cx);
+                    });
+                }
+            }
+            EditorState::NCharInput(_) => {
+                for editor in editors {
+                    editor.update(cx, |editor, cx| {
+                        editor.clear_highlights::<Self>(cx);
+                        editor.set_keymap_context_layer::<Self>(ctx.clone(), cx);
+                    });
+                }
+            }
+            EditorState::PendingSearch => {}
         }
     }
 
-    fn handle_record_char_multipane(
-        n_char: NCharInput,
-        keys: &str,
-        cx: &mut WindowContext,
-    ) -> EditorState {
-        todo!()
-    }
+    fn cancel(workspace: &mut Workspace, cx: &mut WindowContext) {
+        let editor = Self::update(cx, |easy, _| {
+            if let Some(state) = easy.multipane_state.as_mut() {
+                state.clear();
+                None
+            } else {
+                easy.clear_state();
+                easy.active_editor.clone()
+            }
+        })
+        .flatten();
 
-    fn handle_record_char_multipane_impl(
-        query: String,
-        dimming: bool,
-        active_editor_id: EntityId,
-        editors: &[(View<Editor>, View<Pane>, Bounds<Pixels>)],
-        cx: &mut ViewContext<Workspace>,
-    ) -> EditorState {
-        todo!()
-    }
-
-    #[allow(dead_code)]
-    fn handle_query(_query: String) {
-        todo!()
+        if workspace.panes().len() > 1 {
+            let editors = active_editor_views(workspace, cx);
+            for editor in editors {
+                editor.update(cx, |editor, cx| {
+                    editor.clear_overlays(cx);
+                    editor.clear_highlights::<Self>(cx);
+                    editor.remove_keymap_context_layer::<Self>(cx);
+                });
+            }
+        } else if let Some(editor) = editor.map(|editor| editor.upgrade()).flatten() {
+            editor.update(cx, |editor, cx| {
+                editor.clear_overlays(cx);
+                editor.clear_highlights::<Self>(cx);
+                editor.remove_keymap_context_layer::<Self>(cx);
+            });
+        }
     }
 
     fn add_overlays<'a>(
@@ -937,4 +1078,65 @@ fn get_highlights(cx: &AppContext) -> (HighlightStyle, HighlightStyle, Highlight
         ..HighlightStyle::default()
     };
     (style_0, style_1, style_2)
+}
+
+fn get_highlights_async(cx: &AsyncAppContext) -> (HighlightStyle, HighlightStyle, HighlightStyle) {
+    let (bg, color_0, color_1, color_2) = ThemeSettings::try_read_global(cx, |theme| {
+        let theme = theme.active_theme.clone();
+        let players = &theme.players().0;
+        let bg = theme.colors().background;
+        let color_0 = saturate(players[0].cursor, 1.0);
+        let color_1 = saturate(players[2].cursor, 1.0);
+        let color_2 = saturate(players[3].cursor, 1.0);
+        (bg, color_0, color_1, color_2)
+    })
+    .unwrap_or((Hsla::white(), Hsla::red(), Hsla::green(), Hsla::blue()));
+
+    let style_0 = HighlightStyle {
+        color: Some(color_0),
+        background_color: Some(bg),
+        ..HighlightStyle::default()
+    };
+    let style_1 = HighlightStyle {
+        color: Some(color_1),
+        background_color: Some(bg),
+        ..HighlightStyle::default()
+    };
+    let style_2 = HighlightStyle {
+        color: Some(color_2),
+        background_color: Some(bg),
+        ..HighlightStyle::default()
+    };
+    (style_0, style_1, style_2)
+}
+
+fn sort_matches_pixel(
+    matches: &mut Vec<(DisplayPoint, EntityId, Point<Pixels>)>,
+    cursor: &Point<Pixels>,
+) {
+    matches.sort_unstable_by(|a, b| {
+        let a_distance = manh_distance_pixels(&a.2, &cursor, 2.5);
+        let b_distance = manh_distance_pixels(&b.2, &cursor, 2.5);
+        if a_distance == b_distance {
+            Ordering::Equal
+        } else if a_distance < b_distance {
+            Ordering::Less
+        } else {
+            Ordering::Greater
+        }
+    });
+}
+
+fn sort_matches_display(matches: &mut Vec<DisplayPoint>, cursor: &DisplayPoint) {
+    matches.sort_unstable_by(|a, b| {
+        let a_distance = manh_distance(a, cursor, 2.5);
+        let b_distance = manh_distance(b, cursor, 2.5);
+        if a_distance == b_distance {
+            Ordering::Equal
+        } else if a_distance < b_distance {
+            Ordering::Less
+        } else {
+            Ordering::Greater
+        }
+    });
 }
