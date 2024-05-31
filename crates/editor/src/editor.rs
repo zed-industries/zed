@@ -9770,7 +9770,7 @@ impl Editor {
     }
 
     pub fn toggle_indent_guides(&mut self, _: &ToggleIndentGuides, cx: &mut ViewContext<Self>) {
-        let currently_enabled = self.should_show_indent_guides().unwrap_or_else(|| {
+        let currently_enabled = self.should_show_indent_guides(cx).unwrap_or_else(|| {
             self.buffer
                 .read(cx)
                 .settings_at(0, cx)
@@ -9781,8 +9781,21 @@ impl Editor {
         cx.notify();
     }
 
-    fn should_show_indent_guides(&self) -> Option<bool> {
-        self.show_indent_guides
+    fn should_show_indent_guides(&self, cx: &mut ViewContext<Self>) -> Option<bool> {
+        match self.show_indent_guides {
+            Some(show_indent_guides) => Some(show_indent_guides),
+            None => {
+                if let Some(buffer) = self.buffer.read(cx).as_singleton() {
+                    Some(
+                        language_settings::language_settings(buffer.read(cx).language(), None, cx)
+                            .indent_guides
+                            .enabled,
+                    )
+                } else {
+                    None
+                }
+            }
+        }
     }
 
     pub fn toggle_line_numbers(&mut self, _: &ToggleLineNumbers, cx: &mut ViewContext<Self>) {

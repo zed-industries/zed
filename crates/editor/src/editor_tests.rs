@@ -17,9 +17,10 @@ use language::{
     },
     BracketPairConfig,
     Capability::ReadWrite,
-    FakeLspAdapter, IndentGuide, IndentGuideStyle, LanguageConfig, LanguageConfigOverride,
-    LanguageMatcher, Override, Point,
+    FakeLspAdapter, IndentGuide, LanguageConfig, LanguageConfigOverride, LanguageMatcher, Override,
+    Point,
 };
+use language_settings::IndentGuideSettings;
 use multi_buffer::MultiBufferIndentGuide;
 use parking_lot::Mutex;
 use project::project_settings::{LspSettings, ProjectSettings};
@@ -11550,11 +11551,7 @@ fn indent_guide(buffer_id: BufferId, start_row: u32, end_row: u32, depth: u32) -
         end_row,
         depth,
         tab_size: 4,
-        style: IndentGuideStyle {
-            line_width: 1,
-            coloring: language_settings::IndentGuideColoring::Disabled,
-            background_coloring: language_settings::IndentGuideBackgroundColoring::Disabled,
-        },
+        settings: IndentGuideSettings::default(),
     }
 }
 

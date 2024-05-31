@@ -6,9 +6,7 @@ pub use crate::{
 };
 use crate::{
     diagnostic_set::{DiagnosticEntry, DiagnosticGroup},
-    language_settings::{
-        language_settings, IndentGuideBackgroundColoring, IndentGuideColoring, LanguageSettings,
-    },
+    language_settings::{language_settings, IndentGuideSettings, LanguageSettings},
     markdown::parse_markdown,
     outline::OutlineItem,
     syntax_map::{
@@ -544,35 +542,10 @@ pub struct IndentGuide {
     pub end_row: BufferRow,
     pub depth: u32,
     pub tab_size: u32,
-    pub style: IndentGuideStyle,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct IndentGuideStyle {
-    pub line_width: u32,
-    pub coloring: IndentGuideColoring,
-    pub background_coloring: IndentGuideBackgroundColoring,
+    pub settings: IndentGuideSettings,
 }
 
 impl IndentGuide {
-    pub fn new(
-        buffer_id: BufferId,
-        start_row: BufferRow,
-        end_row: BufferRow,
-        depth: u32,
-        tab_size: u32,
-        style: IndentGuideStyle,
-    ) -> Self {
-        Self {
-            buffer_id,
-            start_row,
-            end_row,
-            depth,
-            tab_size,
-            style,
-        }
-    }
-
     pub fn indent_level(&self) -> u32 {
         self.depth * self.tab_size
     }
@@ -3166,15 +3139,7 @@ impl BufferSnapshot {
         cx: &AppContext,
     ) -> Vec<IndentGuide> {
         let language_settings = language_settings(self.language(), None, cx);
-        if !language_settings.indent_guides.enabled {
-            return Vec::default();
-        }
-        let indent_guide_settings = language_settings.indent_guides;
-        let style = IndentGuideStyle {
-            coloring: indent_guide_settings.coloring,
-            background_coloring: indent_guide_settings.background_coloring,
-            line_width: indent_guide_settings.line_width,
-        };
+        let settings = language_settings.indent_guides;
         let tab_size = language_settings.tab_size.get() as u32;
 
         let start_row = range.start.to_point(self).row;
@@ -3256,7 +3221,7 @@ impl BufferSnapshot {
                         end_row: last_row,
                         depth: next_depth,
                         tab_size,
-                        style,
+                        settings,
                     });
                 }
             }
