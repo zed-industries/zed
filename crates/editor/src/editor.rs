@@ -9826,7 +9826,7 @@ impl Editor {
     }
 
     pub fn reveal_in_finder(&mut self, _: &RevealInFinder, cx: &mut ViewContext<Self>) {
-        if let Some(buffer) = self.buffer().read(cx).as_singleton() {
+        if let Some((_, buffer, _)) = self.active_excerpt(cx) {
             if let Some(file) = buffer.read(cx).file().and_then(|f| f.as_local()) {
                 cx.reveal_path(&file.abs_path(cx));
             }
