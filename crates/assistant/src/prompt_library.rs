@@ -9,8 +9,8 @@ use futures::{
 use fuzzy::StringMatchCandidate;
 use gpui::{
     actions, point, size, AppContext, BackgroundExecutor, Bounds, DevicePixels, EventEmitter,
-    Global, ReadGlobal, Subscription, Task, TitlebarOptions, View, WindowBounds, WindowHandle,
-    WindowOptions,
+    Global, PromptLevel, ReadGlobal, Subscription, Task, TitlebarOptions, View, WindowBounds,
+    WindowHandle, WindowOptions,
 };
 use heed::{types::SerdeBincode, Database, RoTxn};
 use language::{language_settings::SoftWrap, Buffer, LanguageRegistry};
@@ -30,7 +30,10 @@ use ui::{
 use util::{paths::PROMPTS_DIR, ResultExt};
 use uuid::Uuid;
 
-actions!(prompt_library, [NewPrompt, SavePrompt, ToggleDefaultPrompt]);
+actions!(
+    prompt_library,
+    [NewPrompt, SavePrompt, DeletePrompt, ToggleDefaultPrompt]
+);
 
 /// Init starts loading the PromptStore in the background and assigns
 /// a shared future to a global.
@@ -107,6 +110,7 @@ struct PromptPickerDelegate {
 
 enum PromptPickerEvent {
     Confirmed { prompt_id: PromptId },
+    Deleted { prompt_id: PromptId },
 }
 
 impl EventEmitter<PromptPickerEvent> for Picker<PromptPickerDelegate> {}
@@ -157,9 +161,10 @@ impl PickerDelegate for PromptPickerDelegate {
         &self,
         ix: usize,
         selected: bool,
-        _cx: &mut ViewContext<Picker<Self>>,
+        cx: &mut ViewContext<Picker<Self>>,
     ) -> Option<Self::ListItem> {
         let prompt = self.matches.get(ix)?;
+        let prompt_id = prompt.id;
         Some(
             ListItem::new(ix)
                 .inset(true)
@@ -167,9 +172,16 @@ impl PickerDelegate for PromptPickerDelegate {
                 .selected(selected)
                 .child(Label::new(
                     prompt.title.clone().unwrap_or("Untitled".into()),
-                )),
+                ))
+                .end_hover_slot(
+                    IconButton::new("delete-prompt", IconName::Trash)
+                        .shape(IconButtonShape::Square)
+                        .tooltip(move |cx| Tooltip::text("Delete Prompt", cx))
+                        .on_click(cx.listener(move |_, _, cx| {
+                            cx.emit(PromptPickerEvent::Deleted { prompt_id })
+                        })),
+                ),
         )
-        // .end_slot(div().when(is_dirty, |this| this.child(Indicator::dot()))),
     }
 }
 
@@ -217,6 +229,9 @@ impl PromptLibrary {
             PromptPickerEvent::Confirmed { prompt_id } => {
                 self.load_prompt(*prompt_id, true, cx);
             }
+            PromptPickerEvent::Deleted { prompt_id } => {
+                self.delete_prompt(*prompt_id, cx);
+            }
         }
     }
 
@@ -250,6 +265,12 @@ impl PromptLibrary {
                 .detach_and_log_err(cx);
             self.picker.update(cx, |picker, cx| picker.refresh(cx));
             cx.notify();
+        }
+    }
+
+    pub fn delete_active_prompt(&mut self, cx: &mut ViewContext<Self>) {
+        if let Some(active_prompt_id) = self.active_prompt_id {
+            self.delete_prompt(active_prompt_id, cx);
         }
     }
 
@@ -317,6 +338,36 @@ impl PromptLibrary {
                 })
                 .ok();
             });
+        }
+    }
+
+    pub fn delete_prompt(&mut self, prompt_id: PromptId, cx: &mut ViewContext<Self>) {
+        if let Some(metadata) = self.store.metadata(prompt_id) {
+            let confirmation = cx.prompt(
+                PromptLevel::Warning,
+                &format!(
+                    "Are you sure you want to delete {}",
+                    metadata.title.unwrap_or("Untitled".into())
+                ),
+                None,
+                &["Delete", "Cancel"],
+            );
+
+            cx.spawn(|this, mut cx| async move {
+                if confirmation.await.ok() == Some(0) {
+                    this.update(&mut cx, |this, cx| {
+                        if this.active_prompt_id == Some(prompt_id) {
+                            this.active_prompt_id = None;
+                        }
+                        this.prompt_editors.remove(&prompt_id);
+                        this.store.delete(prompt_id).detach_and_log_err(cx);
+                        this.picker.update(cx, |picker, cx| picker.refresh(cx));
+                        cx.notify();
+                    })?;
+                }
+                anyhow::Ok(())
+            })
+            .detach_and_log_err(cx);
         }
     }
 
@@ -419,6 +470,20 @@ impl PromptLibrary {
                                                     ));
                                                 },
                                             ),
+                                        )
+                                        .child(
+                                            IconButton::new("delete-prompt", IconName::Trash)
+                                                .shape(IconButtonShape::Square)
+                                                .tooltip(move |cx| {
+                                                    Tooltip::for_action(
+                                                        "Delete Prompt",
+                                                        &DeletePrompt,
+                                                        cx,
+                                                    )
+                                                })
+                                                .on_click(|_, cx| {
+                                                    cx.dispatch_action(Box::new(DeletePrompt));
+                                                }),
                                         ),
                                 ),
                         )
@@ -435,6 +500,7 @@ impl Render for PromptLibrary {
             .key_context("PromptLibrary")
             .on_action(cx.listener(|this, &NewPrompt, cx| this.new_prompt(cx)))
             .on_action(cx.listener(|this, &SavePrompt, cx| this.save_active_prompt(cx)))
+            .on_action(cx.listener(|this, &DeletePrompt, cx| this.delete_active_prompt(cx)))
             .on_action(cx.listener(|this, &ToggleDefaultPrompt, cx| {
                 this.toggle_default_for_active_prompt(cx)
             }))
@@ -502,6 +568,11 @@ impl MetadataCache {
         }
         self.metadata.sort_by_key(|m| Reverse(m.saved_at));
     }
+
+    fn remove(&mut self, id: PromptId) {
+        self.metadata.retain(|metadata| metadata.id != id);
+        self.metadata_by_id.remove(&id);
+    }
 }
 
 impl PromptStore {
@@ -548,6 +619,24 @@ impl PromptStore {
             Ok(bodies
                 .get(&txn, &id)?
                 .ok_or_else(|| anyhow!("prompt not found"))?)
+        })
+    }
+
+    pub fn delete(&self, id: PromptId) -> Task<Result<()>> {
+        self.metadata_cache.lock().remove(id);
+
+        let db_connection = self.env.clone();
+        let bodies = self.bodies;
+        let metadata = self.metadata;
+
+        self.executor.spawn(async move {
+            let mut txn = db_connection.write_txn()?;
+
+            metadata.delete(&mut txn, &id)?;
+            bodies.delete(&mut txn, &id)?;
+
+            txn.commit()?;
+            Ok(())
         })
     }
 
