@@ -238,6 +238,7 @@ impl PromptLibrary {
     pub fn new_prompt(&mut self, cx: &mut ViewContext<Self>) {
         let prompt_id = PromptId::new();
         let save = self.store.save(prompt_id, None, false, "".into());
+        self.picker.update(cx, |picker, cx| picker.refresh(cx));
         cx.spawn(|this, mut cx| async move {
             save.await?;
             this.update(&mut cx, |this, cx| this.load_prompt(prompt_id, true, cx))
