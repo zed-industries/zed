@@ -60,6 +60,7 @@ impl LspAdapter for RustLspAdapter {
                 env: None,
             })
         } else {
+            log::info!("Trying to use `rust-analyzer` from PATH");
             let env = delegate.shell_env().await;
             let path = delegate.which(Self::SERVER_NAME.as_ref()).await?;
             Some(LanguageServerBinary {
