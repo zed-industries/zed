@@ -19,6 +19,14 @@ pub(crate) enum EditorState {
 }
 
 impl EditorState {
+    pub(crate) fn new_selection(trie: Trie<OverlayState>) -> EditorState {
+        EditorState::Selection(Selection::new(trie))
+    }
+
+    pub(crate) fn new_n_char(n: usize) -> EditorState {
+        EditorState::NCharInput(NCharInput::new(n))
+    }
+
     pub(crate) fn is_none(&self) -> bool {
         matches!(self, EditorState::None)
     }
@@ -92,6 +100,13 @@ pub(crate) enum InputResult {
 }
 
 impl NCharInput {
+    pub(crate) fn new(n: usize) -> Self {
+        Self {
+            n,
+            chars: String::new(),
+        }
+    }
+
     pub(crate) fn record_str(mut self, characters: &str) -> InputResult {
         if self.chars.len() + characters.len() >= self.n {
             self.chars

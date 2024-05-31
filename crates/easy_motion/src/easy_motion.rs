@@ -7,8 +7,9 @@ use std::{fmt, mem};
 use editor::scroll::Autoscroll;
 use editor::{DisplayPoint, Editor};
 use gpui::{
-    actions, impl_actions, saturate, AppContext, Bounds, Entity, EntityId, Global, HighlightStyle,
-    KeystrokeEvent, Model, ModelContext, Point, Subscription, View, ViewContext, WeakView,
+    actions, impl_actions, saturate, AppContext, AsyncAppContext, Bounds, Entity, EntityId, Global,
+    HighlightStyle, KeystrokeEvent, Model, ModelContext, Point, Subscription, View, ViewContext,
+    WeakView,
 };
 use perm::{TrieBuilder, TrimResult};
 use settings::Settings;
@@ -116,7 +117,7 @@ pub fn init(cx: &mut AppContext) {
 fn register(workspace: &mut Workspace, _: &mut ViewContext<Workspace>) {
     workspace.register_action(|workspace: &mut Workspace, action: &Word, cx| {
         let Word(direction) = *action;
-        // TODO other directions
+        // TODO other directions?
         // not sure if check for multiple editors is totally necessary
         if matches!(direction, Direction::BiDirectional)
             && workspace.is_split()
@@ -160,6 +161,17 @@ impl EasyMotion {
         EasyMotion::global(cx).map(|easy| easy.update(cx, f))
     }
 
+    pub fn update_async<F, S>(cx: &mut AsyncAppContext, f: F) -> Option<S>
+    where
+        F: FnOnce(&mut EasyMotion, &mut ModelContext<EasyMotion>) -> S,
+    {
+        EasyMotion::global_async(cx).and_then(|easy| easy.update(cx, f).ok())
+    }
+
+    pub fn global_async(cx: &mut AsyncAppContext) -> Option<Model<Self>> {
+        cx.try_read_global::<GlobalEasyMotion, _>(|global_easy, _cx| global_easy.0.clone())
+    }
+
     pub fn global(cx: &AppContext) -> Option<Model<Self>> {
         cx.try_global::<GlobalEasyMotion>()
             .map(|model| model.0.clone())
@@ -170,7 +182,7 @@ impl EasyMotion {
     }
 
     pub fn read_with<S>(
-        cx: &ViewContext<Workspace>,
+        cx: &WindowContext,
         f: impl FnOnce(&EasyMotion, &AppContext) -> S,
     ) -> Option<S> {
         EasyMotion::global(cx).map(|easy| easy.read_with(cx, f))
@@ -191,7 +203,7 @@ impl EasyMotion {
         self.active_editor = Some(editor.downgrade());
     }
 
-    fn active_editor(cx: &mut ViewContext<Workspace>) -> Option<View<Editor>> {
+    fn active_editor(cx: &mut WindowContext) -> Option<View<Editor>> {
         Self::read_with(cx, |easy, _| {
             easy.active_editor.as_ref().and_then(|weak| weak.upgrade())
         })
@@ -229,7 +241,7 @@ impl EasyMotion {
         })
     }
 
-    fn word(word_type: WordType, direction: Direction, cx: &mut ViewContext<Workspace>) {
+    fn word(word_type: WordType, direction: Direction, cx: &mut WindowContext) {
         let Some(active_editor) = Self::active_editor(cx) else {
             return;
         };
@@ -258,6 +270,9 @@ impl EasyMotion {
         let map = &editor.snapshot(cx).display_snapshot;
 
         let mut word_starts = Self::word_starts(word_type, direction, map, &selections, editor, cx);
+        if word_starts.is_empty() {
+            return EditorState::None;
+        }
         word_starts.sort_unstable_by(|a, b| {
             let a_distance = manh_distance(a, &selections.start, 2.5);
             let b_distance = manh_distance(b, &selections.start, 2.5);
@@ -269,9 +284,6 @@ impl EasyMotion {
                 Ordering::Greater
             }
         });
-        if word_starts.is_empty() {
-            return EditorState::None;
-        }
 
         let (style_0, style_1, style_2) = get_highlights(cx);
         let trie = TrieBuilder::new("asdghklqwertyuiopzxcvbnmfj".to_string(), word_starts.len())
@@ -361,14 +373,14 @@ impl EasyMotion {
                 })
                 .map(|editor| {
                     let bounding_box = workspace.center().bounding_box_for_pane(pane).unwrap();
-                    (editor, pane.clone(), bounding_box)
+                    (editor, bounding_box)
                 })
             })
             .collect::<Vec<_>>();
 
         let new_state = Self::word_multipane_impl(word_type, true, active_editor_id, &editors, cx);
 
-        for (editor, _, _) in editors {
+        for (editor, _) in editors {
             editor.update(cx, |editor, cx| {
                 let ctx = new_state.keymap_context_layer();
                 editor.set_keymap_context_layer::<Self>(ctx, cx);
@@ -384,40 +396,15 @@ impl EasyMotion {
         word_type: WordType,
         dimming: bool,
         active_editor_id: EntityId,
-        editors: &[(View<Editor>, View<Pane>, Bounds<Pixels>)],
+        editors: &[(View<Editor>, Bounds<Pixels>)],
         cx: &mut ViewContext<Workspace>,
     ) -> EditorState {
         // TODO do this in parallel?
         // get words along with their display points within their editors
         // as well as a rough absolute position for sorting purposes
-        let cursor = editors
-            .iter()
-            .find(|(editor_view, _, _)| editor_view.entity_id() == active_editor_id)
-            .map(|(editor_view, _, bounding_box)| {
-                editor_view.update(cx, |editor, cx| {
-                    let style = cx.text_style();
-                    let line_height = style
-                        .line_height
-                        .to_pixels(style.font_size, cx.rem_size())
-                        .0;
-                    let selections = editor.selections.newest_display(cx);
-                    let start = selections.start;
-                    let text_layout_details = editor.text_layout_details(cx);
-                    let map = editor.snapshot(cx).display_snapshot;
-                    let window_top = window_top(&map, &text_layout_details);
-                    let x = bounding_box.origin.x.0 + start.column() as f32 * line_height * 0.5;
-                    let y = bounding_box.origin.y.0
-                        + (start.row().0 as f32 - window_top.row().0 as f32) * line_height;
-                    let x = Pixels(x);
-                    let y = Pixels(y);
-                    Point::new(x, y)
-                })
-            })
-            .unwrap();
-
         let mut word_starts = editors
             .iter()
-            .map(|(editor_view, _pane_view, bounding_box)| {
+            .map(|(editor_view, bounding_box)| {
                 editor_view.update(cx, |editor, cx| {
                     let selections = editor.selections.newest_display(cx);
 
@@ -453,9 +440,34 @@ impl EasyMotion {
             .flatten()
             .collect::<Vec<_>>();
 
-        word_starts.sort_unstable_by(|a, b| {
-            let a_distance = manh_distance_pixels(&a.2, &cursor, 2.5);
-            let b_distance = manh_distance_pixels(&b.2, &cursor, 2.5);
+        let cursor = editors
+            .iter()
+            .find(|(editor_view, _)| editor_view.entity_id() == active_editor_id)
+            .map(|(editor_view, bounding_box)| {
+                editor_view.update(cx, |editor, cx| {
+                    let style = cx.text_style();
+                    let line_height = style
+                        .line_height
+                        .to_pixels(style.font_size, cx.rem_size())
+                        .0;
+                    let selections = editor.selections.newest_display(cx);
+                    let start = selections.start;
+                    let text_layout_details = editor.text_layout_details(cx);
+                    let map = editor.snapshot(cx).display_snapshot;
+                    let window_top = window_top(&map, &text_layout_details);
+                    let x = bounding_box.origin.x.0 + start.column() as f32 * line_height * 0.5;
+                    let y = bounding_box.origin.y.0
+                        + (start.row().0 as f32 - window_top.row().0 as f32) * line_height;
+                    let x = Pixels(x);
+                    let y = Pixels(y);
+                    Point::new(x, y)
+                })
+            })
+            .unwrap();
+
+        word_starts.sort_unstable_by(|(_, _, a), (_, _, b)| {
+            let a_distance = manh_distance_pixels(a, &cursor, 2.5);
+            let b_distance = manh_distance_pixels(b, &cursor, 2.5);
             if a_distance == b_distance {
                 Ordering::Equal
             } else if a_distance < b_distance {
@@ -481,7 +493,7 @@ impl EasyMotion {
                 }
             });
 
-        for (editor, _, _) in editors {
+        for (editor, _) in editors {
             let trie_iter = trie
                 .iter()
                 .filter(|(_seq, overlay)| overlay.editor_id == editor.entity_id());
