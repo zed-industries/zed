@@ -42,36 +42,51 @@ pub fn init(cx: &mut AppContext) {
     cx.set_global(GlobalPromptStore(prompt_store_future))
 }
 
-/// This method waits for the PromptStore to be initialized.
-/// If it was initialized successfully, it returns a window handle to a prompt library.
+/// This function opens a new prompt library window if one doesn't exist already.
+/// If one exists, it brings it to the foreground.
+///
+/// Note that, when opening a new window, this waits for the PromptStore to be
+/// initialized. If it was initialized successfully, it returns a window handle
+/// to a prompt library.
 pub fn open_prompt_library(
     language_registry: Arc<LanguageRegistry>,
     cx: &mut AppContext,
 ) -> Task<Result<WindowHandle<PromptLibrary>>> {
-    let store = GlobalPromptStore::global(cx).0.clone();
-    cx.spawn(|cx| async move {
-        let store = store.await.map_err(|e| anyhow!(e))?;
+    let existing_window = cx
+        .windows()
+        .into_iter()
+        .find_map(|window| window.downcast::<PromptLibrary>());
+    if let Some(existing_window) = existing_window {
+        existing_window
+            .update(cx, |_, cx| cx.activate_window())
+            .ok();
+        Task::ready(Ok(existing_window))
+    } else {
+        let store = GlobalPromptStore::global(cx).0.clone();
+        cx.spawn(|cx| async move {
+            let store = store.await.map_err(|e| anyhow!(e))?;
 
-        cx.update(|cx| {
-            let bounds = Bounds::centered(
-                None,
-                size(DevicePixels::from(1024), DevicePixels::from(768)),
-                cx,
-            );
-            cx.open_window(
-                WindowOptions {
-                    titlebar: Some(TitlebarOptions {
-                        title: None,
-                        appears_transparent: true,
-                        traffic_light_position: Some(point(px(9.0), px(9.0))),
-                    }),
-                    window_bounds: Some(WindowBounds::Windowed(bounds)),
-                    ..Default::default()
-                },
-                |cx| cx.new_view(|cx| PromptLibrary::new(store, language_registry, cx)),
-            )
+            cx.update(|cx| {
+                let bounds = Bounds::centered(
+                    None,
+                    size(DevicePixels::from(1024), DevicePixels::from(768)),
+                    cx,
+                );
+                cx.open_window(
+                    WindowOptions {
+                        titlebar: Some(TitlebarOptions {
+                            title: None,
+                            appears_transparent: true,
+                            traffic_light_position: Some(point(px(9.0), px(9.0))),
+                        }),
+                        window_bounds: Some(WindowBounds::Windowed(bounds)),
+                        ..Default::default()
+                    },
+                    |cx| cx.new_view(|cx| PromptLibrary::new(store, language_registry, cx)),
+                )
+            })
         })
-    })
+    }
 }
 
 pub struct PromptLibrary {
