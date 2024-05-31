@@ -311,6 +311,7 @@ unsafe fn build_window_class(name: &'static str, superclass: &Class) -> *const C
     decl.register()
 }
 
+#[derive(Debug)]
 #[allow(clippy::enum_variant_names)]
 enum ImeInput {
     InsertText(String, Option<Range<usize>>),
@@ -1219,16 +1220,7 @@ extern "C" fn handle_key_event(this: &Object, native_event: id, key_equivalent: 
 
         let keydown = event.keystroke.clone();
         let fn_modifier = keydown.modifiers.function;
-        // Ignore events from held-down keys after some of the initially-pressed keys
-        // were released.
-        if event.is_held {
-            if lock.last_fresh_keydown.as_ref() != Some(&keydown) {
-                return YES;
-            }
-        } else {
-            lock.last_fresh_keydown = Some(keydown.clone());
-        }
-        lock.input_during_keydown = Some(SmallVec::new());
+
         drop(lock);
 
         // Send the event to the input context for IME handling, unless the `fn` modifier is
@@ -1240,11 +1232,32 @@ extern "C" fn handle_key_event(this: &Object, native_event: id, key_equivalent: 
                 let _: BOOL = msg_send![input_context, handleEvent: native_event];
             }
         }
+        let mut lock = window_state.lock();
+
+        println!("******************************************");
+        ///// THE PROBLEM AREA ///////
+        // Ignore events from held-down keys after some of the initially-pressed keys
+        // were released.
+        if dbg!(event.is_held) {
+            if dbg!(lock.last_fresh_keydown.as_ref()) != Some(&keydown) {
+                return YES;
+            }
+        } else {
+            //????
+            lock.last_fresh_keydown = Some(dbg!(keydown.clone()));
+        }
+        lock.input_during_keydown = Some(SmallVec::new());
+        ///// THE PROBLEM AREA ///////
+
+        // Send the event to the input context for IME handling, unless the `fn` modifier is
+        // being pressed.
+        // this will call back into `insert_text`, etc.
 
         let mut handled = false;
-        let mut lock = window_state.lock();
         let previous_keydown_inserted_text = lock.previous_keydown_inserted_text.take();
+
         let mut input_during_keydown = lock.input_during_keydown.take().unwrap();
+        dbg!(&input_during_keydown);
         let mut callback = lock.event_callback.take();
         drop(lock);
 
@@ -1260,7 +1273,10 @@ extern "C" fn handle_key_event(this: &Object, native_event: id, key_equivalent: 
                 .flatten()
                 .is_some();
 
+        dbg!(is_composing, &last_ime);
+
         if let Some(ime) = last_ime {
+            // Problem area
             if let ImeInput::InsertText(text, _) = &ime {
                 if !is_composing {
                     window_state.lock().previous_keydown_inserted_text = Some(text.clone());
@@ -1275,6 +1291,7 @@ extern "C" fn handle_key_event(this: &Object, native_event: id, key_equivalent: 
                 handled = true;
                 send_to_input_handler(this, ime);
             }
+            // Problem area
         } else if !is_composing {
             let is_held = event.is_held;
 
@@ -1655,21 +1672,27 @@ extern "C" fn valid_attributes_for_marked_text(_: &Object, _: Sel) -> id {
 }
 
 extern "C" fn has_marked_text(this: &Object, _: Sel) -> BOOL {
-    with_input_handler(this, |input_handler| input_handler.marked_text_range())
-        .flatten()
-        .is_some() as BOOL
+    dbg!("has marked range");
+    with_input_handler(
+        this,
+        |input_handler| dbg!(input_handler.marked_text_range()),
+    )
+    .flatten()
+    .is_some() as BOOL
 }
 
 extern "C" fn marked_range(this: &Object, _: Sel) -> NSRange {
+    dbg!("querying marked range");
     with_input_handler(this, |input_handler| input_handler.marked_text_range())
         .flatten()
-        .map_or(NSRange::invalid(), |range| range.into())
+        .map_or(NSRange::invalid(), |range| dbg!(range).into())
 }
 
 extern "C" fn selected_range(this: &Object, _: Sel) -> NSRange {
+    dbg!("asking for sel range");
     with_input_handler(this, |input_handler| input_handler.selected_text_range())
         .flatten()
-        .map_or(NSRange::invalid(), |range| range.into())
+        .map_or(NSRange::invalid(), |range| dbg!(range).into())
 }
 
 extern "C" fn first_rect_for_character_range(

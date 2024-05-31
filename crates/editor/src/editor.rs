@@ -11574,6 +11574,7 @@ impl ViewInputHandler for Editor {
     }
 
     fn unmark_text(&mut self, cx: &mut ViewContext<Self>) {
+        dbg!("unmark text");
         self.clear_highlights::<InputComposition>(cx);
         self.ime_transaction.take();
     }
@@ -11584,6 +11585,7 @@ impl ViewInputHandler for Editor {
         text: &str,
         cx: &mut ViewContext<Self>,
     ) {
+        dbg!((&range_utf16, text));
         if !self.input_enabled {
             cx.emit(EditorEvent::InputIgnored { text: text.into() });
             return;
@@ -11646,6 +11648,7 @@ impl ViewInputHandler for Editor {
         new_selected_range_utf16: Option<Range<usize>>,
         cx: &mut ViewContext<Self>,
     ) {
+        dbg!((&range_utf16, text, &new_selected_range_utf16));
         if !self.input_enabled {
             cx.emit(EditorEvent::InputIgnored { text: text.into() });
             return;
