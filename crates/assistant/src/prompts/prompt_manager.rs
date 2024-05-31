@@ -46,7 +46,6 @@ impl PromptManager {
                 },
                 cx,
             )
-            .max_height(rems(35.75))
             .modal(false)
         });
 

@@ -8,8 +8,9 @@ use futures::{
 };
 use fuzzy::StringMatchCandidate;
 use gpui::{
-    actions, point, size, AppContext, BackgroundExecutor, Bounds, DevicePixels, Global, ReadGlobal,
-    Task, TitlebarOptions, View, WindowBounds, WindowHandle, WindowOptions,
+    actions, point, size, AppContext, BackgroundExecutor, Bounds, DevicePixels, EventEmitter,
+    Global, ReadGlobal, Subscription, Task, TitlebarOptions, View, WindowBounds, WindowHandle,
+    WindowOptions,
 };
 use heed::{types::SerdeBincode, Database, RoTxn};
 use language::{language_settings::SoftWrap, Buffer, LanguageRegistry};
@@ -80,6 +81,7 @@ pub struct PromptLibrary {
     active_prompt_id: Option<PromptId>,
     picker: View<Picker<PromptPickerDelegate>>,
     pending_load: Task<()>,
+    _subscriptions: Vec<Subscription>,
 }
 
 struct PromptPickerDelegate {
@@ -87,6 +89,12 @@ struct PromptPickerDelegate {
     selected_index: usize,
     matches: Vec<PromptMetadata>,
 }
+
+enum PromptPickerEvent {
+    Confirmed { prompt_id: PromptId },
+}
+
+impl EventEmitter<PromptPickerEvent> for Picker<PromptPickerDelegate> {}
 
 impl PickerDelegate for PromptPickerDelegate {
     type ListItem = ListItem;
@@ -112,6 +120,7 @@ impl PickerDelegate for PromptPickerDelegate {
         cx.spawn(|this, mut cx| async move {
             let matches = search.await;
             this.update(&mut cx, |this, cx| {
+                this.delegate.selected_index = 0;
                 this.delegate.matches = matches;
                 cx.notify();
             })
@@ -119,8 +128,12 @@ impl PickerDelegate for PromptPickerDelegate {
         })
     }
 
-    fn confirm(&mut self, secondary: bool, cx: &mut ViewContext<Picker<Self>>) {
-        todo!()
+    fn confirm(&mut self, _secondary: bool, cx: &mut ViewContext<Picker<Self>>) {
+        if let Some(prompt) = self.matches.get(self.selected_index) {
+            cx.emit(PromptPickerEvent::Confirmed {
+                prompt_id: prompt.id,
+            });
+        }
     }
 
     fn dismissed(&mut self, _cx: &mut ViewContext<Picker<Self>>) {}
@@ -146,7 +159,7 @@ impl PickerDelegate for PromptPickerDelegate {
 }
 
 impl PromptLibrary {
-    pub fn new(
+    fn new(
         store: Arc<PromptStore>,
         language_registry: Arc<LanguageRegistry>,
         cx: &mut ViewContext<Self>,
@@ -157,22 +170,39 @@ impl PromptLibrary {
             matches: Vec::new(),
         };
 
+        let picker = cx.new_view(|cx| {
+            let picker = Picker::uniform_list(delegate, cx)
+                .modal(false)
+                .max_height(None);
+            picker.focus(cx);
+            picker
+        });
         let mut this = Self {
             store: store.clone(),
             language_registry,
             prompt_editors: HashMap::default(),
             active_prompt_id: None,
-            picker: cx.new_view(|cx| {
-                let picker = Picker::uniform_list(delegate, cx).modal(false);
-                picker.focus(cx);
-                picker
-            }),
             pending_load: Task::ready(()),
+            _subscriptions: vec![cx.subscribe(&picker, Self::handle_picker_event)],
+            picker,
         };
         if let Some(prompt_id) = store.most_recently_saved() {
             this.load_prompt(prompt_id, false, cx);
         }
         this
+    }
+
+    fn handle_picker_event(
+        &mut self,
+        _: View<Picker<PromptPickerDelegate>>,
+        event: &PromptPickerEvent,
+        cx: &mut ViewContext<Self>,
+    ) {
+        match event {
+            PromptPickerEvent::Confirmed { prompt_id } => {
+                self.load_prompt(*prompt_id, true, cx);
+            }
+        }
     }
 
     pub fn new_prompt(&mut self, cx: &mut ViewContext<Self>) {
@@ -197,13 +227,16 @@ impl PromptLibrary {
             self.store
                 .save(active_prompt_id, title, body.text())
                 .detach_and_log_err(cx);
-
+            self.picker.update(cx, |picker, cx| picker.refresh(cx));
             cx.notify();
         }
     }
 
     pub fn load_prompt(&mut self, prompt_id: PromptId, focus: bool, cx: &mut ViewContext<Self>) {
-        if self.prompt_editors.contains_key(&prompt_id) {
+        if let Some(prompt_editor) = self.prompt_editors.get(&prompt_id) {
+            if focus {
+                prompt_editor.update(cx, |editor, cx| editor.focus(cx));
+            }
             self.active_prompt_id = Some(prompt_id);
         } else {
             let language_registry = self.language_registry.clone();
@@ -244,8 +277,6 @@ impl PromptLibrary {
     }
 
     fn render_prompt_list(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
-        let picker = self.picker.clone();
-
         v_flex()
             .id("prompt-list")
             .bg(cx.theme().colors().surface_background)
@@ -265,13 +296,13 @@ impl PromptLibrary {
                     .child(
                         IconButton::new("new-prompt", IconName::Plus)
                             .shape(IconButtonShape::Square)
-                            .tooltip(move |cx| Tooltip::text("New Prompt", cx))
+                            .tooltip(move |cx| Tooltip::for_action("New Prompt", &NewPrompt, cx))
                             .on_click(|_, cx| {
                                 cx.dispatch_action(Box::new(NewPrompt));
                             }),
                     ),
             )
-            .child(v_flex().flex_grow().justify_start().child(picker))
+            .child(div().flex_grow().child(self.picker.clone()))
     }
 
     fn render_active_prompt(&mut self, cx: &mut ViewContext<PromptLibrary>) -> gpui::Stateful<Div> {
@@ -294,9 +325,42 @@ impl PromptLibrary {
                             h_flex()
                                 .h(TitleBar::height(cx))
                                 .px(Spacing::Large.rems(cx))
+                                .justify_between()
                                 .child(
                                     Label::new(prompt_metadata.title.unwrap_or("Untitled".into()))
                                         .size(LabelSize::Large),
+                                )
+                                .child(
+                                    h_flex()
+                                        .gap_4()
+                                        .child(
+                                            IconButton::new("save-prompt", IconName::Save)
+                                                .shape(IconButtonShape::Square)
+                                                .tooltip(move |cx| {
+                                                    Tooltip::for_action(
+                                                        "Save Prompt",
+                                                        &SavePrompt,
+                                                        cx,
+                                                    )
+                                                })
+                                                .on_click(|_, cx| {
+                                                    cx.dispatch_action(Box::new(SavePrompt));
+                                                }),
+                                        )
+                                        .child(
+                                            IconButton::new("star-prompt", IconName::Star)
+                                                .shape(IconButtonShape::Square)
+                                                .tooltip(move |cx| {
+                                                    Tooltip::for_action(
+                                                        "Add to Default Prompt",
+                                                        &SavePrompt,
+                                                        cx,
+                                                    )
+                                                })
+                                                .on_click(|_, cx| {
+                                                    cx.dispatch_action(Box::new(SavePrompt));
+                                                }),
+                                        ),
                                 ),
                         )
                         .child(div().flex_grow().p(Spacing::Large.rems(cx)).child(editor)),
@@ -438,30 +502,33 @@ impl PromptStore {
         let cached_metadata = self.metadata_cache.lock().metadata.clone();
         let executor = self.executor.clone();
         self.executor.spawn(async move {
-            let candidates = cached_metadata
-                .iter()
-                .enumerate()
-                .filter_map(|(ix, metadata)| {
-                    Some(StringMatchCandidate::new(
-                        ix,
-                        metadata.title.as_ref()?.to_string(),
-                    ))
-                })
-                .collect::<Vec<_>>();
-            let matches = fuzzy::match_strings(
-                &candidates,
-                &query,
-                false,
-                100,
-                &AtomicBool::default(),
-                executor,
-            )
-            .await;
-
-            matches
-                .into_iter()
-                .map(|mat| cached_metadata[mat.candidate_id].clone())
-                .collect()
+            if query.is_empty() {
+                cached_metadata
+            } else {
+                let candidates = cached_metadata
+                    .iter()
+                    .enumerate()
+                    .filter_map(|(ix, metadata)| {
+                        Some(StringMatchCandidate::new(
+                            ix,
+                            metadata.title.as_ref()?.to_string(),
+                        ))
+                    })
+                    .collect::<Vec<_>>();
+                let matches = fuzzy::match_strings(
+                    &candidates,
+                    &query,
+                    false,
+                    100,
+                    &AtomicBool::default(),
+                    executor,
+                )
+                .await;
+                matches
+                    .into_iter()
+                    .map(|mat| cached_metadata[mat.candidate_id].clone())
+                    .collect()
+            }
         })
     }
 

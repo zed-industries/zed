@@ -2,8 +2,9 @@ use anyhow::Result;
 use editor::{scroll::Autoscroll, Editor};
 use gpui::{
     actions, div, impl_actions, list, prelude::*, uniform_list, AnyElement, AppContext, ClickEvent,
-    DismissEvent, EventEmitter, FocusHandle, FocusableView, Length, ListState, MouseButton,
-    MouseUpEvent, Render, Task, UniformListScrollHandle, View, ViewContext, WindowContext,
+    DismissEvent, EventEmitter, FocusHandle, FocusableView, Length, ListSizingBehavior, ListState,
+    MouseButton, MouseUpEvent, Render, Task, UniformListScrollHandle, View, ViewContext,
+    WindowContext,
 };
 use head::Head;
 use serde::Deserialize;
@@ -174,7 +175,7 @@ impl<D: PickerDelegate> Picker<D> {
             pending_update_matches: None,
             confirm_on_update: None,
             width: None,
-            max_height: None,
+            max_height: Some(rems(18.).into()),
             is_modal: true,
         };
         this.update_matches("".to_string(), cx);
@@ -217,8 +218,8 @@ impl<D: PickerDelegate> Picker<D> {
         self
     }
 
-    pub fn max_height(mut self, max_height: impl Into<gpui::Length>) -> Self {
-        self.max_height = Some(max_height.into());
+    pub fn max_height(mut self, max_height: Option<gpui::Length>) -> Self {
+        self.max_height = max_height;
         self
     }
 
@@ -491,6 +492,11 @@ impl<D: PickerDelegate> Picker<D> {
     }
 
     fn render_element_container(&self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+        let sizing_behavior = if self.max_height.is_some() {
+            ListSizingBehavior::Infer
+        } else {
+            ListSizingBehavior::Auto
+        };
         match &self.element_container {
             ElementContainer::UniformList(scroll_handle) => uniform_list(
                 cx.view().clone(),
@@ -502,11 +508,14 @@ impl<D: PickerDelegate> Picker<D> {
                         .collect()
                 },
             )
+            .with_sizing_behavior(sizing_behavior)
+            .flex_grow()
             .py_2()
             .track_scroll(scroll_handle.clone())
             .into_any_element(),
             ElementContainer::List(state) => list(state.clone())
-                .with_sizing_behavior(gpui::ListSizingBehavior::Infer)
+                .with_sizing_behavior(sizing_behavior)
+                .flex_grow()
                 .py_2()
                 .into_any_element(),
         }
@@ -518,7 +527,7 @@ impl<D: PickerDelegate> ModalView for Picker<D> {}
 
 impl<D: PickerDelegate> Render for Picker<D> {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
-        div()
+        v_flex()
             .key_context("Picker")
             .size_full()
             .when_some(self.width, |el, width| el.w(width))
@@ -554,7 +563,7 @@ impl<D: PickerDelegate> Render for Picker<D> {
                 el.child(
                     v_flex()
                         .flex_grow()
-                        .max_h(self.max_height.unwrap_or(rems(18.).into()))
+                        .when_some(self.max_height, |div, max_h| div.max_h(max_h))
                         .overflow_hidden()
                         .children(self.delegate.render_header(cx))
                         .child(self.render_element_container(cx)),
