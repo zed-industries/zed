@@ -1,20 +1,15 @@
-use crate::prompt_library::open_prompt_library;
-use crate::prompts::{generate_content_prompt, PromptLibrary, PromptManager};
-use crate::slash_command::{rustdoc_command, search_command, tabs_command};
 use crate::{
     assistant_settings::{AssistantDockPosition, AssistantSettings},
     codegen::{self, Codegen, CodegenKind},
+    prompt_library::open_prompt_library,
+    prompts::generate_content_prompt,
     search::*,
-    slash_command::{
-        active_command, file_command, project_command, prompt_command,
-        SlashCommandCompletionProvider, SlashCommandLine, SlashCommandRegistry,
-    },
+    slash_command::{SlashCommandCompletionProvider, SlashCommandLine, SlashCommandRegistry},
     ApplyEdit, Assist, CompletionProvider, ConfirmCommand, CycleMessageRole, InlineAssist,
     LanguageModelRequest, LanguageModelRequestMessage, MessageId, MessageMetadata, MessageStatus,
-    QuoteSelection, ResetKey, Role, SavedConversation, SavedConversationMetadata, SavedMessage,
-    Split, ToggleFocus, ToggleHistory,
+    ModelSelector, QuoteSelection, ResetKey, Role, SavedConversation, SavedConversationMetadata,
+    SavedMessage, Split, ToggleFocus, ToggleHistory, ToggleModelSelector,
 };
-use crate::{ModelSelector, ToggleModelSelector};
 use anyhow::{anyhow, Result};
 use assistant_slash_command::{SlashCommandOutput, SlashCommandOutputSection};
 use client::telemetry::Telemetry;
@@ -111,7 +106,6 @@ pub struct AssistantPanel {
     toolbar: View<Toolbar>,
     languages: Arc<LanguageRegistry>,
     slash_commands: Arc<SlashCommandRegistry>,
-    prompt_library: Arc<PromptLibrary>,
     fs: Arc<dyn Fs>,
     telemetry: Arc<Telemetry>,
     _subscriptions: Vec<Subscription>,
@@ -148,13 +142,6 @@ impl AssistantPanel {
                 .await
                 .log_err()
                 .unwrap_or_default();
-
-            let prompt_library = Arc::new(
-                PromptLibrary::load_index(fs.clone())
-                    .await
-                    .log_err()
-                    .unwrap_or_default(),
-            );
 
             // TODO: deserialize state.
             let workspace_handle = workspace.clone();
@@ -210,23 +197,6 @@ impl AssistantPanel {
                     })
                     .detach();
 
-                    let slash_command_registry = SlashCommandRegistry::global(cx);
-
-                    slash_command_registry.register_command(file_command::FileSlashCommand, true);
-                    slash_command_registry.register_command(
-                        prompt_command::PromptSlashCommand::new(prompt_library.clone()),
-                        true,
-                    );
-                    slash_command_registry
-                        .register_command(active_command::ActiveSlashCommand, true);
-                    slash_command_registry.register_command(tabs_command::TabsSlashCommand, true);
-                    slash_command_registry
-                        .register_command(project_command::ProjectSlashCommand, true);
-                    slash_command_registry
-                        .register_command(search_command::SearchSlashCommand, true);
-                    slash_command_registry
-                        .register_command(rustdoc_command::RustdocSlashCommand, false);
-
                     Self {
                         workspace: workspace_handle,
                         active_conversation_editor: None,
@@ -237,8 +207,7 @@ impl AssistantPanel {
                         focus_handle,
                         toolbar,
                         languages: workspace.app_state().languages.clone(),
-                        slash_commands: slash_command_registry,
-                        prompt_library,
+                        slash_commands: SlashCommandRegistry::global(cx),
                         fs: workspace.app_state().fs.clone(),
                         telemetry: workspace.client().telemetry().clone(),
                         width: None,
@@ -1152,21 +1121,6 @@ impl AssistantPanel {
             })??;
             Ok(())
         })
-    }
-
-    fn show_prompt_manager(&mut self, cx: &mut ViewContext<Self>) {
-        if let Some(workspace) = self.workspace.upgrade() {
-            workspace.update(cx, |workspace, cx| {
-                workspace.toggle_modal(cx, |cx| {
-                    PromptManager::new(
-                        self.prompt_library.clone(),
-                        self.languages.clone(),
-                        self.fs.clone(),
-                        cx,
-                    )
-                })
-            })
-        }
     }
 
     fn is_authenticated(&mut self, cx: &mut ViewContext<Self>) -> bool {
@@ -3817,7 +3771,10 @@ fn make_lsp_adapter_delegate(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{FakeCompletionProvider, MessageId};
+    use crate::{
+        slash_command::{active_command, file_command},
+        FakeCompletionProvider, MessageId,
+    };
     use fs::FakeFs;
     use gpui::{AppContext, TestAppContext};
     use rope::Rope;
@@ -4167,14 +4124,9 @@ mod tests {
         )
         .await;
 
-        let prompt_library = Arc::new(PromptLibrary::default());
         let slash_command_registry = SlashCommandRegistry::new();
-
         slash_command_registry.register_command(file_command::FileSlashCommand, false);
-        slash_command_registry.register_command(
-            prompt_command::PromptSlashCommand::new(prompt_library.clone()),
-            false,
-        );
+        slash_command_registry.register_command(active_command::ActiveSlashCommand, false);
 
         let registry = Arc::new(LanguageRegistry::test(cx.executor()));
         let conversation = cx

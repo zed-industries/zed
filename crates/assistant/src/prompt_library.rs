@@ -19,6 +19,7 @@ use picker::{Picker, PickerDelegate};
 use serde::{Deserialize, Serialize};
 use std::{
     cmp::Reverse,
+    future::Future,
     path::PathBuf,
     sync::{atomic::AtomicBool, Arc},
 };
@@ -62,10 +63,9 @@ pub fn open_prompt_library(
             .ok();
         Task::ready(Ok(existing_window))
     } else {
-        let store = GlobalPromptStore::global(cx).0.clone();
+        let store = PromptStore::global(cx);
         cx.spawn(|cx| async move {
-            let store = store.await.map_err(|e| anyhow!(e))?;
-
+            let store = store.await?;
             cx.update(|cx| {
                 let bounds = Bounds::centered(
                     None,
@@ -122,7 +122,7 @@ impl PickerDelegate for PromptPickerDelegate {
         self.selected_index
     }
 
-    fn set_selected_index(&mut self, ix: usize, cx: &mut ViewContext<Picker<Self>>) {
+    fn set_selected_index(&mut self, ix: usize, _cx: &mut ViewContext<Picker<Self>>) {
         self.selected_index = ix;
     }
 
@@ -157,7 +157,7 @@ impl PickerDelegate for PromptPickerDelegate {
         &self,
         ix: usize,
         selected: bool,
-        cx: &mut ViewContext<Picker<Self>>,
+        _cx: &mut ViewContext<Picker<Self>>,
     ) -> Option<Self::ListItem> {
         let prompt = self.matches.get(ix)?;
         Some(
@@ -462,7 +462,7 @@ impl PromptId {
     }
 }
 
-struct PromptStore {
+pub struct PromptStore {
     executor: BackgroundExecutor,
     env: heed::Env,
     bodies: Database<SerdeBincode<PromptId>, SerdeBincode<String>>,
@@ -505,6 +505,11 @@ impl MetadataCache {
 }
 
 impl PromptStore {
+    pub fn global(cx: &AppContext) -> impl Future<Output = Result<Arc<Self>>> {
+        let store = GlobalPromptStore::global(cx).0.clone();
+        async move { store.await.map_err(|err| anyhow!(err)) }
+    }
+
     pub fn new(db_path: PathBuf, executor: BackgroundExecutor) -> Task<Result<Self>> {
         executor.spawn({
             let executor = executor.clone();
@@ -535,11 +540,7 @@ impl PromptStore {
         })
     }
 
-    fn count(&self) -> usize {
-        self.metadata_cache.lock().metadata.len()
-    }
-
-    fn load(&self, id: PromptId) -> Task<Result<String>> {
+    pub fn load(&self, id: PromptId) -> Task<Result<String>> {
         let env = self.env.clone();
         let bodies = self.bodies;
         self.executor.spawn(async move {
@@ -554,7 +555,16 @@ impl PromptStore {
         self.metadata_cache.lock().metadata_by_id.get(&id).cloned()
     }
 
-    fn search(&self, query: String) -> Task<Vec<PromptMetadata>> {
+    pub fn id_for_title(&self, title: &str) -> Option<PromptId> {
+        let metadata_cache = self.metadata_cache.lock();
+        let metadata = metadata_cache
+            .metadata
+            .iter()
+            .find(|metadata| metadata.title.as_ref().map(|title| &***title) == Some(title))?;
+        Some(metadata.id)
+    }
+
+    pub fn search(&self, query: String) -> Task<Vec<PromptMetadata>> {
         let cached_metadata = self.metadata_cache.lock().metadata.clone();
         let executor = self.executor.clone();
         self.executor.spawn(async move {

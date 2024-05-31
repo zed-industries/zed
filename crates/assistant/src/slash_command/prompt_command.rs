@@ -1,8 +1,7 @@
 use super::{SlashCommand, SlashCommandOutput};
-use crate::prompts::PromptLibrary;
+use crate::prompt_library::PromptStore;
 use anyhow::{anyhow, Context, Result};
 use assistant_slash_command::SlashCommandOutputSection;
-use fuzzy::StringMatchCandidate;
 use gpui::{AppContext, Task, WeakView};
 use language::LspAdapterDelegate;
 use std::sync::{atomic::AtomicBool, Arc};
@@ -10,12 +9,12 @@ use ui::{prelude::*, ButtonLike, ElevationIndex};
 use workspace::Workspace;
 
 pub(crate) struct PromptSlashCommand {
-    library: Arc<PromptLibrary>,
+    store: Arc<PromptStore>,
 }
 
 impl PromptSlashCommand {
-    pub fn new(library: Arc<PromptLibrary>) -> Self {
-        Self { library }
+    pub fn new(store: Arc<PromptStore>) -> Self {
+        Self { store }
     }
 }
 
@@ -39,31 +38,16 @@ impl SlashCommand for PromptSlashCommand {
     fn complete_argument(
         &self,
         query: String,
-        cancellation_flag: Arc<AtomicBool>,
+        _cancellation_flag: Arc<AtomicBool>,
         _workspace: WeakView<Workspace>,
         cx: &mut AppContext,
     ) -> Task<Result<Vec<String>>> {
-        let library = self.library.clone();
-        let executor = cx.background_executor().clone();
+        let store = self.store.clone();
         cx.background_executor().spawn(async move {
-            let candidates = library
-                .prompts()
+            let prompts = store.search(query).await;
+            Ok(prompts
                 .into_iter()
-                .enumerate()
-                .map(|(ix, prompt)| StringMatchCandidate::new(ix, prompt.1.title().to_string()))
-                .collect::<Vec<_>>();
-            let matches = fuzzy::match_strings(
-                &candidates,
-                &query,
-                false,
-                100,
-                &cancellation_flag,
-                executor,
-            )
-            .await;
-            Ok(matches
-                .into_iter()
-                .map(|mat| candidates[mat.candidate_id].string.clone())
+                .filter_map(|prompt| Some(prompt.title?.to_string()))
                 .collect())
         })
     }
@@ -79,19 +63,16 @@ impl SlashCommand for PromptSlashCommand {
             return Task::ready(Err(anyhow!("missing prompt name")));
         };
 
-        let library = self.library.clone();
+        let store = self.store.clone();
         let title = SharedString::from(title.to_string());
         let prompt = cx.background_executor().spawn({
             let title = title.clone();
             async move {
-                let prompt = library
-                    .prompts()
-                    .into_iter()
-                    .map(|prompt| (prompt.1.title(), prompt))
-                    .find(|(t, _)| t == &title)
-                    .with_context(|| format!("no prompt found with title {:?}", title))?
-                    .1;
-                anyhow::Ok(prompt.1.body())
+                let prompt_id = store
+                    .id_for_title(&title)
+                    .with_context(|| format!("no prompt found with title {:?}", title))?;
+                let body = store.load(prompt_id).await?;
+                anyhow::Ok(body)
             }
         });
         cx.foreground_executor().spawn(async move {
