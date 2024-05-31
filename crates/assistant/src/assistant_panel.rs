@@ -1213,14 +1213,16 @@ impl AssistantPanel {
                             .gap_1()
                             .child(self.render_inject_context_menu(cx))
                             .child(
-                                // cx.has_flag::<PromptLibraryFeatureFlag>().then_some(
                                 IconButton::new("show-prompt-library", IconName::Library)
                                     .icon_size(IconSize::Small)
-                                    .on_click(cx.listener(|_this, _event, cx| {
-                                        open_prompt_library(cx).detach_and_log_err(cx);
-                                    }))
+                                    .on_click({
+                                        let language_registry = self.languages.clone();
+                                        cx.listener(move |_this, _event, cx| {
+                                            open_prompt_library(language_registry.clone(), cx)
+                                                .detach_and_log_err(cx);
+                                        })
+                                    })
                                     .tooltip(|cx| Tooltip::text("Prompt Library…", cx)),
-                                // ),
                             ),
                     ),
             );
