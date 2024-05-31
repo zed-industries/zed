@@ -3,7 +3,7 @@
 (
     (call
         target: (identifier) @run (#any-of? @run "describe" "test")
-    ) @elixir-test
+    ) @_elixir-test
     (#set! tag elixir-test)
 )
 
@@ -13,8 +13,8 @@
     (call
         target: (identifier) @run (#eq? @run "defmodule")
         (do_block
-            (call target: (identifier) @keyword (#any-of? @keyword "describe" "test"))
+            (call target: (identifier) @_keyword (#any-of? @_keyword "describe" "test"))
         )
-    ) @elixir-module-test
+    ) @_elixir-module-test
     (#set! tag elixir-module-test)
 )
