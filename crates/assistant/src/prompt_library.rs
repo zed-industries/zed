@@ -322,19 +322,13 @@ impl PromptLibrary {
     }
 
     pub fn toggle_default_for_prompt(&mut self, prompt_id: PromptId, cx: &mut ViewContext<Self>) {
-        let prompt_metadata = self.store.metadata(prompt_id).unwrap();
-        let body = self
-            .prompt_editors
-            .get_mut(&prompt_id)
-            .unwrap()
-            .update(cx, |editor, cx| editor.snapshot(cx));
-
-        let title = title_from_body(body.buffer_chars_at(0).map(|(c, _)| c));
-        self.store
-            .save(prompt_id, title, !prompt_metadata.default, body.text())
-            .detach_and_log_err(cx);
-        self.picker.update(cx, |picker, cx| picker.refresh(cx));
-        cx.notify();
+        if let Some(prompt_metadata) = self.store.metadata(prompt_id) {
+            self.store
+                .save_metadata(prompt_id, prompt_metadata.title, !prompt_metadata.default)
+                .detach_and_log_err(cx);
+            self.picker.update(cx, |picker, cx| picker.refresh(cx));
+            cx.notify();
+        }
     }
 
     pub fn load_prompt(&mut self, prompt_id: PromptId, focus: bool, cx: &mut ViewContext<Self>) {
@@ -753,6 +747,31 @@ impl PromptStore {
             metadata.put(&mut txn, &id, &prompt_metadata)?;
             bodies.put(&mut txn, &id, &body)?;
 
+            txn.commit()?;
+            Ok(())
+        })
+    }
+
+    fn save_metadata(
+        &self,
+        id: PromptId,
+        title: Option<SharedString>,
+        default: bool,
+    ) -> Task<Result<()>> {
+        let prompt_metadata = PromptMetadata {
+            id,
+            title,
+            default,
+            saved_at: Utc::now(),
+        };
+        self.metadata_cache.lock().insert(prompt_metadata.clone());
+
+        let db_connection = self.env.clone();
+        let metadata = self.metadata;
+
+        self.executor.spawn(async move {
+            let mut txn = db_connection.write_txn()?;
+            metadata.put(&mut txn, &id, &prompt_metadata)?;
             txn.commit()?;
             Ok(())
         })
