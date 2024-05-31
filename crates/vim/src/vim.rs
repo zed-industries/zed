@@ -193,6 +193,10 @@ fn observe_keystrokes(keystroke_event: &KeystrokeEvent, cx: &mut WindowContext) 
         return;
     }
 
+    if let None = keystroke_event.keystroke.ime_key {
+        return;
+    }
+
     Vim::update(cx, |vim, cx| match vim.active_operator() {
         Some(
             Operator::FindForward { .. }
