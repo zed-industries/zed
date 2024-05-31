@@ -97,6 +97,8 @@
   //  3. Never close the window
   //         "when_closing_with_no_tabs": "keep_window_open",
   "when_closing_with_no_tabs": "platform_default",
+  // Whether to open new workspace in current window
+  "open_new_workspace_in_current_window": false,
   // Whether the cursor blinks in the editor.
   "cursor_blink": true,
   // How to highlight the current line in the editor.
