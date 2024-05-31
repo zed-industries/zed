@@ -59,6 +59,10 @@ impl CopilotCompletionProvider {
 }
 
 impl InlineCompletionProvider for CopilotCompletionProvider {
+    fn name() -> &'static str {
+        "copilot"
+    }
+
     fn is_enabled(
         &self,
         buffer: &Model<Buffer>,
@@ -186,17 +190,23 @@ impl InlineCompletionProvider for CopilotCompletionProvider {
             self.copilot
                 .update(cx, |copilot, cx| copilot.accept_completion(completion, cx))
                 .detach_and_log_err(cx);
-            if let Some(telemetry) = self.telemetry.as_ref() {
-                telemetry.report_copilot_event(
-                    Some(completion.uuid.clone()),
-                    true,
-                    self.file_extension.clone(),
-                );
+            if self.active_completion().is_some() {
+                if let Some(telemetry) = self.telemetry.as_ref() {
+                    telemetry.report_inline_completion_event(
+                        Self::name().to_string(),
+                        true,
+                        self.file_extension.clone(),
+                    );
+                }
             }
         }
     }
 
-    fn discard(&mut self, cx: &mut ModelContext<Self>) {
+    fn discard(
+        &mut self,
+        should_report_inline_completion_event: bool,
+        cx: &mut ModelContext<Self>,
+    ) {
         let settings = AllLanguageSettings::get_global(cx);
 
         let copilot_enabled = settings.inline_completions_enabled(None, None);
@@ -210,8 +220,17 @@ impl InlineCompletionProvider for CopilotCompletionProvider {
                 copilot.discard_completions(&self.completions, cx)
             })
             .detach_and_log_err(cx);
-        if let Some(telemetry) = self.telemetry.as_ref() {
-            telemetry.report_copilot_event(None, false, self.file_extension.clone());
+
+        if should_report_inline_completion_event {
+            if self.active_completion().is_some() {
+                if let Some(telemetry) = self.telemetry.as_ref() {
+                    telemetry.report_inline_completion_event(
+                        Self::name().to_string(),
+                        false,
+                        self.file_extension.clone(),
+                    );
+                }
+            }
         }
     }
 
@@ -273,7 +292,7 @@ mod tests {
     };
     use fs::FakeFs;
     use futures::StreamExt;
-    use gpui::{BackgroundExecutor, BorrowAppContext, Context, TestAppContext};
+    use gpui::{BackgroundExecutor, Context, TestAppContext, UpdateGlobal};
     use indoc::indoc;
     use language::{
         language_settings::{AllLanguageSettings, AllLanguageSettingsContent},
@@ -473,8 +492,8 @@ mod tests {
             assert_eq!(editor.display_text(cx), "one.copilot2\ntwo\nthree\n");
             assert_eq!(editor.text(cx), "one.co\ntwo\nthree\n");
 
-            // Tabbing when there is an active suggestion inserts it.
-            editor.tab(&Default::default(), cx);
+            // AcceptInlineCompletion when there is an active suggestion inserts it.
+            editor.accept_inline_completion(&Default::default(), cx);
             assert!(!editor.has_active_inline_completion(cx));
             assert_eq!(editor.display_text(cx), "one.copilot2\ntwo\nthree\n");
             assert_eq!(editor.text(cx), "one.copilot2\ntwo\nthree\n");
@@ -531,8 +550,8 @@ mod tests {
             assert_eq!(editor.text(cx), "fn foo() {\n    \n}");
             assert_eq!(editor.display_text(cx), "fn foo() {\n    let x = 4;\n}");
 
-            // Tabbing again accepts the suggestion.
-            editor.tab(&Default::default(), cx);
+            // Using AcceptInlineCompletion again accepts the suggestion.
+            editor.accept_inline_completion(&Default::default(), cx);
             assert!(!editor.has_active_inline_completion(cx));
             assert_eq!(editor.text(cx), "fn foo() {\n    let x = 4;\n}");
             assert_eq!(editor.display_text(cx), "fn foo() {\n    let x = 4;\n}");
@@ -762,7 +781,7 @@ mod tests {
             );
             multibuffer
         });
-        let editor = cx.add_window(|cx| Editor::for_multibuffer(multibuffer, None, cx));
+        let editor = cx.add_window(|cx| Editor::for_multibuffer(multibuffer, None, true, cx));
         editor.update(cx, |editor, cx| editor.focus(cx)).unwrap();
         let copilot_provider = cx.new_model(|_| CopilotCompletionProvider::new(copilot));
         editor
@@ -792,7 +811,7 @@ mod tests {
             assert!(editor.has_active_inline_completion(cx));
             assert_eq!(
                 editor.display_text(cx),
-                "\n\na = 1\nb = 2 + a\n\n\n\nc = 3\nd = 4\n"
+                "\n\n\na = 1\nb = 2 + a\n\n\n\n\n\nc = 3\nd = 4\n\n"
             );
             assert_eq!(editor.text(cx), "a = 1\nb = 2\n\nc = 3\nd = 4\n");
         });
@@ -814,7 +833,7 @@ mod tests {
             assert!(!editor.has_active_inline_completion(cx));
             assert_eq!(
                 editor.display_text(cx),
-                "\n\na = 1\nb = 2\n\n\n\nc = 3\nd = 4\n"
+                "\n\n\na = 1\nb = 2\n\n\n\n\n\nc = 3\nd = 4\n\n"
             );
             assert_eq!(editor.text(cx), "a = 1\nb = 2\n\nc = 3\nd = 4\n");
 
@@ -823,7 +842,7 @@ mod tests {
             assert!(!editor.has_active_inline_completion(cx));
             assert_eq!(
                 editor.display_text(cx),
-                "\n\na = 1\nb = 2\n\n\n\nc = 3\nd = 4 \n"
+                "\n\n\na = 1\nb = 2\n\n\n\n\n\nc = 3\nd = 4 \n\n"
             );
             assert_eq!(editor.text(cx), "a = 1\nb = 2\n\nc = 3\nd = 4 \n");
         });
@@ -834,7 +853,7 @@ mod tests {
             assert!(editor.has_active_inline_completion(cx));
             assert_eq!(
                 editor.display_text(cx),
-                "\n\na = 1\nb = 2\n\n\n\nc = 3\nd = 4 + c\n"
+                "\n\n\na = 1\nb = 2\n\n\n\n\n\nc = 3\nd = 4 + c\n\n"
             );
             assert_eq!(editor.text(cx), "a = 1\nb = 2\n\nc = 3\nd = 4 \n");
         });
@@ -1013,7 +1032,7 @@ mod tests {
             );
             multibuffer
         });
-        let editor = cx.add_window(|cx| Editor::for_multibuffer(multibuffer, None, cx));
+        let editor = cx.add_window(|cx| Editor::for_multibuffer(multibuffer, None, true, cx));
         let copilot_provider = cx.new_model(|_| CopilotCompletionProvider::new(copilot));
         editor
             .update(cx, |editor, cx| {
@@ -1138,7 +1157,7 @@ mod tests {
             editor::init_settings(cx);
             Project::init_settings(cx);
             workspace::init_settings(cx);
-            cx.update_global(|store: &mut SettingsStore, cx| {
+            SettingsStore::update_global(cx, |store: &mut SettingsStore, cx| {
                 store.update_user_settings::<AllLanguageSettings>(cx, f);
             });
         });

@@ -16,10 +16,10 @@ use fuzzy::{match_strings, StringMatchCandidate};
 use gpui::{
     actions, anchored, canvas, deferred, div, fill, list, point, prelude::*, px, AnyElement,
     AppContext, AsyncWindowContext, Bounds, ClickEvent, ClipboardItem, DismissEvent, Div,
-    EventEmitter, FocusHandle, FocusableView, FontStyle, FontWeight, InteractiveElement,
-    IntoElement, ListOffset, ListState, Model, MouseDownEvent, ParentElement, Pixels, Point,
-    PromptLevel, Render, SharedString, Styled, Subscription, Task, TextStyle, View, ViewContext,
-    VisualContext, WeakView, WhiteSpace,
+    EventEmitter, FocusHandle, FocusableView, FontStyle, InteractiveElement, IntoElement,
+    ListOffset, ListState, Model, MouseDownEvent, ParentElement, Pixels, Point, PromptLevel,
+    Render, SharedString, Styled, Subscription, Task, TextStyle, View, ViewContext, VisualContext,
+    WeakView, WhiteSpace,
 };
 use menu::{Cancel, Confirm, SecondaryConfirm, SelectNext, SelectPrev};
 use project::{Fs, Project};
@@ -1569,11 +1569,28 @@ impl CollabPanel {
 
                     *pending_name = Some(channel_name.clone());
 
-                    self.channel_store
-                        .update(cx, |channel_store, cx| {
-                            channel_store.create_channel(&channel_name, *location, cx)
+                    let create = self.channel_store.update(cx, |channel_store, cx| {
+                        channel_store.create_channel(&channel_name, *location, cx)
+                    });
+                    if location.is_none() {
+                        cx.spawn(|this, mut cx| async move {
+                            let channel_id = create.await?;
+                            this.update(&mut cx, |this, cx| {
+                                this.show_channel_modal(
+                                    channel_id,
+                                    channel_modal::Mode::InviteMembers,
+                                    cx,
+                                )
+                            })
                         })
-                        .detach();
+                        .detach_and_prompt_err(
+                            "Failed to create channel",
+                            cx,
+                            |_, _| None,
+                        );
+                    } else {
+                        create.detach_and_prompt_err("Failed to create channel", cx, |_, _| None);
+                    }
                     cx.notify();
                 }
                 ChannelEditingState::Rename {
@@ -1859,12 +1876,8 @@ impl CollabPanel {
         let workspace = self.workspace.clone();
         let user_store = self.user_store.clone();
         let channel_store = self.channel_store.clone();
-        let members = self.channel_store.update(cx, |channel_store, cx| {
-            channel_store.get_channel_member_details(channel_id, cx)
-        });
 
         cx.spawn(|_, mut cx| async move {
-            let members = members.await?;
             workspace.update(&mut cx, |workspace, cx| {
                 workspace.toggle_modal(cx, |cx| {
                     ChannelModal::new(
@@ -1872,7 +1885,6 @@ impl CollabPanel {
                         channel_store.clone(),
                         channel_id,
                         mode,
-                        members,
                         cx,
                     )
                 });
@@ -2149,6 +2161,9 @@ impl CollabPanel {
     }
 
     fn render_signed_in(&mut self, cx: &mut ViewContext<Self>) -> Div {
+        self.channel_store.update(cx, |channel_store, _| {
+            channel_store.initialize();
+        });
         v_flex()
             .size_full()
             .child(list(self.list_state.clone()).size_full())
@@ -2178,7 +2193,7 @@ impl CollabPanel {
             font_family: settings.ui_font.family.clone(),
             font_features: settings.ui_font.features.clone(),
             font_size: rems(0.875).into(),
-            font_weight: FontWeight::NORMAL,
+            font_weight: settings.ui_font.weight,
             font_style: FontStyle::Normal,
             line_height: relative(1.3),
             background_color: None,
@@ -2949,7 +2964,7 @@ struct DraggedChannelView {
 }
 
 impl Render for DraggedChannelView {
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl Element {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         let ui_font = ThemeSettings::get_global(cx).ui_font.family.clone();
         h_flex()
             .font_family(ui_font)

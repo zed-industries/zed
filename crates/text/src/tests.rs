@@ -139,6 +139,14 @@ fn test_random_edits(mut rng: StdRng) {
             assert_eq!(old_text, new_text);
         }
 
+        assert_eq!(
+            buffer.has_edits_since(&old_buffer.version),
+            buffer
+                .edits_since::<usize>(&old_buffer.version)
+                .next()
+                .is_some(),
+        );
+
         let subscription_edits = subscription.consume();
         log::info!(
             "applying subscription edits since version {:?} to old text: {:?}: {:?}",

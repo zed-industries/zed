@@ -1,5 +1,7 @@
 use core::hash;
 use std::cell::{RefCell, RefMut};
+use std::ffi::OsString;
+use std::ops::{Deref, DerefMut};
 use std::os::fd::{AsRawFd, BorrowedFd};
 use std::path::PathBuf;
 use std::rc::{Rc, Weak};
@@ -14,6 +16,7 @@ use collections::HashMap;
 use copypasta::wayland_clipboard::{create_clipboards_from_external, Clipboard, Primary};
 use copypasta::ClipboardProvider;
 use filedescriptor::Pipe;
+use parking_lot::Mutex;
 use smallvec::SmallVec;
 use util::ResultExt;
 use wayland_backend::client::ObjectId;
@@ -22,7 +25,7 @@ use wayland_client::event_created_child;
 use wayland_client::globals::{registry_queue_init, GlobalList, GlobalListContents};
 use wayland_client::protocol::wl_callback::{self, WlCallback};
 use wayland_client::protocol::wl_data_device_manager::DndAction;
-use wayland_client::protocol::wl_pointer::{AxisRelativeDirection, AxisSource};
+use wayland_client::protocol::wl_pointer::AxisSource;
 use wayland_client::protocol::wl_seat::WlSeat;
 use wayland_client::protocol::{
     wl_data_device, wl_data_device_manager, wl_data_offer, wl_data_source, wl_output, wl_region,
@@ -42,6 +45,12 @@ use wayland_protocols::wp::cursor_shape::v1::client::{
 use wayland_protocols::wp::fractional_scale::v1::client::{
     wp_fractional_scale_manager_v1, wp_fractional_scale_v1,
 };
+use wayland_protocols::wp::text_input::zv3::client::zwp_text_input_v3::{
+    ContentHint, ContentPurpose,
+};
+use wayland_protocols::wp::text_input::zv3::client::{
+    zwp_text_input_manager_v3, zwp_text_input_v3,
+};
 use wayland_protocols::wp::viewporter::client::{wp_viewport, wp_viewporter};
 use wayland_protocols::xdg::activation::v1::client::{xdg_activation_token_v1, xdg_activation_v1};
 use wayland_protocols::xdg::decoration::zv1::client::{
@@ -53,14 +62,18 @@ use xkbcommon::xkb::ffi::XKB_KEYMAP_FORMAT_TEXT_V1;
 use xkbcommon::xkb::{self, Keycode, KEYMAP_COMPILE_NO_FLAGS};
 
 use super::super::{open_uri_internal, read_fd, DOUBLE_CLICK_INTERVAL};
-use super::window::{WaylandWindowState, WaylandWindowStatePtr};
+use super::window::{ImeInput, WaylandWindowState, WaylandWindowStatePtr};
 use crate::platform::linux::is_within_click_distance;
 use crate::platform::linux::wayland::cursor::Cursor;
 use crate::platform::linux::wayland::serial::{SerialKind, SerialTracker};
 use crate::platform::linux::wayland::window::WaylandWindow;
+use crate::platform::linux::xdg_desktop_portal::{Event as XDPEvent, XDPEventSource};
 use crate::platform::linux::LinuxClient;
 use crate::platform::PlatformWindow;
-use crate::{point, px, FileDropEvent, ForegroundExecutor, MouseExitEvent, SCROLL_LINES};
+use crate::{
+    point, px, Bounds, FileDropEvent, ForegroundExecutor, MouseExitEvent, WindowAppearance,
+    SCROLL_LINES,
+};
 use crate::{
     AnyWindowHandle, CursorStyle, DisplayId, KeyDownEvent, KeyUpEvent, Keystroke, Modifiers,
     ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent,
@@ -87,6 +100,7 @@ pub struct Globals {
         Option<wp_fractional_scale_manager_v1::WpFractionalScaleManagerV1>,
     pub decoration_manager: Option<zxdg_decoration_manager_v1::ZxdgDecorationManagerV1>,
     pub blur_manager: Option<org_kde_kwin_blur_manager::OrgKdeKwinBlurManager>,
+    pub text_input_manager: Option<zwp_text_input_manager_v3::ZwpTextInputManagerV3>,
     pub executor: ForegroundExecutor,
 }
 
@@ -122,6 +136,7 @@ impl Globals {
             fractional_scale_manager: globals.bind(&qh, 1..=1, ()).ok(),
             decoration_manager: globals.bind(&qh, 1..=1, ()).ok(),
             blur_manager: globals.bind(&qh, 1..=1, ()).ok(),
+            text_input_manager: globals.bind(&qh, 1..=1, ()).ok(),
             executor,
             qh,
         }
@@ -135,11 +150,15 @@ pub(crate) struct WaylandClientState {
     wl_pointer: Option<wl_pointer::WlPointer>,
     cursor_shape_device: Option<wp_cursor_shape_device_v1::WpCursorShapeDeviceV1>,
     data_device: Option<wl_data_device::WlDataDevice>,
+    text_input: Option<zwp_text_input_v3::ZwpTextInputV3>,
+    pre_edit_text: Option<String>,
+    composing: bool,
     // Surface to Window mapping
     windows: HashMap<ObjectId, WaylandWindowStatePtr>,
     // Output to scale mapping
     output_scales: HashMap<ObjectId, i32>,
     keymap_state: Option<xkb::State>,
+    compose_state: Option<xkb::compose::State>,
     drag: DragState,
     click: ClickState,
     repeat: KeyRepeat,
@@ -201,6 +220,41 @@ impl WaylandClientStatePtr {
         self.0.upgrade().unwrap().borrow().serial_tracker.get(kind)
     }
 
+    pub fn enable_ime(&self) {
+        let client = self.get_client();
+        let mut state = client.borrow_mut();
+        let Some(mut text_input) = state.text_input.take() else {
+            return;
+        };
+
+        text_input.enable();
+        text_input.set_content_type(ContentHint::None, ContentPurpose::Normal);
+        if let Some(window) = state.keyboard_focused_window.clone() {
+            drop(state);
+            if let Some(area) = window.get_ime_area() {
+                text_input.set_cursor_rectangle(
+                    area.origin.x.0 as i32,
+                    area.origin.y.0 as i32,
+                    area.size.width.0 as i32,
+                    area.size.height.0 as i32,
+                );
+            }
+            state = client.borrow_mut();
+        }
+        text_input.commit();
+        state.text_input = Some(text_input);
+    }
+
+    pub fn disable_ime(&self) {
+        let client = self.get_client();
+        let mut state = client.borrow_mut();
+        state.composing = false;
+        if let Some(text_input) = &state.text_input {
+            text_input.disable();
+            text_input.commit();
+        }
+    }
+
     pub fn drop_window(&self, surface_id: &ObjectId) {
         let mut client = self.get_client();
         let mut state = client.borrow_mut();
@@ -240,6 +294,9 @@ impl Drop for WaylandClient {
         }
         if let Some(data_device) = &state.data_device {
             data_device.release();
+        }
+        if let Some(text_input) = &state.text_input {
+            text_input.destroy();
         }
     }
 }
@@ -327,6 +384,22 @@ impl WaylandClient {
 
         let cursor = Cursor::new(&conn, &globals, 24);
 
+        handle.insert_source(XDPEventSource::new(&common.background_executor), {
+            move |event, _, client| match event {
+                XDPEvent::WindowAppearance(appearance) => {
+                    if let Some(client) = client.0.upgrade() {
+                        let mut client = client.borrow_mut();
+
+                        client.common.appearance = appearance;
+
+                        for (_, window) in &mut client.windows {
+                            window.set_appearance(appearance);
+                        }
+                    }
+                }
+            }
+        });
+
         let mut state = Rc::new(RefCell::new(WaylandClientState {
             serial_tracker: SerialTracker::new(),
             globals,
@@ -334,10 +407,14 @@ impl WaylandClient {
             wl_pointer: None,
             cursor_shape_device: None,
             data_device,
+            text_input: None,
+            pre_edit_text: None,
+            composing: false,
             output_scales: outputs,
             windows: HashMap::default(),
             common,
             keymap_state: None,
+            compose_state: None,
             drag: DragState {
                 data_offer: None,
                 window: None,
@@ -412,6 +489,7 @@ impl LinuxClient for WaylandClient {
             state.globals.clone(),
             WaylandClientStatePtr(Rc::downgrade(&self.0)),
             params,
+            state.common.appearance,
         );
         state.windows.insert(surface_id, window.0.clone());
 
@@ -577,6 +655,7 @@ delegate_noop!(WaylandClientStatePtr: ignore wl_region::WlRegion);
 delegate_noop!(WaylandClientStatePtr: ignore wp_fractional_scale_manager_v1::WpFractionalScaleManagerV1);
 delegate_noop!(WaylandClientStatePtr: ignore zxdg_decoration_manager_v1::ZxdgDecorationManagerV1);
 delegate_noop!(WaylandClientStatePtr: ignore org_kde_kwin_blur_manager::OrgKdeKwinBlurManager);
+delegate_noop!(WaylandClientStatePtr: ignore zwp_text_input_manager_v3::ZwpTextInputManagerV3);
 delegate_noop!(WaylandClientStatePtr: ignore org_kde_kwin_blur::OrgKdeKwinBlur);
 delegate_noop!(WaylandClientStatePtr: ignore wp_viewporter::WpViewporter);
 delegate_noop!(WaylandClientStatePtr: ignore wp_viewport::WpViewport);
@@ -753,12 +832,17 @@ impl Dispatch<wl_seat::WlSeat, ()> for WaylandClientStatePtr {
             capabilities: WEnum::Value(capabilities),
         } = event
         {
+            let client = state.get_client();
+            let mut state = client.borrow_mut();
             if capabilities.contains(wl_seat::Capability::Keyboard) {
                 seat.get_keyboard(qh, ());
+                state.text_input = state
+                    .globals
+                    .text_input_manager
+                    .as_ref()
+                    .map(|text_input_manager| text_input_manager.get_text_input(&seat, qh, ()));
             }
             if capabilities.contains(wl_seat::Capability::Pointer) {
-                let client = state.get_client();
-                let mut state = client.borrow_mut();
                 let pointer = seat.get_pointer(qh, ());
                 state.cursor_shape_device = state
                     .globals
@@ -798,9 +882,10 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for WaylandClientStatePtr {
                     wl_keyboard::KeymapFormat::XkbV1,
                     "Unsupported keymap format"
                 );
+                let xkb_context = xkb::Context::new(xkb::CONTEXT_NO_FLAGS);
                 let keymap = unsafe {
                     xkb::Keymap::new_from_fd(
-                        &xkb::Context::new(xkb::CONTEXT_NO_FLAGS),
+                        &xkb_context,
                         fd,
                         size as usize,
                         XKB_KEYMAP_FORMAT_TEXT_V1,
@@ -810,7 +895,21 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for WaylandClientStatePtr {
                     .flatten()
                     .expect("Failed to create keymap")
                 };
+                let table = {
+                    let locale = std::env::var_os("LC_CTYPE").unwrap_or(OsString::from("C"));
+                    xkb::compose::Table::new_from_locale(
+                        &xkb_context,
+                        &locale,
+                        xkb::compose::COMPILE_NO_FLAGS,
+                    )
+                    .log_err()
+                    .unwrap()
+                };
                 state.keymap_state = Some(xkb::State::new(&keymap));
+                state.compose_state = Some(xkb::compose::State::new(
+                    &table,
+                    xkb::compose::STATE_NO_FLAGS,
+                ));
             }
             wl_keyboard::Event::Enter { surface, .. } => {
                 state.keyboard_focused_window = get_window(&mut state, &surface.id());
@@ -827,7 +926,12 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for WaylandClientStatePtr {
                 state.enter_token.take();
 
                 if let Some(window) = keyboard_focused_window {
+                    if let Some(ref mut compose) = state.compose_state {
+                        compose.reset();
+                    }
+                    state.pre_edit_text.take();
                     drop(state);
+                    window.handle_ime(ImeInput::DeleteText);
                     window.set_focused(false);
                 }
             }
@@ -874,8 +978,47 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for WaylandClientStatePtr {
 
                 match key_state {
                     wl_keyboard::KeyState::Pressed if !keysym.is_modifier_key() => {
+                        let mut keystroke =
+                            Keystroke::from_xkb(&keymap_state, state.modifiers, keycode);
+                        if let Some(mut compose) = state.compose_state.take() {
+                            compose.feed(keysym);
+                            match compose.status() {
+                                xkb::Status::Composing => {
+                                    state.pre_edit_text =
+                                        compose.utf8().or(Keystroke::underlying_dead_key(keysym));
+                                    let pre_edit =
+                                        state.pre_edit_text.clone().unwrap_or(String::default());
+                                    drop(state);
+                                    focused_window.handle_ime(ImeInput::SetMarkedText(pre_edit));
+                                    state = client.borrow_mut();
+                                }
+
+                                xkb::Status::Composed => {
+                                    state.pre_edit_text.take();
+                                    keystroke.ime_key = compose.utf8();
+                                    keystroke.key = xkb::keysym_get_name(compose.keysym().unwrap());
+                                }
+                                xkb::Status::Cancelled => {
+                                    let pre_edit = state.pre_edit_text.take();
+                                    drop(state);
+                                    if let Some(pre_edit) = pre_edit {
+                                        focused_window.handle_ime(ImeInput::InsertText(pre_edit));
+                                    }
+                                    if let Some(current_key) =
+                                        Keystroke::underlying_dead_key(keysym)
+                                    {
+                                        focused_window
+                                            .handle_ime(ImeInput::SetMarkedText(current_key));
+                                    }
+                                    compose.feed(keysym);
+                                    state = client.borrow_mut();
+                                }
+                                _ => {}
+                            }
+                            state.compose_state = Some(compose);
+                        }
                         let input = PlatformInput::KeyDown(KeyDownEvent {
-                            keystroke: Keystroke::from_xkb(keymap_state, state.modifiers, keycode),
+                            keystroke: keystroke,
                             is_held: false, // todo(linux)
                         });
 
@@ -926,6 +1069,88 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for WaylandClientStatePtr {
                         focused_window.handle_input(input);
                     }
                     _ => {}
+                }
+            }
+            _ => {}
+        }
+    }
+}
+impl Dispatch<zwp_text_input_v3::ZwpTextInputV3, ()> for WaylandClientStatePtr {
+    fn event(
+        this: &mut Self,
+        text_input: &zwp_text_input_v3::ZwpTextInputV3,
+        event: <zwp_text_input_v3::ZwpTextInputV3 as Proxy>::Event,
+        data: &(),
+        conn: &Connection,
+        qhandle: &QueueHandle<Self>,
+    ) {
+        let client = this.get_client();
+        let mut state = client.borrow_mut();
+        match event {
+            zwp_text_input_v3::Event::Enter { surface } => {
+                drop(state);
+                this.enable_ime();
+            }
+            zwp_text_input_v3::Event::Leave { surface } => {
+                drop(state);
+                this.disable_ime();
+            }
+            zwp_text_input_v3::Event::CommitString { text } => {
+                state.composing = false;
+                let Some(window) = state.keyboard_focused_window.clone() else {
+                    return;
+                };
+
+                if let Some(commit_text) = text {
+                    drop(state);
+                    // IBus Intercepts keys like `a`, `b`, but those keys are needed for vim mode.
+                    // We should only send ASCII characters to Zed, otherwise a user could remap a letter like `か` or `相`.
+                    if commit_text.len() == 1 {
+                        window.handle_input(PlatformInput::KeyDown(KeyDownEvent {
+                            keystroke: Keystroke {
+                                modifiers: Modifiers::default(),
+                                key: commit_text.clone(),
+                                ime_key: Some(commit_text),
+                            },
+                            is_held: false,
+                        }));
+                    } else {
+                        window.handle_ime(ImeInput::InsertText(commit_text));
+                    }
+                }
+            }
+            zwp_text_input_v3::Event::PreeditString {
+                text,
+                cursor_begin,
+                cursor_end,
+            } => {
+                state.composing = true;
+                state.pre_edit_text = text;
+            }
+            zwp_text_input_v3::Event::Done { serial } => {
+                let last_serial = state.serial_tracker.get(SerialKind::InputMethod);
+                state.serial_tracker.update(SerialKind::InputMethod, serial);
+                let Some(window) = state.keyboard_focused_window.clone() else {
+                    return;
+                };
+
+                if let Some(text) = state.pre_edit_text.take() {
+                    drop(state);
+                    window.handle_ime(ImeInput::SetMarkedText(text));
+                    if let Some(area) = window.get_ime_area() {
+                        text_input.set_cursor_rectangle(
+                            area.origin.x.0 as i32,
+                            area.origin.y.0 as i32,
+                            area.size.width.0 as i32,
+                            area.size.height.0 as i32,
+                        );
+                        if last_serial == serial {
+                            text_input.commit();
+                        }
+                    }
+                } else {
+                    drop(state);
+                    window.handle_ime(ImeInput::DeleteText);
                 }
             }
             _ => {}
@@ -1053,6 +1278,24 @@ impl Dispatch<wl_pointer::WlPointer, ()> for WaylandClientStatePtr {
                 }
                 match button_state {
                     wl_pointer::ButtonState::Pressed => {
+                        if let Some(window) = state.keyboard_focused_window.clone() {
+                            if state.composing && state.text_input.is_some() {
+                                let text_input = state.text_input.as_ref().unwrap();
+                                drop(state);
+                                // text_input_v3 don't have something like a reset function
+                                this.disable_ime();
+                                this.enable_ime();
+                                window.handle_ime(ImeInput::UnmarkText);
+                                state = client.borrow_mut();
+                            } else if let (Some(text), Some(compose)) =
+                                (state.pre_edit_text.take(), state.compose_state.as_mut())
+                            {
+                                compose.reset();
+                                drop(state);
+                                window.handle_ime(ImeInput::InsertText(text));
+                                state = client.borrow_mut();
+                            }
+                        }
                         let click_elapsed = state.click.last_click.elapsed();
 
                         if click_elapsed < DOUBLE_CLICK_INTERVAL
@@ -1161,24 +1404,6 @@ impl Dispatch<wl_pointer::WlPointer, ()> for WaylandClientStatePtr {
                     _ => unreachable!(),
                 }
             }
-            wl_pointer::Event::AxisRelativeDirection {
-                axis: WEnum::Value(axis),
-                direction: WEnum::Value(direction),
-            } => match (axis, direction) {
-                (wl_pointer::Axis::VerticalScroll, AxisRelativeDirection::Identical) => {
-                    state.vertical_modifier = -1.0
-                }
-                (wl_pointer::Axis::VerticalScroll, AxisRelativeDirection::Inverted) => {
-                    state.vertical_modifier = 1.0
-                }
-                (wl_pointer::Axis::HorizontalScroll, AxisRelativeDirection::Identical) => {
-                    state.horizontal_modifier = -1.0
-                }
-                (wl_pointer::Axis::HorizontalScroll, AxisRelativeDirection::Inverted) => {
-                    state.horizontal_modifier = 1.0
-                }
-                _ => unreachable!(),
-            },
             wl_pointer::Event::AxisValue120 {
                 axis: WEnum::Value(axis),
                 value120,

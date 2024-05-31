@@ -8,6 +8,7 @@ use std::io::Read;
 use std::ops::{Deref, DerefMut};
 use std::os::fd::{AsRawFd, FromRawFd};
 use std::panic::Location;
+use std::rc::Weak;
 use std::{
     path::{Path, PathBuf},
     process::Command,
@@ -27,14 +28,16 @@ use flume::{Receiver, Sender};
 use futures::channel::oneshot;
 use parking_lot::Mutex;
 use time::UtcOffset;
+use util::ResultExt;
 use wayland_client::Connection;
 use wayland_protocols::wp::cursor_shape::v1::client::wp_cursor_shape_device_v1::Shape;
 use xkbcommon::xkb::{self, Keycode, Keysym, State};
 
 use crate::platform::linux::wayland::WaylandClient;
+use crate::platform::linux::xdg_desktop_portal::{should_auto_hide_scrollbars, window_appearance};
 use crate::{
     px, Action, AnyWindowHandle, BackgroundExecutor, ClipboardItem, CosmicTextSystem, CursorStyle,
-    DisplayId, ForegroundExecutor, Keymap, Keystroke, LinuxDispatcher, Menu, Modifiers,
+    DisplayId, ForegroundExecutor, Keymap, Keystroke, LinuxDispatcher, Menu, MenuItem, Modifiers,
     PathPromptOptions, Pixels, Platform, PlatformDisplay, PlatformInputHandler, PlatformTextSystem,
     PlatformWindow, Point, PromptLevel, Result, SemanticVersion, Size, Task, WindowAppearance,
     WindowOptions, WindowParams,
@@ -55,6 +58,9 @@ pub trait LinuxClient {
     fn displays(&self) -> Vec<Rc<dyn PlatformDisplay>>;
     fn primary_display(&self) -> Option<Rc<dyn PlatformDisplay>>;
     fn display(&self, id: DisplayId) -> Option<Rc<dyn PlatformDisplay>>;
+    fn can_open_windows(&self) -> anyhow::Result<()> {
+        Ok(())
+    }
     fn open_window(
         &self,
         handle: AnyWindowHandle,
@@ -83,6 +89,8 @@ pub(crate) struct LinuxCommon {
     pub(crate) background_executor: BackgroundExecutor,
     pub(crate) foreground_executor: ForegroundExecutor,
     pub(crate) text_system: Arc<CosmicTextSystem>,
+    pub(crate) appearance: WindowAppearance,
+    pub(crate) auto_hide_scrollbars: bool,
     pub(crate) callbacks: PlatformHandlers,
     pub(crate) signal: LoopSignal,
 }
@@ -93,12 +101,21 @@ impl LinuxCommon {
         let text_system = Arc::new(CosmicTextSystem::new());
         let callbacks = PlatformHandlers::default();
 
-        let dispatcher = Arc::new(LinuxDispatcher::new(main_sender));
+        let dispatcher = Arc::new(LinuxDispatcher::new(main_sender.clone()));
+
+        let background_executor = BackgroundExecutor::new(dispatcher.clone());
+        let appearance = window_appearance(&background_executor)
+            .log_err()
+            .unwrap_or(WindowAppearance::Light);
+        let auto_hide_scrollbars =
+            should_auto_hide_scrollbars(&background_executor).unwrap_or(false);
 
         let common = LinuxCommon {
-            background_executor: BackgroundExecutor::new(dispatcher.clone()),
+            background_executor,
             foreground_executor: ForegroundExecutor::new(dispatcher.clone()),
             text_system,
+            appearance,
+            auto_hide_scrollbars,
             callbacks,
             signal,
         };
@@ -130,6 +147,10 @@ impl<P: LinuxClient + 'static> Platform for P {
                 fun();
             }
         });
+    }
+
+    fn can_open_windows(&self) -> anyhow::Result<()> {
+        self.can_open_windows()
     }
 
     fn quit(&self) {
@@ -368,6 +389,7 @@ impl<P: LinuxClient + 'static> Platform for P {
 
     // todo(linux)
     fn set_menus(&self, menus: Vec<Menu>, keymap: &Keymap) {}
+    fn set_dock_menu(&self, menu: Vec<MenuItem>, keymap: &Keymap) {}
 
     fn local_timezone(&self) -> UtcOffset {
         UtcOffset::UTC
@@ -384,9 +406,8 @@ impl<P: LinuxClient + 'static> Platform for P {
         self.set_cursor_style(style)
     }
 
-    // todo(linux)
     fn should_auto_hide_scrollbars(&self) -> bool {
-        false
+        self.with_common(|common| common.auto_hide_scrollbars)
     }
 
     fn write_credentials(&self, url: &str, username: &str, password: &[u8]) -> Task<Result<()>> {
@@ -454,8 +475,8 @@ impl<P: LinuxClient + 'static> Platform for P {
         })
     }
 
-    fn window_appearance(&self) -> crate::WindowAppearance {
-        crate::WindowAppearance::Light
+    fn window_appearance(&self) -> WindowAppearance {
+        self.with_common(|common| common.appearance)
     }
 
     fn register_url_scheme(&self, _: &str) -> Task<anyhow::Result<()>> {
@@ -485,7 +506,7 @@ pub(super) fn open_uri_internal(uri: &str, activation_token: Option<&str>) {
         if let Some(token) = activation_token {
             command.env("XDG_ACTIVATION_TOKEN", token);
         }
-        match command.status() {
+        match command.spawn() {
             Ok(_) => return,
             Err(err) => last_err = Some(err),
         }
@@ -653,6 +674,68 @@ impl Keystroke {
             modifiers,
             key,
             ime_key,
+        }
+    }
+
+    /**
+     * Returns which symbol the dead key represents
+     * https://developer.mozilla.org/en-US/docs/Web/API/UI_Events/Keyboard_event_key_values#dead_keycodes_for_linux
+     */
+    pub fn underlying_dead_key(keysym: Keysym) -> Option<String> {
+        match keysym {
+            Keysym::dead_grave => Some("`".to_owned()),
+            Keysym::dead_acute => Some("´".to_owned()),
+            Keysym::dead_circumflex => Some("^".to_owned()),
+            Keysym::dead_tilde => Some("~".to_owned()),
+            Keysym::dead_perispomeni => Some("͂".to_owned()),
+            Keysym::dead_macron => Some("¯".to_owned()),
+            Keysym::dead_breve => Some("˘".to_owned()),
+            Keysym::dead_abovedot => Some("˙".to_owned()),
+            Keysym::dead_diaeresis => Some("¨".to_owned()),
+            Keysym::dead_abovering => Some("˚".to_owned()),
+            Keysym::dead_doubleacute => Some("˝".to_owned()),
+            Keysym::dead_caron => Some("ˇ".to_owned()),
+            Keysym::dead_cedilla => Some("¸".to_owned()),
+            Keysym::dead_ogonek => Some("˛".to_owned()),
+            Keysym::dead_iota => Some("ͅ".to_owned()),
+            Keysym::dead_voiced_sound => Some("゙".to_owned()),
+            Keysym::dead_semivoiced_sound => Some("゚".to_owned()),
+            Keysym::dead_belowdot => Some("̣̣".to_owned()),
+            Keysym::dead_hook => Some("̡".to_owned()),
+            Keysym::dead_horn => Some("̛".to_owned()),
+            Keysym::dead_stroke => Some("̶̶".to_owned()),
+            Keysym::dead_abovecomma => Some("̓̓".to_owned()),
+            Keysym::dead_psili => Some("᾿".to_owned()),
+            Keysym::dead_abovereversedcomma => Some("ʽ".to_owned()),
+            Keysym::dead_dasia => Some("῾".to_owned()),
+            Keysym::dead_doublegrave => Some("̏".to_owned()),
+            Keysym::dead_belowring => Some("˳".to_owned()),
+            Keysym::dead_belowmacron => Some("̱".to_owned()),
+            Keysym::dead_belowcircumflex => Some("ꞈ".to_owned()),
+            Keysym::dead_belowtilde => Some("̰".to_owned()),
+            Keysym::dead_belowbreve => Some("̮".to_owned()),
+            Keysym::dead_belowdiaeresis => Some("̤".to_owned()),
+            Keysym::dead_invertedbreve => Some("̯".to_owned()),
+            Keysym::dead_belowcomma => Some("̦".to_owned()),
+            Keysym::dead_currency => None,
+            Keysym::dead_lowline => None,
+            Keysym::dead_aboveverticalline => None,
+            Keysym::dead_belowverticalline => None,
+            Keysym::dead_longsolidusoverlay => None,
+            Keysym::dead_a => None,
+            Keysym::dead_A => None,
+            Keysym::dead_e => None,
+            Keysym::dead_E => None,
+            Keysym::dead_i => None,
+            Keysym::dead_I => None,
+            Keysym::dead_o => None,
+            Keysym::dead_O => None,
+            Keysym::dead_u => None,
+            Keysym::dead_U => None,
+            Keysym::dead_small_schwa => Some("ə".to_owned()),
+            Keysym::dead_capital_schwa => Some("Ə".to_owned()),
+            Keysym::dead_greek => None,
+            _ => None,
         }
     }
 }

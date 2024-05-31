@@ -19,7 +19,7 @@ use editor::{
 };
 use futures::StreamExt;
 use git::diff::DiffHunkStatus;
-use gpui::{BorrowAppContext, TestAppContext, VisualContext, VisualTestContext};
+use gpui::{TestAppContext, UpdateGlobal, VisualContext, VisualTestContext};
 use indoc::indoc;
 use language::{
     language_settings::{AllLanguageSettings, InlayHintSettings},
@@ -42,7 +42,7 @@ use std::{
     },
 };
 use text::Point;
-use workspace::{Workspace, WorkspaceId};
+use workspace::Workspace;
 
 #[gpui::test(iterations = 10)]
 async fn test_host_disconnect(
@@ -85,14 +85,8 @@ async fn test_host_disconnect(
 
     assert!(worktree_a.read_with(cx_a, |tree, _| tree.as_local().unwrap().is_shared()));
 
-    let workspace_b = cx_b.add_window(|cx| {
-        Workspace::new(
-            WorkspaceId::default(),
-            project_b.clone(),
-            client_b.app_state.clone(),
-            cx,
-        )
-    });
+    let workspace_b = cx_b
+        .add_window(|cx| Workspace::new(None, project_b.clone(), client_b.app_state.clone(), cx));
     let cx_b = &mut VisualTestContext::from_window(*workspace_b, cx_b);
     let workspace_b_view = workspace_b.root_view(cx_b).unwrap();
 
@@ -1517,7 +1511,7 @@ async fn test_mutual_editor_inlay_hint_cache_update(
     cx_b.update(editor::init);
 
     cx_a.update(|cx| {
-        cx.update_global(|store: &mut SettingsStore, cx| {
+        SettingsStore::update_global(cx, |store, cx| {
             store.update_user_settings::<AllLanguageSettings>(cx, |settings| {
                 settings.defaults.inlay_hints = Some(InlayHintSettings {
                     enabled: true,
@@ -1531,7 +1525,7 @@ async fn test_mutual_editor_inlay_hint_cache_update(
         });
     });
     cx_b.update(|cx| {
-        cx.update_global(|store: &mut SettingsStore, cx| {
+        SettingsStore::update_global(cx, |store, cx| {
             store.update_user_settings::<AllLanguageSettings>(cx, |settings| {
                 settings.defaults.inlay_hints = Some(InlayHintSettings {
                     enabled: true,
@@ -1779,7 +1773,7 @@ async fn test_inlay_hint_refresh_is_forwarded(
     cx_b.update(editor::init);
 
     cx_a.update(|cx| {
-        cx.update_global(|store: &mut SettingsStore, cx| {
+        SettingsStore::update_global(cx, |store, cx| {
             store.update_user_settings::<AllLanguageSettings>(cx, |settings| {
                 settings.defaults.inlay_hints = Some(InlayHintSettings {
                     enabled: false,
@@ -1793,7 +1787,7 @@ async fn test_inlay_hint_refresh_is_forwarded(
         });
     });
     cx_b.update(|cx| {
-        cx.update_global(|store: &mut SettingsStore, cx| {
+        SettingsStore::update_global(cx, |store, cx| {
             store.update_user_settings::<AllLanguageSettings>(cx, |settings| {
                 settings.defaults.inlay_hints = Some(InlayHintSettings {
                     enabled: true,
@@ -2269,14 +2263,14 @@ async fn test_git_blame_is_forwarded(cx_a: &mut TestAppContext, cx_b: &mut TestA
         min_column: None,
     });
     cx_a.update(|cx| {
-        cx.update_global(|store: &mut SettingsStore, cx| {
+        SettingsStore::update_global(cx, |store, cx| {
             store.update_user_settings::<ProjectSettings>(cx, |settings| {
                 settings.git.inline_blame = inline_blame_off_settings;
             });
         });
     });
     cx_b.update(|cx| {
-        cx.update_global(|store: &mut SettingsStore, cx| {
+        SettingsStore::update_global(cx, |store, cx| {
             store.update_user_settings::<ProjectSettings>(cx, |settings| {
                 settings.git.inline_blame = inline_blame_off_settings;
             });

@@ -1,5 +1,7 @@
 mod dev_servers;
 
+use client::ProjectId;
+use dev_servers::reconnect_to_dev_server;
 pub use dev_servers::DevServerProjects;
 use feature_flags::FeatureFlagAppExt;
 use fuzzy::{StringMatch, StringMatchCandidate};
@@ -17,6 +19,7 @@ use serde::Deserialize;
 use std::{
     path::{Path, PathBuf},
     sync::Arc,
+    time::Duration,
 };
 use ui::{
     prelude::*, tooltip_container, ButtonLike, IconWithIndicator, Indicator, KeyBinding, ListItem,
@@ -226,9 +229,10 @@ impl PickerDelegate for RecentProjectsDelegate {
             .workspaces
             .iter()
             .enumerate()
+            .filter(|(_, (id, _))| !self.is_current_workspace(*id, cx))
             .map(|(id, (_, location))| {
                 let combined_string = match location {
-                    SerializedWorkspaceLocation::Local(paths) => paths
+                    SerializedWorkspaceLocation::Local(paths, _) => paths
                         .paths()
                         .iter()
                         .map(|path| path.compact().to_string_lossy().into_owned())
@@ -284,11 +288,11 @@ impl PickerDelegate for RecentProjectsDelegate {
             };
             workspace
                 .update(cx, |workspace, cx| {
-                    if workspace.database_id() == *candidate_workspace_id {
+                    if workspace.database_id() == Some(*candidate_workspace_id) {
                         Task::ready(Ok(()))
                     } else {
                         match candidate_workspace_location {
-                            SerializedWorkspaceLocation::Local(paths) => {
+                            SerializedWorkspaceLocation::Local(paths, _) => {
                                 let paths = paths.paths().as_ref().clone();
                                 if replace_current_window {
                                     cx.spawn(move |workspace, mut cx| async move {
@@ -313,72 +317,59 @@ impl PickerDelegate for RecentProjectsDelegate {
                                 }
                             }
                             SerializedWorkspaceLocation::DevServer(dev_server_project) => {
-                                let store = dev_server_projects::Store::global(cx).read(cx);
-                                let Some(project_id) = store
+                                let store = dev_server_projects::Store::global(cx);
+                                let Some(project_id) = store.read(cx)
                                     .dev_server_project(dev_server_project.id)
                                     .and_then(|p| p.project_id)
                                 else {
-                                    let dev_server_name = dev_server_project.dev_server_name.clone();
-                                    return cx.spawn(|workspace, mut cx| async move {
-                                        let response =
-                                            cx.prompt(gpui::PromptLevel::Warning,
-                                                "Dev Server is offline",
-                                                Some(format!("Cannot connect to {}. To debug open the remote project settings.", dev_server_name).as_str()),
-                                                &["Ok", "Open Settings"]
-                                            ).await?;
-                                        if response == 1 {
-                                            workspace.update(&mut cx, |workspace, cx| {
-                                                workspace.toggle_modal(cx, |cx| DevServerProjects::new(cx))
-                                            })?;
-                                        } else {
-                                            workspace.update(&mut cx, |workspace, cx| {
-                                                RecentProjects::open(workspace, true, cx);
-                                            })?;
-                                        }
-                                        Ok(())
-                                    })
-                                };
-                                if let Some(app_state) = AppState::global(cx).upgrade() {
-                                    let handle = if replace_current_window {
-                                        cx.window_handle().downcast::<Workspace>()
-                                    } else {
-                                        None
-                                    };
+                                    let server = store.read(cx).dev_server_for_project(dev_server_project.id);
+                                    if server.is_some_and(|server| server.ssh_connection_string.is_some()) {
+                                        let reconnect =  reconnect_to_dev_server(cx.view().clone(), server.unwrap().clone(), cx);
+                                        let id = dev_server_project.id;
+                                        return cx.spawn(|workspace, mut cx| async move {
+                                            reconnect.await?;
 
-                                    if let Some(handle) = handle {
-                                            cx.spawn(move |workspace, mut cx| async move {
-                                                let continue_replacing = workspace
-                                                    .update(&mut cx, |workspace, cx| {
-                                                        workspace.
-                                                            prepare_to_close(true, cx)
-                                                    })?
-                                                    .await?;
-                                                if continue_replacing {
-                                                    workspace
-                                                        .update(&mut cx, |_workspace, cx| {
-                                                            workspace::join_dev_server_project(project_id, app_state, Some(handle), cx)
-                                                        })?
-                                                        .await?;
+                                            cx.background_executor().timer(Duration::from_millis(1000)).await;
+
+                                            if let Some(project_id) = store.update(&mut cx, |store, _| {
+                                                store.dev_server_project(id)
+                                                    .and_then(|p| p.project_id)
+                                            })? {
+                                                    workspace.update(&mut cx, move |_, cx| {
+                                                    open_dev_server_project(replace_current_window, project_id, cx)
+                                                    })?.await?;
                                                 }
-                                                Ok(())
-                                            })
-                                        }
-                                    else {
-                                        let task =
-                                            workspace::join_dev_server_project(project_id, app_state, None, cx);
-                                        cx.spawn(|_, _| async move {
-                                            task.await?;
+                                            Ok(())
+                                        })
+                                    } else {
+                                        let dev_server_name = dev_server_project.dev_server_name.clone();
+                                        return cx.spawn(|workspace, mut cx| async move {
+                                            let response =
+                                                cx.prompt(gpui::PromptLevel::Warning,
+                                                    "Dev Server is offline",
+                                                    Some(format!("Cannot connect to {}. To debug open the remote project settings.", dev_server_name).as_str()),
+                                                    &["Ok", "Open Settings"]
+                                                ).await?;
+                                            if response == 1 {
+                                                workspace.update(&mut cx, |workspace, cx| {
+                                                    let handle = cx.view().downgrade();
+                                                    workspace.toggle_modal(cx, |cx| DevServerProjects::new(cx, handle))
+                                                })?;
+                                            } else {
+                                                workspace.update(&mut cx, |workspace, cx| {
+                                                    RecentProjects::open(workspace, true, cx);
+                                                })?;
+                                            }
                                             Ok(())
                                         })
                                     }
-                                } else {
-                                    Task::ready(Err(anyhow::anyhow!("App state not found")))
-                                }
-                            }
+                                };
+                                open_dev_server_project(replace_current_window, project_id, cx)
                         }
                     }
+                }
                 })
-                .detach_and_log_err(cx);
+            .detach_and_log_err(cx);
             cx.emit(DismissEvent);
         }
     }
@@ -403,8 +394,7 @@ impl PickerDelegate for RecentProjectsDelegate {
             return None;
         };
 
-        let (workspace_id, location) = &self.workspaces[hit.candidate_id];
-        let is_current_workspace = self.is_current_workspace(*workspace_id, cx);
+        let (_, location) = self.workspaces.get(hit.candidate_id)?;
 
         let is_remote = matches!(location, SerializedWorkspaceLocation::DevServer(_));
         let dev_server_status =
@@ -423,7 +413,7 @@ impl PickerDelegate for RecentProjectsDelegate {
 
         let mut path_start_offset = 0;
         let paths = match location {
-            SerializedWorkspaceLocation::Local(paths) => paths.paths(),
+            SerializedWorkspaceLocation::Local(paths, _) => paths.paths(),
             SerializedWorkspaceLocation::DevServer(dev_server_project) => {
                 Arc::new(vec![PathBuf::from(format!(
                     "{}:{}",
@@ -497,7 +487,7 @@ impl PickerDelegate for RecentProjectsDelegate {
                             highlighted.render(cx)
                         }),
                 )
-                .when(!is_current_workspace, |el| {
+                .map(|el| {
                     let delete_button = div()
                         .child(
                             IconButton::new("delete", IconName::Close)
@@ -545,7 +535,7 @@ impl PickerDelegate for RecentProjectsDelegate {
                         .when_some(KeyBinding::for_action(&OpenRemote, cx), |button, key| {
                             button.child(key)
                         })
-                        .child(Label::new("Connect…").color(Color::Muted))
+                        .child(Label::new("New remote project…").color(Color::Muted))
                         .on_click(|_, cx| cx.dispatch_action(OpenRemote.boxed_clone())),
                 )
                 .child(
@@ -554,11 +544,56 @@ impl PickerDelegate for RecentProjectsDelegate {
                             KeyBinding::for_action(&workspace::Open, cx),
                             |button, key| button.child(key),
                         )
-                        .child(Label::new("Open folder…").color(Color::Muted))
+                        .child(Label::new("Open local folder…").color(Color::Muted))
                         .on_click(|_, cx| cx.dispatch_action(workspace::Open.boxed_clone())),
                 )
                 .into_any(),
         )
+    }
+}
+
+fn open_dev_server_project(
+    replace_current_window: bool,
+    project_id: ProjectId,
+    cx: &mut ViewContext<Workspace>,
+) -> Task<anyhow::Result<()>> {
+    if let Some(app_state) = AppState::global(cx).upgrade() {
+        let handle = if replace_current_window {
+            cx.window_handle().downcast::<Workspace>()
+        } else {
+            None
+        };
+
+        if let Some(handle) = handle {
+            cx.spawn(move |workspace, mut cx| async move {
+                let continue_replacing = workspace
+                    .update(&mut cx, |workspace, cx| {
+                        workspace.prepare_to_close(true, cx)
+                    })?
+                    .await?;
+                if continue_replacing {
+                    workspace
+                        .update(&mut cx, |_workspace, cx| {
+                            workspace::join_dev_server_project(
+                                project_id,
+                                app_state,
+                                Some(handle),
+                                cx,
+                            )
+                        })?
+                        .await?;
+                }
+                Ok(())
+            })
+        } else {
+            let task = workspace::join_dev_server_project(project_id, app_state, None, cx);
+            cx.spawn(|_, _| async move {
+                task.await?;
+                Ok(())
+            })
+        }
+    } else {
+        Task::ready(Err(anyhow::anyhow!("App state not found")))
     }
 }
 
@@ -640,7 +675,7 @@ impl RecentProjectsDelegate {
     ) -> bool {
         if let Some(workspace) = self.workspace.upgrade() {
             let workspace = workspace.read(cx);
-            if workspace_id == workspace.database_id() {
+            if Some(workspace_id) == workspace.database_id() {
                 return true;
             }
         }

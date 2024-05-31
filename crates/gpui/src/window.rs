@@ -46,6 +46,7 @@ use std::{
 };
 use util::post_inc;
 use util::{measure, ResultExt};
+use uuid::Uuid;
 
 mod prompts;
 
@@ -491,14 +492,11 @@ pub struct Window {
     sprite_atlas: Arc<dyn PlatformAtlas>,
     text_system: Arc<WindowTextSystem>,
     rem_size: Pixels,
-    /// An override value for the window's rem size.
+    /// The stack of override values for the window's rem size.
     ///
     /// This is used by `with_rem_size` to allow rendering an element tree with
     /// a given rem size.
-    ///
-    /// Note: Right now we only allow for a single override value at a time, but
-    /// this could likely be changed to be a stack of rem sizes.
-    rem_size_override: Option<Pixels>,
+    rem_size_override_stack: SmallVec<[Pixels; 8]>,
     pub(crate) viewport_size: Size<Pixels>,
     layout_engine: Option<TaffyLayoutEngine>,
     pub(crate) root_view: Option<AnyView>,
@@ -771,7 +769,7 @@ impl Window {
             sprite_atlas,
             text_system,
             rem_size: px(16.),
-            rem_size_override: None,
+            rem_size_override_stack: SmallVec::new(),
             viewport_size: content_size,
             layout_engine: Some(TaffyLayoutEngine::new()),
             root_view: None,
@@ -1149,12 +1147,12 @@ impl<'a> WindowContext<'a> {
         self.window.platform_window.zoom();
     }
 
-    /// Opens the native title bar context menu, useful when implementing client side decorations (Wayland only)
+    /// Opens the native title bar context menu, useful when implementing client side decorations (Wayland and X11)
     pub fn show_window_menu(&self, position: Point<Pixels>) {
         self.window.platform_window.show_window_menu(position)
     }
 
-    /// Tells the compositor to take control of window movement (Wayland only)
+    /// Tells the compositor to take control of window movement (Wayland and X11)
     ///
     /// Events may not be received during a move operation.
     pub fn start_system_move(&self) {
@@ -1212,7 +1210,9 @@ impl<'a> WindowContext<'a> {
     /// UI to scale, just like zooming a web page.
     pub fn rem_size(&self) -> Pixels {
         self.window
-            .rem_size_override
+            .rem_size_override_stack
+            .last()
+            .copied()
             .unwrap_or(self.window.rem_size)
     }
 
@@ -1238,9 +1238,9 @@ impl<'a> WindowContext<'a> {
         );
 
         if let Some(rem_size) = rem_size {
-            self.window.rem_size_override = Some(rem_size.into());
+            self.window.rem_size_override_stack.push(rem_size.into());
             let result = f(self);
-            self.window.rem_size_override.take();
+            self.window.rem_size_override_stack.pop();
             result
         } else {
             f(self)
@@ -2347,13 +2347,14 @@ impl<'a> WindowContext<'a> {
 
         let raster_bounds = self.text_system().raster_bounds(&params)?;
         if !raster_bounds.is_zero() {
-            let tile =
-                self.window
-                    .sprite_atlas
-                    .get_or_insert_with(&params.clone().into(), &mut || {
-                        let (size, bytes) = self.text_system().rasterize_glyph(&params)?;
-                        Ok((size, Cow::Owned(bytes)))
-                    })?;
+            let tile = self
+                .window
+                .sprite_atlas
+                .get_or_insert_with(&params.clone().into(), &mut || {
+                    let (size, bytes) = self.text_system().rasterize_glyph(&params)?;
+                    Ok(Some((size, Cow::Owned(bytes))))
+                })?
+                .expect("Callback above only errors or returns Some");
             let bounds = Bounds {
                 origin: glyph_origin.map(|px| px.floor()) + raster_bounds.origin.map(Into::into),
                 size: tile.bounds.size.map(Into::into),
@@ -2410,13 +2411,15 @@ impl<'a> WindowContext<'a> {
 
         let raster_bounds = self.text_system().raster_bounds(&params)?;
         if !raster_bounds.is_zero() {
-            let tile =
-                self.window
-                    .sprite_atlas
-                    .get_or_insert_with(&params.clone().into(), &mut || {
-                        let (size, bytes) = self.text_system().rasterize_glyph(&params)?;
-                        Ok((size, Cow::Owned(bytes)))
-                    })?;
+            let tile = self
+                .window
+                .sprite_atlas
+                .get_or_insert_with(&params.clone().into(), &mut || {
+                    let (size, bytes) = self.text_system().rasterize_glyph(&params)?;
+                    Ok(Some((size, Cow::Owned(bytes))))
+                })?
+                .expect("Callback above only errors or returns Some");
+
             let bounds = Bounds {
                 origin: glyph_origin.map(|px| px.floor()) + raster_bounds.origin.map(Into::into),
                 size: tile.bounds.size.map(Into::into),
@@ -2464,13 +2467,18 @@ impl<'a> WindowContext<'a> {
                 .map(|pixels| DevicePixels::from((pixels.0 * 2.).ceil() as i32)),
         };
 
-        let tile =
+        let Some(tile) =
             self.window
                 .sprite_atlas
                 .get_or_insert_with(&params.clone().into(), &mut || {
-                    let bytes = self.svg_renderer.render(&params)?;
-                    Ok((params.size, Cow::Owned(bytes)))
-                })?;
+                    let Some(bytes) = self.svg_renderer.render(&params)? else {
+                        return Ok(None);
+                    };
+                    Ok(Some((params.size, Cow::Owned(bytes))))
+                })?
+        else {
+            return Ok(());
+        };
         let content_mask = self.content_mask().scale(scale_factor);
 
         self.window
@@ -2513,8 +2521,9 @@ impl<'a> WindowContext<'a> {
             .window
             .sprite_atlas
             .get_or_insert_with(&params.clone().into(), &mut || {
-                Ok((data.size(), Cow::Borrowed(data.as_bytes())))
-            })?;
+                Ok(Some((data.size(), Cow::Borrowed(data.as_bytes()))))
+            })?
+            .expect("Callback above only returns Some");
         let content_mask = self.content_mask().scale(scale_factor);
         let corner_radii = corner_radii.scale(scale_factor);
 
@@ -4444,6 +4453,9 @@ impl<V: 'static> From<WindowHandle<V>> for AnyWindowHandle {
     }
 }
 
+unsafe impl<V> Send for WindowHandle<V> {}
+unsafe impl<V> Sync for WindowHandle<V> {}
+
 /// A handle to a window with any root view type, which can be downcast to a window with a specific root view type.
 #[derive(Copy, Clone, PartialEq, Eq, Hash)]
 pub struct AnyWindowHandle {
@@ -4512,6 +4524,8 @@ pub enum ElementId {
     Integer(usize),
     /// A string based ID.
     Name(SharedString),
+    /// A UUID.
+    Uuid(Uuid),
     /// An ID that's equated with a focus handle.
     FocusHandle(FocusId),
     /// A combination of a name and an integer.
@@ -4526,6 +4540,7 @@ impl Display for ElementId {
             ElementId::Name(name) => write!(f, "{}", name)?,
             ElementId::FocusHandle(_) => write!(f, "FocusHandle")?,
             ElementId::NamedInteger(s, i) => write!(f, "{}-{}", s, i)?,
+            ElementId::Uuid(uuid) => write!(f, "{}", uuid)?,
         }
 
         Ok(())
@@ -4588,6 +4603,18 @@ impl From<(&'static str, usize)> for ElementId {
 
 impl From<(&'static str, u64)> for ElementId {
     fn from((name, id): (&'static str, u64)) -> Self {
+        ElementId::NamedInteger(name.into(), id as usize)
+    }
+}
+
+impl From<Uuid> for ElementId {
+    fn from(value: Uuid) -> Self {
+        Self::Uuid(value)
+    }
+}
+
+impl From<(&'static str, u32)> for ElementId {
+    fn from((name, id): (&'static str, u32)) -> Self {
         ElementId::NamedInteger(name.into(), id as usize)
     }
 }

@@ -3,13 +3,13 @@ use backtrace::{self, Backtrace};
 use chrono::Utc;
 use db::kvp::KEY_VALUE_STORE;
 use gpui::{App, AppContext, SemanticVersion};
+use http::Method;
 use isahc::config::Configurable;
 
 use http::{self, HttpClient, HttpClientWithUrl};
 use paths::{CRASHES_DIR, CRASHES_RETIRED_DIR};
 use release_channel::ReleaseChannel;
 use release_channel::RELEASE_CHANNEL;
-use serde::{Deserialize, Serialize};
 use settings::Settings;
 use smol::stream::StreamExt;
 use std::{
@@ -18,39 +18,12 @@ use std::{
     sync::{atomic::Ordering, Arc},
 };
 use std::{io::Write, panic, sync::atomic::AtomicU32, thread};
+use telemetry_events::LocationData;
+use telemetry_events::Panic;
+use telemetry_events::PanicRequest;
 use util::{paths, ResultExt};
 
 use crate::stdout_is_a_pty;
-
-#[derive(Serialize, Deserialize)]
-struct LocationData {
-    file: String,
-    line: u32,
-}
-
-#[derive(Serialize, Deserialize)]
-struct Panic {
-    thread: String,
-    payload: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    location_data: Option<LocationData>,
-    backtrace: Vec<String>,
-    app_version: String,
-    release_channel: String,
-    os_name: String,
-    os_version: Option<String>,
-    architecture: String,
-    panicked_on: i64,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    installation_id: Option<String>,
-    session_id: String,
-}
-
-#[derive(Serialize)]
-struct PanicRequest {
-    panic: Panic,
-}
-
 static PANIC_COUNT: AtomicU32 = AtomicU32::new(0);
 
 pub fn init_panic_hook(app: &App, installation_id: Option<String>, session_id: String) {
@@ -119,7 +92,7 @@ pub fn init_panic_hook(app: &App, installation_id: Option<String>, session_id: S
             backtrace.drain(0..=ix);
         }
 
-        let panic_data = Panic {
+        let panic_data = telemetry_events::Panic {
             thread: thread_name.into(),
             payload,
             location_data: info.location().map(|location| LocationData {
@@ -397,7 +370,7 @@ async fn upload_previous_panics(
     http: Arc<HttpClientWithUrl>,
     telemetry_settings: client::TelemetrySettings,
 ) -> Result<Option<(i64, String)>> {
-    let panic_report_url = http.build_url("/api/panic");
+    let panic_report_url = http.build_zed_api_url("/telemetry/panics", &[])?;
     let mut children = smol::fs::read_dir(&*paths::LOGS_DIR).await?;
 
     let mut most_recent_panic = None;
@@ -440,12 +413,21 @@ async fn upload_previous_panics(
             if let Some(panic) = panic {
                 most_recent_panic = Some((panic.panicked_on, panic.payload.clone()));
 
-                let body = serde_json::to_string(&PanicRequest { panic }).unwrap();
+                let json_bytes = serde_json::to_vec(&PanicRequest { panic }).unwrap();
 
-                let request = http::Request::post(&panic_report_url)
-                    .redirect_policy(isahc::config::RedirectPolicy::Follow)
-                    .header("Content-Type", "application/json")
-                    .body(body.into())?;
+                let Some(checksum) = client::telemetry::calculate_json_checksum(&json_bytes) else {
+                    continue;
+                };
+
+                let Ok(request) = http::Request::builder()
+                    .method(Method::POST)
+                    .uri(panic_report_url.as_ref())
+                    .header("x-zed-checksum", checksum)
+                    .body(json_bytes.into())
+                else {
+                    continue;
+                };
+
                 let response = http.send(request).await.context("error sending panic")?;
                 if !response.status().is_success() {
                     log::error!("Error uploading panic to server: {}", response.status());

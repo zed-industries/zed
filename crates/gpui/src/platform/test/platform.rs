@@ -38,6 +38,12 @@ pub(crate) struct TestPrompts {
 
 impl TestPlatform {
     pub fn new(executor: BackgroundExecutor, foreground_executor: ForegroundExecutor) -> Rc<Self> {
+        #[cfg(target_os = "windows")]
+        unsafe {
+            windows::Win32::System::Ole::OleInitialize(None)
+                .expect("unable to initialize Windows OLE");
+        }
+
         Rc::new_cyclic(|weak| TestPlatform {
             background_executor: executor,
             foreground_executor,
@@ -233,6 +239,7 @@ impl Platform for TestPlatform {
     }
 
     fn set_menus(&self, _menus: Vec<crate::Menu>, _keymap: &Keymap) {}
+    fn set_dock_menu(&self, _menu: Vec<crate::MenuItem>, _keymap: &Keymap) {}
 
     fn add_recent_document(&self, _paths: &Path) {}
 

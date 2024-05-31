@@ -14,6 +14,7 @@ doctest = false
 
 [dependencies]
 anyhow.workspace = true
+assistant_slash_command.workspace = true
 async-compression.workspace = true
 async-tar.workspace = true
 async-trait.workspace = true
@@ -30,6 +31,7 @@ log.workspace = true
 lsp.workspace = true
 node_runtime.workspace = true
 project.workspace = true
+release_channel.workspace = true
 schemars.workspace = true
 semantic_version.workspace = true
 serde.workspace = true
@@ -37,6 +39,7 @@ serde_json.workspace = true
 settings.workspace = true
 theme.workspace = true
 toml.workspace = true
+ui.workspace = true
 url.workspace = true
 util.workspace = true
 wasm-encoder.workspace = true
@@ -44,6 +47,7 @@ wasmtime.workspace = true
 wasmtime-wasi.workspace = true
 wasmparser.workspace = true
 wit-component.workspace = true
+workspace.workspace = true
 task.workspace = true
 serde_json_lenient.workspace = true
 
@@ -56,3 +60,4 @@ fs = { workspace = true, features = ["test-support"] }
 gpui = { workspace = true, features = ["test-support"] }
 language = { workspace = true, features = ["test-support"] }
 project = { workspace = true, features = ["test-support"] }
+workspace = { workspace = true, features = ["test-support"] }

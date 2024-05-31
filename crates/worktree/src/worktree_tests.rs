@@ -15,13 +15,7 @@ use pretty_assertions::assert_eq;
 use rand::prelude::*;
 use serde_json::json;
 use settings::{Settings, SettingsStore};
-use std::{
-    env,
-    fmt::Write,
-    mem,
-    path::{Path, PathBuf},
-    sync::Arc,
-};
+use std::{env, fmt::Write, mem, path::Path, sync::Arc};
 use util::{test::temp_tree, ResultExt};
 
 #[gpui::test]
@@ -76,114 +70,6 @@ async fn test_traversal(cx: &mut TestAppContext) {
                 Path::new("a/b"),
                 Path::new("a/c"),
             ]
-        );
-    })
-}
-
-#[gpui::test]
-async fn test_descendent_entries(cx: &mut TestAppContext) {
-    init_test(cx);
-    let fs = FakeFs::new(cx.background_executor.clone());
-    fs.insert_tree(
-        "/root",
-        json!({
-            "a": "",
-            "b": {
-               "c": {
-                   "d": ""
-               },
-               "e": {}
-            },
-            "f": "",
-            "g": {
-                "h": {}
-            },
-            "i": {
-                "j": {
-                    "k": ""
-                },
-                "l": {
-
-                }
-            },
-            ".gitignore": "i/j\n",
-        }),
-    )
-    .await;
-
-    let tree = Worktree::local(
-        build_client(cx),
-        Path::new("/root"),
-        true,
-        fs,
-        Default::default(),
-        &mut cx.to_async(),
-    )
-    .await
-    .unwrap();
-    cx.read(|cx| tree.read(cx).as_local().unwrap().scan_complete())
-        .await;
-
-    tree.read_with(cx, |tree, _| {
-        assert_eq!(
-            tree.descendent_entries(false, false, Path::new("b"))
-                .map(|entry| entry.path.as_ref())
-                .collect::<Vec<_>>(),
-            vec![Path::new("b/c/d"),]
-        );
-        assert_eq!(
-            tree.descendent_entries(true, false, Path::new("b"))
-                .map(|entry| entry.path.as_ref())
-                .collect::<Vec<_>>(),
-            vec![
-                Path::new("b"),
-                Path::new("b/c"),
-                Path::new("b/c/d"),
-                Path::new("b/e"),
-            ]
-        );
-
-        assert_eq!(
-            tree.descendent_entries(false, false, Path::new("g"))
-                .map(|entry| entry.path.as_ref())
-                .collect::<Vec<_>>(),
-            Vec::<PathBuf>::new()
-        );
-        assert_eq!(
-            tree.descendent_entries(true, false, Path::new("g"))
-                .map(|entry| entry.path.as_ref())
-                .collect::<Vec<_>>(),
-            vec![Path::new("g"), Path::new("g/h"),]
-        );
-    });
-
-    // Expand gitignored directory.
-    tree.read_with(cx, |tree, _| {
-        tree.as_local()
-            .unwrap()
-            .refresh_entries_for_paths(vec![Path::new("i/j").into()])
-    })
-    .recv()
-    .await;
-
-    tree.read_with(cx, |tree, _| {
-        assert_eq!(
-            tree.descendent_entries(false, false, Path::new("i"))
-                .map(|entry| entry.path.as_ref())
-                .collect::<Vec<_>>(),
-            Vec::<PathBuf>::new()
-        );
-        assert_eq!(
-            tree.descendent_entries(false, true, Path::new("i"))
-                .map(|entry| entry.path.as_ref())
-                .collect::<Vec<_>>(),
-            vec![Path::new("i/j/k")]
-        );
-        assert_eq!(
-            tree.descendent_entries(true, false, Path::new("i"))
-                .map(|entry| entry.path.as_ref())
-                .collect::<Vec<_>>(),
-            vec![Path::new("i"), Path::new("i/l"),]
         );
     })
 }
@@ -2704,6 +2590,10 @@ fn check_worktree_entries(
 }
 
 fn init_test(cx: &mut gpui::TestAppContext) {
+    if std::env::var("RUST_LOG").is_ok() {
+        env_logger::try_init().ok();
+    }
+
     cx.update(|cx| {
         let settings_store = SettingsStore::test(cx);
         cx.set_global(settings_store);

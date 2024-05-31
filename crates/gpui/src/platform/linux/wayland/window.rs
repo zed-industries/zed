@@ -2,6 +2,7 @@ use std::any::Any;
 use std::cell::{Ref, RefCell, RefMut};
 use std::ffi::c_void;
 use std::num::NonZeroU32;
+use std::ops::{Deref, Range};
 use std::ptr::NonNull;
 use std::rc::{Rc, Weak};
 use std::sync::Arc;
@@ -9,6 +10,7 @@ use std::sync::Arc;
 use blade_graphics as gpu;
 use collections::{HashMap, HashSet};
 use futures::channel::oneshot::Receiver;
+use parking_lot::Mutex;
 use raw_window_handle as rwh;
 use wayland_backend::client::ObjectId;
 use wayland_client::protocol::wl_region::WlRegion;
@@ -69,6 +71,7 @@ pub struct WaylandWindowState {
     acknowledged_first_configure: bool,
     pub surface: wl_surface::WlSurface,
     decoration: Option<zxdg_toplevel_decoration_v1::ZxdgToplevelDecorationV1>,
+    appearance: WindowAppearance,
     blur: Option<org_kde_kwin_blur::OrgKdeKwinBlur>,
     toplevel: xdg_toplevel::XdgToplevel,
     viewport: Option<wp_viewport::WpViewport>,
@@ -99,6 +102,7 @@ impl WaylandWindowState {
         xdg_surface: xdg_surface::XdgSurface,
         toplevel: xdg_toplevel::XdgToplevel,
         decoration: Option<zxdg_toplevel_decoration_v1::ZxdgToplevelDecorationV1>,
+        appearance: WindowAppearance,
         viewport: Option<wp_viewport::WpViewport>,
         client: WaylandClientStatePtr,
         globals: Globals,
@@ -157,11 +161,18 @@ impl WaylandWindowState {
             maximized: false,
             callbacks: Callbacks::default(),
             client,
+            appearance,
         }
     }
 }
 
 pub(crate) struct WaylandWindow(pub WaylandWindowStatePtr);
+pub enum ImeInput {
+    InsertText(String),
+    SetMarkedText(String),
+    UnmarkText,
+    DeleteText,
+}
 
 impl Drop for WaylandWindow {
     fn drop(&mut self) {
@@ -209,6 +220,7 @@ impl WaylandWindow {
         globals: Globals,
         client: WaylandClientStatePtr,
         params: WindowParams,
+        appearance: WindowAppearance,
     ) -> (Self, ObjectId) {
         let surface = globals.compositor.create_surface(&globals.qh, ());
         let xdg_surface = globals
@@ -245,6 +257,7 @@ impl WaylandWindow {
                 xdg_surface,
                 toplevel,
                 decoration,
+                appearance,
                 viewport,
                 client,
                 globals,
@@ -425,6 +438,43 @@ impl WaylandWindowStatePtr {
         }
     }
 
+    pub fn handle_ime(&self, ime: ImeInput) {
+        let mut state = self.state.borrow_mut();
+        if let Some(mut input_handler) = state.input_handler.take() {
+            drop(state);
+            match ime {
+                ImeInput::InsertText(text) => {
+                    input_handler.replace_text_in_range(None, &text);
+                }
+                ImeInput::SetMarkedText(text) => {
+                    input_handler.replace_and_mark_text_in_range(None, &text, None);
+                }
+                ImeInput::UnmarkText => {
+                    input_handler.unmark_text();
+                }
+                ImeInput::DeleteText => {
+                    if let Some(marked) = input_handler.marked_text_range() {
+                        input_handler.replace_text_in_range(Some(marked), "");
+                    }
+                }
+            }
+            self.state.borrow_mut().input_handler = Some(input_handler);
+        }
+    }
+
+    pub fn get_ime_area(&self) -> Option<Bounds<Pixels>> {
+        let mut state = self.state.borrow_mut();
+        let mut bounds: Option<Bounds<Pixels>> = None;
+        if let Some(mut input_handler) = state.input_handler.take() {
+            drop(state);
+            if let Some(range) = input_handler.selected_text_range() {
+                bounds = input_handler.bounds_for_range(range);
+            }
+            self.state.borrow_mut().input_handler = Some(input_handler);
+        }
+        bounds
+    }
+
     pub fn set_size_and_scale(
         &self,
         width: Option<NonZeroU32>,
@@ -531,6 +581,15 @@ impl WaylandWindowStatePtr {
             fun(focus);
         }
     }
+
+    pub fn set_appearance(&mut self, appearance: WindowAppearance) {
+        self.state.borrow_mut().appearance = appearance;
+
+        let mut callbacks = self.callbacks.borrow_mut();
+        if let Some(ref mut fun) = callbacks.appearance_changed {
+            (fun)()
+        }
+    }
 }
 
 impl rwh::HasWindowHandle for WaylandWindow {
@@ -578,9 +637,8 @@ impl PlatformWindow for WaylandWindow {
         self.borrow().scale
     }
 
-    // todo(linux)
     fn appearance(&self) -> WindowAppearance {
-        WindowAppearance::Light
+        self.borrow().appearance
     }
 
     // todo(linux)
@@ -737,7 +795,7 @@ impl PlatformWindow for WaylandWindow {
     }
 
     fn on_appearance_changed(&self, callback: Box<dyn FnMut()>) {
-        // todo(linux)
+        self.0.callbacks.borrow_mut().appearance_changed = Some(callback);
     }
 
     fn draw(&self, scene: &Scene) {

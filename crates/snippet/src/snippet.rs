@@ -2,7 +2,7 @@ use anyhow::{anyhow, Context, Result};
 use smallvec::SmallVec;
 use std::{collections::BTreeMap, ops::Range};
 
-#[derive(Default)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct Snippet {
     pub text: String,
     pub tabstops: Vec<TabStop>,

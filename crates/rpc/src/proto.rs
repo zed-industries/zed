@@ -277,8 +277,13 @@ messages!(
     (ShareProjectResponse, Foreground),
     (ShowContacts, Foreground),
     (StartLanguageServer, Foreground),
+    (SubscribeToChannels, Foreground),
     (SynchronizeBuffers, Foreground),
     (SynchronizeBuffersResponse, Foreground),
+    (TaskContextForLocation, Background),
+    (TaskContext, Background),
+    (TaskTemplates, Background),
+    (TaskTemplatesResponse, Background),
     (Test, Foreground),
     (Unfollow, Foreground),
     (UnshareProject, Foreground),
@@ -326,7 +331,7 @@ messages!(
     (RegenerateDevServerToken, Foreground),
     (RegenerateDevServerTokenResponse, Foreground),
     (RenameDevServer, Foreground),
-    (OpenNewBuffer, Foreground)
+    (OpenNewBuffer, Foreground),
 );
 
 request_messages!(
@@ -414,6 +419,8 @@ request_messages!(
     (SetChannelVisibility, Ack),
     (ShareProject, ShareProjectResponse),
     (SynchronizeBuffers, SynchronizeBuffersResponse),
+    (TaskContextForLocation, TaskContext),
+    (TaskTemplates, TaskTemplatesResponse),
     (Test, Test),
     (UpdateBuffer, Ack),
     (UpdateParticipantLocation, Ack),
@@ -481,6 +488,8 @@ entity_messages!(
     SearchProject,
     StartLanguageServer,
     SynchronizeBuffers,
+    TaskContextForLocation,
+    TaskTemplates,
     UnshareProject,
     UpdateBuffer,
     UpdateBufferFile,

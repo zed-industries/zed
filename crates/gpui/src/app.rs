@@ -29,8 +29,8 @@ use crate::{
     current_platform, init_app_menus, Action, ActionRegistry, Any, AnyView, AnyWindowHandle,
     AppMetadata, AssetCache, AssetSource, BackgroundExecutor, ClipboardItem, Context,
     DispatchPhase, DisplayId, Entity, EventEmitter, ForegroundExecutor, Global, KeyBinding, Keymap,
-    Keystroke, LayoutId, Menu, PathPromptOptions, Pixels, Platform, PlatformDisplay, Point,
-    PromptBuilder, PromptHandle, PromptLevel, Render, RenderablePromptHandle, Reservation,
+    Keystroke, LayoutId, Menu, MenuItem, PathPromptOptions, Pixels, Platform, PlatformDisplay,
+    Point, PromptBuilder, PromptHandle, PromptLevel, Render, RenderablePromptHandle, Reservation,
     SharedString, SubscriberSet, Subscription, SvgRenderer, Task, TextSystem, View, ViewContext,
     Window, WindowAppearance, WindowContext, WindowHandle, WindowId,
 };
@@ -115,7 +115,7 @@ impl App {
         Self(AppContext::new(
             current_platform(),
             Arc::new(()),
-            http::client(),
+            http::client(None),
         ))
     }
 
@@ -502,6 +502,13 @@ impl AppContext {
         })
     }
 
+    /// Returns Ok() if the platform supports opening windows.
+    /// This returns false (for example) on linux when we could
+    /// not establish a connection to X or Wayland.
+    pub fn can_open_windows(&self) -> anyhow::Result<()> {
+        self.platform.can_open_windows()
+    }
+
     /// Instructs the platform to activate the application by bringing it to the foreground.
     pub fn activate(&self, ignoring_other_apps: bool) {
         self.platform.activate(ignoring_other_apps);
@@ -649,6 +656,11 @@ impl AppContext {
     /// Returns the local timezone at the platform level.
     pub fn local_timezone(&self) -> UtcOffset {
         self.platform.local_timezone()
+    }
+
+    /// Updates the http client assigned to GPUI
+    pub fn update_http_client(&mut self, new_client: Arc<dyn HttpClient>) {
+        self.http_client = new_client;
     }
 
     /// Returns the http client assigned to GPUI
@@ -1153,6 +1165,11 @@ impl AppContext {
     /// Sets the menu bar for this application. This will replace any existing menu bar.
     pub fn set_menus(&mut self, menus: Vec<Menu>) {
         self.platform.set_menus(menus, &self.keymap.borrow());
+    }
+
+    /// Sets the right click menu for the app icon in the dock
+    pub fn set_dock_menu(&mut self, menus: Vec<MenuItem>) {
+        self.platform.set_dock_menu(menus, &self.keymap.borrow());
     }
 
     /// Adds given path to the bottom of the list of recent paths for the application.

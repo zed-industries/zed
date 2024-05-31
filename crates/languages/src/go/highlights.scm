@@ -110,6 +110,9 @@
   (imaginary_literal)
 ] @number
 
+(const_spec
+  name: (identifier) @constant)
+
 [
   (true)
   (false)

@@ -1,0 +1,21 @@
+[package]
+name = "assistant_slash_command"
+version = "0.1.0"
+edition = "2021"
+publish = false
+license = "GPL-3.0-or-later"
+
+[lints]
+workspace = true
+
+[lib]
+path = "src/assistant_slash_command.rs"
+
+[dependencies]
+anyhow.workspace = true
+collections.workspace = true
+derive_more.workspace = true
+gpui.workspace = true
+language.workspace = true
+parking_lot.workspace = true
+workspace.workspace = true

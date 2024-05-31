@@ -60,20 +60,22 @@ impl PlatformAtlas for MetalAtlas {
     fn get_or_insert_with<'a>(
         &self,
         key: &AtlasKey,
-        build: &mut dyn FnMut() -> Result<(Size<DevicePixels>, Cow<'a, [u8]>)>,
-    ) -> Result<AtlasTile> {
+        build: &mut dyn FnMut() -> Result<Option<(Size<DevicePixels>, Cow<'a, [u8]>)>>,
+    ) -> Result<Option<AtlasTile>> {
         let mut lock = self.0.lock();
         if let Some(tile) = lock.tiles_by_key.get(key) {
-            Ok(tile.clone())
+            Ok(Some(tile.clone()))
         } else {
-            let (size, bytes) = build()?;
+            let Some((size, bytes)) = build()? else {
+                return Ok(None);
+            };
             let tile = lock
                 .allocate(size, key.texture_kind())
                 .ok_or_else(|| anyhow!("failed to allocate"))?;
             let texture = lock.texture(tile.texture_id);
             texture.upload(tile.bounds, &bytes);
             lock.tiles_by_key.insert(key.clone(), tile.clone());
-            Ok(tile)
+            Ok(Some(tile))
         }
     }
 }

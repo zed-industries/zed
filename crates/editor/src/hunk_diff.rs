@@ -194,6 +194,7 @@ impl Editor {
                         editor.highlight_rows::<DiffRowHighlight>(
                             to_inclusive_row_range(removed_rows, &snapshot),
                             None,
+                            false,
                             cx,
                         );
                     }
@@ -269,6 +270,7 @@ impl Editor {
                 self.highlight_rows::<DiffRowHighlight>(
                     to_inclusive_row_range(hunk_start..hunk_end, &snapshot),
                     Some(added_hunk_color(cx)),
+                    false,
                     cx,
                 );
                 None
@@ -277,6 +279,7 @@ impl Editor {
                 self.highlight_rows::<DiffRowHighlight>(
                     to_inclusive_row_range(hunk_start..hunk_end, &snapshot),
                     Some(added_hunk_color(cx)),
+                    false,
                     cx,
                 );
                 self.insert_deleted_text_block(diff_base_buffer, deleted_text_lines, &hunk, cx)
@@ -306,17 +309,18 @@ impl Editor {
         let deleted_hunk_color = deleted_hunk_color(cx);
         let (editor_height, editor_with_deleted_text) =
             editor_with_deleted_text(diff_base_buffer, deleted_hunk_color, hunk, cx);
-        let parent_gutter_offset = self.gutter_dimensions.width + self.gutter_dimensions.margin;
+        let editor_model = cx.model().clone();
         let mut new_block_ids = self.insert_blocks(
             Some(BlockProperties {
                 position: hunk.multi_buffer_range.start,
                 height: editor_height.max(deleted_text_height),
                 style: BlockStyle::Flex,
-                render: Box::new(move |_| {
+                render: Box::new(move |cx| {
+                    let gutter_dimensions = editor_model.read(cx).gutter_dimensions;
                     div()
                         .bg(deleted_hunk_color)
                         .size_full()
-                        .pl(parent_gutter_offset)
+                        .pl(gutter_dimensions.width + gutter_dimensions.margin)
                         .child(editor_with_deleted_text.clone())
                         .into_any_element()
                 }),
@@ -476,6 +480,7 @@ impl Editor {
                         editor.highlight_rows::<DiffRowHighlight>(
                             to_inclusive_row_range(removed_rows, &snapshot),
                             None,
+                            false,
                             cx,
                         );
                     }
@@ -568,7 +573,7 @@ fn editor_with_deleted_text(
             );
         });
 
-        let mut editor = Editor::for_multibuffer(multi_buffer, None, cx);
+        let mut editor = Editor::for_multibuffer(multi_buffer, None, true, cx);
         editor.soft_wrap_mode_override = Some(language::language_settings::SoftWrap::None);
         editor.show_wrap_guides = Some(false);
         editor.show_gutter = false;
@@ -581,7 +586,7 @@ fn editor_with_deleted_text(
             .buffer_snapshot
             .anchor_after(editor.buffer.read(cx).len(cx));
 
-        editor.highlight_rows::<DiffRowHighlight>(start..=end, Some(deleted_color), cx);
+        editor.highlight_rows::<DiffRowHighlight>(start..=end, Some(deleted_color), false, cx);
 
         let subscription_editor = parent_editor.clone();
         editor._subscriptions.extend([

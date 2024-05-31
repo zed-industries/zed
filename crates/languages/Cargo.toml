@@ -8,6 +8,9 @@ license = "GPL-3.0-or-later"
 [lints]
 workspace = true
 
+[features]
+test-support = []
+
 [dependencies]
 anyhow.workspace = true
 async-compression.workspace = true

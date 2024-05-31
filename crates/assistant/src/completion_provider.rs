@@ -25,31 +25,26 @@ use std::time::Duration;
 pub fn init(client: Arc<Client>, cx: &mut AppContext) {
     let mut settings_version = 0;
     let provider = match &AssistantSettings::get_global(cx).provider {
-        AssistantProvider::ZedDotDev { default_model } => {
-            CompletionProvider::ZedDotDev(ZedDotDevCompletionProvider::new(
-                default_model.clone(),
-                client.clone(),
-                settings_version,
-                cx,
-            ))
-        }
+        AssistantProvider::ZedDotDev { model } => CompletionProvider::ZedDotDev(
+            ZedDotDevCompletionProvider::new(model.clone(), client.clone(), settings_version, cx),
+        ),
         AssistantProvider::OpenAi {
-            default_model,
+            model,
             api_url,
             low_speed_timeout_in_seconds,
         } => CompletionProvider::OpenAi(OpenAiCompletionProvider::new(
-            default_model.clone(),
+            model.clone(),
             api_url.clone(),
             client.http_client(),
             low_speed_timeout_in_seconds.map(Duration::from_secs),
             settings_version,
         )),
         AssistantProvider::Anthropic {
-            default_model,
+            model,
             api_url,
             low_speed_timeout_in_seconds,
         } => CompletionProvider::Anthropic(AnthropicCompletionProvider::new(
-            default_model.clone(),
+            model.clone(),
             api_url.clone(),
             client.http_client(),
             low_speed_timeout_in_seconds.map(Duration::from_secs),
@@ -65,13 +60,13 @@ pub fn init(client: Arc<Client>, cx: &mut AppContext) {
                 (
                     CompletionProvider::OpenAi(provider),
                     AssistantProvider::OpenAi {
-                        default_model,
+                        model,
                         api_url,
                         low_speed_timeout_in_seconds,
                     },
                 ) => {
                     provider.update(
-                        default_model.clone(),
+                        model.clone(),
                         api_url.clone(),
                         low_speed_timeout_in_seconds.map(Duration::from_secs),
                         settings_version,
@@ -80,13 +75,13 @@ pub fn init(client: Arc<Client>, cx: &mut AppContext) {
                 (
                     CompletionProvider::Anthropic(provider),
                     AssistantProvider::Anthropic {
-                        default_model,
+                        model,
                         api_url,
                         low_speed_timeout_in_seconds,
                     },
                 ) => {
                     provider.update(
-                        default_model.clone(),
+                        model.clone(),
                         api_url.clone(),
                         low_speed_timeout_in_seconds.map(Duration::from_secs),
                         settings_version,
@@ -94,13 +89,13 @@ pub fn init(client: Arc<Client>, cx: &mut AppContext) {
                 }
                 (
                     CompletionProvider::ZedDotDev(provider),
-                    AssistantProvider::ZedDotDev { default_model },
+                    AssistantProvider::ZedDotDev { model },
                 ) => {
-                    provider.update(default_model.clone(), settings_version);
+                    provider.update(model.clone(), settings_version);
                 }
-                (_, AssistantProvider::ZedDotDev { default_model }) => {
+                (_, AssistantProvider::ZedDotDev { model }) => {
                     *provider = CompletionProvider::ZedDotDev(ZedDotDevCompletionProvider::new(
-                        default_model.clone(),
+                        model.clone(),
                         client.clone(),
                         settings_version,
                         cx,
@@ -109,13 +104,13 @@ pub fn init(client: Arc<Client>, cx: &mut AppContext) {
                 (
                     _,
                     AssistantProvider::OpenAi {
-                        default_model,
+                        model,
                         api_url,
                         low_speed_timeout_in_seconds,
                     },
                 ) => {
                     *provider = CompletionProvider::OpenAi(OpenAiCompletionProvider::new(
-                        default_model.clone(),
+                        model.clone(),
                         api_url.clone(),
                         client.http_client(),
                         low_speed_timeout_in_seconds.map(Duration::from_secs),
@@ -125,13 +120,13 @@ pub fn init(client: Arc<Client>, cx: &mut AppContext) {
                 (
                     _,
                     AssistantProvider::Anthropic {
-                        default_model,
+                        model,
                         api_url,
                         low_speed_timeout_in_seconds,
                     },
                 ) => {
                     *provider = CompletionProvider::Anthropic(AnthropicCompletionProvider::new(
-                        default_model.clone(),
+                        model.clone(),
                         api_url.clone(),
                         client.http_client(),
                         low_speed_timeout_in_seconds.map(Duration::from_secs),
@@ -157,6 +152,25 @@ impl gpui::Global for CompletionProvider {}
 impl CompletionProvider {
     pub fn global(cx: &AppContext) -> &Self {
         cx.global::<Self>()
+    }
+
+    pub fn available_models(&self) -> Vec<LanguageModel> {
+        match self {
+            CompletionProvider::OpenAi(provider) => provider
+                .available_models()
+                .map(LanguageModel::OpenAi)
+                .collect(),
+            CompletionProvider::Anthropic(provider) => provider
+                .available_models()
+                .map(LanguageModel::Anthropic)
+                .collect(),
+            CompletionProvider::ZedDotDev(provider) => provider
+                .available_models()
+                .map(LanguageModel::ZedDotDev)
+                .collect(),
+            #[cfg(test)]
+            CompletionProvider::Fake(_) => unimplemented!(),
+        }
     }
 
     pub fn settings_version(&self) -> usize {
@@ -209,17 +223,13 @@ impl CompletionProvider {
         }
     }
 
-    pub fn default_model(&self) -> LanguageModel {
+    pub fn model(&self) -> LanguageModel {
         match self {
-            CompletionProvider::OpenAi(provider) => LanguageModel::OpenAi(provider.default_model()),
-            CompletionProvider::Anthropic(provider) => {
-                LanguageModel::Anthropic(provider.default_model())
-            }
-            CompletionProvider::ZedDotDev(provider) => {
-                LanguageModel::ZedDotDev(provider.default_model())
-            }
+            CompletionProvider::OpenAi(provider) => LanguageModel::OpenAi(provider.model()),
+            CompletionProvider::Anthropic(provider) => LanguageModel::Anthropic(provider.model()),
+            CompletionProvider::ZedDotDev(provider) => LanguageModel::ZedDotDev(provider.model()),
             #[cfg(test)]
-            CompletionProvider::Fake(_) => unimplemented!(),
+            CompletionProvider::Fake(_) => LanguageModel::default(),
         }
     }
 
@@ -233,7 +243,7 @@ impl CompletionProvider {
             CompletionProvider::Anthropic(provider) => provider.count_tokens(request, cx),
             CompletionProvider::ZedDotDev(provider) => provider.count_tokens(request, cx),
             #[cfg(test)]
-            CompletionProvider::Fake(_) => unimplemented!(),
+            CompletionProvider::Fake(_) => futures::FutureExt::boxed(futures::future::ready(Ok(0))),
         }
     }
 

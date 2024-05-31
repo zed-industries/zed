@@ -5,8 +5,11 @@ use gpui::*;
 struct Assets {}
 
 impl AssetSource for Assets {
-    fn load(&self, path: &str) -> Result<std::borrow::Cow<'static, [u8]>> {
-        std::fs::read(path).map(Into::into).map_err(Into::into)
+    fn load(&self, path: &str) -> Result<Option<std::borrow::Cow<'static, [u8]>>> {
+        std::fs::read(path)
+            .map(Into::into)
+            .map_err(Into::into)
+            .map(|result| Some(result))
     }
 
     fn list(&self, path: &str) -> Result<Vec<SharedString>> {

@@ -8,14 +8,10 @@ use std::process::{Command, Stdio};
 use std::sync::Arc;
 use std::{ops::Range, path::Path};
 use text::Rope;
-use time;
 use time::macros::format_description;
 use time::OffsetDateTime;
 use time::UtcOffset;
 use url::Url;
-
-#[cfg(windows)]
-use std::os::windows::process::CommandExt;
 
 pub use git2 as libgit;
 
@@ -98,7 +94,10 @@ fn run_git_blame(
         .stderr(Stdio::piped());
 
     #[cfg(windows)]
-    child.creation_flags(windows::Win32::System::Threading::CREATE_NO_WINDOW.0);
+    {
+        use std::os::windows::process::CommandExt;
+        child.creation_flags(windows::Win32::System::Threading::CREATE_NO_WINDOW.0);
+    }
 
     let child = child
         .spawn()

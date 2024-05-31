@@ -1,6 +1,6 @@
 [package]
 name = "zed_ruby"
-version = "0.0.3"
+version = "0.0.6"
 edition = "2021"
 publish = false
 license = "Apache-2.0"

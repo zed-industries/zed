@@ -237,8 +237,9 @@ fn view_release_notes_locally(workspace: &mut Workspace, cx: &mut ViewContext<Wo
                             let buffer = cx.new_model(|cx| MultiBuffer::singleton(buffer, cx));
 
                             let tab_description = SharedString::from(body.title.to_string());
-                            let editor = cx
-                                .new_view(|cx| Editor::for_multibuffer(buffer, Some(project), cx));
+                            let editor = cx.new_view(|cx| {
+                                Editor::for_multibuffer(buffer, Some(project), true, cx)
+                            });
                             let workspace_handle = workspace.weak_handle();
                             let view: View<MarkdownPreviewView> = MarkdownPreviewView::new(
                                 MarkdownPreviewMode::Default,
@@ -341,6 +342,16 @@ impl AutoUpdater {
     }
 
     async fn update(this: Model<Self>, mut cx: AsyncAppContext) -> Result<()> {
+        // Skip auto-update for flatpaks
+        #[cfg(target_os = "linux")]
+        if matches!(std::env::var("ZED_IS_FLATPAK_INSTALL"), Ok(_)) {
+            this.update(&mut cx, |this, cx| {
+                this.status = AutoUpdateStatus::Idle;
+                cx.notify();
+            })?;
+            return Ok(());
+        }
+
         let (client, current_version) = this.read_with(&cx, |this, _| {
             (this.http_client.clone(), this.current_version)
         })?;

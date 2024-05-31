@@ -56,7 +56,7 @@ impl VimTestContext {
 
     pub fn new_with_lsp(mut cx: EditorLspTestContext, enabled: bool) -> VimTestContext {
         cx.update(|cx| {
-            cx.update_global(|store: &mut SettingsStore, cx| {
+            SettingsStore::update_global(cx, |store, cx| {
                 store.update_user_settings::<VimModeSetting>(cx, |s| *s = Some(enabled));
             });
             settings::KeymapFile::load_asset("keymaps/default-macos.json", cx).unwrap();
@@ -104,7 +104,7 @@ impl VimTestContext {
 
     pub fn enable_vim(&mut self) {
         self.cx.update(|cx| {
-            cx.update_global(|store: &mut SettingsStore, cx| {
+            SettingsStore::update_global(cx, |store, cx| {
                 store.update_user_settings::<VimModeSetting>(cx, |s| *s = Some(true));
             });
         })
@@ -112,7 +112,7 @@ impl VimTestContext {
 
     pub fn disable_vim(&mut self) {
         self.cx.update(|cx| {
-            cx.update_global(|store: &mut SettingsStore, cx| {
+            SettingsStore::update_global(cx, |store, cx| {
                 store.update_user_settings::<VimModeSetting>(cx, |s| *s = Some(false));
             });
         })

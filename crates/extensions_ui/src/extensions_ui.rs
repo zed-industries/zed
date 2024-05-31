@@ -13,9 +13,10 @@ use extension::{ExtensionManifest, ExtensionOperation, ExtensionStore};
 use fuzzy::{match_strings, StringMatchCandidate};
 use gpui::{
     actions, canvas, uniform_list, AnyElement, AppContext, EventEmitter, FocusableView, FontStyle,
-    FontWeight, InteractiveElement, KeyContext, ParentElement, Render, Styled, Task, TextStyle,
+    InteractiveElement, KeyContext, ParentElement, Render, Styled, Task, TextStyle,
     UniformListScrollHandle, View, ViewContext, VisualContext, WeakView, WhiteSpace, WindowContext,
 };
+use release_channel::ReleaseChannel;
 use settings::Settings;
 use std::ops::DerefMut;
 use std::time::Duration;
@@ -602,7 +603,8 @@ impl ExtensionsPage {
         has_dev_extension: bool,
         cx: &mut ViewContext<Self>,
     ) -> (Button, Option<Button>) {
-        let is_compatible = extension::is_version_compatible(&extension);
+        let is_compatible =
+            extension::is_version_compatible(ReleaseChannel::global(cx), &extension);
 
         if has_dev_extension {
             // If we have a dev extension for the given extension, just treat it as uninstalled.
@@ -741,7 +743,7 @@ impl ExtensionsPage {
             font_family: settings.ui_font.family.clone(),
             font_features: settings.ui_font.features.clone(),
             font_size: rems(0.875).into(),
-            font_weight: FontWeight::NORMAL,
+            font_weight: settings.ui_font.weight,
             font_style: FontStyle::Normal,
             line_height: relative(1.3),
             background_color: None,
@@ -990,7 +992,7 @@ impl Item for ExtensionsPage {
 
     fn clone_on_split(
         &self,
-        _workspace_id: WorkspaceId,
+        _workspace_id: Option<WorkspaceId>,
         _: &mut ViewContext<Self>,
     ) -> Option<View<Self>> {
         None

@@ -26,7 +26,7 @@ fn main() {
         });
 
         let clock = Arc::new(FakeSystemClock::default());
-        let http = Arc::new(HttpClientWithUrl::new("http://localhost:11434"));
+        let http = Arc::new(HttpClientWithUrl::new("http://localhost:11434", None));
 
         let client = client::Client::new(clock, http.clone(), cx);
         Client::set_global(client.clone(), cx);
