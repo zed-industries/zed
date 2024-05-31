@@ -29,9 +29,9 @@ use crate::platform::linux::wayland::serial::SerialKind;
 use crate::platform::{PlatformAtlas, PlatformInputHandler, PlatformWindow};
 use crate::scene::Scene;
 use crate::{
-    px, size, AnyWindowHandle, Bounds, DevicePixels, Globals, Modifiers, Pixels, PlatformDisplay,
-    PlatformInput, Point, PromptLevel, Size, WaylandClientStatePtr, WindowAppearance,
-    WindowBackgroundAppearance, WindowBounds, WindowParams,
+    px, size, AnyWindowHandle, Bounds, DevicePixels, Globals, Modifiers, Output, Pixels,
+    PlatformDisplay, PlatformInput, Point, PromptLevel, Size, WaylandClientStatePtr,
+    WindowAppearance, WindowBackgroundAppearance, WindowBounds, WindowParams,
 };
 
 #[derive(Default)]
@@ -75,7 +75,8 @@ pub struct WaylandWindowState {
     blur: Option<org_kde_kwin_blur::OrgKdeKwinBlur>,
     toplevel: xdg_toplevel::XdgToplevel,
     viewport: Option<wp_viewport::WpViewport>,
-    outputs: HashSet<ObjectId>,
+    outputs: HashMap<ObjectId, Output>,
+    display: Option<(ObjectId, Output)>,
     globals: Globals,
     renderer: BladeRenderer,
     bounds: Bounds<u32>,
@@ -153,7 +154,8 @@ impl WaylandWindowState {
             toplevel,
             viewport,
             globals,
-            outputs: HashSet::default(),
+            outputs: HashMap::default(),
+            display: None,
             renderer: BladeRenderer::new(gpu, config),
             bounds,
             scale: 1.0,
@@ -392,7 +394,7 @@ impl WaylandWindowStatePtr {
     pub fn handle_surface_event(
         &self,
         event: wl_surface::Event,
-        output_scales: HashMap<ObjectId, i32>,
+        outputs: HashMap<ObjectId, Output>,
     ) {
         let mut state = self.state.borrow_mut();
 
@@ -407,15 +409,15 @@ impl WaylandWindowStatePtr {
                 if state.surface.version() >= wl_surface::EVT_PREFERRED_BUFFER_SCALE_SINCE {
                     return;
                 }
+                let id = output.id();
 
-                state.outputs.insert(output.id());
+                let Some(output) = outputs.get(&id) else {
+                    return;
+                };
 
-                let mut scale = 1;
-                for output in state.outputs.iter() {
-                    if let Some(s) = output_scales.get(output) {
-                        scale = scale.max(*s)
-                    }
-                }
+                state.outputs.insert(id, *output);
+
+                let scale = primary_output_scale(&mut state);
 
                 state.surface.set_buffer_scale(scale);
                 drop(state);
@@ -429,12 +431,7 @@ impl WaylandWindowStatePtr {
 
                 state.outputs.remove(&output.id());
 
-                let mut scale = 1;
-                for output in state.outputs.iter() {
-                    if let Some(s) = output_scales.get(output) {
-                        scale = scale.max(*s)
-                    }
-                }
+                let scale = primary_output_scale(&mut state);
 
                 state.surface.set_buffer_scale(scale);
                 drop(state);
@@ -604,6 +601,23 @@ impl WaylandWindowStatePtr {
     }
 }
 
+fn primary_output_scale(state: &mut RefMut<WaylandWindowState>) -> i32 {
+    let mut scale = 1;
+    let mut current_output = state.display.take();
+    for (id, output) in state.outputs.iter() {
+        if let Some((_, output_data)) = &current_output {
+            if output.scale > output_data.scale {
+                current_output = Some((id.clone(), *output));
+            }
+        } else {
+            current_output = Some((id.clone(), *output));
+        }
+        scale = scale.max(output.scale);
+    }
+    state.display = current_output;
+    scale
+}
+
 impl rwh::HasWindowHandle for WaylandWindow {
     fn window_handle(&self) -> Result<rwh::WindowHandle<'_>, rwh::HandleError> {
         unimplemented!()
@@ -651,9 +665,13 @@ impl PlatformWindow for WaylandWindow {
         self.borrow().appearance
     }
 
-    // todo(linux)
-    fn display(&self) -> Rc<dyn PlatformDisplay> {
-        Rc::new(WaylandDisplay {})
+    fn display(&self) -> Option<Rc<dyn PlatformDisplay>> {
+        self.borrow().display.as_ref().map(|(id, display)| {
+            Rc::new(WaylandDisplay {
+                id: id.clone(),
+                bounds: display.bounds,
+            }) as Rc<dyn PlatformDisplay>
+        })
     }
 
     fn mouse_position(&self) -> Point<Pixels> {

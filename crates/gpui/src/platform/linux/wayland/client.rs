@@ -1,6 +1,6 @@
-use core::hash;
 use std::cell::{RefCell, RefMut};
 use std::ffi::OsString;
+use std::hash::Hash;
 use std::ops::{Deref, DerefMut};
 use std::os::fd::{AsRawFd, BorrowedFd};
 use std::path::PathBuf;
@@ -62,6 +62,7 @@ use xkbcommon::xkb::ffi::XKB_KEYMAP_FORMAT_TEXT_V1;
 use xkbcommon::xkb::{self, Keycode, KEYMAP_COMPILE_NO_FLAGS};
 
 use super::super::{open_uri_internal, read_fd, DOUBLE_CLICK_INTERVAL};
+use super::display::WaylandDisplay;
 use super::window::{ImeInput, WaylandWindowState, WaylandWindowStatePtr};
 use crate::platform::linux::is_within_click_distance;
 use crate::platform::linux::wayland::cursor::Cursor;
@@ -71,8 +72,8 @@ use crate::platform::linux::xdg_desktop_portal::{Event as XDPEvent, XDPEventSour
 use crate::platform::linux::LinuxClient;
 use crate::platform::PlatformWindow;
 use crate::{
-    point, px, Bounds, FileDropEvent, ForegroundExecutor, MouseExitEvent, WindowAppearance,
-    SCROLL_LINES,
+    point, px, size, Bounds, DevicePixels, FileDropEvent, ForegroundExecutor, MouseExitEvent, Size,
+    WindowAppearance, SCROLL_LINES,
 };
 use crate::{
     AnyWindowHandle, CursorStyle, DisplayId, KeyDownEvent, KeyUpEvent, Keystroke, Modifiers,
@@ -143,6 +144,49 @@ impl Globals {
     }
 }
 
+#[derive(Default, Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct InProgressOutput {
+    scale: Option<i32>,
+    position: Option<Point<DevicePixels>>,
+    size: Option<Size<DevicePixels>>,
+}
+
+impl InProgressOutput {
+    fn clear(&mut self) {
+        self.scale = None;
+        self.position = None;
+        self.size = None;
+    }
+
+    fn complete(&self) -> Option<Output> {
+        if let Some((position, size)) = self.position.zip(self.size) {
+            let scale = self.scale.unwrap_or(1);
+            Some(Output {
+                scale,
+                bounds: Bounds::new(position, size),
+            })
+        } else {
+            None
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+pub struct Output {
+    pub scale: i32,
+    pub bounds: Bounds<DevicePixels>,
+}
+
+impl Hash for Output {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        state.write_i32(self.scale);
+        state.write_i32(self.bounds.origin.x.0);
+        state.write_i32(self.bounds.origin.y.0);
+        state.write_i32(self.bounds.size.width.0);
+        state.write_i32(self.bounds.size.height.0);
+    }
+}
+
 pub(crate) struct WaylandClientState {
     serial_tracker: SerialTracker,
     globals: Globals,
@@ -156,7 +200,8 @@ pub(crate) struct WaylandClientState {
     // Surface to Window mapping
     windows: HashMap<ObjectId, WaylandWindowStatePtr>,
     // Output to scale mapping
-    output_scales: HashMap<ObjectId, i32>,
+    outputs: HashMap<ObjectId, Output>,
+    in_progress_outputs: HashMap<ObjectId, InProgressOutput>,
     keymap_state: Option<xkb::State>,
     compose_state: Option<xkb::compose::State>,
     drag: DragState,
@@ -328,7 +373,7 @@ impl WaylandClient {
         let qh = event_queue.handle();
 
         let mut seat: Option<wl_seat::WlSeat> = None;
-        let mut outputs = HashMap::default();
+        let mut in_progress_outputs = HashMap::default();
         globals.contents().with_list(|list| {
             for global in list {
                 match &global.interface[..] {
@@ -347,7 +392,7 @@ impl WaylandClient {
                             &qh,
                             (),
                         );
-                        outputs.insert(output.id(), 1);
+                        in_progress_outputs.insert(output.id(), InProgressOutput::default());
                     }
                     _ => {}
                 }
@@ -410,7 +455,8 @@ impl WaylandClient {
             text_input: None,
             pre_edit_text: None,
             composing: false,
-            output_scales: outputs,
+            outputs: HashMap::default(),
+            in_progress_outputs,
             windows: HashMap::default(),
             common,
             keymap_state: None,
@@ -642,7 +688,9 @@ impl Dispatch<wl_registry::WlRegistry, GlobalListContents> for WaylandClientStat
                     let output =
                         registry.bind::<wl_output::WlOutput, _, _>(name, WL_OUTPUT_VERSION, qh, ());
 
-                    state.output_scales.insert(output.id(), 1);
+                    state
+                        .in_progress_outputs
+                        .insert(output.id(), InProgressOutput::default());
                 }
                 _ => {}
             },
@@ -716,10 +764,10 @@ impl Dispatch<wl_surface::WlSurface, ()> for WaylandClientStatePtr {
         let Some(window) = get_window(&mut state, &surface.id()) else {
             return;
         };
-        let scales = state.output_scales.clone();
+        let outputs = state.outputs.clone();
         drop(state);
 
-        window.handle_surface_event(event, scales);
+        window.handle_surface_event(event, outputs);
     }
 }
 
@@ -735,13 +783,25 @@ impl Dispatch<wl_output::WlOutput, ()> for WaylandClientStatePtr {
         let mut client = this.get_client();
         let mut state = client.borrow_mut();
 
-        let Some(mut output_scale) = state.output_scales.get_mut(&output.id()) else {
+        let Some(mut in_progress_output) = state.in_progress_outputs.get_mut(&output.id()) else {
             return;
         };
 
         match event {
             wl_output::Event::Scale { factor } => {
-                *output_scale = factor;
+                in_progress_output.scale = Some(factor);
+            }
+            wl_output::Event::Geometry { x, y, .. } => {
+                in_progress_output.position = Some(point(DevicePixels(x), DevicePixels(y)))
+            }
+            wl_output::Event::Mode { width, height, .. } => {
+                in_progress_output.size = Some(size(DevicePixels(width), DevicePixels(height)))
+            }
+            wl_output::Event::Done => {
+                if let Some(complete) = in_progress_output.complete() {
+                    state.outputs.insert(output.id(), complete);
+                }
+                state.in_progress_outputs.remove(&output.id());
             }
             _ => {}
         }

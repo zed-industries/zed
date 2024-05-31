@@ -696,8 +696,8 @@ impl PlatformWindow for X11Window {
         self.0.state.borrow().appearance
     }
 
-    fn display(&self) -> Rc<dyn PlatformDisplay> {
-        self.0.state.borrow().display.clone()
+    fn display(&self) -> Option<Rc<dyn PlatformDisplay>> {
+        Some(self.0.state.borrow().display.clone())
     }
 
     fn mouse_position(&self) -> Point<Pixels> {

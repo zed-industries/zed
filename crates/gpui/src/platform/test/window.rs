@@ -132,8 +132,8 @@ impl PlatformWindow for TestWindow {
         WindowAppearance::Light
     }
 
-    fn display(&self) -> std::rc::Rc<dyn crate::PlatformDisplay> {
-        self.0.lock().display.clone()
+    fn display(&self) -> Option<std::rc::Rc<dyn crate::PlatformDisplay>> {
+        Some(self.0.lock().display.clone())
     }
 
     fn mouse_position(&self) -> Point<Pixels> {
