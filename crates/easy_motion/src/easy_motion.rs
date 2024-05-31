@@ -78,6 +78,7 @@ pub struct EasyMotion {
     active_editor: Option<WeakView<Editor>>,
     editor_subscription: Option<Subscription>,
     dimming: bool,
+    keys: String,
     enabled: bool,
     editor_states: HashMap<EntityId, EditorState>,
     multipane_state: Option<EditorState>,
@@ -98,12 +99,15 @@ struct GlobalEasyMotion(Model<EasyMotion>);
 
 impl Global for GlobalEasyMotion {}
 
+const DEFAULT_KEYS: &'static str = "asdghklqwertyuiopzxcvbnmfj";
+
 pub fn init(cx: &mut AppContext) {
     let easy = cx.new_model({
         move |_cx| {
             let mut easy = EasyMotion::default();
             easy.enabled = true;
             easy.dimming = true;
+            easy.keys = DEFAULT_KEYS.to_string();
             easy
         }
     });
@@ -175,14 +179,21 @@ impl EasyMotion {
         EasyMotion::global(cx).map(|easy| easy.read_with(cx, f))
     }
 
+    pub fn read_with_async<F, S>(cx: &AsyncAppContext, f: F) -> Option<S>
+    where
+        F: FnOnce(&EasyMotion, &AppContext) -> S,
+    {
+        EasyMotion::global_async(cx).and_then(|easy| easy.read_with(cx, f).ok())
+    }
+
     #[allow(dead_code)]
     fn update_active_editor<S>(
         cx: &mut ViewContext<Workspace>,
         update: impl FnOnce(&Editor, &ViewContext<Editor>) -> S,
     ) -> Option<S> {
-        let weak_editor =
-            EasyMotion::read_with(cx, |easy, _cx| easy.active_editor.clone()).flatten()?;
-        let editor = weak_editor.upgrade()?;
+        let editor = EasyMotion::read_with(cx, |easy, _cx| easy.active_editor.clone())
+            .flatten()?
+            .upgrade()?;
         Some(editor.update(cx, |editor, cx| update(editor, cx)))
     }
 
@@ -217,6 +228,12 @@ impl EasyMotion {
         let active_editor = self.active_editor.as_ref()?;
         self.editor_states.insert(active_editor.entity_id(), state);
         Some(())
+    }
+
+    fn insert_multipane_state(new_state: EditorState, cx: &mut AppContext) -> Option<()> {
+        Self::update(cx, move |easy, _cx| {
+            easy.multipane_state = Some(new_state);
+        })
     }
 
     fn take_state(&mut self) -> Option<EditorState> {
@@ -271,13 +288,18 @@ impl EasyMotion {
     }
 
     fn word_single_pane(word_type: WordType, direction: Direction, cx: &mut WindowContext) {
-        let Some(active_editor) = Self::active_editor(cx) else {
+        let Some((active_editor, dimming)) = Self::read_with(cx, |easy, _| {
+            let weak_editor = easy.active_editor.as_ref()?;
+            let editor = weak_editor.upgrade()?;
+            Some((editor, easy.dimming))
+        })
+        .flatten() else {
             return;
         };
         let entity_id = active_editor.entity_id();
 
         let new_state = active_editor.update(cx, |editor, cx| {
-            let new_state = Self::word_impl(true, word_type, direction, editor, cx);
+            let new_state = Self::word_impl(word_type, direction, editor, cx);
             let ctx = new_state.keymap_context_layer();
             editor.set_keymap_context_layer::<Self>(ctx, cx);
             new_state
@@ -289,7 +311,6 @@ impl EasyMotion {
     }
 
     fn word_impl(
-        dimming: bool,
         word_type: WordType,
         direction: Direction,
         editor: &mut Editor,
@@ -305,9 +326,14 @@ impl EasyMotion {
 
         sort_matches_display(&mut word_starts, &selections.start);
 
+        let (keys, dimming) = Self::read_with(cx, |easy, _| (easy.keys.clone(), easy.dimming))
+            .unwrap_or((DEFAULT_KEYS.to_string(), false));
+
         let (style_0, style_1, style_2) = get_highlights(cx);
-        let trie = TrieBuilder::new("asdghklqwertyuiopzxcvbnmfj".to_string(), word_starts.len())
-            .populate_with(true, word_starts, |seq, point| {
+        let trie = TrieBuilder::new(keys, word_starts.len()).populate_with(
+            true,
+            word_starts,
+            |seq, point| {
                 let style = match seq.len() {
                     0 | 1 => style_0,
                     2 => style_1,
@@ -318,7 +344,8 @@ impl EasyMotion {
                     point,
                     editor_id: cx.entity_id(),
                 }
-            });
+            },
+        );
         Self::add_overlays(editor, trie.iter(), cx);
 
         if dimming {
@@ -373,10 +400,12 @@ impl EasyMotion {
     }
 
     fn word_multipane(word_type: WordType, workspace: &Workspace, cx: &mut WindowContext) {
-        let Some(active_editor) = Self::active_editor(cx) else {
+        let Some(active_editor_id) = Self::read_with(cx, |easy, _| {
+            easy.active_editor.as_ref().map(|editor| editor.entity_id())
+        })
+        .flatten() else {
             return;
         };
-        let active_editor_id = active_editor.entity_id();
 
         let panes = workspace.panes();
 
@@ -445,33 +474,30 @@ impl EasyMotion {
 
         sort_matches_pixel(&mut matches, &cursor);
 
+        let (keys, dimming) = Self::read_with(cx, |easy, _| (easy.keys.clone(), easy.dimming))
+            .unwrap_or((DEFAULT_KEYS.to_string(), false));
+
         let len = matches.len();
         let matches = matches.into_iter().map(|(point, id, _)| (point, id));
         let (style_0, style_1, style_2) = get_highlights(cx);
-        let trie = TrieBuilder::new("asdghklqwertyuiopzxcvbnmfj".to_string(), len).populate_with(
-            true,
-            matches,
-            |seq, point| {
-                let style = match seq.len() {
-                    0 | 1 => style_0,
-                    2 => style_1,
-                    3.. => style_2,
-                };
-                OverlayState {
-                    style,
-                    point: point.0,
-                    editor_id: point.1,
-                }
-            },
-        );
+        let trie = TrieBuilder::new(keys, len).populate_with(true, matches, |seq, point| {
+            let style = match seq.len() {
+                0 | 1 => style_0,
+                2 => style_1,
+                3.. => style_2,
+            };
+            OverlayState {
+                style,
+                point: point.0,
+                editor_id: point.1,
+            }
+        });
 
         let new_state = EditorState::new_selection(trie);
         let just_editors = editors.into_iter().map(|(editor, _)| editor);
-        Self::update_editors(&new_state, true, just_editors, cx);
+        Self::update_editors(&new_state, dimming, just_editors, cx);
 
-        Self::update(cx, move |easy, _cx| {
-            easy.multipane_state = Some(new_state);
-        });
+        Self::insert_multipane_state(new_state, cx);
     }
 
     fn get_cursor_pixels(
@@ -484,17 +510,15 @@ impl EasyMotion {
             .line_height
             .to_pixels(style.font_size, cx.rem_size())
             .0;
-        let selections = editor.selections.newest_display(cx);
-        let start = selections.start;
         let text_layout_details = editor.text_layout_details(cx);
         let map = editor.snapshot(cx).display_snapshot;
         let window_top = window_top(&map, &text_layout_details);
-        let x = bounding_box.origin.x.0 + start.column() as f32 * line_height * 0.5;
-        let y = bounding_box.origin.y.0
-            + (start.row().0 as f32 - window_top.row().0 as f32) * line_height;
-        let x = Pixels(x);
-        let y = Pixels(y);
-        Point::new(x, y)
+        let cursor = editor.selections.newest_display(cx).start;
+
+        let x = bounding_box.origin.x.0 + cursor.column() as f32 * line_height * 0.5;
+        let y =
+            bounding_box.origin.y.0 + (cursor.row().0 - window_top.row().0) as f32 * line_height;
+        Point::new(Pixels(x), Pixels(y))
     }
 
     fn pattern(_action: &Pattern, _cx: &WindowContext) {
@@ -557,9 +581,9 @@ impl EasyMotion {
 
     fn observe_keystrokes_impl(keystroke_event: &KeystrokeEvent, cx: &mut WindowContext) {
         let Some((state, weak_editor)) = Self::update(cx, |easy, _| {
-            let state = easy.take_state();
-            let weak_editor = easy.active_editor.clone();
-            state.zip(weak_editor)
+            let state = easy.take_state()?;
+            let weak_editor = easy.active_editor.clone()?;
+            Some((state, weak_editor))
         })
         .flatten() else {
             return;
@@ -609,19 +633,38 @@ impl EasyMotion {
             EditorState::NCharInput(char_input) => {
                 let res = char_input.record_str(keys);
                 match res {
-                    InputResult::ShowTrie(query) => Self::show_trie_multipane(query, cx),
+                    InputResult::ShowTrie(query) => cx
+                        .window_handle()
+                        .downcast::<Workspace>()
+                        .and_then(|handle| handle.root(cx).ok())
+                        .map(|workspace_view| {
+                            workspace_view.update(cx, |workspace, cx| {
+                                Self::show_trie_multipane(query, workspace, cx)
+                            })
+                        })
+                        .unwrap_or_default(),
                     // do nothing
                     InputResult::Recording(n_char) => EditorState::NCharInput(n_char),
                 }
             }
-            EditorState::Selection(selection) => Self::handle_trim_multipane(selection, keys, cx),
+            EditorState::Selection(selection) => {
+                let handle = cx
+                    .window_handle()
+                    .downcast::<Workspace>()
+                    .and_then(|handle| handle.root(cx).ok());
+                handle
+                    .map(|workspace_view| {
+                        workspace_view.update(cx, |workspace, cx| {
+                            Self::handle_trim_multipane(selection, keys, workspace, cx)
+                        })
+                    })
+                    .unwrap_or_default()
+            }
             EditorState::PendingSearch => EditorState::PendingSearch,
             EditorState::None => EditorState::None,
         };
 
-        Self::update(cx, move |easy, _| {
-            easy.multipane_state = Some(new_state);
-        });
+        Self::insert_multipane_state(new_state, cx);
     }
 
     fn handle_trim(
@@ -660,68 +703,59 @@ impl EasyMotion {
     fn handle_trim_multipane(
         selection: Selection,
         keys: &str,
+        workspace: &mut Workspace,
         cx: &mut WindowContext,
     ) -> EditorState {
-        let handle = cx
-            .window_handle()
-            .downcast::<Workspace>()
-            .and_then(|handle| handle.root(cx).ok());
-        let Some(workspace_view) = handle else {
-            return EditorState::None;
-        };
-        workspace_view.update(cx, |workspace, cx| {
-            let editors = active_editor_views(workspace, cx);
-            let (selection, res) = selection.record_str(keys);
-            match res {
-                TrimResult::Found(overlay) => {
-                    let Some(editor) = editors
-                        .iter()
-                        .find(|editor| editor.entity_id() == overlay.editor_id)
-                    else {
-                        return EditorState::None;
-                    };
-                    workspace.activate_item(editor, cx);
-                    editor.update(cx, |editor, cx| {
-                        editor.change_selections(Some(Autoscroll::fit()), cx, |selection| {
-                            selection
-                                .move_cursors_with(|_, _, _| (overlay.point, SelectionGoal::None))
-                        });
+        let editors = active_editor_views(workspace, cx);
+        let (selection, res) = selection.record_str(keys);
+        match res {
+            TrimResult::Found(overlay) => {
+                let Some(editor) = editors
+                    .iter()
+                    .find(|editor| editor.entity_id() == overlay.editor_id)
+                else {
+                    return EditorState::None;
+                };
+                workspace.activate_item(editor, cx);
+                editor.update(cx, |editor, cx| {
+                    editor.change_selections(Some(Autoscroll::fit()), cx, |selection| {
+                        selection.move_cursors_with(|_, _, _| (overlay.point, SelectionGoal::None))
                     });
-                    for editor in editors {
-                        editor.update(cx, |editor, cx| {
-                            editor.clear_overlays(cx);
-                            editor.clear_highlights::<Self>(cx);
-                            editor.remove_keymap_context_layer::<Self>(cx);
-                        });
-                    }
-                    EditorState::None
+                });
+                for editor in editors {
+                    editor.update(cx, |editor, cx| {
+                        editor.clear_overlays(cx);
+                        editor.clear_highlights::<Self>(cx);
+                        editor.remove_keymap_context_layer::<Self>(cx);
+                    });
                 }
-                TrimResult::Changed => {
-                    let trie = selection.trie();
-                    for editor in editors {
-                        let iter = trie
-                            .iter()
-                            .filter(|(_, overlay)| overlay.editor_id == editor.entity_id());
-                        editor.update(cx, |editor, cx| {
-                            editor.clear_overlays(cx);
-                            Self::add_overlays(editor, iter, cx);
-                        });
-                    }
-                    EditorState::Selection(selection)
-                }
-                TrimResult::Err => {
-                    for editor in editors {
-                        editor.update(cx, |editor, cx| {
-                            editor.clear_overlays(cx);
-                            editor.clear_highlights::<Self>(cx);
-                            editor.remove_keymap_context_layer::<Self>(cx);
-                        });
-                    }
-                    EditorState::None
-                }
-                TrimResult::NoChange => EditorState::Selection(selection),
+                EditorState::None
             }
-        })
+            TrimResult::Changed => {
+                let trie = selection.trie();
+                for editor in editors {
+                    let iter = trie
+                        .iter()
+                        .filter(|(_, overlay)| overlay.editor_id == editor.entity_id());
+                    editor.update(cx, |editor, cx| {
+                        editor.clear_overlays(cx);
+                        Self::add_overlays(editor, iter, cx);
+                    });
+                }
+                EditorState::Selection(selection)
+            }
+            TrimResult::Err => {
+                for editor in editors {
+                    editor.update(cx, |editor, cx| {
+                        editor.clear_overlays(cx);
+                        editor.clear_highlights::<Self>(cx);
+                        editor.remove_keymap_context_layer::<Self>(cx);
+                    });
+                }
+                EditorState::None
+            }
+            TrimResult::NoChange => EditorState::Selection(selection),
+        }
     }
 
     fn handle_record_char_impl(
@@ -748,9 +782,12 @@ impl EasyMotion {
             }
         });
 
+        let (keys, dimming) = Self::read_with(cx, |easy, _| (easy.keys.clone(), easy.dimming))
+            .unwrap_or((DEFAULT_KEYS.to_string(), false));
+
         let (style_0, style_1, style_2) = get_highlights(cx);
-        let trie = TrieBuilder::new("asdghklqwertyuiopzxcvbnmfj".to_string(), matches.len())
-            .populate_with(true, matches, |seq, point| {
+        let trie =
+            TrieBuilder::new(keys, matches.len()).populate_with(true, matches, |seq, point| {
                 let style = match seq.len() {
                     0 | 1 => style_0,
                     2 => style_1,
@@ -764,8 +801,7 @@ impl EasyMotion {
             });
         Self::add_overlays(editor, trie.iter(), cx);
 
-        // todo dimming
-        if true {
+        if dimming {
             let start = DisplayPoint::zero();
             let end = end_of_document(map);
             let anchor_start = map.display_point_to_anchor(start, Bias::Left);
@@ -814,100 +850,100 @@ impl EasyMotion {
         EditorState::None
     }
 
-    fn show_trie_multipane(query: String, cx: &mut WindowContext) -> EditorState {
-        let Some(active_editor_id) = Self::active_editor(cx).map(|editor| editor.entity_id())
-        else {
+    fn show_trie_multipane(
+        query: String,
+        workspace: &mut Workspace,
+        cx: &mut WindowContext,
+    ) -> EditorState {
+        let Some(active_editor_id) = Self::read_with(cx, |easy, _| {
+            let weak_editor = easy.active_editor.as_ref()?;
+            Some(weak_editor.entity_id())
+        })
+        .flatten() else {
             return EditorState::None;
         };
 
-        let handle = cx
-            .window_handle()
-            .downcast::<Workspace>()
-            .and_then(|handle| handle.root(cx).ok());
-        let Some(workspace_view) = handle else {
-            return EditorState::None;
-        };
+        let panes = workspace.panes();
 
-        let state = workspace_view.update(cx, |workspace, cx| {
-            let panes = workspace.panes();
-
-            let editors = panes
-                .iter()
-                .filter_map(|pane| {
-                    pane.update(cx, |pane, _cx| {
-                        pane.active_item()
-                            .and_then(|item| item.downcast::<Editor>())
-                    })
-                    .map(|editor| {
-                        let bounding_box = workspace.center().bounding_box_for_pane(pane).unwrap();
-                        (editor, bounding_box)
-                    })
+        let editors = panes
+            .iter()
+            .filter_map(|pane| {
+                pane.update(cx, |pane, _cx| {
+                    pane.active_item()
+                        .and_then(|item| item.downcast::<Editor>())
                 })
-                .collect::<Vec<_>>();
-
-            let tasks = editors
-                .iter()
-                .map(|(editor, bounding_box)| {
-                    let entity_id = editor.entity_id();
-                    editor.update(cx, |editor, cx| {
-                        search_multipane(query.as_str(), *bounding_box, entity_id, editor, cx)
-                    })
+                .map(|editor| {
+                    let bounding_box = workspace.center().bounding_box_for_pane(pane).unwrap();
+                    (editor, bounding_box)
                 })
-                .collect::<Option<Vec<_>>>();
-            let Some(tasks) = tasks else {
-                // there was an issue with at least one of the searches
-                // todo need to remove search highlights if there's an issue
-                return EditorState::None;
-            };
-
-            // downgrade before spawn?
-            let cursor = editors
-                .iter()
-                .find(|(editor_view, _)| editor_view.entity_id() == active_editor_id)
-                .map(|(editor_view, bounding_box)| {
-                    editor_view.update(cx, |editor, cx| {
-                        Self::get_cursor_pixels(bounding_box, editor, cx)
-                    })
-                })
-                .unwrap();
-
-            cx.spawn(move |_view, mut cx| async move {
-                // let matches = tasks.
-                let cursor = cursor;
-                let tasks = join_all(tasks).await;
-
-                let mut matches = tasks.into_iter().flatten().collect::<Vec<_>>();
-                sort_matches_pixel(&mut matches, &cursor);
-
-                let len = matches.len();
-                let matches = matches.into_iter().map(|(point, id, _)| (point, id));
-                let (style_0, style_1, style_2) = get_highlights_async(&cx);
-                let trie = TrieBuilder::new("asdghklqwertyuiopzxcvbnmfj".to_string(), len)
-                    .populate_with(true, matches, |seq, point| {
-                        let style = match seq.len() {
-                            0 | 1 => style_0,
-                            2 => style_1,
-                            3.. => style_2,
-                        };
-                        OverlayState {
-                            style,
-                            point: point.0,
-                            editor_id: point.1,
-                        }
-                    });
-
-                let new_state = EditorState::new_selection(trie);
-                let just_editors = editors.into_iter().map(|(editor, _)| editor);
-                Self::update_editors(&new_state, true, just_editors, &mut cx);
-
-                Self::update_async(&mut cx, move |easy, _cx| {
-                    easy.multipane_state = Some(new_state);
-                });
             })
-            .detach();
-            EditorState::PendingSearch
-        });
-        state
+            .collect::<Vec<_>>();
+
+        let tasks = editors
+            .iter()
+            .map(|(editor, bounding_box)| {
+                let entity_id = editor.entity_id();
+                editor.update(cx, |editor, cx| {
+                    search_multipane(query.as_str(), *bounding_box, entity_id, editor, cx)
+                })
+            })
+            .collect::<Option<Vec<_>>>();
+        let Some(tasks) = tasks else {
+            // there was an issue with at least one of the searches
+            // todo need to remove search highlights if there's an issue
+            return EditorState::None;
+        };
+
+        let cursor = editors
+            .iter()
+            .find(|(editor_view, _)| editor_view.entity_id() == active_editor_id)
+            .map(|(editor_view, bounding_box)| {
+                editor_view.update(cx, |editor, cx| {
+                    Self::get_cursor_pixels(bounding_box, editor, cx)
+                })
+            })
+            .unwrap();
+
+        // downgrade editors before spawn?
+        cx.spawn(move |mut cx| async move {
+            // let matches = tasks.
+            let cursor = cursor;
+            let tasks = join_all(tasks).await;
+
+            let mut matches = tasks.into_iter().flatten().collect::<Vec<_>>();
+            sort_matches_pixel(&mut matches, &cursor);
+
+            let (keys, dimming) =
+                Self::read_with_async(&cx, |easy, _| (easy.keys.clone(), easy.dimming))
+                    .unwrap_or((DEFAULT_KEYS.to_string(), false));
+
+            let len = matches.len();
+            let matches = matches.into_iter().map(|(point, id, _)| (point, id));
+
+            let (style_0, style_1, style_2) = get_highlights_async(&cx);
+            let trie = TrieBuilder::new(keys, len).populate_with(true, matches, |seq, point| {
+                let style = match seq.len() {
+                    0 | 1 => style_0,
+                    2 => style_1,
+                    3.. => style_2,
+                };
+                OverlayState {
+                    style,
+                    point: point.0,
+                    editor_id: point.1,
+                }
+            });
+
+            let new_state = EditorState::new_selection(trie);
+            let just_editors = editors.into_iter().map(|(editor, _)| editor);
+            Self::update_editors(&new_state, dimming, just_editors, &mut cx);
+
+            Self::update_async(&mut cx, move |easy, _cx| {
+                easy.multipane_state = Some(new_state);
+            });
+        })
+        .detach();
+        EditorState::PendingSearch
     }
 
     fn update_editors(
@@ -935,27 +971,29 @@ impl EasyMotion {
                         .filter(|(_seq, overlay)| overlay.editor_id == editor.entity_id());
 
                     editor.update(cx, |editor, cx| {
+                        editor.set_keymap_context_layer::<Self>(ctx.clone(), cx);
                         editor.clear_search_within_ranges(cx);
+
                         Self::add_overlays(editor, trie_iter, cx);
 
-                        if dimming {
-                            let map = &editor.snapshot(cx).display_snapshot;
-                            let start = start_of_document(map);
-                            let end = end_of_document(map);
-                            let anchor_start = map.display_point_to_anchor(start, Bias::Left);
-                            let anchor_end = map.display_point_to_anchor(end, Bias::Left);
-                            let highlight = HighlightStyle {
-                                fade_out: Some(0.7),
-                                ..Default::default()
-                            };
-                            editor.highlight_text::<Self>(
-                                vec![anchor_start..anchor_end],
-                                highlight,
-                                cx,
-                            );
+                        if !dimming {
+                            return;
                         }
 
-                        editor.set_keymap_context_layer::<Self>(ctx.clone(), cx);
+                        let map = &editor.snapshot(cx).display_snapshot;
+                        let start = start_of_document(map);
+                        let end = end_of_document(map);
+                        let anchor_start = map.display_point_to_anchor(start, Bias::Left);
+                        let anchor_end = map.display_point_to_anchor(end, Bias::Left);
+                        let highlight = HighlightStyle {
+                            fade_out: Some(0.7),
+                            ..Default::default()
+                        };
+                        editor.highlight_text::<Self>(
+                            vec![anchor_start..anchor_end],
+                            highlight,
+                            cx,
+                        );
                     });
                 }
             }
