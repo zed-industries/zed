@@ -72,6 +72,7 @@ pub trait LinuxClient {
     fn write_to_clipboard(&self, item: ClipboardItem);
     fn read_from_primary(&self) -> Option<ClipboardItem>;
     fn read_from_clipboard(&self) -> Option<ClipboardItem>;
+    fn active_window(&self) -> Option<AnyWindowHandle>;
     fn run(&self);
 }
 
@@ -210,18 +211,21 @@ impl<P: LinuxClient + 'static> Platform for P {
         }
     }
 
-    // todo(linux)
-    fn activate(&self, ignoring_other_apps: bool) {}
-
-    // todo(linux)
-    fn hide(&self) {}
-
-    fn hide_other_apps(&self) {
-        log::warn!("hide_other_apps is not implemented on Linux, ignoring the call")
+    fn activate(&self, ignoring_other_apps: bool) {
+        log::info!("activate is not implemented on Linux, ignoring the call")
     }
 
-    // todo(linux)
-    fn unhide_other_apps(&self) {}
+    fn hide(&self) {
+        log::info!("hide is not implemented on Linux, ignoring the call")
+    }
+
+    fn hide_other_apps(&self) {
+        log::info!("hide_other_apps is not implemented on Linux, ignoring the call")
+    }
+
+    fn unhide_other_apps(&self) {
+        log::info!("unhide_other_apps is not implemented on Linux, ignoring the call")
+    }
 
     fn primary_display(&self) -> Option<Rc<dyn PlatformDisplay>> {
         self.primary_display()
@@ -231,9 +235,8 @@ impl<P: LinuxClient + 'static> Platform for P {
         self.displays()
     }
 
-    // todo(linux)
     fn active_window(&self) -> Option<AnyWindowHandle> {
-        None
+        self.active_window()
     }
 
     fn open_window(
@@ -395,7 +398,6 @@ impl<P: LinuxClient + 'static> Platform for P {
         UtcOffset::UTC
     }
 
-    //todo(linux)
     fn path_for_auxiliary_executable(&self, name: &str) -> Result<PathBuf> {
         Err(anyhow::Error::msg(
             "Platform<LinuxPlatform>::path_for_auxiliary_executable is not implemented yet",
@@ -549,7 +551,6 @@ impl CursorStyle {
             CursorStyle::ResizeUpDown => Shape::NsResize,
             CursorStyle::ResizeColumn => Shape::ColResize,
             CursorStyle::ResizeRow => Shape::RowResize,
-            CursorStyle::DisappearingItem => Shape::Grabbing, // todo(linux) - couldn't find equivalent icon in linux
             CursorStyle::IBeamCursorForVerticalLayout => Shape::VerticalText,
             CursorStyle::OperationNotAllowed => Shape::NotAllowed,
             CursorStyle::DragLink => Shape::Alias,
@@ -577,7 +578,6 @@ impl CursorStyle {
             CursorStyle::ResizeUpDown => "ns-resize",
             CursorStyle::ResizeColumn => "col-resize",
             CursorStyle::ResizeRow => "row-resize",
-            CursorStyle::DisappearingItem => "grabbing", // todo(linux) - couldn't find equivalent icon in linux
             CursorStyle::IBeamCursorForVerticalLayout => "vertical-text",
             CursorStyle::OperationNotAllowed => "not-allowed",
             CursorStyle::DragLink => "alias",

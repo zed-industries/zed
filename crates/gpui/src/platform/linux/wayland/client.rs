@@ -162,9 +162,9 @@ pub(crate) struct WaylandClientState {
     drag: DragState,
     click: ClickState,
     repeat: KeyRepeat,
-    modifiers: Modifiers,
+    pub modifiers: Modifiers,
     axis_source: AxisSource,
-    mouse_location: Option<Point<Pixels>>,
+    pub mouse_location: Option<Point<Pixels>>,
     continuous_scroll_delta: Option<Point<Pixels>>,
     discrete_scroll_delta: Option<Point<f32>>,
     vertical_modifier: f32,
@@ -210,7 +210,7 @@ pub(crate) struct KeyRepeat {
 pub struct WaylandClientStatePtr(Weak<RefCell<WaylandClientState>>);
 
 impl WaylandClientStatePtr {
-    fn get_client(&self) -> Rc<RefCell<WaylandClientState>> {
+    pub fn get_client(&self) -> Rc<RefCell<WaylandClientState>> {
         self.0
             .upgrade()
             .expect("The pointer should always be valid when dispatching in wayland")
@@ -486,6 +486,7 @@ impl LinuxClient for WaylandClient {
         let mut state = self.0.borrow_mut();
 
         let (window, surface_id) = WaylandWindow::new(
+            handle,
             state.globals.clone(),
             WaylandClientStatePtr(Rc::downgrade(&self.0)),
             params,
@@ -604,6 +605,14 @@ impl LinuxClient for WaylandClient {
                 text: s,
                 metadata: None,
             })
+    }
+
+    fn active_window(&self) -> Option<AnyWindowHandle> {
+        self.0
+            .borrow_mut()
+            .keyboard_focused_window
+            .as_ref()
+            .map(|window| window.handle())
     }
 }
 
@@ -1018,7 +1027,7 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for WaylandClientStatePtr {
                             state.compose_state = Some(compose);
                         }
                         let input = PlatformInput::KeyDown(KeyDownEvent {
-                            keystroke: keystroke,
+                            keystroke,
                             is_held: false, // todo(linux)
                         });
 
@@ -1370,7 +1379,6 @@ impl Dispatch<wl_pointer::WlPointer, ()> for WaylandClientStatePtr {
                 let scroll_delta = state
                     .continuous_scroll_delta
                     .get_or_insert(point(px(0.0), px(0.0)));
-                // TODO: Make nice feeling kinetic scrolling that integrates with the platform's scroll settings
                 let modifier = 3.0;
                 match axis {
                     wl_pointer::Axis::VerticalScroll => {

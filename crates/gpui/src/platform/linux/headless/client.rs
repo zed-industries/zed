@@ -72,6 +72,10 @@ impl LinuxClient for HeadlessClient {
         return Err(anyhow::anyhow!("neither DISPLAY, nor WAYLAND_DISPLAY found. You can still run zed for remote development with --dev-server-token."));
     }
 
+    fn active_window(&self) -> Option<AnyWindowHandle> {
+        None
+    }
+
     fn open_window(
         &self,
         _handle: AnyWindowHandle,

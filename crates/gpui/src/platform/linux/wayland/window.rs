@@ -29,9 +29,9 @@ use crate::platform::linux::wayland::serial::SerialKind;
 use crate::platform::{PlatformAtlas, PlatformInputHandler, PlatformWindow};
 use crate::scene::Scene;
 use crate::{
-    px, size, Bounds, DevicePixels, Globals, Modifiers, Pixels, PlatformDisplay, PlatformInput,
-    Point, PromptLevel, Size, WaylandClientStatePtr, WindowAppearance, WindowBackgroundAppearance,
-    WindowBounds, WindowParams,
+    px, size, AnyWindowHandle, Bounds, DevicePixels, Globals, Modifiers, Pixels, PlatformDisplay,
+    PlatformInput, Point, PromptLevel, Size, WaylandClientStatePtr, WindowAppearance,
+    WindowBackgroundAppearance, WindowBounds, WindowParams,
 };
 
 #[derive(Default)]
@@ -87,6 +87,7 @@ pub struct WaylandWindowState {
     maximized: bool,
     client: WaylandClientStatePtr,
     callbacks: Callbacks,
+    handle: AnyWindowHandle,
 }
 
 #[derive(Clone)]
@@ -98,6 +99,7 @@ pub struct WaylandWindowStatePtr {
 impl WaylandWindowState {
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn new(
+        handle: AnyWindowHandle,
         surface: wl_surface::WlSurface,
         xdg_surface: xdg_surface::XdgSurface,
         toplevel: xdg_toplevel::XdgToplevel,
@@ -162,6 +164,7 @@ impl WaylandWindowState {
             callbacks: Callbacks::default(),
             client,
             appearance,
+            handle,
         }
     }
 }
@@ -217,6 +220,7 @@ impl WaylandWindow {
     }
 
     pub fn new(
+        handle: AnyWindowHandle,
         globals: Globals,
         client: WaylandClientStatePtr,
         params: WindowParams,
@@ -253,6 +257,7 @@ impl WaylandWindow {
 
         let this = Self(WaylandWindowStatePtr {
             state: Rc::new(RefCell::new(WaylandWindowState::new(
+                handle,
                 surface.clone(),
                 xdg_surface,
                 toplevel,
@@ -274,6 +279,10 @@ impl WaylandWindow {
 }
 
 impl WaylandWindowStatePtr {
+    pub fn handle(&self) -> AnyWindowHandle {
+        self.state.borrow().handle.clone()
+    }
+
     pub fn surface(&self) -> wl_surface::WlSurface {
         self.state.borrow().surface.clone()
     }
@@ -612,8 +621,6 @@ impl PlatformWindow for WaylandWindow {
         self.borrow().maximized
     }
 
-    // todo(linux)
-    // check if it is right
     fn window_bounds(&self) -> WindowBounds {
         let state = self.borrow();
         if state.fullscreen {
@@ -646,14 +653,17 @@ impl PlatformWindow for WaylandWindow {
         Rc::new(WaylandDisplay {})
     }
 
-    // todo(linux)
     fn mouse_position(&self) -> Point<Pixels> {
-        Point::default()
+        self.borrow()
+            .client
+            .get_client()
+            .borrow()
+            .mouse_location
+            .unwrap_or_default()
     }
 
-    // todo(linux)
     fn modifiers(&self) -> Modifiers {
-        crate::Modifiers::default()
+        self.borrow().client.get_client().borrow().modifiers
     }
 
     fn set_input_handler(&mut self, input_handler: PlatformInputHandler) {
@@ -731,12 +741,12 @@ impl PlatformWindow for WaylandWindow {
         region.destroy();
     }
 
-    fn set_edited(&mut self, edited: bool) {
-        // todo(linux)
+    fn set_edited(&mut self, _edited: bool) {
+        log::info!("ignoring macOS specific set_edited");
     }
 
     fn show_character_palette(&self) {
-        // todo(linux)
+        log::info!("ignoring macOS specific show_character_palette");
     }
 
     fn minimize(&self) {

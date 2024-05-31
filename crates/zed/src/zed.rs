@@ -76,8 +76,11 @@ actions!(
 );
 
 pub fn init(cx: &mut AppContext) {
+    #[cfg(target_os = "macos")]
     cx.on_action(|_: &Hide, cx| cx.hide());
+    #[cfg(target_os = "macos")]
     cx.on_action(|_: &HideOthers, cx| cx.hide_other_apps());
+    #[cfg(target_os = "macos")]
     cx.on_action(|_: &ShowAll, cx| cx.unhide_other_apps());
     cx.on_action(quit);
 }

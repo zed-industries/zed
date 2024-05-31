@@ -1,12 +1,9 @@
-// todo(linux): remove
-#![allow(unused)]
-
 use crate::{
     platform::blade::{BladeRenderer, BladeSurfaceConfig},
-    size, Bounds, DevicePixels, ForegroundExecutor, Modifiers, Pixels, Platform, PlatformAtlas,
-    PlatformDisplay, PlatformInput, PlatformInputHandler, PlatformWindow, Point, PromptLevel,
-    Scene, Size, WindowAppearance, WindowBackgroundAppearance, WindowBounds, WindowOptions,
-    WindowParams, X11Client, X11ClientState, X11ClientStatePtr,
+    size, AnyWindowHandle, Bounds, DevicePixels, ForegroundExecutor, Modifiers, Pixels, Platform,
+    PlatformAtlas, PlatformDisplay, PlatformInput, PlatformInputHandler, PlatformWindow, Point,
+    PromptLevel, Scene, Size, WindowAppearance, WindowBackgroundAppearance, WindowBounds,
+    WindowOptions, WindowParams, X11Client, X11ClientState, X11ClientStatePtr,
 };
 
 use blade_graphics as gpu;
@@ -28,7 +25,6 @@ use x11rb::{
     xcb_ffi::XCBConnection,
 };
 
-use std::ops::Deref;
 use std::rc::Weak;
 use std::{
     cell::{Ref, RefCell, RefMut},
@@ -165,7 +161,7 @@ pub struct Callbacks {
     appearance_changed: Option<Box<dyn FnMut()>>,
 }
 
-pub(crate) struct X11WindowState {
+pub struct X11WindowState {
     client: X11ClientStatePtr,
     executor: ForegroundExecutor,
     atoms: XcbAtoms,
@@ -177,17 +173,17 @@ pub(crate) struct X11WindowState {
     display: Rc<dyn PlatformDisplay>,
     input_handler: Option<PlatformInputHandler>,
     appearance: WindowAppearance,
+    pub handle: AnyWindowHandle,
 }
 
 #[derive(Clone)]
 pub(crate) struct X11WindowStatePtr {
-    pub(crate) state: Rc<RefCell<X11WindowState>>,
+    pub state: Rc<RefCell<X11WindowState>>,
     pub(crate) callbacks: Rc<RefCell<Callbacks>>,
     xcb_connection: Rc<XCBConnection>,
     x_window: xproto::Window,
 }
 
-// todo(linux): Remove other RawWindowHandle implementation
 impl rwh::HasWindowHandle for RawWindow {
     fn window_handle(&self) -> Result<rwh::WindowHandle, rwh::HandleError> {
         let non_zero = NonZeroU32::new(self.window_id).unwrap();
@@ -218,6 +214,7 @@ impl rwh::HasDisplayHandle for X11Window {
 impl X11WindowState {
     #[allow(clippy::too_many_arguments)]
     pub fn new(
+        handle: AnyWindowHandle,
         client: X11ClientStatePtr,
         executor: ForegroundExecutor,
         params: WindowParams,
@@ -380,6 +377,7 @@ impl X11WindowState {
             atoms: *atoms,
             input_handler: None,
             appearance,
+            handle,
         }
     }
 
@@ -428,6 +426,7 @@ enum WmHintPropertyState {
 impl X11Window {
     #[allow(clippy::too_many_arguments)]
     pub fn new(
+        handle: AnyWindowHandle,
         client: X11ClientStatePtr,
         executor: ForegroundExecutor,
         params: WindowParams,
@@ -440,6 +439,7 @@ impl X11Window {
     ) -> Self {
         Self(X11WindowStatePtr {
             state: Rc::new(RefCell::new(X11WindowState::new(
+                handle,
                 client,
                 executor,
                 params,
@@ -622,8 +622,6 @@ impl X11WindowStatePtr {
             let mut state = self.state.borrow_mut();
             let old_bounds = mem::replace(&mut state.bounds, bounds);
             do_move = old_bounds.origin != bounds.origin;
-            // todo(linux): use normal GPUI types here, refactor out the double
-            // viewport check and extra casts ( )
             let gpu_size = query_render_extent(&self.xcb_connection, self.x_window);
             if state.renderer.viewport_size() != gpu_size {
                 state
@@ -713,9 +711,15 @@ impl PlatformWindow for X11Window {
         Point::new((reply.root_x as u32).into(), (reply.root_y as u32).into())
     }
 
-    // todo(linux)
     fn modifiers(&self) -> Modifiers {
-        Modifiers::default()
+        self.0
+            .state
+            .borrow()
+            .client
+            .0
+            .upgrade()
+            .map(|ref_cell| ref_cell.borrow().modifiers)
+            .unwrap_or_default()
     }
 
     fn set_input_handler(&mut self, input_handler: PlatformInputHandler) {
@@ -792,8 +796,9 @@ impl PlatformWindow for X11Window {
             .unwrap();
     }
 
-    // todo(linux)
-    fn set_edited(&mut self, edited: bool) {}
+    fn set_edited(&mut self, edited: bool) {
+        log::info!("ignoring macOS specific set_edited");
+    }
 
     fn set_background_appearance(&mut self, background_appearance: WindowBackgroundAppearance) {
         let mut inner = self.0.state.borrow_mut();
@@ -801,14 +806,8 @@ impl PlatformWindow for X11Window {
         inner.renderer.update_transparency(transparent);
     }
 
-    // todo(linux), this corresponds to `orderFrontCharacterPalette` on macOS,
-    // but it looks like the equivalent for Linux is GTK specific:
-    //
-    // https://docs.gtk.org/gtk3/signal.Entry.insert-emoji.html
-    //
-    // This API might need to change, or we might need to build an emoji picker into GPUI
     fn show_character_palette(&self) {
-        unimplemented!()
+        log::info!("ignoring macOS specific show_character_palette");
     }
 
     fn minimize(&self) {

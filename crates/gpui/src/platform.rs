@@ -797,10 +797,6 @@ pub enum CursorStyle {
     /// corresponds to the CSS curosr value `row-resize`
     ResizeRow,
 
-    /// A cursor indicating that something will disappear if moved here
-    /// Does not correspond to a CSS cursor value
-    DisappearingItem,
-
     /// A text input cursor for vertical layout
     /// corresponds to the CSS cursor value `vertical-text`
     IBeamCursorForVerticalLayout,

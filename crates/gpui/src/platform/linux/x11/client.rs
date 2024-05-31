@@ -54,6 +54,12 @@ pub(crate) struct WindowRef {
     refresh_event_token: RegistrationToken,
 }
 
+impl WindowRef {
+    pub fn handle(&self) -> AnyWindowHandle {
+        self.window.state.borrow().handle.clone()
+    }
+}
+
 impl Deref for WindowRef {
     type Target = X11WindowStatePtr;
 
@@ -111,6 +117,7 @@ pub struct X11ClientState {
     pub(crate) xkb: xkbc::State,
     pub(crate) ximc: Option<X11rbClient<Rc<XCBConnection>>>,
     pub(crate) xim_handler: Option<XimHandler>,
+    pub modifiers: Modifiers,
 
     pub(crate) compose_state: xkbc::compose::State,
     pub(crate) pre_edit_text: Option<String>,
@@ -375,6 +382,7 @@ impl X11Client {
         });
 
         X11Client(Rc::new(RefCell::new(X11ClientState {
+            modifiers: Modifiers::default(),
             event_loop: Some(event_loop),
             loop_handle: handle,
             common,
@@ -535,6 +543,7 @@ impl X11Client {
                 );
                 let modifiers = Modifiers::from_xkb(&state.xkb);
                 let focused_window_id = state.focused_window?;
+                state.modifiers = modifiers;
                 drop(state);
 
                 let focused_window = self.get_window(focused_window_id)?;
@@ -547,6 +556,8 @@ impl X11Client {
                 let mut state = self.0.borrow_mut();
 
                 let modifiers = modifiers_from_state(event.state);
+                state.modifiers = modifiers;
+
                 let keystroke = {
                     let code = event.detail.into();
                     let mut keystroke = crate::Keystroke::from_xkb(&state.xkb, modifiers, code);
@@ -600,6 +611,8 @@ impl X11Client {
                 let mut state = self.0.borrow_mut();
 
                 let modifiers = modifiers_from_state(event.state);
+                state.modifiers = modifiers;
+
                 let keystroke = {
                     let code = event.detail.into();
                     let keystroke = crate::Keystroke::from_xkb(&state.xkb, modifiers, code);
@@ -618,6 +631,8 @@ impl X11Client {
                 let mut state = self.0.borrow_mut();
 
                 let modifiers = modifiers_from_xinput_info(event.mods);
+                state.modifiers = modifiers;
+
                 let position = point(
                     px(event.event_x as f32 / u16::MAX as f32 / state.scale_factor),
                     px(event.event_y as f32 / u16::MAX as f32 / state.scale_factor),
@@ -664,8 +679,10 @@ impl X11Client {
             }
             Event::XinputButtonRelease(event) => {
                 let window = self.get_window(event.event)?;
-                let state = self.0.borrow();
+                let mut state = self.0.borrow_mut();
                 let modifiers = modifiers_from_xinput_info(event.mods);
+                state.modifiers = modifiers;
+
                 let position = point(
                     px(event.event_x as f32 / u16::MAX as f32 / state.scale_factor),
                     px(event.event_y as f32 / u16::MAX as f32 / state.scale_factor),
@@ -683,14 +700,15 @@ impl X11Client {
             }
             Event::XinputMotion(event) => {
                 let window = self.get_window(event.event)?;
-                let state = self.0.borrow();
+                let mut state = self.0.borrow_mut();
                 let pressed_button = pressed_button_from_mask(event.button_mask[0]);
                 let position = point(
                     px(event.event_x as f32 / u16::MAX as f32 / state.scale_factor),
                     px(event.event_y as f32 / u16::MAX as f32 / state.scale_factor),
                 );
-                drop(state);
                 let modifiers = modifiers_from_xinput_info(event.mods);
+                state.modifiers = modifiers;
+                drop(state);
 
                 let axisvalues = event
                     .axisvalues
@@ -766,13 +784,14 @@ impl X11Client {
                 self.0.borrow_mut().scroll_y = None;
 
                 let window = self.get_window(event.event)?;
-                let state = self.0.borrow();
+                let mut state = self.0.borrow_mut();
                 let pressed_button = pressed_button_from_mask(event.buttons[0]);
                 let position = point(
                     px(event.event_x as f32 / u16::MAX as f32 / state.scale_factor),
                     px(event.event_y as f32 / u16::MAX as f32 / state.scale_factor),
                 );
                 let modifiers = modifiers_from_xinput_info(event.mods);
+                state.modifiers = modifiers;
                 drop(state);
 
                 window.handle_input(PlatformInput::MouseExited(crate::MouseExitEvent {
@@ -904,13 +923,14 @@ impl LinuxClient for X11Client {
 
     fn open_window(
         &self,
-        _handle: AnyWindowHandle,
+        handle: AnyWindowHandle,
         params: WindowParams,
     ) -> Box<dyn PlatformWindow> {
         let mut state = self.0.borrow_mut();
         let x_window = state.xcb_connection.generate_id().unwrap();
 
         let window = X11Window::new(
+            handle,
             X11ClientStatePtr(Rc::downgrade(&self.0)),
             state.common.foreground_executor.clone(),
             params,
@@ -1074,6 +1094,19 @@ impl LinuxClient for X11Client {
             .expect("App is already running");
 
         event_loop.run(None, &mut self.clone(), |_| {}).log_err();
+    }
+
+    fn active_window(&self) -> Option<AnyWindowHandle> {
+        let state = self.0.borrow();
+        state
+            .focused_window
+            .map(|focused_window| {
+                state
+                    .windows
+                    .get(&focused_window)
+                    .map(|window| window.handle())
+            })
+            .flatten()
     }
 }
 
