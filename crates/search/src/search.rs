@@ -25,6 +25,7 @@ actions!(
         ToggleIncludeIgnored,
         ToggleRegex,
         ToggleReplace,
+        ToggleSelection,
         SelectNextMatch,
         SelectPrevMatch,
         SelectAllMatches,
@@ -43,6 +44,7 @@ bitflags! {
         const CASE_SENSITIVE = 0b010;
         const INCLUDE_IGNORED = 0b100;
         const REGEX = 0b1000;
+        const SELECTION = 0b10000;
     }
 }
 
@@ -53,6 +55,7 @@ impl SearchOptions {
             SearchOptions::CASE_SENSITIVE => "match case",
             SearchOptions::INCLUDE_IGNORED => "include Ignored",
             SearchOptions::REGEX => "regular expression",
+            SearchOptions::SELECTION => "Only in Selection",
             _ => panic!("{:?} is not a named SearchOption", self),
         }
     }
@@ -63,6 +66,7 @@ impl SearchOptions {
             SearchOptions::CASE_SENSITIVE => ui::IconName::CaseSensitive,
             SearchOptions::INCLUDE_IGNORED => ui::IconName::FileGit,
             SearchOptions::REGEX => ui::IconName::Regex,
+            SearchOptions::SELECTION => ui::IconName::FileGit,
             _ => panic!("{:?} is not a named SearchOption", self),
         }
     }
@@ -73,6 +77,7 @@ impl SearchOptions {
             SearchOptions::CASE_SENSITIVE => Box::new(ToggleCaseSensitive),
             SearchOptions::INCLUDE_IGNORED => Box::new(ToggleIncludeIgnored),
             SearchOptions::REGEX => Box::new(ToggleRegex),
+            SearchOptions::SELECTION => Box::new(ToggleWholeWord),
             _ => panic!("{:?} is not a named SearchOption", self),
         }
     }

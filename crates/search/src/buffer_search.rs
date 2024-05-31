@@ -3,7 +3,7 @@ mod registrar;
 use crate::{
     search_bar::render_nav_button, FocusSearch, NextHistoryQuery, PreviousHistoryQuery, ReplaceAll,
     ReplaceNext, SearchOptions, SelectAllMatches, SelectNextMatch, SelectPrevMatch,
-    ToggleCaseSensitive, ToggleRegex, ToggleReplace, ToggleWholeWord,
+    ToggleCaseSensitive, ToggleRegex, ToggleReplace, ToggleSelection, ToggleWholeWord,
 };
 use any_vec::AnyVec;
 use collections::HashMap;
@@ -225,6 +225,14 @@ impl Render for BufferSearchBar {
                                 SearchOptions::WHOLE_WORD,
                                 cx.listener(|this, _, cx| {
                                     this.toggle_whole_word(&ToggleWholeWord, cx)
+                                }),
+                            )
+                        }))
+                        .children(supported_options.word.then(|| {
+                            self.render_search_option_button(
+                                SearchOptions::SELECTION,
+                                cx.listener(|this, _, cx| {
+                                    this.toggle_selection(&ToggleSelection, cx)
                                 }),
                             )
                         }))
@@ -821,6 +829,10 @@ impl BufferSearchBar {
 
     fn toggle_whole_word(&mut self, _: &ToggleWholeWord, cx: &mut ViewContext<Self>) {
         self.toggle_search_option(SearchOptions::WHOLE_WORD, cx)
+    }
+
+    fn toggle_selection(&mut self, _: &ToggleSelection, cx: &mut ViewContext<Self>) {
+        self.toggle_search_option(SearchOptions::SELECTION, cx)
     }
 
     fn toggle_regex(&mut self, _: &ToggleRegex, cx: &mut ViewContext<Self>) {
