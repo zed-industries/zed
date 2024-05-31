@@ -29,7 +29,7 @@ use ui::{
 use util::{paths::PROMPTS_DIR, ResultExt};
 use uuid::Uuid;
 
-actions!(prompt_library, [NewPrompt, SavePrompt]);
+actions!(prompt_library, [NewPrompt, SavePrompt, ToggleDefaultPrompt]);
 
 /// Init starts loading the PromptStore in the background and assigns
 /// a shared future to a global.
@@ -207,7 +207,7 @@ impl PromptLibrary {
 
     pub fn new_prompt(&mut self, cx: &mut ViewContext<Self>) {
         let prompt_id = PromptId::new();
-        let save = self.store.save(prompt_id, None, "".into());
+        let save = self.store.save(prompt_id, None, false, "".into());
         cx.spawn(|this, mut cx| async move {
             save.await?;
             this.update(&mut cx, |this, cx| this.load_prompt(prompt_id, true, cx))
@@ -217,6 +217,7 @@ impl PromptLibrary {
 
     pub fn save_active_prompt(&mut self, cx: &mut ViewContext<Self>) {
         if let Some(active_prompt_id) = self.active_prompt_id {
+            let prompt_metadata = self.store.metadata(active_prompt_id).unwrap();
             let body = self
                 .prompt_editors
                 .get_mut(&active_prompt_id)
@@ -225,7 +226,35 @@ impl PromptLibrary {
 
             let title = title_from_body(body.buffer_chars_at(0).map(|(c, _)| c));
             self.store
-                .save(active_prompt_id, title, body.text())
+                .save(
+                    active_prompt_id,
+                    title,
+                    prompt_metadata.default,
+                    body.text(),
+                )
+                .detach_and_log_err(cx);
+            self.picker.update(cx, |picker, cx| picker.refresh(cx));
+            cx.notify();
+        }
+    }
+
+    pub fn toggle_default_for_active_prompt(&mut self, cx: &mut ViewContext<Self>) {
+        if let Some(active_prompt_id) = self.active_prompt_id {
+            let prompt_metadata = self.store.metadata(active_prompt_id).unwrap();
+            let body = self
+                .prompt_editors
+                .get_mut(&active_prompt_id)
+                .unwrap()
+                .update(cx, |editor, cx| editor.snapshot(cx));
+
+            let title = title_from_body(body.buffer_chars_at(0).map(|(c, _)| c));
+            self.store
+                .save(
+                    active_prompt_id,
+                    title,
+                    !prompt_metadata.default,
+                    body.text(),
+                )
                 .detach_and_log_err(cx);
             self.picker.update(cx, |picker, cx| picker.refresh(cx));
             cx.notify();
@@ -348,18 +377,33 @@ impl PromptLibrary {
                                                 }),
                                         )
                                         .child(
-                                            IconButton::new("star-prompt", IconName::Star)
-                                                .shape(IconButtonShape::Square)
-                                                .tooltip(move |cx| {
-                                                    Tooltip::for_action(
-                                                        "Add to Default Prompt",
-                                                        &SavePrompt,
-                                                        cx,
-                                                    )
-                                                })
-                                                .on_click(|_, cx| {
-                                                    cx.dispatch_action(Box::new(SavePrompt));
-                                                }),
+                                            IconButton::new(
+                                                "toggle-default-prompt",
+                                                if prompt_metadata.default {
+                                                    IconName::StarFilled
+                                                } else {
+                                                    IconName::Star
+                                                },
+                                            )
+                                            .shape(IconButtonShape::Square)
+                                            .tooltip(move |cx| {
+                                                Tooltip::for_action(
+                                                    if prompt_metadata.default {
+                                                        "Remove from Default Prompt"
+                                                    } else {
+                                                        "Add to Default Prompt"
+                                                    },
+                                                    &ToggleDefaultPrompt,
+                                                    cx,
+                                                )
+                                            })
+                                            .on_click(
+                                                |_, cx| {
+                                                    cx.dispatch_action(Box::new(
+                                                        ToggleDefaultPrompt,
+                                                    ));
+                                                },
+                                            ),
                                         ),
                                 ),
                         )
@@ -376,6 +420,9 @@ impl Render for PromptLibrary {
             .key_context("PromptLibrary")
             .on_action(cx.listener(|this, &NewPrompt, cx| this.new_prompt(cx)))
             .on_action(cx.listener(|this, &SavePrompt, cx| this.save_active_prompt(cx)))
+            .on_action(cx.listener(|this, &ToggleDefaultPrompt, cx| {
+                this.toggle_default_for_active_prompt(cx)
+            }))
             .size_full()
             .overflow_hidden()
             .child(self.render_prompt_list(cx))
@@ -387,6 +434,7 @@ impl Render for PromptLibrary {
 pub struct PromptMetadata {
     pub id: PromptId,
     pub title: Option<SharedString>,
+    pub default: bool,
     pub saved_at: DateTime<Utc>,
 }
 
@@ -431,16 +479,9 @@ impl MetadataCache {
     }
 
     fn insert(&mut self, metadata: PromptMetadata) {
-        if let Some(old_metadata) = self.metadata_by_id.get_mut(&metadata.id) {
-            old_metadata.title = metadata.title.clone();
-            old_metadata.saved_at = metadata.saved_at;
-        } else {
-            self.metadata_by_id.insert(metadata.id, metadata.clone());
-        }
-
+        self.metadata_by_id.insert(metadata.id, metadata.clone());
         if let Some(old_metadata) = self.metadata.iter_mut().find(|m| m.id == metadata.id) {
-            old_metadata.title = metadata.title;
-            old_metadata.saved_at = metadata.saved_at;
+            *old_metadata = metadata;
         } else {
             self.metadata.push(metadata);
         }
@@ -532,10 +573,17 @@ impl PromptStore {
         })
     }
 
-    fn save(&self, id: PromptId, title: Option<SharedString>, body: String) -> Task<Result<()>> {
+    fn save(
+        &self,
+        id: PromptId,
+        title: Option<SharedString>,
+        default: bool,
+        body: String,
+    ) -> Task<Result<()>> {
         let prompt_metadata = PromptMetadata {
             id,
             title,
+            default,
             saved_at: Utc::now(),
         };
         self.metadata_cache.lock().insert(prompt_metadata.clone());
