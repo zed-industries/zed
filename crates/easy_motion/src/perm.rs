@@ -1,4 +1,4 @@
-use std::mem;
+use std::{mem, sync::Arc};
 
 #[derive(Debug)]
 enum TrieNode<T> {
@@ -47,11 +47,11 @@ impl<T: Default> Default for TrieNode<T> {
 #[derive(Debug)]
 pub(crate) struct TrieBuilder {
     root: TrieNode<()>,
-    keys: String,
+    keys: Arc<str>,
 }
 
 impl TrieBuilder {
-    pub fn new(keys: String, len: usize) -> Self {
+    pub fn new(keys: Arc<str>, len: usize) -> Self {
         let root = TrieNode::Node(vec![TrieNode::Leaf(())]);
         let mut builder = TrieBuilder { keys, root };
         let mut p = vec![0];
@@ -213,13 +213,13 @@ impl TrieBuilder {
 
 #[derive(Debug)]
 pub(crate) struct Trie<T> {
-    keys: String,
+    keys: Arc<str>,
     root: TrieNode<T>,
 }
 
 impl<T> Trie<T> {
     #[allow(dead_code)]
-    pub fn new_from_vec(keys: String, values: Vec<T>, reverse: bool) -> Self {
+    pub fn new_from_vec(keys: Arc<str>, values: Vec<T>, reverse: bool) -> Self {
         TrieBuilder::new(keys, values.len()).populate(reverse, values)
     }
 
@@ -387,7 +387,7 @@ impl<'a, T> TrieIterator<'a, T> {
     fn new(trie: &'a Trie<T>) -> Self {
         TrieIterator {
             stack: vec![(&trie.root, String::new())],
-            keys: trie.keys.as_str(),
+            keys: trie.keys.as_ref(),
         }
     }
 }
@@ -451,19 +451,19 @@ mod tests {
 
     #[test]
     fn test_trie_perms() {
-        let trie = Trie::new_from_vec("abc".to_string(), vec![0, 1, 2], false);
+        let trie = Trie::new_from_vec("abc".into(), vec![0, 1, 2], false);
         let expected = vec![("a", 0), ("b", 1), ("c", 2)];
         perms_helper(&trie, expected);
 
-        let trie = Trie::new_from_vec("abc".to_string(), vec![0, 1, 2, 3], false);
+        let trie = Trie::new_from_vec("abc".into(), vec![0, 1, 2, 3], false);
         let expected = vec![("aa", 0), ("ab", 1), ("b", 2), ("c", 3)];
         perms_helper(&trie, expected);
 
-        let trie = Trie::new_from_vec("abc".to_string(), vec![0, 1, 2, 3, 4], false);
+        let trie = Trie::new_from_vec("abc".into(), vec![0, 1, 2, 3, 4], false);
         let expected = vec![("aa", 0), ("ab", 1), ("ac", 2), ("b", 3), ("c", 4)];
         perms_helper(&trie, expected);
 
-        let trie = Trie::new_from_vec("abc".to_string(), vec![0, 1, 2, 3, 4, 5, 6, 7, 8, 9], false);
+        let trie = Trie::new_from_vec("abc".into(), vec![0, 1, 2, 3, 4, 5, 6, 7, 8, 9], false);
         let expected = vec![
             ("aaa", 0),
             ("aab", 1),
@@ -478,8 +478,7 @@ mod tests {
         ];
         perms_helper(&trie, expected);
 
-        let mut trie =
-            Trie::new_from_vec("abc".to_string(), vec![0, 1, 2, 3, 4, 5, 6, 7, 8, 9], true);
+        let mut trie = Trie::new_from_vec("abc".into(), vec![0, 1, 2, 3, 4, 5, 6, 7, 8, 9], true);
         let expected = vec![
             ("aa", 0),
             ("ab", 1),
@@ -531,19 +530,19 @@ mod tests {
 
     #[test]
     fn test_trie_iter() {
-        let trie = Trie::new_from_vec("abc".to_string(), vec![0, 1, 2], false);
+        let trie = Trie::new_from_vec("abc".into(), vec![0, 1, 2], false);
         let expected = vec![("a", 0), ("b", 1), ("c", 2)];
         iter_helper(trie, expected);
 
-        let trie = Trie::new_from_vec("abc".to_string(), vec![0, 1, 2, 3], false);
+        let trie = Trie::new_from_vec("abc".into(), vec![0, 1, 2, 3], false);
         let expected = vec![("aa", 0), ("ab", 1), ("b", 2), ("c", 3)];
         iter_helper(trie, expected);
 
-        let trie = Trie::new_from_vec("abc".to_string(), vec![0, 1, 2, 3], true);
+        let trie = Trie::new_from_vec("abc".into(), vec![0, 1, 2, 3], true);
         let expected = vec![("a", 0), ("b", 1), ("ca", 2), ("cb", 3)];
         iter_helper(trie, expected);
 
-        let trie = Trie::new_from_vec("abc".to_string(), vec![0, 1, 2, 3, 4, 5, 6, 7, 8, 9], true);
+        let trie = Trie::new_from_vec("abc".into(), vec![0, 1, 2, 3, 4, 5, 6, 7, 8, 9], true);
         let expected = vec![
             ("aa", 0),
             ("ab", 1),
@@ -561,7 +560,7 @@ mod tests {
 
     #[test]
     fn test_populate_with() {
-        let keys = "abc".to_string();
+        let keys: Arc<str> = "abc".into();
         let values = vec![0, 1, 2];
         let builder = TrieBuilder::new(keys.clone(), values.len());
         let trie = builder.populate_with(true, values.into_iter(), |path, val| {

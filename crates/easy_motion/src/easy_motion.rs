@@ -4,6 +4,7 @@ use futures::future::join_all;
 use search::{search, search_multipane};
 use serde::Deserialize;
 use std::cmp::Ordering;
+use std::sync::Arc;
 use std::{fmt, mem};
 
 use editor::scroll::Autoscroll;
@@ -73,12 +74,11 @@ enum WordType {
     FullWord,
 }
 
-#[derive(Default)]
 pub struct EasyMotion {
     active_editor: Option<WeakView<Editor>>,
     editor_subscription: Option<Subscription>,
     dimming: bool,
-    keys: String,
+    keys: Arc<str>,
     enabled: bool,
     editor_states: HashMap<EntityId, EditorState>,
     multipane_state: Option<EditorState>,
@@ -103,12 +103,14 @@ const DEFAULT_KEYS: &'static str = "asdghklqwertyuiopzxcvbnmfj";
 
 pub fn init(cx: &mut AppContext) {
     let easy = cx.new_model({
-        move |_cx| {
-            let mut easy = EasyMotion::default();
-            easy.enabled = true;
-            easy.dimming = true;
-            easy.keys = DEFAULT_KEYS.to_string();
-            easy
+        |_| EasyMotion {
+            active_editor: None,
+            editor_subscription: None,
+            dimming: true,
+            editor_states: HashMap::default(),
+            enabled: true,
+            keys: DEFAULT_KEYS.into(),
+            multipane_state: None,
         }
     });
     EasyMotion::set_global(easy.clone(), cx);
@@ -288,12 +290,7 @@ impl EasyMotion {
     }
 
     fn word_single_pane(word_type: WordType, direction: Direction, cx: &mut WindowContext) {
-        let Some((active_editor, dimming)) = Self::read_with(cx, |easy, _| {
-            let weak_editor = easy.active_editor.as_ref()?;
-            let editor = weak_editor.upgrade()?;
-            Some((editor, easy.dimming))
-        })
-        .flatten() else {
+        let Some(active_editor) = Self::active_editor(cx) else {
             return;
         };
         let entity_id = active_editor.entity_id();
@@ -327,7 +324,7 @@ impl EasyMotion {
         sort_matches_display(&mut word_starts, &selections.start);
 
         let (keys, dimming) = Self::read_with(cx, |easy, _| (easy.keys.clone(), easy.dimming))
-            .unwrap_or((DEFAULT_KEYS.to_string(), false));
+            .unwrap_or((DEFAULT_KEYS.into(), false));
 
         let (style_0, style_1, style_2) = get_highlights(cx);
         let trie = TrieBuilder::new(keys, word_starts.len()).populate_with(
@@ -475,7 +472,7 @@ impl EasyMotion {
         sort_matches_pixel(&mut matches, &cursor);
 
         let (keys, dimming) = Self::read_with(cx, |easy, _| (easy.keys.clone(), easy.dimming))
-            .unwrap_or((DEFAULT_KEYS.to_string(), false));
+            .unwrap_or((DEFAULT_KEYS.into(), false));
 
         let len = matches.len();
         let matches = matches.into_iter().map(|(point, id, _)| (point, id));
@@ -783,7 +780,7 @@ impl EasyMotion {
         });
 
         let (keys, dimming) = Self::read_with(cx, |easy, _| (easy.keys.clone(), easy.dimming))
-            .unwrap_or((DEFAULT_KEYS.to_string(), false));
+            .unwrap_or((DEFAULT_KEYS.into(), false));
 
         let (style_0, style_1, style_2) = get_highlights(cx);
         let trie =
@@ -915,7 +912,7 @@ impl EasyMotion {
 
             let (keys, dimming) =
                 Self::read_with_async(&cx, |easy, _| (easy.keys.clone(), easy.dimming))
-                    .unwrap_or((DEFAULT_KEYS.to_string(), false));
+                    .unwrap_or((DEFAULT_KEYS.into(), false));
 
             let len = matches.len();
             let matches = matches.into_iter().map(|(point, id, _)| (point, id));
