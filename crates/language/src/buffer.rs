@@ -3153,7 +3153,11 @@ impl BufferSnapshot {
         range: Range<Anchor>,
         cx: &AppContext,
     ) -> Vec<IndentGuide> {
-        let tab_size = language_settings(self.language(), None, cx).tab_size.get() as u32;
+        let language_settings = language_settings(self.language(), None, cx);
+        if !language_settings.indent_guides.enabled {
+            return Vec::default();
+        }
+        let tab_size = language_settings.tab_size.get() as u32;
 
         let start_row = range.start.to_point(self).row;
         let end_row = range.end.to_point(self).row;
