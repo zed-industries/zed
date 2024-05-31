@@ -925,7 +925,6 @@ fn handle_nc_mouse_down_msg(
         return None;
     }
 
-    // unsafe { SetCapture(handle) };
     let mut lock = state_ptr.state.borrow_mut();
     if let Some(mut callback) = lock.callbacks.input.take() {
         let scale_factor = lock.scale_factor;
@@ -983,7 +982,6 @@ fn handle_nc_mouse_up_msg(
         return None;
     }
 
-    // unsafe { ReleaseCapture().log_err() };
     let mut lock = state_ptr.state.borrow_mut();
     if let Some(mut callback) = lock.callbacks.input.take() {
         let scale_factor = lock.scale_factor;
