@@ -13,12 +13,14 @@
   {
     "label": "mix test $ZED_RELATIVE_FILE",
     "command": "mix",
-    "args": ["test", "$ZED_RELATIVE_FILE"]
+    "args": ["test", "$ZED_RELATIVE_FILE"],
+    "tags": ["elixir-module-test"]
   },
   {
     "label": "mix test $ZED_RELATIVE_FILE:$ZED_ROW",
     "command": "mix",
-    "args": ["test", "$ZED_RELATIVE_FILE:$ZED_ROW"]
+    "args": ["test", "$ZED_RELATIVE_FILE:$ZED_ROW"],
+    "tags": ["elixir-test"]
   },
   {
     "label": "Elixir: break line",
