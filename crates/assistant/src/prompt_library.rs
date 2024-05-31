@@ -8,9 +8,9 @@ use futures::{
 };
 use fuzzy::StringMatchCandidate;
 use gpui::{
-    actions, point, size, AppContext, BackgroundExecutor, Bounds, DevicePixels, EventEmitter,
-    Global, PromptLevel, ReadGlobal, Subscription, Task, TitlebarOptions, View, WindowBounds,
-    WindowHandle, WindowOptions,
+    actions, point, size, AppContext, BackgroundExecutor, Bounds, DevicePixels, Empty,
+    EventEmitter, Global, PromptLevel, ReadGlobal, Subscription, Task, TitlebarOptions, View,
+    WindowBounds, WindowHandle, WindowOptions,
 };
 use heed::{types::SerdeBincode, Database, RoTxn};
 use language::{language_settings::SoftWrap, Buffer, LanguageRegistry};
@@ -111,6 +111,7 @@ struct PromptPickerDelegate {
 enum PromptPickerEvent {
     Confirmed { prompt_id: PromptId },
     Deleted { prompt_id: PromptId },
+    ToggledDefault { prompt_id: PromptId },
 }
 
 impl EventEmitter<PromptPickerEvent> for Picker<PromptPickerDelegate> {}
@@ -164,6 +165,7 @@ impl PickerDelegate for PromptPickerDelegate {
         cx: &mut ViewContext<Picker<Self>>,
     ) -> Option<Self::ListItem> {
         let prompt = self.matches.get(ix)?;
+        let default = prompt.default;
         let prompt_id = prompt.id;
         Some(
             ListItem::new(ix)
@@ -173,13 +175,48 @@ impl PickerDelegate for PromptPickerDelegate {
                 .child(Label::new(
                     prompt.title.clone().unwrap_or("Untitled".into()),
                 ))
-                .end_hover_slot(
-                    IconButton::new("delete-prompt", IconName::Trash)
+                .end_slot(if default {
+                    IconButton::new("toggle-default-prompt", IconName::StarFilled)
                         .shape(IconButtonShape::Square)
-                        .tooltip(move |cx| Tooltip::text("Delete Prompt", cx))
-                        .on_click(cx.listener(move |_, _, cx| {
-                            cx.emit(PromptPickerEvent::Deleted { prompt_id })
-                        })),
+                        .into_any_element()
+                } else {
+                    Empty.into_any()
+                })
+                .end_hover_slot(
+                    h_flex()
+                        .gap_2()
+                        .child(
+                            IconButton::new("delete-prompt", IconName::Trash)
+                                .shape(IconButtonShape::Square)
+                                .tooltip(move |cx| Tooltip::text("Delete Prompt", cx))
+                                .on_click(cx.listener(move |_, _, cx| {
+                                    cx.emit(PromptPickerEvent::Deleted { prompt_id })
+                                })),
+                        )
+                        .child(
+                            IconButton::new(
+                                "toggle-default-prompt",
+                                if default {
+                                    IconName::StarFilled
+                                } else {
+                                    IconName::Star
+                                },
+                            )
+                            .shape(IconButtonShape::Square)
+                            .tooltip(move |cx| {
+                                Tooltip::text(
+                                    if default {
+                                        "Remove from Default Prompt"
+                                    } else {
+                                        "Add to Default Prompt"
+                                    },
+                                    cx,
+                                )
+                            })
+                            .on_click(cx.listener(move |_, _, cx| {
+                                cx.emit(PromptPickerEvent::ToggledDefault { prompt_id })
+                            })),
+                        ),
                 ),
         )
     }
@@ -229,6 +266,9 @@ impl PromptLibrary {
             PromptPickerEvent::Confirmed { prompt_id } => {
                 self.load_prompt(*prompt_id, true, cx);
             }
+            PromptPickerEvent::ToggledDefault { prompt_id } => {
+                self.toggle_default_for_prompt(*prompt_id, cx);
+            }
             PromptPickerEvent::Deleted { prompt_id } => {
                 self.delete_prompt(*prompt_id, cx);
             }
@@ -277,25 +317,24 @@ impl PromptLibrary {
 
     pub fn toggle_default_for_active_prompt(&mut self, cx: &mut ViewContext<Self>) {
         if let Some(active_prompt_id) = self.active_prompt_id {
-            let prompt_metadata = self.store.metadata(active_prompt_id).unwrap();
-            let body = self
-                .prompt_editors
-                .get_mut(&active_prompt_id)
-                .unwrap()
-                .update(cx, |editor, cx| editor.snapshot(cx));
-
-            let title = title_from_body(body.buffer_chars_at(0).map(|(c, _)| c));
-            self.store
-                .save(
-                    active_prompt_id,
-                    title,
-                    !prompt_metadata.default,
-                    body.text(),
-                )
-                .detach_and_log_err(cx);
-            self.picker.update(cx, |picker, cx| picker.refresh(cx));
-            cx.notify();
+            self.toggle_default_for_prompt(active_prompt_id, cx);
         }
+    }
+
+    pub fn toggle_default_for_prompt(&mut self, prompt_id: PromptId, cx: &mut ViewContext<Self>) {
+        let prompt_metadata = self.store.metadata(prompt_id).unwrap();
+        let body = self
+            .prompt_editors
+            .get_mut(&prompt_id)
+            .unwrap()
+            .update(cx, |editor, cx| editor.snapshot(cx));
+
+        let title = title_from_body(body.buffer_chars_at(0).map(|(c, _)| c));
+        self.store
+            .save(prompt_id, title, !prompt_metadata.default, body.text())
+            .detach_and_log_err(cx);
+        self.picker.update(cx, |picker, cx| picker.refresh(cx));
+        cx.notify();
     }
 
     pub fn load_prompt(&mut self, prompt_id: PromptId, focus: bool, cx: &mut ViewContext<Self>) {
