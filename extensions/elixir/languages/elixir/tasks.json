@@ -11,18 +11,18 @@
     "args": ["test", "--failed"]
   },
   {
-    "label": "mix test $ZED_SYMBOL",
+    "label": "mix test $ZED_RELATIVE_FILE",
     "command": "mix",
-    "args": ["test", "$ZED_SYMBOL"]
+    "args": ["test", "$ZED_RELATIVE_FILE"]
   },
   {
-    "label": "mix test $ZED_FILE:$ZED_ROW",
+    "label": "mix test $ZED_RELATIVE_FILE:$ZED_ROW",
     "command": "mix",
-    "args": ["test", "$ZED_FILE:$ZED_ROW"]
+    "args": ["test", "$ZED_RELATIVE_FILE:$ZED_ROW"]
   },
   {
     "label": "Elixir: break line",
     "command": "iex",
-    "args": ["-S", "mix", "test", "-b", "$ZED_FILE:$ZED_ROW"]
+    "args": ["-S", "mix", "test", "-b", "$ZED_RELATIVE_FILE:$ZED_ROW"]
   }
 ]
