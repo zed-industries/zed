@@ -18,7 +18,7 @@ pub(crate) fn manh_distance_pixels(
     point_2: &Point<Pixels>,
     x_bias: f32,
 ) -> f32 {
-    x_bias * (point_1.x.0 - point_2.x.0).abs() + (point_1.y.0 - point_2.y.0).abs() as f32
+    x_bias * (point_1.x.0 - point_2.x.0).abs() + (point_1.y.0 - point_2.y.0).abs()
 }
 
 pub(crate) fn end_of_document(map: &DisplaySnapshot) -> DisplayPoint {

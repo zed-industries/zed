@@ -307,7 +307,7 @@ impl EasyMotion {
 
         let (style_0, style_1, style_2) = get_highlights(cx);
         let trie = TrieBuilder::new("asdghklqwertyuiopzxcvbnmfj".to_string(), word_starts.len())
-            .populate_with(true, word_starts.into_iter(), |seq, point| {
+            .populate_with(true, word_starts, |seq, point| {
                 let style = match seq.len() {
                     0 | 1 => style_0,
                     2 => style_1,
@@ -398,7 +398,7 @@ impl EasyMotion {
         // as well as a rough absolute position for sorting purposes
         let mut matches = editors
             .iter()
-            .map(|(editor_view, bounding_box)| {
+            .flat_map(|(editor_view, bounding_box)| {
                 editor_view.update(cx, |editor, cx| {
                     let selections = editor.selections.newest_display(cx);
 
@@ -431,7 +431,6 @@ impl EasyMotion {
                     })
                 })
             })
-            .flatten()
             .collect::<Vec<_>>();
 
         let cursor = editors
@@ -514,7 +513,6 @@ impl EasyMotion {
                         pane.active_item()
                             .and_then(|item| item.downcast::<Editor>())
                     })
-                    .map(|editor| editor)
                 })
                 .collect::<Vec<_>>();
 
@@ -752,7 +750,7 @@ impl EasyMotion {
 
         let (style_0, style_1, style_2) = get_highlights(cx);
         let trie = TrieBuilder::new("asdghklqwertyuiopzxcvbnmfj".to_string(), matches.len())
-            .populate_with(true, matches.into_iter(), |seq, point| {
+            .populate_with(true, matches, |seq, point| {
                 let style = match seq.len() {
                     0 | 1 => style_0,
                     2 => style_1,
@@ -852,13 +850,7 @@ impl EasyMotion {
                 .map(|(editor, bounding_box)| {
                     let entity_id = editor.entity_id();
                     editor.update(cx, |editor, cx| {
-                        search_multipane(
-                            query.as_str(),
-                            bounding_box.clone(),
-                            entity_id,
-                            editor,
-                            cx,
-                        )
+                        search_multipane(query.as_str(), *bounding_box, entity_id, editor, cx)
                     })
                 })
                 .collect::<Option<Vec<_>>>();
@@ -1000,7 +992,7 @@ impl EasyMotion {
                     editor.remove_keymap_context_layer::<Self>(cx);
                 });
             }
-        } else if let Some(editor) = editor.map(|editor| editor.upgrade()).flatten() {
+        } else if let Some(editor) = editor.and_then(|editor| editor.upgrade()) {
             editor.update(cx, |editor, cx| {
                 editor.clear_overlays(cx);
                 editor.clear_highlights::<Self>(cx);
@@ -1015,17 +1007,17 @@ impl EasyMotion {
         cx: &mut ViewContext<Editor>,
     ) {
         for (seq, overlay) in trie_iter {
-            let mut highlights = vec![(0..1, overlay.style.clone())];
+            let mut highlights = vec![(0..1, overlay.style)];
             if seq.len() > 1 {
                 highlights.push((
                     1..seq.len(),
                     HighlightStyle {
                         fade_out: Some(0.3),
-                        ..overlay.style.clone()
+                        ..overlay.style
                     },
                 ));
             }
-            editor.add_overlay(seq, overlay.point.clone(), 0.0, highlights, cx);
+            editor.add_overlay(seq, overlay.point, 0.0, highlights, cx);
         }
     }
 }

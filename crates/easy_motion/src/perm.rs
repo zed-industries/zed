@@ -159,7 +159,7 @@ impl TrieBuilder {
     fn next_perm_internal(&mut self, mut pointer: Vec<usize>) -> Vec<usize> {
         let max_len = self.keys.len();
         let len = pointer.len();
-        let last_index = pointer.last().unwrap().clone();
+        let last_index = *pointer.last().unwrap();
         if last_index < max_len - 1 {
             pointer[len - 1] += 1;
             // get parent to current node
@@ -172,7 +172,7 @@ impl TrieBuilder {
         let mut depth = len;
         // find the first layer that is not full
         while depth > 0 {
-            if !(pointer[depth - 1] < max_len - 1) {
+            if pointer[depth - 1] >= max_len - 1 {
                 depth -= 1;
                 continue;
             }
@@ -204,7 +204,7 @@ impl TrieBuilder {
         for i in pointer {
             node = match node {
                 TrieNode::Leaf(_) => return node,
-                TrieNode::Node(list) => list.get_mut(i.clone()).unwrap(),
+                TrieNode::Node(list) => list.get_mut(*i).unwrap(),
             };
         }
         node
@@ -220,7 +220,7 @@ pub(crate) struct Trie<T> {
 impl<T> Trie<T> {
     #[allow(dead_code)]
     pub fn new_from_vec(keys: String, values: Vec<T>, reverse: bool) -> Self {
-        TrieBuilder::new(keys, values.len()).populate(reverse, values.into_iter())
+        TrieBuilder::new(keys, values.len()).populate(reverse, values)
     }
 
     #[allow(dead_code)]
