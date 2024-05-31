@@ -11554,6 +11554,7 @@ fn indent_guide(buffer_id: BufferId, start_row: u32, end_row: u32, depth: u32) -
         tab_size: 4,
         settings: IndentGuideSettings {
             enabled: true,
+            line_width: 1,
             ..Default::default()
         },
     }
