@@ -1,2 +1,4 @@
 (heredoc_body
-  (heredoc_end) @language) @content
+  (heredoc_content) @content
+  (heredoc_end) @language
+  (#downcase! @language))
