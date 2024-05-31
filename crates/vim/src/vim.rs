@@ -189,11 +189,7 @@ fn observe_keystrokes(keystroke_event: &KeystrokeEvent, cx: &mut WindowContext) 
         if action.name().starts_with("vim::") {
             return;
         }
-    } else if cx.has_pending_keystrokes() {
-        return;
-    }
-
-    if let None = keystroke_event.keystroke.ime_key {
+    } else if cx.has_pending_keystrokes() || keystroke_event.keystroke.ime_key.is_none() {
         return;
     }
 
@@ -257,7 +253,7 @@ impl Vim {
                     })
                 }
             }
-            EditorEvent::InputIgnored { text } => {
+            EditorEvent::InputIgnored { text } if text != &"¨".into() && text != &"´".into() => {
                 Vim::active_editor_input_ignored(text.clone(), cx);
                 Vim::record_insertion(text, None, cx)
             }
