@@ -78,7 +78,7 @@ impl Model {
         }
     }
 
-    pub fn id(&self) -> &str {
+    pub fn id(&self) -> &'static str {
         match self {
             Self::ThreePointFiveTurbo => "gpt-3.5-turbo",
             Self::Four => "gpt-4",
