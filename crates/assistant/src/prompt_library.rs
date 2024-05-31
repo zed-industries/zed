@@ -373,7 +373,8 @@ impl PromptLibrary {
                         cx.notify();
                     }
                     Err(error) => {
-                        // todo!("show an error in the UI somewhere")
+                        // TODO: we should show the error in the UI.
+                        log::error!("error while loading prompt: {:?}", error);
                     }
                 })
                 .ok();
