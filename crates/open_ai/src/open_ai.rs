@@ -44,7 +44,7 @@ impl From<Role> for String {
 }
 
 #[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
-#[derive(Clone, Debug, Default, Deserialize, PartialEq, EnumIter)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, EnumIter)]
 pub enum Model {
     #[serde(rename = "gpt-3.5-turbo", alias = "gpt-3.5-turbo-0613")]
     ThreePointFiveTurbo,
@@ -60,18 +60,6 @@ pub enum Model {
         name: String,
         max_token_count: usize,
     },
-}
-
-impl Serialize for Model {
-    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        match self {
-            Model::ThreePointFiveTurbo => serializer.serialize_str("gpt-3.5-turbo"),
-            Model::Four => serializer.serialize_str("gpt-4"),
-            Model::FourTurbo => serializer.serialize_str("gpt-4-turbo-preview"),
-            Model::FourOmni => serializer.serialize_str("gpt-4o"),
-            Model::Custom { name, .. } => serializer.serialize_str(name),
-        }
-    }
 }
 
 impl Model {
@@ -91,7 +79,7 @@ impl Model {
             Self::Four => "gpt-4",
             Self::FourTurbo => "gpt-4-turbo-preview",
             Self::FourOmni => "gpt-4o",
-            Self::Custom { name, .. } => name,
+            Self::Custom { .. } => "custom",
         }
     }
 
@@ -118,8 +106,19 @@ impl Model {
     }
 }
 
+pub fn serialize_model<S>(model: &Model, serializer: S) -> Result<S::Ok, S::Error>
+where
+    S: serde::Serializer,
+{
+    match model {
+        Model::Custom { name, .. } => serializer.serialize_str(name),
+        _ => serializer.serialize_str(model.id()),
+    }
+}
+
 #[derive(Debug, Serialize)]
 pub struct Request {
+    #[serde(serialize_with = "serialize_model")]
     pub model: Model,
     pub messages: Vec<RequestMessage>,
     pub stream: bool,
