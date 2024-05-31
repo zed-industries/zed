@@ -3442,14 +3442,12 @@ dependencies = [
  "gpui",
  "language",
  "project",
- "search",
  "serde",
  "settings",
  "text",
  "theme",
  "ui",
  "util",
- "vim",
  "workspace",
 ]
 
