@@ -38,9 +38,9 @@ use crate::platform::linux::xdg_desktop_portal::{should_auto_hide_scrollbars, wi
 use crate::{
     px, Action, AnyWindowHandle, BackgroundExecutor, ClipboardItem, CosmicTextSystem, CursorStyle,
     DisplayId, ForegroundExecutor, Keymap, Keystroke, LinuxDispatcher, Menu, MenuItem, Modifiers,
-    PathPromptOptions, Pixels, Platform, PlatformDisplay, PlatformInputHandler, PlatformTextSystem,
-    PlatformWindow, Point, PromptLevel, Result, SemanticVersion, Size, Task, WindowAppearance,
-    WindowOptions, WindowParams,
+    OwnedMenu, PathPromptOptions, Pixels, Platform, PlatformDisplay, PlatformInputHandler,
+    PlatformTextSystem, PlatformWindow, Point, PromptLevel, Result, SemanticVersion, Size, Task,
+    WindowAppearance, WindowOptions, WindowParams,
 };
 
 use super::x11::X11Client;
@@ -94,6 +94,7 @@ pub(crate) struct LinuxCommon {
     pub(crate) auto_hide_scrollbars: bool,
     pub(crate) callbacks: PlatformHandlers,
     pub(crate) signal: LoopSignal,
+    pub(crate) menus: Vec<OwnedMenu>,
 }
 
 impl LinuxCommon {
@@ -119,6 +120,7 @@ impl LinuxCommon {
             auto_hide_scrollbars,
             callbacks,
             signal,
+            menus: Vec::new(),
         };
 
         (common, main_receiver)
@@ -390,8 +392,16 @@ impl<P: LinuxClient + 'static> Platform for P {
         Ok(exe_path)
     }
 
-    // todo(linux)
-    fn set_menus(&self, menus: Vec<Menu>, keymap: &Keymap) {}
+    fn set_menus(&self, menus: Vec<Menu>, _keymap: &Keymap) {
+        self.with_common(|common| {
+            common.menus = menus.into_iter().map(|menu| menu.owned()).collect();
+        })
+    }
+
+    fn get_menus(&self) -> Option<Vec<OwnedMenu>> {
+        self.with_common(|common| Some(common.menus.clone()))
+    }
+
     fn set_dock_menu(&self, menu: Vec<MenuItem>, keymap: &Keymap) {}
 
     fn local_timezone(&self) -> UtcOffset {

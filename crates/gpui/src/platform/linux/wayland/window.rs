@@ -88,6 +88,7 @@ pub struct WaylandWindowState {
     client: WaylandClientStatePtr,
     callbacks: Callbacks,
     handle: AnyWindowHandle,
+    active: bool,
 }
 
 #[derive(Clone)]
@@ -165,6 +166,7 @@ impl WaylandWindowState {
             client,
             appearance,
             handle,
+            active: false,
         }
     }
 }
@@ -586,6 +588,7 @@ impl WaylandWindowStatePtr {
     }
 
     pub fn set_focused(&self, focus: bool) {
+        self.state.borrow_mut().active = focus;
         if let Some(ref mut fun) = self.callbacks.borrow_mut().active_status_change {
             fun(focus);
         }
@@ -685,12 +688,11 @@ impl PlatformWindow for WaylandWindow {
     }
 
     fn activate(&self) {
-        // todo(linux)
+        log::info!("Wayland does not support this API");
     }
 
-    // todo(linux)
     fn is_active(&self) -> bool {
-        false
+        self.borrow().active
     }
 
     fn set_title(&mut self, title: &str) {
