@@ -416,6 +416,7 @@ fn handle_mouse_down_msg(
     lparam: LPARAM,
     state_ptr: Rc<WindowsWindowStatePtr>,
 ) -> Option<isize> {
+    unsafe { SetCapture(handle) };
     let mut lock = state_ptr.state.borrow_mut();
     if let Some(mut callback) = lock.callbacks.input.take() {
         let x = lparam.signed_loword() as f32;
@@ -437,7 +438,6 @@ fn handle_mouse_down_msg(
         } else {
             Some(1)
         };
-        unsafe { SetCapture(handle) };
         state_ptr.state.borrow_mut().callbacks.input = Some(callback);
 
         result
@@ -452,6 +452,7 @@ fn handle_mouse_up_msg(
     lparam: LPARAM,
     state_ptr: Rc<WindowsWindowStatePtr>,
 ) -> Option<isize> {
+    unsafe { ReleaseCapture().log_err() };
     let mut lock = state_ptr.state.borrow_mut();
     if let Some(mut callback) = lock.callbacks.input.take() {
         let x = lparam.signed_loword() as f32;
@@ -471,7 +472,6 @@ fn handle_mouse_up_msg(
         } else {
             Some(1)
         };
-        unsafe { ReleaseCapture().log_err() };
         state_ptr.state.borrow_mut().callbacks.input = Some(callback);
 
         result
@@ -925,6 +925,7 @@ fn handle_nc_mouse_down_msg(
         return None;
     }
 
+    // unsafe { SetCapture(handle) };
     let mut lock = state_ptr.state.borrow_mut();
     if let Some(mut callback) = lock.callbacks.input.take() {
         let scale_factor = lock.scale_factor;
@@ -982,6 +983,7 @@ fn handle_nc_mouse_up_msg(
         return None;
     }
 
+    // unsafe { ReleaseCapture().log_err() };
     let mut lock = state_ptr.state.borrow_mut();
     if let Some(mut callback) = lock.callbacks.input.take() {
         let scale_factor = lock.scale_factor;
