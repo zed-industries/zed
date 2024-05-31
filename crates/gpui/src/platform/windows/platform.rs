@@ -619,9 +619,8 @@ impl Platform for WindowsPlatform {
         }
     }
 
-    // todo(windows)
     fn should_auto_hide_scrollbars(&self) -> bool {
-        false
+        should_auto_hide_scrollbars().log_err().unwrap_or(false)
     }
 
     fn write_to_clipboard(&self, item: ClipboardItem) {
@@ -805,6 +804,7 @@ fn load_icon() -> Result<HICON> {
 }
 
 // https://learn.microsoft.com/en-us/windows/apps/desktop/modernize/apply-windows-themes
+#[inline]
 fn system_appearance() -> Result<WindowAppearance> {
     let ui_settings = UISettings::new()?;
     let foreground_color = ui_settings.GetColorValue(UIColorType::Foreground)?;
@@ -820,4 +820,10 @@ fn system_appearance() -> Result<WindowAppearance> {
 #[inline(always)]
 fn is_color_light(color: &Color) -> bool {
     ((5 * color.G as u32) + (2 * color.R as u32) + color.B as u32) > (8 * 128)
+}
+
+#[inline]
+fn should_auto_hide_scrollbars() -> Result<bool> {
+    let ui_settings = UISettings::new()?;
+    Ok(ui_settings.AutoHideScrollBars()?)
 }
