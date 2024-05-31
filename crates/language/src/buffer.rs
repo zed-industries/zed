@@ -3153,10 +3153,7 @@ impl BufferSnapshot {
         range: Range<Anchor>,
         cx: &AppContext,
     ) -> Vec<IndentGuide> {
-        fn tab_size_for_row(this: &BufferSnapshot, row: BufferRow, cx: &AppContext) -> u32 {
-            let language = this.language_at(Point::new(row, 0));
-            language_settings(language, None, cx).tab_size.get() as u32
-        }
+        let tab_size = language_settings(self.language(), None, cx).tab_size.get() as u32;
 
         let start_row = range.start.to_point(self).row;
         let end_row = range.end.to_point(self).row;
@@ -3166,9 +3163,6 @@ impl BufferSnapshot {
 
         let mut result_vec = Vec::new();
         let mut indent_stack = SmallVec::<[IndentGuide; 8]>::new();
-
-        // TODO: This should be calculated for every row but it is pretty expensive
-        let tab_size = tab_size_for_row(self, start_row, cx);
 
         while let Some((first_row, mut line_indent)) = row_indents.next() {
             let current_depth = indent_stack.len() as u32;
