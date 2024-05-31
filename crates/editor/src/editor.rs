@@ -1962,7 +1962,7 @@ impl Editor {
         self.buffer().read(cx).title(cx)
     }
 
-    pub fn snapshot(&mut self, cx: &mut WindowContext) -> EditorSnapshot {
+    pub fn snapshot(&self, cx: &mut WindowContext) -> EditorSnapshot {
         EditorSnapshot {
             mode: self.mode,
             show_gutter: self.show_gutter,
@@ -9953,7 +9953,7 @@ impl Editor {
         self.blame.as_ref()
     }
 
-    pub fn render_git_blame_gutter(&mut self, cx: &mut WindowContext) -> bool {
+    pub fn render_git_blame_gutter(&self, cx: &mut WindowContext) -> bool {
         self.show_git_blame_gutter && self.has_blame_entries(cx)
     }
 

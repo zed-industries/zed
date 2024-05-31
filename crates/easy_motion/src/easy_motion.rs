@@ -116,7 +116,7 @@ pub fn init(cx: &mut AppContext) {
     editor_events::init(cx);
 }
 
-fn register(workspace: &mut Workspace, _: &mut ViewContext<Workspace>) {
+fn register(workspace: &mut Workspace, _: &ViewContext<Workspace>) {
     workspace.register_action(|workspace: &mut Workspace, action: &Word, cx| {
         EasyMotion::word(action, workspace, cx);
     });
@@ -155,7 +155,7 @@ impl EasyMotion {
         EasyMotion::global_async(cx).and_then(|easy| easy.update(cx, f).ok())
     }
 
-    pub fn global_async(cx: &mut AsyncAppContext) -> Option<Model<Self>> {
+    pub fn global_async(cx: &AsyncAppContext) -> Option<Model<Self>> {
         cx.try_read_global::<GlobalEasyMotion, _>(|global_easy, _cx| global_easy.0.clone())
     }
 
@@ -178,7 +178,7 @@ impl EasyMotion {
     #[allow(dead_code)]
     fn update_active_editor<S>(
         cx: &mut ViewContext<Workspace>,
-        update: impl FnOnce(&mut Editor, &mut ViewContext<Editor>) -> S,
+        update: impl FnOnce(&Editor, &ViewContext<Editor>) -> S,
     ) -> Option<S> {
         let weak_editor =
             EasyMotion::read_with(cx, |easy, _cx| easy.active_editor.clone()).flatten()?;
@@ -190,7 +190,7 @@ impl EasyMotion {
         self.active_editor = Some(editor.downgrade());
     }
 
-    fn active_editor(cx: &mut WindowContext) -> Option<View<Editor>> {
+    fn active_editor(cx: &WindowContext) -> Option<View<Editor>> {
         Self::read_with(cx, |easy, _| {
             easy.active_editor.as_ref().and_then(|weak| weak.upgrade())
         })
@@ -228,7 +228,7 @@ impl EasyMotion {
         })
     }
 
-    fn word(action: &Word, workspace: &mut Workspace, cx: &mut WindowContext) {
+    fn word(action: &Word, workspace: &Workspace, cx: &mut WindowContext) {
         let Word(direction) = *action;
         // TODO other directions?
         // not sure if check for multiple editors is totally necessary
@@ -242,7 +242,7 @@ impl EasyMotion {
         }
     }
 
-    fn sub_word(action: &SubWord, workspace: &mut Workspace, cx: &mut WindowContext) {
+    fn sub_word(action: &SubWord, workspace: &Workspace, cx: &mut WindowContext) {
         let SubWord(direction) = *action;
         // TODO other directions?
         // not sure if check for multiple editors is totally necessary
@@ -256,7 +256,7 @@ impl EasyMotion {
         }
     }
 
-    fn full_word(action: &FullWord, workspace: &mut Workspace, cx: &mut WindowContext) {
+    fn full_word(action: &FullWord, workspace: &Workspace, cx: &mut WindowContext) {
         let FullWord(direction) = *action;
         // TODO other directions?
         // not sure if check for multiple editors is totally necessary
@@ -372,7 +372,7 @@ impl EasyMotion {
         util::word_starts_in_range(&map, start, end, full_word)
     }
 
-    fn word_multipane(word_type: WordType, workspace: &mut Workspace, cx: &mut WindowContext) {
+    fn word_multipane(word_type: WordType, workspace: &Workspace, cx: &mut WindowContext) {
         let Some(active_editor) = Self::active_editor(cx) else {
             return;
         };
@@ -498,11 +498,11 @@ impl EasyMotion {
         Point::new(x, y)
     }
 
-    fn pattern(_action: &Pattern, _cx: &mut WindowContext) {
+    fn pattern(_action: &Pattern, _cx: &WindowContext) {
         todo!()
     }
 
-    fn n_char(action: &NChar, workspace: &mut Workspace, cx: &mut WindowContext) {
+    fn n_char(action: &NChar, workspace: &Workspace, cx: &mut WindowContext) {
         let n = action.n;
         if workspace.is_split() && workspace_has_multiple_editors(workspace, cx) {
             let panes = workspace.panes();
@@ -889,7 +889,7 @@ impl EasyMotion {
 
                 let len = matches.len();
                 let matches = matches.into_iter().map(|(point, id, _)| (point, id));
-                let (style_0, style_1, style_2) = get_highlights_async(&mut cx);
+                let (style_0, style_1, style_2) = get_highlights_async(&cx);
                 let trie = TrieBuilder::new("asdghklqwertyuiopzxcvbnmfj".to_string(), len)
                     .populate_with(true, matches, |seq, point| {
                         let style = match seq.len() {
@@ -979,7 +979,7 @@ impl EasyMotion {
         }
     }
 
-    fn cancel(workspace: &mut Workspace, cx: &mut WindowContext) {
+    fn cancel(workspace: &Workspace, cx: &mut WindowContext) {
         let editor = Self::update(cx, |easy, _| {
             if let Some(state) = easy.multipane_state.as_mut() {
                 state.clear();
@@ -1030,23 +1030,22 @@ impl EasyMotion {
     }
 }
 
-fn workspace_has_multiple_editors(workspace: &Workspace, cx: &mut WindowContext) -> bool {
+fn workspace_has_multiple_editors(workspace: &Workspace, cx: &WindowContext) -> bool {
     let panes = workspace.panes();
     panes
         .iter()
         .filter(|pane| {
-            pane.update(cx, |pane, _cx| {
-                pane.active_item()
-                    .and_then(|item| item.downcast::<Editor>())
-            })
-            .is_some()
+            pane.read(cx)
+                .active_item()
+                .and_then(|item| item.downcast::<Editor>())
+                .is_some()
         })
         .take(2)
         .count()
         == 2
 }
 
-fn active_editor_views(workspace: &Workspace, cx: &mut WindowContext) -> Vec<View<Editor>> {
+fn active_editor_views(workspace: &Workspace, cx: &WindowContext) -> Vec<View<Editor>> {
     let panes = workspace.panes();
     panes
         .iter()
