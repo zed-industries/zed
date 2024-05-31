@@ -37,7 +37,7 @@ impl Editor {
         snapshot: &DisplaySnapshot,
         cx: &mut ViewContext<Editor>,
     ) -> Option<Vec<MultiBufferIndentGuide>> {
-        if self.should_show_indent_guides() {
+        if self.should_show_indent_guides().unwrap_or(true) {
             Some(indent_guides_in_range(visible_buffer_range, snapshot, cx))
         } else {
             None
