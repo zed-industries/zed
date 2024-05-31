@@ -1,5 +1,6 @@
 use collections::HashMap;
 use editor::display_map::DisplaySnapshot;
+use search::search;
 use serde::Deserialize;
 use std::cmp::Ordering;
 use std::{fmt, mem};
@@ -399,7 +400,6 @@ impl EasyMotion {
         editors: &[(View<Editor>, Bounds<Pixels>)],
         cx: &mut ViewContext<Workspace>,
     ) -> EditorState {
-        // TODO do this in parallel?
         // get words along with their display points within their editors
         // as well as a rough absolute position for sorting purposes
         let mut word_starts = editors
@@ -522,8 +522,23 @@ impl EasyMotion {
         todo!()
     }
 
-    fn n_char(_action: &NChar, _cx: &mut WindowContext) {
-        todo!()
+    fn n_char(action: &NChar, cx: &mut WindowContext) {
+        let Some(active_editor) = Self::active_editor(cx) else {
+            return;
+        };
+        let entity_id = active_editor.entity_id();
+
+        let new_state = active_editor.update(cx, |editor, cx| {
+            let new_state = EditorState::new_n_char(action.n as usize);
+            let ctx = new_state.keymap_context_layer();
+            editor.set_keymap_context_layer::<Self>(ctx, cx);
+            new_state
+        });
+
+        Self::update(cx, move |easy, _cx| {
+            easy.editor_states.insert(entity_id, new_state);
+        });
+        dbg!("n_char setup complete");
     }
 
     fn cancel(workspace: &mut Workspace, cx: &mut WindowContext) {
@@ -592,7 +607,9 @@ impl EasyMotion {
 
         let keys = keystroke_event.keystroke.key.as_str();
         let new_state = editor.update(cx, |editor, cx| match state {
-            EditorState::NCharInput(char_input) => Self::handle_record_char(char_input, keys, cx),
+            EditorState::NCharInput(char_input) => {
+                Self::handle_record_char(char_input, keys, editor, cx)
+            }
             EditorState::Selection(selection) => Self::handle_trim(selection, keys, editor, cx),
             EditorState::None => EditorState::None,
         });
@@ -613,7 +630,9 @@ impl EasyMotion {
 
         let keys = keystroke_event.keystroke.key.as_str();
         let new_state = match state {
-            EditorState::NCharInput(char_input) => Self::handle_record_char(char_input, keys, cx),
+            EditorState::NCharInput(char_input) => {
+                Self::handle_record_char_multipane(char_input, keys, cx)
+            }
             EditorState::Selection(selection) => Self::handle_trim_multipane(selection, keys, cx),
             EditorState::None => EditorState::None,
         };
@@ -723,20 +742,100 @@ impl EasyMotion {
         })
     }
 
-    fn handle_record_char(n_char: NCharInput, keys: &str, _: &mut WindowContext) -> EditorState {
+    fn handle_record_char_impl(
+        mut matches: Vec<DisplayPoint>,
+        editor: &mut Editor,
+        cx: &mut ViewContext<Editor>,
+    ) -> EditorState {
+        let selections = editor.selections.newest_display(cx);
+        let snapshot = editor.snapshot(cx);
+        let map = &snapshot.display_snapshot;
+
+        if matches.is_empty() {
+            return EditorState::None;
+        }
+        matches.sort_unstable_by(|a, b| {
+            let a_distance = manh_distance(a, &selections.start, 2.5);
+            let b_distance = manh_distance(b, &selections.start, 2.5);
+            if a_distance == b_distance {
+                Ordering::Equal
+            } else if a_distance < b_distance {
+                Ordering::Less
+            } else {
+                Ordering::Greater
+            }
+        });
+
+        let (style_0, style_1, style_2) = get_highlights(cx);
+        let trie = TrieBuilder::new("asdghklqwertyuiopzxcvbnmfj".to_string(), matches.len())
+            .populate_with(true, matches.into_iter(), |seq, point| {
+                let style = match seq.len() {
+                    0 | 1 => style_0,
+                    2 => style_1,
+                    3.. => style_2,
+                };
+                OverlayState {
+                    style,
+                    point,
+                    editor_id: cx.entity_id(),
+                }
+            });
+        Self::add_overlays(editor, trie.iter(), cx);
+
+        // todo dimming
+        if true {
+            let start = DisplayPoint::zero();
+            let end = end_of_document(map);
+            let anchor_start = map.display_point_to_anchor(start, Bias::Left);
+            let anchor_end = map.display_point_to_anchor(end, Bias::Left);
+            let highlight = HighlightStyle {
+                fade_out: Some(0.7),
+                ..Default::default()
+            };
+            editor.highlight_text::<Self>(vec![anchor_start..anchor_end], highlight, cx);
+        }
+        EditorState::new_selection(trie)
+    }
+
+    fn handle_record_char(
+        n_char: NCharInput,
+        keys: &str,
+        editor: &mut Editor,
+        cx: &mut ViewContext<Editor>,
+    ) -> EditorState {
         let res = n_char.record_str(keys);
         match res {
-            InputResult::ShowTrie(_query) => {
-                // maybe just have a whole separate struct for the search version?
-                // model? view?
-                // let chan = self.update_easy_and_active_editor(cx, |easy, editor, cx| {
-                //     cx.spawn(|view, cx| async move {
-                //         Self::update(cx, |easy, window| {});
-                //     });
-                // });
-
-                // search
-                // create trie
+            InputResult::ShowTrie(query) => {
+                let task = search(query, editor, cx);
+                let Some(task) = task else {
+                    return EditorState::None;
+                };
+                cx.spawn(|editor, mut cx| async move {
+                    let entity_id = editor.entity_id();
+                    let Some(editor) = editor.upgrade() else {
+                        return;
+                    };
+                    let matches = task.await;
+                    let res = editor.update(&mut cx, move |editor, cx| {
+                        editor.clear_search_within_ranges(cx);
+                        let new_state = Self::handle_record_char_impl(matches, editor, cx);
+                        // should already be set
+                        // let ctx = new_state.keymap_context_layer();
+                        // editor.set_keymap_context_layer::<Self>(ctx, cx);
+                        new_state
+                    });
+                    match res {
+                        Ok(state) => {
+                            Self::update_async(&mut cx, move |easy, _cx| {
+                                easy.editor_states.insert(entity_id, state);
+                            });
+                        }
+                        Err(err) => {
+                            dbg!(err);
+                        }
+                    }
+                })
+                .detach();
                 // show overlays
                 // etc
                 EditorState::None
@@ -744,6 +843,24 @@ impl EasyMotion {
             // do nothing
             InputResult::Recording(n_char) => EditorState::NCharInput(n_char),
         }
+    }
+
+    fn handle_record_char_multipane(
+        n_char: NCharInput,
+        keys: &str,
+        cx: &mut WindowContext,
+    ) -> EditorState {
+        todo!()
+    }
+
+    fn handle_record_char_multipane_impl(
+        query: String,
+        dimming: bool,
+        active_editor_id: EntityId,
+        editors: &[(View<Editor>, View<Pane>, Bounds<Pixels>)],
+        cx: &mut ViewContext<Workspace>,
+    ) -> EditorState {
+        todo!()
     }
 
     #[allow(dead_code)]

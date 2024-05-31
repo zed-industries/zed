@@ -1,60 +1,71 @@
-use futures::channel::oneshot;
+use std::sync::Arc;
 
-use editor::Editor;
+use futures::{Future, FutureExt};
+
+use editor::{display_map::ToDisplayPoint, DisplayPoint, Editor};
+use project::search::SearchQuery;
+use text::Bias;
 use ui::ViewContext;
+use workspace::searchable::SearchableItem;
 
-#[allow(dead_code)]
-struct Search {}
+use crate::util::{window_bottom, window_top};
 
-#[allow(dead_code)]
-impl Search {
-    pub fn search(_query: String, _cx: &mut ViewContext<Editor>) -> oneshot::Receiver<()> {
-        let (_done_tx, done_rx) = oneshot::channel();
-        // let query: Arc<_> =
-        //     match SearchQuery::text(query, true, false, false, Vec::new(), Vec::new()) {
-        //         Ok(query) => query.with_replacement(self.replacement(cx)),
-        //         Err(_) => {
-        //             self.query_contains_error = true;
-        //             self.clear_active_searchable_item_matches(cx);
-        //             cx.notify();
-        //             return done_rx;
-        //         }
-        //     }
-        //     .into();
-        // self.active_search = Some(query.clone());
-        // let query_text = query.as_str().to_string();
+pub fn search(
+    query: String,
+    editor: &mut Editor,
+    cx: &mut ViewContext<Editor>,
+) -> Option<impl Future<Output = Vec<DisplayPoint>>> {
+    let query: Arc<_> = SearchQuery::text(query, false, false, false, Vec::new(), Vec::new())
+        .ok()?
+        .into();
 
-        // let matches = active_searchable_item.find_matches(query, cx);
+    let map = editor.snapshot(cx).display_snapshot;
+    let text_layout_details = editor.text_layout_details(cx);
+    // todo switch editor to view and do search in background?
+    let start = window_top(&map, &text_layout_details);
+    let end = window_bottom(&map, &text_layout_details);
+    let start = map.display_point_to_anchor(start, Bias::Left);
+    let end = map.display_point_to_anchor(end, Bias::Left);
+    let ranges = [start..end];
+    editor.set_search_within_ranges(&ranges, cx);
+    let matches = editor
+        .find_matches(query, cx)
+        .then(move |matches| async move {
+            let map = map;
+            matches
+                .into_iter()
+                .map(|anchor| anchor.start.to_display_point(&map))
+                .collect::<Vec<_>>()
+        });
+    Some(matches)
+}
 
-        // let active_searchable_item = active_searchable_item.downgrade();
-        // self.pending_search = Some(cx.spawn(|this, mut cx| async move {
-        //     let matches = matches.await;
+pub fn search_multipane(
+    query: String,
+    editor: &mut Editor,
+    cx: &mut ViewContext<Editor>,
+) -> Option<impl Future<Output = Vec<DisplayPoint>>> {
+    let query: Arc<_> = SearchQuery::text(query, false, false, false, Vec::new(), Vec::new())
+        .ok()?
+        .into();
 
-        //     this.update(&mut cx, |this, cx| {
-        //         let Some(active_searchable_item) =
-        //             WeakSearchableItemHandle::upgrade(active_searchable_item.as_ref(), cx)
-        //         else {
-        //             return;
-        //         };
-
-        //         this.searchable_items_with_matches
-        //             .insert(active_searchable_item.downgrade(), matches);
-
-        //         this.update_match_index(cx);
-        //         this.search_history
-        //             .add(&mut this.search_history_cursor, query_text);
-        //         if !this.dismissed {
-        //             let matches = this
-        //                 .searchable_items_with_matches
-        //                 .get(&active_searchable_item.downgrade())
-        //                 .unwrap();
-        //             active_searchable_item.update_matches(matches, cx);
-        //             let _ = done_tx.send(());
-        //         }
-        //         cx.notify();
-        //     })
-        //     .log_err();
-        // }));
-        done_rx
-    }
+    let map = editor.snapshot(cx).display_snapshot;
+    let text_layout_details = editor.text_layout_details(cx);
+    // todo switch editor to view and do search in background?
+    let start = window_top(&map, &text_layout_details);
+    let end = window_bottom(&map, &text_layout_details);
+    let start = map.display_point_to_anchor(start, Bias::Left);
+    let end = map.display_point_to_anchor(end, Bias::Left);
+    let ranges = [start..end];
+    editor.set_search_within_ranges(&ranges, cx);
+    let matches = editor
+        .find_matches(query, cx)
+        .then(move |matches| async move {
+            let map = map;
+            matches
+                .into_iter()
+                .map(|anchor| anchor.start.to_display_point(&map))
+                .collect::<Vec<_>>()
+        });
+    Some(matches)
 }
