@@ -43,6 +43,10 @@ impl From<Role> for String {
     }
 }
 
+fn custom_default_max_token_count() -> usize {
+    128000
+}
+
 #[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, EnumIter)]
 pub enum Model {
@@ -58,6 +62,7 @@ pub enum Model {
     #[serde(rename = "custom")]
     Custom {
         name: String,
+        #[serde(default = "custom_default_max_token_count")]
         max_token_count: usize,
     },
 }

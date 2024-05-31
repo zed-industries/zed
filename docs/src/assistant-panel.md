@@ -101,11 +101,39 @@ To do so, add the following to your Zed `settings.json`:
 
 The custom URL here is `http://localhost:11434/v1`.
 
+## Using a custom model for OpenAI
+
+Sometimes you may want to use a custom model for OpenAI-compatible endpoints. To do so, add the following to your Zed `settings.json`:
+
+```json
+{
+  "assistant": {
+    "version": "1",
+    "provider": {
+      "name": "openai",
+      "type": "openai",
+      "default_model": {
+        "custom": {
+          "name": "example",  // The name of the model
+          "max_token_count": 128000  // The maximum token count for the model
+        }
+      }
+    }
+  }
+}
+```
+
+`max_token_count` is optional and defaults to 128000.
+
 ## Using Ollama on macOS
 
-You can use Ollama with the Zed assistant by making Ollama appear as an OpenAPI endpoint.
+You can use Ollama with the Zed assistant by customizing API endpoints and models.
 
-1. Add the following to your Zed `settings.json`:
+1. Download, for example, the `mistral` model with Ollama:
+  ```
+  ollama run mistral
+  ```
+2. Add the following to your Zed `settings.json`:
 
   ```json
   {
@@ -114,25 +142,21 @@ You can use Ollama with the Zed assistant by making Ollama appear as an OpenAPI 
       "provider": {
         "name": "openai",
         "type": "openai",
-        "default_model": "gpt-4-turbo-preview",
+        "default_model": {
+          "custom": {
+            "name": "mistral"
+          }
+        },
         "api_url": "http://localhost:11434/v1"
       }
     }
   }
   ```
-2. Download, for example, the `mistral` model with Ollama:
-  ```
-  ollama run mistral
-  ```
-3. Copy the model and change its name to match the model in the Zed `settings.json`:
-  ```
-  ollama cp mistral gpt-4-turbo-preview
-  ```
-4. Use `assistant: reset key` (see the [Setup](#setup) section above) and enter the following API key:
+3. Use `assistant: reset key` (see the [Setup](#setup) section above) and enter the following API key:
   ```
   ollama
   ```
-5. Restart Zed
+4. Restart Zed
 
 ## Prompt Library
 
