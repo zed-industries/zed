@@ -11631,6 +11631,7 @@ impl ViewInputHandler for Editor {
         Some(range.start.0..range.end.0)
     }
 
+    #[cfg(target_os = "linux")]
     fn selection_position(&mut self, cx: &mut ViewContext<Self>) -> usize {
         self.selections.last::<OffsetUtf16>(cx).head().0
     }

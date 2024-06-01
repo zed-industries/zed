@@ -901,6 +901,7 @@ impl InputHandler for TerminalInputHandler {
         }
     }
 
+    #[cfg(target_os = "linux")]
     fn selection_position(&mut self, _cx: &mut WindowContext) -> usize {
         0
     }
