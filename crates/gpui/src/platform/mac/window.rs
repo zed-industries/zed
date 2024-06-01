@@ -799,7 +799,7 @@ impl PlatformWindow for MacWindow {
         }
     }
 
-    fn display(&self) -> Rc<dyn PlatformDisplay> {
+    fn display(&self) -> Option<Rc<dyn PlatformDisplay>> {
         unsafe {
             let screen = self.0.lock().native_window.screen();
             let device_description: id = msg_send![screen, deviceDescription];
@@ -810,7 +810,7 @@ impl PlatformWindow for MacWindow {
 
             let screen_number: u32 = msg_send![screen_number, unsignedIntValue];
 
-            Rc::new(MacDisplay(screen_number))
+            Some(Rc::new(MacDisplay(screen_number)))
         }
     }
 

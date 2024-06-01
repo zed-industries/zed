@@ -99,7 +99,6 @@ objc = "0.2"
 
 [target.'cfg(any(target_os = "linux", target_os = "windows"))'.dependencies]
 flume = "0.11"
-#TODO: use these on all platforms
 blade-graphics.workspace = true
 blade-macros.workspace = true
 blade-util.workspace = true
