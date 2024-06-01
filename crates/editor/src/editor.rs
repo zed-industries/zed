@@ -494,7 +494,7 @@ pub struct Editor {
     leader_peer_id: Option<PeerId>,
     remote_id: Option<ViewId>,
     hover_state: HoverState,
-    overlays: Vec<Overlay>,
+    overlay_map: HashMap<TypeId, Vec<Overlay>>,
     gutter_hovered: bool,
     hovered_link_state: Option<HoveredLinkState>,
     inline_completion_provider: Option<RegisteredInlineCompletionProvider>,
@@ -1701,7 +1701,7 @@ impl Editor {
         cx.on_blur(&focus_handle, Self::handle_blur).detach();
 
         let mut this = Self {
-            overlays: Default::default(),
+            overlay_map: Default::default(),
             focus_handle,
             buffer: buffer.clone(),
             display_map: display_map.clone(),
@@ -4811,17 +4811,20 @@ impl Editor {
         snapshot: &EditorSnapshot,
         visible_display_row_range: Range<DisplayRow>,
         cx: &mut ViewContext<Editor>,
-    ) -> Vec<Option<(DisplayPoint, f32, AnyElement)>> {
+    ) -> Vec<(DisplayPoint, f32, AnyElement)> {
         let Some(style) = self.style.as_ref() else {
             return vec![];
         };
         // let mut new_style = style.clone();
         // new_style.text.font_size *= 0.8;
-        let overlays = &self.overlays;
-        overlays
-            .into_iter()
-            .map(|overlay| overlay.render(style, snapshot, visible_display_row_range.clone(), cx))
-            .collect_vec()
+        let overlays = &self.overlay_map;
+        let iter = overlays
+            .iter()
+            .flat_map(|(_, list)| list.iter())
+            .filter_map(move |overlay| {
+                overlay.render(style, snapshot, visible_display_row_range.clone(), cx)
+            });
+        iter.collect_vec()
     }
 
     fn hide_context_menu(&mut self, cx: &mut ViewContext<Self>) -> Option<ContextMenu> {
@@ -10422,7 +10425,7 @@ impl Editor {
             .collect()
     }
 
-    pub fn add_overlay(
+    pub fn add_overlay<T: 'static>(
         &mut self,
         text: String,
         point: DisplayPoint,
@@ -10436,12 +10439,13 @@ impl Editor {
             point,
             offset,
         };
-        self.overlays.push(overlay);
+        let list = self.overlay_map.entry(TypeId::of::<T>()).or_default();
+        list.push(overlay);
         cx.notify();
     }
 
-    pub fn clear_overlays(&mut self, cx: &mut ViewContext<Self>) {
-        self.overlays.clear();
+    pub fn clear_overlays<T: 'static>(&mut self, cx: &mut ViewContext<Self>) {
+        self.overlay_map.remove(&TypeId::of::<T>());
         cx.notify();
     }
 

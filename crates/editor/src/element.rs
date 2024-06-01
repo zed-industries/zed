@@ -2404,11 +2404,11 @@ impl EditorElement {
         });
         if overlays.is_empty() {
             return false;
-        }
+        };
 
         let available_space = size(AvailableSpace::MinContent, AvailableSpace::MinContent);
 
-        for (anchor, offset, mut overlay) in overlays.into_iter().flatten() {
+        for (anchor, offset, mut overlay) in overlays {
             let _overlay_size = overlay.layout_as_root(available_space, cx);
 
             let hovered_row_layout =

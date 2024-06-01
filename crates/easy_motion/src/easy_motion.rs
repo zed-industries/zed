@@ -676,19 +676,19 @@ impl EasyMotion {
                 editor.change_selections(Some(Autoscroll::fit()), cx, |selection| {
                     selection.move_cursors_with(|_, _, _| (overlay.point, SelectionGoal::None))
                 });
-                editor.clear_overlays(cx);
+                editor.clear_overlays::<Self>(cx);
                 editor.clear_highlights::<Self>(cx);
                 editor.remove_keymap_context_layer::<Self>(cx);
                 EditorState::None
             }
             TrimResult::Changed => {
                 let trie = selection.trie();
-                editor.clear_overlays(cx);
+                editor.clear_overlays::<Self>(cx);
                 Self::add_overlays(editor, trie.iter(), cx);
                 EditorState::Selection(selection)
             }
             TrimResult::Err => {
-                editor.clear_overlays(cx);
+                editor.clear_overlays::<Self>(cx);
                 editor.clear_highlights::<Self>(cx);
                 editor.remove_keymap_context_layer::<Self>(cx);
                 EditorState::None
@@ -721,7 +721,7 @@ impl EasyMotion {
                 });
                 for editor in editors {
                     editor.update(cx, |editor, cx| {
-                        editor.clear_overlays(cx);
+                        editor.clear_overlays::<Self>(cx);
                         editor.clear_highlights::<Self>(cx);
                         editor.remove_keymap_context_layer::<Self>(cx);
                     });
@@ -735,7 +735,7 @@ impl EasyMotion {
                         .iter()
                         .filter(|(_, overlay)| overlay.editor_id == editor.entity_id());
                     editor.update(cx, |editor, cx| {
-                        editor.clear_overlays(cx);
+                        editor.clear_overlays::<Self>(cx);
                         Self::add_overlays(editor, iter, cx);
                     });
                 }
@@ -744,7 +744,7 @@ impl EasyMotion {
             TrimResult::Err => {
                 for editor in editors {
                     editor.update(cx, |editor, cx| {
-                        editor.clear_overlays(cx);
+                        editor.clear_overlays::<Self>(cx);
                         editor.clear_highlights::<Self>(cx);
                         editor.remove_keymap_context_layer::<Self>(cx);
                     });
@@ -817,18 +817,19 @@ impl EasyMotion {
         let Some(task) = task else {
             return EditorState::None;
         };
+
         cx.spawn(|editor, mut cx| async move {
             let entity_id = editor.entity_id();
             let Some(editor) = editor.upgrade() else {
                 return;
             };
+
             let matches = task.await;
             let res = editor.update(&mut cx, move |editor, cx| {
                 editor.clear_search_within_ranges(cx);
                 let new_state = Self::handle_record_char_impl(matches, editor, cx);
-                // should already be set
-                // let ctx = new_state.keymap_context_layer();
-                // editor.set_keymap_context_layer::<Self>(ctx, cx);
+                let ctx = new_state.keymap_context_layer();
+                editor.set_keymap_context_layer::<Self>(ctx, cx);
                 new_state
             });
             match res {
@@ -1022,14 +1023,14 @@ impl EasyMotion {
             let editors = active_editor_views(workspace, cx);
             for editor in editors {
                 editor.update(cx, |editor, cx| {
-                    editor.clear_overlays(cx);
+                    editor.clear_overlays::<Self>(cx);
                     editor.clear_highlights::<Self>(cx);
                     editor.remove_keymap_context_layer::<Self>(cx);
                 });
             }
         } else if let Some(editor) = editor.and_then(|editor| editor.upgrade()) {
             editor.update(cx, |editor, cx| {
-                editor.clear_overlays(cx);
+                editor.clear_overlays::<Self>(cx);
                 editor.clear_highlights::<Self>(cx);
                 editor.remove_keymap_context_layer::<Self>(cx);
             });
@@ -1052,7 +1053,7 @@ impl EasyMotion {
                     },
                 ));
             }
-            editor.add_overlay(seq, overlay.point, 0.0, highlights, cx);
+            editor.add_overlay::<Self>(seq, overlay.point, 0.0, highlights, cx);
         }
     }
 }
