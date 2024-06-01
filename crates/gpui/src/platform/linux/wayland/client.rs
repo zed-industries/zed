@@ -13,6 +13,7 @@ use collections::HashMap;
 use copypasta::wayland_clipboard::{create_clipboards_from_external, Clipboard, Primary};
 use copypasta::ClipboardProvider;
 use filedescriptor::Pipe;
+
 use smallvec::SmallVec;
 use util::ResultExt;
 use wayland_backend::client::ObjectId;
@@ -56,6 +57,7 @@ use xkbcommon::xkb::ffi::XKB_KEYMAP_FORMAT_TEXT_V1;
 use xkbcommon::xkb::{self, Keycode, KEYMAP_COMPILE_NO_FLAGS};
 
 use super::super::{open_uri_internal, read_fd, DOUBLE_CLICK_INTERVAL};
+use super::display::WaylandDisplay;
 use super::window::{ImeInput, WaylandWindowStatePtr};
 use crate::platform::linux::is_within_click_distance;
 use crate::platform::linux::wayland::cursor::Cursor;
@@ -507,14 +509,33 @@ impl WaylandClient {
 }
 
 impl LinuxClient for WaylandClient {
-    // todo(linux)
     fn displays(&self) -> Vec<Rc<dyn PlatformDisplay>> {
-        Vec::new()
+        self.0
+            .borrow()
+            .outputs
+            .iter()
+            .map(|(id, output)| {
+                Rc::new(WaylandDisplay {
+                    id: id.clone(),
+                    bounds: output.bounds,
+                }) as Rc<dyn PlatformDisplay>
+            })
+            .collect()
     }
 
-    // todo(linux)
     fn display(&self, id: DisplayId) -> Option<Rc<dyn PlatformDisplay>> {
-        unimplemented!()
+        self.0
+            .borrow()
+            .outputs
+            .iter()
+            .find_map(|(object_id, output)| {
+                (object_id.protocol_id() == id.0).then(|| {
+                    Rc::new(WaylandDisplay {
+                        id: object_id.clone(),
+                        bounds: output.bounds,
+                    }) as Rc<dyn PlatformDisplay>
+                })
+            })
     }
 
     fn primary_display(&self) -> Option<Rc<dyn PlatformDisplay>> {
