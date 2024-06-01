@@ -393,17 +393,8 @@ impl WaylandWindowStatePtr {
     ) {
         let mut state = self.state.borrow_mut();
 
-        // We use `WpFractionalScale` instead to set the scale if it's available
-        if state.globals.fractional_scale_manager.is_some() {
-            return;
-        }
-
         match event {
             wl_surface::Event::Enter { output } => {
-                // We use `PreferredBufferScale` instead to set the scale if it's available
-                if state.surface.version() >= wl_surface::EVT_PREFERRED_BUFFER_SCALE_SINCE {
-                    return;
-                }
                 let id = output.id();
 
                 let Some(output) = outputs.get(&id) else {
@@ -414,28 +405,32 @@ impl WaylandWindowStatePtr {
 
                 let scale = primary_output_scale(&mut state);
 
-                state.surface.set_buffer_scale(scale);
-                drop(state);
-                self.rescale(scale as f32);
+                // We use `PreferredBufferScale` instead to set the scale if it's available
+                if state.surface.version() < wl_surface::EVT_PREFERRED_BUFFER_SCALE_SINCE {
+                    state.surface.set_buffer_scale(scale);
+                    drop(state);
+                    self.rescale(scale as f32);
+                }
             }
             wl_surface::Event::Leave { output } => {
-                // We use `PreferredBufferScale` instead to set the scale if it's available
-                if state.surface.version() >= wl_surface::EVT_PREFERRED_BUFFER_SCALE_SINCE {
-                    return;
-                }
-
                 state.outputs.remove(&output.id());
 
                 let scale = primary_output_scale(&mut state);
 
-                state.surface.set_buffer_scale(scale);
-                drop(state);
-                self.rescale(scale as f32);
+                // We use `PreferredBufferScale` instead to set the scale if it's available
+                if state.surface.version() < wl_surface::EVT_PREFERRED_BUFFER_SCALE_SINCE {
+                    state.surface.set_buffer_scale(scale);
+                    drop(state);
+                    self.rescale(scale as f32);
+                }
             }
             wl_surface::Event::PreferredBufferScale { factor } => {
-                state.surface.set_buffer_scale(factor);
-                drop(state);
-                self.rescale(factor as f32);
+                // We use `WpFractionalScale` instead to set the scale if it's available
+                if state.globals.fractional_scale_manager.is_none() {
+                    state.surface.set_buffer_scale(factor);
+                    drop(state);
+                    self.rescale(factor as f32);
+                }
             }
             _ => {}
         }
