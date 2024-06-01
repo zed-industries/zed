@@ -1,5 +1,3 @@
-// todo(linux): remove
-#![cfg_attr(target_os = "linux", allow(dead_code))]
 // todo(windows): remove
 #![cfg_attr(windows, allow(dead_code))]
 
