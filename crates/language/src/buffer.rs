@@ -3139,7 +3139,7 @@ impl BufferSnapshot {
         overwrite_if_enabled: Option<bool>,
         cx: &AppContext,
     ) -> Vec<IndentGuide> {
-        let language_settings = language_settings(self.language(), None, cx);
+        let language_settings = language_settings(self.language(), self.file.as_ref(), cx);
         let settings = language_settings.indent_guides;
         if !(overwrite_if_enabled.unwrap_or(settings.enabled)) {
             return Vec::new();
