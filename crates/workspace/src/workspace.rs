@@ -2523,6 +2523,7 @@ impl Workspace {
             pane::Event::Split(direction) => {
                 self.split_and_clone(pane, *direction, cx);
             }
+            pane::Event::JoinIntoNext => self.join_pane_into_next(pane, cx),
             pane::Event::Remove => self.remove_pane(pane, cx),
             pane::Event::ActivateItem { local } => {
                 pane.model.update(cx, |pane, _| {
@@ -2653,6 +2654,20 @@ impl Workspace {
             task.await?;
             Ok(())
         }))
+    }
+
+    pub fn join_pane_into_next(&mut self, pane: View<Pane>, cx: &mut ViewContext<Self>) {
+        let next_pane = self
+            .find_pane_in_direction(SplitDirection::Right, cx)
+            .or_else(|| self.find_pane_in_direction(SplitDirection::Left, cx));
+        let Some(next_pane) = next_pane else {
+            return;
+        };
+        let item_ids: Vec<EntityId> = pane.read(cx).items().map(|item| item.item_id()).collect();
+        for item_id in item_ids {
+            self.move_item(pane.clone(), next_pane.clone(), item_id, 0, cx);
+        }
+        cx.notify();
     }
 
     pub fn move_item(

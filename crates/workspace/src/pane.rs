@@ -121,6 +121,7 @@ actions!(
         CloseItemsToTheRight,
         GoBack,
         GoForward,
+        JoinIntoNext,
         ReopenClosedItem,
         SplitLeft,
         SplitUp,
@@ -146,6 +147,7 @@ pub enum Event {
     Remove,
     RemoveItem { item_id: EntityId },
     Split(SplitDirection),
+    JoinIntoNext,
     ChangeItemTitle,
     Focus,
     ZoomIn,
@@ -172,6 +174,7 @@ impl fmt::Debug for Event {
                 .debug_struct("Split")
                 .field("direction", direction)
                 .finish(),
+            Event::JoinIntoNext => f.write_str("JoinIntoNext"),
             Event::ChangeItemTitle => f.write_str("ChangeItemTitle"),
             Event::Focus => f.write_str("Focus"),
             Event::ZoomIn => f.write_str("ZoomIn"),
@@ -606,6 +609,10 @@ impl Pane {
                 })
             })
         }
+    }
+
+    fn join_into_next(&mut self, cx: &mut ViewContext<Self>) {
+        cx.emit(Event::JoinIntoNext);
     }
 
     fn history_updated(&mut self, cx: &mut ViewContext<Self>) {
@@ -2076,6 +2083,7 @@ impl Render for Pane {
             .on_action(cx.listener(|pane, _: &SplitDown, cx| pane.split(SplitDirection::Down, cx)))
             .on_action(cx.listener(|pane, _: &GoBack, cx| pane.navigate_backward(cx)))
             .on_action(cx.listener(|pane, _: &GoForward, cx| pane.navigate_forward(cx)))
+            .on_action(cx.listener(|pane, _: &JoinIntoNext, cx| pane.join_into_next(cx)))
             .on_action(cx.listener(Pane::toggle_zoom))
             .on_action(cx.listener(|pane: &mut Pane, action: &ActivateItem, cx| {
                 pane.activate_item(action.0, true, true, cx);
