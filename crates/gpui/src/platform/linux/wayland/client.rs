@@ -139,8 +139,9 @@ impl Globals {
     }
 }
 
-#[derive(Default, Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Default, Debug, Clone, PartialEq, Eq, Hash)]
 pub struct InProgressOutput {
+    name: Option<String>,
     scale: Option<i32>,
     position: Option<Point<DevicePixels>>,
     size: Option<Size<DevicePixels>>,
@@ -151,6 +152,7 @@ impl InProgressOutput {
         if let Some((position, size)) = self.position.zip(self.size) {
             let scale = self.scale.unwrap_or(1);
             Some(Output {
+                name: self.name.clone(),
                 scale,
                 bounds: Bounds::new(position, size),
             })
@@ -160,20 +162,11 @@ impl InProgressOutput {
     }
 }
 
-#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+#[derive(Debug, Clone, Eq, PartialEq, Hash)]
 pub struct Output {
+    pub name: Option<String>,
     pub scale: i32,
     pub bounds: Bounds<DevicePixels>,
-}
-
-impl Hash for Output {
-    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
-        state.write_i32(self.scale);
-        state.write_i32(self.bounds.origin.x.0);
-        state.write_i32(self.bounds.origin.y.0);
-        state.write_i32(self.bounds.size.width.0);
-        state.write_i32(self.bounds.size.height.0);
-    }
 }
 
 pub(crate) struct WaylandClientState {
@@ -337,7 +330,6 @@ impl Drop for WaylandClient {
 }
 
 const WL_DATA_DEVICE_MANAGER_VERSION: u32 = 3;
-const WL_OUTPUT_VERSION: u32 = 2;
 
 fn wl_seat_version(version: u32) -> u32 {
     // We rely on the wl_pointer.frame event
@@ -352,6 +344,20 @@ fn wl_seat_version(version: u32) -> u32 {
     }
 
     version.clamp(WL_SEAT_MIN_VERSION, WL_SEAT_MAX_VERSION)
+}
+
+fn wl_output_version(version: u32) -> u32 {
+    const WL_OUTPUT_MIN_VERSION: u32 = 2;
+    const WL_OUTPUT_MAX_VERSION: u32 = 4;
+
+    if version < WL_OUTPUT_MIN_VERSION {
+        panic!(
+            "wl_output below required version: {} < {}",
+            version, WL_OUTPUT_MIN_VERSION
+        );
+    }
+
+    version.clamp(WL_OUTPUT_MIN_VERSION, WL_OUTPUT_MAX_VERSION)
 }
 
 impl WaylandClient {
@@ -378,7 +384,7 @@ impl WaylandClient {
                     "wl_output" => {
                         let output = globals.registry().bind::<wl_output::WlOutput, _, _>(
                             global.name,
-                            WL_OUTPUT_VERSION,
+                            wl_output_version(global.version),
                             &qh,
                             (),
                         );
@@ -517,6 +523,7 @@ impl LinuxClient for WaylandClient {
             .map(|(id, output)| {
                 Rc::new(WaylandDisplay {
                     id: id.clone(),
+                    name: output.name.clone(),
                     bounds: output.bounds,
                 }) as Rc<dyn PlatformDisplay>
             })
@@ -532,6 +539,7 @@ impl LinuxClient for WaylandClient {
                 (object_id.protocol_id() == id.0).then(|| {
                     Rc::new(WaylandDisplay {
                         id: object_id.clone(),
+                        name: output.name.clone(),
                         bounds: output.bounds,
                     }) as Rc<dyn PlatformDisplay>
                 })
@@ -716,8 +724,12 @@ impl Dispatch<wl_registry::WlRegistry, GlobalListContents> for WaylandClientStat
                     );
                 }
                 "wl_output" => {
-                    let output =
-                        registry.bind::<wl_output::WlOutput, _, _>(name, WL_OUTPUT_VERSION, qh, ());
+                    let output = registry.bind::<wl_output::WlOutput, _, _>(
+                        name,
+                        wl_output_version(version),
+                        qh,
+                        (),
+                    );
 
                     state
                         .in_progress_outputs
@@ -821,6 +833,9 @@ impl Dispatch<wl_output::WlOutput, ()> for WaylandClientStatePtr {
         };
 
         match event {
+            wl_output::Event::Name { name } => {
+                in_progress_output.name = Some(name);
+            }
             wl_output::Event::Scale { factor } => {
                 in_progress_output.scale = Some(factor);
             }

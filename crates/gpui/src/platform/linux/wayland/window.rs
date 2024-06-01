@@ -401,7 +401,7 @@ impl WaylandWindowStatePtr {
                     return;
                 };
 
-                state.outputs.insert(id, *output);
+                state.outputs.insert(id, output.clone());
 
                 let scale = primary_output_scale(&mut state);
 
@@ -597,10 +597,10 @@ fn primary_output_scale(state: &mut RefMut<WaylandWindowState>) -> i32 {
     for (id, output) in state.outputs.iter() {
         if let Some((_, output_data)) = &current_output {
             if output.scale > output_data.scale {
-                current_output = Some((id.clone(), *output));
+                current_output = Some((id.clone(), output.clone()));
             }
         } else {
-            current_output = Some((id.clone(), *output));
+            current_output = Some((id.clone(), output.clone()));
         }
         scale = scale.max(output.scale);
     }
@@ -659,6 +659,7 @@ impl PlatformWindow for WaylandWindow {
         self.borrow().display.as_ref().map(|(id, display)| {
             Rc::new(WaylandDisplay {
                 id: id.clone(),
+                name: display.name.clone(),
                 bounds: display.bounds,
             }) as Rc<dyn PlatformDisplay>
         })
