@@ -411,6 +411,13 @@ impl PlatformInputHandler {
             .flatten()
     }
 
+    fn selection_position(&mut self) -> usize {
+        self.cx
+            .update(|cx| self.handler.selection_position(cx))
+            .ok()
+            .unwrap()
+    }
+
     fn marked_text_range(&mut self) -> Option<Range<usize>> {
         self.cx
             .update(|cx| self.handler.marked_text_range(cx))
@@ -479,6 +486,10 @@ pub trait InputHandler: 'static {
     ///
     /// Return value is in terms of UTF-16 characters, from 0 to the length of the document
     fn selected_text_range(&mut self, cx: &mut WindowContext) -> Option<Range<usize>>;
+
+    #[cfg(target_os = "linux")]
+    /// Get the current selection position
+    fn selection_position(&mut self, cx: &mut WindowContext) -> usize;
 
     /// Get the range of the currently marked text, if any
     /// Corresponds to [markedRange()](https://developer.apple.com/documentation/appkit/nstextinputclient/1438250-markedrange)

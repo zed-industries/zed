@@ -11623,13 +11623,16 @@ impl ViewInputHandler for Editor {
     fn selected_text_range(&mut self, cx: &mut ViewContext<Self>) -> Option<Range<usize>> {
         // Prevent the IME menu from appearing when holding down an alphabetic key
         // while input is disabled.
-        #[cfg(not(target_os = "linux"))]
         if !self.input_enabled {
             return None;
         }
 
         let range = self.selections.newest::<OffsetUtf16>(cx).range();
         Some(range.start.0..range.end.0)
+    }
+
+    fn selection_position(&mut self, cx: &mut ViewContext<Self>) -> usize {
+        self.selections.last::<OffsetUtf16>(cx).head().0
     }
 
     fn marked_text_range(&self, cx: &mut ViewContext<Self>) -> Option<Range<usize>> {

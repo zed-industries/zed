@@ -901,6 +901,10 @@ impl InputHandler for TerminalInputHandler {
         }
     }
 
+    fn selection_position(&mut self, cx: &mut WindowContext) -> usize {
+        0
+    }
+
     fn marked_text_range(&mut self, _: &mut WindowContext) -> Option<std::ops::Range<usize>> {
         None
     }
