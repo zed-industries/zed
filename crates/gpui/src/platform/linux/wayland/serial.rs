@@ -1,6 +1,8 @@
 use std::time::Instant;
 
 use collections::HashMap;
+use wayland_backend::client::ObjectId;
+use wayland_client::{protocol::wl_seat, Proxy};
 
 #[derive(Debug, Hash, PartialEq, Eq)]
 pub(crate) enum SerialKind {

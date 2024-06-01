@@ -257,21 +257,7 @@ impl X11Client {
 
         let screen = xcb_connection.setup().roots.get(x_root_index).unwrap();
 
-        // Values from `Database::GET_RESOURCE_DATABASE`
-        let resource_manager = xcb_connection
-            .get_property(
-                false,
-                screen.root,
-                xproto::AtomEnum::RESOURCE_MANAGER,
-                xproto::AtomEnum::STRING,
-                0,
-                100_000_000,
-            )
-            .unwrap();
-        let resource_manager = resource_manager.reply().unwrap();
-
-        // todo(linux): read hostname
-        let resource_database = Database::new_from_default(&resource_manager, "HOSTNAME".into());
+        let resource_database = x11rb::resource_manager::new_from_default(&xcb_connection).unwrap();
 
         let scale_factor = resource_database
             .get_value("Xft.dpi", "Xft.dpi")

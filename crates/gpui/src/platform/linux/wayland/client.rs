@@ -190,8 +190,9 @@ impl Hash for Output {
 pub(crate) struct WaylandClientState {
     serial_tracker: SerialTracker,
     globals: Globals,
-    wl_seat: wl_seat::WlSeat, // todo(linux): multi-seat support
+    wl_seat: wl_seat::WlSeat, // TODO: Multi seat support
     wl_pointer: Option<wl_pointer::WlPointer>,
+    wl_keyboard: Option<wl_keyboard::WlKeyboard>,
     cursor_shape_device: Option<wp_cursor_shape_device_v1::WpCursorShapeDeviceV1>,
     data_device: Option<wl_data_device::WlDataDevice>,
     text_input: Option<zwp_text_input_v3::ZwpTextInputV3>,
@@ -450,6 +451,7 @@ impl WaylandClient {
             globals,
             wl_seat: seat,
             wl_pointer: None,
+            wl_keyboard: None,
             cursor_shape_device: None,
             data_device,
             text_input: None,
@@ -681,8 +683,19 @@ impl Dispatch<wl_registry::WlRegistry, GlobalListContents> for WaylandClientStat
                 version,
             } => match &interface[..] {
                 "wl_seat" => {
-                    state.wl_pointer = None;
-                    registry.bind::<wl_seat::WlSeat, _, _>(name, wl_seat_version(version), qh, ());
+                    if let Some(wl_pointer) = state.wl_pointer.take() {
+                        wl_pointer.release();
+                    }
+                    if let Some(wl_keyboard) = state.wl_keyboard.take() {
+                        wl_keyboard.release();
+                    }
+                    state.wl_seat.release();
+                    state.wl_seat = registry.bind::<wl_seat::WlSeat, _, _>(
+                        name,
+                        wl_seat_version(version),
+                        qh,
+                        (),
+                    );
                 }
                 "wl_output" => {
                     let output =
@@ -694,7 +707,9 @@ impl Dispatch<wl_registry::WlRegistry, GlobalListContents> for WaylandClientStat
                 }
                 _ => {}
             },
-            wl_registry::Event::GlobalRemove { name: _ } => {}
+            wl_registry::Event::GlobalRemove { name: _ } => {
+                // TODO: handle global removal
+            }
             _ => {}
         }
     }
@@ -904,12 +919,19 @@ impl Dispatch<wl_seat::WlSeat, ()> for WaylandClientStatePtr {
             let client = state.get_client();
             let mut state = client.borrow_mut();
             if capabilities.contains(wl_seat::Capability::Keyboard) {
-                seat.get_keyboard(qh, ());
+                let keyboard = seat.get_keyboard(qh, ());
+
                 state.text_input = state
                     .globals
                     .text_input_manager
                     .as_ref()
                     .map(|text_input_manager| text_input_manager.get_text_input(&seat, qh, ()));
+
+                if let Some(wl_keyboard) = &state.wl_keyboard {
+                    wl_keyboard.release();
+                }
+
+                state.wl_keyboard = Some(keyboard);
             }
             if capabilities.contains(wl_seat::Capability::Pointer) {
                 let pointer = seat.get_pointer(qh, ());
@@ -918,6 +940,11 @@ impl Dispatch<wl_seat::WlSeat, ()> for WaylandClientStatePtr {
                     .cursor_shape_manager
                     .as_ref()
                     .map(|cursor_shape_manager| cursor_shape_manager.get_pointer(&pointer, qh, ()));
+
+                if let Some(wl_pointer) = &state.wl_pointer {
+                    wl_pointer.release();
+                }
+
                 state.wl_pointer = Some(pointer);
             }
         }
@@ -1087,8 +1114,8 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for WaylandClientStatePtr {
                             state.compose_state = Some(compose);
                         }
                         let input = PlatformInput::KeyDown(KeyDownEvent {
-                            keystroke,
-                            is_held: false, // todo(linux)
+                            keystroke: keystroke.clone(),
+                            is_held: false,
                         });
 
                         state.repeat.current_id += 1;
@@ -1099,7 +1126,10 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for WaylandClientStatePtr {
                         state
                             .loop_handle
                             .insert_source(Timer::from_duration(state.repeat.delay), {
-                                let input = input.clone();
+                                let input = PlatformInput::KeyDown(KeyDownEvent {
+                                    keystroke,
+                                    is_held: true,
+                                });
                                 move |event, _metadata, this| {
                                     let mut client = this.get_client();
                                     let mut state = client.borrow_mut();
