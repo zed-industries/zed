@@ -3409,6 +3409,12 @@ impl<'a> WindowContext<'a> {
         self.window.platform_window.toggle_fullscreen();
     }
 
+    #[cfg(target_os = "linux")]
+    /// Updates the IME panel position suggestions for languages like japanese, chinese.
+    pub fn update_ime_position(&self) {
+        self.window.platform_window.update_ime_position();
+    }
+
     /// Present a platform dialog.
     /// The provided message will be presented, along with buttons for each answer.
     /// When a button is clicked, the returned Receiver will receive the index of the clicked button.
@@ -3572,14 +3578,6 @@ impl WindowContext<'_> {
     /// Returns the raw HWND handle for the window.
     pub fn get_raw_handle(&self) -> windows::Win32::Foundation::HWND {
         self.window.platform_window.get_raw_handle()
-    }
-}
-
-#[cfg(target_os = "linux")]
-impl WindowContext<'_> {
-    /// Updates the IME panel position suggestions for languages like japanese, chinese.
-    pub fn update_ime_position(&self) {
-        self.window.platform_window.update_ime_position();
     }
 }
 
