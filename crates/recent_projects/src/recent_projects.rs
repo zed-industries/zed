@@ -118,16 +118,6 @@ impl RecentProjects {
             modal
         })
     }
-
-    pub fn open_popover(workspace: WeakView<Workspace>, cx: &mut WindowContext<'_>) -> View<Self> {
-        cx.new_view(|cx| {
-            Self::new(
-                RecentProjectsDelegate::new(workspace, false, false),
-                20.,
-                cx,
-            )
-        })
-    }
 }
 
 impl EventEmitter<DismissEvent> for RecentProjects {}

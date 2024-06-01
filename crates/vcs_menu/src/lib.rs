@@ -21,7 +21,7 @@ actions!(branches, [OpenRecent]);
 pub fn init(cx: &mut AppContext) {
     cx.observe_new_views(|workspace: &mut Workspace, _| {
         workspace.register_action(|workspace, action, cx| {
-            BranchList::toggle_modal(workspace, action, cx).log_err();
+            BranchList::open(workspace, action, cx).log_err();
         });
     })
     .detach();
@@ -43,7 +43,7 @@ impl BranchList {
             _subscription,
         }
     }
-    fn toggle_modal(
+    pub fn open(
         workspace: &mut Workspace,
         _: &OpenRecent,
         cx: &mut ViewContext<Workspace>,
@@ -75,16 +75,6 @@ impl Render for BranchList {
                 })
             }))
     }
-}
-
-pub fn build_branch_list(
-    workspace: View<Workspace>,
-    cx: &mut WindowContext<'_>,
-) -> Result<View<BranchList>> {
-    let delegate = workspace.update(cx, |workspace, cx| {
-        BranchListDelegate::new(workspace, cx.view().clone(), 29, cx)
-    })?;
-    Ok(cx.new_view(move |cx| BranchList::new(delegate, 20., cx)))
 }
 
 pub struct BranchListDelegate {
