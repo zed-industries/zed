@@ -415,6 +415,7 @@ impl PlatformInputHandler {
             .flatten()
     }
 
+    #[cfg_attr(target_os = "linux", allow(dead_code))]
     fn text_for_range(&mut self, range_utf16: Range<usize>) -> Option<String> {
         self.cx
             .update(|cx| self.handler.text_for_range(range_utf16, cx))
@@ -575,13 +576,17 @@ pub(crate) struct WindowParams {
     pub titlebar: Option<TitlebarOptions>,
 
     /// The kind of window to create
+    #[cfg_attr(target_os = "linux", allow(dead_code))]
     pub kind: WindowKind,
 
     /// Whether the window should be movable by the user
+    #[cfg_attr(target_os = "linux", allow(dead_code))]
     pub is_movable: bool,
 
+    #[cfg_attr(target_os = "linux", allow(dead_code))]
     pub focus: bool,
 
+    #[cfg_attr(target_os = "linux", allow(dead_code))]
     pub show: bool,
 
     pub display_id: Option<DisplayId>,
@@ -863,6 +868,7 @@ impl ClipboardItem {
             .and_then(|m| serde_json::from_str(m).ok())
     }
 
+    #[cfg_attr(target_os = "linux", allow(dead_code))]
     pub(crate) fn text_hash(text: &str) -> u64 {
         let mut hasher = SeaHasher::new();
         text.hash(&mut hasher);

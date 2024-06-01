@@ -57,7 +57,7 @@ impl LinuxDispatcher {
                         timer_handle
                             .insert_source(
                                 calloop::timer::Timer::from_duration(timer.duration),
-                                move |e, _, _| {
+                                move |_, _, _| {
                                     if let Some(runnable) = runnable.take() {
                                         runnable.run();
                                     }

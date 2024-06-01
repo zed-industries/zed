@@ -6,7 +6,7 @@ use std::{
 use uuid::Uuid;
 use wayland_backend::client::ObjectId;
 
-use crate::{Bounds, DevicePixels, DisplayId, PlatformDisplay, Size};
+use crate::{Bounds, DevicePixels, DisplayId, PlatformDisplay};
 
 #[derive(Debug, Clone)]
 pub(crate) struct WaylandDisplay {

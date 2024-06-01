@@ -2,7 +2,6 @@ use std::cell::RefCell;
 use std::ffi::OsString;
 use std::ops::Deref;
 use std::rc::{Rc, Weak};
-use std::sync::OnceLock;
 use std::time::{Duration, Instant};
 
 use calloop::generic::{FdWrapper, Generic};
@@ -11,30 +10,29 @@ use calloop::{channel, EventLoop, LoopHandle, RegistrationToken};
 use collections::HashMap;
 use copypasta::x11_clipboard::{Clipboard, Primary, X11ClipboardContext};
 use copypasta::ClipboardProvider;
-use parking_lot::Mutex;
 
 use util::ResultExt;
 use x11rb::connection::{Connection, RequestConnection};
 use x11rb::cursor;
 use x11rb::errors::ConnectionError;
 use x11rb::protocol::randr::ConnectionExt as _;
-use x11rb::protocol::xinput::{ConnectionExt, ScrollClass};
+use x11rb::protocol::xinput::ConnectionExt;
 use x11rb::protocol::xkb::ConnectionExt as _;
 use x11rb::protocol::xproto::{ChangeWindowAttributesAux, ConnectionExt as _};
 use x11rb::protocol::{randr, render, xinput, xkb, xproto, Event};
 use x11rb::resource_manager::Database;
 use x11rb::xcb_ffi::XCBConnection;
 use xim::{x11rb::X11rbClient, Client};
-use xim::{AHashMap, AttributeName, ClientHandler, InputStyle};
+use xim::{AttributeName, InputStyle};
 use xkbc::x11::ffi::{XKB_X11_MIN_MAJOR_XKB_VERSION, XKB_X11_MIN_MINOR_XKB_VERSION};
 use xkbcommon::xkb as xkbc;
 
 use crate::platform::linux::LinuxClient;
-use crate::platform::{LinuxCommon, PlatformWindow, WaylandClientState};
+use crate::platform::{LinuxCommon, PlatformWindow};
 use crate::{
     modifiers_from_xinput_info, point, px, AnyWindowHandle, Bounds, CursorStyle, DisplayId,
-    ForegroundExecutor, Keystroke, Modifiers, ModifiersChangedEvent, Pixels, PlatformDisplay,
-    PlatformInput, Point, ScrollDelta, Size, TouchPhase, WindowAppearance, WindowParams, X11Window,
+    Keystroke, Modifiers, ModifiersChangedEvent, Pixels, PlatformDisplay, PlatformInput, Point,
+    ScrollDelta, Size, TouchPhase, WindowParams, X11Window,
 };
 
 use super::{
@@ -110,7 +108,7 @@ pub struct X11ClientState {
 
     pub(crate) xcb_connection: Rc<XCBConnection>,
     pub(crate) x_root_index: usize,
-    pub(crate) resource_database: Database,
+    pub(crate) _resource_database: Database,
     pub(crate) atoms: XcbAtoms,
     pub(crate) windows: HashMap<xproto::Window, WindowRef>,
     pub(crate) focused_window: Option<xproto::Window>,
@@ -166,11 +164,13 @@ impl X11Client {
 
         let handle = event_loop.handle();
 
-        handle.insert_source(main_receiver, |event, _, _: &mut X11Client| {
-            if let calloop::channel::Event::Msg(runnable) = event {
-                runnable.run();
-            }
-        });
+        handle
+            .insert_source(main_receiver, |event, _, _: &mut X11Client| {
+                if let calloop::channel::Event::Msg(runnable) = event {
+                    runnable.run();
+                }
+            })
+            .unwrap();
 
         let (xcb_connection, x_root_index) = XCBConnection::connect(None).unwrap();
         xcb_connection
@@ -255,8 +255,6 @@ impl X11Client {
             xkbc::compose::State::new(&table, xkbc::compose::STATE_NO_FLAGS)
         };
 
-        let screen = xcb_connection.setup().roots.get(x_root_index).unwrap();
-
         let resource_database = x11rb::resource_manager::new_from_default(&xcb_connection).unwrap();
 
         let scale_factor = resource_database
@@ -338,7 +336,7 @@ impl X11Client {
             .insert_source(xim_rx, {
                 move |chan_event, _, client| match chan_event {
                     channel::Event::Msg(xim_event) => {
-                        match (xim_event) {
+                        match xim_event {
                             XimCallbackEvent::XimXEvent(event) => {
                                 client.handle_event(event);
                             }
@@ -356,16 +354,18 @@ impl X11Client {
                 }
             })
             .expect("Failed to initialize XIM event source");
-        handle.insert_source(XDPEventSource::new(&common.background_executor), {
-            move |event, _, client| match event {
-                XDPEvent::WindowAppearance(appearance) => {
-                    client.with_common(|common| common.appearance = appearance);
-                    for (_, window) in &mut client.0.borrow_mut().windows {
-                        window.window.set_appearance(appearance);
+        handle
+            .insert_source(XDPEventSource::new(&common.background_executor), {
+                move |event, _, client| match event {
+                    XDPEvent::WindowAppearance(appearance) => {
+                        client.with_common(|common| common.appearance = appearance);
+                        for (_, window) in &mut client.0.borrow_mut().windows {
+                            window.window.set_appearance(appearance);
+                        }
                     }
                 }
-            }
-        });
+            })
+            .unwrap();
 
         X11Client(Rc::new(RefCell::new(X11ClientState {
             modifiers: Modifiers::default(),
@@ -379,7 +379,7 @@ impl X11Client {
 
             xcb_connection,
             x_root_index,
-            resource_database,
+            _resource_database: resource_database,
             atoms,
             windows: HashMap::default(),
             focused_window: None,
@@ -440,7 +440,8 @@ impl X11Client {
                     });
             }
         }
-        ximc.create_ic(xim_handler.im_id, ic_attributes.build());
+        ximc.create_ic(xim_handler.im_id, ic_attributes.build())
+            .ok();
         state = self.0.borrow_mut();
         state.xim_handler = Some(xim_handler);
         state.ximc = Some(ximc);
@@ -451,7 +452,7 @@ impl X11Client {
         state.composing = false;
         if let Some(mut ximc) = state.ximc.take() {
             let xim_handler = state.xim_handler.as_ref().unwrap();
-            ximc.destroy_ic(xim_handler.im_id, xim_handler.ic_id);
+            ximc.destroy_ic(xim_handler.im_id, xim_handler.ic_id).ok();
             state.ximc = Some(ximc);
         }
     }
@@ -860,7 +861,8 @@ impl X11Client {
                     );
                 })
                 .build();
-            ximc.set_ic_values(xim_handler.im_id, xim_handler.ic_id, ic_attributes);
+            ximc.set_ic_values(xim_handler.im_id, xim_handler.ic_id, ic_attributes)
+                .ok();
         }
         let mut state = self.0.borrow_mut();
         state.ximc = Some(ximc);
@@ -1040,11 +1042,11 @@ impl LinuxClient for X11Client {
     }
 
     fn write_to_primary(&self, item: crate::ClipboardItem) {
-        self.0.borrow_mut().primary.set_contents(item.text);
+        self.0.borrow_mut().primary.set_contents(item.text).ok();
     }
 
     fn write_to_clipboard(&self, item: crate::ClipboardItem) {
-        self.0.borrow_mut().clipboard.set_contents(item.text);
+        self.0.borrow_mut().clipboard.set_contents(item.text).ok();
     }
 
     fn read_from_primary(&self) -> Option<crate::ClipboardItem> {

@@ -20,7 +20,9 @@ use std::{mem, sync::Arc};
 
 const MAX_FRAME_TIME_MS: u32 = 1000;
 
+#[cfg(target_os = "macos")]
 pub type Context = ();
+#[cfg(target_os = "macos")]
 pub type Renderer = BladeRenderer;
 
 #[cfg(target_os = "macos")]

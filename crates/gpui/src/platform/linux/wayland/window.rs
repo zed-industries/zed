@@ -1,27 +1,24 @@
-use std::any::Any;
 use std::cell::{Ref, RefCell, RefMut};
 use std::ffi::c_void;
 use std::num::NonZeroU32;
-use std::ops::{Deref, Range};
 use std::ptr::NonNull;
-use std::rc::{Rc, Weak};
+use std::rc::Rc;
 use std::sync::Arc;
 
 use blade_graphics as gpu;
-use collections::{HashMap, HashSet};
+use collections::HashMap;
 use futures::channel::oneshot::Receiver;
-use parking_lot::Mutex;
+
 use raw_window_handle as rwh;
 use wayland_backend::client::ObjectId;
-use wayland_client::protocol::wl_region::WlRegion;
 use wayland_client::WEnum;
 use wayland_client::{protocol::wl_surface, Proxy};
 use wayland_protocols::wp::fractional_scale::v1::client::wp_fractional_scale_v1;
 use wayland_protocols::wp::viewporter::client::wp_viewport;
 use wayland_protocols::xdg::decoration::zv1::client::zxdg_toplevel_decoration_v1;
 use wayland_protocols::xdg::shell::client::xdg_surface;
-use wayland_protocols::xdg::shell::client::xdg_toplevel::{self, WmCapabilities};
-use wayland_protocols_plasma::blur::client::{org_kde_kwin_blur, org_kde_kwin_blur_manager};
+use wayland_protocols::xdg::shell::client::xdg_toplevel::{self};
+use wayland_protocols_plasma::blur::client::org_kde_kwin_blur;
 
 use crate::platform::blade::{BladeRenderer, BladeSurfaceConfig};
 use crate::platform::linux::wayland::display::WaylandDisplay;
@@ -87,7 +84,6 @@ pub struct WaylandWindowState {
     restore_bounds: Bounds<DevicePixels>,
     maximized: bool,
     client: WaylandClientStatePtr,
-    callbacks: Callbacks,
     handle: AnyWindowHandle,
     active: bool,
 }
@@ -164,7 +160,6 @@ impl WaylandWindowState {
             fullscreen: false,
             restore_bounds: Bounds::default(),
             maximized: false,
-            callbacks: Callbacks::default(),
             client,
             appearance,
             handle,
@@ -697,10 +692,10 @@ impl PlatformWindow for WaylandWindow {
 
     fn prompt(
         &self,
-        level: PromptLevel,
-        msg: &str,
-        detail: Option<&str>,
-        answers: &[&str],
+        _level: PromptLevel,
+        _msg: &str,
+        _detail: Option<&str>,
+        _answers: &[&str],
     ) -> Option<Receiver<usize>> {
         None
     }
@@ -742,8 +737,8 @@ impl PlatformWindow for WaylandWindow {
         }
 
         if let Some(ref blur_manager) = state.globals.blur_manager {
-            if (background_appearance == WindowBackgroundAppearance::Blurred) {
-                if (state.blur.is_none()) {
+            if background_appearance == WindowBackgroundAppearance::Blurred {
+                if state.blur.is_none() {
                     let blur = blur_manager.create(&state.surface, &state.globals.qh, ());
                     blur.set_region(Some(&region));
                     state.blur = Some(blur);

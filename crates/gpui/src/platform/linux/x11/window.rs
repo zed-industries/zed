@@ -1,36 +1,29 @@
 use crate::{
     platform::blade::{BladeRenderer, BladeSurfaceConfig},
-    size, AnyWindowHandle, Bounds, DevicePixels, ForegroundExecutor, Modifiers, Pixels, Platform,
+    size, AnyWindowHandle, Bounds, DevicePixels, ForegroundExecutor, Modifiers, Pixels,
     PlatformAtlas, PlatformDisplay, PlatformInput, PlatformInputHandler, PlatformWindow, Point,
     PromptLevel, Scene, Size, WindowAppearance, WindowBackgroundAppearance, WindowBounds,
-    WindowOptions, WindowParams, X11Client, X11ClientState, X11ClientStatePtr,
+    WindowParams, X11ClientStatePtr,
 };
 
 use blade_graphics as gpu;
-use parking_lot::Mutex;
 use raw_window_handle as rwh;
 use util::ResultExt;
 use x11rb::{
-    connection::{Connection as _, RequestConnection as _},
+    connection::Connection,
     protocol::{
-        render,
         xinput::{self, ConnectionExt as _},
         xproto::{
-            self, Atom, ClientMessageEvent, ConnectionExt as _, CreateWindowAux, EventMask,
-            TranslateCoordinatesReply,
+            self, ClientMessageEvent, ConnectionExt as _, EventMask, TranslateCoordinatesReply,
         },
     },
-    resource_manager::Database,
     wrapper::ConnectionExt as _,
     xcb_ffi::XCBConnection,
 };
 
-use std::rc::Weak;
 use std::{
-    cell::{Ref, RefCell, RefMut},
-    collections::HashMap,
+    cell::RefCell,
     ffi::c_void,
-    iter::Zip,
     mem,
     num::NonZeroU32,
     ops::Div,
@@ -166,7 +159,7 @@ pub struct X11WindowState {
     executor: ForegroundExecutor,
     atoms: XcbAtoms,
     x_root_window: xproto::Window,
-    raw: RawWindow,
+    _raw: RawWindow,
     bounds: Bounds<i32>,
     scale_factor: f32,
     renderer: BladeRenderer,
@@ -369,7 +362,7 @@ impl X11WindowState {
             client,
             executor,
             display: Rc::new(X11Display::new(xcb_connection, x_screen_index).unwrap()),
-            raw,
+            _raw: raw,
             x_root_window: visual_set.root,
             bounds: params.bounds.map(|v| v.0),
             scale_factor,
@@ -418,8 +411,8 @@ impl Drop for X11Window {
 }
 
 enum WmHintPropertyState {
-    Remove = 0,
-    Add = 1,
+    // Remove = 0,
+    // Add = 1,
     Toggle = 2,
 }
 
@@ -796,7 +789,7 @@ impl PlatformWindow for X11Window {
             .unwrap();
     }
 
-    fn set_edited(&mut self, edited: bool) {
+    fn set_edited(&mut self, _edited: bool) {
         log::info!("ignoring macOS specific set_edited");
     }
 
