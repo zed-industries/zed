@@ -284,7 +284,7 @@ impl WaylandWindow {
 
 impl WaylandWindowStatePtr {
     pub fn handle(&self) -> AnyWindowHandle {
-        self.state.borrow().handle.clone()
+        self.state.borrow().handle
     }
 
     pub fn surface(&self) -> wl_surface::WlSurface {

@@ -56,7 +56,7 @@ pub(crate) struct WindowRef {
 
 impl WindowRef {
     pub fn handle(&self) -> AnyWindowHandle {
-        self.window.state.borrow().handle.clone()
+        self.window.state.borrow().handle
     }
 }
 
@@ -1084,15 +1084,12 @@ impl LinuxClient for X11Client {
 
     fn active_window(&self) -> Option<AnyWindowHandle> {
         let state = self.0.borrow();
-        state
-            .focused_window
-            .map(|focused_window| {
-                state
-                    .windows
-                    .get(&focused_window)
-                    .map(|window| window.handle())
-            })
-            .flatten()
+        state.focused_window.and_then(|focused_window| {
+            state
+                .windows
+                .get(&focused_window)
+                .map(|window| window.handle())
+        })
     }
 }
 
