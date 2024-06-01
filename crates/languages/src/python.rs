@@ -190,36 +190,34 @@ const PYTHON_UNITTEST_TARGET_TASK_VARIABLE: VariableName =
 impl ContextProvider for PythonContextProvider {
     fn build_context(
         &self,
-        _variables: &task::TaskVariables,
+        variables: &task::TaskVariables,
         _location: &project::Location,
         _cx: &mut gpui::AppContext,
     ) -> Result<task::TaskVariables> {
-        let _python_module_name = python_module_name_from_relative_path(
-            _variables.get(&VariableName::RelativeFile).unwrap_or(""),
+        let python_module_name = python_module_name_from_relative_path(
+            variables.get(&VariableName::RelativeFile).unwrap_or(""),
         );
-        let _unittest_class_name =
-            _variables.get(&VariableName::Custom(Cow::Borrowed("_unittest_class_name")));
-        let _unittest_method_name = _variables.get(&VariableName::Custom(Cow::Borrowed(
+        let unittest_class_name =
+            variables.get(&VariableName::Custom(Cow::Borrowed("_unittest_class_name")));
+        let unittest_method_name = variables.get(&VariableName::Custom(Cow::Borrowed(
             "_unittest_method_name",
         )));
 
-        let _unittest_target_str = match (_unittest_class_name, _unittest_method_name) {
+        let unittest_target_str = match (unittest_class_name, unittest_method_name) {
             (Some(class_name), Some(method_name)) => {
-                format!("{}.{}.{}", _python_module_name, class_name, method_name)
+                format!("{}.{}.{}", python_module_name, class_name, method_name)
             }
-            (Some(class_name), None) => format!("{}.{}", _python_module_name, class_name),
-            (None, None) => format!("{}", _python_module_name),
-            (None, Some(_)) => unreachable!("Method name without class name is not possible"),
+            (Some(class_name), None) => format!("{}.{}", python_module_name, class_name),
+            (None, None) => python_module_name,
+            (None, Some(_)) => return Ok(task::TaskVariables::default()), // should never happen, a TestCase class is the unit of testing
         };
 
         let unittest_target = (
             PYTHON_UNITTEST_TARGET_TASK_VARIABLE.clone(),
-            _unittest_target_str,
+            unittest_target_str,
         );
 
-        Ok(task::TaskVariables::from_iter(
-            [unittest_target].into_iter(),
-        ))
+        Ok(task::TaskVariables::from_iter([unittest_target]))
     }
 
     fn associated_tasks(&self) -> Option<TaskTemplates> {
@@ -265,7 +263,7 @@ impl ContextProvider for PythonContextProvider {
 }
 
 fn python_module_name_from_relative_path(relative_path: &str) -> String {
-    let path_with_dots = relative_path.replace("/", ".");
+    let path_with_dots = relative_path.replace('/', ".");
     path_with_dots
         .strip_suffix(".py")
         .unwrap_or(&path_with_dots)
