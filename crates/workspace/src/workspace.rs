@@ -1563,9 +1563,6 @@ impl Workspace {
             multiple: true,
         });
 
-        let open_new_workspace_in_current_window =
-            WorkspaceSettings::get_global(cx).open_new_workspace_in_current_window;
-
         cx.spawn(|this, mut cx| async move {
             let Some(paths) = paths.await.log_err().flatten() else {
                 return;
@@ -1573,7 +1570,11 @@ impl Workspace {
 
             if let Some(task) = this
                 .update(&mut cx, |this, cx| {
-                    this.open_workspace_for_paths(open_new_workspace_in_current_window, paths, cx)
+                    this.open_workspace_for_paths(
+                        WorkspaceSettings::get_global(cx).open_new_workspace_in_current_window,
+                        paths,
+                        cx,
+                    )
                 })
                 .log_err()
             {

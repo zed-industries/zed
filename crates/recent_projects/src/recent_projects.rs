@@ -16,6 +16,7 @@ use picker::{
 };
 use rpc::proto::DevServerStatus;
 use serde::Deserialize;
+use settings::Settings;
 use std::{
     path::{Path, PathBuf},
     sync::Arc,
@@ -27,7 +28,8 @@ use ui::{
 };
 use util::{paths::PathExt, ResultExt};
 use workspace::{
-    AppState, ModalView, SerializedWorkspaceLocation, Workspace, WorkspaceId, WORKSPACE_DB,
+    AppState, ModalView, SerializedWorkspaceLocation, Workspace, WorkspaceId, WorkspaceSettings,
+    WORKSPACE_DB,
 };
 
 #[derive(PartialEq, Clone, Deserialize, Default)]
@@ -294,7 +296,7 @@ impl PickerDelegate for RecentProjectsDelegate {
                         match candidate_workspace_location {
                             SerializedWorkspaceLocation::Local(paths, _) => {
                                 let paths = paths.paths().as_ref().clone();
-                                if replace_current_window {
+                                if replace_current_window || WorkspaceSettings::get_global(cx).open_new_workspace_in_current_window {
                                     cx.spawn(move |workspace, mut cx| async move {
                                         let continue_replacing = workspace
                                             .update(&mut cx, |workspace, cx| {

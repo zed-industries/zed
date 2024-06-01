@@ -25,6 +25,7 @@ ordered-float.workspace = true
 picker.workspace = true
 dev_server_projects.workspace = true
 rpc.workspace = true
+settings.workspace = true
 serde.workspace = true
 smol.workspace = true
 task.workspace = true

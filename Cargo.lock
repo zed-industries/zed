@@ -8168,6 +8168,7 @@ dependencies = [
  "rpc",
  "serde",
  "serde_json",
+ "settings",
  "smol",
  "task",
  "terminal_view",
