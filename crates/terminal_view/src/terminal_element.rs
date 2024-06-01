@@ -901,7 +901,7 @@ impl InputHandler for TerminalInputHandler {
         }
     }
 
-    fn selection_position(&mut self, cx: &mut WindowContext) -> usize {
+    fn selection_position(&mut self, _cx: &mut WindowContext) -> usize {
         0
     }
 

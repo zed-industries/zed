@@ -487,7 +487,6 @@ pub trait InputHandler: 'static {
     /// Return value is in terms of UTF-16 characters, from 0 to the length of the document
     fn selected_text_range(&mut self, cx: &mut WindowContext) -> Option<Range<usize>>;
 
-    #[cfg(target_os = "linux")]
     /// Get the current selection position
     fn selection_position(&mut self, cx: &mut WindowContext) -> usize;
 

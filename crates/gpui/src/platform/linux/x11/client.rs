@@ -191,7 +191,9 @@ impl X11ClientStatePtr {
                     );
                 })
                 .build();
-            ximc.set_ic_values(xim_handler.im_id, xim_handler.ic_id, ic_attributes);
+            let _ = ximc
+                .set_ic_values(xim_handler.im_id, xim_handler.ic_id, ic_attributes)
+                .log_err();
         }
         state = client.0.borrow_mut();
         state.ximc = Some(ximc);
