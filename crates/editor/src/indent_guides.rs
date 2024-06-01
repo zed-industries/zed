@@ -53,7 +53,7 @@ impl Editor {
 
         Some(indent_guides_in_range(
             visible_buffer_range,
-            self.should_show_indent_guides(),
+            self.should_show_indent_guides() == Some(true),
             snapshot,
             cx,
         ))
@@ -149,7 +149,7 @@ impl Editor {
 
 pub fn indent_guides_in_range(
     visible_buffer_range: Range<MultiBufferRow>,
-    overwrite_if_enabled: Option<bool>,
+    ignore_disabled_for_language: bool,
     snapshot: &DisplaySnapshot,
     cx: &AppContext,
 ) -> Vec<MultiBufferIndentGuide> {
@@ -162,7 +162,7 @@ pub fn indent_guides_in_range(
 
     snapshot
         .buffer_snapshot
-        .indent_guides_in_range(start_anchor..end_anchor, overwrite_if_enabled, cx)
+        .indent_guides_in_range(start_anchor..end_anchor, ignore_disabled_for_language, cx)
         .into_iter()
         .filter(|indent_guide| {
             // Filter out indent guides that are inside a fold

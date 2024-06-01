@@ -11506,7 +11506,7 @@ fn assert_indent_guides(
         let snapshot = editor.snapshot(cx).display_snapshot;
         let mut indent_guides: Vec<_> = crate::indent_guides::indent_guides_in_range(
             MultiBufferRow(range.start)..MultiBufferRow(range.end),
-            None,
+            true,
             &snapshot,
             cx,
         );

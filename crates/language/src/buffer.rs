@@ -3136,12 +3136,12 @@ impl BufferSnapshot {
     pub fn indent_guides_in_range(
         &self,
         range: Range<Anchor>,
-        overwrite_if_enabled: Option<bool>,
+        ignore_disabled_for_language: bool,
         cx: &AppContext,
     ) -> Vec<IndentGuide> {
         let language_settings = language_settings(self.language(), self.file.as_ref(), cx);
         let settings = language_settings.indent_guides;
-        if !(overwrite_if_enabled.unwrap_or(settings.enabled)) {
+        if !ignore_disabled_for_language && !settings.enabled {
             return Vec::new();
         }
         let tab_size = language_settings.tab_size.get() as u32;

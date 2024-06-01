@@ -3289,7 +3289,7 @@ impl MultiBufferSnapshot {
     pub fn indent_guides_in_range(
         &self,
         range: Range<Anchor>,
-        overwrite_if_enabled: Option<bool>,
+        ignore_disabled_for_language: bool,
         cx: &AppContext,
     ) -> Vec<MultiBufferIndentGuide> {
         // Fast path for singleton buffers, we can skip the conversion between offsets.
@@ -3297,7 +3297,7 @@ impl MultiBufferSnapshot {
             return snapshot
                 .indent_guides_in_range(
                     range.start.text_anchor..range.end.text_anchor,
-                    overwrite_if_enabled,
+                    ignore_disabled_for_language,
                     cx,
                 )
                 .into_iter()
@@ -3319,7 +3319,11 @@ impl MultiBufferSnapshot {
 
                 excerpt
                     .buffer
-                    .indent_guides_in_range(excerpt.range.context.clone(), overwrite_if_enabled, cx)
+                    .indent_guides_in_range(
+                        excerpt.range.context.clone(),
+                        ignore_disabled_for_language,
+                        cx,
+                    )
                     .into_iter()
                     .map(move |indent_guide| {
                         let start_row = excerpt_offset_row
