@@ -489,7 +489,7 @@ pub trait InputHandler: 'static {
     fn selected_text_range(&mut self, cx: &mut WindowContext) -> Option<Range<usize>>;
 
     #[cfg(target_os = "linux")]
-    /// Get the current selection position
+    /// Returns the current selection head position.
     fn selection_position(&mut self, cx: &mut WindowContext) -> usize;
 
     /// Get the range of the currently marked text, if any
