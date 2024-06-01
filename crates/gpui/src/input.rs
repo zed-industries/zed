@@ -15,7 +15,6 @@ pub trait ViewInputHandler: 'static + Sized {
     /// See [`InputHandler::selected_text_range`] for details
     fn selected_text_range(&mut self, cx: &mut ViewContext<Self>) -> Option<Range<usize>>;
 
-    #[cfg(target_os = "linux")]
     /// Returns the current selection head position.
     fn selection_position(&mut self, cx: &mut ViewContext<Self>) -> usize;
 
