@@ -39,6 +39,7 @@ pub mod tasks;
 
 #[cfg(test)]
 mod editor_tests;
+pub mod sketch;
 #[cfg(any(test, feature = "test-support"))]
 pub mod test;
 use ::git::diff::{DiffHunk, DiffHunkStatus};
