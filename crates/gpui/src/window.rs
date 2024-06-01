@@ -693,8 +693,6 @@ impl Window {
                             .update(&mut cx, |_, cx| {
                                 cx.draw();
                                 cx.present();
-                                #[cfg(target_os = "linux")]
-                                cx.update_ime_position();
                             })
                             .log_err();
                     })
@@ -762,6 +760,9 @@ impl Window {
         if let Some(app_id) = app_id {
             platform_window.set_app_id(&app_id);
         }
+
+        #[cfg(target_os = "linux")]
+        platform_window.update_ime_position();
 
         Window {
             handle,
