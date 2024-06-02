@@ -81,8 +81,8 @@ pub struct WaylandWindowState {
     input_handler: Option<PlatformInputHandler>,
     decoration_state: WaylandDecorationState,
     fullscreen: bool,
-    restore_bounds: Bounds<DevicePixels>,
     maximized: bool,
+    windowed_bounds: Bounds<DevicePixels>,
     client: WaylandClientStatePtr,
     handle: AnyWindowHandle,
     active: bool,
@@ -158,8 +158,8 @@ impl WaylandWindowState {
             input_handler: None,
             decoration_state: WaylandDecorationState::Client,
             fullscreen: false,
-            restore_bounds: Bounds::default(),
             maximized: false,
+            windowed_bounds: options.bounds,
             client,
             appearance,
             handle,
@@ -352,19 +352,23 @@ impl WaylandWindowStatePtr {
                 height,
                 states,
             } => {
-                let width = NonZeroU32::new(width as u32);
-                let height = NonZeroU32::new(height as u32);
                 let fullscreen = states.contains(&(xdg_toplevel::State::Fullscreen as u8));
                 let maximized = states.contains(&(xdg_toplevel::State::Maximized as u8));
+
                 let mut state = self.state.borrow_mut();
-                state.maximized = maximized;
                 state.fullscreen = fullscreen;
-                if fullscreen || maximized {
-                    state.restore_bounds = state.bounds.map(|p| DevicePixels(p as i32));
+                state.maximized = maximized;
+                if width != 0 && height != 0 && !fullscreen && !maximized {
+                    state.windowed_bounds = Bounds {
+                        origin: Point::default(),
+                        size: size(width.into(), height.into()),
+                    };
                 }
+
+                let width = NonZeroU32::new(width as u32);
+                let height = NonZeroU32::new(height as u32);
                 drop(state);
                 self.resize(width, height);
-                self.set_fullscreen(fullscreen);
 
                 false
             }
@@ -532,11 +536,6 @@ impl WaylandWindowStatePtr {
         self.set_size_and_scale(None, None, Some(scale));
     }
 
-    pub fn set_fullscreen(&self, fullscreen: bool) {
-        let mut state = self.state.borrow_mut();
-        state.fullscreen = fullscreen;
-    }
-
     /// Notifies the window of the state of the decorations.
     ///
     /// # Note
@@ -631,9 +630,9 @@ impl PlatformWindow for WaylandWindow {
     fn window_bounds(&self) -> WindowBounds {
         let state = self.borrow();
         if state.fullscreen {
-            WindowBounds::Fullscreen(state.restore_bounds)
+            WindowBounds::Fullscreen(state.windowed_bounds)
         } else if state.maximized {
-            WindowBounds::Maximized(state.restore_bounds)
+            WindowBounds::Maximized(state.windowed_bounds)
         } else {
             WindowBounds::Windowed(state.bounds.map(|p| DevicePixels(p as i32)))
         }
@@ -775,7 +774,6 @@ impl PlatformWindow for WaylandWindow {
 
     fn toggle_fullscreen(&self) {
         let mut state = self.borrow_mut();
-        state.restore_bounds = state.bounds.map(|p| DevicePixels(p as i32));
         if !state.fullscreen {
             state.toplevel.set_fullscreen(None);
         } else {
