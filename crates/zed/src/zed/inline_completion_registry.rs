@@ -4,7 +4,7 @@ use client::telemetry::Telemetry;
 use collections::HashMap;
 use copilot::{Copilot, CopilotCompletionProvider};
 use editor::{Editor, EditorMode};
-use gpui::{AnyWindowHandle, AppContext, Context, ViewContext, WeakView};
+use gpui::{AnyWindowHandle, AppContext, StaticContext, ViewContext, WeakView};
 use language::language_settings::all_language_settings;
 use settings::SettingsStore;
 use supermaven::{Supermaven, SupermavenCompletionProvider};

@@ -9,7 +9,7 @@ use collections::{HashMap, HashSet};
 use command_palette_hooks::CommandPaletteFilter;
 use futures::{channel::oneshot, future::Shared, Future, FutureExt, TryFutureExt};
 use gpui::{
-    actions, AppContext, AsyncAppContext, Context, Entity, EntityId, EventEmitter, Global, Model,
+    actions, AppContext, AsyncAppContext, StaticContext, Entity, EntityId, EventEmitter, Global, Model,
     ModelContext, Task, WeakModel,
 };
 use http::github::latest_github_release;

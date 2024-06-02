@@ -23,7 +23,7 @@ use std::{
     },
 };
 
-use ui::Context;
+use ui::StaticContext;
 use util::{
     assert_set_eq,
     test::{generate_marked_text, marked_text_ranges},

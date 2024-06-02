@@ -201,7 +201,7 @@ pub(super) fn python_task_context() -> ContextProviderWithTasks {
 
 #[cfg(test)]
 mod tests {
-    use gpui::{BorrowAppContext, Context, ModelContext, TestAppContext};
+    use gpui::{BorrowAppContext, ModelContext, StaticContext, TestAppContext};
     use language::{language_settings::AllLanguageSettings, AutoindentMode, Buffer};
     use settings::SettingsStore;
     use std::num::NonZeroU32;

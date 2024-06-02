@@ -319,7 +319,7 @@ async fn get_cached_server_binary(container_dir: PathBuf) -> Option<LanguageServ
 
 #[cfg(test)]
 mod tests {
-    use gpui::{BorrowAppContext, Context, TestAppContext};
+    use gpui::{BorrowAppContext, StaticContext, TestAppContext};
     use language::{language_settings::AllLanguageSettings, AutoindentMode, Buffer};
     use settings::SettingsStore;
     use std::num::NonZeroU32;

@@ -1,7 +1,7 @@
 use crate::{
     hash, point, prelude::*, px, size, transparent_black, Action, AnyDrag, AnyElement, AnyTooltip,
     AnyView, AppContext, Arena, Asset, AsyncWindowContext, AvailableSpace, Bounds, BoxShadow,
-    Context, Corners, CursorStyle, DevicePixels, DispatchActionListener, DispatchNodeId,
+    StaticContext, Corners, CursorStyle, DevicePixels, DispatchActionListener, DispatchNodeId,
     DispatchTree, DisplayId, Edges, Effect, Entity, EntityId, EventEmitter, FileDropEvent, Flatten,
     FontId, Global, GlobalElementId, GlyphId, Hsla, ImageData, InputHandler, IsZero, KeyBinding,
     KeyContext, KeyDownEvent, KeyEvent, KeyMatch, KeymatchResult, Keystroke, KeystrokeEvent,
@@ -3536,7 +3536,7 @@ impl WindowContext<'_> {
     }
 }
 
-impl Context for WindowContext<'_> {
+impl StaticContext for WindowContext<'_> {
     type Result<T> = T;
 
     fn new_model<T>(&mut self, build_model: impl FnOnce(&mut ModelContext<'_, T>) -> T) -> Model<T>
@@ -4198,7 +4198,7 @@ impl<'a, V: 'static> ViewContext<'a, V> {
     }
 }
 
-impl<V> Context for ViewContext<'_, V> {
+impl<V> StaticContext for ViewContext<'_, V> {
     type Result<U> = U;
 
     fn new_model<T: 'static>(
@@ -4348,7 +4348,7 @@ impl<V: 'static + Render> WindowHandle<V> {
     /// This will fail if the window is closed or if the root view's type does not match `V`.
     pub fn root<C>(&self, cx: &mut C) -> Result<View<V>>
     where
-        C: Context,
+        C: StaticContext,
     {
         Flatten::flatten(cx.update_window(self.any_handle, |root_view, _| {
             root_view
@@ -4366,7 +4366,7 @@ impl<V: 'static + Render> WindowHandle<V> {
         update: impl FnOnce(&mut V, &mut ViewContext<'_, V>) -> R,
     ) -> Result<R>
     where
-        C: Context,
+        C: StaticContext,
     {
         cx.update_window(self.any_handle, |root_view, cx| {
             let view = root_view
@@ -4400,7 +4400,7 @@ impl<V: 'static + Render> WindowHandle<V> {
     /// This will fail if the window is closed or if the root view's type does not match `V`.
     pub fn read_with<C, R>(&self, cx: &C, read_with: impl FnOnce(&V, &AppContext) -> R) -> Result<R>
     where
-        C: Context,
+        C: StaticContext,
     {
         cx.read_window(self, |root_view, cx| read_with(root_view.read(cx), cx))
     }
@@ -4410,7 +4410,7 @@ impl<V: 'static + Render> WindowHandle<V> {
     /// This will fail if the window is closed or if the root view's type does not match `V`.
     pub fn root_view<C>(&self, cx: &C) -> Result<View<V>>
     where
-        C: Context,
+        C: StaticContext,
     {
         cx.read_window(self, |root_view, _cx| root_view.clone())
     }
@@ -4491,7 +4491,7 @@ impl AnyWindowHandle {
         update: impl FnOnce(AnyView, &mut WindowContext<'_>) -> R,
     ) -> Result<R>
     where
-        C: Context,
+        C: StaticContext,
     {
         cx.update_window(self, update)
     }
@@ -4501,7 +4501,7 @@ impl AnyWindowHandle {
     /// This will fail if the window has been closed.
     pub fn read<T, C, R>(self, cx: &C, read: impl FnOnce(View<T>, &AppContext) -> R) -> Result<R>
     where
-        C: Context,
+        C: StaticContext,
         T: 'static,
     {
         let view = self

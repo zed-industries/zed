@@ -19,9 +19,9 @@ use futures::{
     StreamExt as _,
 };
 use gpui::{
-    actions, div, svg, AnyElement, AnyView, AppContext, Context, EventEmitter, FocusHandle,
-    FocusableView, HighlightStyle, InteractiveElement, IntoElement, Model, ParentElement, Render,
-    SharedString, Styled, StyledText, Subscription, Task, View, ViewContext, VisualContext,
+    actions, div, svg, AnyElement, AnyView, AppContext, EventEmitter, FocusHandle, FocusableView,
+    HighlightStyle, InteractiveElement, IntoElement, Model, ParentElement, Render, SharedString,
+    StaticContext, Styled, StyledText, Subscription, Task, View, ViewContext, VisualContext,
     WeakView, WindowContext,
 };
 use language::{

@@ -2,7 +2,7 @@ use crate::{Channel, ChannelStore};
 use anyhow::Result;
 use client::{ChannelId, Client, Collaborator, UserStore, ZED_ALWAYS_ACTIVE};
 use collections::HashMap;
-use gpui::{AppContext, AsyncAppContext, Context, EventEmitter, Model, ModelContext, Task};
+use gpui::{AppContext, AsyncAppContext, EventEmitter, Model, ModelContext, StaticContext, Task};
 use language::proto::serialize_version;
 use rpc::{
     proto::{self, PeerId},

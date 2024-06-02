@@ -27,8 +27,8 @@ use git::{
     DOT_GIT, GITIGNORE,
 };
 use gpui::{
-    AppContext, AsyncAppContext, BackgroundExecutor, Context, EventEmitter, Model, ModelContext,
-    Task,
+    AppContext, AsyncAppContext, BackgroundExecutor, EventEmitter, Model, ModelContext,
+    StaticContext, Task,
 };
 use ignore::IgnoreStack;
 use itertools::Itertools;

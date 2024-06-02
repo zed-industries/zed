@@ -1,6 +1,6 @@
 use crate::{
-    AnyView, AnyWindowHandle, AppContext, AsyncAppContext, Context, Effect, Entity, EntityId,
-    EventEmitter, Model, Reservation, Subscription, Task, View, WeakModel, WindowContext,
+    AnyView, AnyWindowHandle, AppContext, AsyncAppContext, Effect, Entity, EntityId, EventEmitter,
+    Model, Reservation, StaticContext, Subscription, Task, View, WeakModel, WindowContext,
     WindowHandle,
 };
 use anyhow::Result;
@@ -220,7 +220,7 @@ impl<'a, T> ModelContext<'a, T> {
     }
 }
 
-impl<'a, T> Context for ModelContext<'a, T> {
+impl<'a, T> StaticContext for ModelContext<'a, T> {
     type Result<U> = U;
 
     fn new_model<U: 'static>(

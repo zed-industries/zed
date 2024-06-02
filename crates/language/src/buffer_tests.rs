@@ -7,7 +7,7 @@ use clock::ReplicaId;
 use collections::BTreeMap;
 use futures::FutureExt as _;
 use gpui::{AppContext, BorrowAppContext, Model};
-use gpui::{Context, TestAppContext};
+use gpui::{StaticContext, TestAppContext};
 use indoc::indoc;
 use proto::deserialize_operation;
 use rand::prelude::*;

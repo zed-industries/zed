@@ -5,7 +5,7 @@ use crate::{
     display_map::{DisplayMap, DisplaySnapshot, ToDisplayPoint},
     DisplayPoint, Editor, EditorMode, FoldPlaceholder, MultiBuffer,
 };
-use gpui::{Context, Font, FontFeatures, FontStyle, FontWeight, Model, Pixels, ViewContext};
+use gpui::{Font, FontFeatures, FontStyle, FontWeight, Model, Pixels, StaticContext, ViewContext};
 use project::Project;
 use util::test::{marked_text_offsets, marked_text_ranges};
 

@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use anyhow::Context as _;
-use gpui::{Context, View, ViewContext, VisualContext, WindowContext};
+use gpui::{StaticContext, View, ViewContext, VisualContext, WindowContext};
 use language::Language;
 use multi_buffer::MultiBuffer;
 use project::lsp_ext_command::ExpandMacro;

@@ -73,7 +73,7 @@ fn line_similarity(line1: &str, line2: &str) -> f64 {
 #[cfg(test)]
 mod test {
     use super::*;
-    use gpui::{AppContext, Context as _};
+    use gpui::{AppContext, StaticContext as _};
     use language::Buffer;
     use unindent::Unindent as _;
     use util::test::marked_text_ranges;

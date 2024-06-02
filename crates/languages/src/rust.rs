@@ -504,7 +504,7 @@ mod tests {
 
     use super::*;
     use crate::language;
-    use gpui::{BorrowAppContext, Context, Hsla, TestAppContext};
+    use gpui::{BorrowAppContext, Hsla, StaticContext, TestAppContext};
     use language::language_settings::AllLanguageSettings;
     use settings::SettingsStore;
     use theme::SyntaxTheme;

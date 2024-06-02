@@ -42,7 +42,7 @@ use theme::SyntaxTheme;
 use util::post_inc;
 
 #[cfg(any(test, feature = "test-support"))]
-use gpui::Context;
+use gpui::StaticContext;
 
 const NEWLINES: &[u8] = &[b'\n'; u8::MAX as usize];
 
@@ -4649,7 +4649,7 @@ where
 mod tests {
     use super::*;
     use futures::StreamExt;
-    use gpui::{AppContext, Context, TestAppContext};
+    use gpui::{AppContext, StaticContext, TestAppContext};
     use language::{Buffer, Rope};
     use parking_lot::RwLock;
     use rand::prelude::*;

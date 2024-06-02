@@ -78,7 +78,7 @@ fn released(entity_id: EntityId, cx: &mut AppContext) {
 mod test {
     use crate::{test::VimTestContext, Vim};
     use editor::Editor;
-    use gpui::{Context, Entity, VisualTestContext};
+    use gpui::{Entity, StaticContext, VisualTestContext};
     use language::Buffer;
 
     // regression test for blur called with a different active editor

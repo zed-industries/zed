@@ -8,7 +8,7 @@ use collections::HashSet;
 use futures::future::try_join_all;
 use git::repository::GitFileStatus;
 use gpui::{
-    point, AnyElement, AppContext, AsyncWindowContext, Context, Entity, EntityId, EventEmitter,
+    point, AnyElement, AppContext, AsyncWindowContext, StaticContext, Entity, EntityId, EventEmitter,
     IntoElement, Model, ParentElement, Pixels, SharedString, Styled, Task, View, ViewContext,
     VisualContext, WeakView, WindowContext,
 };

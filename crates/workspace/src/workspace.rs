@@ -80,7 +80,7 @@ use theme::{ActiveTheme, SystemAppearance, ThemeSettings};
 pub use toolbar::{Toolbar, ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView};
 pub use ui;
 use ui::{
-    div, h_flex, Context as _, Div, Element, FluentBuilder, InteractiveElement as _, IntoElement,
+    div, h_flex, StaticContext as _, Div, Element, FluentBuilder, InteractiveElement as _, IntoElement,
     Label, ParentElement as _, Pixels, SharedString, Styled as _, ViewContext, VisualContext as _,
     WindowContext,
 };
@@ -453,7 +453,7 @@ impl AppState {
     pub fn test(cx: &mut AppContext) -> Arc<Self> {
         use node_runtime::FakeNodeRuntime;
         use settings::SettingsStore;
-        use ui::Context as _;
+        use ui::StaticContext as _;
 
         if !cx.has_global::<SettingsStore>() {
             let settings_store = SettingsStore::test(cx);
@@ -6210,7 +6210,7 @@ mod tests {
     }
 
     mod register_project_item_tests {
-        use ui::Context as _;
+        use ui::StaticContext as _;
 
         use super::*;
 

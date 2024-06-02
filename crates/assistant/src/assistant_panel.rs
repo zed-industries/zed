@@ -36,7 +36,7 @@ use futures::future::Shared;
 use futures::{FutureExt, StreamExt};
 use gpui::{
     canvas, div, point, relative, rems, uniform_list, Action, AnyElement, AnyView, AppContext,
-    AsyncAppContext, AsyncWindowContext, AvailableSpace, ClipboardItem, Context, Empty,
+    AsyncAppContext, AsyncWindowContext, AvailableSpace, ClipboardItem, StaticContext, Empty,
     EventEmitter, FocusHandle, FocusableView, FontStyle, FontWeight, HighlightStyle,
     InteractiveElement, IntoElement, Model, ModelContext, ParentElement, Pixels, Render,
     SharedString, StatefulInteractiveElement, Styled, Subscription, Task, TextStyle,

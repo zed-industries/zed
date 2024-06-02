@@ -1,5 +1,5 @@
 use anyhow::Result;
-use gpui::{AppContext, AsyncAppContext, Context, Global, Model, ModelContext, SharedString, Task};
+use gpui::{AppContext, AsyncAppContext, StaticContext, Global, Model, ModelContext, SharedString, Task};
 use rpc::{
     proto::{self, DevServerStatus},
     TypedEnvelope,

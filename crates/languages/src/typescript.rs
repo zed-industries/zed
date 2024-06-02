@@ -435,7 +435,7 @@ async fn get_cached_eslint_server_binary(
 
 #[cfg(test)]
 mod tests {
-    use gpui::{Context, TestAppContext};
+    use gpui::{StaticContext, TestAppContext};
     use unindent::Unindent;
 
     #[gpui::test]

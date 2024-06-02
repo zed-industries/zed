@@ -68,11 +68,11 @@ use git::diff_hunk_to_display;
 use gpui::{
     div, impl_actions, point, prelude::*, px, relative, size, uniform_list, Action, AnyElement,
     AppContext, AsyncWindowContext, AvailableSpace, BackgroundExecutor, Bounds, ClipboardItem,
-    Context, DispatchPhase, ElementId, EventEmitter, FocusHandle, FocusableView, FontId, FontStyle,
+    DispatchPhase, ElementId, EventEmitter, FocusHandle, FocusableView, FontId, FontStyle,
     FontWeight, HighlightStyle, Hsla, InteractiveText, KeyContext, Model, MouseButton, PaintQuad,
-    ParentElement, Pixels, Render, SharedString, Size, StrikethroughStyle, Styled, StyledText,
-    Subscription, Task, TextStyle, UnderlineStyle, UniformListScrollHandle, View, ViewContext,
-    ViewInputHandler, VisualContext, WeakView, WhiteSpace, WindowContext,
+    ParentElement, Pixels, Render, SharedString, Size, StaticContext, StrikethroughStyle, Styled,
+    StyledText, Subscription, Task, TextStyle, UnderlineStyle, UniformListScrollHandle, View,
+    ViewContext, ViewInputHandler, VisualContext, WeakView, WhiteSpace, WindowContext,
 };
 use highlight_matching_bracket::refresh_matching_bracket_highlights;
 use hover_popover::{hide_hover, HoverState};

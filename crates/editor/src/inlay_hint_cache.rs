@@ -1268,7 +1268,7 @@ pub mod tests {
         ExcerptRange,
     };
     use futures::StreamExt;
-    use gpui::{Context, TestAppContext, WindowHandle};
+    use gpui::{StaticContext, TestAppContext, WindowHandle};
     use itertools::Itertools;
     use language::{
         language_settings::AllLanguageSettingsContent, Capability, FakeLspAdapter, Language,

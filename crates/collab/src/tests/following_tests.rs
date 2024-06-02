@@ -7,7 +7,7 @@ use collab_ui::{
 };
 use editor::{Editor, ExcerptRange, MultiBuffer};
 use gpui::{
-    point, BackgroundExecutor, BorrowAppContext, Context, Entity, SharedString, TestAppContext,
+    point, BackgroundExecutor, BorrowAppContext, StaticContext, Entity, SharedString, TestAppContext,
     View, VisualContext, VisualTestContext,
 };
 use language::Capability;

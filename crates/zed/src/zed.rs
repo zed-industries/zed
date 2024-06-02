@@ -10,7 +10,7 @@ use client::ZED_URL_SCHEME;
 use collections::VecDeque;
 use editor::{scroll::Autoscroll, Editor, MultiBuffer};
 use gpui::{
-    actions, point, px, AppContext, AsyncAppContext, Context, FocusableView, MenuItem, PromptLevel,
+    actions, point, px, AppContext, AsyncAppContext, StaticContext, FocusableView, MenuItem, PromptLevel,
     ReadGlobal, TitlebarOptions, View, ViewContext, VisualContext, WindowKind, WindowOptions,
 };
 pub use open_listener::*;

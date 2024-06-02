@@ -3,7 +3,7 @@ use super::{
     tab_map::{self, TabEdit, TabPoint, TabSnapshot},
     Highlights,
 };
-use gpui::{AppContext, Context, Font, LineWrapper, Model, ModelContext, Pixels, Task};
+use gpui::{AppContext, Font, LineWrapper, Model, ModelContext, Pixels, StaticContext, Task};
 use language::{Chunk, Point};
 use lazy_static::lazy_static;
 use multi_buffer::MultiBufferSnapshot;

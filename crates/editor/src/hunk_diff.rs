@@ -13,7 +13,8 @@ use multi_buffer::{
 use settings::{Settings, SettingsStore};
 use text::{BufferId, Point};
 use ui::{
-    div, ActiveTheme, Context as _, IntoElement, ParentElement, Styled, ViewContext, VisualContext,
+    div, ActiveTheme, IntoElement, ParentElement, StaticContext as _, Styled, ViewContext,
+    VisualContext,
 };
 use util::{debug_panic, RangeExt};
 

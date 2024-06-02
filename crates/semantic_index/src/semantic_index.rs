@@ -10,8 +10,8 @@ use fs::Fs;
 use futures::{future::Shared, stream::StreamExt, FutureExt};
 use futures_batch::ChunksTimeoutStreamExt;
 use gpui::{
-    AppContext, AsyncAppContext, BorrowAppContext, Context, Entity, EntityId, EventEmitter, Global,
-    Model, ModelContext, Subscription, Task, WeakModel,
+    AppContext, AsyncAppContext, BorrowAppContext, Entity, EntityId, EventEmitter, Global, Model,
+    ModelContext, StaticContext, Subscription, Task, WeakModel,
 };
 use heed::types::{SerdeBincode, Str};
 use language::LanguageRegistry;

@@ -1,4 +1,4 @@
-use gpui::{px, size, Context, UpdateGlobal};
+use gpui::{px, size, StaticContext, UpdateGlobal};
 use indoc::indoc;
 use settings::SettingsStore;
 use std::{

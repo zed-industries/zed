@@ -9,8 +9,8 @@ use client::{proto, ChannelId, Client, TypedEnvelope, User, UserStore, ZED_ALWAY
 use collections::HashSet;
 use futures::{channel::oneshot, future::Shared, Future, FutureExt};
 use gpui::{
-    AppContext, AsyncAppContext, Context, EventEmitter, Global, Model, ModelContext, Subscription,
-    Task, WeakModel,
+    AppContext, AsyncAppContext, EventEmitter, Global, Model, ModelContext, StaticContext,
+    Subscription, Task, WeakModel,
 };
 use postage::watch;
 use project::Project;

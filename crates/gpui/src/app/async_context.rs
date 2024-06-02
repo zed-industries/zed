@@ -1,8 +1,8 @@
 use crate::{
-    AnyView, AnyWindowHandle, AppCell, AppContext, BackgroundExecutor, BorrowAppContext, Context,
+    AnyView, AnyWindowHandle, AppCell, AppContext, BackgroundExecutor, BorrowAppContext,
     DismissEvent, FocusableView, ForegroundExecutor, Global, Model, ModelContext, PromptLevel,
-    Render, Reservation, Result, Task, View, ViewContext, VisualContext, WindowContext,
-    WindowHandle,
+    Render, Reservation, Result, StaticContext, Task, View, ViewContext, VisualContext,
+    WindowContext, WindowHandle,
 };
 use anyhow::{anyhow, Context as _};
 use derive_more::{Deref, DerefMut};
@@ -19,7 +19,7 @@ pub struct AsyncAppContext {
     pub(crate) foreground_executor: ForegroundExecutor,
 }
 
-impl Context for AsyncAppContext {
+impl StaticContext for AsyncAppContext {
     type Result<T> = Result<T>;
 
     fn new_model<T: 'static>(
@@ -301,7 +301,7 @@ impl AsyncWindowContext {
     }
 }
 
-impl Context for AsyncWindowContext {
+impl StaticContext for AsyncWindowContext {
     type Result<T> = Result<T>;
 
     fn new_model<T>(

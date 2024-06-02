@@ -28,7 +28,7 @@ use futures::{
     select_biased, AsyncReadExt as _, Future, FutureExt as _, StreamExt as _,
 };
 use gpui::{
-    actions, AppContext, AsyncAppContext, Context, EventEmitter, Global, Model, ModelContext, Task,
+    actions, AppContext, AsyncAppContext, StaticContext, EventEmitter, Global, Model, ModelContext, Task,
     WeakModel,
 };
 use http::{AsyncBody, HttpClient, HttpClientWithUrl};

@@ -1,5 +1,5 @@
 use gpui::{
-    canvas, div, fill, img, opaque_grey, point, size, AnyElement, AppContext, Bounds, Context,
+    canvas, div, fill, img, opaque_grey, point, size, AnyElement, AppContext, Bounds, StaticContext,
     EventEmitter, FocusHandle, FocusableView, Img, InteractiveElement, IntoElement, Model,
     ObjectFit, ParentElement, Render, Styled, Task, View, ViewContext, VisualContext, WeakView,
     WindowContext,

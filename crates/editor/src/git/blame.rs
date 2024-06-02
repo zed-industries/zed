@@ -519,7 +519,7 @@ async fn parse_markdown(text: &str, language_registry: &Arc<LanguageRegistry>) -
 #[cfg(test)]
 mod tests {
     use super::*;
-    use gpui::Context;
+    use gpui::StaticContext;
     use language::{Point, Rope};
     use project::FakeFs;
     use rand::prelude::*;

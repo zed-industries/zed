@@ -1091,7 +1091,7 @@ mod tests {
 
     use super::*;
     use editor::{display_map::DisplayRow, DisplayPoint, Editor};
-    use gpui::{Context, Hsla, TestAppContext, VisualTestContext};
+    use gpui::{Hsla, StaticContext, TestAppContext, VisualTestContext};
     use language::Buffer;
     use project::Project;
     use smol::stream::StreamExt as _;

@@ -13,7 +13,7 @@ use futures::{
     channel::mpsc::{unbounded, UnboundedSender},
     StreamExt,
 };
-use gpui::{AppContext, Context, Model, ModelContext, Task};
+use gpui::{AppContext, Model, ModelContext, StaticContext, Task};
 use itertools::Itertools;
 use language::{ContextProvider, Language, Location};
 use task::{

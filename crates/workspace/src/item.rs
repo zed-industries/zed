@@ -869,8 +869,8 @@ pub mod test {
     use super::{Item, ItemEvent, TabContentParams};
     use crate::{ItemId, ItemNavHistory, Pane, Workspace, WorkspaceId};
     use gpui::{
-        AnyElement, AppContext, Context as _, EntityId, EventEmitter, FocusableView,
-        InteractiveElement, IntoElement, Model, Render, SharedString, Task, View, ViewContext,
+        AnyElement, AppContext, EntityId, EventEmitter, FocusableView, InteractiveElement,
+        IntoElement, Model, Render, SharedString, StaticContext as _, Task, View, ViewContext,
         VisualContext, WeakView,
     };
     use project::{Project, ProjectEntryId, ProjectPath, WorktreeId};

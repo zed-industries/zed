@@ -1,4 +1,4 @@
-use crate::{seal::Sealed, AppContext, Context, Entity, ModelContext};
+use crate::{seal::Sealed, AppContext, StaticContext, Entity, ModelContext};
 use anyhow::{anyhow, Result};
 use derive_more::{Deref, DerefMut};
 use parking_lot::{RwLock, RwLockUpgradableReadGuard};
@@ -398,7 +398,7 @@ impl<T: 'static> Model<T> {
     }
 
     /// Read the entity referenced by this model with the given function.
-    pub fn read_with<R, C: Context>(
+    pub fn read_with<R, C: StaticContext>(
         &self,
         cx: &C,
         f: impl FnOnce(&T, &AppContext) -> R,
@@ -417,7 +417,7 @@ impl<T: 'static> Model<T> {
         update: impl FnOnce(&mut T, &mut ModelContext<'_, T>) -> R,
     ) -> C::Result<R>
     where
-        C: Context,
+        C: StaticContext,
     {
         cx.update_model(self, update)
     }
@@ -595,7 +595,7 @@ impl<T: 'static> WeakModel<T> {
         update: impl FnOnce(&mut T, &mut ModelContext<'_, T>) -> R,
     ) -> Result<R>
     where
-        C: Context,
+        C: StaticContext,
         Result<C::Result<R>>: crate::Flatten<R>,
     {
         crate::Flatten::flatten(
@@ -610,7 +610,7 @@ impl<T: 'static> WeakModel<T> {
     /// been released.
     pub fn read_with<C, R>(&self, cx: &C, read: impl FnOnce(&T, &AppContext) -> R) -> Result<R>
     where
-        C: Context,
+        C: StaticContext,
         Result<C::Result<R>>: crate::Flatten<R>,
     {
         crate::Flatten::flatten(

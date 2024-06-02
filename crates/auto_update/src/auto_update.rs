@@ -6,8 +6,8 @@ use db::kvp::KEY_VALUE_STORE;
 use db::RELEASE_CHANNEL;
 use editor::{Editor, MultiBuffer};
 use gpui::{
-    actions, AppContext, AsyncAppContext, Context as _, Global, Model, ModelContext,
-    SemanticVersion, SharedString, Task, View, ViewContext, VisualContext, WindowContext,
+    actions, AppContext, AsyncAppContext, Global, Model, ModelContext, SemanticVersion,
+    SharedString, StaticContext as _, Task, View, ViewContext, VisualContext, WindowContext,
 };
 use isahc::AsyncBody;
 

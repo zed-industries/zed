@@ -8,7 +8,7 @@ use client::{
 use collections::HashSet;
 use futures::lock::Mutex;
 use gpui::{
-    AppContext, AsyncAppContext, Context, EventEmitter, Model, ModelContext, Task, WeakModel,
+    AppContext, AsyncAppContext, EventEmitter, Model, ModelContext, StaticContext, Task, WeakModel,
 };
 use rand::prelude::*;
 use std::{

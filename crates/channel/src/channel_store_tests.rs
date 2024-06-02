@@ -3,7 +3,7 @@ use crate::channel_chat::ChannelChatEvent;
 use super::*;
 use client::{test::FakeServer, Client, UserStore};
 use clock::FakeSystemClock;
-use gpui::{AppContext, Context, Model, TestAppContext};
+use gpui::{AppContext, Model, StaticContext, TestAppContext};
 use http::FakeHttpClient;
 use rpc::proto::{self};
 use settings::SettingsStore;

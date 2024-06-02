@@ -4,7 +4,7 @@ use client::{ChannelId, Client, UserStore};
 use collections::HashMap;
 use db::smol::stream::StreamExt;
 use gpui::{
-    AppContext, AsyncAppContext, Context as _, EventEmitter, Global, Model, ModelContext, Task,
+    AppContext, AsyncAppContext, StaticContext as _, EventEmitter, Global, Model, ModelContext, Task,
 };
 use rpc::{proto, Notification, TypedEnvelope};
 use std::{ops::Range, sync::Arc};

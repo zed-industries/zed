@@ -18,7 +18,7 @@ use fs::RealFs;
 use futures::{future, StreamExt};
 use git::GitHostingProviderRegistry;
 use gpui::{
-    App, AppContext, AsyncAppContext, Context, Global, Task, UpdateGlobal as _, VisualContext,
+    App, AppContext, AsyncAppContext, StaticContext, Global, Task, UpdateGlobal as _, VisualContext,
 };
 use image_viewer;
 use language::LanguageRegistry;

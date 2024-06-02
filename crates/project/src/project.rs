@@ -35,8 +35,9 @@ use fuzzy::CharBag;
 use git::{blame::Blame, repository::GitRepository};
 use globset::{Glob, GlobSet, GlobSetBuilder};
 use gpui::{
-    AnyModel, AppContext, AsyncAppContext, BackgroundExecutor, BorrowAppContext, Context, Entity,
-    EventEmitter, Model, ModelContext, PromptLevel, SharedString, Task, WeakModel, WindowContext,
+    AnyModel, AppContext, AsyncAppContext, BackgroundExecutor, BorrowAppContext, Entity,
+    EventEmitter, Model, ModelContext, PromptLevel, SharedString, StaticContext, Task, WeakModel,
+    WindowContext,
 };
 use itertools::Itertools;
 use language::{

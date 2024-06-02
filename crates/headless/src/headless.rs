@@ -3,7 +3,9 @@ use client::DevServerProjectId;
 use client::{user::UserStore, Client, ClientSettings};
 use fs::Fs;
 use futures::Future;
-use gpui::{AppContext, AsyncAppContext, Context, Global, Model, ModelContext, Task, WeakModel};
+use gpui::{
+    AppContext, AsyncAppContext, Global, Model, ModelContext, StaticContext, Task, WeakModel,
+};
 use language::LanguageRegistry;
 use node_runtime::NodeRuntime;
 use postage::stream::Stream;

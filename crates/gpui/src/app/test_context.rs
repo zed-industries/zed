@@ -1,6 +1,6 @@
 use crate::{
     Action, AnyView, AnyWindowHandle, AppCell, AppContext, AsyncAppContext, AvailableSpace,
-    BackgroundExecutor, BorrowAppContext, Bounds, ClipboardItem, Context, DrawPhase, Drawable,
+    BackgroundExecutor, BorrowAppContext, Bounds, ClipboardItem, StaticContext, DrawPhase, Drawable,
     Element, Empty, Entity, EventEmitter, ForegroundExecutor, Global, InputEvent, Keystroke, Model,
     ModelContext, Modifiers, ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseMoveEvent,
     MouseUpEvent, Pixels, Platform, Point, Render, Result, Size, Task, TestDispatcher,
@@ -29,7 +29,7 @@ pub struct TestAppContext {
     on_quit: Rc<RefCell<Vec<Box<dyn FnOnce() + 'static>>>>,
 }
 
-impl Context for TestAppContext {
+impl StaticContext for TestAppContext {
     type Result<T> = T;
 
     fn new_model<T: 'static>(
@@ -844,8 +844,8 @@ impl VisualTestContext {
     }
 }
 
-impl Context for VisualTestContext {
-    type Result<T> = <TestAppContext as Context>::Result<T>;
+impl StaticContext for VisualTestContext {
+    type Result<T> = <TestAppContext as StaticContext>::Result<T>;
 
     fn new_model<T: 'static>(
         &mut self,

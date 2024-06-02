@@ -7,8 +7,8 @@ use client::{ChannelId, Client, ClientSettings, ProjectId, Subscription, User, U
 use collections::{hash_map, HashMap, HashSet};
 use futures::{channel::mpsc, future::Shared, Future, FutureExt, StreamExt};
 use gpui::{
-    AppContext, AsyncAppContext, Context, EventEmitter, Global, Model, ModelContext, SharedString,
-    Task, WeakModel,
+    AppContext, AsyncAppContext, EventEmitter, Global, Model, ModelContext, SharedString,
+    StaticContext, Task, WeakModel,
 };
 use language::Capability;
 use rpc::{

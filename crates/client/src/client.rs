@@ -1701,7 +1701,7 @@ mod tests {
     use crate::test::FakeServer;
 
     use clock::FakeSystemClock;
-    use gpui::{BackgroundExecutor, Context, TestAppContext};
+    use gpui::{BackgroundExecutor, StaticContext, TestAppContext};
     use http::FakeHttpClient;
     use parking_lot::Mutex;
     use settings::SettingsStore;

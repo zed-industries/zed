@@ -12,9 +12,9 @@ use editor::{
     Anchor, Editor, EditorElement, EditorEvent, EditorStyle, MultiBuffer, MAX_TAB_TITLE_LEN,
 };
 use gpui::{
-    actions, div, Action, AnyElement, AnyView, AppContext, Context as _, Element, EntityId,
-    EventEmitter, FocusHandle, FocusableView, FontStyle, Global, Hsla, InteractiveElement,
-    IntoElement, Model, ModelContext, ParentElement, Point, Render, SharedString, Styled,
+    actions, div, Action, AnyElement, AnyView, AppContext, Element, EntityId, EventEmitter,
+    FocusHandle, FocusableView, FontStyle, Global, Hsla, InteractiveElement, IntoElement, Model,
+    ModelContext, ParentElement, Point, Render, SharedString, StaticContext as _, Styled,
     Subscription, Task, TextStyle, UpdateGlobal, View, ViewContext, VisualContext, WeakModel,
     WeakView, WhiteSpace, WindowContext,
 };

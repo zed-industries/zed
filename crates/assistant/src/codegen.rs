@@ -391,7 +391,7 @@ mod tests {
 
     use super::*;
     use futures::stream::{self};
-    use gpui::{Context, TestAppContext};
+    use gpui::{StaticContext, TestAppContext};
     use indoc::indoc;
     use language::{
         language_settings, tree_sitter_rust, Buffer, Language, LanguageConfig, LanguageMatcher,

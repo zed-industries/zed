@@ -107,7 +107,7 @@ pub fn diff_hunk_to_display(
 mod tests {
     use crate::Point;
     use crate::{editor_tests::init_test, hunk_status};
-    use gpui::{Context, TestAppContext};
+    use gpui::{StaticContext, TestAppContext};
     use language::Capability::ReadWrite;
     use multi_buffer::{ExcerptRange, MultiBuffer, MultiBufferRow};
     use project::{FakeFs, Project};

@@ -118,7 +118,7 @@ mod test {
         state::Mode,
         test::{NeovimBackedTestContext, VimTestContext},
     };
-    use gpui::{point, px, size, Context};
+    use gpui::{point, px, size, StaticContext};
     use indoc::indoc;
     use language::Point;
 

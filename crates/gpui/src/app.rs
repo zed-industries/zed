@@ -27,7 +27,7 @@ use util::ResultExt;
 
 use crate::{
     current_platform, init_app_menus, Action, ActionRegistry, Any, AnyView, AnyWindowHandle,
-    AppMetadata, AssetCache, AssetSource, BackgroundExecutor, ClipboardItem, Context,
+    AppMetadata, AssetCache, AssetSource, BackgroundExecutor, ClipboardItem, StaticContext,
     DispatchPhase, DisplayId, Entity, EventEmitter, ForegroundExecutor, Global, KeyBinding, Keymap,
     Keystroke, LayoutId, Menu, MenuItem, PathPromptOptions, Pixels, Platform, PlatformDisplay,
     Point, PromptBuilder, PromptHandle, PromptLevel, Render, RenderablePromptHandle, Reservation,
@@ -1263,7 +1263,7 @@ impl AppContext {
     }
 }
 
-impl Context for AppContext {
+impl StaticContext for AppContext {
     type Result<T> = T;
 
     /// Build an entity that is owned by the application. The given function will be invoked with

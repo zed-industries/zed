@@ -12,7 +12,7 @@ use collections::{BTreeMap, HashMap, HashSet};
 use fs::Fs;
 use futures::{FutureExt, StreamExt};
 use gpui::{
-    AppContext, AsyncAppContext, Context, EventEmitter, Model, ModelContext, Task, WeakModel,
+    AppContext, AsyncAppContext, StaticContext, EventEmitter, Model, ModelContext, Task, WeakModel,
 };
 use language::LanguageRegistry;
 use live_kit_client::{LocalAudioTrack, LocalTrackPublication, LocalVideoTrack, RoomUpdate};

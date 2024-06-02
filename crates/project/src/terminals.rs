@@ -1,7 +1,8 @@
 use crate::Project;
 use collections::HashMap;
 use gpui::{
-    AnyWindowHandle, AppContext, Context, Entity, Model, ModelContext, SharedString, WeakModel,
+    AnyWindowHandle, AppContext, Entity, Model, ModelContext, SharedString, StaticContext,
+    WeakModel,
 };
 use itertools::Itertools;
 use settings::{Settings, SettingsLocation};

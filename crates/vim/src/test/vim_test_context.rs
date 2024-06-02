@@ -1,7 +1,7 @@
 use std::ops::{Deref, DerefMut};
 
 use editor::test::editor_lsp_test_context::EditorLspTestContext;
-use gpui::{Context, View, VisualContext};
+use gpui::{StaticContext, View, VisualContext};
 use search::{project_search::ProjectSearchBar, BufferSearchBar};
 
 use crate::{state::Operator, *};

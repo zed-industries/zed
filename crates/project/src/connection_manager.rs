@@ -3,7 +3,7 @@ use anyhow::Result;
 use client::Client;
 use collections::{HashMap, HashSet};
 use futures::{FutureExt, StreamExt};
-use gpui::{AppContext, AsyncAppContext, Context, Global, Model, ModelContext, Task, WeakModel};
+use gpui::{AppContext, AsyncAppContext, StaticContext, Global, Model, ModelContext, Task, WeakModel};
 use postage::stream::Stream;
 use rpc::proto;
 use std::{sync::Arc, time::Duration};

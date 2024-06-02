@@ -158,7 +158,7 @@ use taffy::TaffyLayoutEngine;
 
 /// The context trait, allows the different contexts in GPUI to be used
 /// interchangeably for certain operations.
-pub trait Context {
+pub trait StaticContext {
     /// The result type for this context, used for async contexts that
     /// can't hold a direct reference to the application context.
     type Result<T>;
@@ -228,7 +228,7 @@ impl<T: 'static> Reservation<T> {
 
 /// This trait is used for the different visual contexts in GPUI that
 /// require a window to be present.
-pub trait VisualContext: Context {
+pub trait VisualContext: StaticContext {
     /// Construct a new view in the window referenced by this context.
     fn new_view<V>(
         &mut self,
