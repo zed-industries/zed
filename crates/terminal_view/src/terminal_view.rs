@@ -150,8 +150,6 @@ impl TerminalView {
 
         let focus_handle = cx.focus_handle();
         let focus_in = cx.on_focus_in(&focus_handle, |terminal_view, cx| {
-            #[cfg(target_os = "linux")]
-            cx.update_ime_position();
             terminal_view.focus_in(cx);
         });
         let focus_out = cx.on_focus_out(&focus_handle, |terminal_view, cx| {
@@ -722,6 +720,8 @@ impl TerminalView {
     fn focus_in(&mut self, cx: &mut ViewContext<Self>) {
         self.terminal.read(cx).focus_in();
         self.blink_cursors(self.blink_epoch, cx);
+        #[cfg(target_os = "linux")]
+        cx.update_ime_position();
         cx.notify();
     }
 
