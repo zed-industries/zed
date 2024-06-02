@@ -211,7 +211,7 @@ async fn test_indent_outdent(cx: &mut gpui::TestAppContext) {
     cx.simulate_keystrokes("v k <");
     cx.assert_editor_state("        a\n    bˇ\n    ccc\n");
     cx.simulate_keystrokes(".");
-    cx.assert_editor_state("        a\nb\nccˇc\n");
+    cx.assert_editor_state("        a\nbˇ\nccc\n");
 }
 
 #[gpui::test]

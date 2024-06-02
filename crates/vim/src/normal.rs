@@ -24,6 +24,7 @@ use crate::{
 use collections::BTreeSet;
 use editor::scroll::Autoscroll;
 use editor::Bias;
+use editor::DisplayPoint;
 use gpui::{actions, ViewContext, WindowContext};
 use language::{Point, SelectionGoal};
 use log::error;
@@ -145,10 +146,10 @@ pub(crate) fn register(workspace: &mut Workspace, cx: &mut ViewContext<Workspace
             vim.record_current_action(cx);
             vim.update_active_editor(cx, |_, editor, cx| {
                 editor.transact(cx, |editor, cx| {
-                    let mut original_positions : HashMap<_, _> = Default::default();
+                    let mut original_positions: HashMap<_, _> = Default::default();
                     let (map, selections) = editor.selections.all_display(cx);
                     selections.iter().for_each(|selection| {
-                        let line_start = first_non_whitespace(&map, false, selection.start).column();
+                        let line_start = first_non_whitespace(&map, true, selection.start).column();
                         original_positions.insert(selection.id, (selection.start, line_start));
                     });
                     editor.indent(&Default::default(), cx);
@@ -158,9 +159,11 @@ pub(crate) fn register(workspace: &mut Workspace, cx: &mut ViewContext<Workspace
                             let (mut cursor, original_line_start) = original_positions.remove(
                                 &selection.id
                             ).unwrap();
-                            *cursor.column_mut() +=
-                                first_non_whitespace(map, true, cursor).column() -
-                                original_line_start;
+                            *cursor.column_mut() += first_non_whitespace(
+                                    map,
+                                    true,
+                                    DisplayPoint::new(cursor.row(), 0)
+                                ).column() - original_line_start;
                             cursor = map.clip_point(cursor, Bias::Left);
                             selection.collapse_to(cursor, selection.goal);
                         });
@@ -177,7 +180,29 @@ pub(crate) fn register(workspace: &mut Workspace, cx: &mut ViewContext<Workspace
         Vim::update(cx, |vim, cx| {
             vim.record_current_action(cx);
             vim.update_active_editor(cx, |_, editor, cx| {
-                editor.transact(cx, |editor, cx| editor.outdent(&Default::default(), cx))
+                editor.transact(cx, |editor, cx| {
+                    let mut original_positions: HashMap<_, _> = Default::default();
+                    let (map, selections) = editor.selections.all_display(cx);
+                    selections.iter().for_each(|selection| {
+                        let line_start = first_non_whitespace(&map, true, selection.start).column();
+                        original_positions.insert(selection.id, (selection.start, line_start));
+                    });
+                    editor.outdent(&Default::default(), cx);
+                    editor.change_selections(Some(Autoscroll::fit()), cx, |s| {
+                        s.move_with(|map, selection| {
+                            let (mut cursor, original_line_start) = original_positions.remove(
+                                &selection.id
+                            ).unwrap();
+                            *cursor.column_mut() -= original_line_start - first_non_whitespace(
+                                    map,
+                                    true,
+                                    DisplayPoint::new(cursor.row(), 0)
+                                ).column();
+                            cursor = map.clip_point(cursor, Bias::Left);
+                            selection.collapse_to(cursor, selection.goal);
+                        });
+                    });
+                });
             });
             if vim.state().mode.is_visual() {
                 vim.switch_mode(Mode::Normal, false, cx)
