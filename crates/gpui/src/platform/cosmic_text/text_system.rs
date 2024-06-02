@@ -314,7 +314,7 @@ impl CosmicTextSystemState {
             let bitmap_size = glyph_bounds.size;
             let font = &self.loaded_fonts_store[params.font_id.0];
             let font_system = &mut self.font_system;
-            let image = self
+            let mut image = self
                 .swash_cache
                 .get_image(
                     font_system,
@@ -329,6 +329,13 @@ impl CosmicTextSystemState {
                 )
                 .clone()
                 .unwrap();
+
+            if params.is_emoji {
+                // Convert from RGBA to BGRA.
+                for pixel in image.data.chunks_exact_mut(4) {
+                    pixel.swap(0, 2);
+                }
+            }
 
             Ok((bitmap_size, image.data))
         }
