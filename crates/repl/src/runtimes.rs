@@ -1,13 +1,15 @@
 use anyhow::{Context as _, Result};
 use collections::HashMap;
+use futures::lock::Mutex;
 use futures::{channel::mpsc, SinkExt as _, StreamExt as _};
-use gpui::EntityId;
+use gpui::{AsyncAppContext, EntityId};
 use project::Fs;
 use runtimelib::{dirs, ConnectionInfo, JupyterKernelspec, JupyterMessage, JupyterMessageContent};
 use smol::{net::TcpListener, process::Command};
+use std::fmt::Debug;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::{path::PathBuf, sync::Arc};
-use util::ResultExt as _;
+use util::{ResultExt as _, TryFutureExt};
 
 #[derive(Debug)]
 pub struct Request {
@@ -74,20 +76,21 @@ async fn peek_ports(ip: IpAddr) -> anyhow::Result<[u16; 5]> {
     Ok(ports)
 }
 
+#[derive(Debug)]
 pub struct RunningKernel {
     #[allow(unused)]
     runtime: RuntimeSpecification,
     #[allow(unused)]
     process: smol::process::Child,
-    pub shell_request_tx: mpsc::UnboundedSender<Request>,
-    _runtime_handle: std::thread::JoinHandle<()>,
+    pub request_tx: mpsc::UnboundedSender<Request>,
 }
 
 impl RunningKernel {
     pub async fn new(
         runtime: RuntimeSpecification,
-        entity_id: &EntityId,
+        entity_id: EntityId,
         fs: Arc<dyn Fs>,
+        cx: AsyncAppContext,
     ) -> anyhow::Result<Self> {
         let ip = IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1));
         let ports = peek_ports(ip).await?;
@@ -118,126 +121,160 @@ impl RunningKernel {
             .spawn()
             .context("failed to start the kernel process")?;
 
-        let (mut shell_request_tx, _runtime_handle) = connect_kernel(connection_info.clone())?;
+        let mut iopub = connection_info.create_client_iopub_connection("").await?;
+        let mut shell = connection_info.create_client_shell_connection().await?;
 
-        // Send an initial kernel info request to the kernel to kick it off
-        let (tx, mut rx) = mpsc::unbounded();
-        shell_request_tx
-            .send(Request {
-                request: runtimelib::KernelInfoRequest {}.into(),
-                responses_rx: tx,
+        // Spawn a background task to handle incoming messages from the kernel as well
+        // as outgoing messages to the kernel
+
+        let child_messages: Arc<
+            Mutex<HashMap<String, mpsc::UnboundedSender<JupyterMessageContent>>>,
+        > = Default::default();
+
+        let (request_tx, mut request_rx) = mpsc::unbounded::<Request>();
+
+        cx.background_executor()
+            .spawn({
+                let child_messages = child_messages.clone();
+
+                async move {
+                    let child_messages = child_messages.clone();
+                    while let Ok(message) = iopub.read().await {
+                        if let Some(parent_header) = message.parent_header {
+                            let child_messages = child_messages.lock().await;
+
+                            let sender = child_messages.get(&parent_header.msg_id);
+
+                            match sender {
+                                Some(mut sender) => {
+                                    sender.send(message.content).await?;
+                                }
+                                None => {}
+                            }
+                        }
+                    }
+
+                    anyhow::Ok(())
+                }
             })
-            .await?;
+            .detach();
 
-        let timeout = smol::Timer::after(std::time::Duration::from_secs(1));
-        futures::future::select(rx.next(), timeout).await;
+        cx.background_executor()
+            .spawn({
+                let child_messages = child_messages.clone();
+                async move {
+                    while let Some(request) = request_rx.next().await {
+                        let rx = request.responses_rx.clone();
+
+                        let request: JupyterMessage = request.request.into();
+                        let msg_id = request.header.msg_id.clone();
+
+                        let mut sender = rx.clone();
+
+                        child_messages
+                            .lock()
+                            .await
+                            .insert(msg_id.clone(), sender.clone());
+
+                        shell.send(request).await?;
+
+                        let response = shell.read().await?;
+
+                        sender.send(response.content).await?;
+                    }
+
+                    anyhow::Ok(())
+                }
+            })
+            .detach();
 
         Ok(Self {
             runtime,
             process,
-            shell_request_tx,
-            _runtime_handle,
+            request_tx,
         })
     }
 }
 
-fn connect_kernel(
-    connection_info: ConnectionInfo,
-) -> Result<(mpsc::UnboundedSender<Request>, std::thread::JoinHandle<()>)> {
-    let (shell_request_tx, shell_request_rx) = mpsc::unbounded::<Request>();
+// async fn connect_kernel(
+//     connection_info: ConnectionInfo,
+// ) -> Result<(
+//     mpsc::UnboundedSender<Request>,
+//     runtimelib::ClientShellConnection,
+//     runtimelib::ClientIoPubConnection,
+// )> {
+//     let (request_tx, request_rx) = mpsc::unbounded::<Request>();
 
-    let _runtime_handle = std::thread::spawn(|| {
-        let tokio_runtime = tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build();
+//     // This is a one way channel that feeds us message from the kernel
+//     // Event Stream --> always emitting
+//     let mut iopub = connection_info.create_client_iopub_connection("").await?;
+//     // Request/Reply
+//     let mut shell = connection_info.create_client_shell_connection().await?;
+//     // Request/Reply
+//     // let mut control = connection_info.create_client_control_connection().await?;
 
-        let tokio_runtime = match tokio_runtime {
-            Ok(tokio_runtime) => tokio_runtime,
-            Err(e) => {
-                log::error!("Failed to create tokio runtime for jupyter kernel: {e:?}");
-                return;
-            }
-        };
+//     let child_messages: Arc<
+//         tokio::sync::Mutex<HashMap<String, mpsc::UnboundedSender<JupyterMessageContent>>>,
+//     > = Default::default();
 
-        // TODO: Will need a signal handler to shutdown the runtime
-        tokio_runtime
-            .block_on(async move {
-                connect_tokio_kernel_interface(&connection_info, shell_request_rx).await
-            })
-            .log_err();
-    });
+//     // let iopub_handle: tokio::task::JoinHandle<anyhow::Result<()>> = tokio::spawn({
+//     //     let child_messages = child_messages.clone();
+//     //     async move {
+//     //         loop {
+//     //             let message = iopub.read().await?;
 
-    Ok((shell_request_tx.clone(), _runtime_handle))
-}
+//     //             if let Some(parent_header) = message.parent_header {
+//     //                 if let Some(mut sender) = child_messages.lock().await.get(&parent_header.msg_id)
+//     //                 {
+//     //                     sender.send(message.content).await.ok();
+//     //                 }
+//     //             }
+//     //         }
+//     //     }
+//     // });
 
-async fn connect_tokio_kernel_interface(
-    connection_info: &runtimelib::ConnectionInfo,
-    mut request_rx: mpsc::UnboundedReceiver<Request>,
-) -> Result<()> {
-    // This is a one way channel that feeds us message from the kernel
-    // Event Stream --> always emitting
-    let mut iopub = connection_info.create_client_iopub_connection("").await?;
-    // Request/Reply
-    let mut shell = connection_info.create_client_shell_connection().await?;
-    // Request/Reply
-    // let mut control = connection_info.create_client_control_connection().await?;
+//     let shell_handle: tokio::task::JoinHandle<anyhow::Result<()>> = tokio::spawn({
+//         let child_messages = child_messages.clone();
+//         async move {
+//             while let Some(request) = request_rx.next().await {
+//                 let message = JupyterMessage::new(request.request, None);
 
-    let child_messages: Arc<
-        tokio::sync::Mutex<HashMap<String, mpsc::UnboundedSender<JupyterMessageContent>>>,
-    > = Default::default();
+//                 let sender = request.responses_rx.clone();
 
-    let iopub_handle: tokio::task::JoinHandle<anyhow::Result<()>> = tokio::spawn({
-        let child_messages = child_messages.clone();
-        async move {
-            loop {
-                let message = iopub.read().await?;
+//                 child_messages
+//                     .lock()
+//                     .await
+//                     .insert(message.header.msg_id.clone(), sender.clone());
 
-                if let Some(parent_header) = message.parent_header {
-                    if let Some(mut sender) = child_messages.lock().await.get(&parent_header.msg_id)
-                    {
-                        sender.send(message.content).await.ok();
-                    }
-                }
-            }
-        }
-    });
+//                 shell.send(message).await?;
 
-    let shell_handle: tokio::task::JoinHandle<anyhow::Result<()>> = tokio::spawn({
-        let child_messages = child_messages.clone();
-        async move {
-            while let Some(request) = request_rx.next().await {
-                let message = JupyterMessage::new(request.request, None);
+//                 let mut sender = sender.clone();
+//                 let reply = shell.read().await?;
+//                 sender.send(reply.content).await.ok();
+//             }
+//             anyhow::Ok(())
+//         }
+//     });
 
-                let sender = request.responses_rx.clone();
+//     let join_fut = futures::future::try_join(iopub_handle, shell_handle);
 
-                child_messages
-                    .lock()
-                    .await
-                    .insert(message.header.msg_id.clone(), sender.clone());
+//     let results = join_fut.await?;
 
-                shell.send(message).await?;
+//     // todo!("If any of these error, we should send back an error using the sender");
+//     if let Err(e) = results.0 {
+//         log::error!("iopub error: {e:?}");
+//     }
+//     if let Err(e) = results.1 {
+//         log::error!("shell error: {e:?}");
+//     }
 
-                let mut sender = sender.clone();
-                let reply = shell.read().await?;
-                sender.send(reply.content).await.ok();
-            }
-            anyhow::Ok(())
-        }
-    });
+//     Ok((request_tx.clone(), shell, iopub))
+// }
 
-    let join_fut = futures::future::try_join(iopub_handle, shell_handle);
-
-    let results = join_fut.await?;
-
-    // todo!("If any of these error, we should send back an error using the sender");
-    if let Err(e) = results.0 {
-        log::error!("iopub error: {e:?}");
-    }
-    if let Err(e) = results.1 {
-        log::error!("shell error: {e:?}");
-    }
-    anyhow::Ok(())
-}
+// async fn connect_tokio_kernel_interface(
+// connection_info: &runtimelib::ConnectionInfo,
+// mut request_rx: mpsc::UnboundedReceiver<Request>,
+//) -> Result<()>
 
 async fn read_kernelspec_at(
     // Path should be a directory to a jupyter kernelspec, as in

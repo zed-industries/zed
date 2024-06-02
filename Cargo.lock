@@ -424,6 +424,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "async-attributes"
+version = "1.1.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a3203e79f4dd9bdda415ed03cf14dae5a2bf775c683a00f94e9cd1faf0f596e5"
+dependencies = [
+ "quote",
+ "syn 1.0.109",
+]
+
+[[package]]
 name = "async-broadcast"
 version = "0.7.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -484,6 +494,16 @@ dependencies = [
  "futures-io",
  "memchr",
  "pin-project-lite",
+]
+
+[[package]]
+name = "async-dispatcher"
+version = "0.1.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5c8bff43baa5b0ca8f8bcd7f9338f5d30fbd75236a2aa89130a7c5121a06d6ca"
+dependencies = [
+ "async-task",
+ "futures-lite 1.13.0",
 ]
 
 [[package]]
@@ -735,6 +755,7 @@ version = "1.12.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "62565bb4402e926b29953c785397c6dc0391b7b446e45008b0049eb43cec6f5d"
 dependencies = [
+ "async-attributes",
  "async-channel 1.9.0",
  "async-global-executor",
  "async-io 1.13.0",
@@ -8363,6 +8384,7 @@ version = "0.1.0"
 dependencies = [
  "alacritty_terminal",
  "anyhow",
+ "async-dispatcher",
  "base64 0.13.1",
  "collections",
  "editor",
@@ -8637,22 +8659,23 @@ dependencies = [
 [[package]]
 name = "runtimelib"
 version = "0.11.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "cf4630343a0bfacc37e83f203cf99961f0e8cf1b4fbc23132282aabd30013ab3"
 dependencies = [
  "anyhow",
+ "async-dispatcher",
+ "async-std",
  "base64 0.22.0",
  "bytes 1.5.0",
  "chrono",
  "data-encoding",
  "dirs 5.0.1",
+ "futures 0.3.28",
  "glob",
  "rand 0.8.5",
  "ring",
  "serde",
  "serde_json",
  "shellexpand 3.1.0",
- "tokio",
+ "smol",
  "uuid",
  "zeromq",
 ]
@@ -13632,10 +13655,10 @@ dependencies = [
 
 [[package]]
 name = "zeromq"
-version = "0.3.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2db35fbc7d9082d39a85c9831ec5dc7b7b135038d2f00bb5ff2a4c0275893da1"
+version = "0.3.5"
 dependencies = [
+ "async-dispatcher",
+ "async-std",
  "async-trait",
  "asynchronous-codec",
  "bytes 1.5.0",
@@ -13652,8 +13675,6 @@ dependencies = [
  "rand 0.8.5",
  "regex",
  "thiserror",
- "tokio",
- "tokio-util",
  "uuid",
 ]
 

@@ -1,4 +1,5 @@
 use anyhow::{anyhow, Context as _, Result};
+use async_dispatcher::{set_dispatcher, timeout, Dispatcher, Runnable};
 use collections::{HashMap, HashSet};
 use editor::{
     display_map::{
@@ -9,17 +10,21 @@ use editor::{
 use futures::{
     channel::mpsc::{self, UnboundedSender},
     future::Shared,
-    Future, FutureExt as _, SinkExt as _, StreamExt as _,
+    Future, FutureExt, SinkExt as _, StreamExt,
 };
-use gpui::{actions, AppContext, Context, EntityId, Global, Model, ModelContext, Task, WeakView};
+use gpui::prelude::*;
+use gpui::{
+    actions, AppContext, Context, EntityId, Global, Model, ModelContext, PlatformDispatcher, Task,
+    WeakView,
+};
 use gpui::{Entity, View};
 use language::Point;
 use outputs::{ExecutionStatus, ExecutionView, LineHeight as _};
 use project::Fs;
 use runtimelib::JupyterMessageContent;
 use settings::Settings as _;
-use std::ops::Range;
-use std::sync::Arc;
+use std::{ops::Range, time::Instant};
+use std::{sync::Arc, time::Duration};
 use theme::{ActiveTheme, ThemeSettings};
 use ui::prelude::*;
 use workspace::Workspace;
@@ -37,7 +42,33 @@ pub struct RuntimeManagerGlobal(Model<RuntimeManager>);
 
 impl Global for RuntimeManagerGlobal {}
 
+pub fn zed_dispatcher(cx: &mut AppContext) -> impl Dispatcher {
+    struct ZedDispatcher {
+        dispatcher: Arc<dyn PlatformDispatcher>,
+    }
+
+    // PlatformDispatcher is _super_ close to the same interface we put in
+    // async-dispatcher, except for the task label in dispatch. Later we should
+    // just make that consistent so we have this dispatcher ready to go for
+    // other crates in Zed.
+    impl Dispatcher for ZedDispatcher {
+        fn dispatch(&self, runnable: Runnable) {
+            self.dispatcher.dispatch(runnable, None)
+        }
+
+        fn dispatch_after(&self, duration: Duration, runnable: Runnable) {
+            self.dispatcher.dispatch_after(duration, runnable);
+        }
+    }
+
+    ZedDispatcher {
+        dispatcher: cx.background_executor().dispatcher.clone(),
+    }
+}
+
 pub fn init(fs: Arc<dyn Fs>, cx: &mut AppContext) {
+    set_dispatcher(zed_dispatcher(cx));
+
     let runtime_manager = cx.new_model(|cx| RuntimeManager::new(fs.clone(), cx));
     RuntimeManager::set_global(runtime_manager.clone(), cx);
 
@@ -67,6 +98,7 @@ pub fn init(fs: Arc<dyn Fs>, cx: &mut AppContext) {
 //
 // Instances will carry EntityId => KernelEnum
 
+#[derive(Debug)]
 pub enum Kernel {
     RunningKernel(RunningKernel),
     StartingKernel(Shared<Task<()>>),
@@ -121,10 +153,12 @@ impl RuntimeManager {
         let kernel = self.instances.get(&entity_id);
         let pending_kernel_start = match kernel {
             Some(Kernel::RunningKernel(running_kernel)) => {
-                return Task::ready(anyhow::Ok(running_kernel.shell_request_tx.clone()));
+                return Task::ready(anyhow::Ok(running_kernel.request_tx.clone()));
             }
             Some(Kernel::StartingKernel(task)) => task.clone(),
             Some(Kernel::FailedLaunch) | None => {
+                self.instances.remove(&entity_id);
+
                 let kernel = self.launch_kernel(entity_id, language_name, cx);
                 let pending_kernel = cx
                     .spawn(|this, mut cx| async move {
@@ -137,7 +171,6 @@ impl RuntimeManager {
                                         .insert(entity_id, Kernel::RunningKernel(running_kernel));
                                 });
                             }
-                            // todo!(): Consider a failed launch state
                             Err(_err) => {
                                 let _ = this.update(&mut cx, |this, _cx| {
                                     this.instances.insert(entity_id, Kernel::FailedLaunch);
@@ -164,9 +197,7 @@ impl RuntimeManager {
                     .ok_or(anyhow!("unable to get a running kernel"))?;
 
                 match kernel {
-                    Kernel::RunningKernel(running_kernel) => {
-                        Ok(running_kernel.shell_request_tx.clone())
-                    }
+                    Kernel::RunningKernel(running_kernel) => Ok(running_kernel.request_tx.clone()),
                     _ => Err(anyhow!("unable to get a running kernel")),
                 }
             })?
@@ -201,25 +232,57 @@ impl RuntimeManager {
 
         let fs = self.fs.clone();
 
-        cx.spawn(|_, _cx| async move {
+        cx.spawn(|_, cx| async move {
             let running_kernel =
-                RunningKernel::new(runtime_specification, &entity_id, fs.clone()).await?;
+                RunningKernel::new(runtime_specification, entity_id.clone(), fs.clone(), cx);
 
-            // At this point, we can now feed all updates to the execution views
-            // that are associated with this entity_id
+            let running_kernel = running_kernel.await?;
 
-            let mut shell_request_tx = running_kernel.shell_request_tx.clone();
-            let (tx, mut rx) = mpsc::unbounded();
-            shell_request_tx
-                .send(Request {
-                    request: runtimelib::KernelInfoRequest {}.into(),
-                    responses_rx: tx,
-                })
-                .await?;
+            let mut request_tx = running_kernel.request_tx.clone();
 
-            // Wait for a kernel info reply on launch
-            let timeout = smol::Timer::after(std::time::Duration::from_secs(1));
-            futures::future::select(rx.next(), timeout).await;
+            let overall_timeout_duration = Duration::from_secs(10);
+
+            let start_time = Instant::now();
+
+            loop {
+                if start_time.elapsed() > overall_timeout_duration {
+                    // todo!(): Kill the kernel
+                    return Err(anyhow::anyhow!("Kernel did not respond in time"));
+                }
+
+                let (tx, rx) = mpsc::unbounded();
+                match request_tx
+                    .send(Request {
+                        request: runtimelib::KernelInfoRequest {}.into(),
+                        responses_rx: tx,
+                    })
+                    .await
+                {
+                    Ok(_) => {}
+                    Err(err) => {
+                        break;
+                    }
+                };
+
+                let mut rx = rx.fuse();
+
+                let kernel_info_timeout = Duration::from_secs(1);
+
+                let mut got_kernel_info = false;
+                // todo!(): have a timer here as well
+                while let Ok(Some(message)) = timeout(kernel_info_timeout, rx.next()).await {
+                    match message {
+                        JupyterMessageContent::KernelInfoReply(_) => {
+                            got_kernel_info = true;
+                        }
+                        _ => {}
+                    }
+                }
+
+                if got_kernel_info {
+                    break;
+                }
+            }
 
             anyhow::Ok(running_kernel)
         })
@@ -234,12 +297,12 @@ impl RuntimeManager {
     ) -> impl Future<Output = Result<mpsc::UnboundedReceiver<JupyterMessageContent>>> {
         let (tx, rx) = mpsc::unbounded();
 
-        let shell_request_tx = self.get_or_launch_kernel(entity_id, language_name, cx);
+        let request_tx = self.get_or_launch_kernel(entity_id, language_name, cx);
 
         async move {
-            let shell_request_tx = shell_request_tx.await?;
+            let request_tx = request_tx.await?;
 
-            shell_request_tx
+            request_tx
                 .unbounded_send(Request {
                     request: runtimelib::ExecuteRequest {
                         code,
