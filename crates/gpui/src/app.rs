@@ -1168,7 +1168,7 @@ impl AppContext {
         self.platform.set_menus(menus, &self.keymap.borrow());
     }
 
-    /// Sets the menu bar for this application. This will replace any existing menu bar.
+    /// Gets the menu bar for this application.
     pub fn get_menus(&self) -> Option<Vec<OwnedMenu>> {
         self.platform.get_menus()
     }
