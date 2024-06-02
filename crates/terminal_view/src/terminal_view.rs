@@ -150,6 +150,8 @@ impl TerminalView {
 
         let focus_handle = cx.focus_handle();
         let focus_in = cx.on_focus_in(&focus_handle, |terminal_view, cx| {
+            #[cfg(target_os = "linux")]
+            cx.update_ime_position();
             terminal_view.focus_in(cx);
         });
         let focus_out = cx.on_focus_out(&focus_handle, |terminal_view, cx| {
@@ -590,7 +592,11 @@ fn subscribe_for_terminal_events(
             },
             Event::BreadcrumbsChanged => cx.emit(ItemEvent::UpdateBreadcrumbs),
             Event::CloseTerminal => cx.emit(ItemEvent::CloseItem),
-            Event::SelectionsChanged => cx.emit(SearchEvent::ActiveMatchChanged),
+            Event::SelectionsChanged => {
+                #[cfg(target_os = "linux")]
+                cx.update_ime_position();
+                cx.emit(SearchEvent::ActiveMatchChanged)
+            }
         });
     vec![terminal_subscription, terminal_events_subscription]
 }
