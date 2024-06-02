@@ -2308,13 +2308,6 @@ impl Editor {
         cx.notify();
     }
 
-    pub fn inspect_selections(
-        &self,
-        inspect: impl FnOnce(&SelectionsCollection)
-    ) {
-        inspect(&self.selections);
-    }
-
     pub fn change_selections<R>(
         &mut self,
         autoscroll: Option<Autoscroll>,

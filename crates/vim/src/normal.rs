@@ -146,10 +146,9 @@ pub(crate) fn register(workspace: &mut Workspace, cx: &mut ViewContext<Workspace
             vim.update_active_editor(cx, |_, editor, cx| {
                 editor.transact(cx, |editor, cx| {
                     let mut original_positions : HashMap<_, _> = Default::default();
-                    editor.inspect_selections(|s| {
-                        s.inspect_with(cx, |_, selection| {
-                            original_positions.insert(selection.id, selection.start);
-                        });
+                    let (_, selections) = editor.selections.all_adjusted_display(cx);
+                    selections.iter().for_each(|selection| {
+                        original_positions.insert(selection.id, selection.start);
                     });
                     editor.indent(&Default::default(), cx);
                     editor.set_clip_at_line_ends(true, cx);

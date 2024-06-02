@@ -347,16 +347,6 @@ impl SelectionsCollection {
         }
     }
 
-    pub fn inspect_with(&self, cx: &mut AppContext, mut inspect: impl FnMut(&DisplaySnapshot, &Selection<DisplayPoint>)) {
-        let map = self.display_map(cx);
-        self
-            .all::<Point>(cx)
-            .iter()
-            .for_each(|selection| {
-                inspect(&map, &selection.map(|point| point.to_display_point(&map)));
-            });
-    }
-
     pub(crate) fn change_with<R>(
         &mut self,
         cx: &mut AppContext,
