@@ -230,6 +230,7 @@ impl WaylandWindow {
             .wm_base
             .get_xdg_surface(&surface, &globals.qh, surface.id());
         let toplevel = xdg_surface.get_toplevel(&globals.qh, surface.id());
+        toplevel.set_min_size(200, 200);
 
         if let Some(fractional_scale_manager) = globals.fractional_scale_manager.as_ref() {
             fractional_scale_manager.get_fractional_scale(&surface, &globals.qh, surface.id());
@@ -348,17 +349,22 @@ impl WaylandWindowStatePtr {
     pub fn handle_toplevel_event(&self, event: xdg_toplevel::Event) -> bool {
         match event {
             xdg_toplevel::Event::Configure {
-                width,
-                height,
+                mut width,
+                mut height,
                 states,
             } => {
                 let fullscreen = states.contains(&(xdg_toplevel::State::Fullscreen as u8));
                 let maximized = states.contains(&(xdg_toplevel::State::Maximized as u8));
 
                 let mut state = self.state.borrow_mut();
+                let got_unmaximized = state.maximized && !maximized;
                 state.fullscreen = fullscreen;
                 state.maximized = maximized;
-                if width != 0 && height != 0 && !fullscreen && !maximized {
+
+                if got_unmaximized {
+                    width = state.windowed_bounds.size.width.0;
+                    height = state.windowed_bounds.size.height.0;
+                } else if width != 0 && height != 0 && !fullscreen && !maximized {
                     state.windowed_bounds = Bounds {
                         origin: Point::default(),
                         size: size(width.into(), height.into()),
