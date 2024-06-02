@@ -12,6 +12,7 @@ pub mod substitute;
 mod yank;
 
 use std::sync::Arc;
+use std::collections::HashMap;
 
 use crate::{
     motion::{self, first_non_whitespace, next_line_end, right, Motion},
@@ -143,7 +144,23 @@ pub(crate) fn register(workspace: &mut Workspace, cx: &mut ViewContext<Workspace
         Vim::update(cx, |vim, cx| {
             vim.record_current_action(cx);
             vim.update_active_editor(cx, |_, editor, cx| {
-                editor.transact(cx, |editor, cx| editor.indent(&Default::default(), cx))
+                editor.transact(cx, |editor, cx| {
+                    let mut original_positions : HashMap<_, _> = Default::default();
+                    editor.inspect_selections(|s| {
+                        s.inspect_with(cx, |_, selection| {
+                            original_positions.insert(selection.id, selection.start);
+                        });
+                    });
+                    editor.indent(&Default::default(), cx);
+                    editor.set_clip_at_line_ends(true, cx);
+                    editor.change_selections(Some(Autoscroll::fit()), cx, |s| {
+                        s.move_with(|map, selection| {
+                            let mut cursor = original_positions.remove(&selection.id).unwrap();
+                            cursor = map.clip_point(cursor, Bias::Left);
+                            selection.collapse_to(cursor, selection.goal);
+                        });
+                    });
+                });
             });
             if vim.state().mode.is_visual() {
                 vim.switch_mode(Mode::Normal, false, cx)
