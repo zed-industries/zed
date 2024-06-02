@@ -63,12 +63,16 @@ impl EditorState {
 
 #[derive(Debug)]
 pub(crate) struct Selection {
+    selection: String,
     trie: Trie<OverlayState>,
 }
 
 impl Selection {
     pub(crate) fn new(trie: Trie<OverlayState>) -> Selection {
-        Selection { trie }
+        Selection {
+            selection: String::new(),
+            trie,
+        }
     }
 
     #[allow(dead_code)]
@@ -76,7 +80,12 @@ impl Selection {
         &self.trie
     }
 
+    pub(crate) fn selection(&self) -> &str {
+        self.selection.as_str()
+    }
+
     pub(crate) fn record_char(&mut self, character: char) -> TrimResult<OverlayState> {
+        self.selection.push(character);
         self.trie.trim(character).cloned()
     }
 
@@ -134,6 +143,10 @@ impl NCharInput {
             self.chars.push_str(characters);
             InputResult::Recording(self)
         }
+    }
+
+    pub(crate) fn chars(&self) -> &str {
+        self.chars.as_str()
     }
 }
 

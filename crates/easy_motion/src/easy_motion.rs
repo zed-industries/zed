@@ -26,6 +26,9 @@ use crate::perm::{TrieBuilder, TrimResult};
 use crate::util::manh_distance_pixels;
 use crate::util::{end_of_document, manh_distance, ranges, start_of_document, window_top};
 
+pub use crate::buffer_display::BufferDisplay;
+
+mod buffer_display;
 mod editor_events;
 mod editor_state;
 mod perm;
@@ -211,6 +214,19 @@ impl EasyMotion {
         .flatten()
     }
 
+    pub(crate) fn latest_state(&self) -> &EditorState {
+        if let Some(state) = self.multipane_state.as_ref() {
+            return state;
+        };
+        self.active_editor
+            .as_ref()
+            .and_then(|editor| {
+                let id = editor.entity_id();
+                self.editor_states.get(&id)
+            })
+            .unwrap_or(&EditorState::None)
+    }
+
     #[allow(dead_code)]
     fn new_state(&mut self) -> &EditorState {
         self.active_editor
@@ -234,8 +250,9 @@ impl EasyMotion {
     }
 
     fn insert_multipane_state(new_state: EditorState, cx: &mut AppContext) -> Option<()> {
-        Self::update(cx, move |easy, _cx| {
+        Self::update(cx, move |easy, cx| {
             easy.multipane_state = Some(new_state);
+            cx.notify();
         })
     }
 
@@ -303,8 +320,9 @@ impl EasyMotion {
             new_state
         });
 
-        Self::update(cx, move |easy, _cx| {
+        Self::update(cx, move |easy, cx| {
             easy.editor_states.insert(entity_id, new_state);
+            cx.notify();
         });
     }
 
@@ -506,9 +524,7 @@ impl EasyMotion {
         Point::new(Pixels(x), Pixels(y))
     }
 
-    fn pattern(_action: &Pattern, _cx: &WindowContext) {
-        todo!()
-    }
+    fn pattern(_action: &Pattern, _cx: &WindowContext) {}
 
     fn n_char(action: &NChar, workspace: &Workspace, cx: &mut WindowContext) {
         let n = action.n;
@@ -529,8 +545,9 @@ impl EasyMotion {
             let new_state = EditorState::new_n_char(n as usize, direction);
             Self::update_editors(&new_state, true, editors.into_iter(), cx);
 
-            Self::update(cx, move |easy, _cx| {
+            Self::update(cx, move |easy, cx| {
                 easy.multipane_state = Some(new_state);
+                cx.notify();
             });
         } else {
             let Some(active_editor) = Self::active_editor(cx) else {
@@ -579,11 +596,11 @@ impl EasyMotion {
             return;
         }
 
-        let entity_id = weak_editor.entity_id();
         let editor = weak_editor.upgrade();
         let Some(editor) = editor else {
             return;
         };
+        let entity_id = editor.entity_id();
 
         let keys = keystroke_event.keystroke.key.as_str();
         let new_state = editor.update(cx, |editor, cx| match state {
@@ -600,8 +617,9 @@ impl EasyMotion {
             EditorState::None => EditorState::None,
         });
 
-        Self::update(cx, move |easy, _cx| {
+        Self::update(cx, move |easy, cx| {
             easy.editor_states.insert(entity_id, new_state);
+            cx.notify();
         });
     }
 
@@ -828,8 +846,9 @@ impl EasyMotion {
             });
             match res {
                 Ok(state) => {
-                    Self::update_async(&mut cx, move |easy, _cx| {
+                    Self::update_async(&mut cx, move |easy, cx| {
                         easy.editor_states.insert(entity_id, state);
+                        cx.notify();
                     });
                 }
                 Err(err) => {
@@ -947,8 +966,9 @@ impl EasyMotion {
             let new_state = EditorState::new_selection(trie);
             Self::update_editors(&new_state, dimming, editors, cx);
 
-            Self::update_async(cx, move |easy, _cx| {
+            Self::update_async(cx, move |easy, cx| {
                 easy.multipane_state = Some(new_state);
+                cx.notify();
             });
         })
         .detach();
