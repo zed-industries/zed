@@ -1,13 +1,9 @@
-use std::cell::RefCell;
 use std::default::Default;
-use std::rc::Rc;
 
 use calloop::channel;
 
 use x11rb::protocol::{xproto, Event};
-use xim::{AHashMap, AttributeName, Client, ClientError, ClientHandler, InputStyle, Point};
-
-use crate::{Keystroke, PlatformInput, X11ClientState};
+use xim::{AHashMap, AttributeName, Client, ClientError, ClientHandler, InputStyle};
 
 pub enum XimCallbackEvent {
     XimXEvent(x11rb::protocol::Event),
@@ -84,10 +80,12 @@ impl<C: Client<XEvent = xproto::KeyPressEvent>> ClientHandler<C> for XimHandler 
         _input_context_id: u16,
         text: &str,
     ) -> Result<(), ClientError> {
-        self.xim_tx.send(XimCallbackEvent::XimCommitEvent(
-            self.window,
-            String::from(text),
-        ));
+        self.xim_tx
+            .send(XimCallbackEvent::XimCommitEvent(
+                self.window,
+                String::from(text),
+            ))
+            .ok();
         Ok(())
     }
 
@@ -99,14 +97,16 @@ impl<C: Client<XEvent = xproto::KeyPressEvent>> ClientHandler<C> for XimHandler 
         _flag: xim::ForwardEventFlag,
         xev: C::XEvent,
     ) -> Result<(), ClientError> {
-        match (xev.response_type) {
+        match xev.response_type {
             x11rb::protocol::xproto::KEY_PRESS_EVENT => {
                 self.xim_tx
-                    .send(XimCallbackEvent::XimXEvent(Event::KeyPress(xev)));
+                    .send(XimCallbackEvent::XimXEvent(Event::KeyPress(xev)))
+                    .ok();
             }
             x11rb::protocol::xproto::KEY_RELEASE_EVENT => {
                 self.xim_tx
-                    .send(XimCallbackEvent::XimXEvent(Event::KeyRelease(xev)));
+                    .send(XimCallbackEvent::XimXEvent(Event::KeyRelease(xev)))
+                    .ok();
             }
             _ => {}
         }
@@ -145,10 +145,12 @@ impl<C: Client<XEvent = xproto::KeyPressEvent>> ClientHandler<C> for XimHandler 
         // XIMPrimary, XIMHighlight, XIMSecondary, XIMTertiary are not specified,
         // but interchangeable as above
         // Currently there's no way to support these.
-        let mark_range = self.xim_tx.send(XimCallbackEvent::XimPreeditEvent(
-            self.window,
-            String::from(preedit_string),
-        ));
+        self.xim_tx
+            .send(XimCallbackEvent::XimPreeditEvent(
+                self.window,
+                String::from(preedit_string),
+            ))
+            .ok();
         Ok(())
     }
 }

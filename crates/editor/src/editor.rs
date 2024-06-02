@@ -1697,6 +1697,12 @@ impl Editor {
         cx.on_focus(&focus_handle, Self::handle_focus).detach();
         cx.on_blur(&focus_handle, Self::handle_blur).detach();
 
+        let show_indent_guides = if mode == EditorMode::SingleLine {
+            Some(false)
+        } else {
+            None
+        };
+
         let mut this = Self {
             focus_handle,
             buffer: buffer.clone(),
@@ -1726,7 +1732,7 @@ impl Editor {
             show_git_diff_gutter: None,
             show_code_actions: None,
             show_wrap_guides: None,
-            show_indent_guides: None,
+            show_indent_guides,
             placeholder_text: None,
             highlight_order: 0,
             highlighted_rows: HashMap::default(),
@@ -9770,19 +9776,19 @@ impl Editor {
     }
 
     pub fn toggle_indent_guides(&mut self, _: &ToggleIndentGuides, cx: &mut ViewContext<Self>) {
-        let currently_enabled = self.should_show_indent_guides(cx);
-        self.show_indent_guides = Some(!currently_enabled);
-        cx.notify();
-    }
-
-    fn should_show_indent_guides(&self, cx: &mut ViewContext<Self>) -> bool {
-        self.show_indent_guides.unwrap_or_else(|| {
+        let currently_enabled = self.should_show_indent_guides().unwrap_or_else(|| {
             self.buffer
                 .read(cx)
                 .settings_at(0, cx)
                 .indent_guides
                 .enabled
-        })
+        });
+        self.show_indent_guides = Some(!currently_enabled);
+        cx.notify();
+    }
+
+    fn should_show_indent_guides(&self) -> Option<bool> {
+        self.show_indent_guides
     }
 
     pub fn toggle_line_numbers(&mut self, _: &ToggleLineNumbers, cx: &mut ViewContext<Self>) {

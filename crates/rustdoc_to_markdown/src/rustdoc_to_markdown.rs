@@ -2,6 +2,7 @@
 
 #![deny(missing_docs)]
 
+mod html_element;
 mod markdown_writer;
 
 use std::io::Read;
@@ -56,6 +57,91 @@ mod tests {
         "##};
         let expected = indoc! {"
             # Crate serde
+        "}
+        .trim();
+
+        assert_eq!(
+            convert_rustdoc_to_markdown(html.as_bytes()).unwrap(),
+            expected
+        )
+    }
+
+    #[test]
+    fn test_single_paragraph() {
+        let html = indoc! {r#"
+            <p>In particular, the last point is what sets <code>axum</code> apart from other frameworks.
+            <code>axum</code> doesn’t have its own middleware system but instead uses
+            <a href="https://docs.rs/tower-service/0.3.2/x86_64-unknown-linux-gnu/tower_service/trait.Service.html" title="trait tower_service::Service"><code>tower::Service</code></a>. This means <code>axum</code> gets timeouts, tracing, compression,
+            authorization, and more, for free. It also enables you to share middleware with
+            applications written using <a href="http://crates.io/crates/hyper"><code>hyper</code></a> or <a href="http://crates.io/crates/tonic"><code>tonic</code></a>.</p>
+        "#};
+        let expected = indoc! {"
+            In particular, the last point is what sets `axum` apart from other frameworks. `axum` doesn’t have its own middleware system but instead uses `tower::Service`. This means `axum` gets timeouts, tracing, compression, authorization, and more, for free. It also enables you to share middleware with applications written using `hyper` or `tonic`.
+        "}
+        .trim();
+
+        assert_eq!(
+            convert_rustdoc_to_markdown(html.as_bytes()).unwrap(),
+            expected
+        )
+    }
+
+    #[test]
+    fn test_multiple_paragraphs() {
+        let html = indoc! {r##"
+            <h2 id="serde"><a class="doc-anchor" href="#serde">§</a>Serde</h2>
+            <p>Serde is a framework for <em><strong>ser</strong></em>ializing and <em><strong>de</strong></em>serializing Rust data
+            structures efficiently and generically.</p>
+            <p>The Serde ecosystem consists of data structures that know how to serialize
+            and deserialize themselves along with data formats that know how to
+            serialize and deserialize other things. Serde provides the layer by which
+            these two groups interact with each other, allowing any supported data
+            structure to be serialized and deserialized using any supported data format.</p>
+            <p>See the Serde website <a href="https://serde.rs/">https://serde.rs/</a> for additional documentation and
+            usage examples.</p>
+            <h3 id="design"><a class="doc-anchor" href="#design">§</a>Design</h3>
+            <p>Where many other languages rely on runtime reflection for serializing data,
+            Serde is instead built on Rust’s powerful trait system. A data structure
+            that knows how to serialize and deserialize itself is one that implements
+            Serde’s <code>Serialize</code> and <code>Deserialize</code> traits (or uses Serde’s derive
+            attribute to automatically generate implementations at compile time). This
+            avoids any overhead of reflection or runtime type information. In fact in
+            many situations the interaction between data structure and data format can
+            be completely optimized away by the Rust compiler, leaving Serde
+            serialization to perform the same speed as a handwritten serializer for the
+            specific selection of data structure and data format.</p>
+        "##};
+        let expected = indoc! {"
+            ## Serde
+
+            Serde is a framework for _**ser**_ializing and _**de**_serializing Rust data structures efficiently and generically.
+
+            The Serde ecosystem consists of data structures that know how to serialize and deserialize themselves along with data formats that know how to serialize and deserialize other things. Serde provides the layer by which these two groups interact with each other, allowing any supported data structure to be serialized and deserialized using any supported data format.
+
+            See the Serde website https://serde.rs/ for additional documentation and usage examples.
+
+            ### Design
+
+            Where many other languages rely on runtime reflection for serializing data, Serde is instead built on Rust’s powerful trait system. A data structure that knows how to serialize and deserialize itself is one that implements Serde’s `Serialize` and `Deserialize` traits (or uses Serde’s derive attribute to automatically generate implementations at compile time). This avoids any overhead of reflection or runtime type information. In fact in many situations the interaction between data structure and data format can be completely optimized away by the Rust compiler, leaving Serde serialization to perform the same speed as a handwritten serializer for the specific selection of data structure and data format.
+        "}
+        .trim();
+
+        assert_eq!(
+            convert_rustdoc_to_markdown(html.as_bytes()).unwrap(),
+            expected
+        )
+    }
+
+    #[test]
+    fn test_styled_text() {
+        let html = indoc! {r#"
+            <p>This text is <strong>bolded</strong>.</p>
+            <p>This text is <em>italicized</em>.</p>
+        "#};
+        let expected = indoc! {"
+            This text is **bolded**.
+
+            This text is _italicized_.
         "}
         .trim();
 
@@ -140,6 +226,42 @@ mod tests {
     }
 
     #[test]
+    fn test_item_table() {
+        let html = indoc! {r##"
+            <h2 id="structs" class="section-header">Structs<a href="#structs" class="anchor">§</a></h2>
+            <ul class="item-table">
+            <li><div class="item-name"><a class="struct" href="struct.Error.html" title="struct axum::Error">Error</a></div><div class="desc docblock-short">Errors that can happen when using axum.</div></li>
+            <li><div class="item-name"><a class="struct" href="struct.Extension.html" title="struct axum::Extension">Extension</a></div><div class="desc docblock-short">Extractor and response for extensions.</div></li>
+            <li><div class="item-name"><a class="struct" href="struct.Form.html" title="struct axum::Form">Form</a><span class="stab portability" title="Available on crate feature `form` only"><code>form</code></span></div><div class="desc docblock-short">URL encoded extractor and response.</div></li>
+            <li><div class="item-name"><a class="struct" href="struct.Json.html" title="struct axum::Json">Json</a><span class="stab portability" title="Available on crate feature `json` only"><code>json</code></span></div><div class="desc docblock-short">JSON Extractor / Response.</div></li>
+            <li><div class="item-name"><a class="struct" href="struct.Router.html" title="struct axum::Router">Router</a></div><div class="desc docblock-short">The router type for composing handlers and services.</div></li></ul>
+            <h2 id="functions" class="section-header">Functions<a href="#functions" class="anchor">§</a></h2>
+            <ul class="item-table">
+            <li><div class="item-name"><a class="fn" href="fn.serve.html" title="fn axum::serve">serve</a><span class="stab portability" title="Available on crate feature `tokio` and (crate features `http1` or `http2`) only"><code>tokio</code> and (<code>http1</code> or <code>http2</code>)</span></div><div class="desc docblock-short">Serve the service with the supplied listener.</div></li>
+            </ul>
+        "##};
+        let expected = indoc! {r#"
+            ## Structs
+
+            - `Error`: Errors that can happen when using axum.
+            - `Extension`: Extractor and response for extensions.
+            - `Form` [`form`]: URL encoded extractor and response.
+            - `Json` [`json`]: JSON Extractor / Response.
+            - `Router`: The router type for composing handlers and services.
+
+            ## Functions
+
+            - `serve` [`tokio` and (`http1` or `http2`)]: Serve the service with the supplied listener.
+        "#}
+        .trim();
+
+        assert_eq!(
+            convert_rustdoc_to_markdown(html.as_bytes()).unwrap(),
+            expected
+        )
+    }
+
+    #[test]
     fn test_table() {
         let html = indoc! {r##"
             <h2 id="feature-flags"><a class="doc-anchor" href="#feature-flags">§</a>Feature flags</h2>
@@ -165,8 +287,9 @@ mod tests {
         let expected = indoc! {r#"
             ## Feature flags
 
-            axum uses a set of feature flags to reduce the amount of compiled and
-            optional dependencies.The following optional features are available:
+            axum uses a set of feature flags to reduce the amount of compiled and optional dependencies.
+
+            The following optional features are available:
 
             | Name | Description | Default? |
             | --- | --- | --- |

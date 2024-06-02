@@ -6,7 +6,6 @@ use std::future::Future;
 use ashpd::desktop::settings::{ColorScheme, Settings};
 use calloop::channel::{Channel, Sender};
 use calloop::{EventSource, Poll, PostAction, Readiness, Token, TokenFactory};
-use parking_lot::Mutex;
 use smol::stream::StreamExt;
 use util::ResultExt;
 
@@ -115,6 +114,7 @@ impl WindowAppearance {
         }
     }
 
+    #[cfg_attr(target_os = "linux", allow(dead_code))]
     fn set_native(&mut self, cs: ColorScheme) {
         *self = Self::from_native(cs);
     }

@@ -1,27 +1,24 @@
-use std::any::Any;
 use std::cell::{Ref, RefCell, RefMut};
 use std::ffi::c_void;
 use std::num::NonZeroU32;
-use std::ops::{Deref, Range};
 use std::ptr::NonNull;
-use std::rc::{Rc, Weak};
+use std::rc::Rc;
 use std::sync::Arc;
 
 use blade_graphics as gpu;
-use collections::{HashMap, HashSet};
+use collections::HashMap;
 use futures::channel::oneshot::Receiver;
-use parking_lot::Mutex;
+
 use raw_window_handle as rwh;
 use wayland_backend::client::ObjectId;
-use wayland_client::protocol::wl_region::WlRegion;
 use wayland_client::WEnum;
 use wayland_client::{protocol::wl_surface, Proxy};
 use wayland_protocols::wp::fractional_scale::v1::client::wp_fractional_scale_v1;
 use wayland_protocols::wp::viewporter::client::wp_viewport;
 use wayland_protocols::xdg::decoration::zv1::client::zxdg_toplevel_decoration_v1;
 use wayland_protocols::xdg::shell::client::xdg_surface;
-use wayland_protocols::xdg::shell::client::xdg_toplevel::{self, WmCapabilities};
-use wayland_protocols_plasma::blur::client::{org_kde_kwin_blur, org_kde_kwin_blur_manager};
+use wayland_protocols::xdg::shell::client::xdg_toplevel::{self};
+use wayland_protocols_plasma::blur::client::org_kde_kwin_blur;
 
 use crate::platform::blade::{BladeRenderer, BladeSurfaceConfig};
 use crate::platform::linux::wayland::display::WaylandDisplay;
@@ -29,9 +26,9 @@ use crate::platform::linux::wayland::serial::SerialKind;
 use crate::platform::{PlatformAtlas, PlatformInputHandler, PlatformWindow};
 use crate::scene::Scene;
 use crate::{
-    px, size, Bounds, DevicePixels, Globals, Modifiers, Pixels, PlatformDisplay, PlatformInput,
-    Point, PromptLevel, Size, WaylandClientStatePtr, WindowAppearance, WindowBackgroundAppearance,
-    WindowBounds, WindowParams,
+    px, size, AnyWindowHandle, Bounds, DevicePixels, Globals, Modifiers, Output, Pixels,
+    PlatformDisplay, PlatformInput, Point, PromptLevel, Size, WaylandClientStatePtr,
+    WindowAppearance, WindowBackgroundAppearance, WindowBounds, WindowParams,
 };
 
 #[derive(Default)]
@@ -75,7 +72,8 @@ pub struct WaylandWindowState {
     blur: Option<org_kde_kwin_blur::OrgKdeKwinBlur>,
     toplevel: xdg_toplevel::XdgToplevel,
     viewport: Option<wp_viewport::WpViewport>,
-    outputs: HashSet<ObjectId>,
+    outputs: HashMap<ObjectId, Output>,
+    display: Option<(ObjectId, Output)>,
     globals: Globals,
     renderer: BladeRenderer,
     bounds: Bounds<u32>,
@@ -86,7 +84,8 @@ pub struct WaylandWindowState {
     restore_bounds: Bounds<DevicePixels>,
     maximized: bool,
     client: WaylandClientStatePtr,
-    callbacks: Callbacks,
+    handle: AnyWindowHandle,
+    active: bool,
 }
 
 #[derive(Clone)]
@@ -98,6 +97,7 @@ pub struct WaylandWindowStatePtr {
 impl WaylandWindowState {
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn new(
+        handle: AnyWindowHandle,
         surface: wl_surface::WlSurface,
         xdg_surface: xdg_surface::XdgSurface,
         toplevel: xdg_toplevel::XdgToplevel,
@@ -150,7 +150,8 @@ impl WaylandWindowState {
             toplevel,
             viewport,
             globals,
-            outputs: HashSet::default(),
+            outputs: HashMap::default(),
+            display: None,
             renderer: BladeRenderer::new(gpu, config),
             bounds,
             scale: 1.0,
@@ -159,9 +160,10 @@ impl WaylandWindowState {
             fullscreen: false,
             restore_bounds: Bounds::default(),
             maximized: false,
-            callbacks: Callbacks::default(),
             client,
             appearance,
+            handle,
+            active: false,
         }
     }
 }
@@ -217,6 +219,7 @@ impl WaylandWindow {
     }
 
     pub fn new(
+        handle: AnyWindowHandle,
         globals: Globals,
         client: WaylandClientStatePtr,
         params: WindowParams,
@@ -253,6 +256,7 @@ impl WaylandWindow {
 
         let this = Self(WaylandWindowStatePtr {
             state: Rc::new(RefCell::new(WaylandWindowState::new(
+                handle,
                 surface.clone(),
                 xdg_surface,
                 toplevel,
@@ -274,6 +278,10 @@ impl WaylandWindow {
 }
 
 impl WaylandWindowStatePtr {
+    pub fn handle(&self) -> AnyWindowHandle {
+        self.state.borrow().handle
+    }
+
     pub fn surface(&self) -> wl_surface::WlSurface {
         self.state.borrow().surface.clone()
     }
@@ -381,7 +389,7 @@ impl WaylandWindowStatePtr {
     pub fn handle_surface_event(
         &self,
         event: wl_surface::Event,
-        output_scales: HashMap<ObjectId, i32>,
+        outputs: HashMap<ObjectId, Output>,
     ) {
         let mut state = self.state.borrow_mut();
 
@@ -396,15 +404,15 @@ impl WaylandWindowStatePtr {
                 if state.surface.version() >= wl_surface::EVT_PREFERRED_BUFFER_SCALE_SINCE {
                     return;
                 }
+                let id = output.id();
 
-                state.outputs.insert(output.id());
+                let Some(output) = outputs.get(&id) else {
+                    return;
+                };
 
-                let mut scale = 1;
-                for output in state.outputs.iter() {
-                    if let Some(s) = output_scales.get(output) {
-                        scale = scale.max(*s)
-                    }
-                }
+                state.outputs.insert(id, *output);
+
+                let scale = primary_output_scale(&mut state);
 
                 state.surface.set_buffer_scale(scale);
                 drop(state);
@@ -418,12 +426,7 @@ impl WaylandWindowStatePtr {
 
                 state.outputs.remove(&output.id());
 
-                let mut scale = 1;
-                for output in state.outputs.iter() {
-                    if let Some(s) = output_scales.get(output) {
-                        scale = scale.max(*s)
-                    }
-                }
+                let scale = primary_output_scale(&mut state);
 
                 state.surface.set_buffer_scale(scale);
                 drop(state);
@@ -577,6 +580,7 @@ impl WaylandWindowStatePtr {
     }
 
     pub fn set_focused(&self, focus: bool) {
+        self.state.borrow_mut().active = focus;
         if let Some(ref mut fun) = self.callbacks.borrow_mut().active_status_change {
             fun(focus);
         }
@@ -590,6 +594,23 @@ impl WaylandWindowStatePtr {
             (fun)()
         }
     }
+}
+
+fn primary_output_scale(state: &mut RefMut<WaylandWindowState>) -> i32 {
+    let mut scale = 1;
+    let mut current_output = state.display.take();
+    for (id, output) in state.outputs.iter() {
+        if let Some((_, output_data)) = &current_output {
+            if output.scale > output_data.scale {
+                current_output = Some((id.clone(), *output));
+            }
+        } else {
+            current_output = Some((id.clone(), *output));
+        }
+        scale = scale.max(output.scale);
+    }
+    state.display = current_output;
+    scale
 }
 
 impl rwh::HasWindowHandle for WaylandWindow {
@@ -612,8 +633,6 @@ impl PlatformWindow for WaylandWindow {
         self.borrow().maximized
     }
 
-    // todo(linux)
-    // check if it is right
     fn window_bounds(&self) -> WindowBounds {
         let state = self.borrow();
         if state.fullscreen {
@@ -641,19 +660,26 @@ impl PlatformWindow for WaylandWindow {
         self.borrow().appearance
     }
 
-    // todo(linux)
-    fn display(&self) -> Rc<dyn PlatformDisplay> {
-        Rc::new(WaylandDisplay {})
+    fn display(&self) -> Option<Rc<dyn PlatformDisplay>> {
+        self.borrow().display.as_ref().map(|(id, display)| {
+            Rc::new(WaylandDisplay {
+                id: id.clone(),
+                bounds: display.bounds,
+            }) as Rc<dyn PlatformDisplay>
+        })
     }
 
-    // todo(linux)
     fn mouse_position(&self) -> Point<Pixels> {
-        Point::default()
+        self.borrow()
+            .client
+            .get_client()
+            .borrow()
+            .mouse_location
+            .unwrap_or_default()
     }
 
-    // todo(linux)
     fn modifiers(&self) -> Modifiers {
-        crate::Modifiers::default()
+        self.borrow().client.get_client().borrow().modifiers
     }
 
     fn set_input_handler(&mut self, input_handler: PlatformInputHandler) {
@@ -666,21 +692,20 @@ impl PlatformWindow for WaylandWindow {
 
     fn prompt(
         &self,
-        level: PromptLevel,
-        msg: &str,
-        detail: Option<&str>,
-        answers: &[&str],
+        _level: PromptLevel,
+        _msg: &str,
+        _detail: Option<&str>,
+        _answers: &[&str],
     ) -> Option<Receiver<usize>> {
         None
     }
 
     fn activate(&self) {
-        // todo(linux)
+        log::info!("Wayland does not support this API");
     }
 
-    // todo(linux)
     fn is_active(&self) -> bool {
-        false
+        self.borrow().active
     }
 
     fn set_title(&mut self, title: &str) {
@@ -712,8 +737,8 @@ impl PlatformWindow for WaylandWindow {
         }
 
         if let Some(ref blur_manager) = state.globals.blur_manager {
-            if (background_appearance == WindowBackgroundAppearance::Blurred) {
-                if (state.blur.is_none()) {
+            if background_appearance == WindowBackgroundAppearance::Blurred {
+                if state.blur.is_none() {
                     let blur = blur_manager.create(&state.surface, &state.globals.qh, ());
                     blur.set_region(Some(&region));
                     state.blur = Some(blur);
@@ -731,12 +756,12 @@ impl PlatformWindow for WaylandWindow {
         region.destroy();
     }
 
-    fn set_edited(&mut self, edited: bool) {
-        // todo(linux)
+    fn set_edited(&mut self, _edited: bool) {
+        log::info!("ignoring macOS specific set_edited");
     }
 
     fn show_character_palette(&self) {
-        // todo(linux)
+        log::info!("ignoring macOS specific show_character_palette");
     }
 
     fn minimize(&self) {

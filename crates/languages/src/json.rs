@@ -15,6 +15,7 @@ use std::{
     any::Any,
     ffi::OsString,
     path::{Path, PathBuf},
+    str::FromStr,
     sync::{Arc, OnceLock},
 };
 use task::{TaskTemplate, TaskTemplates, VariableName};
@@ -22,6 +23,8 @@ use util::{maybe, paths, ResultExt};
 
 const SERVER_PATH: &str = "node_modules/vscode-json-languageserver/bin/vscode-json-languageserver";
 
+// Origin: https://github.com/SchemaStore/schemastore
+const TSCONFIG_SCHEMA: &str = include_str!("json/schemas/tsconfig.json");
 pub(super) fn json_task_context() -> ContextProviderWithTasks {
     ContextProviderWithTasks::new(TaskTemplates(vec![
         TaskTemplate {
@@ -74,6 +77,7 @@ impl JsonLspAdapter {
             cx,
         );
         let tasks_schema = task::TaskTemplates::generate_json_schema();
+        let tsconfig_schema = serde_json::Value::from_str(TSCONFIG_SCHEMA).unwrap();
         serde_json::json!({
             "json": {
                 "format": {
@@ -97,6 +101,10 @@ impl JsonLspAdapter {
                             &*paths::LOCAL_TASKS_RELATIVE_PATH,
                         ],
                         "schema": tasks_schema,
+                    },
+                    {
+                        "fileMatch": "*/tsconfig.json",
+                        "schema":tsconfig_schema
                     }
                 ]
             }

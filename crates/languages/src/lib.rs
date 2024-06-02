@@ -3,16 +3,15 @@ use gpui::{AppContext, UpdateGlobal};
 use json::json_task_context;
 pub use language::*;
 use node_runtime::NodeRuntime;
+use python::PythonContextProvider;
 use rust_embed::RustEmbed;
 use settings::SettingsStore;
 use smol::stream::StreamExt;
 use std::{str, sync::Arc};
+use typescript::typescript_task_context;
 use util::{asset_str, ResultExt};
 
-use crate::{
-    bash::bash_task_context, go::GoContextProvider, python::python_task_context,
-    rust::RustContextProvider,
-};
+use crate::{bash::bash_task_context, go::GoContextProvider, rust::RustContextProvider};
 
 mod bash;
 mod c;
@@ -129,7 +128,7 @@ pub fn init(
         vec![Arc::new(python::PythonLspAdapter::new(
             node_runtime.clone(),
         ))],
-        python_task_context()
+        PythonContextProvider
     );
     language!(
         "rust",
@@ -146,13 +145,15 @@ pub fn init(
         "typescript",
         vec![Arc::new(typescript::TypeScriptLspAdapter::new(
             node_runtime.clone()
-        ))]
+        ))],
+        typescript_task_context()
     );
     language!(
         "javascript",
         vec![Arc::new(typescript::TypeScriptLspAdapter::new(
             node_runtime.clone()
-        ))]
+        ))],
+        typescript_task_context()
     );
     language!(
         "jsdoc",

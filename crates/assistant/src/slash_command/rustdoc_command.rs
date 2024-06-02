@@ -17,10 +17,17 @@ impl RustdocSlashCommand {
     async fn build_message(
         http_client: Arc<HttpClientWithUrl>,
         crate_name: String,
+        module_path: Vec<String>,
     ) -> Result<String> {
+        let version = "latest";
+        let path = format!(
+            "{crate_name}/{version}/{crate_name}/{module_path}",
+            module_path = module_path.join("/")
+        );
+
         let mut response = http_client
             .get(
-                &format!("https://docs.rs/{crate_name}"),
+                &format!("https://docs.rs/{path}"),
                 AsyncBody::default(),
                 true,
             )
@@ -87,14 +94,28 @@ impl SlashCommand for RustdocSlashCommand {
         };
 
         let http_client = workspace.read(cx).client().http_client();
-        let crate_name = argument.to_string();
+        let mut path_components = argument.split("::");
+        let crate_name = match path_components
+            .next()
+            .ok_or_else(|| anyhow!("missing crate name"))
+        {
+            Ok(crate_name) => crate_name.to_string(),
+            Err(err) => return Task::ready(Err(err)),
+        };
+        let module_path = path_components.map(ToString::to_string).collect::<Vec<_>>();
 
         let text = cx.background_executor().spawn({
             let crate_name = crate_name.clone();
-            async move { Self::build_message(http_client, crate_name).await }
+            let module_path = module_path.clone();
+            async move { Self::build_message(http_client, crate_name, module_path).await }
         });
 
         let crate_name = SharedString::from(crate_name);
+        let module_path = if module_path.is_empty() {
+            None
+        } else {
+            Some(SharedString::from(module_path.join("::")))
+        };
         cx.foreground_executor().spawn(async move {
             let text = text.await?;
             let range = 0..text.len();
@@ -107,6 +128,7 @@ impl SlashCommand for RustdocSlashCommand {
                             id,
                             unfold,
                             crate_name: crate_name.clone(),
+                            module_path: module_path.clone(),
                         }
                         .into_any_element()
                     }),
@@ -121,17 +143,23 @@ struct RustdocPlaceholder {
     pub id: ElementId,
     pub unfold: Arc<dyn Fn(&mut WindowContext)>,
     pub crate_name: SharedString,
+    pub module_path: Option<SharedString>,
 }
 
 impl RenderOnce for RustdocPlaceholder {
     fn render(self, _cx: &mut WindowContext) -> impl IntoElement {
         let unfold = self.unfold;
 
+        let crate_path = self
+            .module_path
+            .map(|module_path| format!("{crate_name}::{module_path}", crate_name = self.crate_name))
+            .unwrap_or(self.crate_name.to_string());
+
         ButtonLike::new(self.id)
             .style(ButtonStyle::Filled)
             .layer(ElevationIndex::ElevatedSurface)
             .child(Icon::new(IconName::FileRust))
-            .child(Label::new(format!("rustdoc: {}", self.crate_name)))
+            .child(Label::new(format!("rustdoc: {crate_path}")))
             .on_click(move |_, cx| unfold(cx))
     }
 }
