@@ -4808,9 +4808,7 @@ impl Editor {
 
     pub fn render_overlays(
         &self,
-        snapshot: &EditorSnapshot,
         visible_display_row_range: Range<DisplayRow>,
-        cx: &mut ViewContext<Editor>,
     ) -> Vec<(DisplayPoint, f32, AnyElement)> {
         let Some(style) = self.style.as_ref() else {
             return vec![];
@@ -4821,9 +4819,7 @@ impl Editor {
         let iter = overlays
             .iter()
             .flat_map(|(_, list)| list.iter())
-            .filter_map(move |overlay| {
-                overlay.render(style, snapshot, visible_display_row_range.clone(), cx)
-            });
+            .filter_map(move |overlay| overlay.render(style, visible_display_row_range.clone()));
         iter.collect_vec()
     }
 

@@ -2399,8 +2399,8 @@ impl EditorElement {
         line_layouts: &[LineWithInvisibles],
         cx: &mut WindowContext,
     ) -> bool {
-        let overlays = self.editor.update(cx, |editor, cx| {
-            editor.render_overlays(snapshot, visible_display_row_range.clone(), cx)
+        let overlays = self.editor.update(cx, |editor, _| {
+            editor.render_overlays(visible_display_row_range.clone())
         });
         if overlays.is_empty() {
             return false;
