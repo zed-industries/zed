@@ -269,7 +269,6 @@ impl RuntimeManager {
                 let kernel_info_timeout = Duration::from_secs(1);
 
                 let mut got_kernel_info = false;
-                // todo!(): have a timer here as well
                 while let Ok(Some(message)) = timeout(kernel_info_timeout, rx.next()).await {
                     match message {
                         JupyterMessageContent::KernelInfoReply(_) => {

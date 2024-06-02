@@ -8403,7 +8403,6 @@ dependencies = [
  "smol",
  "terminal_view",
  "theme",
- "tokio",
  "ui",
  "util",
  "uuid",
