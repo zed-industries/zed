@@ -36,6 +36,7 @@ impl BufferDisplay {
             let str = match state {
                 EditorState::NCharInput(n_char) => n_char.chars().to_string(),
                 EditorState::Selection(selection) => selection.selection().to_string(),
+                EditorState::Pattern(pattern) => pattern.chars().to_string(),
                 _ => String::new(),
             };
             this.buffer = str;

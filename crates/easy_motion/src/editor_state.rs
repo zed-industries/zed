@@ -20,6 +20,7 @@ pub(crate) enum EditorState {
     PendingSearch,
     NCharInput(NCharInput),
     Selection(Selection),
+    Pattern(Pattern),
 }
 
 impl EditorState {
@@ -29,6 +30,10 @@ impl EditorState {
 
     pub(crate) fn new_n_char(n: usize, direction: Direction) -> EditorState {
         EditorState::NCharInput(NCharInput::new(n, direction))
+    }
+
+    pub(crate) fn new_pattern(direction: Direction) -> EditorState {
+        EditorState::Pattern(Pattern::new(direction))
     }
 
     pub(crate) fn is_none(&self) -> bool {
@@ -143,6 +148,34 @@ impl NCharInput {
             self.chars.push_str(characters);
             InputResult::Recording(self)
         }
+    }
+
+    pub(crate) fn chars(&self) -> &str {
+        self.chars.as_str()
+    }
+}
+
+#[derive(Debug, Default)]
+pub(crate) struct Pattern {
+    direction: Direction,
+    chars: String,
+}
+
+impl Pattern {
+    pub(crate) fn new(direction: Direction) -> Self {
+        Self {
+            direction,
+            chars: String::new(),
+        }
+    }
+
+    pub(crate) fn direction(&self) -> Direction {
+        self.direction
+    }
+
+    pub(crate) fn record_str(mut self, keys: &str) -> Self {
+        self.chars.push_str(keys);
+        self
     }
 
     pub(crate) fn chars(&self) -> &str {

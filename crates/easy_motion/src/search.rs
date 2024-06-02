@@ -15,11 +15,16 @@ use crate::{
 
 pub fn search_window(
     query: &str,
+    is_regex: bool,
     direction: Direction,
     editor: &mut Editor,
     cx: &mut ViewContext<Editor>,
 ) -> Option<impl Future<Output = Vec<DisplayPoint>>> {
-    let query = SearchQuery::text(query, false, false, false, Vec::new(), Vec::new()).ok()?;
+    let query = if is_regex {
+        SearchQuery::regex(query, false, false, false, Vec::new(), Vec::new()).ok()?
+    } else {
+        SearchQuery::text(query, false, false, false, Vec::new(), Vec::new()).ok()?
+    };
 
     let map = editor.snapshot(cx).display_snapshot;
     let selections = editor.selections.newest_display(cx);
@@ -43,12 +48,17 @@ pub fn search_window(
 
 pub fn search_multipane(
     query: &str,
+    is_regex: bool,
     bounding_box: Bounds<Pixels>,
     entity_id: EntityId,
     editor: &mut Editor,
     cx: &mut ViewContext<Editor>,
 ) -> Option<impl Future<Output = Vec<(DisplayPoint, EntityId, Point<Pixels>)>>> {
-    let query = SearchQuery::text(query, false, false, false, Vec::new(), Vec::new()).ok()?;
+    let query = if is_regex {
+        SearchQuery::regex(query, false, true, false, Vec::new(), Vec::new()).ok()?
+    } else {
+        SearchQuery::text(query, false, false, false, Vec::new(), Vec::new()).ok()?
+    };
 
     let map = editor.snapshot(cx).display_snapshot;
     let text_layout_details = editor.text_layout_details(cx);

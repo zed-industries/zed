@@ -69,7 +69,7 @@ struct FullWord(Direction);
 
 impl_actions!(easy_motion, [NChar, Pattern, Word, SubWord, FullWord]);
 
-actions!(easy_motion, [Cancel]);
+actions!(easy_motion, [Cancel, PatternSubmit]);
 
 #[derive(Clone, Copy, Debug)]
 enum WordType {
@@ -141,8 +141,11 @@ fn register(workspace: &mut Workspace, _: &ViewContext<Workspace>) {
         EasyMotion::n_char(action, workspace, cx);
     });
 
-    workspace.register_action(|_: &mut Workspace, action: &Pattern, cx| {
-        EasyMotion::pattern(action, cx);
+    workspace.register_action(|workspace: &mut Workspace, action: &Pattern, cx| {
+        EasyMotion::pattern(action, workspace, cx);
+    });
+    workspace.register_action(|workspace: &mut Workspace, action: &PatternSubmit, cx| {
+        EasyMotion::pattern_submit(workspace, cx);
     });
 
     workspace.register_action(|workspace: &mut Workspace, _: &Cancel, cx| {
@@ -212,6 +215,33 @@ impl EasyMotion {
             easy.active_editor.as_ref().and_then(|weak| weak.upgrade())
         })
         .flatten()
+    }
+
+    fn active_editor_id(cx: &WindowContext) -> Option<EntityId> {
+        Self::read_with(cx, |easy, _| {
+            easy.active_editor.as_ref().map(|editor| editor.entity_id())
+        })
+        .flatten()
+    }
+
+    fn editors_with_bounding_boxes(
+        workspace: &Workspace,
+        cx: &mut WindowContext,
+    ) -> Vec<(View<Editor>, Bounds<Pixels>)> {
+        let panes = workspace.panes();
+        panes
+            .iter()
+            .filter_map(|pane| {
+                pane.update(cx, |pane, _cx| {
+                    pane.active_item()
+                        .and_then(|item| item.downcast::<Editor>())
+                })
+                .map(|editor| {
+                    let bounding_box = workspace.center().bounding_box_for_pane(pane).unwrap();
+                    (editor, bounding_box)
+                })
+            })
+            .collect::<Vec<_>>()
     }
 
     pub(crate) fn latest_state(&self) -> &EditorState {
@@ -403,28 +433,11 @@ impl EasyMotion {
     }
 
     fn word_multipane(word_type: WordType, workspace: &Workspace, cx: &mut WindowContext) {
-        let Some(active_editor_id) = Self::read_with(cx, |easy, _| {
-            easy.active_editor.as_ref().map(|editor| editor.entity_id())
-        })
-        .flatten() else {
+        let Some(active_editor_id) = Self::active_editor_id(cx) else {
             return;
         };
 
-        let panes = workspace.panes();
-
-        let editors = panes
-            .iter()
-            .filter_map(|pane| {
-                pane.update(cx, |pane, _cx| {
-                    pane.active_item()
-                        .and_then(|item| item.downcast::<Editor>())
-                })
-                .map(|editor| {
-                    let bounding_box = workspace.center().bounding_box_for_pane(pane).unwrap();
-                    (editor, bounding_box)
-                })
-            })
-            .collect::<Vec<_>>();
+        let editors = Self::editors_with_bounding_boxes(workspace, cx);
 
         // get words along with their display points within their editors
         // as well as a rough absolute position for sorting purposes
@@ -524,11 +537,7 @@ impl EasyMotion {
         Point::new(Pixels(x), Pixels(y))
     }
 
-    fn pattern(_action: &Pattern, _cx: &WindowContext) {}
-
-    fn n_char(action: &NChar, workspace: &Workspace, cx: &mut WindowContext) {
-        let n = action.n;
-        let direction = action.direction;
+    fn simple_action(new_state: EditorState, workspace: &Workspace, cx: &mut WindowContext) {
         if workspace.is_split() && workspace_has_multiple_editors(workspace, cx) {
             let panes = workspace.panes();
 
@@ -542,30 +551,87 @@ impl EasyMotion {
                 })
                 .collect::<Vec<_>>();
 
-            let new_state = EditorState::new_n_char(n as usize, direction);
             Self::update_editors(&new_state, true, editors.into_iter(), cx);
 
-            Self::update(cx, move |easy, cx| {
-                easy.multipane_state = Some(new_state);
-                cx.notify();
-            });
+            Self::insert_multipane_state(new_state, cx);
         } else {
             let Some(active_editor) = Self::active_editor(cx) else {
                 return;
             };
             let entity_id = active_editor.entity_id();
 
-            let new_state = active_editor.update(cx, |editor, cx| {
-                let new_state = EditorState::new_n_char(action.n as usize, direction);
-                let ctx = new_state.keymap_context_layer();
+            let ctx = new_state.keymap_context_layer();
+            active_editor.update(cx, |editor, cx| {
                 editor.set_keymap_context_layer::<Self>(ctx, cx);
-                new_state
             });
 
-            Self::update(cx, move |easy, _cx| {
+            Self::update(cx, move |easy, cx| {
                 easy.editor_states.insert(entity_id, new_state);
+                cx.notify();
             });
         }
+    }
+
+    fn n_char(action: &NChar, workspace: &Workspace, cx: &mut WindowContext) {
+        let n = action.n;
+        let direction = action.direction;
+        let new_state = EditorState::new_n_char(n as usize, direction);
+        Self::simple_action(new_state, workspace, cx);
+    }
+
+    // there should probably be an editor view for this?
+    // at the moment there's no way to backspace when entering a regex query
+    fn pattern(action: &Pattern, workspace: &Workspace, cx: &mut WindowContext) {
+        let Pattern(direction) = action;
+        let new_state = EditorState::new_pattern(*direction);
+        Self::simple_action(new_state, workspace, cx);
+    }
+
+    fn pattern_submit(workspace: &mut Workspace, cx: &mut WindowContext) {
+        if let Some(state) =
+            Self::update(cx, |easy, _| Some(easy.multipane_state.take()?)).flatten()
+        {
+            let EditorState::Pattern(pattern) = state else {
+                return;
+            };
+            let Some(active_editor_id) = Self::active_editor_id(cx) else {
+                return;
+            };
+
+            let editors = Self::editors_with_bounding_boxes(workspace, cx);
+            let query = pattern.chars().to_string();
+            let new_state =
+                Self::show_trie_from_query_multipane(query, false, active_editor_id, editors, cx);
+            Self::insert_multipane_state(new_state, cx);
+        } else {
+            let Some((state, editor)) = Self::update(cx, |easy, _| {
+                let state = easy.take_state()?;
+                let weak_editor = easy.active_editor.clone()?;
+                let editor = weak_editor.upgrade()?;
+                Some((state, editor))
+            })
+            .flatten() else {
+                return;
+            };
+            if !state.easy_motion_controlled() {
+                return;
+            }
+
+            let EditorState::Pattern(pattern) = state else {
+                return;
+            };
+            let query = pattern.chars().to_string();
+            let direction = pattern.direction();
+            let new_state = editor.update(cx, |editor, cx| {
+                Self::show_trie_from_query(query, false, direction, editor, cx)
+            });
+
+            let entity_id = editor.entity_id();
+            Self::update(cx, move |easy, cx| {
+                easy.editor_states.insert(entity_id, new_state);
+                cx.notify();
+            });
+        };
     }
 
     fn observe_keystrokes(keystroke_event: &KeystrokeEvent, cx: &mut WindowContext) {
@@ -608,12 +674,15 @@ impl EasyMotion {
                 let direction = char_input.direction();
                 let res = char_input.record_str(keys);
                 match res {
-                    InputResult::ShowTrie(query) => Self::show_trie(query, direction, editor, cx),
+                    InputResult::ShowTrie(query) => {
+                        Self::show_trie_from_query(query, false, direction, editor, cx)
+                    }
                     InputResult::Recording(n_char) => EditorState::NCharInput(n_char),
                 }
             }
             EditorState::Selection(selection) => Self::handle_trim(selection, keys, editor, cx),
             EditorState::PendingSearch => EditorState::PendingSearch,
+            EditorState::Pattern(pattern) => EditorState::Pattern(pattern.record_str(keys)),
             EditorState::None => EditorState::None,
         });
 
@@ -643,7 +712,18 @@ impl EasyMotion {
                         .and_then(|handle| handle.root(cx).ok())
                         .map(|workspace_view| {
                             workspace_view.update(cx, |workspace, cx| {
-                                Self::show_trie_multipane(query, workspace, cx)
+                                let Some(active_editor_id) = Self::active_editor_id(cx) else {
+                                    return EditorState::None;
+                                };
+
+                                let editors = Self::editors_with_bounding_boxes(workspace, cx);
+                                Self::show_trie_from_query_multipane(
+                                    query,
+                                    false,
+                                    active_editor_id,
+                                    editors,
+                                    cx,
+                                )
                             })
                         })
                         .unwrap_or_default(),
@@ -651,20 +731,18 @@ impl EasyMotion {
                     InputResult::Recording(n_char) => EditorState::NCharInput(n_char),
                 }
             }
-            EditorState::Selection(selection) => {
-                let handle = cx
-                    .window_handle()
-                    .downcast::<Workspace>()
-                    .and_then(|handle| handle.root(cx).ok());
-                handle
-                    .map(|workspace_view| {
-                        workspace_view.update(cx, |workspace, cx| {
-                            Self::handle_trim_multipane(selection, keys, workspace, cx)
-                        })
+            EditorState::Selection(selection) => cx
+                .window_handle()
+                .downcast::<Workspace>()
+                .and_then(|handle| handle.root(cx).ok())
+                .map(|workspace_view| {
+                    workspace_view.update(cx, |workspace, cx| {
+                        Self::handle_trim_multipane(selection, keys, workspace, cx)
                     })
-                    .unwrap_or_default()
-            }
+                })
+                .unwrap_or_default(),
             EditorState::PendingSearch => EditorState::PendingSearch,
+            EditorState::Pattern(pattern) => EditorState::Pattern(pattern.record_str(keys)),
             EditorState::None => EditorState::None,
         };
 
@@ -819,13 +897,14 @@ impl EasyMotion {
         EditorState::new_selection(trie)
     }
 
-    fn show_trie(
+    fn show_trie_from_query(
         query: String,
+        is_regex: bool,
         direction: Direction,
         editor: &mut Editor,
         cx: &mut ViewContext<Editor>,
     ) -> EditorState {
-        let task = search_window(query.as_str(), direction, editor, cx);
+        let task = search_window(query.as_str(), is_regex, direction, editor, cx);
         let Some(task) = task else {
             return EditorState::None;
         };
@@ -861,42 +940,27 @@ impl EasyMotion {
         EditorState::PendingSearch
     }
 
-    fn show_trie_multipane(
+    fn show_trie_from_query_multipane(
         query: String,
-        workspace: &mut Workspace,
+        is_regex: bool,
+        active_editor_id: EntityId,
+        editors: Vec<(View<Editor>, Bounds<Pixels>)>,
         cx: &mut WindowContext,
     ) -> EditorState {
-        let Some(active_editor_id) = Self::read_with(cx, |easy, _| {
-            let weak_editor = easy.active_editor.as_ref()?;
-            Some(weak_editor.entity_id())
-        })
-        .flatten() else {
-            return EditorState::None;
-        };
-
-        let panes = workspace.panes();
-
-        let editors = panes
-            .iter()
-            .filter_map(|pane| {
-                pane.update(cx, |pane, _cx| {
-                    pane.active_item()
-                        .and_then(|item| item.downcast::<Editor>())
-                })
-                .map(|editor| {
-                    let bounding_box = workspace.center().bounding_box_for_pane(pane).unwrap();
-                    (editor, bounding_box)
-                })
-            })
-            .collect::<Vec<_>>();
-
         // group each list of matches to a weak view of its corresponding editor
         let (weak_editors, search_tasks): (Vec<_>, Vec<_>) = editors
             .iter()
             .filter_map(|(editor, bounding_box)| {
                 let entity_id = editor.entity_id();
                 if let Some(search_res) = editor.update(cx, |editor, cx| {
-                    search_multipane(query.as_str(), *bounding_box, entity_id, editor, cx)
+                    search_multipane(
+                        query.as_str(),
+                        is_regex,
+                        *bounding_box,
+                        entity_id,
+                        editor,
+                        cx,
+                    )
                 }) {
                     Some((editor.downgrade(), search_res))
                 } else {
@@ -1027,7 +1091,7 @@ impl EasyMotion {
                     });
                 }
             }
-            EditorState::NCharInput(_) => {
+            EditorState::NCharInput(_) | EditorState::Pattern(_) => {
                 for editor in editors {
                     editor.update(cx, |editor, cx| {
                         editor.clear_highlights::<Self>(cx);
