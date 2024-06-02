@@ -1,6 +1,5 @@
-use std::sync::Arc;
-
 use futures::{Future, FutureExt};
+use std::sync::Arc;
 
 use editor::{display_map::ToDisplayPoint, DisplayPoint, Editor};
 use gpui::{Bounds, EntityId, Point};
@@ -9,21 +8,25 @@ use text::Bias;
 use ui::{Pixels, ViewContext};
 use workspace::searchable::SearchableItem;
 
-use crate::util::{window_bottom, window_top};
+use crate::{
+    util::{ranges, window_bottom, window_top},
+    Direction,
+};
 
-pub fn search(
+pub fn search_window(
     query: &str,
+    direction: Direction,
     editor: &mut Editor,
     cx: &mut ViewContext<Editor>,
 ) -> Option<impl Future<Output = Vec<DisplayPoint>>> {
     let query = SearchQuery::text(query, false, false, false, Vec::new(), Vec::new()).ok()?;
 
     let map = editor.snapshot(cx).display_snapshot;
-    let text_layout_details = editor.text_layout_details(cx);
-    let start = window_top(&map, &text_layout_details);
-    let end = window_bottom(&map, &text_layout_details);
-    let start = map.display_point_to_anchor(start, Bias::Left);
-    let end = map.display_point_to_anchor(end, Bias::Left);
+    let selections = editor.selections.newest_display(cx);
+    let range = ranges(direction, &map, &selections, editor, cx);
+    let start = map.display_point_to_anchor(range.start, Bias::Left);
+    let end = map.display_point_to_anchor(range.end, Bias::Left);
+
     let ranges = [start..end];
     editor.set_search_within_ranges(&ranges, cx);
     let matches = editor

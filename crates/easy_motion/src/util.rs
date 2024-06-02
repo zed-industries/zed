@@ -1,12 +1,16 @@
+use std::ops::Range;
+
 use editor::{
     display_map::{DisplayRow, DisplaySnapshot, ToDisplayPoint},
     movement::{find_boundary_range, TextLayoutDetails},
-    DisplayPoint, RowExt,
+    DisplayPoint, Editor, RowExt,
 };
 use gpui::Point;
 use language::{char_kind, coerce_punctuation, CharKind};
-use text::Bias;
-use ui::Pixels;
+use text::{Bias, Selection};
+use ui::{Pixels, WindowContext};
+
+use crate::Direction;
 
 pub(crate) fn manh_distance(point_1: &DisplayPoint, point_2: &DisplayPoint, x_bias: f32) -> f32 {
     x_bias * (point_1.row().as_f32() - point_2.row().as_f32()).abs()
@@ -107,6 +111,25 @@ pub(crate) fn word_starts_in_range(
         from = new_point;
     }
     result
+}
+
+pub(crate) fn ranges(
+    direction: Direction,
+    map: &DisplaySnapshot,
+    selections: &Selection<DisplayPoint>,
+    editor: &Editor,
+    cx: &WindowContext,
+) -> Range<DisplayPoint> {
+    let text_layout_details = editor.text_layout_details(cx);
+    let start = match direction {
+        Direction::BiDirectional | Direction::Backwards => window_top(map, &text_layout_details),
+        Direction::Forwards => selections.end,
+    };
+    let end = match direction {
+        Direction::BiDirectional | Direction::Forwards => window_bottom(map, &text_layout_details),
+        Direction::Backwards => selections.start,
+    };
+    start..end
 }
 
 #[cfg(test)]

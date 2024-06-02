@@ -1,12 +1,12 @@
 use collections::HashMap;
-use editor::display_map::DisplaySnapshot;
 use futures::future::join_all;
-use search::{search, search_multipane};
 use serde::Deserialize;
 use std::cmp::Ordering;
+use std::ops::Range;
 use std::sync::Arc;
 use std::{fmt, mem};
 
+use editor::display_map::DisplaySnapshot;
 use editor::scroll::Autoscroll;
 use editor::{DisplayPoint, Editor};
 use gpui::{
@@ -14,17 +14,17 @@ use gpui::{
     HighlightStyle, Hsla, KeystrokeEvent, Model, ModelContext, Point, Subscription, View,
     ViewContext, WeakView,
 };
-use perm::{TrieBuilder, TrimResult};
+use search::{search_multipane, search_window};
 use settings::Settings;
 use text::{Bias, Selection as TextSelection, SelectionGoal};
 use theme::ThemeSettings;
 use ui::{Context, Pixels, VisualContext, WindowContext};
 use workspace::Workspace;
 
-use editor_state::{EditorState, InputResult, OverlayState, Selection};
-use util::{end_of_document, manh_distance, start_of_document, window_bottom, window_top};
-
+use crate::editor_state::{EditorState, InputResult, OverlayState, Selection};
+use crate::perm::{TrieBuilder, TrimResult};
 use crate::util::manh_distance_pixels;
+use crate::util::{end_of_document, manh_distance, ranges, start_of_document, window_top};
 
 mod editor_events;
 mod editor_state;
@@ -32,9 +32,10 @@ mod perm;
 mod search;
 mod util;
 
-#[derive(Eq, PartialEq, Copy, Clone, Deserialize)]
+#[derive(Eq, PartialEq, Copy, Clone, Deserialize, Debug, Default)]
 #[serde(rename_all = "camelCase")]
 enum Direction {
+    #[default]
     BiDirectional,
     Forwards,
     Backwards,
@@ -374,20 +375,7 @@ impl EasyMotion {
         editor: &Editor,
         cx: &WindowContext,
     ) -> Vec<DisplayPoint> {
-        let text_layout_details = editor.text_layout_details(cx);
-        let start = match direction {
-            Direction::BiDirectional | Direction::Backwards => {
-                window_top(map, &text_layout_details)
-            }
-            Direction::Forwards => selections.end,
-        };
-        let end = match direction {
-            Direction::BiDirectional | Direction::Forwards => {
-                window_bottom(map, &text_layout_details)
-            }
-            Direction::Backwards => selections.start,
-        };
-
+        let Range { start, end } = ranges(direction, map, selections, editor, cx);
         let full_word = match word_type {
             WordType::Word => false,
             WordType::FullWord => true,
@@ -524,6 +512,7 @@ impl EasyMotion {
 
     fn n_char(action: &NChar, workspace: &Workspace, cx: &mut WindowContext) {
         let n = action.n;
+        let direction = action.direction;
         if workspace.is_split() && workspace_has_multiple_editors(workspace, cx) {
             let panes = workspace.panes();
 
@@ -537,7 +526,7 @@ impl EasyMotion {
                 })
                 .collect::<Vec<_>>();
 
-            let new_state = EditorState::new_n_char(n as usize);
+            let new_state = EditorState::new_n_char(n as usize, direction);
             Self::update_editors(&new_state, true, editors.into_iter(), cx);
 
             Self::update(cx, move |easy, _cx| {
@@ -550,7 +539,7 @@ impl EasyMotion {
             let entity_id = active_editor.entity_id();
 
             let new_state = active_editor.update(cx, |editor, cx| {
-                let new_state = EditorState::new_n_char(action.n as usize);
+                let new_state = EditorState::new_n_char(action.n as usize, direction);
                 let ctx = new_state.keymap_context_layer();
                 editor.set_keymap_context_layer::<Self>(ctx, cx);
                 new_state
@@ -599,10 +588,10 @@ impl EasyMotion {
         let keys = keystroke_event.keystroke.key.as_str();
         let new_state = editor.update(cx, |editor, cx| match state {
             EditorState::NCharInput(char_input) => {
+                let direction = char_input.direction();
                 let res = char_input.record_str(keys);
                 match res {
-                    InputResult::ShowTrie(query) => Self::show_trie(query, editor, cx),
-                    // do nothing
+                    InputResult::ShowTrie(query) => Self::show_trie(query, direction, editor, cx),
                     InputResult::Recording(n_char) => EditorState::NCharInput(n_char),
                 }
             }
@@ -812,8 +801,13 @@ impl EasyMotion {
         EditorState::new_selection(trie)
     }
 
-    fn show_trie(query: String, editor: &mut Editor, cx: &mut ViewContext<Editor>) -> EditorState {
-        let task = search(query.as_str(), editor, cx);
+    fn show_trie(
+        query: String,
+        direction: Direction,
+        editor: &mut Editor,
+        cx: &mut ViewContext<Editor>,
+    ) -> EditorState {
+        let task = search_window(query.as_str(), direction, editor, cx);
         let Some(task) = task else {
             return EditorState::None;
         };
@@ -845,7 +839,7 @@ impl EasyMotion {
         })
         .detach();
 
-        EditorState::None
+        EditorState::PendingSearch
     }
 
     fn show_trie_multipane(
@@ -877,46 +871,64 @@ impl EasyMotion {
             })
             .collect::<Vec<_>>();
 
-        let tasks = editors
+        // group each list of matches to a weak view of its corresponding editor
+        let (weak_editors, search_tasks): (Vec<_>, Vec<_>) = editors
             .iter()
-            .map(|(editor, bounding_box)| {
+            .filter_map(|(editor, bounding_box)| {
                 let entity_id = editor.entity_id();
-                editor.update(cx, |editor, cx| {
+                if let Some(search_res) = editor.update(cx, |editor, cx| {
                     search_multipane(query.as_str(), *bounding_box, entity_id, editor, cx)
-                })
+                }) {
+                    Some((editor.downgrade(), search_res))
+                } else {
+                    editor.update(cx, |editor, cx| {
+                        editor.clear_search_within_ranges(cx);
+                        editor.clear_highlights::<Self>(cx);
+                        editor.remove_keymap_context_layer::<Self>(cx);
+                    });
+                    None
+                }
             })
-            .collect::<Option<Vec<_>>>();
-        let Some(tasks) = tasks else {
-            // there was an issue with at least one of the searches
-            // todo need to remove search highlights if there's an issue
+            .unzip();
+        if search_tasks.len() == 0 {
             return EditorState::None;
-        };
+        }
 
         let cursor = editors
-            .iter()
+            .into_iter()
             .find(|(editor_view, _)| editor_view.entity_id() == active_editor_id)
             .map(|(editor_view, bounding_box)| {
                 editor_view.update(cx, |editor, cx| {
-                    Self::get_cursor_pixels(bounding_box, editor, cx)
+                    Self::get_cursor_pixels(&bounding_box, editor, cx)
                 })
             })
             .unwrap();
 
-        // downgrade editors before spawn?
         cx.spawn(move |mut cx| async move {
-            // let matches = tasks.
+            let cx = &mut cx;
             let cursor = cursor;
-            let tasks = join_all(tasks).await;
 
-            let mut matches = tasks.into_iter().flatten().collect::<Vec<_>>();
-            sort_matches_pixel(&mut matches, &cursor);
+            let editors = weak_editors
+                .into_iter()
+                .filter_map(|editor| editor.upgrade());
+
+            let mut search_matches = join_all(search_tasks)
+                .await
+                .into_iter()
+                .flatten()
+                .collect::<Vec<_>>();
+            let len = search_matches.len();
+            if len == 0 {
+                Self::update_editors(&EditorState::None, false, editors, cx);
+                return;
+            }
+            sort_matches_pixel(&mut search_matches, &cursor);
 
             let (keys, dimming) =
                 Self::read_with_async(&cx, |easy, _| (easy.keys.clone(), easy.dimming))
                     .unwrap_or((DEFAULT_KEYS.into(), false));
 
-            let len = matches.len();
-            let matches = matches.into_iter().map(|(point, id, _)| (point, id));
+            let matches = search_matches.into_iter().map(|(point, id, _)| (point, id));
 
             let (style_0, style_1, style_2) = get_highlights_async(&cx);
             let trie = TrieBuilder::new(keys, len).populate_with(true, matches, |seq, point| {
@@ -933,10 +945,9 @@ impl EasyMotion {
             });
 
             let new_state = EditorState::new_selection(trie);
-            let just_editors = editors.into_iter().map(|(editor, _)| editor);
-            Self::update_editors(&new_state, dimming, just_editors, &mut cx);
+            Self::update_editors(&new_state, dimming, editors, cx);
 
-            Self::update_async(&mut cx, move |easy, _cx| {
+            Self::update_async(cx, move |easy, _cx| {
                 easy.multipane_state = Some(new_state);
             });
         })
@@ -956,8 +967,9 @@ impl EasyMotion {
             EditorState::None => {
                 for editor in editors {
                     editor.update(cx, |editor, cx| {
+                        editor.clear_search_within_ranges(cx);
                         editor.clear_highlights::<Self>(cx);
-                        editor.set_keymap_context_layer::<Self>(ctx.clone(), cx);
+                        editor.remove_keymap_context_layer::<Self>(cx);
                     });
                 }
             }

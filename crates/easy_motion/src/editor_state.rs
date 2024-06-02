@@ -1,7 +1,10 @@
 use editor::DisplayPoint;
 use gpui::{EntityId, HighlightStyle, KeyContext};
 
-use crate::perm::{Trie, TrimResult};
+use crate::{
+    perm::{Trie, TrimResult},
+    Direction,
+};
 
 #[derive(Debug, Default, Clone)]
 pub(crate) struct OverlayState {
@@ -24,8 +27,8 @@ impl EditorState {
         EditorState::Selection(Selection::new(trie))
     }
 
-    pub(crate) fn new_n_char(n: usize) -> EditorState {
-        EditorState::NCharInput(NCharInput::new(n))
+    pub(crate) fn new_n_char(n: usize, direction: Direction) -> EditorState {
+        EditorState::NCharInput(NCharInput::new(n, direction))
     }
 
     pub(crate) fn is_none(&self) -> bool {
@@ -99,6 +102,7 @@ impl Selection {
 #[derive(Debug, Default)]
 pub(crate) struct NCharInput {
     n: usize,
+    direction: Direction,
     chars: String,
 }
 
@@ -109,11 +113,16 @@ pub(crate) enum InputResult {
 }
 
 impl NCharInput {
-    pub(crate) fn new(n: usize) -> Self {
+    pub(crate) fn new(n: usize, direction: Direction) -> Self {
         Self {
             n,
+            direction,
             chars: String::new(),
         }
+    }
+
+    pub(crate) fn direction(&self) -> Direction {
+        self.direction
     }
 
     pub(crate) fn record_str(mut self, characters: &str) -> InputResult {
@@ -130,12 +139,15 @@ impl NCharInput {
 
 #[cfg(test)]
 mod tests {
+    use crate::Direction;
+
     use super::{InputResult, NCharInput};
 
     #[test]
     fn test_record_str() {
         let char_input = NCharInput {
             n: 4,
+            direction: Direction::BiDirectional,
             chars: "a".to_string(),
         };
         let res = char_input.record_str("b");
