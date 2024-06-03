@@ -1,18 +1,18 @@
 use collections::HashMap;
-use futures::future::join_all;
+use futures::{future::join_all, Future};
 use serde::Deserialize;
 use std::{fmt, mem, ops::Range, sync::Arc};
 
-use editor::{display_map::DisplaySnapshot, scroll::Autoscroll, DisplayPoint, Editor, RowRangeExt};
+use editor::{scroll::Autoscroll, DisplayPoint, Editor, RowRangeExt};
 use gpui::{
     actions, column_pixels, impl_actions, point, saturate, AppContext, AsyncAppContext, Bounds,
     Entity, EntityId, Global, HighlightStyle, Hsla, KeystrokeEvent, Model, ModelContext, Point,
     Subscription, View, ViewContext, WeakView,
 };
 use multi_buffer::MultiBufferPoint;
-use search::{search_multipane, search_window};
+use search::{get_word_task, search_multipane, search_window, word_starts};
 use settings::Settings;
-use text::{Bias, Selection as TextSelection, SelectionGoal};
+use text::{Bias, SelectionGoal};
 use theme::ThemeSettings;
 use ui::{Context, Pixels, VisualContext, WindowContext};
 use workspace::Workspace;
@@ -323,7 +323,7 @@ impl EasyMotion {
             && workspace.is_split()
             && workspace_has_multiple_editors(workspace, cx)
         {
-            // todo?
+            todo!()
         } else {
             EasyMotion::word_single_pane(WordType::SubWord, direction, cx);
         }
@@ -337,7 +337,7 @@ impl EasyMotion {
             && workspace.is_split()
             && workspace_has_multiple_editors(workspace, cx)
         {
-            // todo?
+            todo!()
         } else {
             EasyMotion::word_single_pane(WordType::FullWord, direction, cx);
         }
@@ -352,7 +352,13 @@ impl EasyMotion {
         let new_state = active_editor.update(cx, |editor, cx| {
             let selections = editor.selections.newest_display(cx);
             let map = &editor.snapshot(cx).display_snapshot;
-            let word_starts = Self::word_starts(word_type, direction, map, &selections, editor, cx);
+            let word_starts = word_starts(
+                word_type,
+                direction,
+                map,
+                &selections,
+                &editor.text_layout_details(cx),
+            );
 
             let new_state = Self::handle_new_matches(word_starts, direction, editor, cx);
             let ctx = new_state.keymap_context_layer();
@@ -366,23 +372,6 @@ impl EasyMotion {
         });
     }
 
-    fn word_starts(
-        word_type: WordType,
-        direction: Direction,
-        map: &DisplaySnapshot,
-        selections: &TextSelection<DisplayPoint>,
-        editor: &Editor,
-        cx: &WindowContext,
-    ) -> Vec<DisplayPoint> {
-        let Range { start, end } = ranges(direction, map, selections, editor, cx);
-        let full_word = match word_type {
-            WordType::Word => false,
-            WordType::FullWord => true,
-            _ => false,
-        };
-        util::word_starts_in_range(&map, start, end, full_word)
-    }
-
     fn word_multipane(word_type: WordType, workspace: &Workspace, cx: &mut WindowContext) {
         let Some(active_editor_id) = Self::active_editor_id(cx) else {
             return;
@@ -391,92 +380,31 @@ impl EasyMotion {
         let editors = Self::editors_with_bounding_boxes(workspace, cx);
 
         // get words along with their display points within their editors
-        // as well as a rough absolute position for sorting purposes
-        let mut matches = editors
+        // as well as their position for sorting purposes
+        let (weak_editors, search_tasks): (Vec<_>, Vec<_>) = editors
             .iter()
-            .flat_map(|(editor_view, bounding_box)| {
-                editor_view.update(cx, |editor, cx| {
-                    let style = cx.text_style();
-                    let scroll_position = editor.snapshot(cx).scroll_position();
-                    let font_size = style.font_size.to_pixels(cx.rem_size());
-                    let line_height = style.line_height_in_pixels(cx.rem_size());
-                    let font_id = cx.text_system().resolve_font(&style.font());
-                    let em_width = cx
-                        .text_system()
-                        .typographic_bounds(font_id, font_size, 'm')
-                        .unwrap()
-                        .size
-                        .width;
-                    let map = editor.snapshot(cx).display_snapshot;
-                    let selections = editor.selections.newest_display(cx);
-                    let scroll_pixel_position = point(
-                        scroll_position.x * em_width,
-                        scroll_position.y * line_height,
-                    );
-
-                    let words = Self::word_starts(
-                        word_type,
-                        Direction::BiDirectional,
-                        &map,
-                        &selections,
-                        editor,
-                        cx,
-                    );
-                    let x = words
-                        .iter()
-                        .map(|word| {
-                            bounding_box.origin.x
-                                + 2.0 * column_pixels(&style, word.column() as usize, cx)
-                        })
-                        // to get around borrowing issue, just change this and below into boomer loop
-                        .collect::<Vec<_>>()
-                        .into_iter();
-                    words.into_iter().zip(x).map(move |(word, x)| {
-                        let y = bounding_box.origin.y + word.row().0 as f32 * line_height;
-                        let p = point(x, y) - scroll_pixel_position;
-                        (word, editor_view.entity_id(), p)
-                    })
-                })
+            .map(|(editor, bounding_box)| {
+                let entity_id = editor.entity_id();
+                let task = editor.update(cx, |editor, cx| {
+                    get_word_task(word_type, *bounding_box, entity_id, editor, cx)
+                });
+                (editor.downgrade(), task)
             })
-            .collect::<Vec<_>>();
+            .unzip();
 
+        // group each list of matches to a weak view of its corresponding editor
         let cursor = editors
-            .iter()
+            .into_iter()
             .find(|(editor_view, _)| editor_view.entity_id() == active_editor_id)
             .map(|(editor_view, bounding_box)| {
                 editor_view.update(cx, |editor, cx| {
-                    Self::get_cursor_pixels(bounding_box, editor, cx)
+                    Self::get_cursor_pixels(&bounding_box, editor, cx)
                 })
             })
             .unwrap();
 
-        // todo spawn background process
-        sort_matches_pixel(&mut matches, &cursor);
-
-        let (keys, dimming) = Self::read_with(cx, |easy, _| (easy.keys.clone(), easy.dimming))
-            .unwrap_or((DEFAULT_KEYS.into(), false));
-
-        let len = matches.len();
-        let matches = matches.into_iter().map(|(point, id, _)| (point, id));
-        let (style_0, style_1, style_2) = get_highlights(cx);
-        let trie = TrieBuilder::new(keys, len).populate_with(true, matches, |seq, point| {
-            let style = match seq.len() {
-                0 | 1 => style_0,
-                2 => style_1,
-                3.. => style_2,
-            };
-            OverlayState {
-                style,
-                point: point.0,
-                editor_id: point.1,
-            }
-        });
-
-        let new_state = EditorState::new_selection(trie);
-        let just_editors = editors.into_iter().map(|(editor, _)| editor);
-        Self::update_editors(&new_state, dimming, just_editors, cx);
-
-        Self::insert_multipane_state(new_state, cx);
+        Self::process_match_tasks(cursor, weak_editors, search_tasks, cx);
+        Self::insert_multipane_state(EditorState::PendingSearch, cx);
     }
 
     fn get_cursor_pixels(
@@ -646,7 +574,8 @@ impl EasyMotion {
         let selections = editor.selections.newest_display(cx);
         let snapshot = editor.snapshot(cx);
         let map = &snapshot.display_snapshot;
-        let Range { start, end } = ranges(direction, map, &selections, editor, cx);
+        let Range { start, end } =
+            ranges(direction, map, &selections, &editor.text_layout_details(cx));
         snapshot
             .buffer_rows(start.row())
             .take((start.row()..end.row()).len())
@@ -1002,6 +931,7 @@ impl EasyMotion {
             return EditorState::None;
         }
 
+        // group each list of matches to a weak view of its corresponding editor
         let cursor = editors
             .into_iter()
             .find(|(editor_view, _)| editor_view.entity_id() == active_editor_id)
@@ -1012,6 +942,18 @@ impl EasyMotion {
             })
             .unwrap();
 
+        Self::process_match_tasks(cursor, weak_editors, search_tasks, cx);
+        EditorState::PendingSearch
+    }
+
+    fn process_match_tasks(
+        cursor: Point<Pixels>,
+        weak_editors: Vec<WeakView<Editor>>,
+        search_tasks: Vec<
+            impl Future<Output = Vec<(DisplayPoint, EntityId, Point<Pixels>)>> + 'static,
+        >,
+        cx: &mut WindowContext,
+    ) {
         cx.spawn(move |mut cx| async move {
             let cx = &mut cx;
             let cursor = cursor;
@@ -1061,7 +1003,6 @@ impl EasyMotion {
             });
         })
         .detach();
-        EditorState::PendingSearch
     }
 
     fn update_editors(
