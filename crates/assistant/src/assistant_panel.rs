@@ -1431,7 +1431,7 @@ impl Panel for AssistantPanel {
             return None;
         }
 
-        Some(IconName::Ai)
+        Some(IconName::ZedAssistant)
     }
 
     fn icon_tooltip(&self, _cx: &WindowContext) -> Option<&'static str> {
