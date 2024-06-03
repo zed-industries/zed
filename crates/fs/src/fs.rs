@@ -136,6 +136,8 @@ pub struct RealFs {
 
 pub struct RealWatcher {
     #[cfg(not(target_os = "macos"))]
+    root_path: PathBuf,
+    #[cfg(not(target_os = "macos"))]
     fs_watcher: parking_lot::Mutex<notify::INotifyWatcher>,
 }
 
@@ -455,16 +457,13 @@ impl Fs for RealFs {
         Pin<Box<dyn Send + Stream<Item = Vec<PathBuf>>>>,
         Arc<dyn Watcher>,
     ) {
-        // todo(linux): This spawns two threads, while the macOS impl
-        // only spawns one. Can we use a OnceLock or some such to make
-        // this better
-
         let (tx, rx) = smol::channel::unbounded();
 
         let file_watcher = notify::recommended_watcher({
             let tx = tx.clone();
             move |event: Result<notify::Event, _>| {
                 if let Some(event) = event.log_err() {
+                    dbg!(&event);
                     tx.try_send(event.paths).ok();
                 }
             }
@@ -472,41 +471,31 @@ impl Fs for RealFs {
         .expect("Could not start file watcher");
 
         let watcher = Arc::new(RealWatcher {
+            root_path: path.to_path_buf(),
             fs_watcher: parking_lot::Mutex::new(file_watcher),
         });
 
         watcher.add(path).ok(); // Ignore "file doesn't exist error" and rely on parent watcher.
 
-        // parent_watched exists so that we can watch settings.json before it
-        // is created.
-        let parent_watcher = notify::recommended_watcher({
-            let watched_path = path.to_path_buf();
-            let tx = tx.clone();
-            let watcher = watcher.clone();
+        // watch the parent dir so we can tell when settings.json is created
+        if let Some(parent) = path.parent() {
+            watcher.add(parent).log_err();
+        }
 
-            move |event: Result<notify::Event, _>| {
-                if let Some(event) = event.ok() {
-                    if event.paths.into_iter().any(|path| *path == watched_path) {
-                        match event.kind {
-                            notify::EventKind::Create(_)
-                            | notify::EventKind::Modify(notify::event::ModifyKind::Name(_)) => {
-                                watcher.add(watched_path.as_path()).log_err();
-                                let _ = tx.try_send(vec![watched_path.clone()]).ok();
-                            }
-                            _ => {}
+        (
+            Box::pin(rx.filter_map({
+                let watcher = watcher.clone();
+                move |mut paths| {
+                    paths.retain(|path| path.starts_with(&watcher.root_path));
+                    async move {
+                        if paths.is_empty() {
+                            None
+                        } else {
+                            Some(paths)
                         }
                     }
                 }
-            }
-        });
-
-        (
-            Box::pin(rx.chain(futures::stream::once({
-                async move {
-                    drop(parent_watcher);
-                    vec![]
-                }
-            }))),
+            })),
             watcher,
         )
     }
