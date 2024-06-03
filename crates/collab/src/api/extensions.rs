@@ -247,7 +247,7 @@ async fn fetch_extensions_from_blob_store(
             .list_objects()
             .bucket(blob_store_bucket)
             .prefix("extensions/")
-            .set_marker(next_marker)
+            .set_marker(next_marker.clone())
             .send()
             .await?;
         let objects = list.contents.unwrap_or_default();
@@ -276,11 +276,13 @@ async fn fetch_extensions_from_blob_store(
         }
 
         if let (Some(true), Some(last_object)) = (list.is_truncated, objects.last()) {
-            next_marker = last_object.key.clone()
+            next_marker.clone_from(&last_object.key);
         } else {
             break;
         }
     }
+
+    log::info!("found {} published extensions", published_versions.len());
 
     let known_versions = app_state.db.get_known_extension_versions().await?;
 
