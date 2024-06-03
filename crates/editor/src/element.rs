@@ -38,7 +38,7 @@ use gpui::{
 };
 use itertools::Itertools;
 use language::language_settings::{
-    IndentGuideBackgroundColoring, IndentGuideColoring, ShowWhitespaceSetting,
+    IndentGuideBackgroundColoring, IndentGuideColoring, IndentGuideSettings, ShowWhitespaceSetting,
 };
 use lsp::DiagnosticSeverity;
 use multi_buffer::{Anchor, MultiBufferPoint, MultiBufferRow};
@@ -1438,6 +1438,7 @@ impl EditorElement {
                             single_indent_width,
                             depth: indent_guide.depth,
                             active: active_indent_guide_indices.contains(&i),
+                            settings: indent_guide.settings,
                         })
                     } else {
                         None
@@ -2730,14 +2731,6 @@ impl EditorElement {
             return;
         };
 
-        let settings = self
-            .editor
-            .read(cx)
-            .buffer()
-            .read(cx)
-            .settings_at(0, cx)
-            .indent_guides;
-
         let faded_color = |color: Hsla, alpha: f32| {
             let mut faded = color;
             faded.a = alpha;
@@ -2746,6 +2739,7 @@ impl EditorElement {
 
         for indent_guide in indent_guides {
             let indent_accent_colors = cx.theme().accents().color_for_index(indent_guide.depth);
+            let settings = indent_guide.settings;
 
             // TODO fixed for now, expose them through themes later
             const INDENT_AWARE_ALPHA: f32 = 0.2;
@@ -2753,7 +2747,7 @@ impl EditorElement {
             const INDENT_AWARE_BACKGROUND_ALPHA: f32 = 0.1;
             const INDENT_AWARE_BACKGROUND_ACTIVE_ALPHA: f32 = 0.2;
 
-            let line_color = match (&settings.coloring, indent_guide.active) {
+            let line_color = match (settings.coloring, indent_guide.active) {
                 (IndentGuideColoring::Disabled, _) => None,
                 (IndentGuideColoring::Fixed, false) => {
                     Some(cx.theme().colors().editor_indent_guide)
@@ -2769,7 +2763,7 @@ impl EditorElement {
                 }
             };
 
-            let background_color = match (&settings.background_coloring, indent_guide.active) {
+            let background_color = match (settings.background_coloring, indent_guide.active) {
                 (IndentGuideBackgroundColoring::Disabled, _) => None,
                 (IndentGuideBackgroundColoring::IndentAware, false) => Some(faded_color(
                     indent_accent_colors,
@@ -5286,6 +5280,7 @@ pub struct IndentGuideLayout {
     single_indent_width: Pixels,
     depth: u32,
     active: bool,
+    settings: IndentGuideSettings,
 }
 
 pub struct CursorLayout {
