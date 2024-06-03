@@ -8,8 +8,8 @@ use anyhow::{anyhow, Context as _, Result};
 use client::{proto, Client};
 use clock::ReplicaId;
 use collections::{HashMap, HashSet, VecDeque};
-use fs::Fs;
-use fs::{copy_recursive, RemoveOptions};
+use fs::{copy_recursive, Fs, RemoveOptions, Watcher};
+use futures::stream::select;
 use futures::{
     channel::{
         mpsc::{self, UnboundedSender},
@@ -674,32 +674,42 @@ fn start_background_scan_tasks(
     let (scan_states_tx, mut scan_states_rx) = mpsc::unbounded();
     let background_scanner = cx.background_executor().spawn({
         let abs_path = if cfg!(target_os = "windows") {
-            abs_path.canonicalize().unwrap_or_else(|_| abs_path.to_path_buf())
+            abs_path
+                .canonicalize()
+                .unwrap_or_else(|_| abs_path.to_path_buf())
         } else {
             abs_path.to_path_buf()
         };
         let background = cx.background_executor().clone();
         async move {
-            let events = fs.watch(&abs_path, FS_WATCH_LATENCY).await;
+            let (events, watcher) = fs.watch(&abs_path, FS_WATCH_LATENCY).await;
             let case_sensitive = fs.is_case_sensitive().await.unwrap_or_else(|e| {
-                log::error!(
-                    "Failed to determine whether filesystem is case sensitive (falling back to true) due to error: {e:#}"
-                );
+                log::error!("Failed to determine whether filesystem is case sensitive: {e:#}");
                 true
             });
 
-            BackgroundScanner::new(
-                snapshot,
-                next_entry_id,
+            let mut scanner = BackgroundScanner {
                 fs,
-                case_sensitive,
-                scan_states_tx,
-                background,
+                fs_case_sensitive: case_sensitive,
+                status_updates_tx: scan_states_tx,
+                executor: background,
                 scan_requests_rx,
                 path_prefixes_to_scan_rx,
-            )
-            .run(events)
-            .await;
+                next_entry_id,
+                state: Mutex::new(BackgroundScannerState {
+                    prev_snapshot: snapshot.snapshot.clone(),
+                    snapshot,
+                    scanned_dirs: Default::default(),
+                    path_prefixes_to_scan: Default::default(),
+                    paths_to_scan: Default::default(),
+                    removed_entry_ids: Default::default(),
+                    changed_paths: Default::default(),
+                }),
+                phase: BackgroundScannerPhase::InitialScan,
+                watcher,
+            };
+
+            scanner.run(events).await;
         }
     });
     let scan_state_updater = cx.spawn(|this, mut cx| async move {
@@ -3406,6 +3416,7 @@ struct BackgroundScanner {
     path_prefixes_to_scan_rx: channel::Receiver<Arc<Path>>,
     next_entry_id: Arc<AtomicUsize>,
     phase: BackgroundScannerPhase,
+    watcher: Arc<dyn Watcher>,
 }
 
 #[derive(PartialEq)]
@@ -3416,38 +3427,6 @@ enum BackgroundScannerPhase {
 }
 
 impl BackgroundScanner {
-    #[allow(clippy::too_many_arguments)]
-    fn new(
-        snapshot: LocalSnapshot,
-        next_entry_id: Arc<AtomicUsize>,
-        fs: Arc<dyn Fs>,
-        fs_case_sensitive: bool,
-        status_updates_tx: UnboundedSender<ScanState>,
-        executor: BackgroundExecutor,
-        scan_requests_rx: channel::Receiver<ScanRequest>,
-        path_prefixes_to_scan_rx: channel::Receiver<Arc<Path>>,
-    ) -> Self {
-        Self {
-            fs,
-            fs_case_sensitive,
-            status_updates_tx,
-            executor,
-            scan_requests_rx,
-            path_prefixes_to_scan_rx,
-            next_entry_id,
-            state: Mutex::new(BackgroundScannerState {
-                prev_snapshot: snapshot.snapshot.clone(),
-                snapshot,
-                scanned_dirs: Default::default(),
-                path_prefixes_to_scan: Default::default(),
-                paths_to_scan: Default::default(),
-                removed_entry_ids: Default::default(),
-                changed_paths: Default::default(),
-            }),
-            phase: BackgroundScannerPhase::InitialScan,
-        }
-    }
-
     async fn run(&mut self, mut fs_events_rx: Pin<Box<dyn Send + Stream<Item = Vec<PathBuf>>>>) {
         use futures::FutureExt as _;
 
@@ -4027,6 +4006,8 @@ impl BackgroundScanner {
         }
 
         state.populate_dir(&job.path, new_entries, new_ignore);
+        self.watcher.add(job.abs_path.as_ref()).log_err();
+        dbg!(&job.abs_path);
 
         let repository =
             dotgit_path.and_then(|path| state.build_git_repository(path, self.fs.as_ref()));

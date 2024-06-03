@@ -1,5 +1,6 @@
 use anyhow::{anyhow, Result};
 use git::GitHostingProviderRegistry;
+use notify::{INotifyWatcher, Watcher as _};
 
 #[cfg(unix)]
 use std::os::unix::fs::MetadataExt;
@@ -31,6 +32,11 @@ use collections::{btree_map, BTreeMap};
 use git::repository::{FakeGitRepositoryState, GitFileStatus};
 #[cfg(any(test, feature = "test-support"))]
 use std::ffi::OsStr;
+
+pub trait Watcher: Send + Sync {
+    fn add(&self, path: &Path) -> Result<()>;
+    fn remove(&self, path: &Path) -> Result<()>;
+}
 
 #[async_trait::async_trait]
 pub trait Fs: Send + Sync {
@@ -75,7 +81,10 @@ pub trait Fs: Send + Sync {
         &self,
         path: &Path,
         latency: Duration,
-    ) -> Pin<Box<dyn Send + Stream<Item = Vec<PathBuf>>>>;
+    ) -> (
+        Pin<Box<dyn Send + Stream<Item = Vec<PathBuf>>>>,
+        Arc<dyn Watcher>,
+    );
 
     fn open_repo(&self, abs_dot_git: &Path) -> Option<Arc<Mutex<dyn GitRepository>>>;
     fn is_fake(&self) -> bool;
@@ -120,6 +129,10 @@ pub struct Metadata {
 pub struct RealFs {
     git_hosting_provider_registry: Arc<GitHostingProviderRegistry>,
     git_binary_path: Option<PathBuf>,
+}
+
+pub struct RealWatcher {
+    fs_watcher: Mutex<INotifyWatcher>,
 }
 
 impl RealFs {
@@ -391,7 +404,10 @@ impl Fs for RealFs {
         &self,
         path: &Path,
         latency: Duration,
-    ) -> Pin<Box<dyn Send + Stream<Item = Vec<PathBuf>>>> {
+    ) -> (
+        Pin<Box<dyn Send + Stream<Item = Vec<PathBuf>>>>,
+        Arc<dyn Watcher>,
+    ) {
         use fsevent::EventStream;
 
         let (tx, rx) = smol::channel::unbounded();
@@ -403,10 +419,15 @@ impl Fs for RealFs {
             });
         });
 
-        Box::pin(rx.chain(futures::stream::once(async move {
-            drop(handle);
-            vec![]
-        })))
+        (
+            Box::pin(rx.chain(futures::stream::once(async move {
+                drop(handle);
+                vec![]
+            }))),
+            Arc::new_cyclic(|this| RealWatcher {
+                weak_self: this.clone(),
+            }),
+        )
     }
 
     #[cfg(not(target_os = "macos"))]
@@ -414,8 +435,10 @@ impl Fs for RealFs {
         &self,
         path: &Path,
         _latency: Duration,
-    ) -> Pin<Box<dyn Send + Stream<Item = Vec<PathBuf>>>> {
-        use notify::{event::EventKind, Watcher};
+    ) -> (
+        Pin<Box<dyn Send + Stream<Item = Vec<PathBuf>>>>,
+        Arc<dyn Watcher>,
+    ) {
         // todo(linux): This spawns two threads, while the macOS impl
         // only spawns one. Can we use a OnceLock or some such to make
         // this better
@@ -433,46 +456,43 @@ impl Fs for RealFs {
         .expect("Could not start file watcher");
 
         file_watcher
-            .watch(path, notify::RecursiveMode::Recursive)
-            .ok(); // It's ok if this fails, the parent watcher will add it.
+            .watch(path, notify::RecursiveMode::NonRecursive)
+            .log_err();
 
-        let mut parent_watcher = notify::recommended_watcher({
-            let watched_path = path.to_path_buf();
-            let tx = tx.clone();
-            move |event: Result<notify::Event, _>| {
-                if let Some(event) = event.ok() {
-                    if event.paths.into_iter().any(|path| *path == watched_path) {
-                        match event.kind {
-                            EventKind::Create(_) => {
-                                file_watcher
-                                    .watch(watched_path.as_path(), notify::RecursiveMode::Recursive)
-                                    .log_err();
-                                let _ = tx.try_send(vec![watched_path.clone()]).ok();
-                            }
-                            EventKind::Remove(_) => {
-                                file_watcher.unwatch(&watched_path).log_err();
-                                let _ = tx.try_send(vec![watched_path.clone()]).ok();
-                            }
-                            _ => {}
-                        }
-                    }
+        // let mut parent_watcher = notify::recommended_watcher({
+        //     let watched_path = path.to_path_buf();
+        //     let tx = tx.clone();
+        //     move |event: Result<notify::Event, _>| {
+        //         if let Some(event) = event.ok() {
+        //             if event.paths.into_iter().any(|path| *path == watched_path) {
+        //                 match event.kind {
+        //                     EventKind::Create(_) => {
+        //                         file_watcher
+        //                             .watch(watched_path.as_path(), notify::RecursiveMode::Recursive)
+        //                             .log_err();
+        //                         let _ = tx.try_send(vec![watched_path.clone()]).ok();
+        //                     }
+        //                     EventKind::Remove(_) => {
+        //                         file_watcher.unwatch(&watched_path).log_err();
+        //                         let _ = tx.try_send(vec![watched_path.clone()]).ok();
+        //                     }
+        //                     _ => {}
+        //                 }
+        //             }
+
+        let watcher = Arc::new(RealWatcher {
+            fs_watcher: Mutex::new(file_watcher),
+        });
+        (
+            Box::pin(rx.chain(futures::stream::once({
+                let watcher = watcher.clone();
+                async move {
+                    drop(watcher);
+                    vec![]
                 }
-            }
-        })
-        .expect("Could not start file watcher");
-
-        parent_watcher
-            .watch(
-                path.parent()
-                    .expect("Watching root is probably not what you want"),
-                notify::RecursiveMode::NonRecursive,
-            )
-            .expect("Could not start watcher on parent directory");
-
-        Box::pin(rx.chain(futures::stream::once(async move {
-            drop(parent_watcher);
-            vec![]
-        })))
+            }))),
+            watcher,
+        )
     }
 
     fn open_repo(&self, dotgit_path: &Path) -> Option<Arc<Mutex<dyn GitRepository>>> {
@@ -531,6 +551,32 @@ impl Fs for RealFs {
     #[cfg(any(test, feature = "test-support"))]
     fn as_fake(&self) -> &FakeFs {
         panic!("called `RealFs::as_fake`")
+    }
+}
+
+#[cfg(os = "macos")]
+impl Watcher for RealWatcher {
+    fn add(&self, path: &Path) -> Result<()> {
+        Ok(())
+    }
+
+    fn remove(&self, path: &Path) -> Result<()> {
+        Ok(())
+    }
+}
+
+#[cfg(not(os = "macos"))]
+impl Watcher for RealWatcher {
+    fn add(&self, path: &Path) -> Result<()> {
+        self.fs_watcher
+            .lock()
+            .watch(path, notify::RecursiveMode::NonRecursive)?;
+        Ok(())
+    }
+
+    fn remove(&self, path: &Path) -> Result<()> {
+        self.fs_watcher.lock().unwatch(path)?;
+        Ok(())
     }
 }
 
@@ -1048,6 +1094,20 @@ impl FakeFsEntry {
 }
 
 #[cfg(any(test, feature = "test-support"))]
+struct FakeWatcher {}
+
+#[cfg(any(test, feature = "test-support"))]
+impl Watcher for FakeWatcher {
+    fn add(&self, _: &Path) -> Result<()> {
+        Ok(())
+    }
+
+    fn remove(&self, _: &Path) -> Result<()> {
+        Ok(())
+    }
+}
+
+#[cfg(any(test, feature = "test-support"))]
 #[async_trait::async_trait]
 impl Fs for FakeFs {
     async fn create_dir(&self, path: &Path) -> Result<()> {
@@ -1442,20 +1502,26 @@ impl Fs for FakeFs {
         &self,
         path: &Path,
         _: Duration,
-    ) -> Pin<Box<dyn Send + Stream<Item = Vec<PathBuf>>>> {
+    ) -> (
+        Pin<Box<dyn Send + Stream<Item = Vec<PathBuf>>>>,
+        Arc<dyn Watcher>,
+    ) {
         self.simulate_random_delay().await;
         let (tx, rx) = smol::channel::unbounded();
         self.state.lock().event_txs.push(tx);
         let path = path.to_path_buf();
         let executor = self.executor.clone();
-        Box::pin(futures::StreamExt::filter(rx, move |events| {
-            let result = events.iter().any(|evt_path| evt_path.starts_with(&path));
-            let executor = executor.clone();
-            async move {
-                executor.simulate_random_delay().await;
-                result
-            }
-        }))
+        (
+            Box::pin(futures::StreamExt::filter(rx, move |events| {
+                let result = events.iter().any(|evt_path| evt_path.starts_with(&path));
+                let executor = executor.clone();
+                async move {
+                    executor.simulate_random_delay().await;
+                    result
+                }
+            })),
+            Arc::new(FakeWatcher {}),
+        )
     }
 
     fn open_repo(&self, abs_dot_git: &Path) -> Option<Arc<Mutex<dyn GitRepository>>> {

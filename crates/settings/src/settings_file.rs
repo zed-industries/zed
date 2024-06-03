@@ -38,7 +38,7 @@ pub fn watch_config_file(
     let (tx, rx) = mpsc::unbounded();
     executor
         .spawn(async move {
-            let events = fs.watch(&path, Duration::from_millis(100)).await;
+            let (events, _) = fs.watch(&path, Duration::from_millis(100)).await;
             futures::pin_mut!(events);
 
             let contents = fs.load(&path).await.unwrap_or_default();
