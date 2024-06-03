@@ -395,7 +395,7 @@ mod tests {
     use collections::HashMap;
 
     #[test]
-    fn test_add_environment_path_with_existing_env() {
+    fn test_add_environment_path_with_existing_path() {
         let tmp_path = std::path::PathBuf::from("/tmp/new");
         let mut env = HashMap::default();
         let old_path = if cfg!(windows) {
@@ -416,7 +416,7 @@ mod tests {
     }
 
     #[test]
-    fn test_add_environment_path_with_empty_env() {
+    fn test_add_environment_path_with_empty_path() {
         let tmp_path = std::path::PathBuf::from("/tmp/new");
         let mut env = HashMap::default();
         env.insert("OTHER".to_string(), "aaa".to_string());
