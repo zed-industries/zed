@@ -377,7 +377,7 @@ fn prepare_ssh_shell(
     Ok(Shell::WithArguments { program, args })
 }
 
-fn prepare_env_paths(env: &mut HashMap<String, String>, add_path: &Path) -> anyhow::Result<()> {
+fn add_environment_path(env: &mut HashMap<String, String>, new_path: &Path) -> anyhow::Result<()> {
     let mut env_paths = vec![add_path.to_path_buf()];
     if let Some(path) = env.get("PATH").or(env::var("PATH").ok().as_ref()) {
         let mut paths = std::env::split_paths(&path).collect::<Vec<_>>();
