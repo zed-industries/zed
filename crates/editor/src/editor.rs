@@ -1120,16 +1120,16 @@ impl CompletionsMenu {
         documentation: &Option<Documentation>,
         max_completion_len: Pixels,
     ) -> (Pixels, StyledText, StyledText) {
+        println!("--------------");
+        for a in completion.label.runs.clone() {
+            let h = a.1;
+            println!("{:?}", a);
+        }
+
         let highlights = gpui::combine_highlights(
             mat.ranges().map(|range| (range, FontWeight::BOLD.into())),
-            styled_runs_for_code_label(&completion.label, &style.syntax).map(
-                |(range, mut highlight)| {
-                    // Ignore font weight for syntax highlighting, as we'll use it
-                    // for fuzzy matches.
-                    highlight.font_weight = None;
-                    (range, highlight)
-                },
-            ),
+            styled_runs_for_code_label(&completion.label, &style.syntax)
+                .map(|(range, mut highlight)| (range, highlight)),
         );
 
         let mut inline_documentation_exists = false;
@@ -1226,9 +1226,9 @@ impl CompletionsMenu {
                 let primary_truncation_index = completion_layout_line
                     .index_for_x(max_primary_width - ellipsis_width.width)
                     .unwrap();
-                primary_end = primary_truncation_index + 2;
+                primary_end = primary_truncation_index + 3;
                 primary_length_truncated =
-                    completion.label.filter_range.end as i32 - primary_end as i32 - 1;
+                    completion.label.filter_range.end as i32 - primary_end as i32;
 
                 if inline_documentation_exists {
                     completion_label_text = completion
@@ -1294,7 +1294,7 @@ impl CompletionsMenu {
         //recompute syntax highlighting
         completion.label.text = completion_label_text.clone();
         if inline_documentation_exists {
-            completion.label.filter_range.end = completion_label_text.len();
+            // completion.label.filter_range.end = completion_label_text.len();
             for run in completion.label.runs.iter_mut() {
                 if run.0.start == 0 {
                     run.0.start = 0;
@@ -1303,26 +1303,20 @@ impl CompletionsMenu {
             }
         } else {
             completion.label.filter_range.end = primary_end;
+            println!(
+                "fr: {}..{}",
+                completion.label.filter_range.start, completion.label.filter_range.end
+            );
+            // primary_length_truncated += 2;
             for run in completion.label.runs.iter_mut() {
-                if run.0.start == 0 {
-                    run.0.start = 0;
-                    run.0.end = primary_end;
-                } else {
-                    run.0.start = (run.0.start as i32 - primary_length_truncated) as usize;
-                    run.0.end = (run.0.end as i32 - primary_length_truncated) as usize;
-                }
+                run.0.start = (run.0.start as i32 - primary_length_truncated) as usize;
+                run.0.end = (run.0.end as i32 - primary_length_truncated) as usize;
             }
         }
         let highlights = gpui::combine_highlights(
             mat.ranges().map(|range| (range, FontWeight::NORMAL.into())),
-            styled_runs_for_code_label(&completion.label, &style.syntax).map(
-                |(range, mut highlight)| {
-                    // Ignore font weight for syntax highlighting, as we'll use it
-                    // for fuzzy matches.
-                    highlight.font_weight = None;
-                    (range, highlight)
-                },
-            ),
+            styled_runs_for_code_label(&completion.label, &style.syntax)
+                .map(|(range, mut highlight)| (range, highlight)),
         );
 
         let completion_label =
