@@ -1125,9 +1125,7 @@ impl EditorElement {
                     ix as f32 * line_height - (scroll_pixel_position.y % line_height),
                 );
                 let centering_offset = point(
-                    (gutter_dimensions.right_padding + gutter_dimensions.margin
-                        - fold_indicator_size.width)
-                        / 2.,
+                    (gutter_dimensions.fold_area_width() - fold_indicator_size.width) / 2.,
                     (line_height - fold_indicator_size.height) / 2.,
                 );
                 let origin = gutter_hitbox.origin + position + centering_offset;
@@ -4629,7 +4627,7 @@ impl Element for EditorElement {
                             &mut scroll_width,
                             &gutter_dimensions,
                             em_width,
-                            gutter_dimensions.width + gutter_dimensions.margin,
+                            gutter_dimensions.full_width(),
                             line_height,
                             &line_layouts,
                             cx,

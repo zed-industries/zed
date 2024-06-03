@@ -320,7 +320,7 @@ impl Editor {
                     div()
                         .bg(deleted_hunk_color)
                         .size_full()
-                        .pl(gutter_dimensions.width + gutter_dimensions.margin)
+                        .pl(gutter_dimensions.full_width())
                         .child(editor_with_deleted_text.clone())
                         .into_any_element()
                 }),

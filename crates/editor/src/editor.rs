@@ -554,6 +554,20 @@ pub struct GutterDimensions {
     pub git_blame_entries_width: Option<Pixels>,
 }
 
+impl GutterDimensions {
+    /// The full width of the space taken up by the gutter.
+    pub fn full_width(&self) -> Pixels {
+        self.margin + self.width
+    }
+
+    /// The width of the space reserved for the fold indicators,
+    /// use alongside 'justify_end' and `gutter_width` to
+    /// right align content with the line numbers
+    pub fn fold_area_width(&self) -> Pixels {
+        self.margin + self.right_padding
+    }
+}
+
 impl Default for GutterDimensions {
     fn default() -> Self {
         Self {
