@@ -19,6 +19,7 @@ test-support = [
 ]
 
 [dependencies]
+multi_buffer.workspace = true
 project.workspace = true
 futures.workspace = true
 collections.workspace = true

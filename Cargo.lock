@@ -3441,6 +3441,7 @@ dependencies = [
  "futures 0.3.28",
  "gpui",
  "language",
+ "multi_buffer",
  "project",
  "serde",
  "settings",

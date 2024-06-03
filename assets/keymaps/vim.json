@@ -280,7 +280,7 @@
       "4": ["vim::Number", 4],
       "5": ["vim::Number", 5],
       "6": ["vim::Number", 6],
-      "7": ["vim::Number", 7],
+      "7": ["easy_motion::Row", "biDirectional"],
       "8": ["easy_motion::NChar", { "n": 2, "direction": "biDirectional" }],
       "9": ["easy_motion::Word", "biDirectional"],
       // window related commands (ctrl-w X)

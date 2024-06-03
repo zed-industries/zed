@@ -1,19 +1,15 @@
 use collections::HashMap;
 use futures::future::join_all;
 use serde::Deserialize;
-use std::cmp::Ordering;
-use std::ops::Range;
-use std::sync::Arc;
-use std::{fmt, mem};
+use std::{fmt, mem, ops::Range, sync::Arc};
 
-use editor::display_map::DisplaySnapshot;
-use editor::scroll::Autoscroll;
-use editor::{DisplayPoint, Editor};
+use editor::{display_map::DisplaySnapshot, scroll::Autoscroll, DisplayPoint, Editor, RowRangeExt};
 use gpui::{
     actions, column_pixels, impl_actions, point, saturate, AppContext, AsyncAppContext, Bounds,
     Entity, EntityId, Global, HighlightStyle, Hsla, KeystrokeEvent, Model, ModelContext, Point,
     Subscription, View, ViewContext, WeakView,
 };
+use multi_buffer::MultiBufferPoint;
 use search::{search_multipane, search_window};
 use settings::Settings;
 use text::{Bias, Selection as TextSelection, SelectionGoal};
@@ -21,11 +17,13 @@ use theme::ThemeSettings;
 use ui::{Context, Pixels, VisualContext, WindowContext};
 use workspace::Workspace;
 
-use crate::editor_state::{EditorState, InputResult, OverlayState, Selection};
-use crate::perm::{TrieBuilder, TrimResult};
-use crate::util::manh_distance_pixels;
-use crate::util::{end_of_document, manh_distance, ranges, start_of_document, window_top};
+use crate::{
+    editor_state::{EditorState, InputResult, OverlayState, Selection},
+    perm::{TrieBuilder, TrimResult},
+    util::{end_of_document, ranges, sort_matches_display, sort_matches_pixel, start_of_document},
+};
 
+// todo change the name of this
 pub use crate::buffer_display::BufferDisplay;
 
 mod buffer_display;
@@ -67,7 +65,11 @@ struct SubWord(Direction);
 #[serde(rename_all = "camelCase")]
 struct FullWord(Direction);
 
-impl_actions!(easy_motion, [NChar, Pattern, Word, SubWord, FullWord]);
+#[derive(Clone, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+struct Row(Direction);
+
+impl_actions!(easy_motion, [NChar, Pattern, Word, SubWord, FullWord, Row]);
 
 actions!(easy_motion, [Cancel, PatternSubmit]);
 
@@ -144,8 +146,12 @@ fn register(workspace: &mut Workspace, _: &ViewContext<Workspace>) {
     workspace.register_action(|workspace: &mut Workspace, action: &Pattern, cx| {
         EasyMotion::pattern(action, workspace, cx);
     });
-    workspace.register_action(|workspace: &mut Workspace, action: &PatternSubmit, cx| {
+    workspace.register_action(|workspace: &mut Workspace, _action: &PatternSubmit, cx| {
         EasyMotion::pattern_submit(workspace, cx);
+    });
+
+    workspace.register_action(|workspace: &mut Workspace, action: &Row, cx| {
+        EasyMotion::row(action, workspace, cx);
     });
 
     workspace.register_action(|workspace: &mut Workspace, _: &Cancel, cx| {
@@ -344,7 +350,11 @@ impl EasyMotion {
         let entity_id = active_editor.entity_id();
 
         let new_state = active_editor.update(cx, |editor, cx| {
-            let new_state = Self::word_impl(word_type, direction, editor, cx);
+            let selections = editor.selections.newest_display(cx);
+            let map = &editor.snapshot(cx).display_snapshot;
+            let word_starts = Self::word_starts(word_type, direction, map, &selections, editor, cx);
+
+            let new_state = Self::handle_new_matches(word_starts, direction, editor, cx);
             let ctx = new_state.keymap_context_layer();
             editor.set_keymap_context_layer::<Self>(ctx, cx);
             new_state
@@ -354,65 +364,6 @@ impl EasyMotion {
             easy.editor_states.insert(entity_id, new_state);
             cx.notify();
         });
-    }
-
-    fn word_impl(
-        word_type: WordType,
-        direction: Direction,
-        editor: &mut Editor,
-        cx: &mut ViewContext<Editor>,
-    ) -> EditorState {
-        let selections = editor.selections.newest_display(cx);
-        let map = &editor.snapshot(cx).display_snapshot;
-
-        let mut word_starts = Self::word_starts(word_type, direction, map, &selections, editor, cx);
-        if word_starts.is_empty() {
-            return EditorState::None;
-        }
-
-        sort_matches_display(&mut word_starts, &selections.start);
-
-        let (keys, dimming) = Self::read_with(cx, |easy, _| (easy.keys.clone(), easy.dimming))
-            .unwrap_or((DEFAULT_KEYS.into(), false));
-
-        let (style_0, style_1, style_2) = get_highlights(cx);
-        let trie = TrieBuilder::new(keys, word_starts.len()).populate_with(
-            true,
-            word_starts,
-            |seq, point| {
-                let style = match seq.len() {
-                    0 | 1 => style_0,
-                    2 => style_1,
-                    3.. => style_2,
-                };
-                OverlayState {
-                    style,
-                    point,
-                    editor_id: cx.entity_id(),
-                }
-            },
-        );
-        Self::add_overlays(editor, trie.iter(), cx);
-
-        if dimming {
-            let start = match direction {
-                Direction::BiDirectional | Direction::Backwards => DisplayPoint::zero(),
-                Direction::Forwards => selections.start,
-            };
-            let end = match direction {
-                Direction::BiDirectional | Direction::Forwards => end_of_document(map),
-                Direction::Backwards => selections.end,
-            };
-            let anchor_start = map.display_point_to_anchor(start, Bias::Left);
-            let anchor_end = map.display_point_to_anchor(end, Bias::Left);
-            let highlight = HighlightStyle {
-                fade_out: Some(0.7),
-                ..Default::default()
-            };
-            editor.highlight_text::<Self>(vec![anchor_start..anchor_end], highlight, cx);
-        }
-
-        EditorState::Selection(Selection::new(trie))
     }
 
     fn word_starts(
@@ -488,7 +439,6 @@ impl EasyMotion {
                 })
             })
             .collect::<Vec<_>>();
-        dbg!(&matches);
 
         let cursor = editors
             .iter()
@@ -652,6 +602,63 @@ impl EasyMotion {
                 cx.notify();
             });
         };
+    }
+
+    fn row(action: &Row, workspace: &Workspace, cx: &mut WindowContext) {
+        let Row(direction) = action;
+        if matches!(direction, Direction::BiDirectional)
+            && workspace.is_split()
+            && workspace_has_multiple_editors(workspace, cx)
+        {
+            EasyMotion::row_multipane(workspace, cx);
+        } else {
+            EasyMotion::row_single_pane(*direction, cx);
+        }
+    }
+
+    fn row_multipane(workspace: &Workspace, cx: &mut WindowContext) {}
+
+    fn row_single_pane(direction: Direction, cx: &mut WindowContext) {
+        let Some(active_editor) = Self::active_editor(cx) else {
+            return;
+        };
+        let entity_id = active_editor.entity_id();
+
+        let new_state = active_editor.update(cx, |editor, cx| {
+            let matches = Self::row_starts(direction, editor, cx);
+            let new_state = Self::handle_new_matches(matches, direction, editor, cx);
+            let ctx = new_state.keymap_context_layer();
+            editor.set_keymap_context_layer::<Self>(ctx, cx);
+            new_state
+        });
+
+        Self::update(cx, move |easy, cx| {
+            easy.editor_states.insert(entity_id, new_state);
+            cx.notify();
+        });
+    }
+
+    fn row_starts(
+        direction: Direction,
+        editor: &mut Editor,
+        cx: &mut ViewContext<Editor>,
+    ) -> Vec<DisplayPoint> {
+        let selections = editor.selections.newest_display(cx);
+        let snapshot = editor.snapshot(cx);
+        let map = &snapshot.display_snapshot;
+        let Range { start, end } = ranges(direction, map, &selections, editor, cx);
+        snapshot
+            .buffer_rows(start.row())
+            .take((start.row()..end.row()).len())
+            .flatten()
+            .filter_map(|row| {
+                if snapshot.is_line_folded(row) {
+                    None
+                } else {
+                    Some(map.point_to_display_point(MultiBufferPoint::new(row.0, 0), Bias::Left))
+                }
+            })
+            .collect::<Vec<_>>()
     }
 
     fn observe_keystrokes(keystroke_event: &KeystrokeEvent, cx: &mut WindowContext) {
@@ -860,8 +867,9 @@ impl EasyMotion {
         }
     }
 
-    fn handle_record_char_impl(
+    fn handle_new_matches(
         mut matches: Vec<DisplayPoint>,
+        direction: Direction,
         editor: &mut Editor,
         cx: &mut ViewContext<Editor>,
     ) -> EditorState {
@@ -872,17 +880,7 @@ impl EasyMotion {
         if matches.is_empty() {
             return EditorState::None;
         }
-        matches.sort_unstable_by(|a, b| {
-            let a_distance = manh_distance(a, &selections.start, 2.5);
-            let b_distance = manh_distance(b, &selections.start, 2.5);
-            if a_distance == b_distance {
-                Ordering::Equal
-            } else if a_distance < b_distance {
-                Ordering::Less
-            } else {
-                Ordering::Greater
-            }
-        });
+        sort_matches_display(&mut matches, &selections.start);
 
         let (keys, dimming) = Self::read_with(cx, |easy, _| (easy.keys.clone(), easy.dimming))
             .unwrap_or((DEFAULT_KEYS.into(), false));
@@ -904,8 +902,14 @@ impl EasyMotion {
         Self::add_overlays(editor, trie.iter(), cx);
 
         if dimming {
-            let start = DisplayPoint::zero();
-            let end = end_of_document(map);
+            let start = match direction {
+                Direction::BiDirectional | Direction::Backwards => DisplayPoint::zero(),
+                Direction::Forwards => selections.start,
+            };
+            let end = match direction {
+                Direction::BiDirectional | Direction::Forwards => end_of_document(map),
+                Direction::Backwards => selections.end,
+            };
             let anchor_start = map.display_point_to_anchor(start, Bias::Left);
             let anchor_end = map.display_point_to_anchor(end, Bias::Left);
             let highlight = HighlightStyle {
@@ -914,6 +918,7 @@ impl EasyMotion {
             };
             editor.highlight_text::<Self>(vec![anchor_start..anchor_end], highlight, cx);
         }
+
         EditorState::new_selection(trie)
     }
 
@@ -938,7 +943,7 @@ impl EasyMotion {
             let matches = task.await;
             let res = editor.update(&mut cx, move |editor, cx| {
                 editor.clear_search_within_ranges(cx);
-                let new_state = Self::handle_record_char_impl(matches, editor, cx);
+                let new_state = Self::handle_new_matches(matches, direction, editor, cx);
                 let ctx = new_state.keymap_context_layer();
                 editor.set_keymap_context_layer::<Self>(ctx, cx);
                 new_state
@@ -1251,35 +1256,4 @@ fn get_highlights_async(cx: &AsyncAppContext) -> (HighlightStyle, HighlightStyle
         ..HighlightStyle::default()
     };
     (style_0, style_1, style_2)
-}
-
-fn sort_matches_pixel(
-    matches: &mut Vec<(DisplayPoint, EntityId, Point<Pixels>)>,
-    cursor: &Point<Pixels>,
-) {
-    matches.sort_unstable_by(|a, b| {
-        let a_distance = manh_distance_pixels(&a.2, &cursor, 2.5);
-        let b_distance = manh_distance_pixels(&b.2, &cursor, 2.5);
-        if a_distance == b_distance {
-            Ordering::Equal
-        } else if a_distance < b_distance {
-            Ordering::Less
-        } else {
-            Ordering::Greater
-        }
-    });
-}
-
-fn sort_matches_display(matches: &mut Vec<DisplayPoint>, cursor: &DisplayPoint) {
-    matches.sort_unstable_by(|a, b| {
-        let a_distance = manh_distance(a, cursor, 2.5);
-        let b_distance = manh_distance(b, cursor, 2.5);
-        if a_distance == b_distance {
-            Ordering::Equal
-        } else if a_distance < b_distance {
-            Ordering::Less
-        } else {
-            Ordering::Greater
-        }
-    });
 }

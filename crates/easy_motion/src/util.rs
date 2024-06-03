@@ -1,11 +1,11 @@
-use std::ops::Range;
+use std::{cmp::Ordering, ops::Range};
 
 use editor::{
     display_map::{DisplayRow, DisplaySnapshot, ToDisplayPoint},
     movement::{find_boundary_range, TextLayoutDetails},
     DisplayPoint, Editor, RowExt,
 };
-use gpui::Point;
+use gpui::{EntityId, Point};
 use language::{char_kind, coerce_punctuation, CharKind};
 use text::{Bias, Selection};
 use ui::{Pixels, WindowContext};
@@ -113,6 +113,9 @@ pub(crate) fn word_starts_in_range(
     result
 }
 
+// returns a display point range from the current selection to the start/end
+// for a direction of backwards/forwards respectively or the full window for
+// bidirectional
 pub(crate) fn ranges(
     direction: Direction,
     map: &DisplaySnapshot,
@@ -130,6 +133,37 @@ pub(crate) fn ranges(
         Direction::Backwards => selections.start,
     };
     start..end
+}
+
+pub(crate) fn sort_matches_pixel(
+    matches: &mut Vec<(DisplayPoint, EntityId, Point<Pixels>)>,
+    cursor: &Point<Pixels>,
+) {
+    matches.sort_unstable_by(|a, b| {
+        let a_distance = manh_distance_pixels(&a.2, &cursor, 2.5);
+        let b_distance = manh_distance_pixels(&b.2, &cursor, 2.5);
+        if a_distance == b_distance {
+            Ordering::Equal
+        } else if a_distance < b_distance {
+            Ordering::Less
+        } else {
+            Ordering::Greater
+        }
+    });
+}
+
+pub(crate) fn sort_matches_display(matches: &mut [DisplayPoint], cursor: &DisplayPoint) {
+    matches.sort_unstable_by(|a, b| {
+        let a_distance = manh_distance(a, cursor, 2.5);
+        let b_distance = manh_distance(b, cursor, 2.5);
+        if a_distance == b_distance {
+            Ordering::Equal
+        } else if a_distance < b_distance {
+            Ordering::Less
+        } else {
+            Ordering::Greater
+        }
+    });
 }
 
 #[cfg(test)]
