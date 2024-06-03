@@ -1188,162 +1188,70 @@ impl CompletionsMenu {
         let mut completion_label_text = completion.label.text.clone();
         let mut variable_name_length_truncated: i32 = 0;
 
-        let mut actual_width: Pixels = px(0.);
+        let mut actual_width = px(0.);
 
         let ellipsis_width = cx
             .text_system()
             .layout_line("…", font_size, &[style.text.to_run("…".len())])
             .unwrap();
+
+        // let secondary_layout_line = match inline_documentation_exists {
+        //     true => documentation_label.layout_line(font_size, cx).unwrap(),
+        //     false => completion_label.layout_line(font_size, cx).unwrap(),
+        // };
         let completion_layout_line = completion_label.layout_line(font_size, cx).unwrap();
         let documentation_layout_line = documentation_label.layout_line(font_size, cx).unwrap();
-        if inline_documentation_exists {
-            if completion_layout_line.width + documentation_layout_line.width > max_completion_len {
-                actual_width = max_completion_len;
-                let width_of_variable_name =
-                    completion_layout_line.x_for_index(completion.label.filter_range.end);
-                let width_of_documentation =
-                    documentation_layout_line.x_for_index(documentation_text.len());
+        // let primary_percentage = if inline_documentation_exists {
+        //     0.8
+        // } else {
+        //     0.65
+        // };
+        let primary_percentage = 0.8;
+        let secondary_percentage = 0.65;
+        if completion_layout_line.width + documentation_layout_line.width > max_completion_len {
+            actual_width = max_completion_len;
+            let primary_width =
+                completion_layout_line.x_for_index(completion.label.filter_range.end); // width of the completion
+            let secondary_width = match inline_documentation_exists {
+                //width of the type annotation or LSP documentation
+                true => documentation_layout_line.x_for_index(documentation_text.len()),
+                false => completion_layout_line.width - primary_width,
+            };
 
-                let max_width_of_variable_name =
-                    if width_of_documentation < max_completion_len * 0.2 {
-                        max_completion_len - width_of_documentation
-                    } else {
-                        max_completion_len * 0.8
-                    };
-
-                if width_of_variable_name < max_width_of_variable_name {
-                    // truncate second part only
-                    if let Some(documentation_truncation_index) = documentation_layout_line
-                        .index_for_x((max_completion_len * 0.65).min(
-                            max_completion_len - ellipsis_width.width - width_of_variable_name,
-                        ))
-                    {
-                        variable_name_end = documentation_truncation_index + 2;
-                        documentation_text = documentation_text
-                            .chars()
-                            .take(documentation_truncation_index)
-                            .collect::<String>()
-                            + "…";
-                    }
+            let max_primary_width =
+                if secondary_width < max_completion_len * (1. - primary_percentage) {
+                    max_completion_len - secondary_width
                 } else {
-                    // truncate first part (and optionally second part too)
-                    if let Some(variable_name_truncation_index) = completion_layout_line
-                        .index_for_x(max_width_of_variable_name - ellipsis_width.width)
-                    {
-                        variable_name_end = variable_name_truncation_index + 2;
-                        variable_name_length_truncated =
-                            completion.label.filter_range.end as i32 - variable_name_end as i32 - 1;
-                        completion_label_text = completion
-                            .label
-                            .text
-                            .chars()
-                            .take(variable_name_truncation_index)
-                            .collect::<String>()
-                            + "…";
-                        completion_label =
-                            completion_label.with_text(completion_label_text.clone());
-                        if let Ok(new_completion_layout_line) =
-                            completion_label.layout_line(font_size, cx)
-                        {
-                            let combined_width = new_completion_layout_line
-                                .x_for_index(completion_label_text.len())
-                                + width_of_documentation;
-                            if combined_width > max_completion_len {
-                                if let Some(documentation_truncation_index) =
-                                    documentation_layout_line.index_for_x(
-                                        (max_completion_len * 0.65).min(
-                                            max_completion_len
-                                                - ellipsis_width.width
-                                                - max_width_of_variable_name,
-                                        ),
-                                    )
-                                {
-                                    documentation_text = documentation_text
-                                        .chars()
-                                        .take(documentation_truncation_index)
-                                        .collect::<String>()
-                                        + "…";
-                                }
-                            }
-                        }
-                    }
-                }
-            } else {
-                actual_width = completion_layout_line.width + documentation_layout_line.width;
-            }
-        } else {
-            if completion_layout_line.width > max_completion_len {
-                actual_width = max_completion_len;
-                let width_of_variable_name =
-                    completion_layout_line.x_for_index(completion.label.filter_range.end);
-                let width_of_type_annotation =
-                    completion_layout_line.width - width_of_variable_name;
+                    max_completion_len * primary_percentage
+                };
 
-                let max_width_of_variable_name =
-                    if width_of_type_annotation < max_completion_len * 0.2 {
-                        max_completion_len - width_of_type_annotation
-                    } else {
-                        max_completion_len * 0.8
-                    };
-
-                if width_of_variable_name < max_width_of_variable_name {
-                    // truncate second part only
-
-                    if let Some(type_annotation_truncation_index) = completion_layout_line
+            if primary_width < max_primary_width {
+                // truncate second part only
+                if inline_documentation_exists {
+                    let truncation_index = documentation_layout_line
+                        .index_for_x(
+                            (max_completion_len * secondary_percentage)
+                                .min(max_completion_len - ellipsis_width.width - primary_width),
+                        )
+                        .unwrap();
+                    variable_name_end = truncation_index + 2;
+                    documentation_text = documentation_text
+                        .chars()
+                        .take(truncation_index)
+                        .collect::<String>()
+                        + "…";
+                    println!(
+                        "11 TRIGGER {}, {}",
+                        documentation_text, ellipsis_width.width.0
+                    );
+                } else {
+                    let truncation_index = completion_layout_line
                         .index_for_x(max_completion_len - ellipsis_width.width)
-                    {
-                        // variable_name_end = type_annotation_truncation_index + 2;
-                        completion_label_text = completion
-                            .label
-                            .text
-                            .chars()
-                            .take(type_annotation_truncation_index)
-                            .collect::<String>()
-                            + "…";
-                    }
-                } else {
-                    // truncate first part (and optionally second part too)
-                    if let Some(variable_name_truncation_index) = completion_layout_line
-                        .index_for_x(max_width_of_variable_name - ellipsis_width.width)
-                    {
-                        variable_name_end = variable_name_truncation_index + 2;
-
-                        variable_name_length_truncated =
-                            completion.label.filter_range.end as i32 - variable_name_end as i32 - 1;
-
-                        let second_part_text =
-                            &completion.label.text.as_str()[completion.label.filter_range.end..];
-
-                        completion_label_text = completion
-                            .label
-                            .text
-                            .chars()
-                            .take(variable_name_truncation_index)
-                            .collect::<String>()
-                            + "…"
-                            + second_part_text;
-                        completion_label =
-                            completion_label.with_text(completion_label_text.clone());
-
-                        if let Ok(layout_line) = completion_label.layout_line(font_size, cx) {
-                            let combined_width =
-                                layout_line.x_for_index(completion_label_text.len());
-                            if combined_width > max_completion_len {
-                                if let Some(type_annotation_truncation_index) = layout_line
-                                    .index_for_x(max_completion_len - ellipsis_width.width)
-                                {
-                                    completion_label_text = completion_label_text
-                                        .chars()
-                                        .take(type_annotation_truncation_index - 2)
-                                        .collect::<String>()
-                                        + "…";
-                                }
-                            }
-                        }
-                    }
+                        .unwrap();
+                    completion_label_text =
+                        format!("{}{}", &(completion.label.text)[..truncation_index], "…");
+                    println!("12 TRIGGER {}", completion_label_text);
                 }
-            } else {
-                actual_width = completion_layout_line.width;
             }
         }
 
