@@ -13,11 +13,7 @@ pub trait ViewInputHandler: 'static + Sized {
         -> Option<String>;
 
     /// See [`InputHandler::selected_text_range`] for details
-    fn selected_text_range(&mut self, cx: &mut ViewContext<Self>) -> Option<Range<usize>>;
-
-    #[cfg(target_os = "linux")]
-    /// See [`InputHandler::selection_position`] for details
-    fn selection_position(&mut self, cx: &mut ViewContext<Self>) -> usize;
+    fn selected_text_range(&mut self, cx: &mut ViewContext<Self>) -> Option<(Range<usize>, bool)>;
 
     /// See [`InputHandler::marked_text_range`] for details
     fn marked_text_range(&self, cx: &mut ViewContext<Self>) -> Option<Range<usize>>;
@@ -72,14 +68,9 @@ impl<V: 'static> ElementInputHandler<V> {
 }
 
 impl<V: ViewInputHandler> InputHandler for ElementInputHandler<V> {
-    fn selected_text_range(&mut self, cx: &mut WindowContext) -> Option<Range<usize>> {
+    fn selected_text_range(&mut self, cx: &mut WindowContext) -> Option<(Range<usize>, bool)> {
         self.view
             .update(cx, |view, cx| view.selected_text_range(cx))
-    }
-
-    #[cfg(target_os = "linux")]
-    fn selection_position(&mut self, cx: &mut WindowContext) -> usize {
-        self.view.update(cx, |view, cx| view.selection_position(cx))
     }
 
     fn marked_text_range(&mut self, cx: &mut WindowContext) -> Option<Range<usize>> {

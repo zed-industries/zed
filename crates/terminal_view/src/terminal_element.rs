@@ -887,7 +887,10 @@ struct TerminalInputHandler {
 }
 
 impl InputHandler for TerminalInputHandler {
-    fn selected_text_range(&mut self, cx: &mut WindowContext) -> Option<std::ops::Range<usize>> {
+    fn selected_text_range(
+        &mut self,
+        cx: &mut WindowContext,
+    ) -> Option<(std::ops::Range<usize>, bool)> {
         if self
             .terminal
             .read(cx)
@@ -897,13 +900,8 @@ impl InputHandler for TerminalInputHandler {
         {
             None
         } else {
-            Some(0..0)
+            Some((0..0, false))
         }
-    }
-
-    #[cfg(target_os = "linux")]
-    fn selection_position(&mut self, _cx: &mut WindowContext) -> usize {
-        0
     }
 
     fn marked_text_range(&mut self, _: &mut WindowContext) -> Option<std::ops::Range<usize>> {

@@ -10880,7 +10880,7 @@ impl Editor {
         let snapshot = buffer.read(cx).snapshot();
         let range = self
             .selected_text_range(cx)
-            .and_then(|selected_range| {
+            .and_then(|(selected_range, _)| {
                 if selected_range.is_empty() {
                     None
                 } else {
@@ -11619,20 +11619,17 @@ impl ViewInputHandler for Editor {
         )
     }
 
-    fn selected_text_range(&mut self, cx: &mut ViewContext<Self>) -> Option<Range<usize>> {
+    fn selected_text_range(&mut self, cx: &mut ViewContext<Self>) -> Option<(Range<usize>, bool)> {
         // Prevent the IME menu from appearing when holding down an alphabetic key
         // while input is disabled.
         if !self.input_enabled {
             return None;
         }
 
-        let range = self.selections.newest::<OffsetUtf16>(cx).range();
-        Some(range.start.0..range.end.0)
-    }
-
-    #[cfg(target_os = "linux")]
-    fn selection_position(&mut self, cx: &mut ViewContext<Self>) -> usize {
-        self.selections.last::<OffsetUtf16>(cx).head().0
+        let selection = self.selections.newest::<OffsetUtf16>(cx);
+        let range = selection.range();
+        let reversed = selection.reversed;
+        Some((range.start.0..range.end.0, reversed))
     }
 
     fn marked_text_range(&self, cx: &mut ViewContext<Self>) -> Option<Range<usize>> {
