@@ -261,8 +261,6 @@ impl X11WindowState {
             .event_mask(
                 xproto::EventMask::EXPOSURE
                     | xproto::EventMask::STRUCTURE_NOTIFY
-                    | xproto::EventMask::ENTER_WINDOW
-                    | xproto::EventMask::LEAVE_WINDOW
                     | xproto::EventMask::FOCUS_CHANGE
                     | xproto::EventMask::KEY_PRESS
                     | xproto::EventMask::KEY_RELEASE,

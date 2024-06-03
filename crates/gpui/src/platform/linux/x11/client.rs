@@ -766,7 +766,7 @@ impl X11Client {
                     valuator_idx += 1;
                 }
             }
-            Event::XinputLeave(event) => {
+            Event::XinputLeave(event) if event.mode == xinput::NotifyMode::NORMAL => {
                 self.0.borrow_mut().scroll_x = None; // Set last scroll to `None` so that a large delta isn't created if scrolling is done outside the window (the valuator is global)
                 self.0.borrow_mut().scroll_y = None;
 
