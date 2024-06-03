@@ -83,16 +83,34 @@ impl SlashCommand for PromptSlashCommand {
                 sections: vec![SlashCommandOutputSection {
                     range,
                     render_placeholder: Arc::new(move |id, unfold, _cx| {
-                        ButtonLike::new(id)
-                            .style(ButtonStyle::Filled)
-                            .layer(ElevationIndex::ElevatedSurface)
-                            .child(Icon::new(IconName::Library))
-                            .child(Label::new(title.clone()))
-                            .on_click(move |_, cx| unfold(cx))
-                            .into_any_element()
+                        PromptPlaceholder {
+                            id,
+                            unfold,
+                            title: title.clone(),
+                        }
+                        .into_any_element()
                     }),
                 }],
             })
         })
+    }
+}
+
+#[derive(IntoElement)]
+pub struct PromptPlaceholder {
+    pub title: SharedString,
+    pub id: ElementId,
+    pub unfold: Arc<dyn Fn(&mut WindowContext)>,
+}
+
+impl RenderOnce for PromptPlaceholder {
+    fn render(self, _cx: &mut WindowContext) -> impl IntoElement {
+        let unfold = self.unfold;
+        ButtonLike::new(self.id)
+            .style(ButtonStyle::Filled)
+            .layer(ElevationIndex::ElevatedSurface)
+            .child(Icon::new(IconName::Library))
+            .child(Label::new(self.title))
+            .on_click(move |_, cx| unfold(cx))
     }
 }

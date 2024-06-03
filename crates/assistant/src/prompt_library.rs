@@ -14,7 +14,7 @@ use gpui::{
 };
 use heed::{types::SerdeBincode, Database, RoTxn};
 use language::{language_settings::SoftWrap, Buffer, LanguageRegistry};
-use parking_lot::Mutex;
+use parking_lot::RwLock;
 use picker::{Picker, PickerDelegate};
 use rope::Rope;
 use serde::{Deserialize, Serialize};
@@ -625,7 +625,7 @@ impl Render for PromptLibrary {
     }
 }
 
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct PromptMetadata {
     pub id: PromptId,
     pub title: Option<SharedString>,
@@ -633,7 +633,7 @@ pub struct PromptMetadata {
     pub saved_at: DateTime<Utc>,
 }
 
-#[derive(Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct PromptId(Uuid);
 
 impl PromptId {
@@ -647,7 +647,8 @@ pub struct PromptStore {
     env: heed::Env,
     bodies: Database<SerdeBincode<PromptId>, SerdeBincode<String>>,
     metadata: Database<SerdeBincode<PromptId>, SerdeBincode<PromptMetadata>>,
-    metadata_cache: Mutex<MetadataCache>,
+    metadata_cache: RwLock<MetadataCache>,
+    updates: (Arc<async_watch::Sender<()>>, async_watch::Receiver<()>),
 }
 
 #[derive(Default)]
@@ -714,15 +715,21 @@ impl PromptStore {
                 let metadata_cache = MetadataCache::from_db(metadata, &txn)?;
                 txn.commit()?;
 
+                let (updates_tx, updates_rx) = async_watch::channel(());
                 Ok(PromptStore {
                     executor,
                     env: db_env,
                     bodies,
                     metadata,
-                    metadata_cache: Mutex::new(metadata_cache),
+                    metadata_cache: RwLock::new(metadata_cache),
+                    updates: (Arc::new(updates_tx), updates_rx),
                 })
             }
         })
+    }
+
+    pub fn updates(&self) -> async_watch::Receiver<()> {
+        self.updates.1.clone()
     }
 
     pub fn load(&self, id: PromptId) -> Task<Result<String>> {
@@ -736,8 +743,36 @@ impl PromptStore {
         })
     }
 
+    pub fn load_default(&self) -> Task<Result<Vec<(PromptMetadata, String)>>> {
+        let default_metadatas = self
+            .metadata_cache
+            .read()
+            .metadata
+            .iter()
+            .filter(|metadata| metadata.default)
+            .cloned()
+            .collect::<Vec<_>>();
+        let env = self.env.clone();
+        let bodies = self.bodies;
+        self.executor.spawn(async move {
+            let txn = env.read_txn()?;
+
+            let mut default_prompts = Vec::new();
+            for metadata in default_metadatas {
+                if let Some(body) = bodies.get(&txn, &metadata.id)? {
+                    if !body.is_empty() {
+                        default_prompts.push((metadata, body));
+                    }
+                }
+            }
+
+            default_prompts.sort_unstable_by_key(|(metadata, _)| metadata.saved_at);
+            Ok(default_prompts)
+        })
+    }
+
     pub fn delete(&self, id: PromptId) -> Task<Result<()>> {
-        self.metadata_cache.lock().remove(id);
+        self.metadata_cache.write().remove(id);
 
         let db_connection = self.env.clone();
         let bodies = self.bodies;
@@ -755,11 +790,11 @@ impl PromptStore {
     }
 
     fn metadata(&self, id: PromptId) -> Option<PromptMetadata> {
-        self.metadata_cache.lock().metadata_by_id.get(&id).cloned()
+        self.metadata_cache.read().metadata_by_id.get(&id).cloned()
     }
 
     pub fn id_for_title(&self, title: &str) -> Option<PromptId> {
-        let metadata_cache = self.metadata_cache.lock();
+        let metadata_cache = self.metadata_cache.read();
         let metadata = metadata_cache
             .metadata
             .iter()
@@ -768,7 +803,7 @@ impl PromptStore {
     }
 
     pub fn search(&self, query: String) -> Task<Vec<PromptMetadata>> {
-        let cached_metadata = self.metadata_cache.lock().metadata.clone();
+        let cached_metadata = self.metadata_cache.read().metadata.clone();
         let executor = self.executor.clone();
         self.executor.spawn(async move {
             if query.is_empty() {
@@ -814,11 +849,12 @@ impl PromptStore {
             default,
             saved_at: Utc::now(),
         };
-        self.metadata_cache.lock().insert(prompt_metadata.clone());
+        self.metadata_cache.write().insert(prompt_metadata.clone());
 
         let db_connection = self.env.clone();
         let bodies = self.bodies;
         let metadata = self.metadata;
+        let updates = self.updates.0.clone();
 
         self.executor.spawn(async move {
             let mut txn = db_connection.write_txn()?;
@@ -827,6 +863,8 @@ impl PromptStore {
             bodies.put(&mut txn, &id, &body.to_string())?;
 
             txn.commit()?;
+            updates.send(()).ok();
+
             Ok(())
         })
     }
@@ -843,22 +881,25 @@ impl PromptStore {
             default,
             saved_at: Utc::now(),
         };
-        self.metadata_cache.lock().insert(prompt_metadata.clone());
+        self.metadata_cache.write().insert(prompt_metadata.clone());
 
         let db_connection = self.env.clone();
         let metadata = self.metadata;
+        let updates = self.updates.0.clone();
 
         self.executor.spawn(async move {
             let mut txn = db_connection.write_txn()?;
             metadata.put(&mut txn, &id, &prompt_metadata)?;
             txn.commit()?;
+            updates.send(()).ok();
+
             Ok(())
         })
     }
 
     fn most_recently_saved(&self) -> Option<PromptId> {
         self.metadata_cache
-            .lock()
+            .read()
             .metadata
             .first()
             .map(|metadata| metadata.id)
