@@ -11,8 +11,8 @@ pub(crate) mod search;
 pub mod substitute;
 mod yank;
 
-use std::sync::Arc;
 use std::collections::HashMap;
+use std::sync::Arc;
 
 use crate::{
     motion::{self, first_non_whitespace, next_line_end, right, Motion},
@@ -156,14 +156,12 @@ pub(crate) fn register(workspace: &mut Workspace, cx: &mut ViewContext<Workspace
                     editor.set_clip_at_line_ends(true, cx);
                     editor.change_selections(Some(Autoscroll::fit()), cx, |s| {
                         s.move_with(|map, selection| {
-                            let (mut cursor, original_line_start) = original_positions.remove(
-                                &selection.id
-                            ).unwrap();
-                            *cursor.column_mut() += first_non_whitespace(
-                                    map,
-                                    true,
-                                    DisplayPoint::new(cursor.row(), 0)
-                                ).column() - original_line_start;
+                            let (mut cursor, original_line_start) =
+                                original_positions.remove(&selection.id).unwrap();
+                            *cursor.column_mut() +=
+                                first_non_whitespace(map, true, DisplayPoint::new(cursor.row(), 0))
+                                    .column()
+                                    - original_line_start;
                             cursor = map.clip_point(cursor, Bias::Left);
                             selection.collapse_to(cursor, selection.goal);
                         });
@@ -190,14 +188,15 @@ pub(crate) fn register(workspace: &mut Workspace, cx: &mut ViewContext<Workspace
                     editor.outdent(&Default::default(), cx);
                     editor.change_selections(Some(Autoscroll::fit()), cx, |s| {
                         s.move_with(|map, selection| {
-                            let (mut cursor, original_line_start) = original_positions.remove(
-                                &selection.id
-                            ).unwrap();
-                            *cursor.column_mut() -= original_line_start - first_non_whitespace(
+                            let (mut cursor, original_line_start) =
+                                original_positions.remove(&selection.id).unwrap();
+                            *cursor.column_mut() -= original_line_start
+                                - first_non_whitespace(
                                     map,
                                     true,
-                                    DisplayPoint::new(cursor.row(), 0)
-                                ).column();
+                                    DisplayPoint::new(cursor.row(), 0),
+                                )
+                                .column();
                             cursor = map.clip_point(cursor, Bias::Left);
                             selection.collapse_to(cursor, selection.goal);
                         });
