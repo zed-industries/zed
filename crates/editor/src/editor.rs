@@ -973,38 +973,40 @@ impl CompletionsMenu {
         let padding_width = cx.rem_size().0 / 16. * 36.;
 
         let max_completion_len = px(510.);
-        let widest_completion_pixels = self
-            .matches
-            .iter()
-            .map(|mat| {
-                let completions = self.completions.read();
-                let completion = &completions[mat.candidate_id];
-                let documentation = &completion.documentation;
+        // let widest_completion_pixels = self
+        //     .matches
+        //     .iter()
+        //     .map(|mat| {
+        //         let completions = self.completions.read();
+        //         let completion = &completions[mat.candidate_id];
+        //         let documentation = &completion.documentation;
 
-                let mut len = completion.label.text.chars().count() as f32;
-                if let Ok(text_width) = cx.text_system().layout_line(
-                    completion.label.text.as_str(),
-                    font_size,
-                    &[style.text.to_run(completion.label.text.as_str().len())],
-                ) {
-                    len = text_width.width.0;
-                }
+        //         let mut len = completion.label.text.chars().count() as f32;
+        //         if let Ok(text_width) = cx.text_system().layout_line(
+        //             completion.label.text.as_str(),
+        //             font_size,
+        //             &[style.text.to_run(completion.label.text.as_str().len())],
+        //         ) {
+        //             len = text_width.width.0;
+        //         }
 
-                if let Some(Documentation::SingleLine(documentation_text)) = documentation {
-                    if show_completion_documentation {
-                        if let Ok(documentation_width) = cx.text_system().layout_line(
-                            documentation_text.as_str(),
-                            font_size,
-                            &[style.text.to_run(documentation_text.as_str().len())],
-                        ) {
-                            len = documentation_width.width.0 + padding_width;
-                        }
-                    }
-                }
+        //         if let Some(Documentation::SingleLine(documentation_text)) = documentation {
+        //             if show_completion_documentation {
+        //                 if let Ok(documentation_width) = cx.text_system().layout_line(
+        //                     documentation_text.as_str(),
+        //                     font_size,
+        //                     &[style.text.to_run(documentation_text.as_str().len())],
+        //                 ) {
+        //                     len = documentation_width.width.0 + padding_width;
+        //                 }
+        //             }
+        //         }
 
-                (len + padding_width).min(max_completion_len.0 as f32)
-            })
-            .fold(190_f32, |a, b| a.max(b));
+        //         (len + padding_width).min(max_completion_len.0 as f32)
+        //     })
+        //     .fold(190_f32, |a, b| a.max(b));
+
+        let widest_completion_pixels = max_completion_len.0;
 
         let completions = self.completions.clone();
         let matches = self.matches.clone();
@@ -1184,9 +1186,9 @@ impl CompletionsMenu {
 
         let font_size = style.text.font_size.to_pixels(cx.rem_size());
 
-        let mut variable_name_end = completion.label.filter_range.end;
+        let mut primary_end = completion.label.filter_range.end;
         let mut completion_label_text = completion.label.text.clone();
-        let mut variable_name_length_truncated: i32 = 0;
+        let mut primary_length_truncated: i32 = 0;
 
         let mut actual_width = px(0.);
 
@@ -1195,17 +1197,9 @@ impl CompletionsMenu {
             .layout_line("…", font_size, &[style.text.to_run("…".len())])
             .unwrap();
 
-        // let secondary_layout_line = match inline_documentation_exists {
-        //     true => documentation_label.layout_line(font_size, cx).unwrap(),
-        //     false => completion_label.layout_line(font_size, cx).unwrap(),
-        // };
         let completion_layout_line = completion_label.layout_line(font_size, cx).unwrap();
         let documentation_layout_line = documentation_label.layout_line(font_size, cx).unwrap();
-        // let primary_percentage = if inline_documentation_exists {
-        //     0.8
-        // } else {
-        //     0.65
-        // };
+
         let primary_percentage = 0.8;
         let secondary_percentage = 0.65;
         if completion_layout_line.width + documentation_layout_line.width > max_completion_len {
@@ -1228,16 +1222,16 @@ impl CompletionsMenu {
             if primary_width < max_primary_width {
                 // truncate second part only
                 if inline_documentation_exists {
-                    let truncation_index = documentation_layout_line
+                    let documentation_truncation_index = documentation_layout_line
                         .index_for_x(
                             (max_completion_len * secondary_percentage)
                                 .min(max_completion_len - ellipsis_width.width - primary_width),
                         )
                         .unwrap();
-                    variable_name_end = truncation_index + 2;
+                    primary_end = documentation_truncation_index + 2;
                     documentation_text = documentation_text
                         .chars()
-                        .take(truncation_index)
+                        .take(documentation_truncation_index)
                         .collect::<String>()
                         + "…";
                     println!(
@@ -1245,12 +1239,88 @@ impl CompletionsMenu {
                         documentation_text, ellipsis_width.width.0
                     );
                 } else {
-                    let truncation_index = completion_layout_line
+                    let type_annotation_truncation_index = completion_layout_line
                         .index_for_x(max_completion_len - ellipsis_width.width)
                         .unwrap();
-                    completion_label_text =
-                        format!("{}{}", &(completion.label.text)[..truncation_index], "…");
+                    completion_label_text = format!(
+                        "{}{}",
+                        &(completion.label.text)[..type_annotation_truncation_index],
+                        "…"
+                    );
                     println!("12 TRIGGER {}", completion_label_text);
+                }
+            } else {
+                // truncate the first (and maybe second) part
+                let primary_truncation_index = completion_layout_line
+                    .index_for_x(max_primary_width - ellipsis_width.width)
+                    .unwrap();
+                primary_end = primary_truncation_index + 2;
+                primary_length_truncated =
+                    completion.label.filter_range.end as i32 - primary_end as i32 - 1;
+
+                if inline_documentation_exists {
+                    completion_label_text = completion
+                        .label
+                        .text
+                        .chars()
+                        .take(primary_truncation_index)
+                        .collect::<String>()
+                        + "…";
+                    completion_label = completion_label.with_text(completion_label_text.clone());
+                    let new_completion_layout_line =
+                        completion_label.layout_line(font_size, cx).unwrap();
+                    let combined_width = new_completion_layout_line
+                        .x_for_index(completion_label_text.len())
+                        + secondary_width;
+                    if combined_width > max_completion_len {
+                        if let Some(documentation_truncation_index) = documentation_layout_line
+                            .index_for_x(
+                                (max_completion_len * secondary_percentage).min(
+                                    max_completion_len - ellipsis_width.width - max_primary_width,
+                                ),
+                            )
+                        {
+                            documentation_text = documentation_text
+                                .chars()
+                                .take(documentation_truncation_index)
+                                .collect::<String>()
+                                + "…";
+                        }
+                    }
+                    println!(
+                        "21 TRIGGER {} {}",
+                        completion_label_text, documentation_text
+                    );
+                } else {
+                    let second_part_text =
+                        &completion.label.text.as_str()[completion.label.filter_range.end..];
+
+                    completion_label_text = completion
+                        .label
+                        .text
+                        .chars()
+                        .take(primary_truncation_index)
+                        .collect::<String>()
+                        + "…"
+                        + second_part_text;
+                    completion_label = completion_label.with_text(completion_label_text.clone());
+                    let new_completion_layout_line =
+                        completion_label.layout_line(font_size, cx).unwrap();
+                    let combined_width =
+                        new_completion_layout_line.x_for_index(completion_label_text.len());
+                    if combined_width > max_completion_len {
+                        if let Some(type_annotation_truncation_index) = new_completion_layout_line
+                            .index_for_x(max_completion_len - ellipsis_width.width)
+                        {
+                            completion_label_text = completion_label_text
+                                .chars()
+                                .take(type_annotation_truncation_index - 2)
+                                .collect::<String>()
+                                + "…";
+                        }
+                    }
+
+                    println!("22 TRIGGER {}", completion_label_text);
                 }
             }
         }
@@ -1266,14 +1336,14 @@ impl CompletionsMenu {
                 }
             }
         } else {
-            completion.label.filter_range.end = variable_name_end;
+            completion.label.filter_range.end = primary_end;
             for run in completion.label.runs.iter_mut() {
                 if run.0.start == 0 {
                     run.0.start = 0;
-                    run.0.end = variable_name_end;
+                    run.0.end = primary_end;
                 } else {
-                    run.0.start = (run.0.start as i32 - variable_name_length_truncated) as usize;
-                    run.0.end = (run.0.end as i32 - variable_name_length_truncated) as usize;
+                    run.0.start = (run.0.start as i32 - primary_length_truncated) as usize;
+                    run.0.end = (run.0.end as i32 - primary_length_truncated) as usize;
                 }
             }
         }
@@ -1307,7 +1377,8 @@ impl CompletionsMenu {
 
         let documentation_label = StyledText::new(documentation_text)
             .with_highlights(&documentation_style, documentation_highlights);
-        (actual_width, completion_label, documentation_label)
+        // (actual_width, completion_label, documentation_label)
+        (px(510.), completion_label, documentation_label)
     }
 
     pub async fn filter(&mut self, query: Option<&str>, executor: BackgroundExecutor) {
