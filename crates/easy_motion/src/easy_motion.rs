@@ -955,38 +955,25 @@ impl EasyMotion {
         >,
         cx: &mut WindowContext,
     ) {
-        let sort_task = cx.background_executor().spawn(async move {
+        let (style_0, style_1, style_2) = get_highlights(cx);
+        let (keys, dimming) = Self::read_with(cx, |easy, _| (easy.keys.clone(), easy.dimming))
+            .unwrap_or((DEFAULT_KEYS.into(), false));
+
+        let new_state = cx.background_executor().spawn(async move {
             let cursor = cursor;
             let mut search_matches = join_all(search_tasks)
                 .await
                 .into_iter()
                 .flatten()
                 .collect::<Vec<_>>();
-            if !search_matches.is_empty() {
-                sort_matches_pixel(&mut search_matches, &cursor);
+            if search_matches.is_empty() {
+                return EditorState::None;
             }
-            search_matches
-        });
-        cx.spawn(move |mut cx| async move {
-            let cx = &mut cx;
-            let editors = weak_editors
-                .into_iter()
-                .filter_map(|editor| editor.upgrade());
+            sort_matches_pixel(&mut search_matches, &cursor);
 
-            let search_matches = sort_task.await;
             let len = search_matches.len();
-            if len == 0 {
-                Self::update_editors(&EditorState::None, false, editors, cx);
-                return;
-            }
-
-            let (keys, dimming) =
-                Self::read_with_async(&cx, |easy, _| (easy.keys.clone(), easy.dimming))
-                    .unwrap_or((DEFAULT_KEYS.into(), false));
-
             let matches = search_matches.into_iter().map(|(point, id, _)| (point, id));
 
-            let (style_0, style_1, style_2) = get_highlights_async(&cx);
             let trie = TrieBuilder::new(keys, len).populate_with(true, matches, |seq, point| {
                 let style = match seq.len() {
                     0 | 1 => style_0,
@@ -1000,7 +987,16 @@ impl EasyMotion {
                 }
             });
 
-            let new_state = EditorState::new_selection(trie);
+            EditorState::new_selection(trie)
+        });
+
+        cx.spawn(move |mut cx| async move {
+            let cx = &mut cx;
+            let editors = weak_editors
+                .into_iter()
+                .filter_map(|editor| editor.upgrade());
+
+            let new_state = new_state.await;
             Self::update_editors(&new_state, dimming, editors, cx);
 
             Self::update_async(cx, move |easy, cx| {
@@ -1183,6 +1179,7 @@ fn get_highlights(cx: &AppContext) -> (HighlightStyle, HighlightStyle, Highlight
     (style_0, style_1, style_2)
 }
 
+#[allow(dead_code)]
 fn get_highlights_async(cx: &AsyncAppContext) -> (HighlightStyle, HighlightStyle, HighlightStyle) {
     let (bg, color_0, color_1, color_2) = ThemeSettings::try_read_global(cx, |theme| {
         let theme = theme.active_theme.clone();

@@ -1,9 +1,10 @@
 use futures::{Future, FutureExt};
+use language::{char_kind, coerce_punctuation, CharKind};
 use std::{ops::Range, sync::Arc};
 
 use editor::{
     display_map::{DisplaySnapshot, ToDisplayPoint},
-    movement::TextLayoutDetails,
+    movement::{find_boundary_range, TextLayoutDetails},
     DisplayPoint, Editor,
 };
 use gpui::{point, Bounds, EntityId, Point, Task};
@@ -13,9 +14,54 @@ use ui::{Pixels, ViewContext};
 use workspace::searchable::SearchableItem;
 
 use crate::{
-    util::{ranges, window_bottom, window_top, word_starts_in_range},
+    util::{ranges, window_bottom, window_top},
     Direction, WordType,
 };
+
+pub fn word_starts_in_range(
+    map: &DisplaySnapshot,
+    mut from: DisplayPoint,
+    to: DisplayPoint,
+    full_word: bool,
+) -> Vec<DisplayPoint> {
+    let scope = map.buffer_snapshot.language_scope_at(from.to_point(map));
+    let mut result = Vec::new();
+
+    if from.is_zero() {
+        let offset = from.to_offset(map, text::Bias::Left);
+        let first_char = map.buffer_snapshot.chars_at(offset).next();
+        if let Some(first_char) = first_char {
+            if char_kind(&scope, first_char) == CharKind::Word {
+                result.push(DisplayPoint::zero());
+            }
+        }
+    }
+
+    while from < to {
+        let new_point = find_boundary_range(map, from, to, |left, right| {
+            let left_kind = coerce_punctuation(char_kind(&scope, left), false);
+            let right_kind = coerce_punctuation(char_kind(&scope, right), false);
+            // TODO ignore just punctuation words i.e. ' {} '?
+            let found = if full_word {
+                left_kind == CharKind::Whitespace && right_kind == CharKind::Word
+            } else {
+                left_kind != right_kind && right_kind == CharKind::Word
+            };
+
+            found
+        });
+
+        let Some(new_point) = new_point else {
+            break;
+        };
+        if from == new_point {
+            break;
+        }
+        result.push(new_point);
+        from = new_point;
+    }
+    result
+}
 
 pub fn word_starts(
     word_type: WordType,
@@ -184,4 +230,126 @@ pub fn search_multipane(
                 .collect::<Vec<_>>()
         });
     Some(matches)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use editor::{display_map::DisplayRow, test::marked_display_snapshot};
+    use gpui::AppContext;
+    use project::Project;
+    use settings::SettingsStore;
+
+    fn display_point(x: u32, y: u32) -> DisplayPoint {
+        DisplayPoint::new(DisplayRow(y), x)
+    }
+
+    fn test_helper(text: &str, list: Vec<DisplayPoint>, full_word: bool, cx: &mut AppContext) {
+        let (snapshot, display_points) = marked_display_snapshot(text, cx);
+        let point = display_points.first().unwrap().clone();
+        let end = display_points.last().unwrap().clone();
+        let starts = word_starts_in_range(&snapshot, point, end, full_word);
+        assert_eq!(starts, list, "full_word: {:?}, text: {}", full_word, text);
+    }
+
+    #[gpui::test]
+    fn test_get_word_starts(cx: &mut AppContext) {
+        init_test(cx);
+
+        let marked_text = "ˇlorem ipsuˇm hi hello ";
+        test_helper(
+            marked_text,
+            vec![display_point(0, 0), display_point(6, 0)],
+            false,
+            cx,
+        );
+
+        let marked_text = "ˇlorem ipsum hi helloˇ";
+        test_helper(
+            marked_text,
+            vec![
+                display_point(0, 0),
+                display_point(6, 0),
+                display_point(12, 0),
+                display_point(15, 0),
+            ],
+            false,
+            cx,
+        );
+
+        let marked_text = "ˇlorem.ipsum.hi.helloˇ";
+        test_helper(
+            marked_text,
+            vec![
+                display_point(0, 0),
+                display_point(6, 0),
+                display_point(12, 0),
+                display_point(15, 0),
+            ],
+            false,
+            cx,
+        );
+
+        let marked_text = "ˇ lorem.ipsum.hi.helloˇ";
+        test_helper(
+            marked_text,
+            vec![
+                display_point(1, 0),
+                display_point(7, 0),
+                display_point(13, 0),
+                display_point(16, 0),
+            ],
+            false,
+            cx,
+        );
+
+        let marked_text = "ˇ lorem.ipsum.hi.helloˇ";
+        test_helper(marked_text, vec![display_point(1, 0)], true, cx);
+
+        let marked_text = "ˇlorem.ipsum hi.helloˇ";
+        test_helper(
+            marked_text,
+            vec![display_point(0, 0), display_point(11, 0)],
+            true,
+            cx,
+        );
+
+        let marked_text = "ˇlorem.ipsum\nhi.helloˇ";
+        test_helper(
+            marked_text,
+            vec![display_point(0, 0), display_point(0, 1)],
+            true,
+            cx,
+        );
+
+        let marked_text = "ˇlorem.ipsum \n\n hi.hello \"\"";
+        test_helper(
+            marked_text,
+            vec![display_point(0, 0), display_point(1, 2)],
+            true,
+            cx,
+        );
+
+        let marked_text = "ˇlorem ipsum \n{}\n hi hello \"\"";
+        test_helper(
+            marked_text,
+            vec![
+                display_point(0, 0),
+                display_point(6, 0),
+                display_point(1, 2),
+                display_point(4, 2),
+            ],
+            true,
+            cx,
+        );
+    }
+
+    fn init_test(cx: &mut gpui::AppContext) {
+        let settings_store = SettingsStore::test(cx);
+        cx.set_global(settings_store);
+        theme::init(theme::LoadThemes::JustBase, cx);
+        language::init(cx);
+        crate::init(cx);
+        Project::init_settings(cx);
+    }
 }
