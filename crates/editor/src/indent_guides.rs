@@ -2,7 +2,7 @@ use std::{ops::Range, time::Duration};
 
 use collections::HashSet;
 use gpui::{AppContext, Task};
-use language::BufferRow;
+use language::{language_settings::language_settings, BufferRow};
 use multi_buffer::{MultiBufferIndentGuide, MultiBufferRow};
 use text::{BufferId, LineIndent, Point};
 use ui::ViewContext;
@@ -37,13 +37,26 @@ impl Editor {
         snapshot: &DisplaySnapshot,
         cx: &mut ViewContext<Editor>,
     ) -> Option<Vec<MultiBufferIndentGuide>> {
-        let enabled = self.should_show_indent_guides(cx);
+        let show_indent_guides = self.should_show_indent_guides().unwrap_or_else(|| {
+            if let Some(buffer) = self.buffer().read(cx).as_singleton() {
+                language_settings(buffer.read(cx).language(), buffer.read(cx).file(), cx)
+                    .indent_guides
+                    .enabled
+            } else {
+                true
+            }
+        });
 
-        if enabled {
-            Some(indent_guides_in_range(visible_buffer_range, snapshot, cx))
-        } else {
-            None
+        if !show_indent_guides {
+            return None;
         }
+
+        Some(indent_guides_in_range(
+            visible_buffer_range,
+            self.should_show_indent_guides() == Some(true),
+            snapshot,
+            cx,
+        ))
     }
 
     pub fn find_active_indent_guide_indices(
@@ -77,8 +90,13 @@ impl Editor {
 
         if state.should_refresh() {
             state.cursor_row = cursor_row;
-            let snapshot = snapshot.clone();
             state.dirty = false;
+
+            if indent_guides.is_empty() {
+                return None;
+            }
+
+            let snapshot = snapshot.clone();
 
             let task = cx
                 .background_executor()
@@ -131,6 +149,7 @@ impl Editor {
 
 pub fn indent_guides_in_range(
     visible_buffer_range: Range<MultiBufferRow>,
+    ignore_disabled_for_language: bool,
     snapshot: &DisplaySnapshot,
     cx: &AppContext,
 ) -> Vec<MultiBufferIndentGuide> {
@@ -143,7 +162,7 @@ pub fn indent_guides_in_range(
 
     snapshot
         .buffer_snapshot
-        .indent_guides_in_range(start_anchor..end_anchor, cx)
+        .indent_guides_in_range(start_anchor..end_anchor, ignore_disabled_for_language, cx)
         .into_iter()
         .filter(|indent_guide| {
             // Filter out indent guides that are inside a fold
