@@ -16,18 +16,19 @@ doctest = false
 anyhow.workspace = true
 anthropic = { workspace = true, features = ["schemars"] }
 assistant_slash_command.workspace = true
+async-watch.workspace = true
 cargo_toml.workspace = true
 chrono.workspace = true
 client.workspace = true
 collections.workspace = true
 command_palette_hooks.workspace = true
 editor.workspace = true
-feature_flags.workspace = true
 file_icons.workspace = true
 fs.workspace = true
 futures.workspace = true
 fuzzy.workspace = true
 gpui.workspace = true
+heed.workspace = true
 http.workspace = true
 indoc.workspace = true
 language.workspace = true
@@ -59,7 +60,6 @@ util.workspace = true
 uuid.workspace = true
 workspace.workspace = true
 picker.workspace = true
-gray_matter = "0.2.7"
 
 [dev-dependencies]
 ctor.workspace = true

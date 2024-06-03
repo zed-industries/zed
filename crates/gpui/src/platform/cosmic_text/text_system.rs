@@ -314,7 +314,7 @@ impl CosmicTextSystemState {
             let bitmap_size = glyph_bounds.size;
             let font = &self.loaded_fonts_store[params.font_id.0];
             let font_system = &mut self.font_system;
-            let image = self
+            let mut image = self
                 .swash_cache
                 .get_image(
                     font_system,
@@ -329,6 +329,13 @@ impl CosmicTextSystemState {
                 )
                 .clone()
                 .unwrap();
+
+            if params.is_emoji {
+                // Convert from RGBA to BGRA.
+                for pixel in image.data.chunks_exact_mut(4) {
+                    pixel.swap(0, 2);
+                }
+            }
 
             Ok((bitmap_size, image.data))
         }
@@ -394,13 +401,20 @@ impl CosmicTextSystemState {
         for glyph in &layout.glyphs {
             let font_id = glyph.font_id;
             let font_id = self.font_id_for_cosmic_id(font_id);
+            let is_emoji = self.is_emoji(font_id);
             let mut glyphs = SmallVec::new();
+
+            // HACK: Prevent crash caused by variation selectors.
+            if glyph.glyph_id == 3 && is_emoji {
+                continue;
+            }
+
             // todo(linux) this is definitely wrong, each glyph in glyphs from cosmic-text is a cluster with one glyph, ShapedRun takes a run of glyphs with the same font and direction
             glyphs.push(ShapedGlyph {
                 id: GlyphId(glyph.glyph_id as u32),
                 position: point((glyph.x).into(), glyph.y.into()),
                 index: glyph.start,
-                is_emoji: self.is_emoji(font_id),
+                is_emoji,
             });
 
             runs.push(crate::ShapedRun { font_id, glyphs });

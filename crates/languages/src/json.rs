@@ -85,6 +85,10 @@ impl JsonLspAdapter {
                 },
                 "schemas": [
                     {
+                        "fileMatch": ["tsconfig.json"],
+                        "schema":tsconfig_schema
+                    },
+                    {
                         "fileMatch": [
                             schema_file_match(&paths::SETTINGS),
                             &*paths::LOCAL_SETTINGS_RELATIVE_PATH,
@@ -101,11 +105,8 @@ impl JsonLspAdapter {
                             &*paths::LOCAL_TASKS_RELATIVE_PATH,
                         ],
                         "schema": tasks_schema,
-                    },
-                    {
-                        "fileMatch": "*/tsconfig.json",
-                        "schema":tsconfig_schema
                     }
+
                 ]
             }
         })

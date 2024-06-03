@@ -1,4 +1,5 @@
 use crate::Project;
+use anyhow::Context as _;
 use collections::HashMap;
 use gpui::{
     AnyWindowHandle, AppContext, Context, Entity, Model, ModelContext, SharedString, WeakModel,
@@ -268,19 +269,8 @@ impl Project {
                 path.to_string_lossy().to_string(),
             );
 
-            let path_bin = path.join("bin");
             // We need to set the PATH to include the virtual environment's bin directory
-            if let Some(paths) = std::env::var_os("PATH") {
-                let paths = std::iter::once(path_bin).chain(std::env::split_paths(&paths));
-                if let Some(new_path) = std::env::join_paths(paths).log_err() {
-                    env.insert("PATH".to_string(), new_path.to_string_lossy().to_string());
-                }
-            } else {
-                env.insert(
-                    "PATH".to_string(),
-                    path.join("bin").to_string_lossy().to_string(),
-                );
-            }
+            add_environment_path(env, &path.join("bin")).log_err();
         }
     }
 
@@ -381,17 +371,64 @@ fn prepare_ssh_shell(
     // todo(windows)
     #[cfg(not(target_os = "windows"))]
     std::fs::set_permissions(ssh_path, smol::fs::unix::PermissionsExt::from_mode(0o755))?;
-    let path = format!(
-        "{}:{}",
-        tmp_dir.to_string_lossy(),
-        env.get("PATH")
-            .cloned()
-            .or(env::var("PATH").ok())
-            .unwrap_or_default()
-    );
-    env.insert("PATH".to_string(), path);
+
+    add_environment_path(env, tmp_dir)?;
 
     let mut args = shlex::split(&ssh_command).unwrap_or_default();
     let program = args.drain(0..1).next().unwrap_or("ssh".to_string());
     Ok(Shell::WithArguments { program, args })
+}
+
+fn add_environment_path(env: &mut HashMap<String, String>, new_path: &Path) -> anyhow::Result<()> {
+    let mut env_paths = vec![new_path.to_path_buf()];
+    if let Some(path) = env.get("PATH").or(env::var("PATH").ok().as_ref()) {
+        let mut paths = std::env::split_paths(&path).collect::<Vec<_>>();
+        env_paths.append(&mut paths);
+    }
+
+    let paths = std::env::join_paths(env_paths).context("failed to create PATH env variable")?;
+    env.insert("PATH".to_string(), paths.to_string_lossy().to_string());
+
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use collections::HashMap;
+
+    #[test]
+    fn test_add_environment_path_with_existing_path() {
+        let tmp_path = std::path::PathBuf::from("/tmp/new");
+        let mut env = HashMap::default();
+        let old_path = if cfg!(windows) {
+            "/usr/bin;/usr/local/bin"
+        } else {
+            "/usr/bin:/usr/local/bin"
+        };
+        env.insert("PATH".to_string(), old_path.to_string());
+        env.insert("OTHER".to_string(), "aaa".to_string());
+
+        super::add_environment_path(&mut env, &tmp_path).unwrap();
+        if cfg!(windows) {
+            assert_eq!(env.get("PATH").unwrap(), &format!("/tmp/new;{}", old_path));
+        } else {
+            assert_eq!(env.get("PATH").unwrap(), &format!("/tmp/new:{}", old_path));
+        }
+        assert_eq!(env.get("OTHER").unwrap(), "aaa");
+    }
+
+    #[test]
+    fn test_add_environment_path_with_empty_path() {
+        let tmp_path = std::path::PathBuf::from("/tmp/new");
+        let mut env = HashMap::default();
+        env.insert("OTHER".to_string(), "aaa".to_string());
+        let os_path = std::env::var("PATH").unwrap();
+        super::add_environment_path(&mut env, &tmp_path).unwrap();
+        if cfg!(windows) {
+            assert_eq!(env.get("PATH").unwrap(), &format!("/tmp/new;{}", os_path));
+        } else {
+            assert_eq!(env.get("PATH").unwrap(), &format!("/tmp/new:{}", os_path));
+        }
+        assert_eq!(env.get("OTHER").unwrap(), "aaa");
+    }
 }

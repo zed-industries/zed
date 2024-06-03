@@ -22,6 +22,7 @@ mod python;
 mod rust;
 mod tailwind;
 mod typescript;
+mod vtsls;
 mod yaml;
 
 #[derive(RustEmbed)]
@@ -137,29 +138,33 @@ pub fn init(
     );
     language!(
         "tsx",
-        vec![Arc::new(typescript::TypeScriptLspAdapter::new(
-            node_runtime.clone()
-        ))]
+        vec![
+            Arc::new(typescript::TypeScriptLspAdapter::new(node_runtime.clone())),
+            Arc::new(vtsls::VtslsLspAdapter::new(node_runtime.clone()))
+        ]
     );
     language!(
         "typescript",
-        vec![Arc::new(typescript::TypeScriptLspAdapter::new(
-            node_runtime.clone()
-        ))],
+        vec![
+            Arc::new(typescript::TypeScriptLspAdapter::new(node_runtime.clone())),
+            Arc::new(vtsls::VtslsLspAdapter::new(node_runtime.clone()))
+        ],
         typescript_task_context()
     );
     language!(
         "javascript",
-        vec![Arc::new(typescript::TypeScriptLspAdapter::new(
-            node_runtime.clone()
-        ))],
+        vec![
+            Arc::new(typescript::TypeScriptLspAdapter::new(node_runtime.clone())),
+            Arc::new(vtsls::VtslsLspAdapter::new(node_runtime.clone()))
+        ],
         typescript_task_context()
     );
     language!(
         "jsdoc",
-        vec![Arc::new(typescript::TypeScriptLspAdapter::new(
-            node_runtime.clone(),
-        ))]
+        vec![
+            Arc::new(typescript::TypeScriptLspAdapter::new(node_runtime.clone(),)),
+            Arc::new(vtsls::VtslsLspAdapter::new(node_runtime.clone()))
+        ]
     );
     language!("regex");
     language!(
