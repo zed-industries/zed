@@ -1150,7 +1150,7 @@ impl EasyMotion {
                 text: seq,
                 highlights,
                 point: overlay.point,
-                offset: 1.0,
+                offset: 0.0,
             }
         });
         editor.add_overlays::<Self>(iter, len, cx);
