@@ -737,9 +737,9 @@ impl PromptStore {
         let bodies = self.bodies;
         self.executor.spawn(async move {
             let txn = env.read_txn()?;
-            Ok(bodies
+            bodies
                 .get(&txn, &id)?
-                .ok_or_else(|| anyhow!("prompt not found"))?)
+                .ok_or_else(|| anyhow!("prompt not found"))
         })
     }
 
@@ -913,7 +913,7 @@ pub struct GlobalPromptStore(
 
 impl Global for GlobalPromptStore {}
 
-fn title_from_body<'a>(body: impl IntoIterator<Item = char>) -> Option<SharedString> {
+fn title_from_body(body: impl IntoIterator<Item = char>) -> Option<SharedString> {
     let mut chars = body.into_iter().take_while(|c| *c != '\n').peekable();
 
     let mut level = 0;

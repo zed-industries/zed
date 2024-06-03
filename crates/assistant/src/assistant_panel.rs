@@ -2637,7 +2637,7 @@ impl ConversationEditor {
                 cx,
             );
             this.split(&Split, cx);
-            this.conversation.update(cx, |this, cx| {
+            this.conversation.update(cx, |this, _cx| {
                 this.messages_metadata
                     .get_mut(&MessageId::default())
                     .unwrap()
