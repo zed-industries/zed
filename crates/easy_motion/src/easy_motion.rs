@@ -215,23 +215,24 @@ impl EasyMotion {
     }
 
     fn update_editors(
-        state: &EditorState,
+        state: Option<&EditorState>,
         dimming: bool,
         editors: impl Iterator<Item = View<Editor>>,
         cx: &mut impl VisualContext,
     ) {
         // filter trie entries by editor and add overlays
+        let Some(state) = state else {
+            for editor in editors {
+                editor.update(cx, |editor, cx| {
+                    editor.clear_search_within_ranges(cx);
+                    editor.clear_highlights::<Self>(cx);
+                    editor.remove_keymap_context_layer::<Self>(cx);
+                });
+            }
+            return;
+        };
         let ctx = state.keymap_context_layer();
         match state {
-            EditorState::None => {
-                for editor in editors {
-                    editor.update(cx, |editor, cx| {
-                        editor.clear_search_within_ranges(cx);
-                        editor.clear_highlights::<Self>(cx);
-                        editor.remove_keymap_context_layer::<Self>(cx);
-                    });
-                }
-            }
             EditorState::Selection(selection) => {
                 for editor in editors {
                     let trie = selection.trie();
@@ -344,17 +345,14 @@ impl EasyMotion {
             .collect()
     }
 
-    pub(crate) fn latest_state(&self) -> &EditorState {
+    pub(crate) fn latest_state(&self) -> Option<&EditorState> {
         if let Some(state) = self.multipane_state.as_ref() {
-            return state;
+            return Some(state);
         };
-        self.active_editor
-            .as_ref()
-            .and_then(|editor| {
-                let id = editor.entity_id();
-                self.editor_states.get(&id)
-            })
-            .unwrap_or(&EditorState::None)
+        self.active_editor.as_ref().and_then(|editor| {
+            let id = editor.entity_id();
+            self.editor_states.get(&id)
+        })
     }
 
     #[allow(dead_code)]
@@ -369,13 +367,9 @@ impl EasyMotion {
             .unwrap()
     }
 
-    fn clear_state(&mut self) {
-        self.insert_state(EditorState::None);
-    }
-
-    fn insert_state(&mut self, state: EditorState) -> Option<()> {
+    fn clear_state(&mut self) -> Option<()> {
         let active_editor = self.active_editor.as_ref()?;
-        self.editor_states.insert(active_editor.entity_id(), state);
+        self.editor_states.remove(&active_editor.entity_id());
         Some(())
     }
 
@@ -400,13 +394,13 @@ impl EasyMotion {
         direction: Direction,
         editor: &mut Editor,
         cx: &mut ViewContext<Editor>,
-    ) -> EditorState {
+    ) -> Option<EditorState> {
         let selections = editor.selections.newest_display(cx);
         let snapshot = editor.snapshot(cx);
         let map = &snapshot.display_snapshot;
 
         if matches.is_empty() {
-            return EditorState::None;
+            return None;
         }
         sort_matches_display(&mut matches, &selections.start);
 
@@ -450,7 +444,7 @@ impl EasyMotion {
         let new_state = EditorState::new_selection(trie);
         let ctx = new_state.keymap_context_layer();
         editor.set_keymap_context_layer::<Self>(ctx, cx);
-        new_state
+        Some(new_state)
     }
 
     fn handle_new_match_tasks(
@@ -473,7 +467,7 @@ impl EasyMotion {
                 .flatten()
                 .collect::<Vec<_>>();
             if search_matches.is_empty() {
-                return EditorState::None;
+                return None;
             }
             sort_matches_pixel(&mut search_matches, &cursor);
 
@@ -493,7 +487,7 @@ impl EasyMotion {
                 }
             });
 
-            EditorState::new_selection(trie)
+            Some(EditorState::new_selection(trie))
         });
 
         cx.spawn(move |mut cx| async move {
@@ -503,10 +497,10 @@ impl EasyMotion {
                 .filter_map(|editor| editor.upgrade());
 
             let new_state = new_state.await;
-            Self::update_editors(&new_state, dimming, editors, cx);
+            Self::update_editors(new_state.as_ref(), dimming, editors, cx);
 
             Self::update_async(cx, move |easy, cx| {
-                easy.multipane_state = Some(new_state);
+                easy.multipane_state = new_state;
                 cx.notify();
             });
         })
@@ -576,7 +570,9 @@ impl EasyMotion {
         });
 
         Self::update(cx, move |easy, cx| {
-            easy.editor_states.insert(entity_id, new_state);
+            if let Some(new_state) = new_state {
+                easy.editor_states.insert(entity_id, new_state);
+            }
             cx.notify();
         });
     }
@@ -630,7 +626,7 @@ impl EasyMotion {
                 })
                 .collect::<Vec<_>>();
 
-            Self::update_editors(&new_state, true, editors.into_iter(), cx);
+            Self::update_editors(Some(&new_state), true, editors.into_iter(), cx);
 
             Self::insert_multipane_state(new_state, cx);
         } else {
@@ -679,7 +675,9 @@ impl EasyMotion {
             let query = pattern.chars().to_string();
             let new_state =
                 Self::show_trie_from_query_multipane(query, false, active_editor_id, editors, cx);
-            Self::insert_multipane_state(new_state, cx);
+            if let Some(new_state) = new_state {
+                Self::insert_multipane_state(new_state, cx);
+            }
         } else {
             let Some((state, editor)) = Self::update(cx, |easy, _| {
                 let state = easy.take_state()?;
@@ -690,9 +688,6 @@ impl EasyMotion {
             .flatten() else {
                 return;
             };
-            if !state.easy_motion_controlled() {
-                return;
-            }
 
             let EditorState::Pattern(pattern) = state else {
                 return;
@@ -705,7 +700,9 @@ impl EasyMotion {
 
             let entity_id = editor.entity_id();
             Self::update(cx, move |easy, cx| {
-                easy.editor_states.insert(entity_id, new_state);
+                if let Some(new_state) = new_state {
+                    easy.editor_states.insert(entity_id, new_state);
+                }
                 cx.notify();
             });
         };
@@ -770,15 +767,16 @@ impl EasyMotion {
         });
 
         Self::update(cx, move |easy, cx| {
-            easy.editor_states.insert(entity_id, new_state);
+            if let Some(new_state) = new_state {
+                easy.editor_states.insert(entity_id, new_state);
+            }
             cx.notify();
         });
     }
 
     fn cancel(workspace: &Workspace, cx: &mut WindowContext) {
         let editor = Self::update(cx, |easy, _| {
-            if let Some(state) = easy.multipane_state.as_mut() {
-                state.clear();
+            if let Some(_) = easy.multipane_state.take() {
                 None
             } else {
                 easy.clear_state();
@@ -829,10 +827,6 @@ impl EasyMotion {
             return;
         };
 
-        if !state.easy_motion_controlled() {
-            return;
-        }
-
         let editor = weak_editor.upgrade();
         let Some(editor) = editor else {
             return;
@@ -848,17 +842,18 @@ impl EasyMotion {
                     InputResult::ShowTrie(query) => {
                         Self::show_trie_from_query(query, false, direction, editor, cx)
                     }
-                    InputResult::Recording(n_char) => EditorState::NCharInput(n_char),
+                    InputResult::Recording(n_char) => Some(EditorState::NCharInput(n_char)),
                 }
             }
             EditorState::Selection(selection) => Self::handle_trim(selection, keys, editor, cx),
-            EditorState::PendingSearch => EditorState::PendingSearch,
-            EditorState::Pattern(pattern) => EditorState::Pattern(pattern.record_str(keys)),
-            EditorState::None => EditorState::None,
+            EditorState::PendingSearch => Some(EditorState::PendingSearch),
+            EditorState::Pattern(pattern) => Some(EditorState::Pattern(pattern.record_str(keys))),
         });
 
         Self::update(cx, move |easy, cx| {
-            easy.editor_states.insert(entity_id, new_state);
+            if let Some(new_state) = new_state {
+                easy.editor_states.insert(entity_id, new_state);
+            }
             cx.notify();
         });
     }
@@ -868,10 +863,6 @@ impl EasyMotion {
         state: EditorState,
         cx: &mut WindowContext,
     ) {
-        if !state.easy_motion_controlled() {
-            return;
-        }
-
         let keys = keystroke_event.keystroke.key.as_str();
         let new_state = match state {
             EditorState::NCharInput(char_input) => {
@@ -884,7 +875,7 @@ impl EasyMotion {
                         .map(|workspace_view| {
                             workspace_view.update(cx, |workspace, cx| {
                                 let Some(active_editor_id) = Self::active_editor_id(cx) else {
-                                    return EditorState::None;
+                                    return None;
                                 };
 
                                 let editors = Self::editors_with_bounding_boxes(workspace, cx);
@@ -899,7 +890,7 @@ impl EasyMotion {
                         })
                         .unwrap_or_default(),
                     // do nothing
-                    InputResult::Recording(n_char) => EditorState::NCharInput(n_char),
+                    InputResult::Recording(n_char) => Some(EditorState::NCharInput(n_char)),
                 }
             }
             EditorState::Selection(selection) => cx
@@ -912,12 +903,13 @@ impl EasyMotion {
                     })
                 })
                 .unwrap_or_default(),
-            EditorState::PendingSearch => EditorState::PendingSearch,
-            EditorState::Pattern(pattern) => EditorState::Pattern(pattern.record_str(keys)),
-            EditorState::None => EditorState::None,
+            EditorState::PendingSearch => Some(EditorState::PendingSearch),
+            EditorState::Pattern(pattern) => Some(EditorState::Pattern(pattern.record_str(keys))),
         };
 
-        Self::insert_multipane_state(new_state, cx);
+        if let Some(new_state) = new_state {
+            Self::insert_multipane_state(new_state, cx);
+        }
     }
 
     fn handle_trim(
@@ -925,7 +917,7 @@ impl EasyMotion {
         keys: &str,
         editor: &mut Editor,
         cx: &mut ViewContext<Editor>,
-    ) -> EditorState {
+    ) -> Option<EditorState> {
         let (selection, res) = selection.record_str(keys);
         match res {
             TrimResult::Found(overlay) => {
@@ -935,22 +927,22 @@ impl EasyMotion {
                 editor.clear_overlays::<Self>(cx);
                 editor.clear_highlights::<Self>(cx);
                 editor.remove_keymap_context_layer::<Self>(cx);
-                EditorState::None
+                None
             }
             TrimResult::Changed => {
                 let trie = selection.trie();
                 let len = trie.len();
                 editor.clear_overlays::<Self>(cx);
                 Self::add_overlays(editor, trie.iter(), len, cx);
-                EditorState::Selection(selection)
+                Some(EditorState::Selection(selection))
             }
             TrimResult::Err => {
                 editor.clear_overlays::<Self>(cx);
                 editor.clear_highlights::<Self>(cx);
                 editor.remove_keymap_context_layer::<Self>(cx);
-                EditorState::None
+                None
             }
-            TrimResult::NoChange => EditorState::Selection(selection),
+            TrimResult::NoChange => Some(EditorState::Selection(selection)),
         }
     }
 
@@ -959,7 +951,7 @@ impl EasyMotion {
         keys: &str,
         workspace: &mut Workspace,
         cx: &mut WindowContext,
-    ) -> EditorState {
+    ) -> Option<EditorState> {
         let editors = Self::active_editor_views(workspace, cx);
         let (selection, res) = selection.record_str(keys);
         match res {
@@ -968,7 +960,7 @@ impl EasyMotion {
                     .iter()
                     .find(|editor| editor.entity_id() == overlay.editor_id)
                 else {
-                    return EditorState::None;
+                    return None;
                 };
                 workspace.activate_item(editor, cx);
                 editor.update(cx, |editor, cx| {
@@ -983,7 +975,7 @@ impl EasyMotion {
                         editor.remove_keymap_context_layer::<Self>(cx);
                     });
                 }
-                EditorState::None
+                None
             }
             TrimResult::Changed => {
                 let trie = selection.trie();
@@ -996,7 +988,7 @@ impl EasyMotion {
                         Self::add_overlays(editor, iter, trie.len(), cx);
                     });
                 }
-                EditorState::Selection(selection)
+                Some(EditorState::Selection(selection))
             }
             TrimResult::Err => {
                 for editor in editors {
@@ -1006,9 +998,9 @@ impl EasyMotion {
                         editor.remove_keymap_context_layer::<Self>(cx);
                     });
                 }
-                EditorState::None
+                None
             }
-            TrimResult::NoChange => EditorState::Selection(selection),
+            TrimResult::NoChange => Some(EditorState::Selection(selection)),
         }
     }
 
@@ -1018,10 +1010,10 @@ impl EasyMotion {
         direction: Direction,
         editor: &mut Editor,
         cx: &mut ViewContext<Editor>,
-    ) -> EditorState {
+    ) -> Option<EditorState> {
         let task = search_window(query.as_str(), is_regex, direction, editor, cx);
         let Some(task) = task else {
-            return EditorState::None;
+            return None;
         };
 
         cx.spawn(|editor, mut cx| async move {
@@ -1034,19 +1026,26 @@ impl EasyMotion {
             let state = editor.update(&mut cx, move |editor, cx| {
                 editor.clear_search_within_ranges(cx);
                 let new_state = Self::handle_new_matches(matches, direction, editor, cx);
-                let ctx = new_state.keymap_context_layer();
-                editor.set_keymap_context_layer::<Self>(ctx, cx);
+                if let Some(new_state) = new_state.as_ref() {
+                    let ctx = new_state.keymap_context_layer();
+                    editor.set_keymap_context_layer::<Self>(ctx, cx);
+                } else {
+                    editor.clear_highlights::<Self>(cx);
+                    editor.remove_keymap_context_layer::<Self>(cx);
+                }
                 new_state
             })?;
             Self::update_async(&mut cx, move |easy, cx| {
-                easy.editor_states.insert(entity_id, state);
+                if let Some(state) = state {
+                    easy.editor_states.insert(entity_id, state);
+                }
                 cx.notify();
             });
             anyhow::Result::Ok(())
         })
         .detach_and_log_err(cx);
 
-        EditorState::PendingSearch
+        Some(EditorState::PendingSearch)
     }
 
     fn show_trie_from_query_multipane(
@@ -1055,7 +1054,7 @@ impl EasyMotion {
         active_editor_id: EntityId,
         editors: Vec<(View<Editor>, Bounds<Pixels>)>,
         cx: &mut WindowContext,
-    ) -> EditorState {
+    ) -> Option<EditorState> {
         // group each list of matches to a weak view of its corresponding editor
         let (weak_editors, search_tasks): (Vec<_>, Vec<_>) = editors
             .iter()
@@ -1083,7 +1082,7 @@ impl EasyMotion {
             })
             .unzip();
         if search_tasks.len() == 0 {
-            return EditorState::None;
+            return None;
         }
 
         // group each list of matches to a weak view of its corresponding editor
@@ -1098,7 +1097,7 @@ impl EasyMotion {
             .unwrap();
 
         Self::handle_new_match_tasks(cursor, weak_editors, search_tasks, cx);
-        EditorState::PendingSearch
+        Some(EditorState::PendingSearch)
     }
 
     fn get_cursor_pixels(

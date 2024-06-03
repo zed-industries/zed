@@ -1,4 +1,4 @@
-use std::{mem, sync::Arc};
+use std::{fmt::Debug, mem, sync::Arc};
 
 #[derive(Debug)]
 enum TrieNode<T> {
@@ -214,11 +214,19 @@ impl TrieBuilder {
     }
 }
 
-#[derive(Debug)]
 pub(crate) struct Trie<T> {
     keys: Arc<str>,
     root: TrieNode<T>,
     len: usize,
+}
+
+impl<T> Debug for Trie<T> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Trie")
+            .field("keys", &self.keys)
+            .field("len", &self.len)
+            .finish_non_exhaustive()
+    }
 }
 
 impl<T> Trie<T> {

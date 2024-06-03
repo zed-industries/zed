@@ -32,7 +32,9 @@ impl InputDisplay {
         };
         let subcription = cx.observe(&model, |this, easy, cx| {
             let easy = easy.read(cx);
-            let state = easy.latest_state();
+            let Some(state) = easy.latest_state() else {
+                return;
+            };
             let str = match state {
                 EditorState::NCharInput(n_char) => n_char.chars().to_string(),
                 EditorState::Selection(selection) => selection.selection().to_string(),

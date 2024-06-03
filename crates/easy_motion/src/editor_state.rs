@@ -16,7 +16,6 @@ pub(crate) struct OverlayState {
 #[derive(Debug, Default)]
 pub(crate) enum EditorState {
     #[default]
-    None,
     PendingSearch,
     NCharInput(NCharInput),
     Selection(Selection),
@@ -36,24 +35,10 @@ impl EditorState {
         EditorState::Pattern(Pattern::new(direction))
     }
 
-    pub(crate) fn is_none(&self) -> bool {
-        matches!(self, EditorState::None)
-    }
-
-    pub(crate) fn clear(&mut self) {
-        *self = EditorState::None;
-    }
-
-    pub(crate) fn easy_motion_controlled(&self) -> bool {
-        !self.is_none()
-    }
-
     pub(crate) fn keymap_context_layer(&self) -> KeyContext {
         let mut context = KeyContext::new_with_defaults();
-        if self.easy_motion_controlled() {
-            context.add("EasyMotionControlled");
-            context.add("menu");
-        }
+        context.add("EasyMotionControlled");
+        context.add("menu");
         return context;
     }
 
