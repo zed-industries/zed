@@ -1,24 +1,54 @@
+use std::path::Path;
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 
 use anyhow::{anyhow, bail, Context, Result};
 use assistant_slash_command::{SlashCommand, SlashCommandOutput, SlashCommandOutputSection};
+use fs::Fs;
 use futures::AsyncReadExt;
-use gpui::{AppContext, Task, WeakView};
+use gpui::{AppContext, Model, Task, WeakView};
 use http::{AsyncBody, HttpClient, HttpClientWithUrl};
 use language::LspAdapterDelegate;
+use project::{Project, ProjectPath};
 use rustdoc_to_markdown::convert_rustdoc_to_markdown;
 use ui::{prelude::*, ButtonLike, ElevationIndex};
 use workspace::Workspace;
+
+#[derive(Debug, Clone, Copy)]
+enum RustdocSource {
+    /// The docs were sourced from local `cargo doc` output.
+    Local,
+    /// The docs were sourced from `docs.rs`.
+    DocsDotRs,
+}
 
 pub(crate) struct RustdocSlashCommand;
 
 impl RustdocSlashCommand {
     async fn build_message(
+        fs: Arc<dyn Fs>,
         http_client: Arc<HttpClientWithUrl>,
         crate_name: String,
         module_path: Vec<String>,
-    ) -> Result<String> {
+        path_to_cargo_toml: Option<&Path>,
+    ) -> Result<(RustdocSource, String)> {
+        let cargo_workspace_root = path_to_cargo_toml.and_then(|path| path.parent());
+        if let Some(cargo_workspace_root) = cargo_workspace_root {
+            let mut local_cargo_doc_path = cargo_workspace_root.join("target/doc");
+            local_cargo_doc_path.push(&crate_name);
+            if !module_path.is_empty() {
+                local_cargo_doc_path.push(module_path.join("/"));
+            }
+            local_cargo_doc_path.push("index.html");
+
+            if let Ok(contents) = fs.load(&local_cargo_doc_path).await {
+                return Ok((
+                    RustdocSource::Local,
+                    convert_rustdoc_to_markdown(contents.as_bytes())?,
+                ));
+            }
+        }
+
         let version = "latest";
         let path = format!(
             "{crate_name}/{version}/{crate_name}/{module_path}",
@@ -48,7 +78,23 @@ impl RustdocSlashCommand {
             );
         }
 
-        convert_rustdoc_to_markdown(&body[..])
+        Ok((
+            RustdocSource::DocsDotRs,
+            convert_rustdoc_to_markdown(&body[..])?,
+        ))
+    }
+
+    fn path_to_cargo_toml(project: Model<Project>, cx: &mut AppContext) -> Option<Arc<Path>> {
+        let worktree = project.read(cx).worktrees().next()?;
+        let worktree = worktree.read(cx);
+        let entry = worktree.entry_for_path("Cargo.toml")?;
+        let path = ProjectPath {
+            worktree_id: worktree.id(),
+            path: entry.path.clone(),
+        };
+        Some(Arc::from(
+            project.read(cx).absolute_path(&path, cx)?.as_path(),
+        ))
     }
 }
 
@@ -93,6 +139,8 @@ impl SlashCommand for RustdocSlashCommand {
             return Task::ready(Err(anyhow!("workspace was dropped")));
         };
 
+        let project = workspace.read(cx).project().clone();
+        let fs = project.read(cx).fs().clone();
         let http_client = workspace.read(cx).client().http_client();
         let mut path_components = argument.split("::");
         let crate_name = match path_components
@@ -103,11 +151,21 @@ impl SlashCommand for RustdocSlashCommand {
             Err(err) => return Task::ready(Err(err)),
         };
         let module_path = path_components.map(ToString::to_string).collect::<Vec<_>>();
+        let path_to_cargo_toml = Self::path_to_cargo_toml(project, cx);
 
         let text = cx.background_executor().spawn({
             let crate_name = crate_name.clone();
             let module_path = module_path.clone();
-            async move { Self::build_message(http_client, crate_name, module_path).await }
+            async move {
+                Self::build_message(
+                    fs,
+                    http_client,
+                    crate_name,
+                    module_path,
+                    path_to_cargo_toml.as_deref(),
+                )
+                .await
+            }
         });
 
         let crate_name = SharedString::from(crate_name);
@@ -117,7 +175,7 @@ impl SlashCommand for RustdocSlashCommand {
             Some(SharedString::from(module_path.join("::")))
         };
         cx.foreground_executor().spawn(async move {
-            let text = text.await?;
+            let (source, text) = text.await?;
             let range = 0..text.len();
             Ok(SlashCommandOutput {
                 text,
@@ -127,6 +185,7 @@ impl SlashCommand for RustdocSlashCommand {
                         RustdocPlaceholder {
                             id,
                             unfold,
+                            source,
                             crate_name: crate_name.clone(),
                             module_path: module_path.clone(),
                         }
@@ -142,6 +201,7 @@ impl SlashCommand for RustdocSlashCommand {
 struct RustdocPlaceholder {
     pub id: ElementId,
     pub unfold: Arc<dyn Fn(&mut WindowContext)>,
+    pub source: RustdocSource,
     pub crate_name: SharedString,
     pub module_path: Option<SharedString>,
 }
@@ -159,7 +219,13 @@ impl RenderOnce for RustdocPlaceholder {
             .style(ButtonStyle::Filled)
             .layer(ElevationIndex::ElevatedSurface)
             .child(Icon::new(IconName::FileRust))
-            .child(Label::new(format!("rustdoc: {crate_path}")))
+            .child(Label::new(format!(
+                "rustdoc ({source}): {crate_path}",
+                source = match self.source {
+                    RustdocSource::Local => "local",
+                    RustdocSource::DocsDotRs => "docs.rs",
+                }
+            )))
             .on_click(move |_, cx| unfold(cx))
     }
 }
