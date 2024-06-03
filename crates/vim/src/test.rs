@@ -182,6 +182,7 @@ async fn test_indent_outdent(cx: &mut gpui::TestAppContext) {
     cx.assert_editor_state("aa\n ˇ   bb\n    cc");
 }
 
+#[gpui::test]
 async fn test_indent_outdent_with_times(cx: &mut gpui::TestAppContext) {
     let mut cx = NeovimBackedTestContext::new(cx).await;
 
