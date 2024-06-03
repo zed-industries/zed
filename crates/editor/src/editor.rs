@@ -11628,8 +11628,7 @@ impl ViewInputHandler for Editor {
 
         let selection = self.selections.newest::<OffsetUtf16>(cx);
         let range = selection.range();
-        let reversed = selection.reversed;
-        Some((range.start.0..range.end.0, reversed))
+        Some((range.start.0..range.end.0, selection.reversed))
     }
 
     fn marked_text_range(&self, cx: &mut ViewContext<Self>) -> Option<Range<usize>> {

@@ -761,9 +761,6 @@ impl Window {
             platform_window.set_app_id(&app_id);
         }
 
-        #[cfg(target_os = "linux")]
-        platform_window.update_ime_position();
-
         Window {
             handle,
             removed: false,

@@ -578,7 +578,7 @@ fn handle_ime_position(handle: HWND, state_ptr: Rc<WindowsWindowStatePtr>) -> Op
         let scale_factor = lock.scale_factor;
         drop(lock);
 
-        let Some(caret_range) = input_handler.selected_text_range() else {
+        let Some((caret_range, _)) = input_handler.selected_text_range() else {
             state_ptr.state.borrow_mut().input_handler = Some(input_handler);
             return Some(0);
         };
