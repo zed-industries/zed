@@ -1,5 +1,5 @@
 use collections::HashMap;
-use gpui::{px, AbsoluteLength, AppContext, FontFeatures, Pixels};
+use gpui::{px, AbsoluteLength, AppContext, FontFeatures, FontWeight, Pixels};
 use schemars::{
     gen::SchemaGenerator,
     schema::{InstanceType, RootSchema, Schema, SchemaObject},
@@ -31,6 +31,7 @@ pub struct TerminalSettings {
     pub font_family: Option<String>,
     pub line_height: TerminalLineHeight,
     pub font_features: Option<FontFeatures>,
+    pub font_weight: Option<FontWeight>,
     pub env: HashMap<String, String>,
     pub blinking: TerminalBlink,
     pub alternate_scroll: AlternateScroll,
@@ -114,6 +115,8 @@ pub struct TerminalSettingsContent {
     /// Default: comfortable
     pub line_height: Option<TerminalLineHeight>,
     pub font_features: Option<FontFeatures>,
+    /// Sets the terminal's font weight in CSS weight units 0-900.
+    pub font_weight: Option<f32>,
     /// Any key-value pairs added to this list will be added to the terminal's
     /// environment. Use `:` to separate multiple values.
     ///
@@ -241,7 +244,7 @@ impl TerminalLineHeight {
     }
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
+#[derive(Copy, Clone, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum TerminalBlink {
     /// Never blink the cursor, ignoring the terminal mode.

@@ -17,7 +17,9 @@ use env_logger::Builder;
 use fs::RealFs;
 use futures::{future, StreamExt};
 use git::GitHostingProviderRegistry;
-use gpui::{App, AppContext, AsyncAppContext, Context, Global, Task, VisualContext};
+use gpui::{
+    App, AppContext, AsyncAppContext, Context, Global, Task, UpdateGlobal as _, VisualContext,
+};
 use image_viewer;
 use language::LanguageRegistry;
 use log::LevelFilter;
@@ -38,11 +40,7 @@ use std::{
     sync::Arc,
 };
 use theme::{ActiveTheme, SystemAppearance, ThemeRegistry, ThemeSettings};
-use util::{
-    maybe, parse_env_output,
-    paths::{self},
-    ResultExt, TryFutureExt,
-};
+use util::{maybe, parse_env_output, paths, with_clone, ResultExt, TryFutureExt};
 use uuid::Uuid;
 use welcome::{show_welcome_view, BaseKeymap, FIRST_OPEN};
 use workspace::{AppState, WorkspaceSettings, WorkspaceStore};
@@ -260,13 +258,11 @@ fn main() {
     let session_id = Uuid::new_v4().to_string();
     reliability::init_panic_hook(&app, installation_id.clone(), session_id.clone());
 
-    let (listener, mut open_rx) = OpenListener::new();
-    let listener = Arc::new(listener);
-    let open_listener = listener.clone();
+    let (open_listener, mut open_rx) = OpenListener::new();
 
     #[cfg(target_os = "linux")]
     {
-        if crate::zed::listen_for_cli_connections(listener.clone()).is_err() {
+        if crate::zed::listen_for_cli_connections(open_listener.clone()).is_err() {
             println!("zed is already running");
             return;
         }
@@ -317,7 +313,7 @@ fn main() {
         })
     };
 
-    app.on_open_urls(move |urls| open_listener.open_urls(urls));
+    app.on_open_urls(with_clone!(open_listener, move |urls| open_listener.open_urls(urls)));
     app.on_reopen(move |cx| {
         if let Some(app_state) = AppState::try_global(cx).and_then(|app_state| app_state.upgrade())
         {
@@ -338,7 +334,7 @@ fn main() {
         GitHostingProviderRegistry::set_global(git_hosting_provider_registry, cx);
         git_hosting_providers::init(cx);
 
-        OpenListener::set_global(listener.clone(), cx);
+        OpenListener::set_global(cx, open_listener.clone());
 
         settings::init(cx);
         handle_settings_file_changes(user_settings_file_rx, cx);
@@ -396,7 +392,7 @@ fn main() {
             .collect();
 
         if !urls.is_empty() {
-            listener.open_urls(urls)
+            open_listener.open_urls(urls)
         }
 
         match open_rx
@@ -836,7 +832,7 @@ fn load_embedded_fonts(cx: &AppContext) {
             }
 
             scope.spawn(async {
-                let font_bytes = asset_source.load(font_path).unwrap();
+                let font_bytes = asset_source.load(font_path).unwrap().unwrap();
                 embedded_fonts.lock().push(font_bytes);
             });
         }

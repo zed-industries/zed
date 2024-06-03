@@ -7,6 +7,7 @@ use gpui::{AppContext, AsyncAppContext};
 use language::{LanguageRegistry, LanguageServerName, LspAdapter, LspAdapterDelegate};
 use lsp::LanguageServerBinary;
 use node_runtime::NodeRuntime;
+use project::ContextProviderWithTasks;
 use serde_json::{json, Value};
 use settings::{KeymapFile, SettingsJsonSchemaParams, SettingsStore};
 use smol::fs;
@@ -14,11 +15,34 @@ use std::{
     any::Any,
     ffi::OsString,
     path::{Path, PathBuf},
+    str::FromStr,
     sync::{Arc, OnceLock},
 };
+use task::{TaskTemplate, TaskTemplates, VariableName};
 use util::{maybe, paths, ResultExt};
 
 const SERVER_PATH: &str = "node_modules/vscode-json-languageserver/bin/vscode-json-languageserver";
+
+// Origin: https://github.com/SchemaStore/schemastore
+const TSCONFIG_SCHEMA: &str = include_str!("json/schemas/tsconfig.json");
+pub(super) fn json_task_context() -> ContextProviderWithTasks {
+    ContextProviderWithTasks::new(TaskTemplates(vec![
+        TaskTemplate {
+            label: "package script $ZED_CUSTOM_script".to_owned(),
+            command: "npm run".to_owned(),
+            args: vec![VariableName::Custom("script".into()).template_value()],
+            tags: vec!["package-script".into()],
+            ..TaskTemplate::default()
+        },
+        TaskTemplate {
+            label: "composer script $ZED_CUSTOM_script".to_owned(),
+            command: "composer".to_owned(),
+            args: vec![VariableName::Custom("script".into()).template_value()],
+            tags: vec!["composer-script".into()],
+            ..TaskTemplate::default()
+        },
+    ]))
+}
 
 fn server_binary_arguments(server_path: &Path) -> Vec<OsString> {
     vec![server_path.into(), "--stdio".into()]
@@ -53,6 +77,7 @@ impl JsonLspAdapter {
             cx,
         );
         let tasks_schema = task::TaskTemplates::generate_json_schema();
+        let tsconfig_schema = serde_json::Value::from_str(TSCONFIG_SCHEMA).unwrap();
         serde_json::json!({
             "json": {
                 "format": {
@@ -76,6 +101,10 @@ impl JsonLspAdapter {
                             &*paths::LOCAL_TASKS_RELATIVE_PATH,
                         ],
                         "schema": tasks_schema,
+                    },
+                    {
+                        "fileMatch": "*/tsconfig.json",
+                        "schema":tsconfig_schema
                     }
                 ]
             }

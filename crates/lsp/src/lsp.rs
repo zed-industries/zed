@@ -79,6 +79,7 @@ pub struct LanguageServer {
     io_tasks: Mutex<Option<(Task<Option<()>>, Task<Option<()>>)>>,
     output_done_rx: Mutex<Option<barrier::Receiver>>,
     root_path: PathBuf,
+    working_dir: PathBuf,
     server: Arc<Mutex<Option<Child>>>,
 }
 
@@ -288,6 +289,7 @@ impl LanguageServer {
             stderr_capture,
             Some(server),
             root_path,
+            working_dir,
             code_action_kinds,
             cx,
             move |notification| {
@@ -322,6 +324,7 @@ impl LanguageServer {
         stderr_capture: Arc<Mutex<Option<String>>>,
         server: Option<Child>,
         root_path: &Path,
+        working_dir: &Path,
         code_action_kinds: Option<Vec<CodeActionKind>>,
         cx: AsyncAppContext,
         on_unhandled_notification: F,
@@ -393,6 +396,7 @@ impl LanguageServer {
             io_tasks: Mutex::new(Some((input_task, output_task))),
             output_done_rx: Mutex::new(Some(output_done_rx)),
             root_path: root_path.to_path_buf(),
+            working_dir: working_dir.to_path_buf(),
             server: Arc::new(Mutex::new(server)),
         }
     }
@@ -448,24 +452,27 @@ impl LanguageServer {
             }
 
             if let Ok(msg) = serde_json::from_slice::<AnyNotification>(&buffer) {
-                if let Some(handler) = notification_handlers.lock().get_mut(msg.method) {
+                let mut notification_handlers = notification_handlers.lock();
+                if let Some(handler) = notification_handlers.get_mut(msg.method) {
                     handler(
                         msg.id,
                         msg.params.map(|params| params.get()).unwrap_or("null"),
                         cx.clone(),
                     );
                 } else {
+                    drop(notification_handlers);
                     on_unhandled_notification(msg);
                 }
             } else if let Ok(AnyResponse {
                 id, error, result, ..
             }) = serde_json::from_slice(&buffer)
             {
+                let mut response_handlers = response_handlers.lock();
                 if let Some(handler) = response_handlers
-                    .lock()
                     .as_mut()
                     .and_then(|handlers| handlers.remove(&id))
                 {
+                    drop(response_handlers);
                     if let Some(error) = error {
                         handler(Err(error));
                     } else if let Some(result) = result {
@@ -566,7 +573,7 @@ impl LanguageServer {
         options: Option<Value>,
         cx: &AppContext,
     ) -> Task<Result<Arc<Self>>> {
-        let root_uri = Url::from_file_path(&self.root_path).unwrap();
+        let root_uri = Url::from_file_path(&self.working_dir).unwrap();
         #[allow(deprecated)]
         let params = InitializeParams {
             process_id: None,
@@ -1171,6 +1178,7 @@ impl FakeLanguageServer {
             Arc::new(Mutex::new(None)),
             None,
             Path::new("/"),
+            Path::new("/"),
             None,
             cx.clone(),
             |_| {},
@@ -1186,6 +1194,7 @@ impl FakeLanguageServer {
                     None::<async_pipe::PipeReader>,
                     Arc::new(Mutex::new(None)),
                     None,
+                    Path::new("/"),
                     Path::new("/"),
                     None,
                     cx,

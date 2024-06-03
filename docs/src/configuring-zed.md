@@ -12,7 +12,7 @@ The following global settings can be overridden with a folder-specific configura
 - `format_on_save`
 - `formatter`
 - `hard_tabs`
-- `language_overrides`
+- `languages`
 - `preferred_line_length`
 - `remove_trailing_whitespace_on_save`
 - `soft_wrap`
@@ -110,14 +110,15 @@ The name of any font family installed on the user's system
 
 **Options**
 
-Zed supports a subset of OpenType features that can be enabled or disabled for a given buffer or terminal font. The following [OpenType features](https://en.wikipedia.org/wiki/List_of_typographic_features) can be enabled or disabled too: `calt`, `case`, `cpsp`, `frac`, `liga`, `onum`, `ordn`, `pnum`, `ss01`, `ss02`, `ss03`, `ss04`, `ss05`, `ss06`, `ss07`, `ss08`, `ss09`, `ss10`, `ss11`, `ss12`, `ss13`, `ss14`, `ss15`, `ss16`, `ss17`, `ss18`, `ss19`, `ss20`, `subs`, `sups`, `swsh`, `titl`, `tnum`, `zero`.
+Zed supports all OpenType features that can be enabled, disabled or set a value to a font feature for a given buffer or terminal font.
 
-For example, to disable ligatures for a given font you can add the following to your settings:
+For example, to disable ligatures and set `7` to `cv01` for a given font you can add the following to your settings:
 
 ```json
 {
   "buffer_font_features": {
-    "calt": false
+    "calt": false,
+    "cv01": 7
   }
 }
 ```
@@ -713,6 +714,74 @@ To interpret all `.c` files as C++, files called `MyLockFile` as TOML and files 
 }
 ```
 
+### Indent Guides
+
+- Description: Configuration related to indent guides (requires Zed `0.138.0`). Indent guides can be configured separately for each language.
+- Setting: `indent_guides`
+- Default:
+
+```json
+{
+  "indent_guides": {
+    "enabled": true,
+    "line_width": 1,
+    "coloring": "fixed",
+    "background_coloring": "disabled"
+  }
+}
+```
+
+**Options**
+
+1. Disable indent guides
+
+```json
+{
+  "indent_guides": {
+    "enabled": false
+  }
+}
+```
+
+2. Enable indent guides for a specific language.
+
+```json
+{
+  "languages": {
+    "Python": {
+      "indent_guides": {
+        "enabled": true
+      }
+    }
+  }
+}
+```
+
+3. Enable indent aware coloring ("rainbow indentation").
+The colors that are used for different indentation levels are defined in the theme (theme key: `accents`). They can be customized by using theme overrides.
+
+```json
+{
+  "indent_guides": {
+    "enabled": true,
+    "coloring": "indent_aware"
+  }
+}
+```
+
+4. Enable indent aware background coloring ("rainbow indentation").
+The colors that are used for different indentation levels are defined in the theme (theme key: `accents`). They can be customized by using theme overrides.
+
+```json
+{
+  "indent_guides": {
+    "enabled": true,
+    "coloring": "indent_aware",
+    "background_coloring": "indent_aware"
+  }
+}
+```
+
 ### Inline Git Blame
 
 - Description: Whether or not to show git blame information inline, on the currently focused line (requires Zed `0.132.0`).
@@ -858,18 +927,18 @@ Settings-related hint updates are not debounced.
 }
 ```
 
-## Language Overrides
+## Languages
 
-- Description: Configuration overrides for specific languages.
-- Setting: `language_overrides`
+- Description: Configuration for specific languages.
+- Setting: `languages`
 - Default: `null`
 
 **Options**
 
-To override settings for a language, add an entry for that languages name to the `language_overrides` value. Example:
+To override settings for a language, add an entry for that languages name to the `languages` value. Example:
 
 ```json
-"language_overrides": {
+"languages": {
   "C": {
     "format_on_save": "off",
     "preferred_line_length": 64,
@@ -1499,7 +1568,7 @@ Run the `theme selector: toggle` action in the command palette to see a current 
   // Join calls with the microphone live by default
   "mute_on_join": false,
   // Share your project when you are the first to join a channel
-  "share_on_join": true
+  "share_on_join": false
 },
 ```
 
@@ -1524,7 +1593,7 @@ Run the `theme selector: toggle` action in the command palette to see a current 
     "font_family": "FiraCode Nerd Font Mono",
     "blinking": "off"
   },
-  "language_overrides": {
+  "languages": {
     "C": {
       "format_on_save": "language_server",
       "preferred_line_length": 64,

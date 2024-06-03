@@ -9,6 +9,7 @@ use language::{LanguageServerName, LspAdapter, LspAdapterDelegate};
 use lsp::{CodeActionKind, LanguageServerBinary};
 use node_runtime::NodeRuntime;
 use project::project_settings::ProjectSettings;
+use project::ContextProviderWithTasks;
 use serde_json::{json, Value};
 use settings::Settings;
 use smol::{fs, io::BufReader, stream::StreamExt};
@@ -18,7 +19,35 @@ use std::{
     path::{Path, PathBuf},
     sync::Arc,
 };
+use task::{TaskTemplate, TaskTemplates, VariableName};
 use util::{fs::remove_matching, maybe, ResultExt};
+
+pub(super) fn typescript_task_context() -> ContextProviderWithTasks {
+    ContextProviderWithTasks::new(TaskTemplates(vec![
+        TaskTemplate {
+            label: "jest file test".to_owned(),
+            command: "npx jest".to_owned(),
+            args: vec![VariableName::File.template_value()],
+            ..TaskTemplate::default()
+        },
+        TaskTemplate {
+            label: "jest test $ZED_SYMBOL".to_owned(),
+            command: "npx jest".to_owned(),
+            args: vec![
+                VariableName::Symbol.template_value(),
+                VariableName::File.template_value(),
+            ],
+            tags: vec!["ts-test".into(), "js-test".into()],
+            ..TaskTemplate::default()
+        },
+        TaskTemplate {
+            label: "execute selection $ZED_SELECTED_TEXT".to_owned(),
+            command: "node".to_owned(),
+            args: vec!["-e".into(), VariableName::SelectedText.template_value()],
+            ..TaskTemplate::default()
+        },
+    ]))
+}
 
 fn typescript_server_binary_arguments(server_path: &Path) -> Vec<OsString> {
     vec![server_path.into(), "--stdio".into()]

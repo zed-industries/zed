@@ -122,3 +122,4 @@
 "try" @keyword
 "use" @keyword
 "while" @keyword
+"yield" @keyword

@@ -14,6 +14,12 @@ impl FeatureFlags {
 
 impl Global for FeatureFlags {}
 
+/// To create a feature flag, implement this trait on a trivial type and use it as
+/// a generic parameter when called [`FeatureFlagAppExt::has_flag`].
+///
+/// Feature flags are always enabled for members of Zed staff. To disable this behavior
+/// so you can test flags being disabled, set ZED_DISABLE_STAFF=1 in your environment,
+/// which will force Zed to treat the current user as non-staff.
 pub trait FeatureFlag {
     const NAME: &'static str;
 }

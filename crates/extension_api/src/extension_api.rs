@@ -16,13 +16,15 @@ pub use serde_json;
 pub use wit::{
     download_file, make_file_executable,
     zed::extension::github::{
-        latest_github_release, GithubRelease, GithubReleaseAsset, GithubReleaseOptions,
+        github_release_by_tag_name, latest_github_release, GithubRelease, GithubReleaseAsset,
+        GithubReleaseOptions,
     },
     zed::extension::nodejs::{
         node_binary_path, npm_install_package, npm_package_installed_version,
         npm_package_latest_version,
     },
     zed::extension::platform::{current_platform, Architecture, Os},
+    zed::extension::slash_command::SlashCommand,
     CodeLabel, CodeLabelSpan, CodeLabelSpanLiteral, Command, DownloadedFileType, EnvVars,
     LanguageServerInstallationStatus, Range, Worktree,
 };
@@ -103,6 +105,16 @@ pub trait Extension: Send + Sync {
     ) -> Option<CodeLabel> {
         None
     }
+
+    /// Runs the given slash command.
+    fn run_slash_command(
+        &self,
+        _command: SlashCommand,
+        _argument: Option<String>,
+        _worktree: &Worktree,
+    ) -> Result<Option<String>, String> {
+        Ok(None)
+    }
 }
 
 /// Registers the provided type as a Zed extension.
@@ -138,9 +150,11 @@ static mut EXTENSION: Option<Box<dyn Extension>> = None;
 pub static ZED_API_VERSION: [u8; 6] = *include_bytes!(concat!(env!("OUT_DIR"), "/version_bytes"));
 
 mod wit {
+    #![allow(clippy::too_many_arguments)]
+
     wit_bindgen::generate!({
         skip: ["init-extension"],
-        path: "./wit/since_v0.0.6",
+        path: "./wit/since_v0.0.7",
     });
 }
 
@@ -207,6 +221,14 @@ impl wit::Guest for Component {
             }
         }
         Ok(labels)
+    }
+
+    fn run_slash_command(
+        command: SlashCommand,
+        argument: Option<String>,
+        worktree: &Worktree,
+    ) -> Result<Option<String>, String> {
+        extension().run_slash_command(command, argument, worktree)
     }
 }
 

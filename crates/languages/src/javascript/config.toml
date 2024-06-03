@@ -16,12 +16,13 @@ brackets = [
 ]
 word_characters = ["$", "#"]
 tab_size = 2
-scope_opt_in_language_servers = ["tailwindcss-language-server","vscode-html-language-server", "emmet-language-server"]
+scope_opt_in_language_servers = ["tailwindcss-language-server", "emmet-language-server"]
+prettier_parser_name = "babel"
 
 [overrides.element]
 line_comments = { remove = true }
 block_comment = ["{/* ", " */}"]
-opt_into_language_servers = ["emmet-language-server", "vscode-html-language-server"]
+opt_into_language_servers = ["emmet-language-server"]
 
 [overrides.string]
 word_characters = ["-"]

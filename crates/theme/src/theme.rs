@@ -125,6 +125,12 @@ impl Theme {
         &self.styles.system
     }
 
+    /// Returns the [`AccentColors`] for the theme.
+    #[inline(always)]
+    pub fn accents(&self) -> &AccentColors {
+        &self.styles.accents
+    }
+
     /// Returns the [`PlayerColors`] for the theme.
     #[inline(always)]
     pub fn players(&self) -> &PlayerColors {

@@ -1,28 +1,31 @@
-mod ambient_context;
 pub mod assistant_panel;
 pub mod assistant_settings;
 mod codegen;
 mod completion_provider;
-mod prompt_library;
+mod model_selector;
 mod prompts;
 mod saved_conversation;
 mod search;
+mod slash_command;
 mod streaming_diff;
 
-use ambient_context::AmbientContextSnapshot;
 pub use assistant_panel::AssistantPanel;
+
 use assistant_settings::{AnthropicModel, AssistantSettings, OpenAiModel, ZedDotDevModel};
 use client::{proto, Client};
 use command_palette_hooks::CommandPaletteFilter;
 pub(crate) use completion_provider::*;
 use gpui::{actions, AppContext, Global, SharedString, UpdateGlobal};
+pub(crate) use model_selector::*;
 pub(crate) use saved_conversation::*;
+use semantic_index::{CloudEmbeddingProvider, SemanticIndex};
 use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsStore};
 use std::{
     fmt::{self, Display},
     sync::Arc,
 };
+use util::paths::EMBEDDINGS_DIR;
 
 actions!(
     assistant,
@@ -35,9 +38,10 @@ actions!(
         ResetKey,
         InlineAssist,
         InsertActivePrompt,
-        ToggleIncludeConversation,
         ToggleHistory,
-        ApplyEdit
+        ApplyEdit,
+        ConfirmCommand,
+        ToggleModelSelector
     ]
 );
 
@@ -187,9 +191,6 @@ pub struct LanguageModelChoiceDelta {
 struct MessageMetadata {
     role: Role,
     status: MessageStatus,
-    // todo!("delete this")
-    #[serde(skip)]
-    ambient_context: AmbientContextSnapshot,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -235,7 +236,23 @@ impl Assistant {
 pub fn init(client: Arc<Client>, cx: &mut AppContext) {
     cx.set_global(Assistant::default());
     AssistantSettings::register(cx);
+
+    cx.spawn(|mut cx| {
+        let client = client.clone();
+        async move {
+            let embedding_provider = CloudEmbeddingProvider::new(client.clone());
+            let semantic_index = SemanticIndex::new(
+                EMBEDDINGS_DIR.join("semantic-index-db.0.mdb"),
+                Arc::new(embedding_provider),
+                &mut cx,
+            )
+            .await?;
+            cx.update(|cx| cx.set_global(semantic_index))
+        }
+    })
+    .detach();
     completion_provider::init(client, cx);
+    assistant_slash_command::init(cx);
     assistant_panel::init(cx);
 
     CommandPaletteFilter::update_global(cx, |filter, _cx| {

@@ -2,14 +2,17 @@ pub mod extension_builder;
 mod extension_lsp_adapter;
 mod extension_manifest;
 mod extension_settings;
+mod extension_slash_command;
 mod wasm_host;
 
 #[cfg(test)]
 mod extension_store_test;
 
 use crate::extension_manifest::SchemaVersion;
+use crate::extension_slash_command::ExtensionSlashCommand;
 use crate::{extension_lsp_adapter::ExtensionLspAdapter, wasm_host::wit};
 use anyhow::{anyhow, bail, Context as _, Result};
+use assistant_slash_command::SlashCommandRegistry;
 use async_compression::futures::bufread::GzipDecoder;
 use async_tar::Archive;
 use client::{telemetry::Telemetry, Client, ExtensionMetadata, GetExtensionsResponse};
@@ -30,10 +33,11 @@ use gpui::{
 };
 use http::{AsyncBody, HttpClient, HttpClientWithUrl};
 use language::{
-    ContextProviderWithTasks, LanguageConfig, LanguageMatcher, LanguageQueries, LanguageRegistry,
-    QUERY_FILENAME_PREFIXES,
+    LanguageConfig, LanguageMatcher, LanguageQueries, LanguageRegistry, QUERY_FILENAME_PREFIXES,
 };
 use node_runtime::NodeRuntime;
+use project::ContextProviderWithTasks;
+use release_channel::ReleaseChannel;
 use semantic_version::SemanticVersion;
 use serde::{Deserialize, Serialize};
 use settings::Settings;
@@ -70,7 +74,10 @@ pub fn schema_version_range() -> RangeInclusive<SchemaVersion> {
 }
 
 /// Returns whether the given extension version is compatible with this version of Zed.
-pub fn is_version_compatible(extension_version: &ExtensionMetadata) -> bool {
+pub fn is_version_compatible(
+    release_channel: ReleaseChannel,
+    extension_version: &ExtensionMetadata,
+) -> bool {
     let schema_version = extension_version.manifest.schema_version.unwrap_or(0);
     if CURRENT_SCHEMA_VERSION.0 < schema_version {
         return false;
@@ -82,7 +89,7 @@ pub fn is_version_compatible(extension_version: &ExtensionMetadata) -> bool {
         .as_ref()
         .and_then(|wasm_api_version| SemanticVersion::from_str(wasm_api_version).ok())
     {
-        if !is_supported_wasm_api_version(wasm_api_version) {
+        if !is_supported_wasm_api_version(release_channel, wasm_api_version) {
             return false;
         }
     }
@@ -103,6 +110,7 @@ pub struct ExtensionStore {
     index_path: PathBuf,
     language_registry: Arc<LanguageRegistry>,
     theme_registry: Arc<ThemeRegistry>,
+    slash_command_registry: Arc<SlashCommandRegistry>,
     modified_extensions: HashSet<Arc<str>>,
     wasm_host: Arc<WasmHost>,
     wasm_extensions: Vec<(Arc<ExtensionManifest>, WasmExtension)>,
@@ -179,6 +187,7 @@ pub fn init(
             node_runtime,
             language_registry,
             theme_registry,
+            SlashCommandRegistry::global(cx),
             cx,
         )
     });
@@ -211,6 +220,7 @@ impl ExtensionStore {
         node_runtime: Arc<dyn NodeRuntime>,
         language_registry: Arc<LanguageRegistry>,
         theme_registry: Arc<ThemeRegistry>,
+        slash_command_registry: Arc<SlashCommandRegistry>,
         cx: &mut ModelContext<Self>,
     ) -> Self {
         let work_dir = extensions_dir.join("work");
@@ -241,6 +251,7 @@ impl ExtensionStore {
             telemetry,
             language_registry,
             theme_registry,
+            slash_command_registry,
             reload_tx,
             tasks: Vec::new(),
         };
@@ -428,7 +439,7 @@ impl ExtensionStore {
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<Vec<ExtensionMetadata>>> {
         let schema_versions = schema_version_range();
-        let wasm_api_versions = wasm_api_version_range();
+        let wasm_api_versions = wasm_api_version_range(ReleaseChannel::global(cx));
         let extension_settings = ExtensionSettings::get_global(cx);
         let extension_ids = self
             .extension_index
@@ -681,7 +692,7 @@ impl ExtensionStore {
         log::info!("installing extension {extension_id} latest version");
 
         let schema_versions = schema_version_range();
-        let wasm_api_versions = wasm_api_version_range();
+        let wasm_api_versions = wasm_api_version_range(ReleaseChannel::global(cx));
 
         let Some(url) = self
             .http_client
@@ -1164,6 +1175,22 @@ impl ExtensionStore {
                                 }),
                             );
                         }
+                    }
+
+                    for (slash_command_name, slash_command) in &manifest.slash_commands {
+                        this.slash_command_registry.register_command(
+                            ExtensionSlashCommand {
+                                command: crate::wit::SlashCommand {
+                                    name: slash_command_name.to_string(),
+                                    description: slash_command.description.to_string(),
+                                    tooltip_text: slash_command.tooltip_text.to_string(),
+                                    requires_argument: slash_command.requires_argument,
+                                },
+                                extension: wasm_extension.clone(),
+                                host: this.wasm_host.clone(),
+                            },
+                            false,
+                        );
                     }
                 }
                 this.wasm_extensions.extend(wasm_extensions);

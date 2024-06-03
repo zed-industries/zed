@@ -143,7 +143,7 @@ impl StyledText {
         }
     }
 
-    /// todo!()
+    /// Get the layout for this element. This can be used to map indices to pixels and vice versa.
     pub fn layout(&self) -> &TextLayout {
         &self.layout
     }
@@ -249,7 +249,7 @@ impl IntoElement for StyledText {
     }
 }
 
-/// todo!()
+/// The Layout for TextElement. This can be used to map indices to pixels and vice versa.
 #[derive(Default, Clone)]
 pub struct TextLayout(Arc<Mutex<Option<TextLayoutInner>>>);
 
@@ -375,7 +375,7 @@ impl TextLayout {
         }
     }
 
-    /// todo!()
+    /// Get the byte index into the input of the pixel position.
     pub fn index_for_position(&self, mut position: Point<Pixels>) -> Result<usize, usize> {
         let element_state = self.lock();
         let element_state = element_state
@@ -409,7 +409,7 @@ impl TextLayout {
         Err(line_start_ix.saturating_sub(1))
     }
 
-    /// todo!()
+    /// Get the pixel position for the given byte index.
     pub fn position_for_index(&self, index: usize) -> Option<Point<Pixels>> {
         let element_state = self.lock();
         let element_state = element_state
@@ -440,17 +440,17 @@ impl TextLayout {
         None
     }
 
-    /// todo!()
+    /// The bounds of this layout.
     pub fn bounds(&self) -> Bounds<Pixels> {
         self.0.lock().as_ref().unwrap().bounds.unwrap()
     }
 
-    /// todo!()
+    /// The line height for this layout.
     pub fn line_height(&self) -> Pixels {
         self.0.lock().as_ref().unwrap().line_height
     }
 
-    /// todo!()
+    /// The text for this layout.
     pub fn text(&self) -> String {
         self.0
             .lock()

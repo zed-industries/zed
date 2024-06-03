@@ -269,7 +269,7 @@ impl Render for ContextMenu {
         let ui_font_size = ThemeSettings::get_global(cx).ui_font_size;
 
         div().occlude().elevation_2(cx).flex().flex_row().child(
-            WithRemSize::new(ui_font_size).child(
+            WithRemSize::new(ui_font_size).flex().child(
                 v_flex()
                     .min_w(px(200.))
                     .track_focus(&self.focus_handle)
@@ -357,7 +357,7 @@ impl Render for ContextMenu {
                                                         .unwrap_or_else(|| {
                                                             KeyBinding::for_action(&**action, cx)
                                                         })
-                                                        .map(|binding| div().ml_1().child(binding))
+                                                        .map(|binding| div().ml_4().child(binding))
                                                 })),
                                         )
                                         .on_click(move |_, cx| {

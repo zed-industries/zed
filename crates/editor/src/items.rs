@@ -137,7 +137,7 @@ impl FollowableItem for Editor {
 
                     cx.new_view(|cx| {
                         let mut editor =
-                            Editor::for_multibuffer(multibuffer, Some(project.clone()), cx);
+                            Editor::for_multibuffer(multibuffer, Some(project.clone()), true, cx);
                         editor.remote_id = Some(remote_id);
                         editor
                     })
@@ -657,7 +657,7 @@ impl Item for Editor {
 
     fn clone_on_split(
         &self,
-        _workspace_id: WorkspaceId,
+        _workspace_id: Option<WorkspaceId>,
         cx: &mut ViewContext<Self>,
     ) -> Option<View<Editor>>
     where
@@ -846,9 +846,12 @@ impl Item for Editor {
     }
 
     fn added_to_workspace(&mut self, workspace: &mut Workspace, cx: &mut ViewContext<Self>) {
-        let workspace_id = workspace.database_id();
-        let item_id = cx.view().item_id().as_u64() as ItemId;
         self.workspace = Some((workspace.weak_handle(), workspace.database_id()));
+        let Some(workspace_id) = workspace.database_id() else {
+            return;
+        };
+
+        let item_id = cx.view().item_id().as_u64() as ItemId;
 
         fn serialize(
             buffer: Model<Buffer>,
@@ -873,7 +876,7 @@ impl Item for Editor {
             serialize(buffer.clone(), workspace_id, item_id, cx);
 
             cx.subscribe(&buffer, |this, buffer, event, cx| {
-                if let Some((_, workspace_id)) = this.workspace.as_ref() {
+                if let Some((_, Some(workspace_id))) = this.workspace.as_ref() {
                     if let language::Event::FileHandleChanged = event {
                         serialize(
                             buffer,
@@ -1162,23 +1165,26 @@ impl SearchableItem for Editor {
                 }
             } else {
                 for excerpt in buffer.excerpt_boundaries_in_range(0..buffer.len()) {
-                    let excerpt_range = excerpt.range.context.to_offset(&excerpt.buffer);
-                    ranges.extend(
-                        query
-                            .search(&excerpt.buffer, Some(excerpt_range.clone()))
-                            .await
-                            .into_iter()
-                            .map(|range| {
-                                let start = excerpt
-                                    .buffer
-                                    .anchor_after(excerpt_range.start + range.start);
-                                let end = excerpt
-                                    .buffer
-                                    .anchor_before(excerpt_range.start + range.end);
-                                buffer.anchor_in_excerpt(excerpt.id, start).unwrap()
-                                    ..buffer.anchor_in_excerpt(excerpt.id, end).unwrap()
-                            }),
-                    );
+                    if let Some(next_excerpt) = excerpt.next {
+                        let excerpt_range =
+                            next_excerpt.range.context.to_offset(&next_excerpt.buffer);
+                        ranges.extend(
+                            query
+                                .search(&next_excerpt.buffer, Some(excerpt_range.clone()))
+                                .await
+                                .into_iter()
+                                .map(|range| {
+                                    let start = next_excerpt
+                                        .buffer
+                                        .anchor_after(excerpt_range.start + range.start);
+                                    let end = next_excerpt
+                                        .buffer
+                                        .anchor_before(excerpt_range.start + range.end);
+                                    buffer.anchor_in_excerpt(next_excerpt.id, start).unwrap()
+                                        ..buffer.anchor_in_excerpt(next_excerpt.id, end).unwrap()
+                                }),
+                        );
+                    }
                 }
             }
             ranges

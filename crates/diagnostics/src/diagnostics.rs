@@ -161,7 +161,7 @@ impl ProjectDiagnosticsEditor {
         });
         let editor = cx.new_view(|cx| {
             let mut editor =
-                Editor::for_multibuffer(excerpts.clone(), Some(project_handle.clone()), cx);
+                Editor::for_multibuffer(excerpts.clone(), Some(project_handle.clone()), false, cx);
             editor.set_vertical_scroll_margin(5, cx);
             editor
         });
@@ -704,7 +704,7 @@ impl Item for ProjectDiagnosticsEditor {
 
     fn clone_on_split(
         &self,
-        _workspace_id: workspace::WorkspaceId,
+        _workspace_id: Option<workspace::WorkspaceId>,
         cx: &mut ViewContext<Self>,
     ) -> Option<View<Self>>
     where
@@ -792,13 +792,15 @@ impl Item for ProjectDiagnosticsEditor {
     }
 }
 
+const DIAGNOSTIC_HEADER: &'static str = "diagnostic header";
+
 fn diagnostic_header_renderer(diagnostic: Diagnostic) -> RenderBlock {
     let (message, code_ranges) = highlight_diagnostic_message(&diagnostic);
     let message: SharedString = message;
     Box::new(move |cx| {
         let highlight_style: HighlightStyle = cx.theme().colors().text_accent.into();
         h_flex()
-            .id("diagnostic header")
+            .id(DIAGNOSTIC_HEADER)
             .py_2()
             .pl_10()
             .pr_5()

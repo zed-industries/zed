@@ -48,13 +48,13 @@ venv = ".venv"
 
 ### Code formatting
 
-The Pyright language server does not provide code formatting. If you want to automatically reformat your Python code when saving, you'll need to specify an \_external_code formatter in your settings. See the [configuration](../configuring_zed.md) documentation for more information.
+The Pyright language server does not provide code formatting. If you want to automatically reformat your Python code when saving, you'll need to specify an \_external_code formatter in your settings. See the [configuration](../configuring-zed.md) documentation for more information.
 
 A common tool for formatting python code is [Black](https://black.readthedocs.io/en/stable/). If you have Black installed globally, you can use it to format Python files by adding the following to your `settings.json`:
 
 ```json
 {
-  "language_overrides": {
+  "languages": {
     "Python": {
       "format_on_save": {
         "external": {

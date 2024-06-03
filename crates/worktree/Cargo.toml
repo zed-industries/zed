@@ -52,6 +52,7 @@ util.workspace = true
 [dev-dependencies]
 clock = {workspace = true, features = ["test-support"]}
 collections = { workspace = true, features = ["test-support"] }
+env_logger.workspace = true
 git2.workspace = true
 gpui = {workspace = true, features = ["test-support"]}
 http.workspace = true

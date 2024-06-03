@@ -1,5 +1,5 @@
-use std::path::Path;
 use std::sync::Arc;
+use std::{fmt::Debug, path::Path};
 
 use anyhow::{anyhow, Context, Result};
 use collections::HashMap;
@@ -12,8 +12,9 @@ use refineable::Refineable;
 use util::ResultExt;
 
 use crate::{
-    try_parse_color, Appearance, AppearanceContent, PlayerColors, StatusColors, SyntaxTheme,
-    SystemColors, Theme, ThemeColors, ThemeContent, ThemeFamily, ThemeFamilyContent, ThemeStyles,
+    try_parse_color, AccentColors, Appearance, AppearanceContent, PlayerColors, StatusColors,
+    SyntaxTheme, SystemColors, Theme, ThemeColors, ThemeContent, ThemeFamily, ThemeFamilyContent,
+    ThemeStyles,
 };
 
 #[derive(Debug, Clone)]
@@ -118,6 +119,12 @@ impl ThemeRegistry {
             };
             player_colors.merge(&user_theme.style.players);
 
+            let mut accent_colors = match user_theme.appearance {
+                AppearanceContent::Light => AccentColors::light(),
+                AppearanceContent::Dark => AccentColors::dark(),
+            };
+            accent_colors.merge(&user_theme.style.accents);
+
             let syntax_highlights = user_theme
                 .style
                 .syntax
@@ -128,6 +135,10 @@ impl ThemeRegistry {
                         HighlightStyle {
                             color: highlight
                                 .color
+                                .as_ref()
+                                .and_then(|color| try_parse_color(color).ok()),
+                            background_color: highlight
+                                .background_color
                                 .as_ref()
                                 .and_then(|color| try_parse_color(color).ok()),
                             font_style: highlight.font_style.map(Into::into),
@@ -156,11 +167,11 @@ impl ThemeRegistry {
                 styles: ThemeStyles {
                     system: SystemColors::default(),
                     window_background_appearance,
+                    accents: accent_colors,
                     colors: theme_colors,
                     status: status_colors,
                     player: player_colors,
                     syntax: syntax_theme,
-                    accents: Vec::new(),
                 },
             }
         }));
@@ -215,7 +226,7 @@ impl ThemeRegistry {
             .filter(|path| path.ends_with(".json"));
 
         for path in theme_paths {
-            let Some(theme) = self.assets.load(&path).log_err() else {
+            let Some(theme) = self.assets.load(&path).log_err().flatten() else {
                 continue;
             };
 

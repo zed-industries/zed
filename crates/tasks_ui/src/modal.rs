@@ -4,12 +4,12 @@ use crate::active_item_selection_properties;
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{
     impl_actions, rems, Action, AnyElement, AppContext, DismissEvent, EventEmitter, FocusableView,
-    InteractiveElement, Model, ParentElement, Render, SharedString, Styled, Subscription, View,
-    ViewContext, VisualContext, WeakView,
+    InteractiveElement, Model, ParentElement, Render, SharedString, Styled, Subscription, Task,
+    View, ViewContext, VisualContext, WeakView,
 };
 use picker::{highlighted_match_with_paths::HighlightedText, Picker, PickerDelegate};
-use project::{Inventory, TaskSourceKind};
-use task::{ResolvedTask, TaskContext, TaskTemplate};
+use project::{Project, TaskSourceKind};
+use task::{ResolvedTask, TaskContext, TaskId, TaskTemplate};
 use ui::{
     div, h_flex, v_flex, ActiveTheme, Button, ButtonCommon, ButtonSize, Clickable, Color,
     FluentBuilder as _, Icon, IconButton, IconButtonShape, IconName, IconSize, IntoElement,
@@ -54,13 +54,16 @@ pub struct Rerun {
     /// Default: null
     #[serde(default)]
     pub use_new_terminal: Option<bool>,
+
+    /// If present, rerun the task with this ID, otherwise rerun the last task.
+    pub task_id: Option<TaskId>,
 }
 
 impl_actions!(task, [Rerun, Spawn]);
 
 /// A modal used to spawn new tasks.
 pub(crate) struct TasksModalDelegate {
-    inventory: Model<Inventory>,
+    project: Model<Project>,
     candidates: Option<Vec<(TaskSourceKind, ResolvedTask)>>,
     last_used_candidate_index: Option<usize>,
     divider_index: Option<usize>,
@@ -74,12 +77,12 @@ pub(crate) struct TasksModalDelegate {
 
 impl TasksModalDelegate {
     fn new(
-        inventory: Model<Inventory>,
+        project: Model<Project>,
         task_context: TaskContext,
         workspace: WeakView<Workspace>,
     ) -> Self {
         Self {
-            inventory,
+            project,
             workspace,
             candidates: None,
             matches: Vec::new(),
@@ -121,8 +124,10 @@ impl TasksModalDelegate {
         // it doesn't make sense to requery the inventory for new candidates, as that's potentially costly and more often than not it should just return back
         // the original list without a removed entry.
         candidates.remove(ix);
-        self.inventory.update(cx, |inventory, _| {
-            inventory.delete_previously_used(&task.id);
+        self.project.update(cx, |project, cx| {
+            project.task_inventory().update(cx, |inventory, _| {
+                inventory.delete_previously_used(&task.id);
+            })
         });
     }
 }
@@ -134,14 +139,14 @@ pub(crate) struct TasksModal {
 
 impl TasksModal {
     pub(crate) fn new(
-        inventory: Model<Inventory>,
+        project: Model<Project>,
         task_context: TaskContext,
         workspace: WeakView<Workspace>,
         cx: &mut ViewContext<Self>,
     ) -> Self {
         let picker = cx.new_view(|cx| {
             Picker::uniform_list(
-                TasksModalDelegate::new(inventory, task_context, workspace),
+                TasksModalDelegate::new(project, task_context, workspace),
                 cx,
             )
         });
@@ -197,50 +202,82 @@ impl PickerDelegate for TasksModalDelegate {
         &mut self,
         query: String,
         cx: &mut ViewContext<picker::Picker<Self>>,
-    ) -> gpui::Task<()> {
+    ) -> Task<()> {
         cx.spawn(move |picker, mut cx| async move {
-            let Some(candidates) = picker
+            let Some(candidates_task) = picker
                 .update(&mut cx, |picker, cx| {
-                    let candidates = match &mut picker.delegate.candidates {
-                        Some(candidates) => candidates,
+                    match &mut picker.delegate.candidates {
+                        Some(candidates) => {
+                            Task::ready(Ok(string_match_candidates(candidates.iter())))
+                        }
                         None => {
-                            let Ok((worktree, language)) =
+                            let Ok((worktree, location)) =
                                 picker.delegate.workspace.update(cx, |workspace, cx| {
                                     active_item_selection_properties(workspace, cx)
                                 })
                             else {
-                                return Vec::new();
-                            };
-                            let (used, current) =
-                                picker.delegate.inventory.update(cx, |inventory, _| {
-                                    inventory.used_and_current_resolved_tasks(
-                                        language,
-                                        worktree,
-                                        &picker.delegate.task_context,
-                                    )
-                                });
-                            picker.delegate.last_used_candidate_index = if used.is_empty() {
-                                None
-                            } else {
-                                Some(used.len() - 1)
+                                return Task::ready(Ok(Vec::new()));
                             };
 
-                            let mut new_candidates = used;
-                            new_candidates.extend(current);
-                            picker.delegate.candidates.insert(new_candidates)
+                            let resolved_task =
+                                picker.delegate.project.update(cx, |project, cx| {
+                                    let ssh_connection_string = project.ssh_connection_string(cx);
+                                    if project.is_remote() && ssh_connection_string.is_none() {
+                                        Task::ready((Vec::new(), Vec::new()))
+                                    } else {
+                                        let remote_templates = if project.is_local() {
+                                            None
+                                        } else {
+                                            project
+                                                .remote_id()
+                                                .filter(|_| ssh_connection_string.is_some())
+                                                .map(|project_id| {
+                                                    project.query_remote_task_templates(
+                                                        project_id,
+                                                        worktree,
+                                                        location.as_ref(),
+                                                        cx,
+                                                    )
+                                                })
+                                        };
+                                        project
+                                            .task_inventory()
+                                            .read(cx)
+                                            .used_and_current_resolved_tasks(
+                                                remote_templates,
+                                                worktree,
+                                                location,
+                                                &picker.delegate.task_context,
+                                                cx,
+                                            )
+                                    }
+                                });
+                            cx.spawn(|picker, mut cx| async move {
+                                let (used, current) = resolved_task.await;
+                                picker.update(&mut cx, |picker, _| {
+                                    picker.delegate.last_used_candidate_index = if used.is_empty() {
+                                        None
+                                    } else {
+                                        Some(used.len() - 1)
+                                    };
+
+                                    let mut new_candidates = used;
+                                    new_candidates.extend(current);
+                                    let match_candidates =
+                                        string_match_candidates(new_candidates.iter());
+                                    let _ = picker.delegate.candidates.insert(new_candidates);
+                                    match_candidates
+                                })
+                            })
                         }
-                    };
-                    candidates
-                        .iter()
-                        .enumerate()
-                        .map(|(index, (_, candidate))| StringMatchCandidate {
-                            id: index,
-                            char_bag: candidate.resolved_label.chars().collect(),
-                            string: candidate.display_label().to_owned(),
-                        })
-                        .collect::<Vec<_>>()
+                    }
                 })
                 .ok()
+            else {
+                return;
+            };
+            let Some(candidates): Option<Vec<StringMatchCandidate>> =
+                candidates_task.await.log_err()
             else {
                 return;
             };
@@ -534,14 +571,27 @@ impl PickerDelegate for TasksModalDelegate {
     }
 }
 
+fn string_match_candidates<'a>(
+    candidates: impl Iterator<Item = &'a (TaskSourceKind, ResolvedTask)> + 'a,
+) -> Vec<StringMatchCandidate> {
+    candidates
+        .enumerate()
+        .map(|(index, (_, candidate))| StringMatchCandidate {
+            id: index,
+            char_bag: candidate.resolved_label.chars().collect(),
+            string: candidate.display_label().to_owned(),
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use std::{path::PathBuf, sync::Arc};
 
     use editor::Editor;
     use gpui::{TestAppContext, VisualTestContext};
-    use language::{ContextProviderWithTasks, Language, LanguageConfig, LanguageMatcher, Point};
-    use project::{FakeFs, Project};
+    use language::{Language, LanguageConfig, LanguageMatcher, Point};
+    use project::{ContextProviderWithTasks, FakeFs, Project};
     use serde_json::json;
     use task::TaskTemplates;
     use workspace::CloseInactiveTabsAndPanes;

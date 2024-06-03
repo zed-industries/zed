@@ -1,27 +1,16 @@
 use std::cell::RefCell;
-use std::ops::Deref;
 use std::rc::Rc;
-use std::time::{Duration, Instant};
 
 use calloop::{EventLoop, LoopHandle};
-use collections::HashMap;
 
 use util::ResultExt;
 
 use crate::platform::linux::LinuxClient;
 use crate::platform::{LinuxCommon, PlatformWindow};
-use crate::{
-    px, AnyWindowHandle, Bounds, CursorStyle, DisplayId, Modifiers, ModifiersChangedEvent, Pixels,
-    PlatformDisplay, PlatformInput, Point, ScrollDelta, Size, TouchPhase, WindowParams,
-};
-
-use calloop::{
-    generic::{FdWrapper, Generic},
-    RegistrationToken,
-};
+use crate::{AnyWindowHandle, CursorStyle, DisplayId, PlatformDisplay, WindowParams};
 
 pub struct HeadlessClientState {
-    pub(crate) loop_handle: LoopHandle<'static, HeadlessClient>,
+    pub(crate) _loop_handle: LoopHandle<'static, HeadlessClient>,
     pub(crate) event_loop: Option<calloop::EventLoop<'static, HeadlessClient>>,
     pub(crate) common: LinuxCommon,
 }
@@ -37,15 +26,17 @@ impl HeadlessClient {
 
         let handle = event_loop.handle();
 
-        handle.insert_source(main_receiver, |event, _, _: &mut HeadlessClient| {
-            if let calloop::channel::Event::Msg(runnable) = event {
-                runnable.run();
-            }
-        });
+        handle
+            .insert_source(main_receiver, |event, _, _: &mut HeadlessClient| {
+                if let calloop::channel::Event::Msg(runnable) = event {
+                    runnable.run();
+                }
+            })
+            .ok();
 
         HeadlessClient(Rc::new(RefCell::new(HeadlessClientState {
             event_loop: Some(event_loop),
-            loop_handle: handle,
+            _loop_handle: handle,
             common,
         })))
     }
@@ -64,7 +55,7 @@ impl LinuxClient for HeadlessClient {
         None
     }
 
-    fn display(&self, id: DisplayId) -> Option<Rc<dyn PlatformDisplay>> {
+    fn display(&self, _id: DisplayId) -> Option<Rc<dyn PlatformDisplay>> {
         None
     }
 
@@ -72,10 +63,14 @@ impl LinuxClient for HeadlessClient {
         return Err(anyhow::anyhow!("neither DISPLAY, nor WAYLAND_DISPLAY found. You can still run zed for remote development with --dev-server-token."));
     }
 
+    fn active_window(&self) -> Option<AnyWindowHandle> {
+        None
+    }
+
     fn open_window(
         &self,
         _handle: AnyWindowHandle,
-        params: WindowParams,
+        _params: WindowParams,
     ) -> Box<dyn PlatformWindow> {
         unimplemented!()
     }
@@ -84,9 +79,9 @@ impl LinuxClient for HeadlessClient {
 
     fn open_uri(&self, _uri: &str) {}
 
-    fn write_to_primary(&self, item: crate::ClipboardItem) {}
+    fn write_to_primary(&self, _item: crate::ClipboardItem) {}
 
-    fn write_to_clipboard(&self, item: crate::ClipboardItem) {}
+    fn write_to_clipboard(&self, _item: crate::ClipboardItem) {}
 
     fn read_from_primary(&self) -> Option<crate::ClipboardItem> {
         None

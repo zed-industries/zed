@@ -227,12 +227,18 @@ pub struct ThemeSettingsContent {
     /// The OpenType features to enable for text in the UI.
     #[serde(default)]
     pub ui_font_features: Option<FontFeatures>,
+    /// The weight of the UI font in CSS units from 100 to 900.
+    #[serde(default)]
+    pub ui_font_weight: Option<f32>,
     /// The name of a font to use for rendering in text buffers.
     #[serde(default)]
     pub buffer_font_family: Option<String>,
     /// The default font size for rendering in text buffers.
     #[serde(default)]
     pub buffer_font_size: Option<f32>,
+    /// The weight of the editor font in CSS units from 100 to 900.
+    #[serde(default)]
+    pub buffer_font_weight: Option<f32>,
     /// The buffer's line height.
     #[serde(default)]
     pub buffer_line_height: Option<BufferLineHeight>,
@@ -325,6 +331,7 @@ impl ThemeSettings {
                 .status
                 .refine(&theme_overrides.status_colors_refinement());
             base_theme.styles.player.merge(&theme_overrides.players);
+            base_theme.styles.accents.merge(&theme_overrides.accents);
             base_theme.styles.syntax =
                 SyntaxTheme::merge(base_theme.styles.syntax, theme_overrides.syntax_overrides());
 
@@ -385,13 +392,13 @@ impl settings::Settings for ThemeSettings {
             ui_font: Font {
                 family: defaults.ui_font_family.clone().unwrap().into(),
                 features: defaults.ui_font_features.clone().unwrap(),
-                weight: Default::default(),
+                weight: defaults.ui_font_weight.map(FontWeight).unwrap(),
                 style: Default::default(),
             },
             buffer_font: Font {
                 family: defaults.buffer_font_family.clone().unwrap().into(),
                 features: defaults.buffer_font_features.clone().unwrap(),
-                weight: FontWeight::default(),
+                weight: defaults.buffer_font_weight.map(FontWeight).unwrap(),
                 style: FontStyle::default(),
             },
             buffer_font_size: defaults.buffer_font_size.unwrap().into(),
@@ -417,11 +424,18 @@ impl settings::Settings for ThemeSettings {
                 this.buffer_font.features = value;
             }
 
+            if let Some(value) = value.buffer_font_weight {
+                this.buffer_font.weight = FontWeight(value);
+            }
+
             if let Some(value) = value.ui_font_family.clone() {
                 this.ui_font.family = value.into();
             }
             if let Some(value) = value.ui_font_features.clone() {
                 this.ui_font.features = value;
+            }
+            if let Some(value) = value.ui_font_weight {
+                this.ui_font.weight = FontWeight(value);
             }
 
             if let Some(value) = &value.theme {

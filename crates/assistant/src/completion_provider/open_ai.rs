@@ -5,12 +5,13 @@ use crate::{
 use anyhow::{anyhow, Result};
 use editor::{Editor, EditorElement, EditorStyle};
 use futures::{future::BoxFuture, stream::BoxStream, FutureExt, StreamExt};
-use gpui::{AnyView, AppContext, FontStyle, FontWeight, Task, TextStyle, View, WhiteSpace};
+use gpui::{AnyView, AppContext, FontStyle, Task, TextStyle, View, WhiteSpace};
 use http::HttpClient;
 use open_ai::{stream_completion, Request, RequestMessage, Role as OpenAiRole};
 use settings::Settings;
 use std::time::Duration;
 use std::{env, sync::Arc};
+use strum::IntoEnumIterator;
 use theme::ThemeSettings;
 use ui::prelude::*;
 use util::ResultExt;
@@ -18,7 +19,7 @@ use util::ResultExt;
 pub struct OpenAiCompletionProvider {
     api_key: Option<String>,
     api_url: String,
-    default_model: OpenAiModel,
+    model: OpenAiModel,
     http_client: Arc<dyn HttpClient>,
     low_speed_timeout: Option<Duration>,
     settings_version: usize,
@@ -26,7 +27,7 @@ pub struct OpenAiCompletionProvider {
 
 impl OpenAiCompletionProvider {
     pub fn new(
-        default_model: OpenAiModel,
+        model: OpenAiModel,
         api_url: String,
         http_client: Arc<dyn HttpClient>,
         low_speed_timeout: Option<Duration>,
@@ -35,7 +36,7 @@ impl OpenAiCompletionProvider {
         Self {
             api_key: None,
             api_url,
-            default_model,
+            model,
             http_client,
             low_speed_timeout,
             settings_version,
@@ -44,15 +45,19 @@ impl OpenAiCompletionProvider {
 
     pub fn update(
         &mut self,
-        default_model: OpenAiModel,
+        model: OpenAiModel,
         api_url: String,
         low_speed_timeout: Option<Duration>,
         settings_version: usize,
     ) {
-        self.default_model = default_model;
+        self.model = model;
         self.api_url = api_url;
         self.low_speed_timeout = low_speed_timeout;
         self.settings_version = settings_version;
+    }
+
+    pub fn available_models(&self) -> impl Iterator<Item = OpenAiModel> {
+        OpenAiModel::iter()
     }
 
     pub fn settings_version(&self) -> usize {
@@ -104,8 +109,8 @@ impl OpenAiCompletionProvider {
             .into()
     }
 
-    pub fn default_model(&self) -> OpenAiModel {
-        self.default_model.clone()
+    pub fn model(&self) -> OpenAiModel {
+        self.model.clone()
     }
 
     pub fn count_tokens(
@@ -152,7 +157,7 @@ impl OpenAiCompletionProvider {
     fn to_open_ai_request(&self, request: LanguageModelRequest) -> Request {
         let model = match request.model {
             LanguageModel::OpenAi(model) => model,
-            _ => self.default_model(),
+            _ => self.model(),
         };
 
         Request {
@@ -273,7 +278,7 @@ impl AuthenticationPrompt {
             font_family: settings.ui_font.family.clone(),
             font_features: settings.ui_font.features.clone(),
             font_size: rems(0.875).into(),
-            font_weight: FontWeight::NORMAL,
+            font_weight: settings.ui_font.weight,
             font_style: FontStyle::Normal,
             line_height: relative(1.3),
             background_color: None,

@@ -75,6 +75,17 @@ impl CompletionProvider for MessageEditorCompletionProvider {
     ) -> Task<Result<Option<language::Transaction>>> {
         Task::ready(Ok(None))
     }
+
+    fn is_completion_trigger(
+        &self,
+        _buffer: &Model<Buffer>,
+        _position: language::Anchor,
+        text: &str,
+        _trigger_in_words: bool,
+        _cx: &mut ViewContext<Editor>,
+    ) -> bool {
+        text == "@"
+    }
 }
 
 impl MessageEditor {
@@ -89,6 +100,9 @@ impl MessageEditor {
         editor.update(cx, |editor, cx| {
             editor.set_soft_wrap_mode(SoftWrap::EditorWidth, cx);
             editor.set_use_autoclose(false);
+            editor.set_show_gutter(false, cx);
+            editor.set_show_wrap_guides(false, cx);
+            editor.set_show_indent_guides(false, cx);
             editor.set_completion_provider(Box::new(MessageEditorCompletionProvider(this)));
             editor.set_auto_replace_emoji_shortcode(
                 MessageEditorSettings::get_global(cx)
@@ -291,6 +305,8 @@ impl MessageEditor {
                     documentation: None,
                     server_id: LanguageServerId(0), // TODO: Make this optional or something?
                     lsp_completion: Default::default(), // TODO: Make this optional or something?
+                    confirm: None,
+                    show_new_completions_on_confirm: false,
                 }
             })
             .collect()
@@ -510,7 +526,7 @@ impl Render for MessageEditor {
             font_family: settings.ui_font.family.clone(),
             font_features: settings.ui_font.features.clone(),
             font_size: TextSize::Small.rems(cx).into(),
-            font_weight: FontWeight::NORMAL,
+            font_weight: settings.ui_font.weight,
             font_style: FontStyle::Normal,
             line_height: relative(1.3),
             background_color: None,

@@ -492,8 +492,8 @@ mod tests {
             assert_eq!(editor.display_text(cx), "one.copilot2\ntwo\nthree\n");
             assert_eq!(editor.text(cx), "one.co\ntwo\nthree\n");
 
-            // Tabbing when there is an active suggestion inserts it.
-            editor.tab(&Default::default(), cx);
+            // AcceptInlineCompletion when there is an active suggestion inserts it.
+            editor.accept_inline_completion(&Default::default(), cx);
             assert!(!editor.has_active_inline_completion(cx));
             assert_eq!(editor.display_text(cx), "one.copilot2\ntwo\nthree\n");
             assert_eq!(editor.text(cx), "one.copilot2\ntwo\nthree\n");
@@ -550,8 +550,8 @@ mod tests {
             assert_eq!(editor.text(cx), "fn foo() {\n    \n}");
             assert_eq!(editor.display_text(cx), "fn foo() {\n    let x = 4;\n}");
 
-            // Tabbing again accepts the suggestion.
-            editor.tab(&Default::default(), cx);
+            // Using AcceptInlineCompletion again accepts the suggestion.
+            editor.accept_inline_completion(&Default::default(), cx);
             assert!(!editor.has_active_inline_completion(cx));
             assert_eq!(editor.text(cx), "fn foo() {\n    let x = 4;\n}");
             assert_eq!(editor.display_text(cx), "fn foo() {\n    let x = 4;\n}");
@@ -781,7 +781,7 @@ mod tests {
             );
             multibuffer
         });
-        let editor = cx.add_window(|cx| Editor::for_multibuffer(multibuffer, None, cx));
+        let editor = cx.add_window(|cx| Editor::for_multibuffer(multibuffer, None, true, cx));
         editor.update(cx, |editor, cx| editor.focus(cx)).unwrap();
         let copilot_provider = cx.new_model(|_| CopilotCompletionProvider::new(copilot));
         editor
@@ -811,7 +811,7 @@ mod tests {
             assert!(editor.has_active_inline_completion(cx));
             assert_eq!(
                 editor.display_text(cx),
-                "\n\na = 1\nb = 2 + a\n\n\n\nc = 3\nd = 4\n"
+                "\n\n\na = 1\nb = 2 + a\n\n\n\n\n\nc = 3\nd = 4\n\n"
             );
             assert_eq!(editor.text(cx), "a = 1\nb = 2\n\nc = 3\nd = 4\n");
         });
@@ -833,7 +833,7 @@ mod tests {
             assert!(!editor.has_active_inline_completion(cx));
             assert_eq!(
                 editor.display_text(cx),
-                "\n\na = 1\nb = 2\n\n\n\nc = 3\nd = 4\n"
+                "\n\n\na = 1\nb = 2\n\n\n\n\n\nc = 3\nd = 4\n\n"
             );
             assert_eq!(editor.text(cx), "a = 1\nb = 2\n\nc = 3\nd = 4\n");
 
@@ -842,7 +842,7 @@ mod tests {
             assert!(!editor.has_active_inline_completion(cx));
             assert_eq!(
                 editor.display_text(cx),
-                "\n\na = 1\nb = 2\n\n\n\nc = 3\nd = 4 \n"
+                "\n\n\na = 1\nb = 2\n\n\n\n\n\nc = 3\nd = 4 \n\n"
             );
             assert_eq!(editor.text(cx), "a = 1\nb = 2\n\nc = 3\nd = 4 \n");
         });
@@ -853,7 +853,7 @@ mod tests {
             assert!(editor.has_active_inline_completion(cx));
             assert_eq!(
                 editor.display_text(cx),
-                "\n\na = 1\nb = 2\n\n\n\nc = 3\nd = 4 + c\n"
+                "\n\n\na = 1\nb = 2\n\n\n\n\n\nc = 3\nd = 4 + c\n\n"
             );
             assert_eq!(editor.text(cx), "a = 1\nb = 2\n\nc = 3\nd = 4 \n");
         });
@@ -1032,7 +1032,7 @@ mod tests {
             );
             multibuffer
         });
-        let editor = cx.add_window(|cx| Editor::for_multibuffer(multibuffer, None, cx));
+        let editor = cx.add_window(|cx| Editor::for_multibuffer(multibuffer, None, true, cx));
         let copilot_provider = cx.new_model(|_| CopilotCompletionProvider::new(copilot));
         editor
             .update(cx, |editor, cx| {

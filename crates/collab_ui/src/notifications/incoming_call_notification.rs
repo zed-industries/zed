@@ -116,15 +116,12 @@ impl Render for IncomingCallNotification {
         // TODO: Is there a better place for us to initialize the font?
         let (ui_font, ui_font_size) = {
             let theme_settings = ThemeSettings::get_global(cx);
-            (
-                theme_settings.ui_font.family.clone(),
-                theme_settings.ui_font_size,
-            )
+            (theme_settings.ui_font.clone(), theme_settings.ui_font_size)
         };
 
         cx.set_rem_size(ui_font_size);
 
-        div().size_full().font_family(ui_font).child(
+        div().size_full().font(ui_font).child(
             CollabNotification::new(
                 self.state.call.calling_user.avatar_uri.clone(),
                 Button::new("accept", "Accept").on_click({

@@ -6,16 +6,19 @@ use db::kvp::KEY_VALUE_STORE;
 use futures::future::join_all;
 use gpui::{
     actions, Action, AppContext, AsyncWindowContext, DismissEvent, Entity, EventEmitter,
-    ExternalPaths, FocusHandle, FocusableView, IntoElement, ParentElement, Pixels, Render, Styled,
-    Subscription, Task, View, ViewContext, VisualContext, WeakView, WindowContext,
+    ExternalPaths, FocusHandle, FocusableView, IntoElement, Model, ParentElement, Pixels, Render,
+    Styled, Subscription, Task, View, ViewContext, VisualContext, WeakView, WindowContext,
 };
 use itertools::Itertools;
 use project::{Fs, ProjectEntryId};
 use search::{buffer_search::DivRegistrar, BufferSearchBar};
 use serde::{Deserialize, Serialize};
 use settings::Settings;
-use task::{RevealStrategy, SpawnInTerminal, TaskId};
-use terminal::terminal_settings::{Shell, TerminalDockPosition, TerminalSettings};
+use task::{RevealStrategy, SpawnInTerminal, TaskId, TerminalWorkDir};
+use terminal::{
+    terminal_settings::{Shell, TerminalDockPosition, TerminalSettings},
+    Terminal,
+};
 use ui::{
     h_flex, ButtonCommon, Clickable, ContextMenu, FluentBuilder, IconButton, IconSize, Selectable,
     Tooltip,
@@ -218,7 +221,9 @@ impl TerminalPanel {
 
         let (panel, pane, items) = workspace.update(&mut cx, |workspace, cx| {
             let panel = cx.new_view(|cx| TerminalPanel::new(workspace, cx));
-            let items = if let Some(serialized_panel) = serialized_panel.as_ref() {
+            let items = if let Some((serialized_panel, database_id)) =
+                serialized_panel.as_ref().zip(workspace.database_id())
+            {
                 panel.update(cx, |panel, cx| {
                     cx.notify();
                     panel.height = serialized_panel.height.map(|h| h.round());
@@ -231,7 +236,7 @@ impl TerminalPanel {
                                 TerminalView::deserialize(
                                     workspace.project().clone(),
                                     workspace.weak_handle(),
-                                    workspace.database_id(),
+                                    database_id,
                                     *item_id,
                                     cx,
                                 )
@@ -319,14 +324,16 @@ impl TerminalPanel {
             return;
         };
 
-        terminal_panel.update(cx, |panel, cx| {
-            panel.add_terminal(
-                Some(action.working_directory.clone()),
-                None,
-                RevealStrategy::Always,
-                cx,
-            )
-        });
+        let terminal_work_dir = workspace
+            .project()
+            .read(cx)
+            .terminal_work_dir_for(Some(&action.working_directory), cx);
+
+        terminal_panel
+            .update(cx, |panel, cx| {
+                panel.add_terminal(terminal_work_dir, None, RevealStrategy::Always, cx)
+            })
+            .detach_and_log_err(cx);
     }
 
     fn spawn_task(&mut self, spawn_in_terminal: &SpawnInTerminal, cx: &mut ViewContext<Self>) {
@@ -355,18 +362,19 @@ impl TerminalPanel {
         let spawn_task = spawn_task;
 
         let reveal = spawn_task.reveal;
-        let working_directory = spawn_in_terminal.cwd.clone();
         let allow_concurrent_runs = spawn_in_terminal.allow_concurrent_runs;
         let use_new_terminal = spawn_in_terminal.use_new_terminal;
 
         if allow_concurrent_runs && use_new_terminal {
-            self.spawn_in_new_terminal(spawn_task, working_directory, cx);
+            self.spawn_in_new_terminal(spawn_task, cx)
+                .detach_and_log_err(cx);
             return;
         }
 
         let terminals_for_task = self.terminals_for_task(&spawn_in_terminal.full_label, cx);
         if terminals_for_task.is_empty() {
-            self.spawn_in_new_terminal(spawn_task, working_directory, cx);
+            self.spawn_in_new_terminal(spawn_task, cx)
+                .detach_and_log_err(cx);
             return;
         }
         let (existing_item_index, existing_terminal) = terminals_for_task
@@ -378,13 +386,7 @@ impl TerminalPanel {
                 !use_new_terminal,
                 "Should have handled 'allow_concurrent_runs && use_new_terminal' case above"
             );
-            self.replace_terminal(
-                working_directory,
-                spawn_task,
-                existing_item_index,
-                existing_terminal,
-                cx,
-            );
+            self.replace_terminal(spawn_task, existing_item_index, existing_terminal, cx);
         } else {
             self.deferred_tasks.insert(
                 spawn_in_terminal.id.clone(),
@@ -393,14 +395,11 @@ impl TerminalPanel {
                     terminal_panel
                         .update(&mut cx, |terminal_panel, cx| {
                             if use_new_terminal {
-                                terminal_panel.spawn_in_new_terminal(
-                                    spawn_task,
-                                    working_directory,
-                                    cx,
-                                );
+                                terminal_panel
+                                    .spawn_in_new_terminal(spawn_task, cx)
+                                    .detach_and_log_err(cx);
                             } else {
                                 terminal_panel.replace_terminal(
-                                    working_directory,
                                     spawn_task,
                                     existing_item_index,
                                     existing_terminal,
@@ -428,14 +427,13 @@ impl TerminalPanel {
         }
     }
 
-    fn spawn_in_new_terminal(
+    pub fn spawn_in_new_terminal(
         &mut self,
         spawn_task: SpawnInTerminal,
-        working_directory: Option<PathBuf>,
         cx: &mut ViewContext<Self>,
-    ) {
+    ) -> Task<Result<Model<Terminal>>> {
         let reveal = spawn_task.reveal;
-        self.add_terminal(working_directory, Some(spawn_task), reveal, cx);
+        self.add_terminal(spawn_task.cwd.clone(), Some(spawn_task), reveal, cx)
     }
 
     /// Create a new Terminal in the current working directory or the user's home directory
@@ -448,9 +446,11 @@ impl TerminalPanel {
             return;
         };
 
-        terminal_panel.update(cx, |this, cx| {
-            this.add_terminal(None, None, RevealStrategy::Always, cx)
-        });
+        terminal_panel
+            .update(cx, |this, cx| {
+                this.add_terminal(None, None, RevealStrategy::Always, cx)
+            })
+            .detach_and_log_err(cx);
     }
 
     fn terminals_for_task(
@@ -482,17 +482,17 @@ impl TerminalPanel {
 
     fn add_terminal(
         &mut self,
-        working_directory: Option<PathBuf>,
+        working_directory: Option<TerminalWorkDir>,
         spawn_task: Option<SpawnInTerminal>,
         reveal_strategy: RevealStrategy,
         cx: &mut ViewContext<Self>,
-    ) {
+    ) -> Task<Result<Model<Terminal>>> {
         let workspace = self.workspace.clone();
         self.pending_terminals_to_add += 1;
 
         cx.spawn(|terminal_panel, mut cx| async move {
             let pane = terminal_panel.update(&mut cx, |this, _| this.pane.clone())?;
-            workspace.update(&mut cx, |workspace, cx| {
+            let result = workspace.update(&mut cx, |workspace, cx| {
                 let working_directory = if let Some(working_directory) = working_directory {
                     Some(working_directory)
                 } else {
@@ -502,35 +502,33 @@ impl TerminalPanel {
                 };
 
                 let window = cx.window_handle();
-                if let Some(terminal) = workspace.project().update(cx, |project, cx| {
-                    project
-                        .create_terminal(working_directory, spawn_task, window, cx)
-                        .log_err()
-                }) {
-                    let terminal = Box::new(cx.new_view(|cx| {
-                        TerminalView::new(
-                            terminal,
-                            workspace.weak_handle(),
-                            workspace.database_id(),
-                            cx,
-                        )
-                    }));
-                    pane.update(cx, |pane, cx| {
-                        let focus = pane.has_focus(cx);
-                        pane.add_item(terminal, true, focus, None, cx);
-                    });
-                }
+                let terminal = workspace.project().update(cx, |project, cx| {
+                    project.create_terminal(working_directory, spawn_task, window, cx)
+                })?;
+                let terminal_view = Box::new(cx.new_view(|cx| {
+                    TerminalView::new(
+                        terminal.clone(),
+                        workspace.weak_handle(),
+                        workspace.database_id(),
+                        cx,
+                    )
+                }));
+                pane.update(cx, |pane, cx| {
+                    let focus = pane.has_focus(cx);
+                    pane.add_item(terminal_view, true, focus, None, cx);
+                });
+
                 if reveal_strategy == RevealStrategy::Always {
                     workspace.focus_panel::<Self>(cx);
                 }
+                Ok(terminal)
             })?;
             terminal_panel.update(&mut cx, |this, cx| {
                 this.pending_terminals_to_add = this.pending_terminals_to_add.saturating_sub(1);
                 this.serialize(cx)
             })?;
-            anyhow::Ok(())
+            result
         })
-        .detach_and_log_err(cx);
     }
 
     fn serialize(&mut self, cx: &mut ViewContext<Self>) {
@@ -579,7 +577,6 @@ impl TerminalPanel {
 
     fn replace_terminal(
         &self,
-        working_directory: Option<PathBuf>,
         spawn_task: SpawnInTerminal,
         terminal_item_index: usize,
         terminal_to_replace: View<TerminalView>,
@@ -594,7 +591,7 @@ impl TerminalPanel {
         let window = cx.window_handle();
         let new_terminal = project.update(cx, |project, cx| {
             project
-                .create_terminal(working_directory, Some(spawn_task), window, cx)
+                .create_terminal(spawn_task.cwd.clone(), Some(spawn_task), window, cx)
                 .log_err()
         })?;
         terminal_to_replace.update(cx, |terminal_to_replace, cx| {
@@ -738,7 +735,8 @@ impl Panel for TerminalPanel {
 
     fn set_active(&mut self, active: bool, cx: &mut ViewContext<Self>) {
         if active && self.has_no_terminals(cx) {
-            self.add_terminal(None, None, RevealStrategy::Never, cx);
+            self.add_terminal(None, None, RevealStrategy::Never, cx)
+                .detach_and_log_err(cx)
         }
     }
 

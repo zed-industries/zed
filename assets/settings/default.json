@@ -37,6 +37,8 @@
   },
   // The default font size for text in the editor
   "buffer_font_size": 15,
+  // The weight of the editor font in standard CSS units from 100 to 900.
+  "buffer_font_weight": 400,
   // Set the buffer's line height.
   // May take 3 values:
   //  1. Use a line height that's comfortable for reading (1.618)
@@ -55,6 +57,8 @@
     // Disable ligatures:
     "calt": false
   },
+  // The weight of the UI font in standard CSS units from 100 to 900.
+  "ui_font_weight": 400,
   // The default font size for text in the UI
   "ui_font_size": 16,
   // The factor to grow the active pane by. Defaults to 1.0
@@ -124,6 +128,8 @@
   "wrap_guides": [],
   // Hide the values of in variables from visual display in private files
   "redact_private_values": false,
+  // The default number of lines to expand excerpts in the multibuffer by.
+  "expand_excerpt_lines": 3,
   // Globs to match against file paths to determine if a file is private.
   "private_files": [
     "**/.env*",
@@ -164,7 +170,7 @@
     // Join calls with the microphone live by default
     "mute_on_join": false,
     // Share your project when you are the first to join a channel
-    "share_on_join": true
+    "share_on_join": false
   },
   // Toolbar related settings
   "toolbar": {
@@ -215,6 +221,25 @@
     "code_actions": true,
     // Whether to show fold buttons in the gutter.
     "folds": true
+  },
+  "indent_guides": {
+    /// Whether to show indent guides in the editor.
+    "enabled": true,
+    /// The width of the indent guides in pixels, between 1 and 10.
+    "line_width": 1,
+    /// Determines how indent guides are colored.
+    /// This setting can take the following three values:
+    ///
+    /// 1. "disabled"
+    /// 2. "fixed"
+    /// 3. "indent_aware"
+    "coloring": "fixed",
+    /// Determines how indent guide backgrounds are colored.
+    /// This setting can take the following two values:
+    ///
+    /// 1. "disabled"
+    /// 2. "indent_aware"
+    "background_coloring": "disabled"
   },
   // The number of lines to keep above/below the cursor when scrolling.
   "vertical_scroll_margin": 3,
@@ -316,7 +341,7 @@
     // AI provider.
     "provider": {
       "name": "openai",
-      // The default model to use when starting new conversations. This
+      // The default model to use when creating new contexts. This
       // setting can take three values:
       //
       // 1. "gpt-3.5-turbo"
@@ -836,7 +861,7 @@
   // environment variables.
   //
   // Examples:
-  //   - "proxy" = "socks5://localhost:10808"
-  //   - "proxy" = "http://127.0.0.1:10809"
+  //   - "proxy": "socks5://localhost:10808"
+  //   - "proxy": "http://127.0.0.1:10809"
   "proxy": null
 }
