@@ -294,7 +294,7 @@ impl CosmicTextSystemState {
                 .0,
             )
             .clone()
-            .unwrap();
+            .with_context(|| format!("no image for {params:?} in font {font:?}"))?;
         Ok(Bounds {
             origin: point(image.placement.left.into(), (-image.placement.top).into()),
             size: size(image.placement.width.into(), image.placement.height.into()),
@@ -328,7 +328,7 @@ impl CosmicTextSystemState {
                     .0,
                 )
                 .clone()
-                .unwrap();
+                .with_context(|| format!("no image for {params:?} in font {font:?}"))?;
 
             if params.is_emoji {
                 // Convert from RGBA to BGRA.
