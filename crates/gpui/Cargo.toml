@@ -122,7 +122,6 @@ x11rb = { version = "0.13.0", features = [
     "xinput",
     "cursor",
     "resource_manager",
-    "extra-traits"
 ] }
 xkbcommon = { version = "0.7", features = ["wayland", "x11"] }
 
