@@ -443,7 +443,7 @@ impl Fs for RealFs {
 
         let (tx, rx) = smol::channel::unbounded();
 
-        let mut file_watcher = notify::recommended_watcher({
+        let file_watcher = notify::recommended_watcher({
             let tx = tx.clone();
             move |event: Result<notify::Event, _>| {
                 if let Some(event) = event.log_err() {
@@ -453,39 +453,38 @@ impl Fs for RealFs {
         })
         .expect("Could not start file watcher");
 
-        file_watcher
-            .watch(path, notify::RecursiveMode::NonRecursive)
-            .log_err();
-
-        // let mut parent_watcher = notify::recommended_watcher({
-        //     let watched_path = path.to_path_buf();
-        //     let tx = tx.clone();
-        //     move |event: Result<notify::Event, _>| {
-        //         if let Some(event) = event.ok() {
-        //             if event.paths.into_iter().any(|path| *path == watched_path) {
-        //                 match event.kind {
-        //                     EventKind::Create(_) => {
-        //                         file_watcher
-        //                             .watch(watched_path.as_path(), notify::RecursiveMode::Recursive)
-        //                             .log_err();
-        //                         let _ = tx.try_send(vec![watched_path.clone()]).ok();
-        //                     }
-        //                     EventKind::Remove(_) => {
-        //                         file_watcher.unwatch(&watched_path).log_err();
-        //                         let _ = tx.try_send(vec![watched_path.clone()]).ok();
-        //                     }
-        //                     _ => {}
-        //                 }
-        //             }
-
         let watcher = Arc::new(RealWatcher {
             fs_watcher: Mutex::new(file_watcher),
         });
+
+        watcher.add(path).ok(); // Ignore "file doesn't exist error" and rely on parent watcher.
+
+        // parent_watched exists so that we can watch settings.json before it
+        // is created.
+        let parent_watcher = notify::recommended_watcher({
+            let watched_path = path.to_path_buf();
+            let tx = tx.clone();
+            let watcher = watcher.clone();
+
+            move |event: Result<notify::Event, _>| {
+                if let Some(event) = event.ok() {
+                    if event.paths.into_iter().any(|path| *path == watched_path) {
+                        match event.kind {
+                            notify::EventKind::Create(_) => {
+                                watcher.add(watched_path.as_path()).log_err();
+                                let _ = tx.try_send(vec![watched_path.clone()]).ok();
+                            }
+                            _ => {}
+                        }
+                    }
+                }
+            }
+        });
+
         (
             Box::pin(rx.chain(futures::stream::once({
-                let watcher = watcher.clone();
                 async move {
-                    drop(watcher);
+                    drop(parent_watcher);
                     vec![]
                 }
             }))),
@@ -566,6 +565,8 @@ impl Watcher for RealWatcher {
 #[cfg(not(target_os = "macos"))]
 impl Watcher for RealWatcher {
     fn add(&self, path: &Path) -> Result<()> {
+        use notify::Watcher;
+
         self.fs_watcher
             .lock()
             .watch(path, notify::RecursiveMode::NonRecursive)?;
@@ -573,6 +574,8 @@ impl Watcher for RealWatcher {
     }
 
     fn remove(&self, path: &Path) -> Result<()> {
+        use notify::Watcher;
+
         self.fs_watcher.lock().unwatch(path)?;
         Ok(())
     }

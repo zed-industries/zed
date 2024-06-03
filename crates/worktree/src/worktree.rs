@@ -4006,7 +4006,6 @@ impl BackgroundScanner {
 
         state.populate_dir(&job.path, new_entries, new_ignore);
         self.watcher.add(job.abs_path.as_ref()).log_err();
-        dbg!(&job.abs_path);
 
         let repository =
             dotgit_path.and_then(|path| state.build_git_repository(path, self.fs.as_ref()));
