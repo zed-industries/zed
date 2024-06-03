@@ -1,4 +1,4 @@
-use super::{ns_string, renderer, MacDisplay, NSRange};
+use super::{ns_string, renderer, MacDisplay, NSRange, NSStringExt};
 use crate::{
     platform::PlatformInputHandler, point, px, size, AnyWindowHandle, Bounds, DevicePixels,
     DisplayLink, ExternalPaths, FileDropEvent, ForegroundExecutor, KeyDownEvent, Keystroke,
@@ -39,7 +39,6 @@ use std::{
     ffi::{c_void, CStr},
     mem,
     ops::Range,
-    os::raw::c_char,
     path::PathBuf,
     ptr::{self, NonNull},
     rc::Rc,
@@ -1711,9 +1710,8 @@ extern "C" fn insert_text(this: &Object, _: Sel, text: id, replacement_range: NS
         } else {
             text
         };
-        let text = CStr::from_ptr(text.UTF8String() as *mut c_char)
-            .to_str()
-            .unwrap();
+
+        let text = text.to_str();
         let replacement_range = replacement_range.to_range();
         send_to_input_handler(
             this,
@@ -1739,9 +1737,7 @@ extern "C" fn set_marked_text(
         };
         let selected_range = selected_range.to_range();
         let replacement_range = replacement_range.to_range();
-        let text = CStr::from_ptr(text.UTF8String() as *mut c_char)
-            .to_str()
-            .unwrap();
+        let text = text.to_str();
 
         send_to_input_handler(
             this,
