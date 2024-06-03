@@ -950,29 +950,34 @@ impl EasyMotion {
         cursor: Point<Pixels>,
         weak_editors: Vec<WeakView<Editor>>,
         search_tasks: Vec<
-            impl Future<Output = Vec<(DisplayPoint, EntityId, Point<Pixels>)>> + 'static,
+            impl Future<Output = Vec<(DisplayPoint, EntityId, Point<Pixels>)>> + 'static + Send,
         >,
         cx: &mut WindowContext,
     ) {
-        cx.spawn(move |mut cx| async move {
-            let cx = &mut cx;
+        let sort_task = cx.background_executor().spawn(async move {
             let cursor = cursor;
-
-            let editors = weak_editors
-                .into_iter()
-                .filter_map(|editor| editor.upgrade());
-
             let mut search_matches = join_all(search_tasks)
                 .await
                 .into_iter()
                 .flatten()
                 .collect::<Vec<_>>();
+            if !search_matches.is_empty() {
+                sort_matches_pixel(&mut search_matches, &cursor);
+            }
+            search_matches
+        });
+        cx.spawn(move |mut cx| async move {
+            let cx = &mut cx;
+            let editors = weak_editors
+                .into_iter()
+                .filter_map(|editor| editor.upgrade());
+
+            let search_matches = sort_task.await;
             let len = search_matches.len();
             if len == 0 {
                 Self::update_editors(&EditorState::None, false, editors, cx);
                 return;
             }
-            sort_matches_pixel(&mut search_matches, &cursor);
 
             let (keys, dimming) =
                 Self::read_with_async(&cx, |easy, _| (easy.keys.clone(), easy.dimming))
