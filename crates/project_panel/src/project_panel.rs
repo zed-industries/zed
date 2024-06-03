@@ -38,6 +38,7 @@ use workspace::{
     notifications::DetachAndPromptErr,
     OpenInTerminal, Workspace,
 };
+use worktree::CreatedEntry;
 
 const PROJECT_PANEL_KEY: &str = "ProjectPanel";
 const NEW_ENTRY_ID: ProjectEntryId = ProjectEntryId::MAX;
@@ -794,29 +795,60 @@ impl ProjectPanel {
         edit_state.processing_filename = Some(filename);
         cx.notify();
 
-        Some(cx.spawn(|this, mut cx| async move {
+        Some(cx.spawn(|project_panel, mut cx| async move {
             let new_entry = edit_task.await;
-            this.update(&mut cx, |this, cx| {
-                this.edit_state.take();
+            project_panel.update(&mut cx, |project_panel, cx| {
+                project_panel.edit_state.take();
                 cx.notify();
             })?;
 
-            if let Some(new_entry) = new_entry? {
-                this.update(&mut cx, |this, cx| {
-                    if let Some(selection) = &mut this.selection {
-                        if selection.entry_id == edited_entry_id {
-                            selection.worktree_id = worktree_id;
-                            selection.entry_id = new_entry.id;
-                            this.marked_entries.clear();
-                            this.expand_to_selection(cx);
+            match new_entry? {
+                CreatedEntry::Included(new_entry) => {
+                    project_panel.update(&mut cx, |project_panel, cx| {
+                        if let Some(selection) = &mut project_panel.selection {
+                            if selection.entry_id == edited_entry_id {
+                                selection.worktree_id = worktree_id;
+                                selection.entry_id = new_entry.id;
+                                project_panel.marked_entries.clear();
+                                project_panel.expand_to_selection(cx);
+                            }
                         }
+                        project_panel.update_visible_entries(None, cx);
+                        if is_new_entry && !is_dir {
+                            project_panel.open_entry(new_entry.id, false, true, false, cx);
+                        }
+                        cx.notify();
+                    })?;
+                }
+                CreatedEntry::Excluded { abs_path } => {
+                    if let Some(open_task) = project_panel
+                        .update(&mut cx, |project_panel, cx| {
+                            project_panel.marked_entries.clear();
+                            project_panel.selection = None;
+                            project_panel.update_visible_entries(None, cx);
+
+                            if is_dir {
+                                project_panel.project.update(cx, |_, cx| {
+                                    cx.emit(project::Event::Notification(format!(
+                                        "Created an excluded directory at {abs_path:?}.\nAlter `file_scan_exclusions` in the settings to show it in the panel"
+                                    )))
+                                });
+                                None
+                            } else {
+                                project_panel
+                                    .workspace
+                                    .update(cx, |workspace, cx| {
+                                        workspace.open_abs_path(abs_path, true, cx)
+                                    })
+                                    .ok()
+                            }
+                        })
+                        .ok()
+                        .flatten()
+                    {
+                        let _ = open_task.await.log_err();
                     }
-                    this.update_visible_entries(None, cx);
-                    if is_new_entry && !is_dir {
-                        this.open_entry(new_entry.id, false, true, false, cx);
-                    }
-                    cx.notify();
-                })?;
+                }
             }
             Ok(())
         }))
