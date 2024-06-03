@@ -3,7 +3,7 @@ use futures::{future::join_all, Future};
 use serde::Deserialize;
 use std::{fmt, mem, ops::Range, sync::Arc};
 
-use editor::{scroll::Autoscroll, DisplayPoint, Editor, RowRangeExt};
+use editor::{overlay::Overlay, scroll::Autoscroll, DisplayPoint, Editor, RowRangeExt};
 use gpui::{
     actions, column_pixels, impl_actions, point, saturate, AppContext, AsyncAppContext, Bounds,
     Entity, EntityId, Global, HighlightStyle, Hsla, KeystrokeEvent, Model, ModelContext, Point,
@@ -724,8 +724,9 @@ impl EasyMotion {
             }
             TrimResult::Changed => {
                 let trie = selection.trie();
+                let len = trie.len();
                 editor.clear_overlays::<Self>(cx);
-                Self::add_overlays(editor, trie.iter(), cx);
+                Self::add_overlays(editor, trie.iter(), len, cx);
                 EditorState::Selection(selection)
             }
             TrimResult::Err => {
@@ -777,7 +778,7 @@ impl EasyMotion {
                         .filter(|(_, overlay)| overlay.editor_id == editor.entity_id());
                     editor.update(cx, |editor, cx| {
                         editor.clear_overlays::<Self>(cx);
-                        Self::add_overlays(editor, iter, cx);
+                        Self::add_overlays(editor, iter, trie.len(), cx);
                     });
                 }
                 EditorState::Selection(selection)
@@ -828,7 +829,7 @@ impl EasyMotion {
                     editor_id: cx.entity_id(),
                 }
             });
-        Self::add_overlays(editor, trie.iter(), cx);
+        Self::add_overlays(editor, trie.iter(), trie.len(), cx);
 
         if dimming {
             let start = match direction {
@@ -1031,6 +1032,7 @@ impl EasyMotion {
             EditorState::Selection(selection) => {
                 for editor in editors {
                     let trie = selection.trie();
+                    let len = trie.len();
                     let trie_iter = trie
                         .iter()
                         .filter(|(_seq, overlay)| overlay.editor_id == editor.entity_id());
@@ -1039,7 +1041,7 @@ impl EasyMotion {
                         editor.set_keymap_context_layer::<Self>(ctx.clone(), cx);
                         editor.clear_search_within_ranges(cx);
 
-                        Self::add_overlays(editor, trie_iter, cx);
+                        Self::add_overlays(editor, trie_iter, len, cx);
 
                         if !dimming {
                             return;
@@ -1107,9 +1109,10 @@ impl EasyMotion {
     fn add_overlays<'a>(
         editor: &mut Editor,
         trie_iter: impl Iterator<Item = (String, &'a OverlayState)>,
+        len: usize,
         cx: &mut ViewContext<Editor>,
     ) {
-        for (seq, overlay) in trie_iter {
+        let iter = trie_iter.map(|(seq, overlay)| {
             let mut highlights = vec![(0..1, overlay.style)];
             if seq.len() > 1 {
                 highlights.push((
@@ -1120,8 +1123,14 @@ impl EasyMotion {
                     },
                 ));
             }
-            editor.add_overlay::<Self>(seq, overlay.point, 0.0, highlights, cx);
-        }
+            Overlay {
+                text: seq,
+                highlights,
+                point: overlay.point,
+                offset: 1.0,
+            }
+        });
+        editor.add_overlays::<Self>(iter, len, cx);
     }
 }
 

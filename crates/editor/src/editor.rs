@@ -10440,6 +10440,18 @@ impl Editor {
         cx.notify();
     }
 
+    pub fn add_overlays<T: 'static>(
+        &mut self,
+        overlays: impl IntoIterator<Item = Overlay>,
+        len: usize,
+        cx: &mut ViewContext<Self>,
+    ) {
+        let list = self.overlay_map.entry(TypeId::of::<T>()).or_default();
+        list.reserve_exact(len);
+        list.extend(overlays);
+        cx.notify();
+    }
+
     pub fn clear_overlays<T: 'static>(&mut self, cx: &mut ViewContext<Self>) {
         self.overlay_map.remove(&TypeId::of::<T>());
         cx.notify();

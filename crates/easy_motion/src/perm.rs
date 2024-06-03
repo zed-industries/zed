@@ -48,12 +48,13 @@ impl<T: Default> Default for TrieNode<T> {
 pub(crate) struct TrieBuilder {
     root: TrieNode<()>,
     keys: Arc<str>,
+    len: usize,
 }
 
 impl TrieBuilder {
     pub fn new(keys: Arc<str>, len: usize) -> Self {
         let root = TrieNode::Node(vec![TrieNode::Leaf(())]);
-        let mut builder = TrieBuilder { keys, root };
+        let mut builder = TrieBuilder { keys, root, len };
         let mut p = vec![0];
         // constructs the trie
         for _ in 1..len {
@@ -68,6 +69,7 @@ impl TrieBuilder {
         Trie {
             keys: self.keys,
             root: node,
+            len: self.len,
         }
     }
 
@@ -83,6 +85,7 @@ impl TrieBuilder {
         Trie {
             keys: self.keys,
             root: node,
+            len: self.len,
         }
     }
 
@@ -215,9 +218,13 @@ impl TrieBuilder {
 pub(crate) struct Trie<T> {
     keys: Arc<str>,
     root: TrieNode<T>,
+    len: usize,
 }
 
 impl<T> Trie<T> {
+    pub fn len(&self) -> usize {
+        self.len
+    }
     #[allow(dead_code)]
     pub fn new_from_vec(keys: Arc<str>, values: Vec<T>, reverse: bool) -> Self {
         TrieBuilder::new(keys, values.len()).populate(reverse, values)
