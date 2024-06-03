@@ -1302,7 +1302,6 @@ impl CompletionsMenu {
         if !inline_documentation_exists {
             completion.label.filter_range.end = completion.label.filter_range.end.min(primary_end);
         }
-        println!("f2 {}", completion.label.filter_range.end);
         for run in completion.label.runs.iter_mut() {
             run.0.start = (run.0.start as i32 - primary_length_truncated).max(0) as usize;
             run.0.end = (run.0.end as i32 - primary_length_truncated).max(0) as usize;
