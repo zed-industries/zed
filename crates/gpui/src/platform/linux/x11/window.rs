@@ -24,7 +24,6 @@ use x11rb::{
 use std::{
     cell::RefCell,
     ffi::c_void,
-    mem,
     num::NonZeroU32,
     ops::Div,
     ptr::NonNull,
@@ -610,11 +609,21 @@ impl X11WindowStatePtr {
 
     pub fn configure(&self, bounds: Bounds<i32>) {
         let mut resize_args = None;
-        let do_move;
+        let is_resize;
         {
             let mut state = self.state.borrow_mut();
-            let old_bounds = mem::replace(&mut state.bounds, bounds);
-            do_move = old_bounds.origin != bounds.origin;
+
+            is_resize = bounds.size.width != state.bounds.size.width
+                || bounds.size.height != state.bounds.size.height;
+
+            // If it's a resize event (only width/height changed), we ignore `bounds.origin`
+            // because it contains wrong values.
+            if is_resize {
+                state.bounds.size = bounds.size;
+            } else {
+                state.bounds = bounds;
+            }
+
             let gpu_size = query_render_extent(&self.xcb_connection, self.x_window);
             if state.renderer.viewport_size() != gpu_size {
                 state
@@ -630,7 +639,7 @@ impl X11WindowStatePtr {
                 fun(content_size, scale_factor)
             }
         }
-        if do_move {
+        if !is_resize {
             if let Some(ref mut fun) = callbacks.moved {
                 fun()
             }
