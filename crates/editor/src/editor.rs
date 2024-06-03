@@ -973,40 +973,38 @@ impl CompletionsMenu {
         let padding_width = cx.rem_size().0 / 16. * 36.;
 
         let max_completion_len = px(510.);
-        // let widest_completion_pixels = self
-        //     .matches
-        //     .iter()
-        //     .map(|mat| {
-        //         let completions = self.completions.read();
-        //         let completion = &completions[mat.candidate_id];
-        //         let documentation = &completion.documentation;
+        let widest_completion_pixels = self
+            .matches
+            .iter()
+            .map(|mat| {
+                let completions = self.completions.read();
+                let completion = &completions[mat.candidate_id];
+                let documentation = &completion.documentation;
 
-        //         let mut len = completion.label.text.chars().count() as f32;
-        //         if let Ok(text_width) = cx.text_system().layout_line(
-        //             completion.label.text.as_str(),
-        //             font_size,
-        //             &[style.text.to_run(completion.label.text.as_str().len())],
-        //         ) {
-        //             len = text_width.width.0;
-        //         }
+                let mut len = 0_f32;
+                if let Ok(text_width) = cx.text_system().layout_line(
+                    completion.label.text.as_str(),
+                    font_size,
+                    &[style.text.to_run(completion.label.text.as_str().len())],
+                ) {
+                    len = text_width.width.0;
+                }
 
-        //         if let Some(Documentation::SingleLine(documentation_text)) = documentation {
-        //             if show_completion_documentation {
-        //                 if let Ok(documentation_width) = cx.text_system().layout_line(
-        //                     documentation_text.as_str(),
-        //                     font_size,
-        //                     &[style.text.to_run(documentation_text.as_str().len())],
-        //                 ) {
-        //                     len = documentation_width.width.0 + padding_width;
-        //                 }
-        //             }
-        //         }
+                if let Some(Documentation::SingleLine(documentation_text)) = documentation {
+                    if show_completion_documentation {
+                        if let Ok(documentation_width) = cx.text_system().layout_line(
+                            documentation_text.as_str(),
+                            font_size,
+                            &[style.text.to_run(documentation_text.as_str().len())],
+                        ) {
+                            len += documentation_width.width.0 + padding_width;
+                        }
+                    }
+                }
 
-        //         (len + padding_width).min(max_completion_len.0 as f32)
-        //     })
-        //     .fold(190_f32, |a, b| a.max(b));
-
-        let widest_completion_pixels = max_completion_len.0;
+                (len).min(max_completion_len.0 as f32)
+            })
+            .fold(190_f32, |a, b| a.max(b));
 
         let completions = self.completions.clone();
         let matches = self.matches.clone();
@@ -1234,10 +1232,6 @@ impl CompletionsMenu {
                         .take(documentation_truncation_index)
                         .collect::<String>()
                         + "…";
-                    println!(
-                        "11 TRIGGER {}, {}",
-                        documentation_text, ellipsis_width.width.0
-                    );
                 } else {
                     let type_annotation_truncation_index = completion_layout_line
                         .index_for_x(max_completion_len - ellipsis_width.width)
@@ -1247,7 +1241,6 @@ impl CompletionsMenu {
                         &(completion.label.text)[..type_annotation_truncation_index],
                         "…"
                     );
-                    println!("12 TRIGGER {}", completion_label_text);
                 }
             } else {
                 // truncate the first (and maybe second) part
@@ -1287,10 +1280,6 @@ impl CompletionsMenu {
                                 + "…";
                         }
                     }
-                    println!(
-                        "21 TRIGGER {} {}",
-                        completion_label_text, documentation_text
-                    );
                 } else {
                     let second_part_text =
                         &completion.label.text.as_str()[completion.label.filter_range.end..];
@@ -1319,8 +1308,6 @@ impl CompletionsMenu {
                                 + "…";
                         }
                     }
-
-                    println!("22 TRIGGER {}", completion_label_text);
                 }
             }
         }
