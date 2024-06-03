@@ -50,7 +50,7 @@
     "eex": "elixir",
     "elm": "elm",
     "ent": "template",
-    "entitlments": "template",
+    "entitlements": "template",
     "erl": "erlang",
     "escript": "erlang",
     "eslintrc": "eslint",
