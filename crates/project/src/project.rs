@@ -5162,16 +5162,14 @@ impl Project {
             child.current_dir(working_dir_path);
         }
 
-        let buffer_path_replacement = buffer_abs_path
-            .map(|path| path.to_string_lossy())
-            .unwrap_or_default();
-
         let mut child = child
-            .args(
-                arguments
-                    .iter()
-                    .map(|arg| arg.replace("{buffer_path}", &buffer_path_replacement)),
-            )
+            .args(arguments.iter().map(|arg| {
+                if let Some(buffer_abs_path) = buffer_abs_path {
+                    arg.replace("{buffer_path}", &buffer_abs_path.to_string_lossy())
+                } else {
+                    arg.replace("{buffer_path}", "Untitled")
+                }
+            }))
             .stdin(smol::process::Stdio::piped())
             .stdout(smol::process::Stdio::piped())
             .stderr(smol::process::Stdio::piped())
