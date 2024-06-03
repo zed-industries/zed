@@ -17,7 +17,7 @@ use anyhow::{anyhow, Result};
 use assistant_slash_command::{SlashCommandOutput, SlashCommandOutputSection};
 use client::telemetry::Telemetry;
 use collections::{hash_map, BTreeSet, HashMap, HashSet, VecDeque};
-use editor::actions::ShowCompletions;
+use editor::{actions::ShowCompletions, GutterDimensions};
 use editor::{
     actions::{FoldAt, MoveDown, MoveToEndOfLine, MoveUp, Newline, UnfoldAt},
     display_map::{
@@ -469,7 +469,7 @@ impl AssistantPanel {
             )
         });
 
-        let measurements = Arc::new(Mutex::new(BlockMeasurements::default()));
+        let measurements = Arc::new(Mutex::new(GutterDimensions::default()));
         let inline_assistant = cx.new_view(|cx| {
             InlineAssistant::new(
                 inline_assist_id,
@@ -492,10 +492,7 @@ impl AssistantPanel {
                     render: Box::new({
                         let inline_assistant = inline_assistant.clone();
                         move |cx: &mut BlockContext| {
-                            *measurements.lock() = BlockMeasurements {
-                                gutter_width: cx.gutter_dimensions.width,
-                                gutter_margin: cx.gutter_dimensions.margin,
-                            };
+                            *measurements.lock() = *cx.gutter_dimensions;
                             inline_assistant.clone().into_any_element()
                         }
                     }),
@@ -583,6 +580,7 @@ impl AssistantPanel {
                 ],
             },
         );
+
         self.pending_inline_assist_ids_by_editor
             .entry(editor.downgrade())
             .or_default()
@@ -810,7 +808,7 @@ impl AssistantPanel {
             codegen.update(&mut cx, |codegen, cx| codegen.start(request, cx))?;
             anyhow::Ok(())
         })
-        .detach();
+        .detach_and_log_err(cx);
     }
 
     fn update_highlights_for_editor(&self, editor: &View<Editor>, cx: &mut ViewContext<Self>) {
@@ -1431,7 +1429,7 @@ impl Panel for AssistantPanel {
             return None;
         }
 
-        Some(IconName::Ai)
+        Some(IconName::ZedAssistant)
     }
 
     fn icon_tooltip(&self, _cx: &WindowContext) -> Option<&'static str> {
@@ -3151,7 +3149,7 @@ impl ConversationEditor {
 
                             h_flex()
                                 .id(("message_header", message_id.0))
-                                .pl(cx.gutter_dimensions.width + cx.gutter_dimensions.margin)
+                                .pl(cx.gutter_dimensions.full_width())
                                 .h_11()
                                 .w_full()
                                 .relative()
@@ -3551,7 +3549,7 @@ struct InlineAssistant {
     prompt_editor: View<Editor>,
     confirmed: bool,
     include_conversation: bool,
-    measurements: Arc<Mutex<BlockMeasurements>>,
+    gutter_dimensions: Arc<Mutex<GutterDimensions>>,
     prompt_history: VecDeque<String>,
     prompt_history_ix: Option<usize>,
     pending_prompt: String,
@@ -3563,7 +3561,8 @@ impl EventEmitter<InlineAssistantEvent> for InlineAssistant {}
 
 impl Render for InlineAssistant {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
-        let measurements = *self.measurements.lock();
+        let gutter_dimensions = *self.gutter_dimensions.lock();
+        let icon_size = IconSize::default();
         h_flex()
             .w_full()
             .py_2()
@@ -3576,14 +3575,20 @@ impl Render for InlineAssistant {
             .on_action(cx.listener(Self::move_down))
             .child(
                 h_flex()
-                    .w(measurements.gutter_width + measurements.gutter_margin)
+                    .w(gutter_dimensions.full_width() + (gutter_dimensions.margin / 2.0))
+                    .pr(gutter_dimensions.fold_area_width())
+                    .justify_end()
                     .children(if let Some(error) = self.codegen.read(cx).error() {
                         let error_message = SharedString::from(error.to_string());
                         Some(
                             div()
                                 .id("error")
                                 .tooltip(move |cx| Tooltip::text(error_message.clone(), cx))
-                                .child(Icon::new(IconName::XCircle).color(Color::Error)),
+                                .child(
+                                    Icon::new(IconName::XCircle)
+                                        .size(icon_size)
+                                        .color(Color::Error),
+                                ),
                         )
                     } else {
                         None
@@ -3603,7 +3608,7 @@ impl InlineAssistant {
     #[allow(clippy::too_many_arguments)]
     fn new(
         id: usize,
-        measurements: Arc<Mutex<BlockMeasurements>>,
+        gutter_dimensions: Arc<Mutex<GutterDimensions>>,
         include_conversation: bool,
         prompt_history: VecDeque<String>,
         codegen: Model<Codegen>,
@@ -3630,7 +3635,7 @@ impl InlineAssistant {
             prompt_editor,
             confirmed: false,
             include_conversation,
-            measurements,
+            gutter_dimensions,
             prompt_history,
             prompt_history_ix: None,
             pending_prompt: String::new(),
@@ -3753,13 +3758,6 @@ impl InlineAssistant {
             },
         )
     }
-}
-
-// This wouldn't need to exist if we could pass parameters when rendering child views.
-#[derive(Copy, Clone, Default)]
-struct BlockMeasurements {
-    gutter_width: Pixels,
-    gutter_margin: Pixels,
 }
 
 struct PendingInlineAssist {

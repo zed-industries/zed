@@ -12,7 +12,7 @@ mod streaming_diff;
 
 pub use assistant_panel::AssistantPanel;
 
-use assistant_settings::{AnthropicModel, AssistantSettings, OpenAiModel, ZedDotDevModel};
+use assistant_settings::{AnthropicModel, AssistantSettings, CloudModel, OpenAiModel};
 use assistant_slash_command::SlashCommandRegistry;
 use client::{proto, Client};
 use command_palette_hooks::CommandPaletteFilter;
@@ -87,14 +87,14 @@ impl Display for Role {
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub enum LanguageModel {
-    ZedDotDev(ZedDotDevModel),
+    Cloud(CloudModel),
     OpenAi(OpenAiModel),
     Anthropic(AnthropicModel),
 }
 
 impl Default for LanguageModel {
     fn default() -> Self {
-        LanguageModel::ZedDotDev(ZedDotDevModel::default())
+        LanguageModel::Cloud(CloudModel::default())
     }
 }
 
@@ -103,7 +103,7 @@ impl LanguageModel {
         match self {
             LanguageModel::OpenAi(model) => format!("openai/{}", model.id()),
             LanguageModel::Anthropic(model) => format!("anthropic/{}", model.id()),
-            LanguageModel::ZedDotDev(model) => format!("zed.dev/{}", model.id()),
+            LanguageModel::Cloud(model) => format!("zed.dev/{}", model.id()),
         }
     }
 
@@ -111,7 +111,7 @@ impl LanguageModel {
         match self {
             LanguageModel::OpenAi(model) => model.display_name().into(),
             LanguageModel::Anthropic(model) => model.display_name().into(),
-            LanguageModel::ZedDotDev(model) => model.display_name().into(),
+            LanguageModel::Cloud(model) => model.display_name().into(),
         }
     }
 
@@ -119,7 +119,7 @@ impl LanguageModel {
         match self {
             LanguageModel::OpenAi(model) => model.max_token_count(),
             LanguageModel::Anthropic(model) => model.max_token_count(),
-            LanguageModel::ZedDotDev(model) => model.max_token_count(),
+            LanguageModel::Cloud(model) => model.max_token_count(),
         }
     }
 
@@ -127,7 +127,7 @@ impl LanguageModel {
         match self {
             LanguageModel::OpenAi(model) => model.id(),
             LanguageModel::Anthropic(model) => model.id(),
-            LanguageModel::ZedDotDev(model) => model.id(),
+            LanguageModel::Cloud(model) => model.id(),
         }
     }
 }
@@ -170,6 +170,20 @@ impl LanguageModelRequest {
             temperature: self.temperature,
             tool_choice: None,
             tools: Vec::new(),
+        }
+    }
+
+    /// Before we send the request to the server, we can perform fixups on it appropriate to the model.
+    pub fn preprocess(&mut self) {
+        match &self.model {
+            LanguageModel::OpenAi(_) => {}
+            LanguageModel::Anthropic(_) => {}
+            LanguageModel::Cloud(model) => match model {
+                CloudModel::Claude3Opus | CloudModel::Claude3Sonnet | CloudModel::Claude3Haiku => {
+                    preprocess_anthropic_request(self);
+                }
+                _ => {}
+            },
         }
     }
 }
