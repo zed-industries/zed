@@ -141,19 +141,24 @@ pub(crate) fn register(workspace: &mut Workspace, cx: &mut ViewContext<Workspace
         Vim::update(cx, |vim, cx| {
             let times = vim.take_count(cx);
             vim.record_current_action(cx);
+            let is_not_visual = !vim.state().mode.is_visual();
             vim.update_active_editor(cx, |_, editor, cx| {
                 let text_layout_details = editor.text_layout_details(cx);
                 let mut original_positions: std::collections::HashMap<_, _> = Default::default();
                 editor.transact(cx, |editor, cx| {
                     editor.change_selections(None, cx, |s| {
                         s.move_with(|map, selection| {
-                            let original_position = (selection.head(), selection.goal);
+                            let original_position = if is_not_visual {
+                                (selection.head(), selection.goal)
+                            } else {
+                                (selection.tail(), selection.goal)
+                            };
                             original_positions.insert(selection.id, original_position);
                             motion::Motion::CurrentLine.expand_selection(
                                 map,
                                 selection,
                                 times,
-                                true,
+                                false,
                                 &text_layout_details,
                             );
                         });
@@ -177,19 +182,24 @@ pub(crate) fn register(workspace: &mut Workspace, cx: &mut ViewContext<Workspace
         Vim::update(cx, |vim, cx| {
             let times = vim.take_count(cx);
             vim.record_current_action(cx);
+            let is_not_visual = !vim.state().mode.is_visual();
             vim.update_active_editor(cx, |_, editor, cx| {
                 let text_layout_details = editor.text_layout_details(cx);
                 let mut original_positions: std::collections::HashMap<_, _> = Default::default();
                 editor.transact(cx, |editor, cx| {
                     editor.change_selections(None, cx, |s| {
                         s.move_with(|map, selection| {
-                            let original_position = (selection.head(), selection.goal);
+                            let original_position = if is_not_visual {
+                                (selection.head(), selection.goal)
+                            } else {
+                                (selection.tail(), selection.goal)
+                            };
                             original_positions.insert(selection.id, original_position);
                             motion::Motion::CurrentLine.expand_selection(
                                 map,
                                 selection,
                                 times,
-                                true,
+                                false,
                                 &text_layout_details,
                             );
                         });

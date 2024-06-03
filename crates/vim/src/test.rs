@@ -179,7 +179,23 @@ async fn test_indent_outdent(cx: &mut gpui::TestAppContext) {
 
     // works in visual mode
     cx.simulate_keystrokes("shift-v down >");
-    cx.assert_editor_state("aa\n    bb\n ˇ   cc");
+    cx.assert_editor_state("aa\n ˇ   bb\n    cc");
+}
+
+async fn test_indent_outdent_with_times(cx: &mut gpui::TestAppContext) {
+    let mut cx = NeovimBackedTestContext::new(cx).await;
+
+    // works in normal mode
+    cx.set_state(indoc! {"aa\nbˇb\ncc"}, Mode::Normal);
+    cx.simulate_keystrokes("2 > >");
+    cx.assert_editor_state("aa\n ˇ   bb\n    cc");
+    cx.simulate_keystrokes("2 < <");
+    cx.assert_editor_state("aa\nbˇb\ncc");
+
+    cx.simulate_keystrokes("4 > >");
+    cx.assert_editor_state("aa\n ˇ   bb\n    cc");
+    cx.simulate_keystrokes("4 < <");
+    cx.assert_editor_state("aa\nbˇb\ncc");
 }
 
 #[gpui::test]
