@@ -1,3 +1,4 @@
+use anyhow;
 use collections::HashMap;
 use futures::{future::join_all, Future};
 use serde::Deserialize;
@@ -25,7 +26,6 @@ use crate::{
     util::{end_of_document, start_of_document},
 };
 
-// todo change the name of this
 pub use crate::input_display::InputDisplay;
 
 mod editor_events;
@@ -535,7 +535,7 @@ impl EasyMotion {
             && workspace.is_split()
             && Self::workspace_has_multiple_editors(workspace, cx)
         {
-            todo!()
+            EasyMotion::word_multipane(WordType::SubWord, workspace, cx);
         } else {
             EasyMotion::word_single_pane(WordType::SubWord, direction, cx);
         }
@@ -549,7 +549,7 @@ impl EasyMotion {
             && workspace.is_split()
             && Self::workspace_has_multiple_editors(workspace, cx)
         {
-            todo!()
+            EasyMotion::word_multipane(WordType::FullWord, workspace, cx);
         } else {
             EasyMotion::word_single_pane(WordType::FullWord, direction, cx);
         }
@@ -667,9 +667,7 @@ impl EasyMotion {
     }
 
     fn pattern_submit(workspace: &mut Workspace, cx: &mut WindowContext) {
-        if let Some(state) =
-            Self::update(cx, |easy, _| Some(easy.multipane_state.take()?)).flatten()
-        {
+        if let Some(state) = Self::update(cx, |easy, _| easy.multipane_state.take()).flatten() {
             let EditorState::Pattern(pattern) = state else {
                 return;
             };
@@ -1029,30 +1027,24 @@ impl EasyMotion {
         cx.spawn(|editor, mut cx| async move {
             let entity_id = editor.entity_id();
             let Some(editor) = editor.upgrade() else {
-                return;
+                return anyhow::Result::Err(anyhow::Error::msg("editor upgrade failed"));
             };
 
             let matches = task.await;
-            let res = editor.update(&mut cx, move |editor, cx| {
+            let state = editor.update(&mut cx, move |editor, cx| {
                 editor.clear_search_within_ranges(cx);
                 let new_state = Self::handle_new_matches(matches, direction, editor, cx);
                 let ctx = new_state.keymap_context_layer();
                 editor.set_keymap_context_layer::<Self>(ctx, cx);
                 new_state
+            })?;
+            Self::update_async(&mut cx, move |easy, cx| {
+                easy.editor_states.insert(entity_id, state);
+                cx.notify();
             });
-            match res {
-                Ok(state) => {
-                    Self::update_async(&mut cx, move |easy, cx| {
-                        easy.editor_states.insert(entity_id, state);
-                        cx.notify();
-                    });
-                }
-                Err(err) => {
-                    dbg!(err);
-                }
-            }
+            anyhow::Result::Ok(())
         })
-        .detach();
+        .detach_and_log_err(cx);
 
         EditorState::PendingSearch
     }
