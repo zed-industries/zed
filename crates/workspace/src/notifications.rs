@@ -122,6 +122,15 @@ impl Workspace {
         }
     }
 
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn notification_ids(&self) -> Vec<NotificationId> {
+        self.notifications
+            .iter()
+            .map(|(id, _)| id)
+            .cloned()
+            .collect()
+    }
+
     pub fn show_notification<V: Notification>(
         &mut self,
         id: NotificationId,

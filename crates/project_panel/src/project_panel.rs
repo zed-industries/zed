@@ -2407,13 +2407,16 @@ impl ClipboardEntry {
 mod tests {
     use super::*;
     use collections::HashSet;
-    use gpui::{TestAppContext, View, VisualTestContext, WindowHandle};
+    use gpui::{Empty, TestAppContext, View, VisualTestContext, WindowHandle};
     use pretty_assertions::assert_eq;
     use project::{FakeFs, WorktreeSettings};
     use serde_json::json;
     use settings::SettingsStore;
     use std::path::{Path, PathBuf};
-    use workspace::AppState;
+    use workspace::{
+        item::{Item, ProjectItem},
+        register_project_item, AppState,
+    };
 
     #[gpui::test]
     async fn test_visible_list(cx: &mut gpui::TestAppContext) {
@@ -4526,6 +4529,199 @@ mod tests {
         );
     }
 
+    #[gpui::test]
+    async fn test_creating_excluded_entries(cx: &mut gpui::TestAppContext) {
+        init_test(cx);
+        cx.update(|cx| {
+            cx.update_global::<SettingsStore, _>(|store, cx| {
+                store.update_user_settings::<WorktreeSettings>(cx, |project_settings| {
+                    project_settings.file_scan_exclusions =
+                        Some(vec!["excluded_dir".to_string(), "**/.git".to_string()]);
+                });
+            });
+        });
+
+        cx.update(|cx| {
+            register_project_item::<TestProjectItemView>(cx);
+        });
+
+        let fs = FakeFs::new(cx.executor().clone());
+        fs.insert_tree(
+            "/root1",
+            json!({
+                ".dockerignore": "",
+                ".git": {
+                    "HEAD": "",
+                },
+            }),
+        )
+        .await;
+
+        let project = Project::test(fs.clone(), ["/root1".as_ref()], cx).await;
+        let workspace = cx.add_window(|cx| Workspace::test_new(project.clone(), cx));
+        let cx = &mut VisualTestContext::from_window(*workspace, cx);
+        let panel = workspace
+            .update(cx, |workspace, cx| {
+                let panel = ProjectPanel::new(workspace, cx);
+                workspace.add_panel(panel.clone(), cx);
+                panel
+            })
+            .unwrap();
+
+        select_path(&panel, "root1", cx);
+        assert_eq!(
+            visible_entries_as_strings(&panel, 0..10, cx),
+            &["v root1  <== selected", "      .dockerignore",]
+        );
+        workspace
+            .update(cx, |workspace, cx| {
+                assert!(
+                    workspace.active_item(cx).is_none(),
+                    "Should have no active items in the beginning"
+                );
+            })
+            .unwrap();
+
+        let excluded_file_path = ".git/COMMIT_EDITMSG";
+        let excluded_dir_path = "excluded_dir";
+
+        panel.update(cx, |panel, cx| panel.new_file(&NewFile, cx));
+        panel.update(cx, |panel, cx| {
+            assert!(panel.filename_editor.read(cx).is_focused(cx));
+        });
+        panel
+            .update(cx, |panel, cx| {
+                panel
+                    .filename_editor
+                    .update(cx, |editor, cx| editor.set_text(excluded_file_path, cx));
+                panel.confirm_edit(cx).unwrap()
+            })
+            .await
+            .unwrap();
+
+        assert_eq!(
+            visible_entries_as_strings(&panel, 0..13, cx),
+            &["v root1", "      .dockerignore"],
+            "Excluded dir should not be shown after opening a file in it"
+        );
+        panel.update(cx, |panel, cx| {
+            assert!(
+                !panel.filename_editor.read(cx).is_focused(cx),
+                "Should have closed the file name editor"
+            );
+        });
+        workspace
+            .update(cx, |workspace, cx| {
+                let active_entry_path = workspace
+                    .active_item(cx)
+                    .expect("should have opened and activated the excluded item")
+                    .act_as::<TestProjectItemView>(cx)
+                    .expect(
+                        "should have opened the corresponding project item for the excluded item",
+                    )
+                    .read(cx)
+                    .path
+                    .clone();
+                assert_eq!(
+                    active_entry_path.path.as_ref(),
+                    Path::new(excluded_file_path),
+                    "Should open the excluded file"
+                );
+
+                assert!(
+                    workspace.notification_ids().is_empty(),
+                    "Should have no notifications after opening an excluded file"
+                );
+            })
+            .unwrap();
+        assert!(
+            fs.is_file(Path::new("/root1/.git/COMMIT_EDITMSG")).await,
+            "Should have created the excluded file"
+        );
+
+        select_path(&panel, "root1", cx);
+        panel.update(cx, |panel, cx| panel.new_directory(&NewDirectory, cx));
+        panel.update(cx, |panel, cx| {
+            assert!(panel.filename_editor.read(cx).is_focused(cx));
+        });
+        panel
+            .update(cx, |panel, cx| {
+                panel
+                    .filename_editor
+                    .update(cx, |editor, cx| editor.set_text(excluded_file_path, cx));
+                panel.confirm_edit(cx).unwrap()
+            })
+            .await
+            .unwrap();
+
+        assert_eq!(
+            visible_entries_as_strings(&panel, 0..13, cx),
+            &["v root1", "      .dockerignore"],
+            "Should not change the project panel after trying to create an excluded directorya directory with the same name as the excluded file"
+        );
+        panel.update(cx, |panel, cx| {
+            assert!(
+                !panel.filename_editor.read(cx).is_focused(cx),
+                "Should have closed the file name editor"
+            );
+        });
+        workspace
+            .update(cx, |workspace, cx| {
+                let notifications = workspace.notification_ids();
+                assert_eq!(
+                    notifications.len(),
+                    1,
+                    "Should receive one notification with the error message"
+                );
+                workspace.dismiss_notification(notifications.first().unwrap(), cx);
+                assert!(workspace.notification_ids().is_empty());
+            })
+            .unwrap();
+
+        select_path(&panel, "root1", cx);
+        panel.update(cx, |panel, cx| panel.new_directory(&NewDirectory, cx));
+        panel.update(cx, |panel, cx| {
+            assert!(panel.filename_editor.read(cx).is_focused(cx));
+        });
+        panel
+            .update(cx, |panel, cx| {
+                panel
+                    .filename_editor
+                    .update(cx, |editor, cx| editor.set_text(excluded_dir_path, cx));
+                panel.confirm_edit(cx).unwrap()
+            })
+            .await
+            .unwrap();
+
+        assert_eq!(
+            visible_entries_as_strings(&panel, 0..13, cx),
+            &["v root1", "      .dockerignore"],
+            "Should not change the project panel after trying to create an excluded directory"
+        );
+        panel.update(cx, |panel, cx| {
+            assert!(
+                !panel.filename_editor.read(cx).is_focused(cx),
+                "Should have closed the file name editor"
+            );
+        });
+        workspace
+            .update(cx, |workspace, cx| {
+                let notifications = workspace.notification_ids();
+                assert_eq!(
+                    notifications.len(),
+                    1,
+                    "Should receive one notification explaining that no directory is actually shown"
+                );
+                workspace.dismiss_notification(notifications.first().unwrap(), cx);
+                assert!(workspace.notification_ids().is_empty());
+            })
+            .unwrap();
+        assert!(
+            fs.is_dir(Path::new("/root1/excluded_dir")).await,
+            "Should have created the excluded directory"
+        );
+    }
+
     fn toggle_expand_dir(
         panel: &View<ProjectPanel>,
         path: impl AsRef<Path>,
@@ -4753,5 +4949,69 @@ mod tests {
                 );
             })
             .unwrap();
+    }
+
+    struct TestProjectItemView {
+        focus_handle: FocusHandle,
+        path: ProjectPath,
+    }
+
+    struct TestProjectItem {
+        path: ProjectPath,
+    }
+
+    impl project::Item for TestProjectItem {
+        fn try_open(
+            _project: &Model<Project>,
+            path: &ProjectPath,
+            cx: &mut AppContext,
+        ) -> Option<Task<gpui::Result<Model<Self>>>> {
+            let path = path.clone();
+            Some(cx.spawn(|mut cx| async move { cx.new_model(|_| Self { path }) }))
+        }
+
+        fn entry_id(&self, _: &AppContext) -> Option<ProjectEntryId> {
+            None
+        }
+
+        fn project_path(&self, _: &AppContext) -> Option<ProjectPath> {
+            Some(self.path.clone())
+        }
+    }
+
+    impl ProjectItem for TestProjectItemView {
+        type Item = TestProjectItem;
+
+        fn for_project_item(
+            _: Model<Project>,
+            project_item: Model<Self::Item>,
+            cx: &mut ViewContext<Self>,
+        ) -> Self
+        where
+            Self: Sized,
+        {
+            Self {
+                path: project_item.update(cx, |project_item, _| project_item.path.clone()),
+                focus_handle: cx.focus_handle(),
+            }
+        }
+    }
+
+    impl Item for TestProjectItemView {
+        type Event = ();
+    }
+
+    impl EventEmitter<()> for TestProjectItemView {}
+
+    impl FocusableView for TestProjectItemView {
+        fn focus_handle(&self, _: &AppContext) -> FocusHandle {
+            self.focus_handle.clone()
+        }
+    }
+
+    impl Render for TestProjectItemView {
+        fn render(&mut self, _: &mut ViewContext<Self>) -> impl IntoElement {
+            Empty
+        }
     }
 }
