@@ -14,6 +14,14 @@ use rustdoc_to_markdown::convert_rustdoc_to_markdown;
 use ui::{prelude::*, ButtonLike, ElevationIndex};
 use workspace::Workspace;
 
+#[derive(Debug, Clone, Copy)]
+enum RustdocSource {
+    /// The docs were sourced from local `cargo doc` output.
+    Local,
+    /// The docs were sourced from `docs.rs`.
+    DocsDotRs,
+}
+
 pub(crate) struct RustdocSlashCommand;
 
 impl RustdocSlashCommand {
@@ -23,7 +31,7 @@ impl RustdocSlashCommand {
         crate_name: String,
         module_path: Vec<String>,
         path_to_cargo_toml: Option<&Path>,
-    ) -> Result<String> {
+    ) -> Result<(RustdocSource, String)> {
         let cargo_workspace_root = path_to_cargo_toml.and_then(|path| path.parent());
         if let Some(cargo_workspace_root) = cargo_workspace_root {
             let mut local_cargo_doc_path = cargo_workspace_root.join("target/doc");
@@ -34,7 +42,10 @@ impl RustdocSlashCommand {
             local_cargo_doc_path.push("index.html");
 
             if let Ok(contents) = fs.load(&local_cargo_doc_path).await {
-                return convert_rustdoc_to_markdown(contents.as_bytes());
+                return Ok((
+                    RustdocSource::Local,
+                    convert_rustdoc_to_markdown(contents.as_bytes())?,
+                ));
             }
         }
 
@@ -67,7 +78,10 @@ impl RustdocSlashCommand {
             );
         }
 
-        convert_rustdoc_to_markdown(&body[..])
+        Ok((
+            RustdocSource::DocsDotRs,
+            convert_rustdoc_to_markdown(&body[..])?,
+        ))
     }
 
     fn path_to_cargo_toml(project: Model<Project>, cx: &mut AppContext) -> Option<Arc<Path>> {
@@ -161,7 +175,7 @@ impl SlashCommand for RustdocSlashCommand {
             Some(SharedString::from(module_path.join("::")))
         };
         cx.foreground_executor().spawn(async move {
-            let text = text.await?;
+            let (source, text) = text.await?;
             let range = 0..text.len();
             Ok(SlashCommandOutput {
                 text,
@@ -171,6 +185,7 @@ impl SlashCommand for RustdocSlashCommand {
                         RustdocPlaceholder {
                             id,
                             unfold,
+                            source,
                             crate_name: crate_name.clone(),
                             module_path: module_path.clone(),
                         }
@@ -186,6 +201,7 @@ impl SlashCommand for RustdocSlashCommand {
 struct RustdocPlaceholder {
     pub id: ElementId,
     pub unfold: Arc<dyn Fn(&mut WindowContext)>,
+    pub source: RustdocSource,
     pub crate_name: SharedString,
     pub module_path: Option<SharedString>,
 }
@@ -203,7 +219,13 @@ impl RenderOnce for RustdocPlaceholder {
             .style(ButtonStyle::Filled)
             .layer(ElevationIndex::ElevatedSurface)
             .child(Icon::new(IconName::FileRust))
-            .child(Label::new(format!("rustdoc: {crate_path}")))
+            .child(Label::new(format!(
+                "rustdoc ({source}): {crate_path}",
+                source = match self.source {
+                    RustdocSource::Local => "local",
+                    RustdocSource::DocsDotRs => "docs.rs",
+                }
+            )))
             .on_click(move |_, cx| unfold(cx))
     }
 }
