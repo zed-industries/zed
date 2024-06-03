@@ -2172,7 +2172,6 @@ impl Editor {
         show_completions: bool,
         cx: &mut ViewContext<Self>,
     ) {
-        #[cfg(target_os = "linux")]
         cx.update_ime_position();
 
         // Copy selections to primary selection buffer

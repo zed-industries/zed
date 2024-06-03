@@ -270,7 +270,6 @@ impl PlatformWindow for TestWindow {
         false
     }
 
-    #[cfg(target_os = "linux")]
     fn update_ime_position(&self) {}
 }
 

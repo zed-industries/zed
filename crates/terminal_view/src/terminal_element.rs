@@ -930,7 +930,6 @@ impl InputHandler for TerminalInputHandler {
 
         self.workspace
             .update(cx, |this, cx| {
-                #[cfg(target_os = "linux")]
                 cx.update_ime_position();
 
                 let telemetry = this.project().read(cx).client().telemetry().clone();

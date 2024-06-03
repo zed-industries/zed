@@ -3409,7 +3409,6 @@ impl<'a> WindowContext<'a> {
         self.window.platform_window.toggle_fullscreen();
     }
 
-    #[cfg(target_os = "linux")]
     /// Updates the IME panel position suggestions for languages like japanese, chinese.
     pub fn update_ime_position(&self) {
         self.window.platform_window.update_ime_position();

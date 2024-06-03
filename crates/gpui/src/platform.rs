@@ -247,8 +247,7 @@ pub(crate) trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
     fn start_system_move(&self);
     fn should_render_window_controls(&self) -> bool;
 
-    #[cfg(target_os = "linux")]
-    fn update_ime_position(&self);
+    fn update_ime_position(&self) {}
 
     #[cfg(any(test, feature = "test-support"))]
     fn as_test(&mut self) -> Option<&mut TestWindow> {

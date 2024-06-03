@@ -591,7 +591,6 @@ fn subscribe_for_terminal_events(
             Event::BreadcrumbsChanged => cx.emit(ItemEvent::UpdateBreadcrumbs),
             Event::CloseTerminal => cx.emit(ItemEvent::CloseItem),
             Event::SelectionsChanged => {
-                #[cfg(target_os = "linux")]
                 cx.update_ime_position();
                 cx.emit(SearchEvent::ActiveMatchChanged)
             }
@@ -720,7 +719,6 @@ impl TerminalView {
     fn focus_in(&mut self, cx: &mut ViewContext<Self>) {
         self.terminal.read(cx).focus_in();
         self.blink_cursors(self.blink_epoch, cx);
-        #[cfg(target_os = "linux")]
         cx.update_ime_position();
         cx.notify();
     }
