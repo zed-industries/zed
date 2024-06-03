@@ -416,7 +416,7 @@ mod tests {
     }
 
     #[test]
-    fn test_add_environment_path_empty_env() {
+    fn test_add_environment_path_with_empty_env() {
         let tmp_path = std::path::PathBuf::from("/tmp/new");
         let mut env = HashMap::default();
         env.insert("OTHER".to_string(), "aaa".to_string());
