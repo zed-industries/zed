@@ -268,7 +268,7 @@ impl Project {
             );
 
             // We need to set the PATH to include the virtual environment's bin directory
-            prepare_env_paths(env, &path.join("bin")).log_err();
+            add_environment_path(env, &path.join("bin")).log_err();
         }
     }
 
@@ -370,7 +370,7 @@ fn prepare_ssh_shell(
     #[cfg(not(target_os = "windows"))]
     std::fs::set_permissions(ssh_path, smol::fs::unix::PermissionsExt::from_mode(0o755))?;
 
-    prepare_env_paths(env, tmp_dir)?;
+    add_environment_path(env, tmp_dir)?;
 
     let mut args = shlex::split(&ssh_command).unwrap_or_default();
     let program = args.drain(0..1).next().unwrap_or("ssh".to_string());
@@ -395,7 +395,7 @@ mod tests {
     use collections::HashMap;
 
     #[test]
-    fn test_prepare_env_paths() {
+    fn test_add_environment_path() {
         let tmp_path = std::path::PathBuf::from("/tmp/new");
         let mut env = HashMap::default();
         let old_path = if cfg!(windows) {
@@ -406,7 +406,7 @@ mod tests {
         env.insert("PATH".to_string(), old_path.to_string());
         env.insert("OTHER".to_string(), "aaa".to_string());
 
-        super::prepare_env_paths(&mut env, &tmp_path).unwrap();
+        super::add_environment_path(&mut env, &tmp_path).unwrap();
         if cfg!(windows) {
             assert_eq!(env.get("PATH").unwrap(), &format!("/tmp/new;{}", old_path));
         } else {
@@ -417,7 +417,7 @@ mod tests {
         let mut env = HashMap::default();
         env.insert("OTHER".to_string(), "aaa".to_string());
         let os_path = std::env::var("PATH").unwrap();
-        super::prepare_env_paths(&mut env, &tmp_path).unwrap();
+        super::add_environment_path(&mut env, &tmp_path).unwrap();
         if cfg!(windows) {
             assert_eq!(env.get("PATH").unwrap(), &format!("/tmp/new;{}", os_path));
         } else {
