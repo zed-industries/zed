@@ -409,13 +409,12 @@ impl PromptLibrary {
     fn render_prompt_list(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         v_flex()
             .id("prompt-list")
-            .bg(cx.theme().colors().surface_background)
+            .bg(cx.theme().colors().panel_background)
             .h_full()
             .w_1_3()
             .overflow_x_hidden()
             .child(
                 h_flex()
-                    .bg(cx.theme().colors().background)
                     .p(Spacing::Small.rems(cx))
                     .border_b_1()
                     .border_color(cx.theme().colors().border)
