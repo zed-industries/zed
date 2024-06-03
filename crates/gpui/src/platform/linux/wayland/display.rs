@@ -12,6 +12,7 @@ use crate::{Bounds, DevicePixels, DisplayId, PlatformDisplay};
 pub(crate) struct WaylandDisplay {
     /// The ID of the wl_output object
     pub id: ObjectId,
+    pub name: Option<String>,
     pub bounds: Bounds<DevicePixels>,
 }
 
@@ -27,7 +28,11 @@ impl PlatformDisplay for WaylandDisplay {
     }
 
     fn uuid(&self) -> anyhow::Result<Uuid> {
-        Err(anyhow::anyhow!("Display UUID is not supported on Wayland"))
+        if let Some(name) = &self.name {
+            Ok(Uuid::new_v5(&Uuid::NAMESPACE_DNS, name.as_bytes()))
+        } else {
+            Err(anyhow::anyhow!("Wayland display does not have a name"))
+        }
     }
 
     fn bounds(&self) -> Bounds<DevicePixels> {

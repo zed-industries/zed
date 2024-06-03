@@ -1,19 +1,18 @@
-use crate::prompts::{generate_content_prompt, PromptLibrary, PromptManager};
-use crate::slash_command::{rustdoc_command, search_command, tabs_command};
 use crate::{
     assistant_settings::{AssistantDockPosition, AssistantSettings},
     codegen::{self, Codegen, CodegenKind},
+    prompt_library::{open_prompt_library, PromptMetadata, PromptStore},
+    prompts::generate_content_prompt,
     search::*,
     slash_command::{
-        active_command, file_command, project_command, prompt_command,
-        SlashCommandCompletionProvider, SlashCommandLine, SlashCommandRegistry,
+        prompt_command::PromptPlaceholder, SlashCommandCompletionProvider, SlashCommandLine,
+        SlashCommandRegistry,
     },
     ApplyEdit, Assist, CompletionProvider, ConfirmCommand, CycleMessageRole, InlineAssist,
     LanguageModelRequest, LanguageModelRequestMessage, MessageId, MessageMetadata, MessageStatus,
-    QuoteSelection, ResetKey, Role, SavedConversation, SavedConversationMetadata, SavedMessage,
-    Split, ToggleFocus, ToggleHistory,
+    ModelSelector, QuoteSelection, ResetKey, Role, SavedConversation, SavedConversationMetadata,
+    SavedMessage, Split, ToggleFocus, ToggleHistory, ToggleModelSelector,
 };
-use crate::{ModelSelector, ToggleModelSelector};
 use anyhow::{anyhow, Result};
 use assistant_slash_command::{SlashCommandOutput, SlashCommandOutputSection};
 use client::telemetry::Telemetry;
@@ -29,19 +28,17 @@ use editor::{
     ToOffset as _, ToPoint,
 };
 use editor::{display_map::FlapId, FoldPlaceholder};
-use feature_flags::{FeatureFlag, FeatureFlagAppExt, FeatureFlagViewExt};
 use file_icons::FileIcons;
 use fs::Fs;
 use futures::future::Shared;
 use futures::{FutureExt, StreamExt};
 use gpui::{
-    canvas, div, point, relative, rems, uniform_list, Action, AnyElement, AnyView, AppContext,
-    AsyncAppContext, AsyncWindowContext, AvailableSpace, ClipboardItem, Context, Empty,
-    EventEmitter, FocusHandle, FocusableView, FontStyle, FontWeight, HighlightStyle,
-    InteractiveElement, IntoElement, Model, ModelContext, ParentElement, Pixels, Render,
-    SharedString, StatefulInteractiveElement, Styled, Subscription, Task, TextStyle,
-    UniformListScrollHandle, View, ViewContext, VisualContext, WeakModel, WeakView, WhiteSpace,
-    WindowContext,
+    div, point, relative, rems, uniform_list, Action, AnyElement, AnyView, AppContext,
+    AsyncAppContext, AsyncWindowContext, ClipboardItem, Context, Empty, EventEmitter, FocusHandle,
+    FocusableView, FontStyle, FontWeight, HighlightStyle, InteractiveElement, IntoElement, Model,
+    ModelContext, ParentElement, Pixels, Render, SharedString, StatefulInteractiveElement, Styled,
+    Subscription, Task, TextStyle, UniformListScrollHandle, View, ViewContext, VisualContext,
+    WeakModel, WeakView, WhiteSpace, WindowContext,
 };
 use language::LspAdapterDelegate;
 use language::{
@@ -111,7 +108,6 @@ pub struct AssistantPanel {
     toolbar: View<Toolbar>,
     languages: Arc<LanguageRegistry>,
     slash_commands: Arc<SlashCommandRegistry>,
-    prompt_library: Arc<PromptLibrary>,
     fs: Arc<dyn Fs>,
     telemetry: Arc<Telemetry>,
     _subscriptions: Vec<Subscription>,
@@ -122,17 +118,19 @@ pub struct AssistantPanel {
     _watch_saved_conversations: Task<Result<()>>,
     authentication_prompt: Option<AnyView>,
     model_menu_handle: PopoverMenuHandle<ContextMenu>,
+    default_prompt: DefaultPrompt,
+    _watch_prompt_store: Task<()>,
+}
+
+#[derive(Default)]
+struct DefaultPrompt {
+    text: String,
+    sections: Vec<SlashCommandOutputSection<usize>>,
 }
 
 struct ActiveConversationEditor {
     editor: View<ConversationEditor>,
     _subscriptions: Vec<Subscription>,
-}
-
-struct PromptLibraryFeatureFlag;
-
-impl FeatureFlag for PromptLibraryFeatureFlag {
-    const NAME: &'static str = "prompt-library";
 }
 
 impl AssistantPanel {
@@ -148,21 +146,13 @@ impl AssistantPanel {
                 .await
                 .log_err()
                 .unwrap_or_default();
-
-            let prompt_library = Arc::new(
-                PromptLibrary::load_index(fs.clone())
-                    .await
-                    .log_err()
-                    .unwrap_or_default(),
-            );
+            let prompt_store = cx.update(|cx| PromptStore::global(cx))?.await?;
+            let default_prompts = prompt_store.load_default().await?;
 
             // TODO: deserialize state.
             let workspace_handle = workspace.clone();
             workspace.update(&mut cx, |workspace, cx| {
                 cx.new_view::<Self>(|cx| {
-                    cx.observe_flag::<PromptLibraryFeatureFlag, _>(|_, _, cx| cx.notify())
-                        .detach();
-
                     const CONVERSATION_WATCH_DURATION: Duration = Duration::from_millis(100);
                     let _watch_saved_conversations = cx.spawn(move |this, mut cx| async move {
                         let mut events = fs
@@ -181,6 +171,22 @@ impl AssistantPanel {
                         }
 
                         anyhow::Ok(())
+                    });
+
+                    let _watch_prompt_store = cx.spawn(|this, mut cx| async move {
+                        let mut updates = prompt_store.updates();
+                        while updates.changed().await.is_ok() {
+                            let Some(prompts) = prompt_store.load_default().await.log_err() else {
+                                continue;
+                            };
+
+                            if this
+                                .update(&mut cx, |this, _cx| this.update_default_prompt(prompts))
+                                .is_err()
+                            {
+                                break;
+                            }
+                        }
                     });
 
                     let toolbar = cx.new_view(|cx| {
@@ -210,24 +216,7 @@ impl AssistantPanel {
                     })
                     .detach();
 
-                    let slash_command_registry = SlashCommandRegistry::global(cx);
-
-                    slash_command_registry.register_command(file_command::FileSlashCommand, true);
-                    slash_command_registry.register_command(
-                        prompt_command::PromptSlashCommand::new(prompt_library.clone()),
-                        true,
-                    );
-                    slash_command_registry
-                        .register_command(active_command::ActiveSlashCommand, true);
-                    slash_command_registry.register_command(tabs_command::TabsSlashCommand, true);
-                    slash_command_registry
-                        .register_command(project_command::ProjectSlashCommand, true);
-                    slash_command_registry
-                        .register_command(search_command::SearchSlashCommand, true);
-                    slash_command_registry
-                        .register_command(rustdoc_command::RustdocSlashCommand, false);
-
-                    Self {
+                    let mut this = Self {
                         workspace: workspace_handle,
                         active_conversation_editor: None,
                         show_saved_conversations: false,
@@ -237,8 +226,7 @@ impl AssistantPanel {
                         focus_handle,
                         toolbar,
                         languages: workspace.app_state().languages.clone(),
-                        slash_commands: slash_command_registry,
-                        prompt_library,
+                        slash_commands: SlashCommandRegistry::global(cx),
                         fs: workspace.app_state().fs.clone(),
                         telemetry: workspace.client().telemetry().clone(),
                         width: None,
@@ -251,7 +239,11 @@ impl AssistantPanel {
                         _watch_saved_conversations,
                         authentication_prompt: None,
                         model_menu_handle: PopoverMenuHandle::default(),
-                    }
+                        default_prompt: DefaultPrompt::default(),
+                        _watch_prompt_store,
+                    };
+                    this.update_default_prompt(default_prompts);
+                    this
                 })
             })
         })
@@ -272,6 +264,55 @@ impl AssistantPanel {
         self.toolbar
             .update(cx, |toolbar, cx| toolbar.focus_changed(false, cx));
         cx.notify();
+    }
+
+    fn update_default_prompt(&mut self, prompts: Vec<(PromptMetadata, String)>) {
+        self.default_prompt.text.clear();
+        self.default_prompt.sections.clear();
+        if !prompts.is_empty() {
+            self.default_prompt.text.push_str("Default Prompt:\n");
+        }
+
+        for (metadata, body) in prompts {
+            let section_start = self.default_prompt.text.len();
+            self.default_prompt.text.push_str(&body);
+            let section_end = self.default_prompt.text.len();
+            self.default_prompt
+                .sections
+                .push(SlashCommandOutputSection {
+                    range: section_start..section_end,
+                    render_placeholder: Arc::new(move |id, unfold, _cx| {
+                        PromptPlaceholder {
+                            title: metadata
+                                .title
+                                .clone()
+                                .unwrap_or_else(|| SharedString::from("Untitled")),
+                            id,
+                            unfold,
+                        }
+                        .into_any_element()
+                    }),
+                });
+            self.default_prompt.text.push('\n');
+        }
+        self.default_prompt.text.pop();
+
+        if !self.default_prompt.text.is_empty() {
+            self.default_prompt.sections.insert(
+                0,
+                SlashCommandOutputSection {
+                    range: 0..self.default_prompt.text.len(),
+                    render_placeholder: Arc::new(move |id, unfold, _cx| {
+                        PromptPlaceholder {
+                            title: "Default".into(),
+                            id,
+                            unfold,
+                        }
+                        .into_any_element()
+                    }),
+                },
+            )
+        }
     }
 
     fn completion_provider_changed(
@@ -823,6 +864,7 @@ impl AssistantPanel {
 
         let editor = cx.new_view(|cx| {
             ConversationEditor::new(
+                &self.default_prompt,
                 self.languages.clone(),
                 self.slash_commands.clone(),
                 self.fs.clone(),
@@ -1154,21 +1196,6 @@ impl AssistantPanel {
         })
     }
 
-    fn show_prompt_manager(&mut self, cx: &mut ViewContext<Self>) {
-        if let Some(workspace) = self.workspace.upgrade() {
-            workspace.update(cx, |workspace, cx| {
-                workspace.toggle_modal(cx, |cx| {
-                    PromptManager::new(
-                        self.prompt_library.clone(),
-                        self.languages.clone(),
-                        self.fs.clone(),
-                        cx,
-                    )
-                })
-            })
-        }
-    }
-
     fn is_authenticated(&mut self, cx: &mut ViewContext<Self>) -> bool {
         CompletionProvider::global(cx).is_authenticated()
     }
@@ -1211,15 +1238,17 @@ impl AssistantPanel {
                         h_flex()
                             .gap_1()
                             .child(self.render_inject_context_menu(cx))
-                            .children(
-                                cx.has_flag::<PromptLibraryFeatureFlag>().then_some(
-                                    IconButton::new("show_prompt_manager", IconName::Library)
-                                        .icon_size(IconSize::Small)
-                                        .on_click(cx.listener(|this, _event, cx| {
-                                            this.show_prompt_manager(cx)
-                                        }))
-                                        .tooltip(|cx| Tooltip::text("Prompt Library…", cx)),
-                                ),
+                            .child(
+                                IconButton::new("show-prompt-library", IconName::Library)
+                                    .icon_size(IconSize::Small)
+                                    .on_click({
+                                        let language_registry = self.languages.clone();
+                                        cx.listener(move |_this, _event, cx| {
+                                            open_prompt_library(language_registry.clone(), cx)
+                                                .detach_and_log_err(cx);
+                                        })
+                                    })
+                                    .tooltip(|cx| Tooltip::text("Prompt Library…", cx)),
                             ),
                     ),
             );
@@ -1261,30 +1290,18 @@ impl AssistantPanel {
                     let view = cx.view().clone();
                     let scroll_handle = self.saved_conversations_scroll_handle.clone();
                     let conversation_count = self.saved_conversations.len();
-                    canvas(
-                        move |bounds, cx| {
-                            let mut saved_conversations = uniform_list(
-                                view,
-                                "saved_conversations",
-                                conversation_count,
-                                |this, range, cx| {
-                                    range
-                                        .map(|ix| this.render_saved_conversation(ix, cx))
-                                        .collect()
-                                },
-                            )
-                            .track_scroll(scroll_handle)
-                            .into_any_element();
-                            saved_conversations.prepaint_as_root(
-                                bounds.origin,
-                                bounds.size.map(AvailableSpace::Definite),
-                                cx,
-                            );
-                            saved_conversations
+                    uniform_list(
+                        view,
+                        "saved_conversations",
+                        conversation_count,
+                        |this, range, cx| {
+                            range
+                                .map(|ix| this.render_saved_conversation(ix, cx))
+                                .collect()
                         },
-                        |_bounds, mut saved_conversations, cx| saved_conversations.paint(cx),
                     )
                     .size_full()
+                    .track_scroll(scroll_handle)
                     .into_any_element()
                 } else if let Some(editor) = self.active_conversation_editor() {
                     let editor = editor.clone();
@@ -2581,6 +2598,7 @@ pub struct ConversationEditor {
 
 impl ConversationEditor {
     fn new(
+        default_prompt: &DefaultPrompt,
         language_registry: Arc<LanguageRegistry>,
         slash_command_registry: Arc<SlashCommandRegistry>,
         fs: Arc<dyn Fs>,
@@ -2600,7 +2618,34 @@ impl ConversationEditor {
             )
         });
 
-        Self::for_conversation(conversation, fs, workspace, lsp_adapter_delegate, cx)
+        let mut this =
+            Self::for_conversation(conversation, fs, workspace, lsp_adapter_delegate, cx);
+
+        if !default_prompt.text.is_empty() {
+            this.editor
+                .update(cx, |editor, cx| editor.insert(&default_prompt.text, cx));
+            let snapshot = this.conversation.read(cx).buffer.read(cx).text_snapshot();
+            this.insert_slash_command_output_sections(
+                default_prompt
+                    .sections
+                    .iter()
+                    .map(|section| SlashCommandOutputSection {
+                        range: snapshot.anchor_after(section.range.start)
+                            ..snapshot.anchor_before(section.range.end),
+                        render_placeholder: section.render_placeholder.clone(),
+                    }),
+                cx,
+            );
+            this.split(&Split, cx);
+            this.conversation.update(cx, |this, _cx| {
+                this.messages_metadata
+                    .get_mut(&MessageId::default())
+                    .unwrap()
+                    .role = Role::System;
+            });
+        }
+
+        this
     }
 
     fn for_conversation(
@@ -2949,59 +2994,66 @@ impl ConversationEditor {
                 })
             }
             ConversationEvent::SlashCommandFinished { sections } => {
-                self.editor.update(cx, |editor, cx| {
-                    let buffer = editor.buffer().read(cx).snapshot(cx);
-                    let excerpt_id = *buffer.as_singleton().unwrap().0;
-                    let mut buffer_rows_to_fold = BTreeSet::new();
-                    let mut flaps = Vec::new();
-                    for section in sections {
-                        let start = buffer
-                            .anchor_in_excerpt(excerpt_id, section.range.start)
-                            .unwrap();
-                        let end = buffer
-                            .anchor_in_excerpt(excerpt_id, section.range.end)
-                            .unwrap();
-                        let buffer_row = MultiBufferRow(start.to_point(&buffer).row);
-                        buffer_rows_to_fold.insert(buffer_row);
-                        flaps.push(Flap::new(
-                            start..end,
-                            FoldPlaceholder {
-                                render: Arc::new({
-                                    let editor = cx.view().downgrade();
-                                    let render_placeholder = section.render_placeholder.clone();
-                                    move |fold_id, fold_range, cx| {
-                                        let editor = editor.clone();
-                                        let unfold = Arc::new(move |cx: &mut WindowContext| {
-                                            editor
-                                                .update(cx, |editor, cx| {
-                                                    let buffer_start = fold_range.start.to_point(
-                                                        &editor.buffer().read(cx).read(cx),
-                                                    );
-                                                    let buffer_row =
-                                                        MultiBufferRow(buffer_start.row);
-                                                    editor.unfold_at(&UnfoldAt { buffer_row }, cx);
-                                                })
-                                                .ok();
-                                        });
-                                        render_placeholder(fold_id.into(), unfold, cx)
-                                    }
-                                }),
-                                constrain_width: false,
-                                merge_adjacent: false,
-                            },
-                            render_slash_command_output_toggle,
-                            |_, _, _| Empty.into_any_element(),
-                        ));
-                    }
-
-                    editor.insert_flaps(flaps, cx);
-
-                    for buffer_row in buffer_rows_to_fold.into_iter().rev() {
-                        editor.fold_at(&FoldAt { buffer_row }, cx);
-                    }
-                });
+                self.insert_slash_command_output_sections(sections.iter().cloned(), cx);
             }
         }
+    }
+
+    fn insert_slash_command_output_sections(
+        &mut self,
+        sections: impl IntoIterator<Item = SlashCommandOutputSection<language::Anchor>>,
+        cx: &mut ViewContext<Self>,
+    ) {
+        self.editor.update(cx, |editor, cx| {
+            let buffer = editor.buffer().read(cx).snapshot(cx);
+            let excerpt_id = *buffer.as_singleton().unwrap().0;
+            let mut buffer_rows_to_fold = BTreeSet::new();
+            let mut flaps = Vec::new();
+            for section in sections {
+                let start = buffer
+                    .anchor_in_excerpt(excerpt_id, section.range.start)
+                    .unwrap();
+                let end = buffer
+                    .anchor_in_excerpt(excerpt_id, section.range.end)
+                    .unwrap();
+                let buffer_row = MultiBufferRow(start.to_point(&buffer).row);
+                buffer_rows_to_fold.insert(buffer_row);
+                flaps.push(Flap::new(
+                    start..end,
+                    FoldPlaceholder {
+                        render: Arc::new({
+                            let editor = cx.view().downgrade();
+                            let render_placeholder = section.render_placeholder.clone();
+                            move |fold_id, fold_range, cx| {
+                                let editor = editor.clone();
+                                let unfold = Arc::new(move |cx: &mut WindowContext| {
+                                    editor
+                                        .update(cx, |editor, cx| {
+                                            let buffer_start = fold_range
+                                                .start
+                                                .to_point(&editor.buffer().read(cx).read(cx));
+                                            let buffer_row = MultiBufferRow(buffer_start.row);
+                                            editor.unfold_at(&UnfoldAt { buffer_row }, cx);
+                                        })
+                                        .ok();
+                                });
+                                render_placeholder(fold_id.into(), unfold, cx)
+                            }
+                        }),
+                        constrain_width: false,
+                        merge_adjacent: false,
+                    },
+                    render_slash_command_output_toggle,
+                    |_, _, _| Empty.into_any_element(),
+                ));
+            }
+
+            editor.insert_flaps(flaps, cx);
+
+            for buffer_row in buffer_rows_to_fold.into_iter().rev() {
+                editor.fold_at(&FoldAt { buffer_row }, cx);
+            }
+        });
     }
 
     fn handle_editor_event(
@@ -3827,7 +3879,10 @@ fn make_lsp_adapter_delegate(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{FakeCompletionProvider, MessageId};
+    use crate::{
+        slash_command::{active_command, file_command},
+        FakeCompletionProvider, MessageId,
+    };
     use fs::FakeFs;
     use gpui::{AppContext, TestAppContext};
     use rope::Rope;
@@ -4177,14 +4232,9 @@ mod tests {
         )
         .await;
 
-        let prompt_library = Arc::new(PromptLibrary::default());
         let slash_command_registry = SlashCommandRegistry::new();
-
         slash_command_registry.register_command(file_command::FileSlashCommand, false);
-        slash_command_registry.register_command(
-            prompt_command::PromptSlashCommand::new(prompt_library.clone()),
-            false,
-        );
+        slash_command_registry.register_command(active_command::ActiveSlashCommand, false);
 
         let registry = Arc::new(LanguageRegistry::test(cx.executor()));
         let conversation = cx

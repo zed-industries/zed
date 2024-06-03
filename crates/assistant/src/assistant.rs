@@ -3,6 +3,7 @@ pub mod assistant_settings;
 mod codegen;
 mod completion_provider;
 mod model_selector;
+mod prompt_library;
 mod prompts;
 mod saved_conversation;
 mod search;
@@ -12,15 +13,21 @@ mod streaming_diff;
 pub use assistant_panel::AssistantPanel;
 
 use assistant_settings::{AnthropicModel, AssistantSettings, OpenAiModel, ZedDotDevModel};
+use assistant_slash_command::SlashCommandRegistry;
 use client::{proto, Client};
 use command_palette_hooks::CommandPaletteFilter;
 pub(crate) use completion_provider::*;
 use gpui::{actions, AppContext, Global, SharedString, UpdateGlobal};
 pub(crate) use model_selector::*;
+use prompt_library::PromptStore;
 pub(crate) use saved_conversation::*;
 use semantic_index::{CloudEmbeddingProvider, SemanticIndex};
 use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsStore};
+use slash_command::{
+    active_command, file_command, project_command, prompt_command, rustdoc_command, search_command,
+    tabs_command,
+};
 use std::{
     fmt::{self, Display},
     sync::Arc,
@@ -251,8 +258,11 @@ pub fn init(client: Arc<Client>, cx: &mut AppContext) {
         }
     })
     .detach();
+
+    prompt_library::init(cx);
     completion_provider::init(client, cx);
     assistant_slash_command::init(cx);
+    register_slash_commands(cx);
     assistant_panel::init(cx);
 
     CommandPaletteFilter::update_global(cx, |filter, _cx| {
@@ -266,11 +276,30 @@ pub fn init(client: Arc<Client>, cx: &mut AppContext) {
     cx.observe_global::<SettingsStore>(|cx| {
         Assistant::update_global(cx, |assistant, cx| {
             let settings = AssistantSettings::get_global(cx);
-
             assistant.set_enabled(settings.enabled, cx);
         });
     })
     .detach();
+}
+
+fn register_slash_commands(cx: &mut AppContext) {
+    let slash_command_registry = SlashCommandRegistry::global(cx);
+    slash_command_registry.register_command(file_command::FileSlashCommand, true);
+    slash_command_registry.register_command(active_command::ActiveSlashCommand, true);
+    slash_command_registry.register_command(tabs_command::TabsSlashCommand, true);
+    slash_command_registry.register_command(project_command::ProjectSlashCommand, true);
+    slash_command_registry.register_command(search_command::SearchSlashCommand, true);
+    slash_command_registry.register_command(rustdoc_command::RustdocSlashCommand, false);
+
+    let store = PromptStore::global(cx);
+    cx.background_executor()
+        .spawn(async move {
+            let store = store.await?;
+            slash_command_registry
+                .register_command(prompt_command::PromptSlashCommand::new(store), true);
+            anyhow::Ok(())
+        })
+        .detach_and_log_err(cx);
 }
 
 #[cfg(test)]

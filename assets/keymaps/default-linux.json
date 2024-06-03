@@ -217,6 +217,13 @@
     }
   },
   {
+    "context": "PromptLibrary",
+    "bindings": {
+      "ctrl-n": "prompt_library::NewPrompt",
+      "ctrl-shift-s": "prompt_library::ToggleDefaultPrompt"
+    }
+  },
+  {
     "context": "BufferSearchBar",
     "bindings": {
       "escape": "buffer_search::Dismiss",

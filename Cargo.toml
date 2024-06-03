@@ -150,6 +150,7 @@ assets = { path = "crates/assets" }
 assistant = { path = "crates/assistant" }
 assistant_slash_command = { path = "crates/assistant_slash_command" }
 assistant_tooling = { path = "crates/assistant_tooling" }
+async-watch = "0.3.1"
 audio = { path = "crates/audio" }
 auto_update = { path = "crates/auto_update" }
 base64 = "0.13"
@@ -166,6 +167,7 @@ color = { path = "crates/color" }
 command_palette = { path = "crates/command_palette" }
 command_palette_hooks = { path = "crates/command_palette_hooks" }
 copilot = { path = "crates/copilot" }
+dashmap = "5.5.3"
 db = { path = "crates/db" }
 diagnostics = { path = "crates/diagnostics" }
 editor = { path = "crates/editor" }
