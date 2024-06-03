@@ -12,7 +12,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     px, Bounds, DevicePixels, Hsla, Pixels, PlatformTextSystem, Point, Result, SharedString, Size,
-    StrikethroughStyle, UnderlineStyle,
+    StrikethroughStyle, TextStyle, UnderlineStyle, WindowContext,
 };
 use anyhow::anyhow;
 use collections::{BTreeSet, FxHashMap};
@@ -793,4 +793,26 @@ impl FontMetrics {
     pub fn bounding_box(&self, font_size: Pixels) -> Bounds<Pixels> {
         (self.bounding_box / self.units_per_em as f32 * font_size.0).map(px)
     }
+}
+
+/// Gives the total width of a monospace text of column characters in pixels
+pub fn column_pixels(text: &TextStyle, column: usize, cx: &WindowContext) -> Pixels {
+    let font_size = text.font_size.to_pixels(cx.rem_size());
+    let layout = cx
+        .text_system()
+        .shape_line(
+            SharedString::from(" ".repeat(column)),
+            font_size,
+            &[TextRun {
+                len: column,
+                font: text.font(),
+                color: Hsla::default(),
+                background_color: None,
+                underline: None,
+                strikethrough: None,
+            }],
+        )
+        .unwrap();
+
+    layout.width
 }

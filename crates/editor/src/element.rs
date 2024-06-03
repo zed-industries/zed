@@ -27,7 +27,7 @@ use client::ParticipantIndex;
 use collections::{BTreeMap, HashMap};
 use git::{blame::BlameEntry, diff::DiffHunkStatus, Oid};
 use gpui::{
-    anchored, deferred, div, fill, outline, point, px, quad, relative, size, svg,
+    anchored, column_pixels, deferred, div, fill, outline, point, px, quad, relative, size, svg,
     transparent_black, Action, AnchorCorner, AnyElement, AvailableSpace, Bounds, ClipboardItem,
     ContentMask, Corners, CursorStyle, DispatchPhase, Edges, Element, ElementInputHandler, Entity,
     FontId, GlobalElementId, Hitbox, Hsla, InteractiveElement, IntoElement, Length,
@@ -2391,7 +2391,6 @@ impl EditorElement {
     #[allow(clippy::too_many_arguments)]
     fn layout_overlays(
         &self,
-        snapshot: &EditorSnapshot,
         content_origin: gpui::Point<Pixels>,
         line_height: Pixels,
         visible_display_row_range: Range<DisplayRow>,
@@ -3733,24 +3732,7 @@ impl EditorElement {
 
     fn column_pixels(&self, column: usize, cx: &WindowContext) -> Pixels {
         let style = &self.style;
-        let font_size = style.text.font_size.to_pixels(cx.rem_size());
-        let layout = cx
-            .text_system()
-            .shape_line(
-                SharedString::from(" ".repeat(column)),
-                font_size,
-                &[TextRun {
-                    len: column,
-                    font: style.text.font(),
-                    color: Hsla::default(),
-                    background_color: None,
-                    underline: None,
-                    strikethrough: None,
-                }],
-            )
-            .unwrap();
-
-        layout.width
+        column_pixels(&style.text, column, cx)
     }
 
     fn max_line_number_width(&self, snapshot: &EditorSnapshot, cx: &WindowContext) -> Pixels {
@@ -4892,7 +4874,6 @@ impl Element for EditorElement {
                     }
 
                     let _ = self.layout_overlays(
-                        &snapshot,
                         content_origin,
                         line_height,
                         start_row..end_row,

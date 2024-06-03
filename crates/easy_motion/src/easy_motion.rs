@@ -10,9 +10,9 @@ use editor::display_map::DisplaySnapshot;
 use editor::scroll::Autoscroll;
 use editor::{DisplayPoint, Editor};
 use gpui::{
-    actions, impl_actions, saturate, AppContext, AsyncAppContext, Bounds, Entity, EntityId, Global,
-    HighlightStyle, Hsla, KeystrokeEvent, Model, ModelContext, Point, Subscription, View,
-    ViewContext, WeakView,
+    actions, column_pixels, impl_actions, point, saturate, AppContext, AsyncAppContext, Bounds,
+    Entity, EntityId, Global, HighlightStyle, Hsla, KeystrokeEvent, Model, ModelContext, Point,
+    Subscription, View, ViewContext, WeakView,
 };
 use search::{search_multipane, search_window};
 use settings::Settings;
@@ -445,18 +445,23 @@ impl EasyMotion {
             .iter()
             .flat_map(|(editor_view, bounding_box)| {
                 editor_view.update(cx, |editor, cx| {
-                    let selections = editor.selections.newest_display(cx);
-
-                    let map = editor.snapshot(cx).display_snapshot;
-
                     let style = cx.text_style();
-                    let line_height = style
-                        .line_height
-                        .to_pixels(style.font_size, cx.rem_size())
-                        .0;
-
-                    let text_layout_details = editor.text_layout_details(cx);
-                    let window_top = window_top(&map, &text_layout_details);
+                    let scroll_position = editor.snapshot(cx).scroll_position();
+                    let font_size = style.font_size.to_pixels(cx.rem_size());
+                    let line_height = style.line_height_in_pixels(cx.rem_size());
+                    let font_id = cx.text_system().resolve_font(&style.font());
+                    let em_width = cx
+                        .text_system()
+                        .typographic_bounds(font_id, font_size, 'm')
+                        .unwrap()
+                        .size
+                        .width;
+                    let map = editor.snapshot(cx).display_snapshot;
+                    let selections = editor.selections.newest_display(cx);
+                    let scroll_pixel_position = point(
+                        scroll_position.x * em_width,
+                        scroll_position.y * line_height,
+                    );
 
                     let words = Self::word_starts(
                         word_type,
@@ -466,17 +471,24 @@ impl EasyMotion {
                         editor,
                         cx,
                     );
-                    words.into_iter().map(move |word| {
-                        let x = bounding_box.origin.x.0 + word.column() as f32 * line_height * 0.5;
-                        let y = bounding_box.origin.y.0 - window_top.row().0 as f32 * line_height
-                            + word.row().0 as f32 * line_height;
-                        let x = Pixels(x);
-                        let y = Pixels(y);
-                        (word, editor_view.entity_id(), Point::new(x, y))
+                    let x = words
+                        .iter()
+                        .map(|word| {
+                            bounding_box.origin.x
+                                + 2.0 * column_pixels(&style, word.column() as usize, cx)
+                        })
+                        // to get around borrowing issue, just change this and below into boomer loop
+                        .collect::<Vec<_>>()
+                        .into_iter();
+                    words.into_iter().zip(x).map(move |(word, x)| {
+                        let y = bounding_box.origin.y + word.row().0 as f32 * line_height;
+                        let p = point(x, y) - scroll_pixel_position;
+                        (word, editor_view.entity_id(), p)
                     })
                 })
             })
             .collect::<Vec<_>>();
+        dbg!(&matches);
 
         let cursor = editors
             .iter()
@@ -488,6 +500,7 @@ impl EasyMotion {
             })
             .unwrap();
 
+        // todo spawn background process
         sort_matches_pixel(&mut matches, &cursor);
 
         let (keys, dimming) = Self::read_with(cx, |easy, _| (easy.keys.clone(), easy.dimming))
@@ -522,19 +535,26 @@ impl EasyMotion {
         cx: &mut ViewContext<Editor>,
     ) -> Point<Pixels> {
         let style = cx.text_style();
-        let line_height = style
-            .line_height
-            .to_pixels(style.font_size, cx.rem_size())
-            .0;
-        let text_layout_details = editor.text_layout_details(cx);
-        let map = editor.snapshot(cx).display_snapshot;
-        let window_top = window_top(&map, &text_layout_details);
-        let cursor = editor.selections.newest_display(cx).start;
+        let scroll_position = editor.snapshot(cx).scroll_position();
+        let font_size = style.font_size.to_pixels(cx.rem_size());
+        let line_height = style.line_height_in_pixels(cx.rem_size());
+        let font_id = cx.text_system().resolve_font(&style.font());
+        let em_width = cx
+            .text_system()
+            .typographic_bounds(font_id, font_size, 'm')
+            .unwrap()
+            .size
+            .width;
+        let scroll_pixel_position = point(
+            scroll_position.x * em_width,
+            scroll_position.y * line_height,
+        );
 
-        let x = bounding_box.origin.x.0 + cursor.column() as f32 * line_height * 0.5;
-        let y =
-            bounding_box.origin.y.0 + (cursor.row().0 - window_top.row().0) as f32 * line_height;
-        Point::new(Pixels(x), Pixels(y))
+        let selections = editor.selections.newest_display(cx);
+        let cursor = selections.start;
+        let x = bounding_box.origin.x + 2.0 * column_pixels(&style, cursor.column() as usize, cx);
+        let y = bounding_box.origin.y + cursor.row().0 as f32 * line_height;
+        point(x, y) - scroll_pixel_position
     }
 
     fn simple_action(new_state: EditorState, workspace: &Workspace, cx: &mut WindowContext) {
