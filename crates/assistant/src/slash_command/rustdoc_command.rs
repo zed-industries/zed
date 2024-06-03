@@ -1,8 +1,10 @@
+use std::path::PathBuf;
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 
 use anyhow::{anyhow, bail, Context, Result};
 use assistant_slash_command::{SlashCommand, SlashCommandOutput, SlashCommandOutputSection};
+use fs::Fs;
 use futures::AsyncReadExt;
 use gpui::{AppContext, Task, WeakView};
 use http::{AsyncBody, HttpClient, HttpClientWithUrl};
@@ -15,40 +17,53 @@ pub(crate) struct RustdocSlashCommand;
 
 impl RustdocSlashCommand {
     async fn build_message(
+        fs: Arc<dyn Fs>,
         http_client: Arc<HttpClientWithUrl>,
         crate_name: String,
         module_path: Vec<String>,
     ) -> Result<String> {
-        let version = "latest";
-        let path = format!(
-            "{crate_name}/{version}/{crate_name}/{module_path}",
-            module_path = module_path.join("/")
-        );
+        let local_cargo_doc_path = {
+            let cargo_doc_dir = "/Users/maxdeviant/projects/zed/target/doc";
+            PathBuf::from(format!(
+                "{cargo_doc_dir}/{crate_name}/{module_path}/index.html",
+                module_path = module_path.join("/")
+            ))
+        };
 
-        let mut response = http_client
-            .get(
-                &format!("https://docs.rs/{path}"),
-                AsyncBody::default(),
-                true,
-            )
-            .await?;
-
-        let mut body = Vec::new();
-        response
-            .body_mut()
-            .read_to_end(&mut body)
-            .await
-            .context("error reading docs.rs response body")?;
-
-        if response.status().is_client_error() {
-            let text = String::from_utf8_lossy(body.as_slice());
-            bail!(
-                "status error {}, response: {text:?}",
-                response.status().as_u16()
+        if let Ok(contents) = fs.load(&local_cargo_doc_path).await {
+            convert_rustdoc_to_markdown(contents.as_bytes())
+        } else {
+            let version = "latest";
+            let path = format!(
+                "{crate_name}/{version}/{crate_name}/{module_path}",
+                module_path = module_path.join("/")
             );
-        }
 
-        convert_rustdoc_to_markdown(&body[..])
+            let mut response = http_client
+                .get(
+                    &format!("https://docs.rs/{path}"),
+                    AsyncBody::default(),
+                    true,
+                )
+                .await?;
+
+            let mut body = Vec::new();
+            response
+                .body_mut()
+                .read_to_end(&mut body)
+                .await
+                .context("error reading docs.rs response body")?;
+
+            if response.status().is_client_error() {
+                let text = String::from_utf8_lossy(body.as_slice());
+                bail!(
+                    "status error {}, response: {text:?}",
+                    response.status().as_u16()
+                );
+            }
+
+            convert_rustdoc_to_markdown(&body[..])
+        }
     }
 }
 
@@ -93,6 +108,7 @@ impl SlashCommand for RustdocSlashCommand {
             return Task::ready(Err(anyhow!("workspace was dropped")));
         };
 
+        let fs = workspace.read(cx).project().read(cx).fs().clone();
         let http_client = workspace.read(cx).client().http_client();
         let mut path_components = argument.split("::");
         let crate_name = match path_components
@@ -107,7 +123,7 @@ impl SlashCommand for RustdocSlashCommand {
         let text = cx.background_executor().spawn({
             let crate_name = crate_name.clone();
             let module_path = module_path.clone();
-            async move { Self::build_message(http_client, crate_name, module_path).await }
+            async move { Self::build_message(fs, http_client, crate_name, module_path).await }
         });
 
         let crate_name = SharedString::from(crate_name);
