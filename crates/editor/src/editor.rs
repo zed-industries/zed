@@ -1128,9 +1128,32 @@ impl CompletionsMenu {
 
         let highlights = gpui::combine_highlights(
             mat.ranges().map(|range| (range, FontWeight::BOLD.into())),
-            styled_runs_for_code_label(&completion.label, &style.syntax)
-                .map(|(range, mut highlight)| (range, highlight)),
+            styled_runs_for_code_label(&completion.label, &style.syntax).map(
+                |(range, mut highlight)| {
+                    // Ignore font weight for syntax highlighting, as we'll use it
+                    // for fuzzy matches.
+                    highlight.font_weight = None;
+
+                    if completion.lsp_completion.deprecated.unwrap_or(false) {
+                        highlight.strikethrough = Some(StrikethroughStyle {
+                            thickness: 1.0.into(),
+                            ..Default::default()
+                        });
+                        highlight.color = Some(cx.theme().colors().text_muted);
+                    }
+
+                    (range, highlight)
+                },
+            ),
         );
+        let mut completion_label =
+            StyledText::new(completion.label.text.clone()).with_highlights(&style.text, highlights);
+
+        // let highlights = gpui::combine_highlights(
+        //     mat.ranges().map(|range| (range, FontWeight::BOLD.into())),
+        //     styled_runs_for_code_label(&completion.label, &style.syntax)
+        //         .map(|(range, mut highlight)| (range, highlight)),
+        // );
 
         let mut inline_documentation_exists = false;
 
@@ -1157,10 +1180,7 @@ impl CompletionsMenu {
         )];
         let documentation_label = StyledText::new(documentation_text.clone())
             .with_highlights(&documentation_style, documentation_highlights);
-
-        let mut completion_label =
-            StyledText::new(completion.label.text.clone()).with_highlights(&style.text, highlights);
-
+        // return (px(0.), completion_label, documentation_label);
         let font_size = style.text.font_size.to_pixels(cx.rem_size());
 
         let mut primary_end = completion.label.filter_range.end;
@@ -1293,30 +1313,52 @@ impl CompletionsMenu {
 
         //recompute syntax highlighting
         completion.label.text = completion_label_text.clone();
-        if inline_documentation_exists {
-            // completion.label.filter_range.end = completion_label_text.len();
-            for run in completion.label.runs.iter_mut() {
-                if run.0.start == 0 {
-                    run.0.start = 0;
-                    run.0.end = completion_label_text.len();
-                }
-            }
-        } else {
-            completion.label.filter_range.end = primary_end;
-            println!(
-                "fr: {}..{}",
-                completion.label.filter_range.start, completion.label.filter_range.end
-            );
-            // primary_length_truncated += 2;
-            for run in completion.label.runs.iter_mut() {
-                run.0.start = (run.0.start as i32 - primary_length_truncated) as usize;
-                run.0.end = (run.0.end as i32 - primary_length_truncated) as usize;
-            }
+        // if inline_documentation_exists {
+        //     // completion.label.filter_range.end = completion_label_text.len();
+        //     for run in completion.label.runs.iter_mut() {
+        //         if run.0.start == 0 {
+        //             run.0.start = 0;
+        //             run.0.end = completion_label_text.len();
+        //         }
+        //     }
+        // } else {
+        completion.label.filter_range.end = completion.label.filter_range.end.min(primary_end);
+        for run in completion.label.runs.iter_mut() {
+            run.0.start = (run.0.start as i32 - primary_length_truncated).max(0) as usize;
+            run.0.end = (run.0.end as i32 - primary_length_truncated).max(0) as usize;
         }
+        // }
+        println!("################");
+        println!("plt {}", primary_length_truncated);
+        for a in completion.label.runs.clone() {
+            let h = a.1;
+            println!("{:?}", a);
+        }
+        // let highlights = gpui::combine_highlights(
+        //     mat.ranges().map(|range| (range, FontWeight::NORMAL.into())),
+        //     styled_runs_for_code_label(&completion.label, &style.syntax)
+        //         .map(|(range, mut highlight)| (range, highlight)),
+        // );
+
         let highlights = gpui::combine_highlights(
-            mat.ranges().map(|range| (range, FontWeight::NORMAL.into())),
-            styled_runs_for_code_label(&completion.label, &style.syntax)
-                .map(|(range, mut highlight)| (range, highlight)),
+            mat.ranges().map(|range| (range, FontWeight::BOLD.into())),
+            styled_runs_for_code_label(&completion.label, &style.syntax).map(
+                |(range, mut highlight)| {
+                    // Ignore font weight for syntax highlighting, as we'll use it
+                    // for fuzzy matches.
+                    highlight.font_weight = None;
+
+                    if completion.lsp_completion.deprecated.unwrap_or(false) {
+                        highlight.strikethrough = Some(StrikethroughStyle {
+                            thickness: 1.0.into(),
+                            ..Default::default()
+                        });
+                        highlight.color = Some(cx.theme().colors().text_muted);
+                    }
+
+                    (range, highlight)
+                },
+            ),
         );
 
         let completion_label =
@@ -1337,6 +1379,7 @@ impl CompletionsMenu {
 
         let documentation_label = StyledText::new(documentation_text)
             .with_highlights(&documentation_style, documentation_highlights);
+
         // (actual_width, completion_label, documentation_label)
         (px(510.), completion_label, documentation_label)
     }
