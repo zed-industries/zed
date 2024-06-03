@@ -712,7 +712,7 @@ impl ProjectPanel {
 
     fn confirm(&mut self, _: &Confirm, cx: &mut ViewContext<Self>) {
         if let Some(task) = self.confirm_edit(cx) {
-            task.detach_and_log_err(cx);
+            task.detach_and_prompt_err("File operation failed", cx, |e, _| Some(format!("{e}")));
         }
     }
 
@@ -802,8 +802,15 @@ impl ProjectPanel {
                 cx.notify();
             })?;
 
-            match new_entry? {
-                CreatedEntry::Included(new_entry) => {
+            match new_entry {
+                Err(e) => {
+                    project_panel.update(&mut cx, |project_panel, cx| {
+                        project_panel.marked_entries.clear();
+                        project_panel.update_visible_entries(None, cx);
+                    }).ok();
+                    Err(e)?;
+                }
+                Ok(CreatedEntry::Included(new_entry)) => {
                     project_panel.update(&mut cx, |project_panel, cx| {
                         if let Some(selection) = &mut project_panel.selection {
                             if selection.entry_id == edited_entry_id {
@@ -820,11 +827,10 @@ impl ProjectPanel {
                         cx.notify();
                     })?;
                 }
-                CreatedEntry::Excluded { abs_path } => {
+                Ok(CreatedEntry::Excluded { abs_path }) => {
                     if let Some(open_task) = project_panel
                         .update(&mut cx, |project_panel, cx| {
                             project_panel.marked_entries.clear();
-                            project_panel.selection = None;
                             project_panel.update_visible_entries(None, cx);
 
                             if is_dir {
@@ -846,7 +852,7 @@ impl ProjectPanel {
                         .ok()
                         .flatten()
                     {
-                        let _ = open_task.await.log_err();
+                        let _ = open_task.await?;
                     }
                 }
             }

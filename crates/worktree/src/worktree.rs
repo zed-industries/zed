@@ -97,9 +97,12 @@ pub enum Worktree {
     Remote(RemoteWorktree),
 }
 
-/// TODO kb docs
+/// An entry, created in the worktree.
+#[derive(Debug)]
 pub enum CreatedEntry {
+    /// Got created and indexed by the worktree, receiving a corresponding entry.
     Included(Entry),
+    /// Got created, but not indexed due to falling under exclusion filters.
     Excluded { abs_path: PathBuf },
 }
 
@@ -1329,10 +1332,13 @@ impl LocalWorktree {
         let task_abs_path = abs_path.clone();
         let write = cx.background_executor().spawn(async move {
             if is_dir {
-                fs.create_dir(&task_abs_path).await
+                fs.create_dir(&task_abs_path)
+                    .await
+                    .with_context(|| format!("creating directory {task_abs_path:?}"))
             } else {
                 fs.save(&task_abs_path, &Rope::default(), LineEnding::default())
                     .await
+                    .with_context(|| format!("creating file {task_abs_path:?}"))
             }
         });
 
@@ -1491,6 +1497,7 @@ impl LocalWorktree {
                 },
             )
             .await
+            .with_context(|| format!("Renaming {abs_old_path:?} into {abs_new_path:?}"))
         });
 
         cx.spawn(|this, mut cx| async move {
