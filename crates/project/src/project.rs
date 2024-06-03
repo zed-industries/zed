@@ -5158,18 +5158,20 @@ impl Project {
 
         let mut child = smol::process::Command::new(command);
 
-        if let Some(buffer_abs_path) = buffer_abs_path {
-            child.args(
-                arguments
-                    .iter()
-                    .map(|arg| arg.replace("{buffer_path}", &buffer_abs_path.to_string_lossy())),
-            );
-        }
         if let Some(working_dir_path) = working_dir_path {
             child.current_dir(working_dir_path);
         }
 
+        let buffer_path_replacement = buffer_abs_path
+            .map(|path| path.to_string_lossy())
+            .unwrap_or_default();
+
         let mut child = child
+            .args(
+                arguments
+                    .iter()
+                    .map(|arg| arg.replace("{buffer_path}", &buffer_path_replacement)),
+            )
             .stdin(smol::process::Stdio::piped())
             .stdout(smol::process::Stdio::piped())
             .stderr(smol::process::Stdio::piped())
