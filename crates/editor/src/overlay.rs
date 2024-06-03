@@ -1,7 +1,7 @@
 use std::ops::Range;
 
-use crate::{DisplayPoint, DisplayRow, Editor, EditorSnapshot, EditorStyle};
-use gpui::{AnyElement, HighlightStyle, IntoElement, StyledText, ViewContext};
+use crate::{DisplayPoint, DisplayRow, EditorStyle};
+use gpui::{AnyElement, HighlightStyle, IntoElement, StyledText};
 
 #[derive(Debug, Clone, Default)]
 pub struct Overlay {

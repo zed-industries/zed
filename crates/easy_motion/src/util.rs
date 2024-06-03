@@ -3,42 +3,35 @@ use std::{cmp::Ordering, ops::Range};
 use editor::{
     display_map::{DisplayRow, DisplaySnapshot, ToDisplayPoint},
     movement::{find_boundary_range, TextLayoutDetails},
-    DisplayPoint, Editor, RowExt,
+    DisplayPoint, RowExt,
 };
 use gpui::{EntityId, Point};
 use language::{char_kind, coerce_punctuation, CharKind};
 use text::{Bias, Selection};
-use ui::{Pixels, WindowContext};
+use ui::Pixels;
 
 use crate::Direction;
 
-pub(crate) fn manh_distance(point_1: &DisplayPoint, point_2: &DisplayPoint, x_bias: f32) -> f32 {
+pub fn manh_distance(point_1: &DisplayPoint, point_2: &DisplayPoint, x_bias: f32) -> f32 {
     x_bias * (point_1.row().as_f32() - point_2.row().as_f32()).abs()
         + (point_1.column() as i32 - point_2.column() as i32).abs() as f32
 }
 
-pub(crate) fn manh_distance_pixels(
-    point_1: &Point<Pixels>,
-    point_2: &Point<Pixels>,
-    x_bias: f32,
-) -> f32 {
+pub fn manh_distance_pixels(point_1: &Point<Pixels>, point_2: &Point<Pixels>, x_bias: f32) -> f32 {
     x_bias * (point_1.x.0 - point_2.x.0).abs() + (point_1.y.0 - point_2.y.0).abs()
 }
 
-pub(crate) fn end_of_document(map: &DisplaySnapshot) -> DisplayPoint {
+pub fn end_of_document(map: &DisplaySnapshot) -> DisplayPoint {
     let new_point = DisplayPoint::new(DisplayRow(u32::max_value()), u32::max_value());
     map.clip_point(new_point, Bias::Left)
 }
 
-pub(crate) fn start_of_document(map: &DisplaySnapshot) -> DisplayPoint {
+pub fn start_of_document(map: &DisplaySnapshot) -> DisplayPoint {
     let new_point = DisplayPoint::zero();
     map.clip_point(new_point, Bias::Left)
 }
 
-pub(crate) fn window_top(
-    map: &DisplaySnapshot,
-    text_layout_details: &TextLayoutDetails,
-) -> DisplayPoint {
+pub fn window_top(map: &DisplaySnapshot, text_layout_details: &TextLayoutDetails) -> DisplayPoint {
     let mut point = text_layout_details
         .scroll_anchor
         .anchor
@@ -47,7 +40,7 @@ pub(crate) fn window_top(
     map.clip_point(point, text::Bias::Left)
 }
 
-pub(crate) fn window_bottom(
+pub fn window_bottom(
     map: &DisplaySnapshot,
     text_layout_details: &TextLayoutDetails,
 ) -> DisplayPoint {
@@ -68,7 +61,7 @@ pub(crate) fn window_bottom(
     )
 }
 
-pub(crate) fn word_starts_in_range(
+pub fn word_starts_in_range(
     map: &DisplaySnapshot,
     mut from: DisplayPoint,
     to: DisplayPoint,
@@ -116,14 +109,12 @@ pub(crate) fn word_starts_in_range(
 // returns a display point range from the current selection to the start/end
 // for a direction of backwards/forwards respectively or the full window for
 // bidirectional
-pub(crate) fn ranges(
+pub fn ranges(
     direction: Direction,
     map: &DisplaySnapshot,
     selections: &Selection<DisplayPoint>,
-    editor: &Editor,
-    cx: &WindowContext,
+    text_layout_details: &TextLayoutDetails,
 ) -> Range<DisplayPoint> {
-    let text_layout_details = editor.text_layout_details(cx);
     let start = match direction {
         Direction::BiDirectional | Direction::Backwards => window_top(map, &text_layout_details),
         Direction::Forwards => selections.end,
@@ -135,7 +126,7 @@ pub(crate) fn ranges(
     start..end
 }
 
-pub(crate) fn sort_matches_pixel(
+pub fn sort_matches_pixel(
     matches: &mut Vec<(DisplayPoint, EntityId, Point<Pixels>)>,
     cursor: &Point<Pixels>,
 ) {
@@ -152,7 +143,7 @@ pub(crate) fn sort_matches_pixel(
     });
 }
 
-pub(crate) fn sort_matches_display(matches: &mut [DisplayPoint], cursor: &DisplayPoint) {
+pub fn sort_matches_display(matches: &mut [DisplayPoint], cursor: &DisplayPoint) {
     matches.sort_unstable_by(|a, b| {
         let a_distance = manh_distance(a, cursor, 2.5);
         let b_distance = manh_distance(b, cursor, 2.5);
