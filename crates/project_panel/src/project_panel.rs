@@ -35,7 +35,7 @@ use unicase::UniCase;
 use util::{maybe, NumericPrefixWithSuffix, ResultExt, TryFutureExt};
 use workspace::{
     dock::{DockPosition, Panel, PanelEvent},
-    notifications::DetachAndPromptErr,
+    notifications::{DetachAndPromptErr, NotifyTaskExt},
     OpenInTerminal, Workspace,
 };
 use worktree::CreatedEntry;
@@ -712,7 +712,7 @@ impl ProjectPanel {
 
     fn confirm(&mut self, _: &Confirm, cx: &mut ViewContext<Self>) {
         if let Some(task) = self.confirm_edit(cx) {
-            task.detach_and_prompt_err("File operation failed", cx, |e, _| Some(format!("{e}")));
+            task.detach_and_notify_err(cx);
         }
     }
 
