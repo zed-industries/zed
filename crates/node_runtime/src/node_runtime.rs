@@ -4,6 +4,7 @@ use anyhow::{anyhow, bail, Context, Result};
 use async_compression::futures::bufread::GzipDecoder;
 use async_tar::Archive;
 use futures::AsyncReadExt;
+use http::HttpClient;
 use semver::Version;
 use serde::Deserialize;
 use smol::io::BufReader;
@@ -15,7 +16,6 @@ use std::{
     path::{Path, PathBuf},
     sync::Arc,
 };
-use util::http::HttpClient;
 use util::ResultExt;
 
 #[cfg(windows)]
@@ -226,17 +226,18 @@ impl NodeRuntime for RealNodeRuntime {
 
             let node_binary = installation_path.join(NODE_PATH);
             let npm_file = installation_path.join(NPM_PATH);
-            let mut env_path = node_binary
+            let mut env_path = vec![node_binary
                 .parent()
                 .expect("invalid node binary path")
-                .to_path_buf();
+                .to_path_buf()];
 
             if let Some(existing_path) = std::env::var_os("PATH") {
-                if !existing_path.is_empty() {
-                    env_path.push(":");
-                    env_path.push(&existing_path);
-                }
+                let mut paths = std::env::split_paths(&existing_path).collect::<Vec<_>>();
+                env_path.append(&mut paths);
             }
+
+            let env_path =
+                std::env::join_paths(env_path).context("failed to create PATH env variable")?;
 
             if smol::fs::metadata(&node_binary).await.is_err() {
                 return Err(anyhow!("missing node binary file"));
@@ -266,8 +267,21 @@ impl NodeRuntime for RealNodeRuntime {
                 command.args(["--prefix".into(), directory.to_path_buf()]);
             }
 
+            if let Some(proxy) = self.http.proxy() {
+                command.args(["--proxy", proxy]);
+            }
+
             #[cfg(windows)]
-            command.creation_flags(windows::Win32::System::Threading::CREATE_NO_WINDOW.0);
+            {
+                // SYSTEMROOT is a critical environment variables for Windows.
+                if let Some(val) = std::env::var("SYSTEMROOT")
+                    .context("Missing environment variable: SYSTEMROOT!")
+                    .log_err()
+                {
+                    command.env("SYSTEMROOT", val);
+                }
+                command.creation_flags(windows::Win32::System::Threading::CREATE_NO_WINDOW.0);
+            }
 
             command.output().await.map_err(|e| anyhow!("{e}"))
         };

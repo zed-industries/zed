@@ -1,15 +1,15 @@
 {
   "stems": {
+    "Dockerfile": "docker",
     "Podfile": "ruby",
-    "Procfile": "heroku",
-    "Dockerfile": "docker"
+    "Procfile": "heroku"
   },
   "suffixes": {
-    "astro": "astro",
     "Emakefile": "erlang",
     "aac": "audio",
     "accdb": "storage",
     "app.src": "erlang",
+    "astro": "astro",
     "avi": "video",
     "avif": "image",
     "bak": "backup",
@@ -22,12 +22,12 @@
     "c": "c",
     "cc": "cpp",
     "cjs": "javascript",
+    "coffee": "coffeescript",
     "conf": "settings",
     "cpp": "cpp",
     "css": "css",
     "csv": "storage",
     "cts": "typescript",
-    "coffee": "coffeescript",
     "dart": "dart",
     "dat": "storage",
     "db": "storage",
@@ -57,14 +57,16 @@
     "gitkeep": "vcs",
     "gitmodules": "vcs",
     "go": "go",
+    "gql": "graphql",
     "graphql": "graphql",
+    "graphqls": "graphql",
     "h": "c",
-    "hpp": "cpp",
     "handlebars": "code",
     "hbs": "template",
     "heex": "elixir",
-    "heif": "image",
     "heic": "image",
+    "heif": "image",
+    "hpp": "cpp",
     "hrl": "erlang",
     "hs": "haskell",
     "htm": "template",
@@ -79,9 +81,9 @@
     "jpeg": "image",
     "jpg": "image",
     "js": "javascript",
-    "jsx": "react",
     "json": "storage",
     "jsonc": "storage",
+    "jsx": "react",
     "jxl": "image",
     "kt": "kotlin",
     "ldf": "storage",
@@ -96,9 +98,9 @@
     "mdf": "storage",
     "mdx": "document",
     "metadata": "code",
-    "mkv": "video",
     "mjs": "javascript",
     "mka": "audio",
+    "mkv": "video",
     "ml": "ocaml",
     "mli": "ocaml",
     "mov": "video",
@@ -107,8 +109,8 @@
     "mts": "typescript",
     "myd": "storage",
     "myi": "storage",
-    "nu": "terminal",
     "nim": "nim",
+    "nu": "terminal",
     "odp": "document",
     "ods": "document",
     "odt": "document",
@@ -130,33 +132,33 @@
     "psd": "image",
     "py": "python",
     "qoi": "image",
+    "r": "r",
     "rb": "ruby",
     "rebar.config": "erlang",
     "rkt": "code",
     "rs": "rust",
-    "r": "r",
     "rtf": "document",
     "sav": "storage",
+    "sc": "scala",
+    "scala": "scala",
     "scm": "code",
     "sdf": "storage",
     "sh": "terminal",
+    "sql": "storage",
     "sqlite": "storage",
     "svelte": "template",
     "svg": "image",
-    "sc": "scala",
-    "scala": "scala",
-    "sql": "storage",
     "swift": "swift",
+    "tcl": "tcl",
     "tf": "terraform",
     "tfvars": "terraform",
     "tiff": "image",
     "toml": "toml",
     "ts": "typescript",
     "tsv": "storage",
-    "ttf": "font",
     "tsx": "react",
+    "ttf": "font",
     "txt": "document",
-    "tcl": "tcl",
     "vue": "vue",
     "wav": "audio",
     "webm": "video",
@@ -188,8 +190,17 @@
     "audio": {
       "icon": "icons/file_icons/audio.svg"
     },
+    "bun": {
+      "icon": "icons/file_icons/bun.svg"
+    },
+    "c": {
+      "icon": "icons/file_icons/c.svg"
+    },
     "code": {
       "icon": "icons/file_icons/code.svg"
+    },
+    "coffeescript": {
+      "icon": "icons/file_icons/coffeescript.svg"
     },
     "collapsed_chevron": {
       "icon": "icons/file_icons/chevron_right.svg"
@@ -197,17 +208,11 @@
     "collapsed_folder": {
       "icon": "icons/file_icons/folder.svg"
     },
-    "c": {
-      "icon": "icons/file_icons/c.svg"
-    },
     "cpp": {
       "icon": "icons/file_icons/cpp.svg"
     },
     "css": {
       "icon": "icons/file_icons/css.svg"
-    },
-    "coffeescript": {
-      "icon": "icons/file_icons/coffeescript.svg"
     },
     "dart": {
       "icon": "icons/file_icons/dart.svg"
@@ -245,17 +250,17 @@
     "fsharp": {
       "icon": "icons/file_icons/fsharp.svg"
     },
-    "haskell": {
-      "icon": "icons/file_icons/haskell.svg"
-    },
-    "heroku": {
-      "icon": "icons/file_icons/heroku.svg"
-    },
     "go": {
       "icon": "icons/file_icons/go.svg"
     },
     "graphql": {
       "icon": "icons/file_icons/graphql.svg"
+    },
+    "haskell": {
+      "icon": "icons/file_icons/haskell.svg"
+    },
+    "heroku": {
+      "icon": "icons/file_icons/heroku.svg"
     },
     "image": {
       "icon": "icons/file_icons/image.svg"
@@ -272,20 +277,17 @@
     "lock": {
       "icon": "icons/file_icons/lock.svg"
     },
-    "bun": {
-      "icon": "icons/file_icons/bun.svg"
-    },
     "log": {
       "icon": "icons/file_icons/info.svg"
     },
     "lua": {
       "icon": "icons/file_icons/lua.svg"
     },
-    "ocaml": {
-      "icon": "icons/file_icons/ocaml.svg"
-    },
     "nim": {
       "icon": "icons/file_icons/nim.svg"
+    },
+    "ocaml": {
+      "icon": "icons/file_icons/ocaml.svg"
     },
     "phoenix": {
       "icon": "icons/file_icons/phoenix.svg"
@@ -314,35 +316,35 @@
     "rust": {
       "icon": "icons/file_icons/rust.svg"
     },
+    "scala": {
+      "icon": "icons/file_icons/scala.svg"
+    },
     "settings": {
       "icon": "icons/file_icons/settings.svg"
     },
     "storage": {
       "icon": "icons/file_icons/database.svg"
     },
-    "scala": {
-      "icon": "icons/file_icons/scala.svg"
-    },
     "swift": {
       "icon": "icons/file_icons/swift.svg"
+    },
+    "tcl": {
+      "icon": "icons/file_icons/tcl.svg"
     },
     "template": {
       "icon": "icons/file_icons/html.svg"
     },
-    "terraform": {
-      "icon": "icons/file_icons/terraform.svg"
-    },
     "terminal": {
       "icon": "icons/file_icons/terminal.svg"
+    },
+    "terraform": {
+      "icon": "icons/file_icons/terraform.svg"
     },
     "toml": {
       "icon": "icons/file_icons/toml.svg"
     },
     "typescript": {
       "icon": "icons/file_icons/typescript.svg"
-    },
-    "tcl": {
-      "icon": "icons/file_icons/tcl.svg"
     },
     "vcs": {
       "icon": "icons/file_icons/git.svg"

@@ -17,7 +17,9 @@ use env_logger::Builder;
 use fs::RealFs;
 use futures::{future, StreamExt};
 use git::GitHostingProviderRegistry;
-use gpui::{App, AppContext, AsyncAppContext, Context, Global, Task, VisualContext};
+use gpui::{
+    App, AppContext, AsyncAppContext, Context, Global, Task, UpdateGlobal as _, VisualContext,
+};
 use image_viewer;
 use language::LanguageRegistry;
 use log::LevelFilter;
@@ -38,11 +40,7 @@ use std::{
     sync::Arc,
 };
 use theme::{ActiveTheme, SystemAppearance, ThemeRegistry, ThemeSettings};
-use util::{
-    maybe, parse_env_output,
-    paths::{self},
-    ResultExt, TryFutureExt,
-};
+use util::{maybe, parse_env_output, paths, with_clone, ResultExt, TryFutureExt};
 use uuid::Uuid;
 use welcome::{show_welcome_view, BaseKeymap, FIRST_OPEN};
 use workspace::{AppState, WorkspaceSettings, WorkspaceStore};
@@ -124,6 +122,10 @@ fn init_ui(app_state: Arc<AppState>, cx: &mut AppContext) -> Result<()> {
         }
     };
 
+    if let Err(err) = cx.can_open_windows() {
+        return Err(err);
+    }
+
     SystemAppearance::init(cx);
     load_embedded_fonts(cx);
 
@@ -175,7 +177,6 @@ fn init_ui(app_state: Arc<AppState>, cx: &mut AppContext) -> Result<()> {
     inline_completion_registry::init(app_state.client.telemetry().clone(), cx);
 
     assistant::init(app_state.client.clone(), cx);
-    assistant2::init(app_state.client.clone(), cx);
 
     cx.observe_global::<SettingsStore>({
         let languages = app_state.languages.clone();
@@ -257,13 +258,11 @@ fn main() {
     let session_id = Uuid::new_v4().to_string();
     reliability::init_panic_hook(&app, installation_id.clone(), session_id.clone());
 
-    let (listener, mut open_rx) = OpenListener::new();
-    let listener = Arc::new(listener);
-    let open_listener = listener.clone();
+    let (open_listener, mut open_rx) = OpenListener::new();
 
     #[cfg(target_os = "linux")]
     {
-        if crate::zed::listen_for_cli_connections(listener.clone()).is_err() {
+        if crate::zed::listen_for_cli_connections(open_listener.clone()).is_err() {
             println!("zed is already running");
             return;
         }
@@ -306,11 +305,15 @@ fn main() {
         Task::ready(())
     } else {
         app.background_executor().spawn(async {
+            #[cfg(unix)]
+            {
+                load_shell_from_passwd().await.log_err();
+            }
             load_login_shell_environment().await.log_err();
         })
     };
 
-    app.on_open_urls(move |urls| open_listener.open_urls(urls));
+    app.on_open_urls(with_clone!(open_listener, move |urls| open_listener.open_urls(urls)));
     app.on_reopen(move |cx| {
         if let Some(app_state) = AppState::try_global(cx).and_then(|app_state| app_state.upgrade())
         {
@@ -331,7 +334,7 @@ fn main() {
         GitHostingProviderRegistry::set_global(git_hosting_provider_registry, cx);
         git_hosting_providers::init(cx);
 
-        OpenListener::set_global(listener.clone(), cx);
+        OpenListener::set_global(cx, open_listener.clone());
 
         settings::init(cx);
         handle_settings_file_changes(user_settings_file_rx, cx);
@@ -339,6 +342,7 @@ fn main() {
 
         client::init_settings(cx);
         let client = Client::production(cx);
+        cx.update_http_client(client.http_client().clone());
         let mut languages =
             LanguageRegistry::new(login_shell_env_loaded, cx.background_executor().clone());
         languages.set_language_server_download_dir(paths::LANGUAGES_DIR.clone());
@@ -388,7 +392,7 @@ fn main() {
             .collect();
 
         if !urls.is_empty() {
-            listener.open_urls(urls)
+            open_listener.open_urls(urls)
         }
 
         match open_rx
@@ -678,6 +682,56 @@ fn init_stdout_logger() {
         })
         .init();
 }
+
+#[cfg(unix)]
+async fn load_shell_from_passwd() -> Result<()> {
+    let buflen = match unsafe { libc::sysconf(libc::_SC_GETPW_R_SIZE_MAX) } {
+        n if n < 0 => 1024,
+        n => n as usize,
+    };
+    let mut buffer = Vec::with_capacity(buflen);
+
+    let mut pwd: std::mem::MaybeUninit<libc::passwd> = std::mem::MaybeUninit::uninit();
+    let mut result: *mut libc::passwd = std::ptr::null_mut();
+
+    let uid = unsafe { libc::getuid() };
+    let status = unsafe {
+        libc::getpwuid_r(
+            uid,
+            pwd.as_mut_ptr(),
+            buffer.as_mut_ptr() as *mut libc::c_char,
+            buflen,
+            &mut result,
+        )
+    };
+    let entry = unsafe { pwd.assume_init() };
+
+    anyhow::ensure!(
+        status == 0,
+        "call to getpwuid_r failed. uid: {}, status: {}",
+        uid,
+        status
+    );
+    anyhow::ensure!(!result.is_null(), "passwd entry for uid {} not found", uid);
+    anyhow::ensure!(
+        entry.pw_uid == uid,
+        "passwd entry has different uid ({}) than getuid ({}) returned",
+        entry.pw_uid,
+        uid,
+    );
+
+    let shell = unsafe { std::ffi::CStr::from_ptr(entry.pw_shell).to_str().unwrap() };
+    if env::var("SHELL").map_or(true, |shell_env| shell_env != shell) {
+        log::info!(
+            "updating SHELL environment variable to value from passwd entry: {:?}",
+            shell,
+        );
+        env::set_var("SHELL", shell);
+    }
+
+    Ok(())
+}
+
 async fn load_login_shell_environment() -> Result<()> {
     let marker = "ZED_LOGIN_SHELL_START";
     let shell = env::var("SHELL").context(
@@ -778,7 +832,7 @@ fn load_embedded_fonts(cx: &AppContext) {
             }
 
             scope.spawn(async {
-                let font_bytes = asset_source.load(font_path).unwrap();
+                let font_bytes = asset_source.load(font_path).unwrap().unwrap();
                 embedded_fonts.lock().push(font_bytes);
             });
         }
@@ -888,7 +942,8 @@ fn watch_languages(_fs: Arc<dyn fs::Fs>, _languages: Arc<LanguageRegistry>, _cx:
 fn watch_file_types(fs: Arc<dyn fs::Fs>, cx: &mut AppContext) {
     use std::time::Duration;
 
-    use gpui::BorrowAppContext;
+    use file_icons::FileIcons;
+    use gpui::UpdateGlobal;
 
     let path = {
         let p = Path::new("assets/icons/file_icons/file_types.json");
@@ -902,7 +957,7 @@ fn watch_file_types(fs: Arc<dyn fs::Fs>, cx: &mut AppContext) {
         let mut events = fs.watch(path.as_path(), Duration::from_millis(100)).await;
         while (events.next().await).is_some() {
             cx.update(|cx| {
-                cx.update_global(|file_types, _| {
+                FileIcons::update_global(cx, |file_types, _cx| {
                     *file_types = file_icons::FileIcons::new(Assets);
                 });
             })

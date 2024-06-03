@@ -5,7 +5,7 @@ use crate::{
     },
     toolbar::Toolbar,
     workspace_settings::{AutosaveSetting, TabBarSettings, WorkspaceSettings},
-    NewCenterTerminal, NewFile, NewSearch, OpenInTerminal, OpenTerminal, OpenVisible,
+    CloseWindow, NewCenterTerminal, NewFile, NewSearch, OpenInTerminal, OpenTerminal, OpenVisible,
     SplitDirection, ToggleZoom, Workspace,
 };
 use anyhow::Result;
@@ -41,7 +41,7 @@ use ui::{
     IconSize, Indicator, Label, Tab, TabBar, TabPosition, Tooltip,
 };
 use ui::{v_flex, ContextMenu};
-use util::{maybe, truncate_and_remove_front, ResultExt};
+use util::{debug_panic, maybe, truncate_and_remove_front, ResultExt};
 
 #[derive(PartialEq, Clone, Copy, Deserialize, Debug)]
 #[serde(rename_all = "camelCase")]
@@ -191,7 +191,8 @@ pub struct Pane {
     ),
     focus_handle: FocusHandle,
     items: Vec<Box<dyn ItemHandle>>,
-    activation_history: Vec<EntityId>,
+    activation_history: Vec<ActivationHistoryEntry>,
+    next_activation_timestamp: Arc<AtomicUsize>,
     zoomed: bool,
     was_focused: bool,
     active_item_index: usize,
@@ -217,6 +218,12 @@ pub struct Pane {
     /// Otherwise, when `display_nav_history_buttons` is Some, it determines whether nav buttons should be displayed.
     display_nav_history_buttons: Option<bool>,
     double_click_dispatch_action: Box<dyn Action>,
+    save_modals_spawned: HashSet<EntityId>,
+}
+
+pub struct ActivationHistoryEntry {
+    pub entity_id: EntityId,
+    pub timestamp: usize,
 }
 
 pub struct ItemNavHistory {
@@ -296,6 +303,7 @@ impl Pane {
             focus_handle,
             items: Vec::new(),
             activation_history: Vec::new(),
+            next_activation_timestamp: next_timestamp.clone(),
             was_focused: false,
             zoomed: false,
             active_item_index: 0,
@@ -394,6 +402,7 @@ impl Pane {
             ),
             _subscriptions: subscriptions,
             double_click_dispatch_action,
+            save_modals_spawned: HashSet::default(),
         }
     }
 
@@ -506,7 +515,7 @@ impl Pane {
         self.active_item_index
     }
 
-    pub fn activation_history(&self) -> &Vec<EntityId> {
+    pub fn activation_history(&self) -> &[ActivationHistoryEntry] {
         &self.activation_history
     }
 
@@ -892,10 +901,13 @@ impl Pane {
 
             if let Some(newly_active_item) = self.items.get(index) {
                 self.activation_history
-                    .retain(|&previously_active_item_id| {
-                        previously_active_item_id != newly_active_item.item_id()
-                    });
-                self.activation_history.push(newly_active_item.item_id());
+                    .retain(|entry| entry.entity_id != newly_active_item.item_id());
+                self.activation_history.push(ActivationHistoryEntry {
+                    entity_id: newly_active_item.item_id(),
+                    timestamp: self
+                        .next_activation_timestamp
+                        .fetch_add(1, Ordering::SeqCst),
+                });
             }
 
             self.update_toolbar(cx);
@@ -936,6 +948,14 @@ impl Pane {
         cx: &mut ViewContext<Self>,
     ) -> Option<Task<Result<()>>> {
         if self.items.is_empty() {
+            // Close the window when there's no active items to close, if configured
+            if WorkspaceSettings::get_global(cx)
+                .when_closing_with_no_tabs
+                .should_close()
+            {
+                cx.dispatch_action(Box::new(CloseWindow));
+            }
+
             return None;
         }
         let active_item_id = self.items[self.active_item_index].item_id();
@@ -1211,7 +1231,7 @@ impl Pane {
         cx: &mut ViewContext<Self>,
     ) {
         self.activation_history
-            .retain(|&history_entry| history_entry != self.items[item_index].item_id());
+            .retain(|entry| entry.entity_id != self.items[item_index].item_id());
 
         if item_index == self.active_item_index {
             let index_to_activate = self
@@ -1219,7 +1239,7 @@ impl Pane {
                 .pop()
                 .and_then(|last_activated_item| {
                     self.items.iter().enumerate().find_map(|(index, item)| {
-                        (item.item_id() == last_activated_item).then_some(index)
+                        (item.item_id() == last_activated_item.entity_id).then_some(index)
                     })
                 })
                 // We didn't have a valid activation history entry, so fallback
@@ -1357,20 +1377,37 @@ impl Pane {
                     ) && Self::can_autosave_item(item, cx)
                 })?;
                 if !will_autosave {
-                    let answer = pane.update(cx, |pane, cx| {
-                        pane.activate_item(item_ix, true, true, cx);
-                        let prompt = dirty_message_for(item.project_path(cx));
-                        cx.prompt(
-                            PromptLevel::Warning,
-                            &prompt,
-                            None,
-                            &["Save", "Don't Save", "Cancel"],
-                        )
+                    let item_id = item.item_id();
+                    let answer_task = pane.update(cx, |pane, cx| {
+                        if pane.save_modals_spawned.insert(item_id) {
+                            pane.activate_item(item_ix, true, true, cx);
+                            let prompt = dirty_message_for(item.project_path(cx));
+                            Some(cx.prompt(
+                                PromptLevel::Warning,
+                                &prompt,
+                                None,
+                                &["Save", "Don't Save", "Cancel"],
+                            ))
+                        } else {
+                            None
+                        }
                     })?;
-                    match answer.await {
-                        Ok(0) => {}
-                        Ok(1) => return Ok(true), // Don't save this file
-                        _ => return Ok(false),    // Cancel
+                    if let Some(answer_task) = answer_task {
+                        let answer = answer_task.await;
+                        pane.update(cx, |pane, _| {
+                            if !pane.save_modals_spawned.remove(&item_id) {
+                                debug_panic!(
+                                    "save modal was not present in spawned modals after awaiting for its answer"
+                                )
+                            }
+                        })?;
+                        match answer {
+                            Ok(0) => {}
+                            Ok(1) => return Ok(true), // Don't save this file
+                            _ => return Ok(false),    // Cancel
+                        }
+                    } else {
+                        return Ok(false);
                     }
                 }
             }
@@ -1404,8 +1441,15 @@ impl Pane {
         project: Model<Project>,
         cx: &mut WindowContext,
     ) -> Task<Result<()>> {
+        let format = if let AutosaveSetting::AfterDelay { .. } =
+            WorkspaceSettings::get_global(cx).autosave
+        {
+            false
+        } else {
+            true
+        };
         if Self::can_autosave_item(item, cx) {
-            item.save(true, project, cx)
+            item.save(format, project, cx)
         } else {
             Task::ready(Ok(()))
         }
@@ -2983,7 +3027,7 @@ mod tests {
 
 impl Render for DraggedTab {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
-        let ui_font = ThemeSettings::get_global(cx).ui_font.family.clone();
+        let ui_font = ThemeSettings::get_global(cx).ui_font.clone();
         let label = self.item.tab_content(
             TabContentParams {
                 detail: Some(self.detail),
@@ -2996,6 +3040,6 @@ impl Render for DraggedTab {
             .selected(self.is_active)
             .child(label)
             .render(cx)
-            .font_family(ui_font)
+            .font(ui_font)
     }
 }

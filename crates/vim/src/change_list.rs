@@ -102,20 +102,16 @@ mod test {
 
         cx.set_shared_state("ˇ").await;
 
-        cx.simulate_shared_keystrokes([
-            "i", "1", "1", "escape", "shift-o", "2", "2", "escape", "shift-g", "o", "3", "3",
-            "escape",
-        ])
-        .await;
+        cx.simulate_shared_keystrokes("i 1 1 escape shift-o 2 2 escape shift-g o 3 3 escape")
+            .await;
 
-        cx.assert_shared_state(indoc! {
+        cx.shared_state().await.assert_eq(indoc! {
             "22
              11
              3ˇ3"
-        })
-        .await;
+        });
 
-        cx.simulate_shared_keystrokes(["g", ";"]).await;
+        cx.simulate_shared_keystrokes("g ;").await;
         // NOTE: this matches nvim when I type it into it
         // but in tests, nvim always reports the column as 0...
         cx.assert_state(
@@ -126,7 +122,7 @@ mod test {
             },
             Mode::Normal,
         );
-        cx.simulate_shared_keystrokes(["g", ";"]).await;
+        cx.simulate_shared_keystrokes("g ;").await;
         cx.assert_state(
             indoc! {
             "2ˇ2
@@ -135,7 +131,7 @@ mod test {
             },
             Mode::Normal,
         );
-        cx.simulate_shared_keystrokes(["g", ";"]).await;
+        cx.simulate_shared_keystrokes("g ;").await;
         cx.assert_state(
             indoc! {
             "22
@@ -144,7 +140,7 @@ mod test {
             },
             Mode::Normal,
         );
-        cx.simulate_shared_keystrokes(["g", ","]).await;
+        cx.simulate_shared_keystrokes("g ,").await;
         cx.assert_state(
             indoc! {
             "2ˇ2
@@ -153,9 +149,8 @@ mod test {
             },
             Mode::Normal,
         );
-        cx.simulate_shared_keystrokes(["shift-g", "i", "4", "4", "escape"])
-            .await;
-        cx.simulate_shared_keystrokes(["g", ";"]).await;
+        cx.simulate_shared_keystrokes("shift-g i 4 4 escape").await;
+        cx.simulate_shared_keystrokes("g ;").await;
         cx.assert_state(
             indoc! {
             "22
@@ -164,7 +159,7 @@ mod test {
             },
             Mode::Normal,
         );
-        cx.simulate_shared_keystrokes(["g", ";"]).await;
+        cx.simulate_shared_keystrokes("g ;").await;
         cx.assert_state(
             indoc! {
             "2ˇ2
@@ -182,22 +177,18 @@ mod test {
         "one two
         three fˇour"})
             .await;
-        cx.simulate_shared_keystrokes(["x", "k", "d", "i", "w", "^", "x"])
-            .await;
-        cx.assert_shared_state(indoc! {
+        cx.simulate_shared_keystrokes("x k d i w ^ x").await;
+        cx.shared_state().await.assert_eq(indoc! {
         "ˇne•
-        three fur"})
-            .await;
-        cx.simulate_shared_keystrokes(["2", "g", ";"]).await;
-        cx.assert_shared_state(indoc! {
+        three fur"});
+        cx.simulate_shared_keystrokes("2 g ;").await;
+        cx.shared_state().await.assert_eq(indoc! {
         "ne•
-        three fˇur"})
-            .await;
-        cx.simulate_shared_keystrokes(["g", ","]).await;
-        cx.assert_shared_state(indoc! {
+        three fˇur"});
+        cx.simulate_shared_keystrokes("g ,").await;
+        cx.shared_state().await.assert_eq(indoc! {
         "ˇne•
-        three fur"})
-            .await;
+        three fur"});
     }
 
     #[gpui::test]
@@ -207,13 +198,11 @@ mod test {
         "one two
         three fˇr"})
             .await;
-        cx.simulate_shared_keystrokes(["i", "o", "escape", "k", "g", "i"])
-            .await;
-        cx.simulate_shared_keystrokes(["u", "escape"]).await;
-        cx.assert_shared_state(indoc! {
+        cx.simulate_shared_keystrokes("i o escape k g i").await;
+        cx.simulate_shared_keystrokes("u escape").await;
+        cx.shared_state().await.assert_eq(indoc! {
         "one two
-        three foˇur"})
-            .await;
+        three foˇur"});
     }
 
     #[gpui::test]
@@ -223,11 +212,9 @@ mod test {
         "one two
         three fˇr"})
             .await;
-        cx.simulate_shared_keystrokes(["i", "o", "escape", "k", "`", "."])
-            .await;
-        cx.assert_shared_state(indoc! {
+        cx.simulate_shared_keystrokes("i o escape k ` .").await;
+        cx.shared_state().await.assert_eq(indoc! {
         "one two
-        three fˇor"})
-            .await;
+        three fˇor"});
     }
 }

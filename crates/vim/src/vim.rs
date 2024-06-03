@@ -27,7 +27,7 @@ use editor::{
 };
 use gpui::{
     actions, impl_actions, Action, AppContext, EntityId, FocusableView, Global, KeystrokeEvent,
-    Subscription, View, ViewContext, WeakView, WindowContext,
+    Subscription, UpdateGlobal, View, ViewContext, WeakView, WindowContext,
 };
 use language::{CursorShape, Point, SelectionGoal, TransactionId};
 pub use mode_indicator::ModeIndicator;
@@ -106,11 +106,11 @@ pub fn init(cx: &mut AppContext) {
     CommandPaletteFilter::update_global(cx, |filter, _| {
         filter.hide_namespace(Vim::NAMESPACE);
     });
-    cx.update_global(|vim: &mut Vim, cx: &mut AppContext| {
+    Vim::update_global(cx, |vim, cx| {
         vim.set_enabled(VimModeSetting::get_global(cx).0, cx)
     });
     cx.observe_global::<SettingsStore>(|cx| {
-        cx.update_global(|vim: &mut Vim, cx: &mut AppContext| {
+        Vim::update_global(cx, |vim, cx| {
             vim.set_enabled(VimModeSetting::get_global(cx).0, cx)
         });
     })
@@ -813,12 +813,11 @@ impl Vim {
             editor.set_input_enabled(!state.vim_controlled());
             editor.set_autoindent(state.should_autoindent());
             editor.selections.line_mode = matches!(state.mode, Mode::VisualLine);
-            if editor.is_focused(cx) {
+            if editor.is_focused(cx) || editor.mouse_menu_is_focused(cx) {
                 editor.set_keymap_context_layer::<Self>(state.keymap_context_layer(), cx);
-            // disables vim if the rename editor is focused,
-            // but not if the command palette is open.
+                // disable vim mode if a sub-editor (inline assist, rename, etc.) is focused
             } else if editor.focus_handle(cx).contains_focused(cx) {
-                editor.remove_keymap_context_layer::<Self>(cx)
+                editor.remove_keymap_context_layer::<Self>(cx);
             }
         });
     }

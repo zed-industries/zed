@@ -8,7 +8,8 @@ use sha2::{Digest, Sha256};
 use util::{truncate_and_remove_front, ResultExt};
 
 use crate::{
-    ResolvedTask, SpawnInTerminal, TaskContext, TaskId, VariableName, ZED_VARIABLE_NAME_PREFIX,
+    ResolvedTask, SpawnInTerminal, TaskContext, TaskId, TerminalWorkDir, VariableName,
+    ZED_VARIABLE_NAME_PREFIX,
 };
 
 /// A template definition of a Zed task to run.
@@ -39,20 +40,6 @@ pub struct TaskTemplate {
     /// Whether to allow multiple instances of the same task to be run, or rather wait for the existing ones to finish.
     #[serde(default)]
     pub allow_concurrent_runs: bool,
-    // Tasks like "execute the selection" better have the constant labels (to avoid polluting the history with temporary tasks),
-    // and always use the latest context with the latest selection.
-    //
-    // Current impl will always pick previously spawned tasks on full label conflict in the tasks modal and terminal tabs, never
-    // getting the latest selection for them.
-    // This flag inverts the behavior, effectively removing all previously spawned tasks from history,
-    // if their full labels are the same as the labels of the newly resolved tasks.
-    // Such tasks are still re-runnable, and will use the old context in that case (unless the rerun task forces this).
-    //
-    // Current approach is relatively hacky, a better way is understand when the new resolved tasks needs a rerun,
-    // and replace the historic task accordingly.
-    #[doc(hidden)]
-    #[serde(default)]
-    pub ignore_previously_resolved: bool,
     /// What to do with the terminal pane and tab, after the command was started:
     /// * `always` — always show the terminal pane, add and focus the corresponding task's tab in it (default)
     /// * `never` — avoid changing current terminal pane focus, but still add/reuse the task's tab there
@@ -126,12 +113,14 @@ impl TaskTemplate {
                     &variable_names,
                     &mut substituted_variables,
                 )?;
-                Some(substitured_cwd)
+                Some(TerminalWorkDir::Local(PathBuf::from(substitured_cwd)))
             }
             None => None,
         }
-        .map(PathBuf::from)
-        .or(cx.cwd.clone());
+        .or(cx
+            .cwd
+            .as_ref()
+            .map(|cwd| TerminalWorkDir::Local(cwd.clone())));
         let human_readable_label = substitute_all_template_variables_in_str(
             &self.label,
             &truncated_variables,
@@ -393,7 +382,10 @@ mod tests {
             task_variables: TaskVariables::default(),
         };
         assert_eq!(
-            resolved_task(&task_without_cwd, &cx).cwd.as_deref(),
+            resolved_task(&task_without_cwd, &cx)
+                .cwd
+                .as_ref()
+                .and_then(|cwd| cwd.local_path()),
             Some(context_cwd.as_path()),
             "TaskContext's cwd should be taken on resolve if task's cwd is None"
         );
@@ -408,7 +400,10 @@ mod tests {
             task_variables: TaskVariables::default(),
         };
         assert_eq!(
-            resolved_task(&task_with_cwd, &cx).cwd.as_deref(),
+            resolved_task(&task_with_cwd, &cx)
+                .cwd
+                .as_ref()
+                .and_then(|cwd| cwd.local_path()),
             Some(task_cwd.as_path()),
             "TaskTemplate's cwd should be taken on resolve if TaskContext's cwd is None"
         );
@@ -418,7 +413,10 @@ mod tests {
             task_variables: TaskVariables::default(),
         };
         assert_eq!(
-            resolved_task(&task_with_cwd, &cx).cwd.as_deref(),
+            resolved_task(&task_with_cwd, &cx)
+                .cwd
+                .as_ref()
+                .and_then(|cwd| cwd.local_path()),
             Some(task_cwd.as_path()),
             "TaskTemplate's cwd should be taken on resolve if TaskContext's cwd is not None"
         );
@@ -471,14 +469,14 @@ mod tests {
                 (
                     "env_key_2".to_string(),
                     format!(
-                        "env_var_2_{}_{}",
+                        "env_var_2 {} {}",
                         custom_variable_1.template_value(),
                         custom_variable_2.template_value()
                     ),
                 ),
                 (
                     "env_key_3".to_string(),
-                    format!("env_var_3_{}", VariableName::Symbol.template_value()),
+                    format!("env_var_3 {}", VariableName::Symbol.template_value()),
                 ),
             ]),
             ..TaskTemplate::default()
@@ -561,11 +559,11 @@ mod tests {
             );
             assert_eq!(
                 spawn_in_terminal.env.get("env_key_2").map(|s| s.as_str()),
-                Some("env_var_2_test_custom_variable_1_test_custom_variable_2")
+                Some("env_var_2 test_custom_variable_1 test_custom_variable_2")
             );
             assert_eq!(
                 spawn_in_terminal.env.get("env_key_3"),
-                Some(&format!("env_var_3_{long_value}")),
+                Some(&format!("env_var_3 {long_value}")),
                 "Env vars should be substituted with variables and those should not be shortened"
             );
         }
@@ -680,5 +678,28 @@ mod tests {
         resolved_variables.sort_by_key(|var| var.to_string());
         expected.sort_by_key(|var| var.to_string());
         assert_eq!(resolved_variables, expected)
+    }
+
+    #[test]
+    fn substitute_funky_labels() {
+        let faulty_go_test = TaskTemplate {
+            label: format!(
+                "go test {}/{}",
+                VariableName::Symbol.template_value(),
+                VariableName::Symbol.template_value(),
+            ),
+            command: "go".into(),
+            args: vec![format!(
+                "^{}$/^{}$",
+                VariableName::Symbol.template_value(),
+                VariableName::Symbol.template_value()
+            )],
+            ..TaskTemplate::default()
+        };
+        let mut context = TaskContext::default();
+        context
+            .task_variables
+            .insert(VariableName::Symbol, "my-symbol".to_string());
+        assert!(faulty_go_test.resolve_task("base", &context).is_some());
     }
 }

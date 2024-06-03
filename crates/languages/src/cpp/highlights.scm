@@ -112,7 +112,7 @@
   (true)
   (false)
   (null)
-  (nullptr)
+  ("nullptr")
 ] @constant
 
 (number_literal) @number

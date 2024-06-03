@@ -3,11 +3,13 @@ use crate::{
     CompletionProvider, LanguageModelRequest,
 };
 use anyhow::Result;
+use client::telemetry::Telemetry;
 use editor::{Anchor, MultiBuffer, MultiBufferSnapshot, ToOffset, ToPoint};
 use futures::{channel::mpsc, SinkExt, Stream, StreamExt};
 use gpui::{EventEmitter, Model, ModelContext, Task};
 use language::{Rope, TransactionId};
-use std::{cmp, future, ops::Range};
+use multi_buffer::MultiBufferRow;
+use std::{cmp, future, ops::Range, sync::Arc, time::Instant};
 
 pub enum Event {
     Finished,
@@ -29,13 +31,19 @@ pub struct Codegen {
     error: Option<anyhow::Error>,
     generation: Task<()>,
     idle: bool,
+    telemetry: Option<Arc<Telemetry>>,
     _subscription: gpui::Subscription,
 }
 
 impl EventEmitter<Event> for Codegen {}
 
 impl Codegen {
-    pub fn new(buffer: Model<MultiBuffer>, kind: CodegenKind, cx: &mut ModelContext<Self>) -> Self {
+    pub fn new(
+        buffer: Model<MultiBuffer>,
+        kind: CodegenKind,
+        telemetry: Option<Arc<Telemetry>>,
+        cx: &mut ModelContext<Self>,
+    ) -> Self {
         let snapshot = buffer.read(cx).snapshot(cx);
         Self {
             buffer: buffer.clone(),
@@ -46,6 +54,7 @@ impl Codegen {
             error: Default::default(),
             idle: true,
             generation: Task::ready(()),
+            telemetry,
             _subscription: cx.subscribe(&buffer, Self::handle_buffer_event),
         }
     }
@@ -100,9 +109,11 @@ impl Codegen {
             .suggested_indents(selection_start.row..selection_start.row + 1, cx)
             .into_values()
             .next()
-            .unwrap_or_else(|| snapshot.indent_size_for_line(selection_start.row));
+            .unwrap_or_else(|| snapshot.indent_size_for_line(MultiBufferRow(selection_start.row)));
 
+        let model_telemetry_id = prompt.model.telemetry_id();
         let response = CompletionProvider::global(cx).complete(prompt);
+        let telemetry = self.telemetry.clone();
         self.generation = cx.spawn(|this, mut cx| {
             async move {
                 let generate = async {
@@ -110,68 +121,89 @@ impl Codegen {
 
                     let (mut hunks_tx, mut hunks_rx) = mpsc::channel(1);
                     let diff = cx.background_executor().spawn(async move {
-                        let chunks = strip_invalid_spans_from_codeblock(response.await?);
-                        futures::pin_mut!(chunks);
-                        let mut diff = StreamingDiff::new(selected_text.to_string());
+                        let mut response_latency = None;
+                        let request_start = Instant::now();
+                        let diff = async {
+                            let chunks = strip_invalid_spans_from_codeblock(response.await?);
+                            futures::pin_mut!(chunks);
+                            let mut diff = StreamingDiff::new(selected_text.to_string());
 
-                        let mut new_text = String::new();
-                        let mut base_indent = None;
-                        let mut line_indent = None;
-                        let mut first_line = true;
+                            let mut new_text = String::new();
+                            let mut base_indent = None;
+                            let mut line_indent = None;
+                            let mut first_line = true;
 
-                        while let Some(chunk) = chunks.next().await {
-                            let chunk = chunk?;
+                            while let Some(chunk) = chunks.next().await {
+                                if response_latency.is_none() {
+                                    response_latency = Some(request_start.elapsed());
+                                }
+                                let chunk = chunk?;
 
-                            let mut lines = chunk.split('\n').peekable();
-                            while let Some(line) = lines.next() {
-                                new_text.push_str(line);
-                                if line_indent.is_none() {
-                                    if let Some(non_whitespace_ch_ix) =
-                                        new_text.find(|ch: char| !ch.is_whitespace())
-                                    {
-                                        line_indent = Some(non_whitespace_ch_ix);
-                                        base_indent = base_indent.or(line_indent);
+                                let mut lines = chunk.split('\n').peekable();
+                                while let Some(line) = lines.next() {
+                                    new_text.push_str(line);
+                                    if line_indent.is_none() {
+                                        if let Some(non_whitespace_ch_ix) =
+                                            new_text.find(|ch: char| !ch.is_whitespace())
+                                        {
+                                            line_indent = Some(non_whitespace_ch_ix);
+                                            base_indent = base_indent.or(line_indent);
 
-                                        let line_indent = line_indent.unwrap();
-                                        let base_indent = base_indent.unwrap();
-                                        let indent_delta = line_indent as i32 - base_indent as i32;
-                                        let mut corrected_indent_len = cmp::max(
-                                            0,
-                                            suggested_line_indent.len as i32 + indent_delta,
-                                        )
-                                            as usize;
-                                        if first_line {
-                                            corrected_indent_len = corrected_indent_len
-                                                .saturating_sub(selection_start.column as usize);
+                                            let line_indent = line_indent.unwrap();
+                                            let base_indent = base_indent.unwrap();
+                                            let indent_delta =
+                                                line_indent as i32 - base_indent as i32;
+                                            let mut corrected_indent_len = cmp::max(
+                                                0,
+                                                suggested_line_indent.len as i32 + indent_delta,
+                                            )
+                                                as usize;
+                                            if first_line {
+                                                corrected_indent_len = corrected_indent_len
+                                                    .saturating_sub(
+                                                        selection_start.column as usize,
+                                                    );
+                                            }
+
+                                            let indent_char = suggested_line_indent.char();
+                                            let mut indent_buffer = [0; 4];
+                                            let indent_str =
+                                                indent_char.encode_utf8(&mut indent_buffer);
+                                            new_text.replace_range(
+                                                ..line_indent,
+                                                &indent_str.repeat(corrected_indent_len),
+                                            );
                                         }
+                                    }
 
-                                        let indent_char = suggested_line_indent.char();
-                                        let mut indent_buffer = [0; 4];
-                                        let indent_str =
-                                            indent_char.encode_utf8(&mut indent_buffer);
-                                        new_text.replace_range(
-                                            ..line_indent,
-                                            &indent_str.repeat(corrected_indent_len),
-                                        );
+                                    if line_indent.is_some() {
+                                        hunks_tx.send(diff.push_new(&new_text)).await?;
+                                        new_text.clear();
+                                    }
+
+                                    if lines.peek().is_some() {
+                                        hunks_tx.send(diff.push_new("\n")).await?;
+                                        line_indent = None;
+                                        first_line = false;
                                     }
                                 }
-
-                                if line_indent.is_some() {
-                                    hunks_tx.send(diff.push_new(&new_text)).await?;
-                                    new_text.clear();
-                                }
-
-                                if lines.peek().is_some() {
-                                    hunks_tx.send(diff.push_new("\n")).await?;
-                                    line_indent = None;
-                                    first_line = false;
-                                }
                             }
-                        }
-                        hunks_tx.send(diff.push_new(&new_text)).await?;
-                        hunks_tx.send(diff.finish()).await?;
+                            hunks_tx.send(diff.push_new(&new_text)).await?;
+                            hunks_tx.send(diff.finish()).await?;
 
-                        anyhow::Ok(())
+                            anyhow::Ok(())
+                        };
+
+                        let error_message = diff.await.err().map(|error| error.to_string());
+                        if let Some(telemetry) = telemetry {
+                            telemetry.report_assistant_event(
+                                None,
+                                telemetry_events::AssistantKind::Inline,
+                                model_telemetry_id,
+                                response_latency,
+                                error_message,
+                            );
+                        }
                     });
 
                     while let Some(hunks) = hunks_rx.next().await {
@@ -234,7 +266,8 @@ impl Codegen {
                         })?;
                     }
 
-                    diff.await?;
+                    diff.await;
+
                     anyhow::Ok(())
                 };
 
@@ -395,8 +428,9 @@ mod tests {
             let snapshot = buffer.snapshot(cx);
             snapshot.anchor_before(Point::new(1, 0))..snapshot.anchor_after(Point::new(4, 5))
         });
-        let codegen =
-            cx.new_model(|cx| Codegen::new(buffer.clone(), CodegenKind::Transform { range }, cx));
+        let codegen = cx.new_model(|cx| {
+            Codegen::new(buffer.clone(), CodegenKind::Transform { range }, None, cx)
+        });
 
         let request = LanguageModelRequest::default();
         codegen.update(cx, |codegen, cx| codegen.start(request, cx));
@@ -453,8 +487,9 @@ mod tests {
             let snapshot = buffer.snapshot(cx);
             snapshot.anchor_before(Point::new(1, 6))
         });
-        let codegen =
-            cx.new_model(|cx| Codegen::new(buffer.clone(), CodegenKind::Generate { position }, cx));
+        let codegen = cx.new_model(|cx| {
+            Codegen::new(buffer.clone(), CodegenKind::Generate { position }, None, cx)
+        });
 
         let request = LanguageModelRequest::default();
         codegen.update(cx, |codegen, cx| codegen.start(request, cx));
@@ -511,8 +546,9 @@ mod tests {
             let snapshot = buffer.snapshot(cx);
             snapshot.anchor_before(Point::new(1, 2))
         });
-        let codegen =
-            cx.new_model(|cx| Codegen::new(buffer.clone(), CodegenKind::Generate { position }, cx));
+        let codegen = cx.new_model(|cx| {
+            Codegen::new(buffer.clone(), CodegenKind::Generate { position }, None, cx)
+        });
 
         let request = LanguageModelRequest::default();
         codegen.update(cx, |codegen, cx| codegen.start(request, cx));

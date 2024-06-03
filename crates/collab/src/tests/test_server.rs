@@ -19,6 +19,7 @@ use fs::FakeFs;
 use futures::{channel::oneshot, StreamExt as _};
 use git::GitHostingProviderRegistry;
 use gpui::{BackgroundExecutor, Context, Model, Task, TestAppContext, View, VisualTestContext};
+use http::FakeHttpClient;
 use language::LanguageRegistry;
 use node_runtime::FakeNodeRuntime;
 use notifications::NotificationStore;
@@ -41,8 +42,7 @@ use std::{
         Arc,
     },
 };
-use util::http::FakeHttpClient;
-use workspace::{Workspace, WorkspaceId, WorkspaceStore};
+use workspace::{Workspace, WorkspaceStore};
 
 pub struct TestServer {
     pub app_state: Arc<AppState>,
@@ -906,12 +906,7 @@ impl TestClient {
     ) -> (View<Workspace>, &'a mut VisualTestContext) {
         cx.add_window_view(|cx| {
             cx.activate_window();
-            Workspace::new(
-                WorkspaceId::default(),
-                project.clone(),
-                self.app_state.clone(),
-                cx,
-            )
+            Workspace::new(None, project.clone(), self.app_state.clone(), cx)
         })
     }
 
@@ -922,12 +917,7 @@ impl TestClient {
         let project = self.build_test_project(cx).await;
         cx.add_window_view(|cx| {
             cx.activate_window();
-            Workspace::new(
-                WorkspaceId::default(),
-                project.clone(),
-                self.app_state.clone(),
-                cx,
-            )
+            Workspace::new(None, project.clone(), self.app_state.clone(), cx)
         })
     }
 

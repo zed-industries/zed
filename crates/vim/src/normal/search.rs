@@ -218,6 +218,9 @@ pub fn move_to_match_internal(
         pane.update(cx, |pane, cx| {
             if let Some(search_bar) = pane.toolbar().read(cx).item_of_type::<BufferSearchBar>() {
                 search_bar.update(cx, |search_bar, cx| {
+                    if !search_bar.has_active_match() || !search_bar.show(cx) {
+                        return;
+                    }
                     search_bar.select_match(direction, count, cx);
 
                     let new_selections = vim.editor_selections(cx);
@@ -350,7 +353,6 @@ fn replace_command(
                 let range = snapshot
                     .anchor_before(Point::new(range.start.saturating_sub(1) as u32, 0))
                     ..snapshot.anchor_before(Point::new(range.end as u32, 0));
-
                 editor.set_search_within_ranges(&[range], cx)
             })
         }
@@ -391,9 +393,7 @@ fn replace_command(
                                 .timer(Duration::from_millis(200))
                                 .await;
                             editor
-                                .update(&mut cx, |editor, cx| {
-                                    editor.set_search_within_ranges(&[], cx)
-                                })
+                                .update(&mut cx, |editor, cx| editor.clear_search_within_ranges(cx))
                                 .ok();
                         })
                         .detach();
@@ -509,7 +509,9 @@ fn parse_replace_all(query: &str) -> Replacement {
 
 #[cfg(test)]
 mod test {
-    use editor::DisplayPoint;
+    use std::time::Duration;
+
+    use editor::{display_map::DisplayRow, DisplayPoint};
     use indoc::indoc;
     use search::BufferSearchBar;
 
@@ -523,34 +525,34 @@ mod test {
         let mut cx = VimTestContext::new(cx, true).await;
         cx.set_state("ˇhi\nhigh\nhi\n", Mode::Normal);
 
-        cx.simulate_keystrokes(["*"]);
+        cx.simulate_keystrokes("*");
         cx.run_until_parked();
         cx.assert_state("hi\nhigh\nˇhi\n", Mode::Normal);
 
-        cx.simulate_keystrokes(["*"]);
+        cx.simulate_keystrokes("*");
         cx.run_until_parked();
         cx.assert_state("ˇhi\nhigh\nhi\n", Mode::Normal);
 
-        cx.simulate_keystrokes(["#"]);
+        cx.simulate_keystrokes("#");
         cx.run_until_parked();
         cx.assert_state("hi\nhigh\nˇhi\n", Mode::Normal);
 
-        cx.simulate_keystrokes(["#"]);
+        cx.simulate_keystrokes("#");
         cx.run_until_parked();
         cx.assert_state("ˇhi\nhigh\nhi\n", Mode::Normal);
 
-        cx.simulate_keystrokes(["2", "*"]);
+        cx.simulate_keystrokes("2 *");
         cx.run_until_parked();
         cx.assert_state("ˇhi\nhigh\nhi\n", Mode::Normal);
 
-        cx.simulate_keystrokes(["g", "*"]);
+        cx.simulate_keystrokes("g *");
         cx.run_until_parked();
         cx.assert_state("hi\nˇhigh\nhi\n", Mode::Normal);
 
-        cx.simulate_keystrokes(["n"]);
+        cx.simulate_keystrokes("n");
         cx.assert_state("hi\nhigh\nˇhi\n", Mode::Normal);
 
-        cx.simulate_keystrokes(["g", "#"]);
+        cx.simulate_keystrokes("g #");
         cx.run_until_parked();
         cx.assert_state("hi\nˇhigh\nhi\n", Mode::Normal);
     }
@@ -560,7 +562,7 @@ mod test {
         let mut cx = VimTestContext::new(cx, true).await;
 
         cx.set_state("aa\nbˇb\ncc\ncc\ncc\n", Mode::Normal);
-        cx.simulate_keystrokes(["/", "c", "c"]);
+        cx.simulate_keystrokes("/ c c");
 
         let search_bar = cx.workspace(|workspace, cx| {
             workspace
@@ -582,55 +584,55 @@ mod test {
             let highlights = editor.all_text_background_highlights(cx);
             assert_eq!(3, highlights.len());
             assert_eq!(
-                DisplayPoint::new(2, 0)..DisplayPoint::new(2, 2),
+                DisplayPoint::new(DisplayRow(2), 0)..DisplayPoint::new(DisplayRow(2), 2),
                 highlights[0].0
             )
         });
 
-        cx.simulate_keystrokes(["enter"]);
+        cx.simulate_keystrokes("enter");
         cx.assert_state("aa\nbb\nˇcc\ncc\ncc\n", Mode::Normal);
 
         // n to go to next/N to go to previous
-        cx.simulate_keystrokes(["n"]);
+        cx.simulate_keystrokes("n");
         cx.assert_state("aa\nbb\ncc\nˇcc\ncc\n", Mode::Normal);
-        cx.simulate_keystrokes(["shift-n"]);
+        cx.simulate_keystrokes("shift-n");
         cx.assert_state("aa\nbb\nˇcc\ncc\ncc\n", Mode::Normal);
 
         // ?<enter> to go to previous
-        cx.simulate_keystrokes(["?", "enter"]);
+        cx.simulate_keystrokes("? enter");
         cx.assert_state("aa\nbb\ncc\ncc\nˇcc\n", Mode::Normal);
-        cx.simulate_keystrokes(["?", "enter"]);
+        cx.simulate_keystrokes("? enter");
         cx.assert_state("aa\nbb\ncc\nˇcc\ncc\n", Mode::Normal);
 
         // /<enter> to go to next
-        cx.simulate_keystrokes(["/", "enter"]);
+        cx.simulate_keystrokes("/ enter");
         cx.assert_state("aa\nbb\ncc\ncc\nˇcc\n", Mode::Normal);
 
         // ?{search}<enter> to search backwards
-        cx.simulate_keystrokes(["?", "b", "enter"]);
+        cx.simulate_keystrokes("? b enter");
         cx.assert_state("aa\nbˇb\ncc\ncc\ncc\n", Mode::Normal);
 
         // works with counts
-        cx.simulate_keystrokes(["4", "/", "c"]);
-        cx.simulate_keystrokes(["enter"]);
+        cx.simulate_keystrokes("4 / c");
+        cx.simulate_keystrokes("enter");
         cx.assert_state("aa\nbb\ncc\ncˇc\ncc\n", Mode::Normal);
 
         // check that searching resumes from cursor, not previous match
         cx.set_state("ˇaa\nbb\ndd\ncc\nbb\n", Mode::Normal);
-        cx.simulate_keystrokes(["/", "d"]);
-        cx.simulate_keystrokes(["enter"]);
+        cx.simulate_keystrokes("/ d");
+        cx.simulate_keystrokes("enter");
         cx.assert_state("aa\nbb\nˇdd\ncc\nbb\n", Mode::Normal);
         cx.update_editor(|editor, cx| editor.move_to_beginning(&Default::default(), cx));
         cx.assert_state("ˇaa\nbb\ndd\ncc\nbb\n", Mode::Normal);
-        cx.simulate_keystrokes(["/", "b"]);
-        cx.simulate_keystrokes(["enter"]);
+        cx.simulate_keystrokes("/ b");
+        cx.simulate_keystrokes("enter");
         cx.assert_state("aa\nˇbb\ndd\ncc\nbb\n", Mode::Normal);
 
         // check that searching switches to normal mode if in visual mode
         cx.set_state("ˇone two one", Mode::Normal);
-        cx.simulate_keystrokes(["v", "l", "l"]);
+        cx.simulate_keystrokes("v l l");
         cx.assert_editor_state("«oneˇ» two one");
-        cx.simulate_keystrokes(["*"]);
+        cx.simulate_keystrokes("*");
         cx.assert_state("one two ˇone", Mode::Normal);
     }
 
@@ -638,13 +640,13 @@ mod test {
     async fn test_non_vim_search(cx: &mut gpui::TestAppContext) {
         let mut cx = VimTestContext::new(cx, false).await;
         cx.set_state("ˇone one one one", Mode::Normal);
-        cx.simulate_keystrokes(["cmd-f"]);
+        cx.simulate_keystrokes("cmd-f");
         cx.run_until_parked();
 
         cx.assert_editor_state("«oneˇ» one one one");
-        cx.simulate_keystrokes(["enter"]);
+        cx.simulate_keystrokes("enter");
         cx.assert_editor_state("one «oneˇ» one one");
-        cx.simulate_keystrokes(["shift-enter"]);
+        cx.simulate_keystrokes("shift-enter");
         cx.assert_editor_state("«oneˇ» one one one");
     }
 
@@ -653,9 +655,8 @@ mod test {
         let mut cx = NeovimBackedTestContext::new(cx).await;
 
         cx.set_shared_state("ˇa.c. abcd a.c. abcd").await;
-        cx.simulate_shared_keystrokes(["v", "3", "l", "*"]).await;
-        cx.assert_shared_state("a.c. abcd ˇa.c. abcd").await;
-        cx.assert_shared_mode(Mode::Normal).await;
+        cx.simulate_shared_keystrokes("v 3 l *").await;
+        cx.shared_state().await.assert_eq("a.c. abcd ˇa.c. abcd");
     }
 
     #[gpui::test]
@@ -663,9 +664,9 @@ mod test {
         let mut cx = NeovimBackedTestContext::new(cx).await;
 
         cx.set_shared_state("ˇa.c. abcd a.c. abcd").await;
-        cx.simulate_shared_keystrokes(["d", "/", "c", "d"]).await;
-        cx.simulate_shared_keystrokes(["enter"]).await;
-        cx.assert_shared_state("ˇcd a.c. abcd").await;
+        cx.simulate_shared_keystrokes("d / c d").await;
+        cx.simulate_shared_keystrokes("enter").await;
+        cx.shared_state().await.assert_eq("ˇcd a.c. abcd");
     }
 
     #[gpui::test]
@@ -673,24 +674,24 @@ mod test {
         let mut cx = NeovimBackedTestContext::new(cx).await;
 
         cx.set_shared_state("ˇa.c. abcd a.c. abcd").await;
-        cx.simulate_shared_keystrokes(["v", "/", "c", "d"]).await;
-        cx.simulate_shared_keystrokes(["enter"]).await;
-        cx.assert_shared_state("«a.c. abcˇ»d a.c. abcd").await;
+        cx.simulate_shared_keystrokes("v / c d").await;
+        cx.simulate_shared_keystrokes("enter").await;
+        cx.shared_state().await.assert_eq("«a.c. abcˇ»d a.c. abcd");
 
         cx.set_shared_state("a a aˇ a a a").await;
-        cx.simulate_shared_keystrokes(["v", "/", "a"]).await;
-        cx.simulate_shared_keystrokes(["enter"]).await;
-        cx.assert_shared_state("a a a« aˇ» a a").await;
-        cx.simulate_shared_keystrokes(["/", "enter"]).await;
-        cx.assert_shared_state("a a a« a aˇ» a").await;
-        cx.simulate_shared_keystrokes(["?", "enter"]).await;
-        cx.assert_shared_state("a a a« aˇ» a a").await;
-        cx.simulate_shared_keystrokes(["?", "enter"]).await;
-        cx.assert_shared_state("a a «ˇa »a a a").await;
-        cx.simulate_shared_keystrokes(["/", "enter"]).await;
-        cx.assert_shared_state("a a a« aˇ» a a").await;
-        cx.simulate_shared_keystrokes(["/", "enter"]).await;
-        cx.assert_shared_state("a a a« a aˇ» a").await;
+        cx.simulate_shared_keystrokes("v / a").await;
+        cx.simulate_shared_keystrokes("enter").await;
+        cx.shared_state().await.assert_eq("a a a« aˇ» a a");
+        cx.simulate_shared_keystrokes("/ enter").await;
+        cx.shared_state().await.assert_eq("a a a« a aˇ» a");
+        cx.simulate_shared_keystrokes("? enter").await;
+        cx.shared_state().await.assert_eq("a a a« aˇ» a a");
+        cx.simulate_shared_keystrokes("? enter").await;
+        cx.shared_state().await.assert_eq("a a «ˇa »a a a");
+        cx.simulate_shared_keystrokes("/ enter").await;
+        cx.shared_state().await.assert_eq("a a a« aˇ» a a");
+        cx.simulate_shared_keystrokes("/ enter").await;
+        cx.shared_state().await.assert_eq("a a a« a aˇ» a");
     }
 
     #[gpui::test]
@@ -704,16 +705,14 @@ mod test {
              "
         })
         .await;
-        cx.simulate_shared_keystrokes(["ctrl-v", "j", "/", "f"])
-            .await;
-        cx.simulate_shared_keystrokes(["enter"]).await;
-        cx.assert_shared_state(indoc! {
+        cx.simulate_shared_keystrokes("ctrl-v j / f").await;
+        cx.simulate_shared_keystrokes("enter").await;
+        cx.shared_state().await.assert_eq(indoc! {
             "«one twoˇ»
              «three fˇ»our
              five six
              "
-        })
-        .await;
+        });
     }
 
     // cargo test -p vim --features neovim test_replace_with_range
@@ -732,10 +731,9 @@ mod test {
              "
         })
         .await;
-        cx.simulate_shared_keystrokes([":", "2", ",", "5", "s", "/", "a", "/", "b"])
-            .await;
-        cx.simulate_shared_keystrokes(["enter"]).await;
-        cx.assert_shared_state(indoc! {
+        cx.simulate_shared_keystrokes(": 2 , 5 s / a / b").await;
+        cx.simulate_shared_keystrokes("enter").await;
+        cx.shared_state().await.assert_eq(indoc! {
             "a
             b
             b
@@ -744,7 +742,20 @@ mod test {
             a
             a
              "
-        })
-        .await;
+        });
+        cx.executor().advance_clock(Duration::from_millis(250));
+        cx.run_until_parked();
+
+        cx.simulate_shared_keystrokes("/ a enter").await;
+        cx.shared_state().await.assert_eq(indoc! {
+            "a
+                b
+                b
+                b
+                b
+                ˇa
+                a
+                 "
+        });
     }
 }

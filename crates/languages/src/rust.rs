@@ -3,6 +3,7 @@ use async_compression::futures::bufread::GzipDecoder;
 use async_trait::async_trait;
 use futures::{io::BufReader, StreamExt};
 use gpui::AsyncAppContext;
+use http::github::{latest_github_release, GitHubLspBinaryVersion};
 pub use language::*;
 use lazy_static::lazy_static;
 use lsp::LanguageServerBinary;
@@ -18,11 +19,7 @@ use std::{
     sync::Arc,
 };
 use task::{TaskTemplate, TaskTemplates, TaskVariables, VariableName};
-use util::{
-    fs::remove_matching,
-    github::{latest_github_release, GitHubLspBinaryVersion},
-    maybe, ResultExt,
-};
+use util::{fs::remove_matching, maybe, ResultExt};
 
 pub struct RustLspAdapter;
 
@@ -331,7 +328,7 @@ const RUST_PACKAGE_TASK_VARIABLE: VariableName =
 impl ContextProvider for RustContextProvider {
     fn build_context(
         &self,
-        _: Option<&Path>,
+        _: &TaskVariables,
         location: &Location,
         cx: &mut gpui::AppContext,
     ) -> Result<TaskVariables> {
@@ -390,6 +387,22 @@ impl ContextProvider for RustContextProvider {
                     "--nocapture".into(),
                 ],
                 tags: vec!["rust-test".to_owned()],
+                ..TaskTemplate::default()
+            },
+            TaskTemplate {
+                label: format!(
+                    "cargo test -p {} {}",
+                    RUST_PACKAGE_TASK_VARIABLE.template_value(),
+                    VariableName::Stem.template_value(),
+                ),
+                command: "cargo".into(),
+                args: vec![
+                    "test".into(),
+                    "-p".into(),
+                    RUST_PACKAGE_TASK_VARIABLE.template_value(),
+                    VariableName::Stem.template_value(),
+                ],
+                tags: vec!["rust-mod-test".to_owned()],
                 ..TaskTemplate::default()
             },
             TaskTemplate {

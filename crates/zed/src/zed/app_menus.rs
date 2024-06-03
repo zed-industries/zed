@@ -138,7 +138,7 @@ pub fn app_menus() -> Vec<Menu<'static>> {
                 MenuItem::separator(),
                 MenuItem::action("Command Palette...", command_palette::Toggle),
                 MenuItem::separator(),
-                MenuItem::action("Go to File...", file_finder::Toggle),
+                MenuItem::action("Go to File...", file_finder::Toggle::default()),
                 // MenuItem::action("Go to Symbol in Project", project_symbols::Toggle),
                 MenuItem::action("Go to Symbol in Editor...", outline::Toggle),
                 MenuItem::action("Go to Line/Column...", go_to_line::Toggle),

@@ -5,6 +5,7 @@ use chrono::{DateTime, Utc};
 use clock::SystemClock;
 use futures::Future;
 use gpui::{AppContext, AppMetadata, BackgroundExecutor, Task};
+use http::{self, HttpClient, HttpClientWithUrl, Method};
 use once_cell::sync::Lazy;
 use parking_lot::Mutex;
 use release_channel::ReleaseChannel;
@@ -14,12 +15,11 @@ use std::io::Write;
 use std::{env, mem, path::PathBuf, sync::Arc, time::Duration};
 use sysinfo::{CpuRefreshKind, Pid, ProcessRefreshKind, RefreshKind, System};
 use telemetry_events::{
-    ActionEvent, AppEvent, AssistantEvent, AssistantKind, CallEvent, CopilotEvent, CpuEvent,
-    EditEvent, EditorEvent, Event, EventRequestBody, EventWrapper, ExtensionEvent, MemoryEvent,
-    SettingEvent,
+    ActionEvent, AppEvent, AssistantEvent, AssistantKind, CallEvent, CpuEvent, EditEvent,
+    EditorEvent, Event, EventRequestBody, EventWrapper, ExtensionEvent, InlineCompletionEvent,
+    MemoryEvent, SettingEvent,
 };
 use tempfile::NamedTempFile;
-use util::http::{self, HttpClient, HttpClientWithUrl, Method};
 #[cfg(not(debug_assertions))]
 use util::ResultExt;
 use util::TryFutureExt;
@@ -241,14 +241,14 @@ impl Telemetry {
         self.report_event(event)
     }
 
-    pub fn report_copilot_event(
+    pub fn report_inline_completion_event(
         self: &Arc<Self>,
-        suggestion_id: Option<String>,
+        provider: String,
         suggestion_accepted: bool,
         file_extension: Option<String>,
     ) {
-        let event = Event::Copilot(CopilotEvent {
-            suggestion_id,
+        let event = Event::InlineCompletion(InlineCompletionEvent {
+            provider,
             suggestion_accepted,
             file_extension,
         });
@@ -261,11 +261,15 @@ impl Telemetry {
         conversation_id: Option<String>,
         kind: AssistantKind,
         model: String,
+        response_latency: Option<Duration>,
+        error_message: Option<String>,
     ) {
         let event = Event::Assistant(AssistantEvent {
             conversation_id,
             kind,
             model: model.to_string(),
+            response_latency,
+            error_message,
         });
 
         self.report_event(event)
@@ -497,7 +501,7 @@ mod tests {
     use chrono::TimeZone;
     use clock::FakeSystemClock;
     use gpui::TestAppContext;
-    use util::http::FakeHttpClient;
+    use http::FakeHttpClient;
 
     #[gpui::test]
     fn test_telemetry_flush_on_max_queue_size(cx: &mut TestAppContext) {

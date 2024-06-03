@@ -8,6 +8,9 @@ license = "GPL-3.0-or-later"
 [lints]
 workspace = true
 
+[features]
+test-support = []
+
 [dependencies]
 anyhow.workspace = true
 async-compression.workspace = true
@@ -17,6 +20,7 @@ collections.workspace = true
 feature_flags.workspace = true
 futures.workspace = true
 gpui.workspace = true
+http.workspace = true
 language.workspace = true
 lazy_static.workspace = true
 log.workspace = true
@@ -25,7 +29,7 @@ node_runtime.workspace = true
 project.workspace = true
 regex.workspace = true
 rope.workspace = true
-rust-embed = "8.2.0"
+rust-embed.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 settings.workspace = true
@@ -36,7 +40,6 @@ tree-sitter-bash.workspace = true
 tree-sitter-c.workspace = true
 tree-sitter-cpp.workspace = true
 tree-sitter-css.workspace = true
-tree-sitter-embedded-template.workspace = true
 tree-sitter-go.workspace = true
 tree-sitter-gomod.workspace = true
 tree-sitter-gowork.workspace = true

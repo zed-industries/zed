@@ -405,7 +405,7 @@ impl TerminalBuilder {
         let _io_thread = event_loop.spawn(); // DANGER
 
         let url_regex = RegexSearch::new(r#"(ipfs:|ipns:|magnet:|mailto:|gemini://|gopher://|https://|http://|news:|file://|git://|ssh:|ftp://)[^\u{0000}-\u{001F}\u{007F}-\u{009F}<>"\s{-}\^⟨⟩`]+"#).unwrap();
-        let word_regex = RegexSearch::new(r#"[\$\+\w.\[\]:/@\-~]+"#).unwrap();
+        let word_regex = RegexSearch::new(r#"[\$\+\w.\[\]:/\\@\-~]+"#).unwrap();
 
         let terminal = Terminal {
             task,
@@ -1195,7 +1195,7 @@ impl Terminal {
         &mut self,
         e: &MouseDownEvent,
         origin: Point<Pixels>,
-        cx: &mut ModelContext<Self>,
+        _cx: &mut ModelContext<Self>,
     ) {
         let position = e.position - origin;
         let point = grid_point(
@@ -1210,33 +1210,40 @@ impl Terminal {
             {
                 self.pty_tx.notify(bytes);
             }
-        } else if e.button == MouseButton::Left {
-            let position = e.position - origin;
-            let (point, side) = grid_point_and_side(
-                position,
-                self.last_content.size,
-                self.last_content.display_offset,
-            );
+        } else {
+            match e.button {
+                MouseButton::Left => {
+                    let position = e.position - origin;
+                    let (point, side) = grid_point_and_side(
+                        position,
+                        self.last_content.size,
+                        self.last_content.display_offset,
+                    );
 
-            let selection_type = match e.click_count {
-                0 => return, //This is a release
-                1 => Some(SelectionType::Simple),
-                2 => Some(SelectionType::Semantic),
-                3 => Some(SelectionType::Lines),
-                _ => None,
-            };
+                    let selection_type = match e.click_count {
+                        0 => return, //This is a release
+                        1 => Some(SelectionType::Simple),
+                        2 => Some(SelectionType::Semantic),
+                        3 => Some(SelectionType::Lines),
+                        _ => None,
+                    };
 
-            let selection =
-                selection_type.map(|selection_type| Selection::new(selection_type, point, side));
+                    let selection = selection_type
+                        .map(|selection_type| Selection::new(selection_type, point, side));
 
-            if let Some(sel) = selection {
-                self.events
-                    .push_back(InternalEvent::SetSelection(Some((sel, point))));
-            }
-        } else if e.button == MouseButton::Middle {
-            if let Some(item) = cx.read_from_primary() {
-                let text = item.text().to_string();
-                self.input(text);
+                    if let Some(sel) = selection {
+                        self.events
+                            .push_back(InternalEvent::SetSelection(Some((sel, point))));
+                    }
+                }
+                #[cfg(target_os = "linux")]
+                MouseButton::Middle => {
+                    if let Some(item) = _cx.read_from_primary() {
+                        let text = item.text().to_string();
+                        self.input(text);
+                    }
+                }
+                _ => {}
             }
         }
     }

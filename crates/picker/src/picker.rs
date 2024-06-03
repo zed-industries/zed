@@ -59,7 +59,14 @@ pub trait PickerDelegate: Sized + 'static {
         Vec::new()
     }
     fn set_selected_index(&mut self, ix: usize, cx: &mut ViewContext<Picker<Self>>);
-
+    // Allows binding some optional effect to when the selection changes.
+    fn selected_index_changed(
+        &self,
+        _ix: usize,
+        _cx: &mut ViewContext<Picker<Self>>,
+    ) -> Option<Box<dyn Fn(&mut WindowContext) + 'static>> {
+        None
+    }
     fn placeholder_text(&self, _cx: &mut WindowContext) -> Arc<str>;
     fn no_matches_text(&self, _cx: &mut WindowContext) -> SharedString {
         "No matches".into()
@@ -224,13 +231,31 @@ impl<D: PickerDelegate> Picker<D> {
         self.focus_handle(cx).focus(cx);
     }
 
+    /// Handles the selecting an index, and passing the change to the delegate.
+    /// If `scroll_to_index` is true, the new selected index will be scrolled into view.
+    ///
+    /// If some effect is bound to `selected_index_changed`, it will be executed.
+    fn set_selected_index(&mut self, ix: usize, scroll_to_index: bool, cx: &mut ViewContext<Self>) {
+        let previous_index = self.delegate.selected_index();
+        self.delegate.set_selected_index(ix, cx);
+        let current_index = self.delegate.selected_index();
+
+        if previous_index != current_index {
+            if let Some(action) = self.delegate.selected_index_changed(ix, cx) {
+                action(cx);
+            }
+            if scroll_to_index {
+                self.scroll_to_item_index(ix);
+            }
+        }
+    }
+
     pub fn select_next(&mut self, _: &menu::SelectNext, cx: &mut ViewContext<Self>) {
         let count = self.delegate.match_count();
         if count > 0 {
             let index = self.delegate.selected_index();
             let ix = if index == count - 1 { 0 } else { index + 1 };
-            self.delegate.set_selected_index(ix, cx);
-            self.scroll_to_item_index(ix);
+            self.set_selected_index(ix, true, cx);
             cx.notify();
         }
     }
@@ -240,8 +265,7 @@ impl<D: PickerDelegate> Picker<D> {
         if count > 0 {
             let index = self.delegate.selected_index();
             let ix = if index == 0 { count - 1 } else { index - 1 };
-            self.delegate.set_selected_index(ix, cx);
-            self.scroll_to_item_index(ix);
+            self.set_selected_index(ix, true, cx);
             cx.notify();
         }
     }
@@ -249,8 +273,7 @@ impl<D: PickerDelegate> Picker<D> {
     fn select_first(&mut self, _: &menu::SelectFirst, cx: &mut ViewContext<Self>) {
         let count = self.delegate.match_count();
         if count > 0 {
-            self.delegate.set_selected_index(0, cx);
-            self.scroll_to_item_index(0);
+            self.set_selected_index(0, true, cx);
             cx.notify();
         }
     }
@@ -259,7 +282,7 @@ impl<D: PickerDelegate> Picker<D> {
         let count = self.delegate.match_count();
         if count > 0 {
             self.delegate.set_selected_index(count - 1, cx);
-            self.scroll_to_item_index(count - 1);
+            self.set_selected_index(count - 1, true, cx);
             cx.notify();
         }
     }
@@ -268,8 +291,7 @@ impl<D: PickerDelegate> Picker<D> {
         let count = self.delegate.match_count();
         let index = self.delegate.selected_index();
         let new_index = if index + 1 == count { 0 } else { index + 1 };
-        self.delegate.set_selected_index(new_index, cx);
-        self.scroll_to_item_index(new_index);
+        self.set_selected_index(new_index, false, cx);
         cx.notify();
     }
 
@@ -319,7 +341,7 @@ impl<D: PickerDelegate> Picker<D> {
     fn handle_click(&mut self, ix: usize, secondary: bool, cx: &mut ViewContext<Self>) {
         cx.stop_propagation();
         cx.prevent_default();
-        self.delegate.set_selected_index(ix, cx);
+        self.set_selected_index(ix, false, cx);
         self.do_confirm(secondary, cx)
     }
 

@@ -7,7 +7,10 @@ use collections::{hash_map, HashMap, HashSet};
 use git::diff::{DiffHunk, DiffHunkStatus};
 use gpui::{AppContext, Hsla, Model, Task, View};
 use language::Buffer;
-use multi_buffer::{Anchor, ExcerptRange, MultiBuffer, MultiBufferSnapshot, ToPoint};
+use multi_buffer::{
+    Anchor, ExcerptRange, MultiBuffer, MultiBufferRow, MultiBufferSnapshot, ToPoint,
+};
+use settings::{Settings, SettingsStore};
 use text::{BufferId, Point};
 use ui::{
     div, ActiveTheme, Context as _, IntoElement, ParentElement, Styled, ViewContext, VisualContext,
@@ -15,10 +18,11 @@ use ui::{
 use util::{debug_panic, RangeExt};
 
 use crate::{
+    editor_settings::CurrentLineHighlight,
     git::{diff_hunk_to_display, DisplayDiffHunk},
-    hunks_for_selections, BlockDisposition, BlockId, BlockProperties, BlockStyle, DiffRowHighlight,
-    Editor, EditorSnapshot, ExpandAllHunkDiffs, RangeToAnchorExt, RevertSelectedHunks,
-    ToDisplayPoint, ToggleHunkDiff,
+    hunk_status, hunks_for_selections, BlockDisposition, BlockId, BlockProperties, BlockStyle,
+    DiffRowHighlight, Editor, EditorSettings, EditorSnapshot, ExpandAllHunkDiffs, RangeToAnchorExt,
+    RevertSelectedHunks, ToDisplayPoint, ToggleHunkDiff,
 };
 
 #[derive(Debug, Clone)]
@@ -90,11 +94,11 @@ impl Editor {
         let hunks = snapshot
             .display_snapshot
             .buffer_snapshot
-            .git_diff_hunks_in_range(0..u32::MAX)
+            .git_diff_hunks_in_range(MultiBufferRow::MIN..MultiBufferRow::MAX)
             .filter(|hunk| {
-                let hunk_display_row_range = Point::new(hunk.associated_range.start, 0)
+                let hunk_display_row_range = Point::new(hunk.associated_range.start.0, 0)
                     .to_display_point(&snapshot.display_snapshot)
-                    ..Point::new(hunk.associated_range.end, 0)
+                    ..Point::new(hunk.associated_range.end.0, 0)
                         .to_display_point(&snapshot.display_snapshot);
                 let row_range_end =
                     display_rows_with_expanded_hunks.get(&hunk_display_row_range.start.row());
@@ -105,7 +109,7 @@ impl Editor {
 
     fn toggle_hunks_expanded(
         &mut self,
-        hunks_to_toggle: Vec<DiffHunk<u32>>,
+        hunks_to_toggle: Vec<DiffHunk<MultiBufferRow>>,
         cx: &mut ViewContext<Self>,
     ) {
         let previous_toggle_task = self.expanded_hunks.hunk_update_tasks.remove(&None);
@@ -176,10 +180,10 @@ impl Editor {
                     });
                     for remaining_hunk in hunks_to_toggle {
                         let remaining_hunk_point_range =
-                            Point::new(remaining_hunk.associated_range.start, 0)
-                                ..Point::new(remaining_hunk.associated_range.end, 0);
+                            Point::new(remaining_hunk.associated_range.start.0, 0)
+                                ..Point::new(remaining_hunk.associated_range.end.0, 0);
                         hunks_to_expand.push(HunkToExpand {
-                            status: remaining_hunk.status(),
+                            status: hunk_status(&remaining_hunk),
                             multi_buffer_range: remaining_hunk_point_range
                                 .to_anchors(&snapshot.buffer_snapshot),
                             diff_base_byte_range: remaining_hunk.diff_base_byte_range.clone(),
@@ -190,6 +194,7 @@ impl Editor {
                         editor.highlight_rows::<DiffRowHighlight>(
                             to_inclusive_row_range(removed_rows, &snapshot),
                             None,
+                            false,
                             cx,
                         );
                     }
@@ -265,6 +270,7 @@ impl Editor {
                 self.highlight_rows::<DiffRowHighlight>(
                     to_inclusive_row_range(hunk_start..hunk_end, &snapshot),
                     Some(added_hunk_color(cx)),
+                    false,
                     cx,
                 );
                 None
@@ -273,6 +279,7 @@ impl Editor {
                 self.highlight_rows::<DiffRowHighlight>(
                     to_inclusive_row_range(hunk_start..hunk_end, &snapshot),
                     Some(added_hunk_color(cx)),
+                    false,
                     cx,
                 );
                 self.insert_deleted_text_block(diff_base_buffer, deleted_text_lines, &hunk, cx)
@@ -302,17 +309,18 @@ impl Editor {
         let deleted_hunk_color = deleted_hunk_color(cx);
         let (editor_height, editor_with_deleted_text) =
             editor_with_deleted_text(diff_base_buffer, deleted_hunk_color, hunk, cx);
-        let parent_gutter_offset = self.gutter_dimensions.width + self.gutter_dimensions.margin;
+        let editor_model = cx.model().clone();
         let mut new_block_ids = self.insert_blocks(
             Some(BlockProperties {
                 position: hunk.multi_buffer_range.start,
                 height: editor_height.max(deleted_text_height),
                 style: BlockStyle::Flex,
-                render: Box::new(move |_| {
+                render: Box::new(move |cx| {
+                    let gutter_dimensions = editor_model.read(cx).gutter_dimensions;
                     div()
                         .bg(deleted_hunk_color)
                         .size_full()
-                        .pl(parent_gutter_offset)
+                        .pl(gutter_dimensions.width + gutter_dimensions.margin)
                         .child(editor_with_deleted_text.clone())
                         .into_any_element()
                 }),
@@ -374,9 +382,10 @@ impl Editor {
                     }
 
                     let snapshot = editor.snapshot(cx);
-                    let buffer_snapshot = buffer.read(cx).snapshot();
-                    let mut recalculated_hunks = buffer_snapshot
-                        .git_diff_hunks_in_row_range(0..u32::MAX)
+                    let mut recalculated_hunks = snapshot
+                        .buffer_snapshot
+                        .git_diff_hunks_in_range(MultiBufferRow::MIN..MultiBufferRow::MAX)
+                        .filter(|hunk| hunk.buffer_id == buffer_id)
                         .fuse()
                         .peekable();
                     let mut highlights_to_remove =
@@ -402,7 +411,7 @@ impl Editor {
                                     .to_display_point(&snapshot)
                                     .row();
                             while let Some(buffer_hunk) = recalculated_hunks.peek() {
-                                match diff_hunk_to_display(buffer_hunk, &snapshot) {
+                                match diff_hunk_to_display(&buffer_hunk, &snapshot) {
                                     DisplayDiffHunk::Folded { display_row } => {
                                         recalculated_hunks.next();
                                         if !expanded_hunk.folded
@@ -441,7 +450,7 @@ impl Editor {
                                         } else {
                                             if !expanded_hunk.folded
                                                 && expanded_hunk_display_range == hunk_display_range
-                                                && expanded_hunk.status == buffer_hunk.status()
+                                                && expanded_hunk.status == hunk_status(buffer_hunk)
                                                 && expanded_hunk.diff_base_byte_range
                                                     == buffer_hunk.diff_base_byte_range
                                             {
@@ -471,6 +480,7 @@ impl Editor {
                         editor.highlight_rows::<DiffRowHighlight>(
                             to_inclusive_row_range(removed_rows, &snapshot),
                             None,
+                            false,
                             cx,
                         );
                     }
@@ -563,7 +573,7 @@ fn editor_with_deleted_text(
             );
         });
 
-        let mut editor = Editor::for_multibuffer(multi_buffer, None, cx);
+        let mut editor = Editor::for_multibuffer(multi_buffer, None, true, cx);
         editor.soft_wrap_mode_override = Some(language::language_settings::SoftWrap::None);
         editor.show_wrap_guides = Some(false);
         editor.show_gutter = false;
@@ -576,13 +586,33 @@ fn editor_with_deleted_text(
             .buffer_snapshot
             .anchor_after(editor.buffer.read(cx).len(cx));
 
-        editor.highlight_rows::<DiffRowHighlight>(start..=end, Some(deleted_color), cx);
-        let hunk_related_subscription = cx.on_blur(&editor.focus_handle, |editor, cx| {
-            editor.change_selections(None, cx, |s| {
-                s.try_cancel();
-            });
-        });
-        editor._subscriptions.push(hunk_related_subscription);
+        editor.highlight_rows::<DiffRowHighlight>(start..=end, Some(deleted_color), false, cx);
+
+        let subscription_editor = parent_editor.clone();
+        editor._subscriptions.extend([
+            cx.on_blur(&editor.focus_handle, |editor, cx| {
+                editor.set_current_line_highlight(CurrentLineHighlight::None);
+                editor.change_selections(None, cx, |s| {
+                    s.try_cancel();
+                });
+                cx.notify();
+            }),
+            cx.on_focus(&editor.focus_handle, move |editor, cx| {
+                let restored_highlight = if let Some(parent_editor) = subscription_editor.upgrade()
+                {
+                    parent_editor.read(cx).current_line_highlight
+                } else {
+                    EditorSettings::get_global(cx).current_line_highlight
+                };
+                editor.set_current_line_highlight(restored_highlight);
+                cx.notify();
+            }),
+            cx.observe_global::<SettingsStore>(|editor, cx| {
+                if !editor.is_focused(cx) {
+                    editor.set_current_line_highlight(CurrentLineHighlight::None);
+                }
+            }),
+        ]);
         let original_multi_buffer_range = hunk.multi_buffer_range.clone();
         let diff_base_range = hunk.diff_base_byte_range.clone();
         editor.register_action::<RevertSelectedHunks>(move |_, cx| {
@@ -614,15 +644,17 @@ fn editor_with_deleted_text(
         editor
     });
 
-    let editor_height = editor.update(cx, |editor, cx| editor.max_point(cx).row() as u8);
+    let editor_height = editor.update(cx, |editor, cx| editor.max_point(cx).row().0 as u8);
     (editor_height, editor)
 }
 
 fn buffer_diff_hunk(
     buffer_snapshot: &MultiBufferSnapshot,
     row_range: Range<Point>,
-) -> Option<DiffHunk<u32>> {
-    let mut hunks = buffer_snapshot.git_diff_hunks_in_range(row_range.start.row..row_range.end.row);
+) -> Option<DiffHunk<MultiBufferRow>> {
+    let mut hunks = buffer_snapshot.git_diff_hunks_in_range(
+        MultiBufferRow(row_range.start.row)..MultiBufferRow(row_range.end.row),
+    );
     let hunk = hunks.next()?;
     let second_hunk = hunks.next();
     if second_hunk.is_none() {

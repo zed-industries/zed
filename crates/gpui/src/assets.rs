@@ -1,5 +1,5 @@
 use crate::{size, DevicePixels, Result, SharedString, Size};
-use anyhow::anyhow;
+
 use image::{Bgra, ImageBuffer};
 use std::{
     borrow::Cow,
@@ -11,18 +11,15 @@ use std::{
 /// A source of assets for this app to use.
 pub trait AssetSource: 'static + Send + Sync {
     /// Load the given asset from the source path.
-    fn load(&self, path: &str) -> Result<Cow<'static, [u8]>>;
+    fn load(&self, path: &str) -> Result<Option<Cow<'static, [u8]>>>;
 
     /// List the assets at the given path.
     fn list(&self, path: &str) -> Result<Vec<SharedString>>;
 }
 
 impl AssetSource for () {
-    fn load(&self, path: &str) -> Result<Cow<'static, [u8]>> {
-        Err(anyhow!(
-            "load called on empty asset provider with \"{}\"",
-            path
-        ))
+    fn load(&self, _path: &str) -> Result<Option<Cow<'static, [u8]>>> {
+        Ok(None)
     }
 
     fn list(&self, _path: &str) -> Result<Vec<SharedString>> {

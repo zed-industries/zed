@@ -4,8 +4,10 @@ use anyhow::{Context, Result};
 use clap::Parser;
 use cli::{ipc::IpcOneShotServer, CliRequest, CliResponse, IpcHandshake};
 use std::{
-    env, fs,
+    env, fs, io,
     path::{Path, PathBuf},
+    process::ExitStatus,
+    thread::{self, JoinHandle},
 };
 use util::paths::PathLikeWithPosition;
 
@@ -14,6 +16,7 @@ struct Detect;
 trait InstalledApp {
     fn zed_version_string(&self) -> String;
     fn launch(&self, ipc_url: String) -> anyhow::Result<()>;
+    fn run_foreground(&self, ipc_url: String) -> io::Result<ExitStatus>;
 }
 
 #[derive(Parser, Debug)]
@@ -37,6 +40,9 @@ struct Args {
     /// Print Zed's version and the app path.
     #[arg(short, long)]
     version: bool,
+    /// Run zed in the foreground (useful for debugging)
+    #[arg(long)]
+    foreground: bool,
     /// Custom path to Zed.app or the zed binary
     #[arg(long)]
     zed: Option<PathBuf>,
@@ -54,6 +60,13 @@ fn parse_path_with_position(
 }
 
 fn main() -> Result<()> {
+    // Exit flatpak sandbox if needed
+    #[cfg(target_os = "linux")]
+    {
+        flatpak::try_restart_to_host();
+        flatpak::ld_extra_libs();
+    }
+
     // Intercept version designators
     #[cfg(target_os = "macos")]
     if let Some(channel) = std::env::args().nth(1).filter(|arg| arg.starts_with("--")) {
@@ -65,6 +78,9 @@ fn main() -> Result<()> {
         }
     }
     let args = Args::parse();
+
+    #[cfg(target_os = "linux")]
+    let args = flatpak::set_bin_if_no_escape(args);
 
     let app = Detect::detect(args.zed.as_deref()).context("Bundle detection")?;
 
@@ -99,10 +115,6 @@ fn main() -> Result<()> {
         IpcOneShotServer::<IpcHandshake>::new().context("Handshake before Zed spawn")?;
     let url = format!("zed-cli://{server_name}");
 
-    app.launch(url)?;
-    let (_, handshake) = server.accept().context("Handshake after Zed spawn")?;
-    let (tx, rx) = (handshake.requests, handshake.responses);
-
     let open_new_workspace = if args.new {
         Some(true)
     } else if args.add {
@@ -111,20 +123,33 @@ fn main() -> Result<()> {
         None
     };
 
-    tx.send(CliRequest::Open {
-        paths,
-        wait: args.wait,
-        open_new_workspace,
-        dev_server_token: args.dev_server_token,
-    })?;
+    let sender: JoinHandle<anyhow::Result<()>> = thread::spawn(move || {
+        let (_, handshake) = server.accept().context("Handshake after Zed spawn")?;
+        let (tx, rx) = (handshake.requests, handshake.responses);
+        tx.send(CliRequest::Open {
+            paths,
+            wait: args.wait,
+            open_new_workspace,
+            dev_server_token: args.dev_server_token,
+        })?;
 
-    while let Ok(response) = rx.recv() {
-        match response {
-            CliResponse::Ping => {}
-            CliResponse::Stdout { message } => println!("{message}"),
-            CliResponse::Stderr { message } => eprintln!("{message}"),
-            CliResponse::Exit { status } => std::process::exit(status),
+        while let Ok(response) = rx.recv() {
+            match response {
+                CliResponse::Ping => {}
+                CliResponse::Stdout { message } => println!("{message}"),
+                CliResponse::Stderr { message } => eprintln!("{message}"),
+                CliResponse::Exit { status } => std::process::exit(status),
+            }
         }
+
+        Ok(())
+    });
+
+    if args.foreground {
+        app.run_foreground(url)?;
+    } else {
+        app.launch(url)?;
+        sender.join().unwrap()?;
     }
 
     Ok(())
@@ -141,7 +166,8 @@ mod linux {
             unix::net::{SocketAddr, UnixDatagram},
         },
         path::{Path, PathBuf},
-        process, thread,
+        process::{self, ExitStatus},
+        thread,
         time::Duration,
     };
 
@@ -208,6 +234,12 @@ mod linux {
             }
             Ok(())
         }
+
+        fn run_foreground(&self, ipc_url: String) -> io::Result<ExitStatus> {
+            std::process::Command::new(self.0.clone())
+                .arg(ipc_url)
+                .status()
+        }
     }
 
     impl App {
@@ -253,11 +285,121 @@ mod linux {
     }
 }
 
+#[cfg(target_os = "linux")]
+mod flatpak {
+    use std::ffi::OsString;
+    use std::path::PathBuf;
+    use std::process::Command;
+    use std::{env, process};
+
+    const EXTRA_LIB_ENV_NAME: &'static str = "ZED_FLATPAK_LIB_PATH";
+    const NO_ESCAPE_ENV_NAME: &'static str = "ZED_FLATPAK_NO_ESCAPE";
+
+    /// Adds bundled libraries to LD_LIBRARY_PATH if running under flatpak
+    pub fn ld_extra_libs() {
+        let mut paths = if let Ok(paths) = env::var("LD_LIBRARY_PATH") {
+            env::split_paths(&paths).collect()
+        } else {
+            Vec::new()
+        };
+
+        if let Ok(extra_path) = env::var(EXTRA_LIB_ENV_NAME) {
+            paths.push(extra_path.into());
+        }
+
+        env::set_var("LD_LIBRARY_PATH", env::join_paths(paths).unwrap());
+    }
+
+    /// Restarts outside of the sandbox if currently running within it
+    pub fn try_restart_to_host() {
+        if let Some(flatpak_dir) = get_flatpak_dir() {
+            let mut args = vec!["/usr/bin/flatpak-spawn".into(), "--host".into()];
+            args.append(&mut get_xdg_env_args());
+            args.push("--env=ZED_IS_FLATPAK_INSTALL=1".into());
+            args.push(
+                format!(
+                    "--env={EXTRA_LIB_ENV_NAME}={}",
+                    flatpak_dir.join("lib").to_str().unwrap()
+                )
+                .into(),
+            );
+            args.push(flatpak_dir.join("bin").join("zed").into());
+
+            let mut is_app_location_set = false;
+            for arg in &env::args_os().collect::<Vec<_>>()[1..] {
+                args.push(arg.clone());
+                is_app_location_set |= arg == "--zed";
+            }
+
+            if !is_app_location_set {
+                args.push("--zed".into());
+                args.push(flatpak_dir.join("bin").join("zed-app").into());
+            }
+
+            let error = exec::execvp("/usr/bin/flatpak-spawn", args);
+            eprintln!("failed restart cli on host: {:?}", error);
+            process::exit(1);
+        }
+    }
+
+    pub fn set_bin_if_no_escape(mut args: super::Args) -> super::Args {
+        if env::var(NO_ESCAPE_ENV_NAME).is_ok()
+            && env::var("FLATPAK_ID").map_or(false, |id| id.starts_with("dev.zed.Zed"))
+        {
+            if args.zed.is_none() {
+                args.zed = Some("/app/bin/zed-app".into());
+                env::set_var("ZED_IS_FLATPAK_INSTALL", "1");
+            }
+        }
+        args
+    }
+
+    fn get_flatpak_dir() -> Option<PathBuf> {
+        if env::var(NO_ESCAPE_ENV_NAME).is_ok() {
+            return None;
+        }
+
+        if let Ok(flatpak_id) = env::var("FLATPAK_ID") {
+            if !flatpak_id.starts_with("dev.zed.Zed") {
+                return None;
+            }
+
+            let install_dir = Command::new("/usr/bin/flatpak-spawn")
+                .arg("--host")
+                .arg("flatpak")
+                .arg("info")
+                .arg("--show-location")
+                .arg(flatpak_id)
+                .output()
+                .unwrap();
+            let install_dir = PathBuf::from(String::from_utf8(install_dir.stdout).unwrap().trim());
+            Some(install_dir.join("files"))
+        } else {
+            None
+        }
+    }
+
+    fn get_xdg_env_args() -> Vec<OsString> {
+        let xdg_keys = [
+            "XDG_DATA_HOME",
+            "XDG_CONFIG_HOME",
+            "XDG_CACHE_HOME",
+            "XDG_STATE_HOME",
+        ];
+        env::vars()
+            .filter(|(key, _)| xdg_keys.contains(&key.as_str()))
+            .map(|(key, val)| format!("--env=FLATPAK_{}={}", key, val).into())
+            .collect()
+    }
+}
+
 // todo("windows")
 #[cfg(target_os = "windows")]
 mod windows {
     use crate::{Detect, InstalledApp};
+    use std::io;
     use std::path::Path;
+    use std::process::ExitStatus;
 
     struct App;
     impl InstalledApp for App {
@@ -265,6 +407,9 @@ mod windows {
             unimplemented!()
         }
         fn launch(&self, _ipc_url: String) -> anyhow::Result<()> {
+            unimplemented!()
+        }
+        fn run_foreground(&self, _ipc_url: String) -> io::Result<ExitStatus> {
             unimplemented!()
         }
     }
@@ -288,9 +433,9 @@ mod mac_os {
     use serde::Deserialize;
     use std::{
         ffi::OsStr,
-        fs,
+        fs, io,
         path::{Path, PathBuf},
-        process::Command,
+        process::{Command, ExitStatus},
         ptr,
     };
 
@@ -441,6 +586,15 @@ mod mac_os {
             }
 
             Ok(())
+        }
+
+        fn run_foreground(&self, ipc_url: String) -> io::Result<ExitStatus> {
+            let path = match self {
+                Bundle::App { app_bundle, .. } => app_bundle.join("Contents/MacOS/zed"),
+                Bundle::LocalPath { executable, .. } => executable.clone(),
+            };
+
+            std::process::Command::new(path).arg(ipc_url).status()
         }
     }
 

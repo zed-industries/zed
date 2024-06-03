@@ -172,7 +172,7 @@ pub trait Item: FocusableView + EventEmitter<Self::Event> {
     fn set_nav_history(&mut self, _: ItemNavHistory, _: &mut ViewContext<Self>) {}
     fn clone_on_split(
         &self,
-        _workspace_id: WorkspaceId,
+        _workspace_id: Option<WorkspaceId>,
         _: &mut ViewContext<Self>,
     ) -> Option<View<Self>>
     where
@@ -287,7 +287,7 @@ pub trait ItemHandle: 'static + Send {
     fn boxed_clone(&self) -> Box<dyn ItemHandle>;
     fn clone_on_split(
         &self,
-        workspace_id: WorkspaceId,
+        workspace_id: Option<WorkspaceId>,
         cx: &mut WindowContext,
     ) -> Option<Box<dyn ItemHandle>>;
     fn added_to_pane(
@@ -437,7 +437,7 @@ impl<T: Item> ItemHandle for View<T> {
 
     fn clone_on_split(
         &self,
-        workspace_id: WorkspaceId,
+        workspace_id: Option<WorkspaceId>,
         cx: &mut WindowContext,
     ) -> Option<Box<dyn ItemHandle>> {
         self.update(cx, |item, cx| item.clone_on_split(workspace_id, cx))
@@ -528,7 +528,6 @@ impl<T: Item> ItemHandle for View<T> {
                     {
                         pane
                     } else {
-                        log::error!("unexpected item event after pane was dropped");
                         return;
                     };
 
@@ -883,7 +882,7 @@ pub mod test {
     }
 
     pub struct TestItem {
-        pub workspace_id: WorkspaceId,
+        pub workspace_id: Option<WorkspaceId>,
         pub state: String,
         pub label: String,
         pub save_count: usize,
@@ -964,7 +963,7 @@ pub mod test {
 
         pub fn new_deserialized(id: WorkspaceId, cx: &mut ViewContext<Self>) -> Self {
             let mut this = Self::new(cx);
-            this.workspace_id = id;
+            this.workspace_id = Some(id);
             this
         }
 
@@ -1081,7 +1080,7 @@ pub mod test {
 
         fn clone_on_split(
             &self,
-            _workspace_id: WorkspaceId,
+            _workspace_id: Option<WorkspaceId>,
             cx: &mut ViewContext<Self>,
         ) -> Option<View<Self>>
         where

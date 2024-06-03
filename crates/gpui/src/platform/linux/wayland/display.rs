@@ -1,31 +1,36 @@
-use std::fmt::Debug;
+use std::{
+    fmt::Debug,
+    hash::{Hash, Hasher},
+};
 
 use uuid::Uuid;
+use wayland_backend::client::ObjectId;
 
-use crate::{Bounds, DevicePixels, DisplayId, PlatformDisplay, Size};
+use crate::{Bounds, DevicePixels, DisplayId, PlatformDisplay};
 
-#[derive(Debug)]
-pub(crate) struct WaylandDisplay {}
+#[derive(Debug, Clone)]
+pub(crate) struct WaylandDisplay {
+    /// The ID of the wl_output object
+    pub id: ObjectId,
+    pub bounds: Bounds<DevicePixels>,
+}
+
+impl Hash for WaylandDisplay {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.id.hash(state);
+    }
+}
 
 impl PlatformDisplay for WaylandDisplay {
-    // todo(linux)
     fn id(&self) -> DisplayId {
-        DisplayId(123) // return some fake data so it doesn't panic
+        DisplayId(self.id.protocol_id())
     }
 
-    // todo(linux)
     fn uuid(&self) -> anyhow::Result<Uuid> {
-        Ok(Uuid::from_bytes([0; 16])) // return some fake data so it doesn't panic
+        Err(anyhow::anyhow!("Display UUID is not supported on Wayland"))
     }
 
-    // todo(linux)
     fn bounds(&self) -> Bounds<DevicePixels> {
-        Bounds {
-            origin: Default::default(),
-            size: Size {
-                width: DevicePixels(1000),
-                height: DevicePixels(500),
-            },
-        } // return some fake data so it doesn't panic
+        self.bounds
     }
 }

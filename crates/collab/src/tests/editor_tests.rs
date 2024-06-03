@@ -9,6 +9,7 @@ use editor::{
         ConfirmCodeAction, ConfirmCompletion, ConfirmRename, ContextMenuFirst, Redo, Rename,
         RevertSelectedHunks, ToggleCodeActions, Undo,
     },
+    display_map::DisplayRow,
     test::{
         editor_hunks,
         editor_test_context::{AssertionContextManager, EditorTestContext},
@@ -18,12 +19,13 @@ use editor::{
 };
 use futures::StreamExt;
 use git::diff::DiffHunkStatus;
-use gpui::{BorrowAppContext, TestAppContext, VisualContext, VisualTestContext};
+use gpui::{TestAppContext, UpdateGlobal, VisualContext, VisualTestContext};
 use indoc::indoc;
 use language::{
     language_settings::{AllLanguageSettings, InlayHintSettings},
     FakeLspAdapter,
 };
+use multi_buffer::MultiBufferRow;
 use project::{
     project_settings::{InlineBlameSettings, ProjectSettings},
     SERVER_PROGRESS_DEBOUNCE_TIMEOUT,
@@ -40,7 +42,7 @@ use std::{
     },
 };
 use text::Point;
-use workspace::{Workspace, WorkspaceId};
+use workspace::Workspace;
 
 #[gpui::test(iterations = 10)]
 async fn test_host_disconnect(
@@ -83,14 +85,8 @@ async fn test_host_disconnect(
 
     assert!(worktree_a.read_with(cx_a, |tree, _| tree.as_local().unwrap().is_shared()));
 
-    let workspace_b = cx_b.add_window(|cx| {
-        Workspace::new(
-            WorkspaceId::default(),
-            project_b.clone(),
-            client_b.app_state.clone(),
-            cx,
-        )
-    });
+    let workspace_b = cx_b
+        .add_window(|cx| Workspace::new(None, project_b.clone(), client_b.app_state.clone(), cx));
     let cx_b = &mut VisualTestContext::from_window(*workspace_b, cx_b);
     let workspace_b_view = workspace_b.root_view(cx_b).unwrap();
 
@@ -1515,7 +1511,7 @@ async fn test_mutual_editor_inlay_hint_cache_update(
     cx_b.update(editor::init);
 
     cx_a.update(|cx| {
-        cx.update_global(|store: &mut SettingsStore, cx| {
+        SettingsStore::update_global(cx, |store, cx| {
             store.update_user_settings::<AllLanguageSettings>(cx, |settings| {
                 settings.defaults.inlay_hints = Some(InlayHintSettings {
                     enabled: true,
@@ -1529,7 +1525,7 @@ async fn test_mutual_editor_inlay_hint_cache_update(
         });
     });
     cx_b.update(|cx| {
-        cx.update_global(|store: &mut SettingsStore, cx| {
+        SettingsStore::update_global(cx, |store, cx| {
             store.update_user_settings::<AllLanguageSettings>(cx, |settings| {
                 settings.defaults.inlay_hints = Some(InlayHintSettings {
                     enabled: true,
@@ -1777,7 +1773,7 @@ async fn test_inlay_hint_refresh_is_forwarded(
     cx_b.update(editor::init);
 
     cx_a.update(|cx| {
-        cx.update_global(|store: &mut SettingsStore, cx| {
+        SettingsStore::update_global(cx, |store, cx| {
             store.update_user_settings::<AllLanguageSettings>(cx, |settings| {
                 settings.defaults.inlay_hints = Some(InlayHintSettings {
                     enabled: false,
@@ -1791,7 +1787,7 @@ async fn test_inlay_hint_refresh_is_forwarded(
         });
     });
     cx_b.update(|cx| {
-        cx.update_global(|store: &mut SettingsStore, cx| {
+        SettingsStore::update_global(cx, |store, cx| {
             store.update_user_settings::<AllLanguageSettings>(cx, |settings| {
                 settings.defaults.inlay_hints = Some(InlayHintSettings {
                     enabled: true,
@@ -2114,14 +2110,30 @@ struct Row10;"#};
         assert_eq!(
             all_hunks,
             vec![
-                ("".to_string(), DiffHunkStatus::Added, 1..3),
-                ("struct Row2;\n".to_string(), DiffHunkStatus::Removed, 4..4),
-                ("struct Row5;\n".to_string(), DiffHunkStatus::Modified, 6..7),
-                ("struct Row8;\n".to_string(), DiffHunkStatus::Removed, 9..9),
+                (
+                    "".to_string(),
+                    DiffHunkStatus::Added,
+                    DisplayRow(1)..DisplayRow(3)
+                ),
+                (
+                    "struct Row2;\n".to_string(),
+                    DiffHunkStatus::Removed,
+                    DisplayRow(4)..DisplayRow(4)
+                ),
+                (
+                    "struct Row5;\n".to_string(),
+                    DiffHunkStatus::Modified,
+                    DisplayRow(6)..DisplayRow(7)
+                ),
+                (
+                    "struct Row8;\n".to_string(),
+                    DiffHunkStatus::Removed,
+                    DisplayRow(9)..DisplayRow(9)
+                ),
                 (
                     "struct Row10;".to_string(),
                     DiffHunkStatus::Modified,
-                    10..10,
+                    DisplayRow(10)..DisplayRow(10),
                 ),
             ]
         );
@@ -2133,23 +2145,35 @@ struct Row10;"#};
         let all_expanded_hunks = expanded_hunks(&editor, &snapshot, cx);
         assert_eq!(
             expanded_hunks_background_highlights(editor, cx),
-            vec![1..=2, 8..=8],
+            vec![DisplayRow(1)..=DisplayRow(2), DisplayRow(8)..=DisplayRow(8)],
         );
         assert_eq!(
             all_hunks,
             vec![
-                ("".to_string(), DiffHunkStatus::Added, 1..3),
-                ("struct Row2;\n".to_string(), DiffHunkStatus::Removed, 5..5),
-                ("struct Row5;\n".to_string(), DiffHunkStatus::Modified, 8..9),
+                (
+                    "".to_string(),
+                    DiffHunkStatus::Added,
+                    DisplayRow(1)..DisplayRow(3)
+                ),
+                (
+                    "struct Row2;\n".to_string(),
+                    DiffHunkStatus::Removed,
+                    DisplayRow(5)..DisplayRow(5)
+                ),
+                (
+                    "struct Row5;\n".to_string(),
+                    DiffHunkStatus::Modified,
+                    DisplayRow(8)..DisplayRow(9)
+                ),
                 (
                     "struct Row8;\n".to_string(),
                     DiffHunkStatus::Removed,
-                    12..12
+                    DisplayRow(12)..DisplayRow(12)
                 ),
                 (
                     "struct Row10;".to_string(),
                     DiffHunkStatus::Modified,
-                    13..13,
+                    DisplayRow(13)..DisplayRow(13),
                 ),
             ]
         );
@@ -2173,7 +2197,7 @@ struct Row10;"#};
             vec![(
                 "struct Row10;".to_string(),
                 DiffHunkStatus::Modified,
-                10..10,
+                DisplayRow(10)..DisplayRow(10),
             )]
         );
         assert_eq!(all_expanded_hunks, Vec::new());
@@ -2184,14 +2208,14 @@ struct Row10;"#};
         let all_expanded_hunks = expanded_hunks(&editor, &snapshot, cx);
         assert_eq!(
             expanded_hunks_background_highlights(editor, cx),
-            vec![5..=5]
+            vec![DisplayRow(5)..=DisplayRow(5)]
         );
         assert_eq!(
             all_hunks,
             vec![(
                 "struct Row10;".to_string(),
                 DiffHunkStatus::Modified,
-                10..10,
+                DisplayRow(10)..DisplayRow(10),
             )]
         );
         assert_eq!(all_expanded_hunks, Vec::new());
@@ -2239,14 +2263,14 @@ async fn test_git_blame_is_forwarded(cx_a: &mut TestAppContext, cx_b: &mut TestA
         min_column: None,
     });
     cx_a.update(|cx| {
-        cx.update_global(|store: &mut SettingsStore, cx| {
+        SettingsStore::update_global(cx, |store, cx| {
             store.update_user_settings::<ProjectSettings>(cx, |settings| {
                 settings.git.inline_blame = inline_blame_off_settings;
             });
         });
     });
     cx_b.update(|cx| {
-        cx.update_global(|store: &mut SettingsStore, cx| {
+        SettingsStore::update_global(cx, |store, cx| {
             store.update_user_settings::<ProjectSettings>(cx, |settings| {
                 settings.git.inline_blame = inline_blame_off_settings;
             });
@@ -2330,7 +2354,7 @@ async fn test_git_blame_is_forwarded(cx_a: &mut TestAppContext, cx_b: &mut TestA
         let blame = editor_b.blame().expect("editor_b should have blame now");
         let entries = blame.update(cx, |blame, cx| {
             blame
-                .blame_for_rows((0..4).map(Some), cx)
+                .blame_for_rows((0..4).map(MultiBufferRow).map(Some), cx)
                 .collect::<Vec<_>>()
         });
 
@@ -2369,7 +2393,7 @@ async fn test_git_blame_is_forwarded(cx_a: &mut TestAppContext, cx_b: &mut TestA
         let blame = editor_b.blame().expect("editor_b should have blame now");
         let entries = blame.update(cx, |blame, cx| {
             blame
-                .blame_for_rows((0..4).map(Some), cx)
+                .blame_for_rows((0..4).map(MultiBufferRow).map(Some), cx)
                 .collect::<Vec<_>>()
         });
 
@@ -2396,7 +2420,7 @@ async fn test_git_blame_is_forwarded(cx_a: &mut TestAppContext, cx_b: &mut TestA
         let blame = editor_b.blame().expect("editor_b should have blame now");
         let entries = blame.update(cx, |blame, cx| {
             blame
-                .blame_for_rows((0..4).map(Some), cx)
+                .blame_for_rows((0..4).map(MultiBufferRow).map(Some), cx)
                 .collect::<Vec<_>>()
         });
 

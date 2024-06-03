@@ -1,7 +1,7 @@
 use super::*;
 use collections::HashMap;
 use editor::{
-    display_map::{BlockContext, TransformBlock},
+    display_map::{BlockContext, DisplayRow, TransformBlock},
     DisplayPoint, GutterDimensions,
 };
 use gpui::{px, AvailableSpace, Stateful, TestAppContext, VisualTestContext};
@@ -158,11 +158,11 @@ async fn test_diagnostics(cx: &mut TestAppContext) {
     assert_eq!(
         editor_blocks(&editor, cx),
         [
-            (0, "path header block".into()),
-            (2, "diagnostic header".into()),
-            (15, "collapsed context".into()),
-            (16, "diagnostic header".into()),
-            (25, "collapsed context".into()),
+            (DisplayRow(0), FILE_HEADER.into()),
+            (DisplayRow(2), DIAGNOSTIC_HEADER.into()),
+            (DisplayRow(15), EXCERPT_HEADER.into()),
+            (DisplayRow(16), DIAGNOSTIC_HEADER.into()),
+            (DisplayRow(25), EXCERPT_HEADER.into()),
         ]
     );
     assert_eq!(
@@ -210,7 +210,7 @@ async fn test_diagnostics(cx: &mut TestAppContext) {
     editor.update(cx, |editor, cx| {
         assert_eq!(
             editor.selections.display_ranges(cx),
-            [DisplayPoint::new(12, 6)..DisplayPoint::new(12, 6)]
+            [DisplayPoint::new(DisplayRow(12), 6)..DisplayPoint::new(DisplayRow(12), 6)]
         );
     });
 
@@ -243,13 +243,13 @@ async fn test_diagnostics(cx: &mut TestAppContext) {
     assert_eq!(
         editor_blocks(&editor, cx),
         [
-            (0, "path header block".into()),
-            (2, "diagnostic header".into()),
-            (7, "path header block".into()),
-            (9, "diagnostic header".into()),
-            (22, "collapsed context".into()),
-            (23, "diagnostic header".into()),
-            (32, "collapsed context".into()),
+            (DisplayRow(0), FILE_HEADER.into()),
+            (DisplayRow(2), DIAGNOSTIC_HEADER.into()),
+            (DisplayRow(7), FILE_HEADER.into()),
+            (DisplayRow(9), DIAGNOSTIC_HEADER.into()),
+            (DisplayRow(22), EXCERPT_HEADER.into()),
+            (DisplayRow(23), DIAGNOSTIC_HEADER.into()),
+            (DisplayRow(32), EXCERPT_HEADER.into()),
         ]
     );
 
@@ -309,7 +309,7 @@ async fn test_diagnostics(cx: &mut TestAppContext) {
     editor.update(cx, |editor, cx| {
         assert_eq!(
             editor.selections.display_ranges(cx),
-            [DisplayPoint::new(19, 6)..DisplayPoint::new(19, 6)]
+            [DisplayPoint::new(DisplayRow(19), 6)..DisplayPoint::new(DisplayRow(19), 6)]
         );
     });
 
@@ -355,15 +355,15 @@ async fn test_diagnostics(cx: &mut TestAppContext) {
     assert_eq!(
         editor_blocks(&editor, cx),
         [
-            (0, "path header block".into()),
-            (2, "diagnostic header".into()),
-            (7, "collapsed context".into()),
-            (8, "diagnostic header".into()),
-            (13, "path header block".into()),
-            (15, "diagnostic header".into()),
-            (28, "collapsed context".into()),
-            (29, "diagnostic header".into()),
-            (38, "collapsed context".into()),
+            (DisplayRow(0), FILE_HEADER.into()),
+            (DisplayRow(2), DIAGNOSTIC_HEADER.into()),
+            (DisplayRow(7), EXCERPT_HEADER.into()),
+            (DisplayRow(8), DIAGNOSTIC_HEADER.into()),
+            (DisplayRow(13), FILE_HEADER.into()),
+            (DisplayRow(15), DIAGNOSTIC_HEADER.into()),
+            (DisplayRow(28), EXCERPT_HEADER.into()),
+            (DisplayRow(29), DIAGNOSTIC_HEADER.into()),
+            (DisplayRow(38), EXCERPT_HEADER.into()),
         ]
     );
 
@@ -493,8 +493,8 @@ async fn test_diagnostics_multiple_servers(cx: &mut TestAppContext) {
     assert_eq!(
         editor_blocks(&editor, cx),
         [
-            (0, "path header block".into()),
-            (2, "diagnostic header".into()),
+            (DisplayRow(0), FILE_HEADER.into()),
+            (DisplayRow(2), DIAGNOSTIC_HEADER.into()),
         ]
     );
     assert_eq!(
@@ -539,10 +539,10 @@ async fn test_diagnostics_multiple_servers(cx: &mut TestAppContext) {
     assert_eq!(
         editor_blocks(&editor, cx),
         [
-            (0, "path header block".into()),
-            (2, "diagnostic header".into()),
-            (6, "collapsed context".into()),
-            (7, "diagnostic header".into()),
+            (DisplayRow(0), FILE_HEADER.into()),
+            (DisplayRow(2), DIAGNOSTIC_HEADER.into()),
+            (DisplayRow(6), EXCERPT_HEADER.into()),
+            (DisplayRow(7), DIAGNOSTIC_HEADER.into()),
         ]
     );
     assert_eq!(
@@ -605,10 +605,10 @@ async fn test_diagnostics_multiple_servers(cx: &mut TestAppContext) {
     assert_eq!(
         editor_blocks(&editor, cx),
         [
-            (0, "path header block".into()),
-            (2, "diagnostic header".into()),
-            (7, "collapsed context".into()),
-            (8, "diagnostic header".into()),
+            (DisplayRow(0), FILE_HEADER.into()),
+            (DisplayRow(2), DIAGNOSTIC_HEADER.into()),
+            (DisplayRow(7), EXCERPT_HEADER.into()),
+            (DisplayRow(8), DIAGNOSTIC_HEADER.into()),
         ]
     );
     assert_eq!(
@@ -661,10 +661,10 @@ async fn test_diagnostics_multiple_servers(cx: &mut TestAppContext) {
     assert_eq!(
         editor_blocks(&editor, cx),
         [
-            (0, "path header block".into()),
-            (2, "diagnostic header".into()),
-            (7, "collapsed context".into()),
-            (8, "diagnostic header".into()),
+            (DisplayRow(0), FILE_HEADER.into()),
+            (DisplayRow(2), DIAGNOSTIC_HEADER.into()),
+            (DisplayRow(7), EXCERPT_HEADER.into()),
+            (DisplayRow(8), DIAGNOSTIC_HEADER.into()),
         ]
     );
     assert_eq!(
@@ -958,14 +958,21 @@ fn random_diagnostic(
     }
 }
 
-fn editor_blocks(editor: &View<Editor>, cx: &mut VisualTestContext) -> Vec<(u32, SharedString)> {
+const FILE_HEADER: &'static str = "file header";
+const EXCERPT_HEADER: &'static str = "excerpt header";
+const EXCERPT_FOOTER: &'static str = "excerpt footer";
+
+fn editor_blocks(
+    editor: &View<Editor>,
+    cx: &mut VisualTestContext,
+) -> Vec<(DisplayRow, SharedString)> {
     let mut blocks = Vec::new();
     cx.draw(gpui::Point::default(), AvailableSpace::min_size(), |cx| {
         editor.update(cx, |editor, cx| {
             let snapshot = editor.snapshot(cx);
             blocks.extend(
                 snapshot
-                    .blocks_in_range(0..snapshot.max_point().row())
+                    .blocks_in_range(DisplayRow(0)..snapshot.max_point().row())
                     .enumerate()
                     .filter_map(|(ix, (row, block))| {
                         let name: SharedString = match block {
@@ -993,11 +1000,12 @@ fn editor_blocks(editor: &View<Editor>, cx: &mut VisualTestContext) -> Vec<(u32,
                                 starts_new_buffer, ..
                             } => {
                                 if *starts_new_buffer {
-                                    "path header block".into()
+                                    FILE_HEADER.into()
                                 } else {
-                                    "collapsed context".into()
+                                    EXCERPT_HEADER.into()
                                 }
                             }
+                            TransformBlock::ExcerptFooter { .. } => EXCERPT_FOOTER.into(),
                         };
 
                         Some((row, name))
