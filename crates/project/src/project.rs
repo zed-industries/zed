@@ -4989,21 +4989,20 @@ impl Project {
                     FormatOnSave::On | FormatOnSave::Off,
                 )
                 | (_, FormatOnSave::External { command, arguments }) => {
-                    if let Some(buffer_abs_path) = buffer_abs_path {
-                        format_operation = Self::format_via_external_command(
-                            buffer,
-                            buffer_abs_path,
-                            command,
-                            arguments,
-                            &mut cx,
-                        )
-                        .await
-                        .context(format!(
-                            "failed to format via external command {:?}",
-                            command
-                        ))?
-                        .map(FormatOperation::External);
-                    }
+                    let buffer_abs_path = buffer_abs_path.as_ref().map(|path| path.as_path());
+                    format_operation = Self::format_via_external_command(
+                        buffer,
+                        buffer_abs_path,
+                        command,
+                        arguments,
+                        &mut cx,
+                    )
+                    .await
+                    .context(format!(
+                        "failed to format via external command {:?}",
+                        command
+                    ))?
+                    .map(FormatOperation::External);
                 }
                 (Formatter::Auto, FormatOnSave::On | FormatOnSave::Off) => {
                     let prettier = if prettier_settings.allowed {
@@ -5142,7 +5141,7 @@ impl Project {
 
     async fn format_via_external_command(
         buffer: &Model<Buffer>,
-        buffer_abs_path: &Path,
+        buffer_abs_path: Option<&Path>,
         command: &str,
         arguments: &[String],
         cx: &mut AsyncAppContext,
@@ -5157,46 +5156,51 @@ impl Project {
             Some(worktree_path)
         })?;
 
+        let mut child = smol::process::Command::new(command);
+
         if let Some(working_dir_path) = working_dir_path {
-            let mut child =
-                smol::process::Command::new(command)
-                    .args(arguments.iter().map(|arg| {
-                        arg.replace("{buffer_path}", &buffer_abs_path.to_string_lossy())
-                    }))
-                    .current_dir(&working_dir_path)
-                    .stdin(smol::process::Stdio::piped())
-                    .stdout(smol::process::Stdio::piped())
-                    .stderr(smol::process::Stdio::piped())
-                    .spawn()?;
-            let stdin = child
-                .stdin
-                .as_mut()
-                .ok_or_else(|| anyhow!("failed to acquire stdin"))?;
-            let text = buffer.update(cx, |buffer, _| buffer.as_rope().clone())?;
-            for chunk in text.chunks() {
-                stdin.write_all(chunk.as_bytes()).await?;
-            }
-            stdin.flush().await?;
-
-            let output = child.output().await?;
-            if !output.status.success() {
-                return Err(anyhow!(
-                    "command failed with exit code {:?}:\nstdout: {}\nstderr: {}",
-                    output.status.code(),
-                    String::from_utf8_lossy(&output.stdout),
-                    String::from_utf8_lossy(&output.stderr),
-                ));
-            }
-
-            let stdout = String::from_utf8(output.stdout)?;
-            Ok(Some(
-                buffer
-                    .update(cx, |buffer, cx| buffer.diff(stdout, cx))?
-                    .await,
-            ))
-        } else {
-            Ok(None)
+            child.current_dir(working_dir_path);
         }
+
+        let mut child = child
+            .args(arguments.iter().map(|arg| {
+                if let Some(buffer_abs_path) = buffer_abs_path {
+                    arg.replace("{buffer_path}", &buffer_abs_path.to_string_lossy())
+                } else {
+                    arg.replace("{buffer_path}", "Untitled")
+                }
+            }))
+            .stdin(smol::process::Stdio::piped())
+            .stdout(smol::process::Stdio::piped())
+            .stderr(smol::process::Stdio::piped())
+            .spawn()?;
+
+        let stdin = child
+            .stdin
+            .as_mut()
+            .ok_or_else(|| anyhow!("failed to acquire stdin"))?;
+        let text = buffer.update(cx, |buffer, _| buffer.as_rope().clone())?;
+        for chunk in text.chunks() {
+            stdin.write_all(chunk.as_bytes()).await?;
+        }
+        stdin.flush().await?;
+
+        let output = child.output().await?;
+        if !output.status.success() {
+            return Err(anyhow!(
+                "command failed with exit code {:?}:\nstdout: {}\nstderr: {}",
+                output.status.code(),
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr),
+            ));
+        }
+
+        let stdout = String::from_utf8(output.stdout)?;
+        Ok(Some(
+            buffer
+                .update(cx, |buffer, cx| buffer.diff(stdout, cx))?
+                .await,
+        ))
     }
 
     #[inline(never)]
