@@ -378,7 +378,7 @@ fn prepare_ssh_shell(
 }
 
 fn add_environment_path(env: &mut HashMap<String, String>, new_path: &Path) -> anyhow::Result<()> {
-    let mut env_paths = vec![add_path.to_path_buf()];
+    let mut env_paths = vec![new_path.to_path_buf()];
     if let Some(path) = env.get("PATH").or(env::var("PATH").ok().as_ref()) {
         let mut paths = std::env::split_paths(&path).collect::<Vec<_>>();
         env_paths.append(&mut paths);
@@ -395,7 +395,7 @@ mod tests {
     use collections::HashMap;
 
     #[test]
-    fn test_add_environment_path() {
+    fn test_add_environment_path_with_existing_env() {
         let tmp_path = std::path::PathBuf::from("/tmp/new");
         let mut env = HashMap::default();
         let old_path = if cfg!(windows) {
@@ -413,7 +413,10 @@ mod tests {
             assert_eq!(env.get("PATH").unwrap(), &format!("/tmp/new:{}", old_path));
         }
         assert_eq!(env.get("OTHER").unwrap(), "aaa");
+    }
 
+    #[test]
+    fn test_add_environment_path_empty_env() {
         let mut env = HashMap::default();
         env.insert("OTHER".to_string(), "aaa".to_string());
         let os_path = std::env::var("PATH").unwrap();
