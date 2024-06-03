@@ -5,10 +5,7 @@
   (template_string)
 ] @string
 
-[
-  (jsx_element)
-  (jsx_fragment)
-] @element
+(jsx_element) @element
 
 [
   (jsx_opening_element)

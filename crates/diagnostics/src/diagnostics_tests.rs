@@ -158,11 +158,11 @@ async fn test_diagnostics(cx: &mut TestAppContext) {
     assert_eq!(
         editor_blocks(&editor, cx),
         [
-            (DisplayRow(0), "path header block".into()),
-            (DisplayRow(2), "diagnostic header".into()),
-            (DisplayRow(15), "collapsed context".into()),
-            (DisplayRow(16), "diagnostic header".into()),
-            (DisplayRow(25), "collapsed context".into()),
+            (DisplayRow(0), FILE_HEADER.into()),
+            (DisplayRow(2), DIAGNOSTIC_HEADER.into()),
+            (DisplayRow(15), EXCERPT_HEADER.into()),
+            (DisplayRow(16), DIAGNOSTIC_HEADER.into()),
+            (DisplayRow(25), EXCERPT_HEADER.into()),
         ]
     );
     assert_eq!(
@@ -243,13 +243,13 @@ async fn test_diagnostics(cx: &mut TestAppContext) {
     assert_eq!(
         editor_blocks(&editor, cx),
         [
-            (DisplayRow(0), "path header block".into()),
-            (DisplayRow(2), "diagnostic header".into()),
-            (DisplayRow(7), "path header block".into()),
-            (DisplayRow(9), "diagnostic header".into()),
-            (DisplayRow(22), "collapsed context".into()),
-            (DisplayRow(23), "diagnostic header".into()),
-            (DisplayRow(32), "collapsed context".into()),
+            (DisplayRow(0), FILE_HEADER.into()),
+            (DisplayRow(2), DIAGNOSTIC_HEADER.into()),
+            (DisplayRow(7), FILE_HEADER.into()),
+            (DisplayRow(9), DIAGNOSTIC_HEADER.into()),
+            (DisplayRow(22), EXCERPT_HEADER.into()),
+            (DisplayRow(23), DIAGNOSTIC_HEADER.into()),
+            (DisplayRow(32), EXCERPT_HEADER.into()),
         ]
     );
 
@@ -355,15 +355,15 @@ async fn test_diagnostics(cx: &mut TestAppContext) {
     assert_eq!(
         editor_blocks(&editor, cx),
         [
-            (DisplayRow(0), "path header block".into()),
-            (DisplayRow(2), "diagnostic header".into()),
-            (DisplayRow(7), "collapsed context".into()),
-            (DisplayRow(8), "diagnostic header".into()),
-            (DisplayRow(13), "path header block".into()),
-            (DisplayRow(15), "diagnostic header".into()),
-            (DisplayRow(28), "collapsed context".into()),
-            (DisplayRow(29), "diagnostic header".into()),
-            (DisplayRow(38), "collapsed context".into()),
+            (DisplayRow(0), FILE_HEADER.into()),
+            (DisplayRow(2), DIAGNOSTIC_HEADER.into()),
+            (DisplayRow(7), EXCERPT_HEADER.into()),
+            (DisplayRow(8), DIAGNOSTIC_HEADER.into()),
+            (DisplayRow(13), FILE_HEADER.into()),
+            (DisplayRow(15), DIAGNOSTIC_HEADER.into()),
+            (DisplayRow(28), EXCERPT_HEADER.into()),
+            (DisplayRow(29), DIAGNOSTIC_HEADER.into()),
+            (DisplayRow(38), EXCERPT_HEADER.into()),
         ]
     );
 
@@ -493,8 +493,8 @@ async fn test_diagnostics_multiple_servers(cx: &mut TestAppContext) {
     assert_eq!(
         editor_blocks(&editor, cx),
         [
-            (DisplayRow(0), "path header block".into()),
-            (DisplayRow(2), "diagnostic header".into()),
+            (DisplayRow(0), FILE_HEADER.into()),
+            (DisplayRow(2), DIAGNOSTIC_HEADER.into()),
         ]
     );
     assert_eq!(
@@ -539,10 +539,10 @@ async fn test_diagnostics_multiple_servers(cx: &mut TestAppContext) {
     assert_eq!(
         editor_blocks(&editor, cx),
         [
-            (DisplayRow(0), "path header block".into()),
-            (DisplayRow(2), "diagnostic header".into()),
-            (DisplayRow(6), "collapsed context".into()),
-            (DisplayRow(7), "diagnostic header".into()),
+            (DisplayRow(0), FILE_HEADER.into()),
+            (DisplayRow(2), DIAGNOSTIC_HEADER.into()),
+            (DisplayRow(6), EXCERPT_HEADER.into()),
+            (DisplayRow(7), DIAGNOSTIC_HEADER.into()),
         ]
     );
     assert_eq!(
@@ -605,10 +605,10 @@ async fn test_diagnostics_multiple_servers(cx: &mut TestAppContext) {
     assert_eq!(
         editor_blocks(&editor, cx),
         [
-            (DisplayRow(0), "path header block".into()),
-            (DisplayRow(2), "diagnostic header".into()),
-            (DisplayRow(7), "collapsed context".into()),
-            (DisplayRow(8), "diagnostic header".into()),
+            (DisplayRow(0), FILE_HEADER.into()),
+            (DisplayRow(2), DIAGNOSTIC_HEADER.into()),
+            (DisplayRow(7), EXCERPT_HEADER.into()),
+            (DisplayRow(8), DIAGNOSTIC_HEADER.into()),
         ]
     );
     assert_eq!(
@@ -661,10 +661,10 @@ async fn test_diagnostics_multiple_servers(cx: &mut TestAppContext) {
     assert_eq!(
         editor_blocks(&editor, cx),
         [
-            (DisplayRow(0), "path header block".into()),
-            (DisplayRow(2), "diagnostic header".into()),
-            (DisplayRow(7), "collapsed context".into()),
-            (DisplayRow(8), "diagnostic header".into()),
+            (DisplayRow(0), FILE_HEADER.into()),
+            (DisplayRow(2), DIAGNOSTIC_HEADER.into()),
+            (DisplayRow(7), EXCERPT_HEADER.into()),
+            (DisplayRow(8), DIAGNOSTIC_HEADER.into()),
         ]
     );
     assert_eq!(
@@ -958,6 +958,10 @@ fn random_diagnostic(
     }
 }
 
+const FILE_HEADER: &'static str = "file header";
+const EXCERPT_HEADER: &'static str = "excerpt header";
+const EXCERPT_FOOTER: &'static str = "excerpt footer";
+
 fn editor_blocks(
     editor: &View<Editor>,
     cx: &mut VisualTestContext,
@@ -996,11 +1000,12 @@ fn editor_blocks(
                                 starts_new_buffer, ..
                             } => {
                                 if *starts_new_buffer {
-                                    "path header block".into()
+                                    FILE_HEADER.into()
                                 } else {
-                                    "collapsed context".into()
+                                    EXCERPT_HEADER.into()
                                 }
                             }
+                            TransformBlock::ExcerptFooter { .. } => EXCERPT_FOOTER.into(),
                         };
 
                         Some((row, name))

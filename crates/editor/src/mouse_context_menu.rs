@@ -1,6 +1,7 @@
 use crate::{
-    DisplayPoint, Editor, EditorMode, FindAllReferences, GoToDefinition, GoToImplementation,
-    GoToTypeDefinition, Rename, RevealInFinder, SelectMode, ToggleCodeActions,
+    Copy, Cut, DisplayPoint, Editor, EditorMode, FindAllReferences, GoToDefinition,
+    GoToImplementation, GoToTypeDefinition, Paste, Rename, RevealInFinder, SelectMode,
+    ToggleCodeActions,
 };
 use gpui::{DismissEvent, Pixels, Point, Subscription, View, ViewContext};
 use workspace::OpenInTerminal;
@@ -70,8 +71,10 @@ pub fn deploy_context_menu(
             s.set_pending_display_range(point..point, SelectMode::Character);
         });
 
+        let focus = cx.focused();
         ui::ContextMenu::build(cx, |menu, _cx| {
-            menu.action("Rename Symbol", Box::new(Rename))
+            let builder = menu
+                .action("Rename Symbol", Box::new(Rename))
                 .action("Go to Definition", Box::new(GoToDefinition))
                 .action("Go to Type Definition", Box::new(GoToTypeDefinition))
                 .action("Go to Implementation", Box::new(GoToImplementation))
@@ -83,8 +86,16 @@ pub fn deploy_context_menu(
                     }),
                 )
                 .separator()
+                .action("Cut", Box::new(Cut))
+                .action("Copy", Box::new(Copy))
+                .action("Paste", Box::new(Paste))
+                .separator()
                 .action("Reveal in Finder", Box::new(RevealInFinder))
-                .action("Open in Terminal", Box::new(OpenInTerminal))
+                .action("Open in Terminal", Box::new(OpenInTerminal));
+            match focus {
+                Some(focus) => builder.context(focus),
+                None => builder,
+            }
         })
     };
     let mouse_context_menu = MouseContextMenu::new(position, context_menu, cx);

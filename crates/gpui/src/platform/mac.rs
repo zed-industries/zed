@@ -29,7 +29,10 @@ use cocoa::{
 };
 
 use objc::runtime::{BOOL, NO, YES};
-use std::ops::Range;
+use std::{
+    ffi::{c_char, CStr},
+    ops::Range,
+};
 
 pub(crate) use dispatcher::*;
 pub(crate) use display::*;
@@ -48,6 +51,21 @@ impl BoolExt for bool {
             YES
         } else {
             NO
+        }
+    }
+}
+
+trait NSStringExt {
+    unsafe fn to_str(&self) -> &str;
+}
+
+impl NSStringExt for id {
+    unsafe fn to_str(&self) -> &str {
+        let cstr = self.UTF8String();
+        if cstr.is_null() {
+            ""
+        } else {
+            CStr::from_ptr(cstr as *mut c_char).to_str().unwrap()
         }
     }
 }

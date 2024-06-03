@@ -28,7 +28,6 @@
       "ctrl-0": "zed::ResetBufferFontSize",
       "ctrl-,": "zed::OpenSettings",
       "ctrl-q": "zed::Quit",
-      "alt-f9": "zed::Hide",
       "f11": "zed::ToggleFullScreen"
     }
   },
@@ -53,7 +52,9 @@
       // "alt-d": "editor::DeleteToNextWordEnd",
       "ctrl-x": "editor::Cut",
       "ctrl-c": "editor::Copy",
+      "ctrl-insert": "editor::Copy",
       "ctrl-v": "editor::Paste",
+      "shift-insert": "editor::Paste",
       "ctrl-z": "editor::Undo",
       "ctrl-shift-z": "editor::Redo",
       "up": "editor::MoveUp",
@@ -190,10 +191,17 @@
     }
   },
   {
+    "context": "Markdown",
+    "bindings": {
+      "ctrl-c": "markdown::Copy"
+    }
+  },
+  {
     "context": "AssistantPanel",
     "bindings": {
       "ctrl-g": "search::SelectNextMatch",
-      "ctrl-shift-g": "search::SelectPrevMatch"
+      "ctrl-shift-g": "search::SelectPrevMatch",
+      "alt-m": "assistant::ToggleModelSelector"
     }
   },
   {
@@ -203,7 +211,16 @@
       "ctrl-s": "workspace::Save",
       "ctrl->": "assistant::QuoteSelection",
       "shift-enter": "assistant::Split",
-      "ctrl-r": "assistant::CycleMessageRole"
+      "ctrl-r": "assistant::CycleMessageRole",
+      "enter": "assistant::ConfirmCommand",
+      "alt-enter": "editor::Newline"
+    }
+  },
+  {
+    "context": "PromptLibrary",
+    "bindings": {
+      "ctrl-n": "prompt_library::NewPrompt",
+      "ctrl-shift-s": "prompt_library::ToggleDefaultPrompt"
     }
   },
   {
@@ -494,6 +511,12 @@
     }
   },
   {
+    "context": "Editor && inline_completion && !showing_completions",
+    "bindings": {
+      "tab": "editor::AcceptInlineCompletion"
+    }
+  },
+  {
     "context": "Editor && showing_code_actions",
     "bindings": {
       "enter": "editor::ConfirmCodeAction"
@@ -546,15 +569,17 @@
       "alt-ctrl-n": "project_panel::NewDirectory",
       "ctrl-x": "project_panel::Cut",
       "ctrl-c": "project_panel::Copy",
+      "ctrl-insert": "project_panel::Copy",
       "ctrl-v": "project_panel::Paste",
+      "shift-insert": "project_panel::Paste",
       "ctrl-alt-c": "project_panel::CopyPath",
       "alt-ctrl-shift-c": "project_panel::CopyRelativePath",
       "f2": "project_panel::Rename",
       "enter": "project_panel::Rename",
       "backspace": "project_panel::Trash",
       "delete": "project_panel::Trash",
-      "ctrl-backspace": ["project_panel::Delete", { "skip_prompt": true }],
-      "ctrl-delete": ["project_panel::Delete", { "skip_prompt": true }],
+      "ctrl-backspace": ["project_panel::Delete", { "skip_prompt": false }],
+      "ctrl-delete": ["project_panel::Delete", { "skip_prompt": false }],
       "alt-ctrl-r": "project_panel::RevealInFinder",
       "alt-shift-f": "project_panel::NewSearchInDirectory"
     }
@@ -608,19 +633,16 @@
     "bindings": {
       "ctrl-alt-space": "terminal::ShowCharacterPalette",
       "shift-ctrl-c": "terminal::Copy",
+      "ctrl-insert": "terminal::Copy",
       "shift-ctrl-v": "terminal::Paste",
+      "shift-insert": "terminal::Paste",
       "up": ["terminal::SendKeystroke", "up"],
       "pageup": ["terminal::SendKeystroke", "pageup"],
       "down": ["terminal::SendKeystroke", "down"],
       "pagedown": ["terminal::SendKeystroke", "pagedown"],
       "escape": ["terminal::SendKeystroke", "escape"],
       "enter": ["terminal::SendKeystroke", "enter"],
-      "ctrl-c": ["terminal::SendKeystroke", "ctrl-c"],
-
-      // Some nice conveniences
-      "ctrl-backspace": ["terminal::SendText", "\u0015"],
-      "ctrl-right": ["terminal::SendText", "\u0005"],
-      "ctrl-left": ["terminal::SendText", "\u0001"]
+      "ctrl-c": ["terminal::SendKeystroke", "ctrl-c"]
     }
   }
 ]

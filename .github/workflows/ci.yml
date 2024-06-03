@@ -23,6 +23,7 @@ env:
 
 jobs:
   style:
+    timeout-minutes: 60
     name: Check formatting and spelling
     runs-on:
       - self-hosted
@@ -77,6 +78,7 @@ jobs:
           against: "https://github.com/${GITHUB_REPOSITORY}.git#branch=${BUF_BASE_BRANCH},subdir=crates/rpc/proto/"
 
   macos_tests:
+    timeout-minutes: 60
     name: (macOS) Run Clippy and tests
     runs-on:
       - self-hosted
@@ -101,6 +103,7 @@ jobs:
 
   # todo(linux): Actually run the tests
   linux_tests:
+    timeout-minutes: 60
     name: (Linux) Run Clippy and tests
     runs-on:
       - self-hosted
@@ -122,6 +125,7 @@ jobs:
 
   # todo(windows): Actually run the tests
   windows_tests:
+    timeout-minutes: 60
     name: (Windows) Run Clippy and tests
     runs-on: hosted-windows-1
     steps:
@@ -142,6 +146,7 @@ jobs:
         run: cargo build -p zed
 
   bundle-mac:
+    timeout-minutes: 60
     name: Create a macOS bundle
     runs-on:
       - self-hosted
@@ -252,6 +257,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
   bundle-linux:
+    timeout-minutes: 60
     name: Create a Linux bundle
     runs-on:
       - self-hosted

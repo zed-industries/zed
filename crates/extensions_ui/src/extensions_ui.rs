@@ -12,10 +12,11 @@ use editor::{Editor, EditorElement, EditorStyle};
 use extension::{ExtensionManifest, ExtensionOperation, ExtensionStore};
 use fuzzy::{match_strings, StringMatchCandidate};
 use gpui::{
-    actions, canvas, uniform_list, AnyElement, AppContext, EventEmitter, FocusableView, FontStyle,
-    FontWeight, InteractiveElement, KeyContext, ParentElement, Render, Styled, Task, TextStyle,
+    actions, uniform_list, AnyElement, AppContext, EventEmitter, FocusableView, FontStyle,
+    InteractiveElement, KeyContext, ParentElement, Render, Styled, Task, TextStyle,
     UniformListScrollHandle, View, ViewContext, VisualContext, WeakView, WhiteSpace, WindowContext,
 };
+use release_channel::ReleaseChannel;
 use settings::Settings;
 use std::ops::DerefMut;
 use std::time::Duration;
@@ -602,7 +603,8 @@ impl ExtensionsPage {
         has_dev_extension: bool,
         cx: &mut ViewContext<Self>,
     ) -> (Button, Option<Button>) {
-        let is_compatible = extension::is_version_compatible(&extension);
+        let is_compatible =
+            extension::is_version_compatible(ReleaseChannel::global(cx), &extension);
 
         if has_dev_extension {
             // If we have a dev extension for the given extension, just treat it as uninstalled.
@@ -741,7 +743,7 @@ impl ExtensionsPage {
             font_family: settings.ui_font.family.clone(),
             font_features: settings.ui_font.features.clone(),
             font_size: rems(0.875).into(),
-            font_weight: FontWeight::NORMAL,
+            font_weight: settings.ui_font.weight,
             font_style: FontStyle::Normal,
             line_height: relative(1.3),
             background_color: None,
@@ -936,24 +938,10 @@ impl Render for ExtensionsPage {
                 let view = cx.view().clone();
                 let scroll_handle = self.list.clone();
                 this.child(
-                    canvas(
-                        move |bounds, cx| {
-                            let mut list = uniform_list::<_, ExtensionCard, _>(
-                                view,
-                                "entries",
-                                count,
-                                Self::render_extensions,
-                            )
-                            .size_full()
-                            .pb_4()
-                            .track_scroll(scroll_handle)
-                            .into_any_element();
-                            list.prepaint_as_root(bounds.origin, bounds.size.into(), cx);
-                            list
-                        },
-                        |_bounds, mut list, cx| list.paint(cx),
-                    )
-                    .size_full(),
+                    uniform_list(view, "entries", count, Self::render_extensions)
+                        .flex_grow()
+                        .pb_4()
+                        .track_scroll(scroll_handle),
                 )
             }))
     }
@@ -990,7 +978,7 @@ impl Item for ExtensionsPage {
 
     fn clone_on_split(
         &self,
-        _workspace_id: WorkspaceId,
+        _workspace_id: Option<WorkspaceId>,
         _: &mut ViewContext<Self>,
     ) -> Option<View<Self>> {
         None

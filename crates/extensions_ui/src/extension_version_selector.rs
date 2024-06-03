@@ -9,6 +9,7 @@ use gpui::{
     prelude::*, AppContext, DismissEvent, EventEmitter, FocusableView, Task, View, WeakView,
 };
 use picker::{Picker, PickerDelegate};
+use release_channel::ReleaseChannel;
 use semantic_version::SemanticVersion;
 use settings::update_settings_file;
 use ui::{prelude::*, HighlightedLabel, ListItem, ListItemSpacing};
@@ -166,7 +167,7 @@ impl PickerDelegate for ExtensionVersionSelectorDelegate {
         let candidate_id = self.matches[self.selected_index].candidate_id;
         let extension_version = &self.extension_versions[candidate_id];
 
-        if !extension::is_version_compatible(extension_version) {
+        if !extension::is_version_compatible(ReleaseChannel::global(cx), extension_version) {
             return;
         }
 
@@ -196,12 +197,13 @@ impl PickerDelegate for ExtensionVersionSelectorDelegate {
         &self,
         ix: usize,
         selected: bool,
-        _cx: &mut ViewContext<Picker<Self>>,
+        cx: &mut ViewContext<Picker<Self>>,
     ) -> Option<Self::ListItem> {
         let version_match = &self.matches[ix];
         let extension_version = &self.extension_versions[version_match.candidate_id];
 
-        let is_version_compatible = extension::is_version_compatible(extension_version);
+        let is_version_compatible =
+            extension::is_version_compatible(ReleaseChannel::global(cx), extension_version);
         let disabled = !is_version_compatible;
 
         Some(

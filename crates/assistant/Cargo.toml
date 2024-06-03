@@ -5,12 +5,19 @@ edition = "2021"
 publish = false
 license = "GPL-3.0-or-later"
 
+[lints]
+workspace = true
+
 [lib]
 path = "src/assistant.rs"
 doctest = false
 
 [dependencies]
 anyhow.workspace = true
+anthropic = { workspace = true, features = ["schemars"] }
+assistant_slash_command.workspace = true
+async-watch.workspace = true
+cargo_toml.workspace = true
 chrono.workspace = true
 client.workspace = true
 collections.workspace = true
@@ -19,7 +26,9 @@ editor.workspace = true
 file_icons.workspace = true
 fs.workspace = true
 futures.workspace = true
+fuzzy.workspace = true
 gpui.workspace = true
+heed.workspace = true
 http.workspace = true
 indoc.workspace = true
 language.workspace = true
@@ -31,19 +40,26 @@ ordered-float.workspace = true
 parking_lot.workspace = true
 project.workspace = true
 regex.workspace = true
+rope.workspace = true
+rustdoc_to_markdown.workspace = true
 schemars.workspace = true
 search.workspace = true
+semantic_index.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 settings.workspace = true
 smol.workspace = true
+strsim = "0.11"
+strum.workspace = true
 telemetry_events.workspace = true
 theme.workspace = true
 tiktoken-rs.workspace = true
+toml.workspace = true
 ui.workspace = true
 util.workspace = true
 uuid.workspace = true
 workspace.workspace = true
+picker.workspace = true
 
 [dev-dependencies]
 ctor.workspace = true
@@ -52,3 +68,4 @@ env_logger.workspace = true
 log.workspace = true
 project = { workspace = true, features = ["test-support"] }
 rand.workspace = true
+unindent.workspace = true

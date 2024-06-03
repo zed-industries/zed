@@ -1,24 +1,24 @@
 use anyhow::{anyhow, Result};
 use git::GitHostingProviderRegistry;
 
+#[cfg(target_os = "linux")]
+use ashpd::desktop::trash;
+#[cfg(target_os = "linux")]
+use std::{fs::File, os::fd::AsFd};
+
 #[cfg(unix)]
 use std::os::unix::fs::MetadataExt;
 
 use async_tar::Archive;
 use futures::{future::BoxFuture, AsyncRead, Stream, StreamExt};
 use git::repository::{GitRepository, RealGitRepository};
-use git2::Repository as LibGitRepository;
-use parking_lot::Mutex;
 use rope::Rope;
-#[cfg(any(test, feature = "test-support"))]
-use smol::io::AsyncReadExt;
 use smol::io::AsyncWriteExt;
-use std::io::Write;
-use std::sync::Arc;
 use std::{
-    io,
+    io::{self, Write},
     path::{Component, Path, PathBuf},
     pin::Pin,
+    sync::Arc,
     time::{Duration, SystemTime},
 };
 use tempfile::{NamedTempFile, TempDir};
@@ -29,6 +29,10 @@ use util::{paths, ResultExt};
 use collections::{btree_map, BTreeMap};
 #[cfg(any(test, feature = "test-support"))]
 use git::repository::{FakeGitRepositoryState, GitFileStatus};
+#[cfg(any(test, feature = "test-support"))]
+use parking_lot::Mutex;
+#[cfg(any(test, feature = "test-support"))]
+use smol::io::AsyncReadExt;
 #[cfg(any(test, feature = "test-support"))]
 use std::ffi::OsStr;
 
@@ -85,7 +89,7 @@ pub trait Fs: Send + Sync {
         Arc<dyn Watcher>,
     );
 
-    fn open_repo(&self, abs_dot_git: &Path) -> Option<Arc<Mutex<dyn GitRepository>>>;
+    fn open_repo(&self, abs_dot_git: &Path) -> Option<Arc<dyn GitRepository>>;
     fn is_fake(&self) -> bool;
     async fn is_case_sensitive(&self) -> Result<bool>;
     #[cfg(any(test, feature = "test-support"))]
@@ -132,7 +136,7 @@ pub struct RealFs {
 
 pub struct RealWatcher {
     #[cfg(not(target_os = "macos"))]
-    fs_watcher: Mutex<notify::INotifyWatcher>,
+    fs_watcher: parking_lot::Mutex<notify::INotifyWatcher>,
 }
 
 impl RealFs {
@@ -286,7 +290,21 @@ impl Fs for RealFs {
         Ok(())
     }
 
+    #[cfg(target_os = "linux")]
+    async fn trash_file(&self, path: &Path, _options: RemoveOptions) -> Result<()> {
+        let file = File::open(path)?;
+        match trash::trash_file(&file.as_fd()).await {
+            Ok(_) => Ok(()),
+            Err(err) => Err(anyhow::Error::new(err)),
+        }
+    }
+
     #[cfg(target_os = "macos")]
+    async fn trash_dir(&self, path: &Path, options: RemoveOptions) -> Result<()> {
+        self.trash_file(path, options).await
+    }
+
+    #[cfg(target_os = "linux")]
     async fn trash_dir(&self, path: &Path, options: RemoveOptions) -> Result<()> {
         self.trash_file(path, options).await
     }
@@ -454,7 +472,7 @@ impl Fs for RealFs {
         .expect("Could not start file watcher");
 
         let watcher = Arc::new(RealWatcher {
-            fs_watcher: Mutex::new(file_watcher),
+            fs_watcher: parking_lot::Mutex::new(file_watcher),
         });
 
         watcher.add(path).ok(); // Ignore "file doesn't exist error" and rely on parent watcher.
@@ -470,7 +488,8 @@ impl Fs for RealFs {
                 if let Some(event) = event.ok() {
                     if event.paths.into_iter().any(|path| *path == watched_path) {
                         match event.kind {
-                            notify::EventKind::Create(_) => {
+                            notify::EventKind::Create(_)
+                            | notify::EventKind::Modify(notify::event::ModifyKind::Name(_)) => {
                                 watcher.add(watched_path.as_path()).log_err();
                                 let _ = tx.try_send(vec![watched_path.clone()]).ok();
                             }
@@ -492,16 +511,13 @@ impl Fs for RealFs {
         )
     }
 
-    fn open_repo(&self, dotgit_path: &Path) -> Option<Arc<Mutex<dyn GitRepository>>> {
-        LibGitRepository::open(dotgit_path)
-            .log_err()
-            .map::<Arc<Mutex<dyn GitRepository>>, _>(|libgit_repository| {
-                Arc::new(Mutex::new(RealGitRepository::new(
-                    libgit_repository,
-                    self.git_binary_path.clone(),
-                    self.git_hosting_provider_registry.clone(),
-                )))
-            })
+    fn open_repo(&self, dotgit_path: &Path) -> Option<Arc<dyn GitRepository>> {
+        let repo = git2::Repository::open(dotgit_path).log_err()?;
+        Some(Arc::new(RealGitRepository::new(
+            repo,
+            self.git_binary_path.clone(),
+            self.git_hosting_provider_registry.clone(),
+        )))
     }
 
     fn is_fake(&self) -> bool {
@@ -1525,7 +1541,7 @@ impl Fs for FakeFs {
         )
     }
 
-    fn open_repo(&self, abs_dot_git: &Path) -> Option<Arc<Mutex<dyn GitRepository>>> {
+    fn open_repo(&self, abs_dot_git: &Path) -> Option<Arc<dyn GitRepository>> {
         let state = self.state.lock();
         let entry = state.read_path(abs_dot_git).unwrap();
         let mut entry = entry.lock();

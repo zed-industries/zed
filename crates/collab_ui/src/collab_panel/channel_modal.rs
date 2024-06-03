@@ -37,7 +37,6 @@ impl ChannelModal {
         channel_store: Model<ChannelStore>,
         channel_id: ChannelId,
         mode: Mode,
-        members: Vec<ChannelMembership>,
         cx: &mut ViewContext<Self>,
     ) -> Self {
         cx.observe(&channel_store, |_, _, cx| cx.notify()).detach();
@@ -54,7 +53,8 @@ impl ChannelModal {
                     channel_id,
                     match_candidates: Vec::new(),
                     context_menu: None,
-                    members,
+                    members: Vec::new(),
+                    has_all_members: false,
                     mode,
                 },
                 cx,
@@ -78,37 +78,15 @@ impl ChannelModal {
     }
 
     fn set_mode(&mut self, mode: Mode, cx: &mut ViewContext<Self>) {
-        let channel_store = self.channel_store.clone();
-        let channel_id = self.channel_id;
-        cx.spawn(|this, mut cx| async move {
-            if mode == Mode::ManageMembers {
-                let mut members = channel_store
-                    .update(&mut cx, |channel_store, cx| {
-                        channel_store.get_channel_member_details(channel_id, cx)
-                    })?
-                    .await?;
-
-                members.sort_by(|a, b| a.sort_key().cmp(&b.sort_key()));
-
-                this.update(&mut cx, |this, cx| {
-                    this.picker
-                        .update(cx, |picker, _| picker.delegate.members = members);
-                })?;
-            }
-
-            this.update(&mut cx, |this, cx| {
-                this.picker.update(cx, |picker, cx| {
-                    let delegate = &mut picker.delegate;
-                    delegate.mode = mode;
-                    delegate.selected_index = 0;
-                    picker.set_query("", cx);
-                    picker.update_matches(picker.query(cx), cx);
-                    cx.notify()
-                });
-                cx.notify()
-            })
-        })
-        .detach();
+        self.picker.update(cx, |picker, cx| {
+            let delegate = &mut picker.delegate;
+            delegate.mode = mode;
+            delegate.selected_index = 0;
+            picker.set_query("", cx);
+            picker.update_matches(picker.query(cx), cx);
+            cx.notify()
+        });
+        cx.notify()
     }
 
     fn set_channel_visibility(&mut self, selection: &Selection, cx: &mut ViewContext<Self>) {
@@ -260,6 +238,7 @@ pub struct ChannelModalDelegate {
     mode: Mode,
     match_candidates: Vec<StringMatchCandidate>,
     members: Vec<ChannelMembership>,
+    has_all_members: bool,
     context_menu: Option<(View<ContextMenu>, Subscription)>,
 }
 
@@ -288,37 +267,59 @@ impl PickerDelegate for ChannelModalDelegate {
     fn update_matches(&mut self, query: String, cx: &mut ViewContext<Picker<Self>>) -> Task<()> {
         match self.mode {
             Mode::ManageMembers => {
-                self.match_candidates.clear();
-                self.match_candidates
-                    .extend(self.members.iter().enumerate().map(|(id, member)| {
-                        StringMatchCandidate {
-                            id,
-                            string: member.user.github_login.clone(),
-                            char_bag: member.user.github_login.chars().collect(),
+                if self.has_all_members {
+                    self.match_candidates.clear();
+                    self.match_candidates
+                        .extend(self.members.iter().enumerate().map(|(id, member)| {
+                            StringMatchCandidate {
+                                id,
+                                string: member.user.github_login.clone(),
+                                char_bag: member.user.github_login.chars().collect(),
+                            }
+                        }));
+
+                    let matches = cx.background_executor().block(match_strings(
+                        &self.match_candidates,
+                        &query,
+                        true,
+                        usize::MAX,
+                        &Default::default(),
+                        cx.background_executor().clone(),
+                    ));
+
+                    cx.spawn(|picker, mut cx| async move {
+                        picker
+                            .update(&mut cx, |picker, cx| {
+                                let delegate = &mut picker.delegate;
+                                delegate.matching_member_indices.clear();
+                                delegate
+                                    .matching_member_indices
+                                    .extend(matches.into_iter().map(|m| m.candidate_id));
+                                cx.notify();
+                            })
+                            .ok();
+                    })
+                } else {
+                    let search_members = self.channel_store.update(cx, |store, cx| {
+                        store.fuzzy_search_members(self.channel_id, query.clone(), 100, cx)
+                    });
+                    cx.spawn(|picker, mut cx| async move {
+                        async {
+                            let members = search_members.await?;
+                            picker.update(&mut cx, |picker, cx| {
+                                picker.delegate.has_all_members =
+                                    query == "" && members.len() < 100;
+                                picker.delegate.matching_member_indices =
+                                    (0..members.len()).collect();
+                                picker.delegate.members = members;
+                                cx.notify();
+                            })?;
+                            anyhow::Ok(())
                         }
-                    }));
-
-                let matches = cx.background_executor().block(match_strings(
-                    &self.match_candidates,
-                    &query,
-                    true,
-                    usize::MAX,
-                    &Default::default(),
-                    cx.background_executor().clone(),
-                ));
-
-                cx.spawn(|picker, mut cx| async move {
-                    picker
-                        .update(&mut cx, |picker, cx| {
-                            let delegate = &mut picker.delegate;
-                            delegate.matching_member_indices.clear();
-                            delegate
-                                .matching_member_indices
-                                .extend(matches.into_iter().map(|m| m.candidate_id));
-                            cx.notify();
-                        })
-                        .ok();
-                })
+                        .log_err()
+                        .await;
+                    })
+                }
             }
             Mode::InviteMembers => {
                 let search_users = self

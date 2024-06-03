@@ -218,6 +218,9 @@ pub fn move_to_match_internal(
         pane.update(cx, |pane, cx| {
             if let Some(search_bar) = pane.toolbar().read(cx).item_of_type::<BufferSearchBar>() {
                 search_bar.update(cx, |search_bar, cx| {
+                    if !search_bar.has_active_match() || !search_bar.show(cx) {
+                        return;
+                    }
                     search_bar.select_match(direction, count, cx);
 
                     let new_selections = vim.editor_selections(cx);
@@ -350,7 +353,6 @@ fn replace_command(
                 let range = snapshot
                     .anchor_before(Point::new(range.start.saturating_sub(1) as u32, 0))
                     ..snapshot.anchor_before(Point::new(range.end as u32, 0));
-
                 editor.set_search_within_ranges(&[range], cx)
             })
         }
@@ -391,9 +393,7 @@ fn replace_command(
                                 .timer(Duration::from_millis(200))
                                 .await;
                             editor
-                                .update(&mut cx, |editor, cx| {
-                                    editor.set_search_within_ranges(&[], cx)
-                                })
+                                .update(&mut cx, |editor, cx| editor.clear_search_within_ranges(cx))
                                 .ok();
                         })
                         .detach();
@@ -509,6 +509,8 @@ fn parse_replace_all(query: &str) -> Replacement {
 
 #[cfg(test)]
 mod test {
+    use std::time::Duration;
+
     use editor::{display_map::DisplayRow, DisplayPoint};
     use indoc::indoc;
     use search::BufferSearchBar;
@@ -740,6 +742,20 @@ mod test {
             a
             a
              "
+        });
+        cx.executor().advance_clock(Duration::from_millis(250));
+        cx.run_until_parked();
+
+        cx.simulate_shared_keystrokes("/ a enter").await;
+        cx.shared_state().await.assert_eq(indoc! {
+            "a
+                b
+                b
+                b
+                b
+                ˇa
+                a
+                 "
         });
     }
 }

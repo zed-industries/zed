@@ -5,19 +5,52 @@ pub mod static_source;
 mod task_template;
 mod vscode_format;
 
-use collections::{HashMap, HashSet};
+use collections::{hash_map, HashMap, HashSet};
 use gpui::SharedString;
-use serde::Serialize;
-use std::borrow::Cow;
+use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
+use std::str::FromStr;
+use std::{borrow::Cow, path::Path};
 
 pub use task_template::{RevealStrategy, TaskTemplate, TaskTemplates};
 pub use vscode_format::VsCodeTaskFile;
 
 /// Task identifier, unique within the application.
 /// Based on it, task reruns and terminal tabs are managed.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Deserialize)]
 pub struct TaskId(pub String);
+
+/// TerminalWorkDir describes where a task should be run
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum TerminalWorkDir {
+    /// Local is on this machine
+    Local(PathBuf),
+    /// SSH runs the terminal over ssh
+    Ssh {
+        /// The command to run to connect
+        ssh_command: String,
+        /// The path on the remote server
+        path: Option<String>,
+    },
+}
+
+impl TerminalWorkDir {
+    /// Returns whether the terminal task is supposed to be spawned on a local machine or not.
+    pub fn is_local(&self) -> bool {
+        match self {
+            Self::Local(_) => true,
+            Self::Ssh { .. } => false,
+        }
+    }
+
+    /// Returns a local CWD if the terminal is local, None otherwise.
+    pub fn local_path(&self) -> Option<&Path> {
+        match self {
+            Self::Local(path) => Some(path),
+            Self::Ssh { .. } => None,
+        }
+    }
+}
 
 /// Contains all information needed by Zed to spawn a new terminal tab for the given task.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -36,7 +69,7 @@ pub struct SpawnInTerminal {
     /// A human-readable label, containing command and all of its arguments, joined and substituted.
     pub command_label: String,
     /// Current working directory to spawn the command into.
-    pub cwd: Option<PathBuf>,
+    pub cwd: Option<TerminalWorkDir>,
     /// Env overrides for the command, will be appended to the terminal's environment from the settings.
     pub env: HashMap<String, String>,
     /// Whether to use a new terminal tab or reuse the existing one to spawn the process.
@@ -88,10 +121,21 @@ impl ResolvedTask {
 }
 
 /// Variables, available for use in [`TaskContext`] when a Zed's [`TaskTemplate`] gets resolved into a [`ResolvedTask`].
+/// Name of the variable must be a valid shell variable identifier, which generally means that it is
+/// a word  consisting only  of alphanumeric characters and underscores,
+/// and beginning with an alphabetic character or an  underscore.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize)]
 pub enum VariableName {
     /// An absolute path of the currently opened file.
     File,
+    /// A path of the currently opened file (relative to worktree root).
+    RelativeFile,
+    /// The currently opened filename.
+    Filename,
+    /// The path to a parent directory of a currently opened file.
+    Dirname,
+    /// Stem (filename without extension) of the currently opened file.
+    Stem,
     /// An absolute path of the currently opened worktree, that contains the file.
     WorktreeRoot,
     /// A symbol text, that contains latest cursor/selection position.
@@ -105,36 +149,65 @@ pub enum VariableName {
     /// The symbol selected by the symbol tagging system, specifically the @run capture in a runnables.scm
     RunnableSymbol,
     /// Custom variable, provided by the plugin or other external source.
-    /// Will be printed with `ZED_` prefix to avoid potential conflicts with other variables.
+    /// Will be printed with `CUSTOM_` prefix to avoid potential conflicts with other variables.
     Custom(Cow<'static, str>),
 }
 
 impl VariableName {
     /// Generates a `$VARIABLE`-like string value to be used in templates.
-    /// Custom variables are wrapped in `${}` to avoid substitution issues with whitespaces.
     pub fn template_value(&self) -> String {
-        if matches!(self, Self::Custom(_)) {
-            format!("${{{self}}}")
-        } else {
-            format!("${self}")
-        }
+        format!("${self}")
+    }
+}
+
+impl FromStr for VariableName {
+    type Err = ();
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        let without_prefix = s.strip_prefix(ZED_VARIABLE_NAME_PREFIX).ok_or(())?;
+        let value = match without_prefix {
+            "FILE" => Self::File,
+            "WORKTREE_ROOT" => Self::WorktreeRoot,
+            "SYMBOL" => Self::Symbol,
+            "SELECTED_TEXT" => Self::SelectedText,
+            "ROW" => Self::Row,
+            "COLUMN" => Self::Column,
+            _ => {
+                if let Some(custom_name) =
+                    without_prefix.strip_prefix(ZED_CUSTOM_VARIABLE_NAME_PREFIX)
+                {
+                    Self::Custom(Cow::Owned(custom_name.to_owned()))
+                } else {
+                    return Err(());
+                }
+            }
+        };
+        Ok(value)
     }
 }
 
 /// A prefix that all [`VariableName`] variants are prefixed with when used in environment variables and similar template contexts.
 pub const ZED_VARIABLE_NAME_PREFIX: &str = "ZED_";
+const ZED_CUSTOM_VARIABLE_NAME_PREFIX: &str = "CUSTOM_";
 
 impl std::fmt::Display for VariableName {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         match self {
             Self::File => write!(f, "{ZED_VARIABLE_NAME_PREFIX}FILE"),
+            Self::Filename => write!(f, "{ZED_VARIABLE_NAME_PREFIX}FILENAME"),
+            Self::RelativeFile => write!(f, "{ZED_VARIABLE_NAME_PREFIX}RELATIVE_FILE"),
+            Self::Dirname => write!(f, "{ZED_VARIABLE_NAME_PREFIX}DIRNAME"),
+            Self::Stem => write!(f, "{ZED_VARIABLE_NAME_PREFIX}STEM"),
             Self::WorktreeRoot => write!(f, "{ZED_VARIABLE_NAME_PREFIX}WORKTREE_ROOT"),
             Self::Symbol => write!(f, "{ZED_VARIABLE_NAME_PREFIX}SYMBOL"),
             Self::Row => write!(f, "{ZED_VARIABLE_NAME_PREFIX}ROW"),
             Self::Column => write!(f, "{ZED_VARIABLE_NAME_PREFIX}COLUMN"),
             Self::SelectedText => write!(f, "{ZED_VARIABLE_NAME_PREFIX}SELECTED_TEXT"),
             Self::RunnableSymbol => write!(f, "{ZED_VARIABLE_NAME_PREFIX}RUNNABLE_SYMBOL"),
-            Self::Custom(s) => write!(f, "{ZED_VARIABLE_NAME_PREFIX}CUSTOM_{s}"),
+            Self::Custom(s) => write!(
+                f,
+                "{ZED_VARIABLE_NAME_PREFIX}{ZED_CUSTOM_VARIABLE_NAME_PREFIX}{s}"
+            ),
         }
     }
 }
@@ -153,11 +226,35 @@ impl TaskVariables {
     pub fn extend(&mut self, other: Self) {
         self.0.extend(other.0);
     }
+    /// Get the value associated with given variable name, if there is one.
+    pub fn get(&self, key: &VariableName) -> Option<&str> {
+        self.0.get(key).map(|s| s.as_str())
+    }
+    /// Clear out variables obtained from tree-sitter queries, which are prefixed with '_' character
+    pub fn sweep(&mut self) {
+        self.0.retain(|name, _| {
+            if let VariableName::Custom(name) = name {
+                !name.starts_with('_')
+            } else {
+                true
+            }
+        })
+    }
 }
 
 impl FromIterator<(VariableName, String)> for TaskVariables {
     fn from_iter<T: IntoIterator<Item = (VariableName, String)>>(iter: T) -> Self {
         Self(HashMap::from_iter(iter))
+    }
+}
+
+impl IntoIterator for TaskVariables {
+    type Item = (VariableName, String);
+
+    type IntoIter = hash_map::IntoIter<VariableName, String>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.0.into_iter()
     }
 }
 

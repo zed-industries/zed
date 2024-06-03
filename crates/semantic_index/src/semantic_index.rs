@@ -7,7 +7,7 @@ use chunking::{chunk_text, Chunk};
 use collections::{Bound, HashMap, HashSet};
 pub use embedding::*;
 use fs::Fs;
-use futures::stream::StreamExt;
+use futures::{future::Shared, stream::StreamExt, FutureExt};
 use futures_batch::ChunksTimeoutStreamExt;
 use gpui::{
     AppContext, AsyncAppContext, BorrowAppContext, Context, Entity, EntityId, EventEmitter, Global,
@@ -115,9 +115,14 @@ pub struct ProjectIndex {
     _subscription: Subscription,
 }
 
+#[derive(Clone)]
 enum WorktreeIndexHandle {
-    Loading { _task: Task<Result<()>> },
-    Loaded { index: Model<WorktreeIndex> },
+    Loading {
+        index: Shared<Task<Result<Model<WorktreeIndex>, Arc<anyhow::Error>>>>,
+    },
+    Loaded {
+        index: Model<WorktreeIndex>,
+    },
 }
 
 impl ProjectIndex {
@@ -213,26 +218,33 @@ impl ProjectIndex {
                 );
 
                 let load_worktree = cx.spawn(|this, mut cx| async move {
-                    if let Some(worktree_index) = worktree_index.await.log_err() {
-                        this.update(&mut cx, |this, _| {
-                            this.worktree_indices.insert(
-                                worktree_id,
-                                WorktreeIndexHandle::Loaded {
-                                    index: worktree_index,
-                                },
-                            );
-                        })?;
-                    } else {
-                        this.update(&mut cx, |this, _cx| {
-                            this.worktree_indices.remove(&worktree_id)
-                        })?;
-                    }
+                    let result = match worktree_index.await {
+                        Ok(worktree_index) => {
+                            this.update(&mut cx, |this, _| {
+                                this.worktree_indices.insert(
+                                    worktree_id,
+                                    WorktreeIndexHandle::Loaded {
+                                        index: worktree_index.clone(),
+                                    },
+                                );
+                            })?;
+                            Ok(worktree_index)
+                        }
+                        Err(error) => {
+                            this.update(&mut cx, |this, _cx| {
+                                this.worktree_indices.remove(&worktree_id)
+                            })?;
+                            Err(Arc::new(error))
+                        }
+                    };
 
-                    this.update(&mut cx, |this, cx| this.update_status(cx))
+                    this.update(&mut cx, |this, cx| this.update_status(cx))?;
+
+                    result
                 });
 
                 WorktreeIndexHandle::Loading {
-                    _task: load_worktree,
+                    index: load_worktree.shared(),
                 }
             });
         }
@@ -279,14 +291,22 @@ impl ProjectIndex {
         let (chunks_tx, chunks_rx) = channel::bounded(1024);
         let mut worktree_scan_tasks = Vec::new();
         for worktree_index in self.worktree_indices.values() {
-            if let WorktreeIndexHandle::Loaded { index, .. } = worktree_index {
-                let chunks_tx = chunks_tx.clone();
-                index.read_with(cx, |index, cx| {
-                    let worktree_id = index.worktree.read(cx).id();
-                    let db_connection = index.db_connection.clone();
-                    let db = index.db;
-                    worktree_scan_tasks.push(cx.background_executor().spawn({
-                        async move {
+            let worktree_index = worktree_index.clone();
+            let chunks_tx = chunks_tx.clone();
+            worktree_scan_tasks.push(cx.spawn(|cx| async move {
+                let index = match worktree_index {
+                    WorktreeIndexHandle::Loading { index } => {
+                        index.clone().await.map_err(|error| anyhow!(error))?
+                    }
+                    WorktreeIndexHandle::Loaded { index } => index.clone(),
+                };
+
+                index
+                    .read_with(&cx, |index, cx| {
+                        let worktree_id = index.worktree.read(cx).id();
+                        let db_connection = index.db_connection.clone();
+                        let db = index.db;
+                        cx.background_executor().spawn(async move {
                             let txn = db_connection
                                 .read_txn()
                                 .context("failed to create read transaction")?;
@@ -300,10 +320,10 @@ impl ProjectIndex {
                                 }
                             }
                             anyhow::Ok(())
-                        }
-                    }));
-                })
-            }
+                        })
+                    })?
+                    .await
+            }));
         }
         drop(chunks_tx);
 
@@ -357,7 +377,9 @@ impl ProjectIndex {
                 })
                 .await;
 
-            futures::future::try_join_all(worktree_scan_tasks).await?;
+            for scan_task in futures::future::join_all(worktree_scan_tasks).await {
+                scan_task.log_err();
+            }
 
             project.read_with(&cx, |project, cx| {
                 let mut search_results = Vec::with_capacity(results_by_worker.len() * limit);
