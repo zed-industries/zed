@@ -16,7 +16,7 @@ Currently the two instances connect via Zed's servers, but we intend to build pe
 
 1. Download and install the latest [Zed Preview](https://zed.dev/releases/preview).
 1. Open the remote projects dialogue with `cmd-shift-p remote`.
-2. Click "Add Server".
+2. Click "New Server".
 3. Choose whether to setup via SSH, or to follow the manual setup.
    > **Note:** With both options your laptop and the remote machine will communicate
      via https://collab.zed.dev/, so you will need outbound internet access on the remote machine.
@@ -47,6 +47,7 @@ can specify:
 - `gh cs ssh -c example-codespace` to connect to a GitHub codespace
 - `doctl compute ssh example-droplet` to connect to a DigitalOcean Droplet
 - `gcloud compute ssh` for a Google Cloud instance
+- `ssh -i path_to_key_file user@host` to connect to a host using a key file or certificate
 
 ### zed --dev-server-token isn't connecting
 
