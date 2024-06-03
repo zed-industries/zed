@@ -672,9 +672,6 @@
     "Elixir": {
       "language_servers": ["elixir-ls", "!next-ls", "!lexical", "..."]
     },
-    "Gleam": {
-      "tab_size": 2
-    },
     "Go": {
       "code_actions_on_format": {
         "source.organizeImports": true
@@ -710,9 +707,6 @@
         "allowed": true
       }
     },
-    "Make": {
-      "hard_tabs": true
-    },
     "Markdown": {
       "format_on_save": "off",
       "prettier": {
@@ -724,9 +718,6 @@
         "allowed": true,
         "plugins": ["@prettier/plugin-php"]
       }
-    },
-    "Prisma": {
-      "tab_size": 2
     },
     "Ruby": {
       "language_servers": ["solargraph", "!ruby-lsp", "..."]
