@@ -1002,7 +1002,7 @@ impl CompletionsMenu {
                     }
                 }
 
-                (len).min(max_completion_len.0 as f32)
+                (len + padding_width).min(max_completion_len.0 as f32)
             })
             .fold(190_f32, |a, b| a.max(b));
 
@@ -1064,27 +1064,6 @@ impl CompletionsMenu {
                         } else {
                             &None
                         };
-
-                        // let highlights = gpui::combine_highlights(
-                        //     mat.ranges().map(|range| (range, FontWeight::BOLD.into())),
-                        //     styled_runs_for_code_label(&completion.label, &style.syntax).map(
-                        //         |(range, mut highlight)| {
-                        //             // Ignore font weight for syntax highlighting, as we'll use it
-                        //             // for fuzzy matches.
-                        //             highlight.font_weight = None;
-
-                        //             if completion.lsp_completion.deprecated.unwrap_or(false) {
-                        //                 highlight.strikethrough = Some(StrikethroughStyle {
-                        //                     thickness: 1.0.into(),
-                        //                     ..Default::default()
-                        //                 });
-                        //                 highlight.color = Some(cx.theme().colors().text_muted);
-                        //             }
-
-                        //             (range, highlight)
-                        //         },
-                        //     ),
-                        // );
 
                         let (_completion_width, completion_label, documentation_label) =
                             Self::truncate_completion(
@@ -1298,15 +1277,15 @@ impl CompletionsMenu {
                     let combined_width =
                         new_completion_layout_line.x_for_index(completion_label_text.len());
                     if combined_width > max_completion_len {
-                        if let Some(type_annotation_truncation_index) = new_completion_layout_line
+                        let type_annotation_truncation_index = new_completion_layout_line
                             .index_for_x(max_completion_len - ellipsis_width.width)
-                        {
-                            completion_label_text = completion_label_text
-                                .chars()
-                                .take(type_annotation_truncation_index - 2)
-                                .collect::<String>()
-                                + "…";
-                        }
+                            .unwrap();
+
+                        completion_label_text = completion_label_text
+                            .chars()
+                            .take(type_annotation_truncation_index - 2)
+                            .collect::<String>()
+                            + "…";
                     }
                 }
             }
