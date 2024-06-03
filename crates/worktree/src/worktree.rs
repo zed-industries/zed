@@ -9,7 +9,6 @@ use client::{proto, Client};
 use clock::ReplicaId;
 use collections::{HashMap, HashSet, VecDeque};
 use fs::{copy_recursive, Fs, RemoveOptions, Watcher};
-use futures::stream::select;
 use futures::{
     channel::{
         mpsc::{self, UnboundedSender},

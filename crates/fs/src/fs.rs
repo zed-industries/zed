@@ -1,6 +1,5 @@
 use anyhow::{anyhow, Result};
 use git::GitHostingProviderRegistry;
-use notify::{INotifyWatcher, Watcher as _};
 
 #[cfg(unix)]
 use std::os::unix::fs::MetadataExt;
@@ -132,7 +131,8 @@ pub struct RealFs {
 }
 
 pub struct RealWatcher {
-    fs_watcher: Mutex<INotifyWatcher>,
+    #[cfg(not(target_os = "macos"))]
+    fs_watcher: Mutex<notify::INotifyWatcher>,
 }
 
 impl RealFs {
@@ -424,9 +424,7 @@ impl Fs for RealFs {
                 drop(handle);
                 vec![]
             }))),
-            Arc::new_cyclic(|this| RealWatcher {
-                weak_self: this.clone(),
-            }),
+            Arc::new(RealWatcher {}),
         )
     }
 
@@ -554,18 +552,18 @@ impl Fs for RealFs {
     }
 }
 
-#[cfg(os = "macos")]
+#[cfg(target_os = "macos")]
 impl Watcher for RealWatcher {
-    fn add(&self, path: &Path) -> Result<()> {
+    fn add(&self, _: &Path) -> Result<()> {
         Ok(())
     }
 
-    fn remove(&self, path: &Path) -> Result<()> {
+    fn remove(&self, _: &Path) -> Result<()> {
         Ok(())
     }
 }
 
-#[cfg(not(os = "macos"))]
+#[cfg(not(target_os = "macos"))]
 impl Watcher for RealWatcher {
     fn add(&self, path: &Path) -> Result<()> {
         self.fs_watcher
