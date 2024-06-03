@@ -1,16 +1,14 @@
 use collections::HashMap;
 use futures::{future::join_all, Future};
 use serde::Deserialize;
-use std::{fmt, mem, ops::Range, sync::Arc};
+use std::{fmt, mem, sync::Arc};
 
-use editor::{overlay::Overlay, scroll::Autoscroll, DisplayPoint, Editor, RowRangeExt};
+use editor::{overlay::Overlay, scroll::Autoscroll, DisplayPoint, Editor};
 use gpui::{
     actions, column_pixels, impl_actions, point, saturate, AppContext, AsyncAppContext, Bounds,
     Entity, EntityId, Global, HighlightStyle, Hsla, KeystrokeEvent, Model, ModelContext, Point,
     Subscription, View, ViewContext, WeakView,
 };
-use multi_buffer::MultiBufferPoint;
-use search::{get_word_task, search_multipane, search_window, word_starts};
 use settings::Settings;
 use text::{Bias, SelectionGoal};
 use theme::ThemeSettings;
@@ -19,8 +17,12 @@ use workspace::Workspace;
 
 use crate::{
     editor_state::{EditorState, InputResult, OverlayState, Selection},
+    search::{
+        get_word_task, row_starts, row_starts_multipane, search_multipane, search_window,
+        sort_matches_display, sort_matches_pixel, word_starts,
+    },
     trie::{TrieBuilder, TrimResult},
-    util::{end_of_document, ranges, sort_matches_display, sort_matches_pixel, start_of_document},
+    util::{end_of_document, start_of_document},
 };
 
 // todo change the name of this
@@ -445,7 +447,10 @@ impl EasyMotion {
             editor.highlight_text::<Self>(vec![anchor_start..anchor_end], highlight, cx);
         }
 
-        EditorState::new_selection(trie)
+        let new_state = EditorState::new_selection(trie);
+        let ctx = new_state.keymap_context_layer();
+        editor.set_keymap_context_layer::<Self>(ctx, cx);
+        new_state
     }
 
     fn handle_new_match_tasks(
@@ -567,10 +572,7 @@ impl EasyMotion {
                 &editor.text_layout_details(cx),
             );
 
-            let new_state = Self::handle_new_matches(word_starts, direction, editor, cx);
-            let ctx = new_state.keymap_context_layer();
-            editor.set_keymap_context_layer::<Self>(ctx, cx);
-            new_state
+            Self::handle_new_matches(word_starts, direction, editor, cx)
         });
 
         Self::update(cx, move |easy, cx| {
@@ -712,18 +714,51 @@ impl EasyMotion {
     }
 
     fn row(action: &Row, workspace: &Workspace, cx: &mut WindowContext) {
-        let Row(direction) = action;
+        let Row(direction) = *action;
         if matches!(direction, Direction::BiDirectional)
             && workspace.is_split()
             && Self::workspace_has_multiple_editors(workspace, cx)
         {
             EasyMotion::row_multipane(workspace, cx);
         } else {
-            EasyMotion::row_single_pane(*direction, cx);
+            EasyMotion::row_single_pane(direction, cx);
         }
     }
 
-    fn row_multipane(workspace: &Workspace, cx: &mut WindowContext) {}
+    fn row_multipane(workspace: &Workspace, cx: &mut WindowContext) {
+        let Some(active_editor_id) = Self::active_editor_id(cx) else {
+            return;
+        };
+
+        let editors = Self::editors_with_bounding_boxes(workspace, cx);
+
+        // get words along with their display points within their editors
+        // as well as their position for sorting purposes
+        let (weak_editors, search_tasks): (Vec<_>, Vec<_>) = editors
+            .iter()
+            .map(|(editor, bounding_box)| {
+                let entity_id = editor.entity_id();
+                let task = editor.update(cx, |editor, cx| {
+                    row_starts_multipane(*bounding_box, entity_id, editor, cx)
+                });
+                (editor.downgrade(), task)
+            })
+            .unzip();
+
+        // group each list of matches to a weak view of its corresponding editor
+        let cursor = editors
+            .into_iter()
+            .find(|(editor_view, _)| editor_view.entity_id() == active_editor_id)
+            .map(|(editor_view, bounding_box)| {
+                editor_view.update(cx, |editor, cx| {
+                    Self::get_cursor_pixels(&bounding_box, editor, cx)
+                })
+            })
+            .unwrap();
+
+        Self::handle_new_match_tasks(cursor, weak_editors, search_tasks, cx);
+        Self::insert_multipane_state(EditorState::PendingSearch, cx);
+    }
 
     fn row_single_pane(direction: Direction, cx: &mut WindowContext) {
         let Some(active_editor) = Self::active_editor(cx) else {
@@ -732,11 +767,8 @@ impl EasyMotion {
         let entity_id = active_editor.entity_id();
 
         let new_state = active_editor.update(cx, |editor, cx| {
-            let matches = Self::row_starts(direction, editor, cx);
-            let new_state = Self::handle_new_matches(matches, direction, editor, cx);
-            let ctx = new_state.keymap_context_layer();
-            editor.set_keymap_context_layer::<Self>(ctx, cx);
-            new_state
+            let matches = row_starts(direction, editor, cx);
+            Self::handle_new_matches(matches, direction, editor, cx)
         });
 
         Self::update(cx, move |easy, cx| {
@@ -1075,30 +1107,6 @@ impl EasyMotion {
 
         Self::handle_new_match_tasks(cursor, weak_editors, search_tasks, cx);
         EditorState::PendingSearch
-    }
-
-    fn row_starts(
-        direction: Direction,
-        editor: &mut Editor,
-        cx: &mut ViewContext<Editor>,
-    ) -> Vec<DisplayPoint> {
-        let selections = editor.selections.newest_display(cx);
-        let snapshot = editor.snapshot(cx);
-        let map = &snapshot.display_snapshot;
-        let Range { start, end } =
-            ranges(direction, map, &selections, &editor.text_layout_details(cx));
-        snapshot
-            .buffer_rows(start.row())
-            .take((start.row()..end.row()).len())
-            .flatten()
-            .filter_map(|row| {
-                if snapshot.is_line_folded(row) {
-                    None
-                } else {
-                    Some(map.point_to_display_point(MultiBufferPoint::new(row.0, 0), Bias::Left))
-                }
-            })
-            .collect::<Vec<_>>()
     }
 
     fn get_cursor_pixels(

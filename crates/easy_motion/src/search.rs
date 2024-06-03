@@ -1,11 +1,12 @@
 use futures::{Future, FutureExt};
 use language::{char_kind, coerce_punctuation, CharKind};
-use std::{ops::Range, sync::Arc};
+use multi_buffer::MultiBufferPoint;
+use std::{cmp::Ordering, ops::Range, sync::Arc};
 
 use editor::{
     display_map::{DisplaySnapshot, ToDisplayPoint},
     movement::{find_boundary_range, TextLayoutDetails},
-    DisplayPoint, Editor,
+    DisplayPoint, Editor, RowRangeExt,
 };
 use gpui::{point, Bounds, EntityId, Point, Task};
 use project::search::SearchQuery;
@@ -14,7 +15,10 @@ use ui::{Pixels, ViewContext};
 use workspace::searchable::SearchableItem;
 
 use crate::{
-    util::{ranges, window_bottom, window_top},
+    util::{
+        manh_distance, manh_distance_pixels, ranges, window_top, window_top_bottom_anchor,
+        window_top_bottom_display,
+    },
     Direction, WordType,
 };
 
@@ -197,8 +201,7 @@ pub fn search_multipane(
 
     let map = editor.snapshot(cx).display_snapshot;
     let text_layout_details = editor.text_layout_details(cx);
-    let start = map.display_point_to_anchor(window_top(&map, &text_layout_details), Bias::Left);
-    let end = map.display_point_to_anchor(window_bottom(&map, &text_layout_details), Bias::Left);
+    let Range { start, end } = window_top_bottom_anchor(&map, &text_layout_details);
     let map = editor.snapshot(cx).display_snapshot;
 
     let style = cx.text_style();
@@ -230,6 +233,103 @@ pub fn search_multipane(
                 .collect::<Vec<_>>()
         });
     Some(matches)
+}
+
+pub fn row_starts(
+    direction: Direction,
+    editor: &mut Editor,
+    cx: &mut ViewContext<Editor>,
+) -> Vec<DisplayPoint> {
+    let selections = editor.selections.newest_display(cx);
+    let snapshot = editor.snapshot(cx);
+    let map = &snapshot.display_snapshot;
+    let Range { start, end } = ranges(direction, map, &selections, &editor.text_layout_details(cx));
+    snapshot
+        .buffer_rows(start.row())
+        .take((start.row()..end.row()).len())
+        .flatten()
+        .filter_map(|row| {
+            if snapshot.is_line_folded(row) {
+                None
+            } else {
+                Some(map.point_to_display_point(MultiBufferPoint::new(row.0, 0), Bias::Left))
+            }
+        })
+        .collect::<Vec<_>>()
+}
+
+pub fn row_starts_multipane(
+    bounding_box: Bounds<Pixels>,
+    entity_id: EntityId,
+    editor: &mut Editor,
+    cx: &mut ViewContext<Editor>,
+) -> Task<Vec<(DisplayPoint, EntityId, Point<Pixels>)>> {
+    let map = editor.snapshot(cx).display_snapshot;
+    let text_layout_details = editor.text_layout_details(cx);
+    let Range { start, end } = window_top_bottom_display(&map, &text_layout_details);
+    let snapshot = editor.snapshot(cx);
+
+    let style = cx.text_style();
+    let line_height = style
+        .line_height
+        .to_pixels(style.font_size, cx.rem_size())
+        .0;
+
+    let text_layout_details = editor.text_layout_details(cx);
+    let window_top = window_top(&snapshot.display_snapshot, &text_layout_details);
+
+    cx.background_executor().spawn(async move {
+        snapshot
+            .buffer_rows(start.row())
+            .take((start.row()..end.row()).len())
+            .flatten()
+            .filter_map(|row| {
+                if snapshot.is_line_folded(row) {
+                    None
+                } else {
+                    let point =
+                        map.point_to_display_point(MultiBufferPoint::new(row.0, 0), Bias::Left);
+                    let x = bounding_box.origin.x.0;
+                    let y = bounding_box.origin.y.0 - window_top.row().0 as f32 * line_height
+                        + point.row().0 as f32 * line_height;
+                    let x = Pixels(x);
+                    let y = Pixels(y);
+                    Some((point, entity_id, Point::new(x, y)))
+                }
+            })
+            .collect::<Vec<_>>()
+    })
+}
+
+pub fn sort_matches_pixel(
+    matches: &mut Vec<(DisplayPoint, EntityId, Point<Pixels>)>,
+    cursor: &Point<Pixels>,
+) {
+    matches.sort_unstable_by(|a, b| {
+        let a_distance = manh_distance_pixels(&a.2, &cursor, 2.5);
+        let b_distance = manh_distance_pixels(&b.2, &cursor, 2.5);
+        if a_distance == b_distance {
+            Ordering::Equal
+        } else if a_distance < b_distance {
+            Ordering::Less
+        } else {
+            Ordering::Greater
+        }
+    });
+}
+
+pub fn sort_matches_display(matches: &mut [DisplayPoint], cursor: &DisplayPoint) {
+    matches.sort_unstable_by(|a, b| {
+        let a_distance = manh_distance(a, cursor, 2.5);
+        let b_distance = manh_distance(b, cursor, 2.5);
+        if a_distance == b_distance {
+            Ordering::Equal
+        } else if a_distance < b_distance {
+            Ordering::Less
+        } else {
+            Ordering::Greater
+        }
+    });
 }
 
 #[cfg(test)]

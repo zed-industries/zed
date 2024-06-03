@@ -1,11 +1,11 @@
-use std::{cmp::Ordering, ops::Range};
+use std::ops::Range;
 
 use editor::{
     display_map::{DisplayRow, DisplaySnapshot, ToDisplayPoint},
     movement::TextLayoutDetails,
-    DisplayPoint, RowExt,
+    Anchor, DisplayPoint, RowExt,
 };
-use gpui::{EntityId, Point};
+use gpui::Point;
 use text::{Bias, Selection};
 use ui::Pixels;
 
@@ -80,35 +80,23 @@ pub fn ranges(
     start..end
 }
 
-pub fn sort_matches_pixel(
-    matches: &mut Vec<(DisplayPoint, EntityId, Point<Pixels>)>,
-    cursor: &Point<Pixels>,
-) {
-    matches.sort_unstable_by(|a, b| {
-        let a_distance = manh_distance_pixels(&a.2, &cursor, 2.5);
-        let b_distance = manh_distance_pixels(&b.2, &cursor, 2.5);
-        if a_distance == b_distance {
-            Ordering::Equal
-        } else if a_distance < b_distance {
-            Ordering::Less
-        } else {
-            Ordering::Greater
-        }
-    });
+pub fn window_top_bottom_display(
+    map: &DisplaySnapshot,
+    text_layout_details: &TextLayoutDetails,
+) -> Range<DisplayPoint> {
+    let start = window_top(&map, &text_layout_details);
+    let end = window_bottom(&map, &text_layout_details);
+    start..end
 }
 
-pub fn sort_matches_display(matches: &mut [DisplayPoint], cursor: &DisplayPoint) {
-    matches.sort_unstable_by(|a, b| {
-        let a_distance = manh_distance(a, cursor, 2.5);
-        let b_distance = manh_distance(b, cursor, 2.5);
-        if a_distance == b_distance {
-            Ordering::Equal
-        } else if a_distance < b_distance {
-            Ordering::Less
-        } else {
-            Ordering::Greater
-        }
-    });
+pub fn window_top_bottom_anchor(
+    map: &DisplaySnapshot,
+    text_layout_details: &TextLayoutDetails,
+) -> Range<Anchor> {
+    let Range { start, end } = window_top_bottom_display(map, text_layout_details);
+    let start = map.display_point_to_anchor(start, Bias::Left);
+    let end = map.display_point_to_anchor(end, Bias::Left);
+    start..end
 }
 
 #[cfg(test)]
