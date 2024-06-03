@@ -2,7 +2,7 @@ use editor::DisplayPoint;
 use gpui::{EntityId, HighlightStyle, KeyContext};
 
 use crate::{
-    perm::{Trie, TrimResult},
+    trie::{Trie, TrimResult},
     Direction,
 };
 

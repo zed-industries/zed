@@ -19,18 +19,18 @@ use workspace::Workspace;
 
 use crate::{
     editor_state::{EditorState, InputResult, OverlayState, Selection},
-    perm::{TrieBuilder, TrimResult},
+    trie::{TrieBuilder, TrimResult},
     util::{end_of_document, ranges, sort_matches_display, sort_matches_pixel, start_of_document},
 };
 
 // todo change the name of this
-pub use crate::buffer_display::BufferDisplay;
+pub use crate::input_display::InputDisplay;
 
-mod buffer_display;
 mod editor_events;
 mod editor_state;
-mod perm;
+mod input_display;
 mod search;
+mod trie;
 mod util;
 
 #[derive(Eq, PartialEq, Copy, Clone, Deserialize, Debug, Default)]
@@ -212,6 +212,71 @@ impl EasyMotion {
         Some(editor.update(cx, |editor, cx| update(editor, cx)))
     }
 
+    fn update_editors(
+        state: &EditorState,
+        dimming: bool,
+        editors: impl Iterator<Item = View<Editor>>,
+        cx: &mut impl VisualContext,
+    ) {
+        // filter trie entries by editor and add overlays
+        let ctx = state.keymap_context_layer();
+        match state {
+            EditorState::None => {
+                for editor in editors {
+                    editor.update(cx, |editor, cx| {
+                        editor.clear_search_within_ranges(cx);
+                        editor.clear_highlights::<Self>(cx);
+                        editor.remove_keymap_context_layer::<Self>(cx);
+                    });
+                }
+            }
+            EditorState::Selection(selection) => {
+                for editor in editors {
+                    let trie = selection.trie();
+                    let len = trie.len();
+                    let trie_iter = trie
+                        .iter()
+                        .filter(|(_seq, overlay)| overlay.editor_id == editor.entity_id());
+
+                    editor.update(cx, |editor, cx| {
+                        editor.set_keymap_context_layer::<Self>(ctx.clone(), cx);
+                        editor.clear_search_within_ranges(cx);
+
+                        Self::add_overlays(editor, trie_iter, len, cx);
+
+                        if !dimming {
+                            return;
+                        }
+
+                        let map = &editor.snapshot(cx).display_snapshot;
+                        let start = start_of_document(map);
+                        let end = end_of_document(map);
+                        let anchor_start = map.display_point_to_anchor(start, Bias::Left);
+                        let anchor_end = map.display_point_to_anchor(end, Bias::Left);
+                        let highlight = HighlightStyle {
+                            fade_out: Some(0.7),
+                            ..Default::default()
+                        };
+                        editor.highlight_text::<Self>(
+                            vec![anchor_start..anchor_end],
+                            highlight,
+                            cx,
+                        );
+                    });
+                }
+            }
+            EditorState::NCharInput(_) | EditorState::Pattern(_) => {
+                for editor in editors {
+                    editor.update(cx, |editor, cx| {
+                        editor.clear_highlights::<Self>(cx);
+                        editor.set_keymap_context_layer::<Self>(ctx.clone(), cx);
+                    });
+                }
+            }
+            EditorState::PendingSearch => {}
+        }
+    }
+
     fn activate_editor(&mut self, editor: View<Editor>) {
         self.active_editor = Some(editor.downgrade());
     }
@@ -248,6 +313,33 @@ impl EasyMotion {
                 })
             })
             .collect::<Vec<_>>()
+    }
+
+    fn workspace_has_multiple_editors(workspace: &Workspace, cx: &WindowContext) -> bool {
+        let panes = workspace.panes();
+        panes
+            .iter()
+            .filter(|pane| {
+                pane.read(cx)
+                    .active_item()
+                    .and_then(|item| item.downcast::<Editor>())
+                    .is_some()
+            })
+            .take(2)
+            .count()
+            == 2
+    }
+
+    fn active_editor_views(workspace: &Workspace, cx: &WindowContext) -> Vec<View<Editor>> {
+        let panes = workspace.panes();
+        panes
+            .iter()
+            .filter_map(|pane| {
+                pane.read(cx)
+                    .active_item()
+                    .and_then(|item| item.downcast::<Editor>())
+            })
+            .collect()
     }
 
     pub(crate) fn latest_state(&self) -> &EditorState {
@@ -301,13 +393,128 @@ impl EasyMotion {
         })
     }
 
+    fn handle_new_matches(
+        mut matches: Vec<DisplayPoint>,
+        direction: Direction,
+        editor: &mut Editor,
+        cx: &mut ViewContext<Editor>,
+    ) -> EditorState {
+        let selections = editor.selections.newest_display(cx);
+        let snapshot = editor.snapshot(cx);
+        let map = &snapshot.display_snapshot;
+
+        if matches.is_empty() {
+            return EditorState::None;
+        }
+        sort_matches_display(&mut matches, &selections.start);
+
+        let (keys, dimming) = Self::read_with(cx, |easy, _| (easy.keys.clone(), easy.dimming))
+            .unwrap_or((DEFAULT_KEYS.into(), false));
+
+        let (style_0, style_1, style_2) = get_highlights(cx);
+        let trie =
+            TrieBuilder::new(keys, matches.len()).populate_with(true, matches, |seq, point| {
+                let style = match seq.len() {
+                    0 | 1 => style_0,
+                    2 => style_1,
+                    3.. => style_2,
+                };
+                OverlayState {
+                    style,
+                    point,
+                    editor_id: cx.entity_id(),
+                }
+            });
+        Self::add_overlays(editor, trie.iter(), trie.len(), cx);
+
+        if dimming {
+            let start = match direction {
+                Direction::BiDirectional | Direction::Backwards => DisplayPoint::zero(),
+                Direction::Forwards => selections.start,
+            };
+            let end = match direction {
+                Direction::BiDirectional | Direction::Forwards => end_of_document(map),
+                Direction::Backwards => selections.end,
+            };
+            let anchor_start = map.display_point_to_anchor(start, Bias::Left);
+            let anchor_end = map.display_point_to_anchor(end, Bias::Left);
+            let highlight = HighlightStyle {
+                fade_out: Some(0.7),
+                ..Default::default()
+            };
+            editor.highlight_text::<Self>(vec![anchor_start..anchor_end], highlight, cx);
+        }
+
+        EditorState::new_selection(trie)
+    }
+
+    fn handle_new_match_tasks(
+        cursor: Point<Pixels>,
+        weak_editors: Vec<WeakView<Editor>>,
+        search_tasks: Vec<
+            impl Future<Output = Vec<(DisplayPoint, EntityId, Point<Pixels>)>> + 'static + Send,
+        >,
+        cx: &mut WindowContext,
+    ) {
+        let (style_0, style_1, style_2) = get_highlights(cx);
+        let (keys, dimming) = Self::read_with(cx, |easy, _| (easy.keys.clone(), easy.dimming))
+            .unwrap_or((DEFAULT_KEYS.into(), false));
+
+        let new_state = cx.background_executor().spawn(async move {
+            let cursor = cursor;
+            let mut search_matches = join_all(search_tasks)
+                .await
+                .into_iter()
+                .flatten()
+                .collect::<Vec<_>>();
+            if search_matches.is_empty() {
+                return EditorState::None;
+            }
+            sort_matches_pixel(&mut search_matches, &cursor);
+
+            let len = search_matches.len();
+            let matches = search_matches.into_iter().map(|(point, id, _)| (point, id));
+
+            let trie = TrieBuilder::new(keys, len).populate_with(true, matches, |seq, point| {
+                let style = match seq.len() {
+                    0 | 1 => style_0,
+                    2 => style_1,
+                    3.. => style_2,
+                };
+                OverlayState {
+                    style,
+                    point: point.0,
+                    editor_id: point.1,
+                }
+            });
+
+            EditorState::new_selection(trie)
+        });
+
+        cx.spawn(move |mut cx| async move {
+            let cx = &mut cx;
+            let editors = weak_editors
+                .into_iter()
+                .filter_map(|editor| editor.upgrade());
+
+            let new_state = new_state.await;
+            Self::update_editors(&new_state, dimming, editors, cx);
+
+            Self::update_async(cx, move |easy, cx| {
+                easy.multipane_state = Some(new_state);
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
     fn word(action: &Word, workspace: &Workspace, cx: &mut WindowContext) {
         let Word(direction) = *action;
         // TODO other directions?
         // not sure if check for multiple editors is totally necessary
         if matches!(direction, Direction::BiDirectional)
             && workspace.is_split()
-            && workspace_has_multiple_editors(workspace, cx)
+            && Self::workspace_has_multiple_editors(workspace, cx)
         {
             EasyMotion::word_multipane(WordType::Word, workspace, cx);
         } else {
@@ -321,7 +528,7 @@ impl EasyMotion {
         // not sure if check for multiple editors is totally necessary
         if matches!(direction, Direction::BiDirectional)
             && workspace.is_split()
-            && workspace_has_multiple_editors(workspace, cx)
+            && Self::workspace_has_multiple_editors(workspace, cx)
         {
             todo!()
         } else {
@@ -335,7 +542,7 @@ impl EasyMotion {
         // not sure if check for multiple editors is totally necessary
         if matches!(direction, Direction::BiDirectional)
             && workspace.is_split()
-            && workspace_has_multiple_editors(workspace, cx)
+            && Self::workspace_has_multiple_editors(workspace, cx)
         {
             todo!()
         } else {
@@ -403,40 +610,12 @@ impl EasyMotion {
             })
             .unwrap();
 
-        Self::process_match_tasks(cursor, weak_editors, search_tasks, cx);
+        Self::handle_new_match_tasks(cursor, weak_editors, search_tasks, cx);
         Self::insert_multipane_state(EditorState::PendingSearch, cx);
     }
 
-    fn get_cursor_pixels(
-        bounding_box: &Bounds<Pixels>,
-        editor: &Editor,
-        cx: &mut ViewContext<Editor>,
-    ) -> Point<Pixels> {
-        let style = cx.text_style();
-        let scroll_position = editor.snapshot(cx).scroll_position();
-        let font_size = style.font_size.to_pixels(cx.rem_size());
-        let line_height = style.line_height_in_pixels(cx.rem_size());
-        let font_id = cx.text_system().resolve_font(&style.font());
-        let em_width = cx
-            .text_system()
-            .typographic_bounds(font_id, font_size, 'm')
-            .unwrap()
-            .size
-            .width;
-        let scroll_pixel_position = point(
-            scroll_position.x * em_width,
-            scroll_position.y * line_height,
-        );
-
-        let selections = editor.selections.newest_display(cx);
-        let cursor = selections.start;
-        let x = bounding_box.origin.x + 2.0 * column_pixels(&style, cursor.column() as usize, cx);
-        let y = bounding_box.origin.y + cursor.row().0 as f32 * line_height;
-        point(x, y) - scroll_pixel_position
-    }
-
     fn simple_action(new_state: EditorState, workspace: &Workspace, cx: &mut WindowContext) {
-        if workspace.is_split() && workspace_has_multiple_editors(workspace, cx) {
+        if workspace.is_split() && Self::workspace_has_multiple_editors(workspace, cx) {
             let panes = workspace.panes();
 
             let editors = panes
@@ -536,7 +715,7 @@ impl EasyMotion {
         let Row(direction) = action;
         if matches!(direction, Direction::BiDirectional)
             && workspace.is_split()
-            && workspace_has_multiple_editors(workspace, cx)
+            && Self::workspace_has_multiple_editors(workspace, cx)
         {
             EasyMotion::row_multipane(workspace, cx);
         } else {
@@ -566,28 +745,34 @@ impl EasyMotion {
         });
     }
 
-    fn row_starts(
-        direction: Direction,
-        editor: &mut Editor,
-        cx: &mut ViewContext<Editor>,
-    ) -> Vec<DisplayPoint> {
-        let selections = editor.selections.newest_display(cx);
-        let snapshot = editor.snapshot(cx);
-        let map = &snapshot.display_snapshot;
-        let Range { start, end } =
-            ranges(direction, map, &selections, &editor.text_layout_details(cx));
-        snapshot
-            .buffer_rows(start.row())
-            .take((start.row()..end.row()).len())
-            .flatten()
-            .filter_map(|row| {
-                if snapshot.is_line_folded(row) {
-                    None
-                } else {
-                    Some(map.point_to_display_point(MultiBufferPoint::new(row.0, 0), Bias::Left))
-                }
-            })
-            .collect::<Vec<_>>()
+    fn cancel(workspace: &Workspace, cx: &mut WindowContext) {
+        let editor = Self::update(cx, |easy, _| {
+            if let Some(state) = easy.multipane_state.as_mut() {
+                state.clear();
+                None
+            } else {
+                easy.clear_state();
+                easy.active_editor.clone()
+            }
+        })
+        .flatten();
+
+        if workspace.panes().len() > 1 {
+            let editors = Self::active_editor_views(workspace, cx);
+            for editor in editors {
+                editor.update(cx, |editor, cx| {
+                    editor.clear_overlays::<Self>(cx);
+                    editor.clear_highlights::<Self>(cx);
+                    editor.remove_keymap_context_layer::<Self>(cx);
+                });
+            }
+        } else if let Some(editor) = editor.and_then(|editor| editor.upgrade()) {
+            editor.update(cx, |editor, cx| {
+                editor.clear_overlays::<Self>(cx);
+                editor.clear_highlights::<Self>(cx);
+                editor.remove_keymap_context_layer::<Self>(cx);
+            });
+        }
     }
 
     fn observe_keystrokes(keystroke_event: &KeystrokeEvent, cx: &mut WindowContext) {
@@ -745,7 +930,7 @@ impl EasyMotion {
         workspace: &mut Workspace,
         cx: &mut WindowContext,
     ) -> EditorState {
-        let editors = active_editor_views(workspace, cx);
+        let editors = Self::active_editor_views(workspace, cx);
         let (selection, res) = selection.record_str(keys);
         match res {
             TrimResult::Found(overlay) => {
@@ -795,61 +980,6 @@ impl EasyMotion {
             }
             TrimResult::NoChange => EditorState::Selection(selection),
         }
-    }
-
-    fn handle_new_matches(
-        mut matches: Vec<DisplayPoint>,
-        direction: Direction,
-        editor: &mut Editor,
-        cx: &mut ViewContext<Editor>,
-    ) -> EditorState {
-        let selections = editor.selections.newest_display(cx);
-        let snapshot = editor.snapshot(cx);
-        let map = &snapshot.display_snapshot;
-
-        if matches.is_empty() {
-            return EditorState::None;
-        }
-        sort_matches_display(&mut matches, &selections.start);
-
-        let (keys, dimming) = Self::read_with(cx, |easy, _| (easy.keys.clone(), easy.dimming))
-            .unwrap_or((DEFAULT_KEYS.into(), false));
-
-        let (style_0, style_1, style_2) = get_highlights(cx);
-        let trie =
-            TrieBuilder::new(keys, matches.len()).populate_with(true, matches, |seq, point| {
-                let style = match seq.len() {
-                    0 | 1 => style_0,
-                    2 => style_1,
-                    3.. => style_2,
-                };
-                OverlayState {
-                    style,
-                    point,
-                    editor_id: cx.entity_id(),
-                }
-            });
-        Self::add_overlays(editor, trie.iter(), trie.len(), cx);
-
-        if dimming {
-            let start = match direction {
-                Direction::BiDirectional | Direction::Backwards => DisplayPoint::zero(),
-                Direction::Forwards => selections.start,
-            };
-            let end = match direction {
-                Direction::BiDirectional | Direction::Forwards => end_of_document(map),
-                Direction::Backwards => selections.end,
-            };
-            let anchor_start = map.display_point_to_anchor(start, Bias::Left);
-            let anchor_end = map.display_point_to_anchor(end, Bias::Left);
-            let highlight = HighlightStyle {
-                fade_out: Some(0.7),
-                ..Default::default()
-            };
-            editor.highlight_text::<Self>(vec![anchor_start..anchor_end], highlight, cx);
-        }
-
-        EditorState::new_selection(trie)
     }
 
     fn show_trie_from_query(
@@ -943,163 +1073,60 @@ impl EasyMotion {
             })
             .unwrap();
 
-        Self::process_match_tasks(cursor, weak_editors, search_tasks, cx);
+        Self::handle_new_match_tasks(cursor, weak_editors, search_tasks, cx);
         EditorState::PendingSearch
     }
 
-    fn process_match_tasks(
-        cursor: Point<Pixels>,
-        weak_editors: Vec<WeakView<Editor>>,
-        search_tasks: Vec<
-            impl Future<Output = Vec<(DisplayPoint, EntityId, Point<Pixels>)>> + 'static + Send,
-        >,
-        cx: &mut WindowContext,
-    ) {
-        let (style_0, style_1, style_2) = get_highlights(cx);
-        let (keys, dimming) = Self::read_with(cx, |easy, _| (easy.keys.clone(), easy.dimming))
-            .unwrap_or((DEFAULT_KEYS.into(), false));
-
-        let new_state = cx.background_executor().spawn(async move {
-            let cursor = cursor;
-            let mut search_matches = join_all(search_tasks)
-                .await
-                .into_iter()
-                .flatten()
-                .collect::<Vec<_>>();
-            if search_matches.is_empty() {
-                return EditorState::None;
-            }
-            sort_matches_pixel(&mut search_matches, &cursor);
-
-            let len = search_matches.len();
-            let matches = search_matches.into_iter().map(|(point, id, _)| (point, id));
-
-            let trie = TrieBuilder::new(keys, len).populate_with(true, matches, |seq, point| {
-                let style = match seq.len() {
-                    0 | 1 => style_0,
-                    2 => style_1,
-                    3.. => style_2,
-                };
-                OverlayState {
-                    style,
-                    point: point.0,
-                    editor_id: point.1,
+    fn row_starts(
+        direction: Direction,
+        editor: &mut Editor,
+        cx: &mut ViewContext<Editor>,
+    ) -> Vec<DisplayPoint> {
+        let selections = editor.selections.newest_display(cx);
+        let snapshot = editor.snapshot(cx);
+        let map = &snapshot.display_snapshot;
+        let Range { start, end } =
+            ranges(direction, map, &selections, &editor.text_layout_details(cx));
+        snapshot
+            .buffer_rows(start.row())
+            .take((start.row()..end.row()).len())
+            .flatten()
+            .filter_map(|row| {
+                if snapshot.is_line_folded(row) {
+                    None
+                } else {
+                    Some(map.point_to_display_point(MultiBufferPoint::new(row.0, 0), Bias::Left))
                 }
-            });
-
-            EditorState::new_selection(trie)
-        });
-
-        cx.spawn(move |mut cx| async move {
-            let cx = &mut cx;
-            let editors = weak_editors
-                .into_iter()
-                .filter_map(|editor| editor.upgrade());
-
-            let new_state = new_state.await;
-            Self::update_editors(&new_state, dimming, editors, cx);
-
-            Self::update_async(cx, move |easy, cx| {
-                easy.multipane_state = Some(new_state);
-                cx.notify();
-            });
-        })
-        .detach();
+            })
+            .collect::<Vec<_>>()
     }
 
-    fn update_editors(
-        state: &EditorState,
-        dimming: bool,
-        editors: impl Iterator<Item = View<Editor>>,
-        cx: &mut impl VisualContext,
-    ) {
-        // filter trie entries by editor and add overlays
-        let ctx = state.keymap_context_layer();
-        match state {
-            EditorState::None => {
-                for editor in editors {
-                    editor.update(cx, |editor, cx| {
-                        editor.clear_search_within_ranges(cx);
-                        editor.clear_highlights::<Self>(cx);
-                        editor.remove_keymap_context_layer::<Self>(cx);
-                    });
-                }
-            }
-            EditorState::Selection(selection) => {
-                for editor in editors {
-                    let trie = selection.trie();
-                    let len = trie.len();
-                    let trie_iter = trie
-                        .iter()
-                        .filter(|(_seq, overlay)| overlay.editor_id == editor.entity_id());
+    fn get_cursor_pixels(
+        bounding_box: &Bounds<Pixels>,
+        editor: &Editor,
+        cx: &mut ViewContext<Editor>,
+    ) -> Point<Pixels> {
+        let style = cx.text_style();
+        let scroll_position = editor.snapshot(cx).scroll_position();
+        let font_size = style.font_size.to_pixels(cx.rem_size());
+        let line_height = style.line_height_in_pixels(cx.rem_size());
+        let font_id = cx.text_system().resolve_font(&style.font());
+        let em_width = cx
+            .text_system()
+            .typographic_bounds(font_id, font_size, 'm')
+            .unwrap()
+            .size
+            .width;
+        let scroll_pixel_position = point(
+            scroll_position.x * em_width,
+            scroll_position.y * line_height,
+        );
 
-                    editor.update(cx, |editor, cx| {
-                        editor.set_keymap_context_layer::<Self>(ctx.clone(), cx);
-                        editor.clear_search_within_ranges(cx);
-
-                        Self::add_overlays(editor, trie_iter, len, cx);
-
-                        if !dimming {
-                            return;
-                        }
-
-                        let map = &editor.snapshot(cx).display_snapshot;
-                        let start = start_of_document(map);
-                        let end = end_of_document(map);
-                        let anchor_start = map.display_point_to_anchor(start, Bias::Left);
-                        let anchor_end = map.display_point_to_anchor(end, Bias::Left);
-                        let highlight = HighlightStyle {
-                            fade_out: Some(0.7),
-                            ..Default::default()
-                        };
-                        editor.highlight_text::<Self>(
-                            vec![anchor_start..anchor_end],
-                            highlight,
-                            cx,
-                        );
-                    });
-                }
-            }
-            EditorState::NCharInput(_) | EditorState::Pattern(_) => {
-                for editor in editors {
-                    editor.update(cx, |editor, cx| {
-                        editor.clear_highlights::<Self>(cx);
-                        editor.set_keymap_context_layer::<Self>(ctx.clone(), cx);
-                    });
-                }
-            }
-            EditorState::PendingSearch => {}
-        }
-    }
-
-    fn cancel(workspace: &Workspace, cx: &mut WindowContext) {
-        let editor = Self::update(cx, |easy, _| {
-            if let Some(state) = easy.multipane_state.as_mut() {
-                state.clear();
-                None
-            } else {
-                easy.clear_state();
-                easy.active_editor.clone()
-            }
-        })
-        .flatten();
-
-        if workspace.panes().len() > 1 {
-            let editors = active_editor_views(workspace, cx);
-            for editor in editors {
-                editor.update(cx, |editor, cx| {
-                    editor.clear_overlays::<Self>(cx);
-                    editor.clear_highlights::<Self>(cx);
-                    editor.remove_keymap_context_layer::<Self>(cx);
-                });
-            }
-        } else if let Some(editor) = editor.and_then(|editor| editor.upgrade()) {
-            editor.update(cx, |editor, cx| {
-                editor.clear_overlays::<Self>(cx);
-                editor.clear_highlights::<Self>(cx);
-                editor.remove_keymap_context_layer::<Self>(cx);
-            });
-        }
+        let selections = editor.selections.newest_display(cx);
+        let cursor = selections.start;
+        let x = bounding_box.origin.x + 2.0 * column_pixels(&style, cursor.column() as usize, cx);
+        let y = bounding_box.origin.y + cursor.row().0 as f32 * line_height;
+        point(x, y) - scroll_pixel_position
     }
 
     fn add_overlays<'a>(
@@ -1128,33 +1155,6 @@ impl EasyMotion {
         });
         editor.add_overlays::<Self>(iter, len, cx);
     }
-}
-
-fn workspace_has_multiple_editors(workspace: &Workspace, cx: &WindowContext) -> bool {
-    let panes = workspace.panes();
-    panes
-        .iter()
-        .filter(|pane| {
-            pane.read(cx)
-                .active_item()
-                .and_then(|item| item.downcast::<Editor>())
-                .is_some()
-        })
-        .take(2)
-        .count()
-        == 2
-}
-
-fn active_editor_views(workspace: &Workspace, cx: &WindowContext) -> Vec<View<Editor>> {
-    let panes = workspace.panes();
-    panes
-        .iter()
-        .filter_map(|pane| {
-            pane.read(cx)
-                .active_item()
-                .and_then(|item| item.downcast::<Editor>())
-        })
-        .collect()
 }
 
 fn get_highlights(cx: &AppContext) -> (HighlightStyle, HighlightStyle, HighlightStyle) {

@@ -3,14 +3,14 @@ use workspace::{item::ItemHandle, ui::prelude::*, StatusItemView};
 
 use crate::{editor_state::EditorState, EasyMotion, GlobalEasyMotion};
 
-pub struct BufferDisplay {
+pub struct InputDisplay {
     pub(crate) buffer: String,
     model: Option<WeakModel<EasyMotion>>,
     model_subscription: Option<Subscription>,
     _global_subscription: Subscription,
 }
 
-impl BufferDisplay {
+impl InputDisplay {
     pub fn new(cx: &mut ViewContext<Self>) -> Self {
         let global_subscription =
             cx.observe_global::<GlobalEasyMotion>(|this, cx| this.update_model(cx));
@@ -46,7 +46,7 @@ impl BufferDisplay {
     }
 }
 
-impl Render for BufferDisplay {
+impl Render for InputDisplay {
     fn render(&mut self, _: &mut ViewContext<Self>) -> impl IntoElement {
         if self.buffer.is_empty() {
             return div().into_any();
@@ -59,7 +59,7 @@ impl Render for BufferDisplay {
     }
 }
 
-impl StatusItemView for BufferDisplay {
+impl StatusItemView for InputDisplay {
     fn set_active_pane_item(
         &mut self,
         _active_pane_item: Option<&dyn ItemHandle>,

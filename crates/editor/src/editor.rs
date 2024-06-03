@@ -10421,20 +10421,7 @@ impl Editor {
             .collect()
     }
 
-    pub fn add_overlay<T: 'static>(
-        &mut self,
-        text: String,
-        point: DisplayPoint,
-        offset: f32,
-        highlights: Vec<(Range<usize>, HighlightStyle)>,
-        cx: &mut ViewContext<Self>,
-    ) {
-        let overlay = Overlay {
-            text,
-            highlights,
-            point,
-            offset,
-        };
+    pub fn add_overlay<T: 'static>(&mut self, overlay: Overlay, cx: &mut ViewContext<Self>) {
         let list = self.overlay_map.entry(TypeId::of::<T>()).or_default();
         list.push(overlay);
         cx.notify();
