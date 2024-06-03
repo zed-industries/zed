@@ -472,6 +472,35 @@ impl PromptLibrary {
         cx: &mut ViewContext<Self>,
     ) {
         if let EditorEvent::BufferEdited = event {
+            let prompt_editor = self.prompt_editors.get(&prompt_id).unwrap();
+            let buffer = prompt_editor
+                .editor
+                .read(cx)
+                .buffer()
+                .read(cx)
+                .as_singleton()
+                .unwrap();
+
+            buffer.update(cx, |buffer, cx| {
+                let mut chars = buffer.chars_at(0);
+                match chars.next() {
+                    Some('#') => {
+                        if chars.next() != Some(' ') {
+                            drop(chars);
+                            buffer.edit([(1..1, " ")], None, cx);
+                        }
+                    }
+                    Some(' ') => {
+                        drop(chars);
+                        buffer.edit([(0..0, "#")], None, cx);
+                    }
+                    _ => {
+                        drop(chars);
+                        buffer.edit([(0..0, "# ")], None, cx);
+                    }
+                }
+            });
+
             self.save_prompt(prompt_id, cx);
         }
     }
@@ -524,11 +553,7 @@ impl PromptLibrary {
                             h_flex()
                                 .h(TitleBar::height(cx))
                                 .px(Spacing::Large.rems(cx))
-                                .justify_between()
-                                .child(
-                                    Label::new(prompt_metadata.title.unwrap_or("Untitled".into()))
-                                        .size(LabelSize::Large),
-                                )
+                                .justify_end()
                                 .child(
                                     h_flex()
                                         .gap_4()
@@ -857,7 +882,12 @@ fn title_from_body<'a>(body: impl IntoIterator<Item = char>) -> Option<SharedStr
     }
 
     if level > 0 {
-        Some(chars.collect::<String>().trim().to_string().into())
+        let title = chars.collect::<String>().trim().to_string();
+        if title.is_empty() {
+            None
+        } else {
+            Some(title.into())
+        }
     } else {
         None
     }
