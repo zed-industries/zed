@@ -568,7 +568,7 @@
     }
   },
   {
-    "context": "Editor && vim_mode == normal",
+    "context": "Editor && vim_mode == normal && !VimWaiting",
     "bindings": {
       "g c c": "editor::ToggleComments"
     }
