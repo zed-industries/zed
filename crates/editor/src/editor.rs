@@ -1697,6 +1697,12 @@ impl Editor {
         cx.on_focus(&focus_handle, Self::handle_focus).detach();
         cx.on_blur(&focus_handle, Self::handle_blur).detach();
 
+        let show_indent_guides = if mode == EditorMode::SingleLine {
+            Some(false)
+        } else {
+            None
+        };
+
         let mut this = Self {
             focus_handle,
             buffer: buffer.clone(),
@@ -1726,7 +1732,7 @@ impl Editor {
             show_git_diff_gutter: None,
             show_code_actions: None,
             show_wrap_guides: None,
-            show_indent_guides: None,
+            show_indent_guides,
             placeholder_text: None,
             highlight_order: 0,
             highlighted_rows: HashMap::default(),
