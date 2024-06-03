@@ -237,7 +237,6 @@
     "context": "PromptLibrary",
     "bindings": {
       "cmd-n": "prompt_library::NewPrompt",
-      "cmd-s": "prompt_library::SavePrompt",
       "cmd-shift-s": "prompt_library::ToggleDefaultPrompt",
       "cmd-w": "workspace::CloseWindow"
     }

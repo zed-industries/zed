@@ -1,7 +1,7 @@
 use anyhow::{anyhow, Result};
 use chrono::{DateTime, Utc};
 use collections::HashMap;
-use editor::Editor;
+use editor::{Editor, EditorEvent};
 use futures::{
     future::{self, BoxFuture, Shared},
     FutureExt,
@@ -16,23 +16,25 @@ use heed::{types::SerdeBincode, Database, RoTxn};
 use language::{language_settings::SoftWrap, Buffer, LanguageRegistry};
 use parking_lot::Mutex;
 use picker::{Picker, PickerDelegate};
+use rope::Rope;
 use serde::{Deserialize, Serialize};
 use std::{
     cmp::Reverse,
     future::Future,
     path::PathBuf,
     sync::{atomic::AtomicBool, Arc},
+    time::Duration,
 };
 use ui::{
     div, prelude::*, IconButtonShape, ListItem, ListItemSpacing, ParentElement, Render,
     SharedString, Styled, TitleBar, Tooltip, ViewContext, VisualContext,
 };
-use util::{paths::PROMPTS_DIR, ResultExt};
+use util::{paths::PROMPTS_DIR, ResultExt, TryFutureExt};
 use uuid::Uuid;
 
 actions!(
     prompt_library,
-    [NewPrompt, SavePrompt, DeletePrompt, ToggleDefaultPrompt]
+    [NewPrompt, DeletePrompt, ToggleDefaultPrompt]
 );
 
 /// Init starts loading the PromptStore in the background and assigns
@@ -95,11 +97,18 @@ pub fn open_prompt_library(
 pub struct PromptLibrary {
     store: Arc<PromptStore>,
     language_registry: Arc<LanguageRegistry>,
-    prompt_editors: HashMap<PromptId, View<Editor>>,
+    prompt_editors: HashMap<PromptId, PromptEditor>,
     active_prompt_id: Option<PromptId>,
     picker: View<Picker<PromptPickerDelegate>>,
     pending_load: Task<()>,
     _subscriptions: Vec<Subscription>,
+}
+
+struct PromptEditor {
+    editor: View<Editor>,
+    next_body_to_save: Option<Rope>,
+    pending_save: Option<Task<Option<()>>>,
+    _subscription: Subscription,
 }
 
 struct PromptPickerDelegate {
@@ -286,26 +295,62 @@ impl PromptLibrary {
         .detach_and_log_err(cx);
     }
 
-    pub fn save_active_prompt(&mut self, cx: &mut ViewContext<Self>) {
-        if let Some(active_prompt_id) = self.active_prompt_id {
-            let prompt_metadata = self.store.metadata(active_prompt_id).unwrap();
-            let body = self
-                .prompt_editors
-                .get_mut(&active_prompt_id)
-                .unwrap()
-                .update(cx, |editor, cx| editor.snapshot(cx));
+    pub fn save_prompt(&mut self, prompt_id: PromptId, cx: &mut ViewContext<Self>) {
+        const SAVE_THROTTLE: Duration = Duration::from_millis(500);
 
-            let title = title_from_body(body.buffer_chars_at(0).map(|(c, _)| c));
-            self.store
-                .save(
-                    active_prompt_id,
-                    title,
-                    prompt_metadata.default,
-                    body.text(),
-                )
-                .detach_and_log_err(cx);
-            self.picker.update(cx, |picker, cx| picker.refresh(cx));
-            cx.notify();
+        let prompt_metadata = self.store.metadata(prompt_id).unwrap();
+        let prompt_editor = self.prompt_editors.get_mut(&prompt_id).unwrap();
+        let body = prompt_editor.editor.update(cx, |editor, cx| {
+            editor
+                .buffer()
+                .read(cx)
+                .as_singleton()
+                .unwrap()
+                .read(cx)
+                .as_rope()
+                .clone()
+        });
+
+        let store = self.store.clone();
+        let executor = cx.background_executor().clone();
+
+        prompt_editor.next_body_to_save = Some(body);
+        if prompt_editor.pending_save.is_none() {
+            prompt_editor.pending_save = Some(cx.spawn(|this, mut cx| {
+                async move {
+                    loop {
+                        let next_body_to_save = this.update(&mut cx, |this, _| {
+                            this.prompt_editors
+                                .get_mut(&prompt_id)?
+                                .next_body_to_save
+                                .take()
+                        })?;
+
+                        if let Some(body) = next_body_to_save {
+                            let title = title_from_body(body.chars_at(0));
+                            store
+                                .save(prompt_id, title, prompt_metadata.default, body)
+                                .await
+                                .log_err();
+                            this.update(&mut cx, |this, cx| {
+                                this.picker.update(cx, |picker, cx| picker.refresh(cx));
+                                cx.notify();
+                            })?;
+
+                            executor.timer(SAVE_THROTTLE).await;
+                        } else {
+                            break;
+                        }
+                    }
+
+                    this.update(&mut cx, |this, _cx| {
+                        if let Some(prompt_editor) = this.prompt_editors.get_mut(&prompt_id) {
+                            prompt_editor.pending_save = None;
+                        }
+                    })
+                }
+                .log_err()
+            }));
         }
     }
 
@@ -334,7 +379,9 @@ impl PromptLibrary {
     pub fn load_prompt(&mut self, prompt_id: PromptId, focus: bool, cx: &mut ViewContext<Self>) {
         if let Some(prompt_editor) = self.prompt_editors.get(&prompt_id) {
             if focus {
-                prompt_editor.update(cx, |editor, cx| editor.focus(cx));
+                prompt_editor
+                    .editor
+                    .update(cx, |editor, cx| editor.focus(cx));
             }
             self.active_prompt_id = Some(prompt_id);
         } else {
@@ -362,7 +409,19 @@ impl PromptLibrary {
                             }
                             editor
                         });
-                        this.prompt_editors.insert(prompt_id, editor);
+                        let _subscription =
+                            cx.subscribe(&editor, move |this, _editor, event, cx| {
+                                this.handle_prompt_editor_event(prompt_id, event, cx)
+                            });
+                        this.prompt_editors.insert(
+                            prompt_id,
+                            PromptEditor {
+                                editor,
+                                next_body_to_save: None,
+                                pending_save: None,
+                                _subscription,
+                            },
+                        );
                         this.active_prompt_id = Some(prompt_id);
                         cx.notify();
                     }
@@ -406,6 +465,17 @@ impl PromptLibrary {
         }
     }
 
+    fn handle_prompt_editor_event(
+        &mut self,
+        prompt_id: PromptId,
+        event: &EditorEvent,
+        cx: &mut ViewContext<Self>,
+    ) {
+        if let EditorEvent::BufferEdited = event {
+            self.save_prompt(prompt_id, cx);
+        }
+    }
+
     fn render_prompt_list(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         v_flex()
             .id("prompt-list")
@@ -446,7 +516,7 @@ impl PromptLibrary {
             .min_w_64()
             .children(self.active_prompt_id.and_then(|prompt_id| {
                 let prompt_metadata = self.store.metadata(prompt_id)?;
-                let editor = self.prompt_editors[&prompt_id].clone();
+                let editor = self.prompt_editors[&prompt_id].editor.clone();
                 Some(
                     v_flex()
                         .size_full()
@@ -462,20 +532,6 @@ impl PromptLibrary {
                                 .child(
                                     h_flex()
                                         .gap_4()
-                                        .child(
-                                            IconButton::new("save-prompt", IconName::Save)
-                                                .shape(IconButtonShape::Square)
-                                                .tooltip(move |cx| {
-                                                    Tooltip::for_action(
-                                                        "Save Prompt",
-                                                        &SavePrompt,
-                                                        cx,
-                                                    )
-                                                })
-                                                .on_click(|_, cx| {
-                                                    cx.dispatch_action(Box::new(SavePrompt));
-                                                }),
-                                        )
                                         .child(
                                             IconButton::new(
                                                 "toggle-default-prompt",
@@ -533,7 +589,6 @@ impl Render for PromptLibrary {
             .id("prompt-manager")
             .key_context("PromptLibrary")
             .on_action(cx.listener(|this, &NewPrompt, cx| this.new_prompt(cx)))
-            .on_action(cx.listener(|this, &SavePrompt, cx| this.save_active_prompt(cx)))
             .on_action(cx.listener(|this, &DeletePrompt, cx| this.delete_active_prompt(cx)))
             .on_action(cx.listener(|this, &ToggleDefaultPrompt, cx| {
                 this.toggle_default_for_active_prompt(cx)
@@ -726,7 +781,7 @@ impl PromptStore {
         id: PromptId,
         title: Option<SharedString>,
         default: bool,
-        body: String,
+        body: Rope,
     ) -> Task<Result<()>> {
         let prompt_metadata = PromptMetadata {
             id,
@@ -744,7 +799,7 @@ impl PromptStore {
             let mut txn = db_connection.write_txn()?;
 
             metadata.put(&mut txn, &id, &prompt_metadata)?;
-            bodies.put(&mut txn, &id, &body)?;
+            bodies.put(&mut txn, &id, &body.to_string())?;
 
             txn.commit()?;
             Ok(())

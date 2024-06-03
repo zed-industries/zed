@@ -220,8 +220,8 @@
   {
     "context": "PromptLibrary",
     "bindings": {
-      "cmd-n": "prompt_library::NewPrompt",
-      "cmd-s": "prompt_library::SavePrompt"
+      "ctrl-n": "prompt_library::NewPrompt",
+      "ctrl-shift-s": "prompt_library::ToggleDefaultPrompt"
     }
   },
   {
