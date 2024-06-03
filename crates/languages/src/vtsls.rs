@@ -38,7 +38,7 @@ struct TypeScriptVersions {
 #[async_trait(?Send)]
 impl LspAdapter for VtslsLspAdapter {
     fn name(&self) -> LanguageServerName {
-        LanguageServerName("vtsls-language-server".into())
+        LanguageServerName("vtsls".into())
     }
 
     async fn fetch_latest_server_version(
