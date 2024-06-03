@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::path::Path;
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 
@@ -6,9 +6,10 @@ use anyhow::{anyhow, bail, Context, Result};
 use assistant_slash_command::{SlashCommand, SlashCommandOutput, SlashCommandOutputSection};
 use fs::Fs;
 use futures::AsyncReadExt;
-use gpui::{AppContext, Task, WeakView};
+use gpui::{AppContext, Model, Task, WeakView};
 use http::{AsyncBody, HttpClient, HttpClientWithUrl};
 use language::LspAdapterDelegate;
+use project::{Project, ProjectPath};
 use rustdoc_to_markdown::convert_rustdoc_to_markdown;
 use ui::{prelude::*, ButtonLike, ElevationIndex};
 use workspace::Workspace;
@@ -21,49 +22,65 @@ impl RustdocSlashCommand {
         http_client: Arc<HttpClientWithUrl>,
         crate_name: String,
         module_path: Vec<String>,
+        path_to_cargo_toml: Option<&Path>,
     ) -> Result<String> {
-        let local_cargo_doc_path = {
-            let cargo_doc_dir = "/Users/maxdeviant/projects/zed/target/doc";
-            PathBuf::from(format!(
-                "{cargo_doc_dir}/{crate_name}/{module_path}/index.html",
-                module_path = module_path.join("/")
-            ))
-        };
-
-        if let Ok(contents) = fs.load(&local_cargo_doc_path).await {
-            convert_rustdoc_to_markdown(contents.as_bytes())
-        } else {
-            let version = "latest";
-            let path = format!(
-                "{crate_name}/{version}/{crate_name}/{module_path}",
-                module_path = module_path.join("/")
-            );
-
-            let mut response = http_client
-                .get(
-                    &format!("https://docs.rs/{path}"),
-                    AsyncBody::default(),
-                    true,
-                )
-                .await?;
-
-            let mut body = Vec::new();
-            response
-                .body_mut()
-                .read_to_end(&mut body)
-                .await
-                .context("error reading docs.rs response body")?;
-
-            if response.status().is_client_error() {
-                let text = String::from_utf8_lossy(body.as_slice());
-                bail!(
-                    "status error {}, response: {text:?}",
-                    response.status().as_u16()
-                );
+        let cargo_workspace_root = path_to_cargo_toml.and_then(|path| path.parent());
+        if let Some(cargo_workspace_root) = cargo_workspace_root {
+            let mut local_cargo_doc_path = cargo_workspace_root.join("target/doc");
+            local_cargo_doc_path.push(&crate_name);
+            if !module_path.is_empty() {
+                local_cargo_doc_path.push(module_path.join("/"));
             }
+            local_cargo_doc_path.push("index.html");
 
-            convert_rustdoc_to_markdown(&body[..])
+            if let Ok(contents) = fs.load(&local_cargo_doc_path).await {
+                return convert_rustdoc_to_markdown(contents.as_bytes());
+            }
         }
+
+        let version = "latest";
+        let path = format!(
+            "{crate_name}/{version}/{crate_name}/{module_path}",
+            module_path = module_path.join("/")
+        );
+
+        let mut response = http_client
+            .get(
+                &format!("https://docs.rs/{path}"),
+                AsyncBody::default(),
+                true,
+            )
+            .await?;
+
+        let mut body = Vec::new();
+        response
+            .body_mut()
+            .read_to_end(&mut body)
+            .await
+            .context("error reading docs.rs response body")?;
+
+        if response.status().is_client_error() {
+            let text = String::from_utf8_lossy(body.as_slice());
+            bail!(
+                "status error {}, response: {text:?}",
+                response.status().as_u16()
+            );
+        }
+
+        convert_rustdoc_to_markdown(&body[..])
+    }
+
+    fn path_to_cargo_toml(project: Model<Project>, cx: &mut AppContext) -> Option<Arc<Path>> {
+        let worktree = project.read(cx).worktrees().next()?;
+        let worktree = worktree.read(cx);
+        let entry = worktree.entry_for_path("Cargo.toml")?;
+        let path = ProjectPath {
+            worktree_id: worktree.id(),
+            path: entry.path.clone(),
+        };
+        Some(Arc::from(
+            project.read(cx).absolute_path(&path, cx)?.as_path(),
+        ))
     }
 }
 
@@ -108,7 +125,8 @@ impl SlashCommand for RustdocSlashCommand {
             return Task::ready(Err(anyhow!("workspace was dropped")));
         };
 
-        let fs = workspace.read(cx).project().read(cx).fs().clone();
+        let project = workspace.read(cx).project().clone();
+        let fs = project.read(cx).fs().clone();
         let http_client = workspace.read(cx).client().http_client();
         let mut path_components = argument.split("::");
         let crate_name = match path_components
@@ -119,11 +137,21 @@ impl SlashCommand for RustdocSlashCommand {
             Err(err) => return Task::ready(Err(err)),
         };
         let module_path = path_components.map(ToString::to_string).collect::<Vec<_>>();
+        let path_to_cargo_toml = Self::path_to_cargo_toml(project, cx);
 
         let text = cx.background_executor().spawn({
             let crate_name = crate_name.clone();
             let module_path = module_path.clone();
-            async move { Self::build_message(fs, http_client, crate_name, module_path).await }
+            async move {
+                Self::build_message(
+                    fs,
+                    http_client,
+                    crate_name,
+                    module_path,
+                    path_to_cargo_toml.as_deref(),
+                )
+                .await
+            }
         });
 
         let crate_name = SharedString::from(crate_name);
