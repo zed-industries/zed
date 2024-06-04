@@ -24,36 +24,16 @@ enum StartTagOutcome {
     Skip,
 }
 
-pub struct MarkdownWriter {
-    current_element_stack: VecDeque<HtmlElement>,
-    /// The number of columns in the current `<table>`.
-    current_table_columns: usize,
-    is_first_th: bool,
-    is_first_td: bool,
-    /// The Markdown output.
-    markdown: String,
-}
+pub struct MarkdownOutput(String);
 
-impl MarkdownWriter {
+impl MarkdownOutput {
     pub fn new() -> Self {
-        Self {
-            current_element_stack: VecDeque::new(),
-            current_table_columns: 0,
-            is_first_th: true,
-            is_first_td: true,
-            markdown: String::new(),
-        }
-    }
-
-    fn is_inside(&self, tag: &str) -> bool {
-        self.current_element_stack
-            .iter()
-            .any(|parent_element| parent_element.tag == tag)
+        Self(String::new())
     }
 
     /// Appends the given string slice onto the end of the Markdown output.
     fn push_str(&mut self, str: &str) {
-        self.markdown.push_str(str);
+        self.0.push_str(str);
     }
 
     /// Appends a newline to the end of the Markdown output.
@@ -65,10 +45,34 @@ impl MarkdownWriter {
     fn push_blank_line(&mut self) {
         self.push_str("\n\n");
     }
+}
+
+pub struct MarkdownWriter {
+    current_element_stack: VecDeque<HtmlElement>,
+    handlers: Vec<Box<dyn HandleTag>>,
+}
+
+impl MarkdownWriter {
+    pub fn new() -> Self {
+        let mut handlers: Vec<Box<dyn HandleTag>> = Vec::new();
+        handlers.push(Box::new(RustdocTableHandler::new()));
+
+        Self {
+            current_element_stack: VecDeque::new(),
+            handlers,
+        }
+    }
+
+    fn is_inside(&self, tag: &str) -> bool {
+        self.current_element_stack
+            .iter()
+            .any(|parent_element| parent_element.tag == tag)
+    }
 
     pub fn run(mut self, root_node: &Handle) -> Result<String> {
-        self.visit_node(&root_node)?;
-        Ok(Self::prettify_markdown(self.markdown))
+        let mut output = MarkdownOutput::new();
+        self.visit_node(&root_node, &mut output)?;
+        Ok(Self::prettify_markdown(output.0))
     }
 
     fn prettify_markdown(markdown: String) -> String {
@@ -78,7 +82,7 @@ impl MarkdownWriter {
         markdown.trim().to_string()
     }
 
-    fn visit_node(&mut self, node: &Handle) -> Result<()> {
+    fn visit_node(&mut self, node: &Handle, output: &mut MarkdownOutput) -> Result<()> {
         let mut current_element = None;
 
         match node.data {
@@ -104,12 +108,12 @@ impl MarkdownWriter {
             }
             NodeData::Text { ref contents } => {
                 let text = contents.borrow().to_string();
-                self.visit_text(text)?;
+                self.visit_text(text, output)?;
             }
         }
 
         if let Some(current_element) = current_element.as_ref() {
-            match self.start_tag(&current_element) {
+            match self.start_tag(&current_element, output) {
                 StartTagOutcome::Continue => {}
                 StartTagOutcome::Skip => return Ok(()),
             }
@@ -119,23 +123,32 @@ impl MarkdownWriter {
         }
 
         for child in node.children.borrow().iter() {
-            self.visit_node(child)?;
+            self.visit_node(child, output)?;
         }
 
         if let Some(current_element) = current_element {
             self.current_element_stack.pop_back();
-            self.end_tag(&current_element);
+            self.end_tag(&current_element, output);
         }
 
         Ok(())
     }
 
-    fn start_tag(&mut self, tag: &HtmlElement) -> StartTagOutcome {
+    fn start_tag(&mut self, tag: &HtmlElement, output: &mut MarkdownOutput) -> StartTagOutcome {
+        for handler in &mut self.handlers {
+            if handler.should_handle(tag.tag.as_str()) {
+                match handler.handle_tag_start(tag, output) {
+                    StartTagOutcome::Continue => {}
+                    StartTagOutcome::Skip => return StartTagOutcome::Skip,
+                }
+            }
+        }
+
         if tag.is_inline() && self.is_inside("p") {
             if let Some(parent) = self.current_element_stack.iter().last() {
                 if !parent.is_inline() {
-                    if !(self.markdown.ends_with(' ') || self.markdown.ends_with('\n')) {
-                        self.push_str(" ");
+                    if !(output.0.ends_with(' ') || output.0.ends_with('\n')) {
+                        output.push_str(" ");
                     }
                 }
             }
@@ -143,18 +156,18 @@ impl MarkdownWriter {
 
         match tag.tag.as_str() {
             "head" | "script" | "nav" => return StartTagOutcome::Skip,
-            "h1" => self.push_str("\n\n# "),
-            "h2" => self.push_str("\n\n## "),
-            "h3" => self.push_str("\n\n### "),
-            "h4" => self.push_str("\n\n#### "),
-            "h5" => self.push_str("\n\n##### "),
-            "h6" => self.push_str("\n\n###### "),
-            "p" => self.push_blank_line(),
-            "strong" => self.push_str("**"),
-            "em" => self.push_str("_"),
+            "h1" => output.push_str("\n\n# "),
+            "h2" => output.push_str("\n\n## "),
+            "h3" => output.push_str("\n\n### "),
+            "h4" => output.push_str("\n\n#### "),
+            "h5" => output.push_str("\n\n##### "),
+            "h6" => output.push_str("\n\n###### "),
+            "p" => output.push_blank_line(),
+            "strong" => output.push_str("**"),
+            "em" => output.push_str("_"),
             "code" => {
                 if !self.is_inside("pre") {
-                    self.push_str("`");
+                    output.push_str("`");
                 }
             }
             "pre" => {
@@ -173,29 +186,10 @@ impl MarkdownWriter {
                     })
                     .unwrap_or("");
 
-                self.push_str(&format!("\n\n```{language}\n"));
+                output.push_str(&format!("\n\n```{language}\n"));
             }
-            "ul" | "ol" => self.push_newline(),
-            "li" => self.push_str("- "),
-            "thead" => self.push_blank_line(),
-            "tr" => self.push_newline(),
-            "th" => {
-                self.current_table_columns += 1;
-                if self.is_first_th {
-                    self.is_first_th = false;
-                } else {
-                    self.push_str(" ");
-                }
-                self.push_str("| ");
-            }
-            "td" => {
-                if self.is_first_td {
-                    self.is_first_td = false;
-                } else {
-                    self.push_str(" ");
-                }
-                self.push_str("| ");
-            }
+            "ul" | "ol" => output.push_newline(),
+            "li" => output.push_str("- "),
             "summary" => {
                 if tag.has_class("hideme") {
                     return StartTagOutcome::Skip;
@@ -213,7 +207,7 @@ impl MarkdownWriter {
                 }
 
                 if self.is_inside_item_name() && tag.has_class("stab") {
-                    self.push_str(" [");
+                    output.push_str(" [");
                 }
             }
             _ => {}
@@ -222,53 +216,59 @@ impl MarkdownWriter {
         StartTagOutcome::Continue
     }
 
-    fn end_tag(&mut self, tag: &HtmlElement) {
+    fn end_tag(&mut self, tag: &HtmlElement, output: &mut MarkdownOutput) {
+        for handler in &mut self.handlers {
+            if handler.should_handle(tag.tag.as_str()) {
+                handler.handle_tag_end(tag, output);
+            }
+        }
+
         match tag.tag.as_str() {
-            "h1" | "h2" | "h3" | "h4" | "h5" | "h6" => self.push_str("\n\n"),
-            "strong" => self.push_str("**"),
-            "em" => self.push_str("_"),
+            "h1" | "h2" | "h3" | "h4" | "h5" | "h6" => output.push_str("\n\n"),
+            "strong" => output.push_str("**"),
+            "em" => output.push_str("_"),
             "code" => {
                 if !self.is_inside("pre") {
-                    self.push_str("`");
+                    output.push_str("`");
                 }
             }
-            "pre" => self.push_str("\n```\n"),
-            "ul" | "ol" => self.push_newline(),
-            "li" => self.push_newline(),
-            "thead" => {
-                self.push_newline();
-                for ix in 0..self.current_table_columns {
-                    if ix > 0 {
-                        self.push_str(" ");
-                    }
-                    self.push_str("| ---");
-                }
-                self.push_str(" |");
-                self.is_first_th = true;
-            }
-            "tr" => {
-                self.push_str(" |");
-                self.is_first_td = true;
-            }
-            "table" => {
-                self.current_table_columns = 0;
-            }
+            "pre" => output.push_str("\n```\n"),
+            "ul" | "ol" => output.push_newline(),
+            "li" => output.push_newline(),
+            // "thead" => {
+            //     self.push_newline();
+            //     for ix in 0..self.current_table_columns {
+            //         if ix > 0 {
+            //             output.push_str(" ");
+            //         }
+            //         output.push_str("| ---");
+            //     }
+            //     output.push_str(" |");
+            //     self.is_first_th = true;
+            // }
+            // "tr" => {
+            //     output.push_str(" |");
+            //     self.is_first_td = true;
+            // }
+            // "table" => {
+            //     self.current_table_columns = 0;
+            // }
             "div" | "span" => {
                 if tag.has_class(RUSTDOC_ITEM_NAME_CLASS) {
-                    self.push_str(": ");
+                    output.push_str(": ");
                 }
 
                 if self.is_inside_item_name() && tag.has_class("stab") {
-                    self.push_str("]");
+                    output.push_str("]");
                 }
             }
             _ => {}
         }
     }
 
-    fn visit_text(&mut self, text: String) -> Result<()> {
+    fn visit_text(&mut self, text: String, output: &mut MarkdownOutput) -> Result<()> {
         if self.is_inside("pre") {
-            self.push_str(&text);
+            output.push_str(&text);
             return Ok(());
         }
 
@@ -277,11 +277,11 @@ impl MarkdownWriter {
             .replace('\n', " ");
 
         if self.is_inside_item_name() && !self.is_inside("span") && !self.is_inside("code") {
-            self.push_str(&format!("`{text}`"));
+            output.push_str(&format!("`{text}`"));
             return Ok(());
         }
 
-        self.push_str(&text);
+        output.push_str(&text);
 
         Ok(())
     }
@@ -292,5 +292,102 @@ impl MarkdownWriter {
         self.current_element_stack
             .iter()
             .any(|element| element.has_class(RUSTDOC_ITEM_NAME_CLASS))
+    }
+}
+
+trait HandleTag {
+    fn should_handle(&self, tag: &str) -> bool;
+
+    fn handle_tag_start(
+        &mut self,
+        _tag: &HtmlElement,
+        _output: &mut MarkdownOutput,
+    ) -> StartTagOutcome {
+        StartTagOutcome::Continue
+    }
+
+    fn handle_tag_end(&mut self, _tag: &HtmlElement, _output: &mut MarkdownOutput) {
+        ()
+    }
+}
+
+struct RustdocTableHandler {
+    /// The number of columns in the current `<table>`.
+    current_table_columns: usize,
+    is_first_th: bool,
+    is_first_td: bool,
+}
+
+impl RustdocTableHandler {
+    pub fn new() -> Self {
+        Self {
+            current_table_columns: 0,
+            is_first_th: true,
+            is_first_td: true,
+        }
+    }
+}
+
+impl HandleTag for RustdocTableHandler {
+    fn should_handle(&self, tag: &str) -> bool {
+        match tag {
+            "table" | "thead" | "tbody" | "tr" | "th" | "td" => true,
+            _ => false,
+        }
+    }
+
+    fn handle_tag_start(
+        &mut self,
+        tag: &HtmlElement,
+        output: &mut MarkdownOutput,
+    ) -> StartTagOutcome {
+        match tag.tag.as_str() {
+            "thead" => output.push_blank_line(),
+            "tr" => output.push_newline(),
+            "th" => {
+                self.current_table_columns += 1;
+                if self.is_first_th {
+                    self.is_first_th = false;
+                } else {
+                    output.push_str(" ");
+                }
+                output.push_str("| ");
+            }
+            "td" => {
+                if self.is_first_td {
+                    self.is_first_td = false;
+                } else {
+                    output.push_str(" ");
+                }
+                output.push_str("| ");
+            }
+            _ => {}
+        }
+
+        StartTagOutcome::Continue
+    }
+
+    fn handle_tag_end(&mut self, tag: &HtmlElement, output: &mut MarkdownOutput) {
+        match tag.tag.as_str() {
+            "thead" => {
+                output.push_newline();
+                for ix in 0..self.current_table_columns {
+                    if ix > 0 {
+                        output.push_str(" ");
+                    }
+                    output.push_str("| ---");
+                }
+                output.push_str(" |");
+                self.is_first_th = true;
+            }
+            "tr" => {
+                output.push_str(" |");
+                self.is_first_td = true;
+            }
+            "table" => {
+                self.current_table_columns = 0;
+            }
+            _ => {}
+        }
     }
 }
