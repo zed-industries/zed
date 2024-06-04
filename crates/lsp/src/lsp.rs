@@ -427,15 +427,17 @@ impl LanguageServer {
         );
 
         while let Some(msg) = input_handler.notifications_channel.next().await {
-            let mut notification_handlers = notification_handlers.lock();
-            if let Some(handler) = notification_handlers.get_mut(msg.method.as_str()) {
-                handler(msg.id, msg.params.unwrap_or(Value::Null), cx.clone());
-            } else {
-                drop(notification_handlers);
-                on_unhandled_notification(msg);
+            {
+                let mut notification_handlers = notification_handlers.lock();
+                if let Some(handler) = notification_handlers.get_mut(msg.method.as_str()) {
+                    handler(msg.id, msg.params.unwrap_or(Value::Null), cx.clone());
+                } else {
+                    drop(notification_handlers);
+                    on_unhandled_notification(msg);
+                }
             }
 
-            // Don't starve the main thread when receiving lots of messages at once.
+            // Don't starve the main thread when receiving lots of notifications at once.
             smol::future::yield_now().await;
         }
         input_handler.loop_handle.await
