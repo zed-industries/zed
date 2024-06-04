@@ -7,7 +7,7 @@ use futures::AsyncReadExt;
 use gpui::{AppContext, Task, WeakView};
 use http::{AsyncBody, HttpClient, HttpClientWithUrl};
 use language::LspAdapterDelegate;
-use rustdoc_to_markdown::convert_rustdoc_to_markdown;
+use rustdoc_to_markdown::convert_html_to_markdown;
 use ui::{prelude::*, ButtonLike, ElevationIndex};
 use workspace::Workspace;
 
@@ -37,7 +37,7 @@ impl FetchSlashCommand {
             );
         }
 
-        convert_rustdoc_to_markdown(&body[..])
+        convert_html_to_markdown(&body[..])
     }
 }
 
