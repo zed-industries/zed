@@ -1196,7 +1196,7 @@ extern "C" fn handle_key_down(this: &Object, _: Sel, native_event: id) {
 //     the terminal behave incorrectly by default. This behavior should be patched by our
 //     IME integration
 //  Brazilian layout:
-//   - `" space` should create an unmarked quote (note: use_autoclose may type an extra ")
+//   - `" space` should create an unmarked quote
 //   - `" backspace` should delete the marked quote
 //   - `" up` should insert a quote, unmark it, and move up one line
 //   - `" cmd-down` should insert a quote, unmark it, and move to the end of the file
