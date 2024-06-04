@@ -17,6 +17,7 @@ use std::{
 use workspace::Workspace;
 
 pub mod active_command;
+pub mod fetch_command;
 pub mod file_command;
 pub mod project_command;
 pub mod prompt_command;
