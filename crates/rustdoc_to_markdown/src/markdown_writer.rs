@@ -59,14 +59,15 @@ impl MarkdownWriter {
     }
 
     pub fn run(mut self, root_node: &Handle) -> Result<String> {
-        let mut handlers: Vec<Box<dyn HandleTag>> = Vec::new();
-        handlers.push(Box::new(HeadingHandler));
-        handlers.push(Box::new(ListHandler));
-        handlers.push(Box::new(RustdocChromeRemover));
-        handlers.push(Box::new(RustdocHeadingHandler));
-        handlers.push(Box::new(RustdocCodeHandler));
-        handlers.push(Box::new(RustdocTableHandler::new()));
-        handlers.push(Box::new(RustdocItemHandler));
+        let mut handlers: Vec<Box<dyn HandleTag>> = vec![
+            Box::new(HeadingHandler),
+            Box::new(ListHandler),
+            Box::new(RustdocChromeRemover),
+            Box::new(RustdocHeadingHandler),
+            Box::new(RustdocCodeHandler),
+            Box::new(RustdocTableHandler::new()),
+            Box::new(RustdocItemHandler),
+        ];
 
         self.visit_node(&root_node, &mut handlers)?;
         Ok(Self::prettify_markdown(self.markdown))
