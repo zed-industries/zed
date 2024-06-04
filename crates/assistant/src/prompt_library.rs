@@ -118,6 +118,7 @@ struct PromptPickerDelegate {
 }
 
 enum PromptPickerEvent {
+    Selected { prompt_id: PromptId },
     Confirmed { prompt_id: PromptId },
     Deleted { prompt_id: PromptId },
     ToggledDefault { prompt_id: PromptId },
@@ -136,8 +137,13 @@ impl PickerDelegate for PromptPickerDelegate {
         self.selected_index
     }
 
-    fn set_selected_index(&mut self, ix: usize, _cx: &mut ViewContext<Picker<Self>>) {
+    fn set_selected_index(&mut self, ix: usize, cx: &mut ViewContext<Picker<Self>>) {
         self.selected_index = ix;
+        if let Some(prompt) = self.matches.get(self.selected_index) {
+            cx.emit(PromptPickerEvent::Selected {
+                prompt_id: prompt.id,
+            });
+        }
     }
 
     fn placeholder_text(&self, _cx: &mut WindowContext) -> Arc<str> {
@@ -149,8 +155,8 @@ impl PickerDelegate for PromptPickerDelegate {
         cx.spawn(|this, mut cx| async move {
             let matches = search.await;
             this.update(&mut cx, |this, cx| {
-                this.delegate.selected_index = 0;
                 this.delegate.matches = matches;
+                this.delegate.set_selected_index(0, cx);
                 cx.notify();
             })
             .ok();
@@ -250,7 +256,7 @@ impl PromptLibrary {
             picker.focus(cx);
             picker
         });
-        let mut this = Self {
+        Self {
             store: store.clone(),
             language_registry,
             prompt_editors: HashMap::default(),
@@ -258,11 +264,7 @@ impl PromptLibrary {
             pending_load: Task::ready(()),
             _subscriptions: vec![cx.subscribe(&picker, Self::handle_picker_event)],
             picker,
-        };
-        if let Some(prompt_id) = store.most_recently_saved() {
-            this.load_prompt(prompt_id, false, cx);
         }
-        this
     }
 
     fn handle_picker_event(
@@ -272,6 +274,9 @@ impl PromptLibrary {
         cx: &mut ViewContext<Self>,
     ) {
         match event {
+            PromptPickerEvent::Selected { prompt_id } => {
+                self.load_prompt(*prompt_id, false, cx);
+            }
             PromptPickerEvent::Confirmed { prompt_id } => {
                 self.load_prompt(*prompt_id, true, cx);
             }
@@ -895,14 +900,6 @@ impl PromptStore {
 
             Ok(())
         })
-    }
-
-    fn most_recently_saved(&self) -> Option<PromptId> {
-        self.metadata_cache
-            .read()
-            .metadata
-            .first()
-            .map(|metadata| metadata.id)
     }
 }
 
