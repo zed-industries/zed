@@ -55,6 +55,7 @@ pub struct MarkdownWriter {
 impl MarkdownWriter {
     pub fn new() -> Self {
         let mut handlers: Vec<Box<dyn HandleTag>> = Vec::new();
+        handlers.push(Box::new(HeadingHandler));
         handlers.push(Box::new(RustdocTableHandler::new()));
 
         Self {
@@ -156,12 +157,6 @@ impl MarkdownWriter {
 
         match tag.tag.as_str() {
             "head" | "script" | "nav" => return StartTagOutcome::Skip,
-            "h1" => output.push_str("\n\n# "),
-            "h2" => output.push_str("\n\n## "),
-            "h3" => output.push_str("\n\n### "),
-            "h4" => output.push_str("\n\n#### "),
-            "h5" => output.push_str("\n\n##### "),
-            "h6" => output.push_str("\n\n###### "),
             "p" => output.push_blank_line(),
             "strong" => output.push_str("**"),
             "em" => output.push_str("_"),
@@ -224,7 +219,6 @@ impl MarkdownWriter {
         }
 
         match tag.tag.as_str() {
-            "h1" | "h2" | "h3" | "h4" | "h5" | "h6" => output.push_str("\n\n"),
             "strong" => output.push_str("**"),
             "em" => output.push_str("_"),
             "code" => {
@@ -290,6 +284,42 @@ trait HandleTag {
 
     fn handle_tag_end(&mut self, _tag: &HtmlElement, _output: &mut MarkdownOutput) {
         ()
+    }
+}
+
+struct HeadingHandler;
+
+impl HandleTag for HeadingHandler {
+    fn should_handle(&self, tag: &str) -> bool {
+        match tag {
+            "h1" | "h2" | "h3" | "h4" | "h5" | "h6" => true,
+            _ => false,
+        }
+    }
+
+    fn handle_tag_start(
+        &mut self,
+        tag: &HtmlElement,
+        output: &mut MarkdownOutput,
+    ) -> StartTagOutcome {
+        match tag.tag.as_str() {
+            "h1" => output.push_str("\n\n# "),
+            "h2" => output.push_str("\n\n## "),
+            "h3" => output.push_str("\n\n### "),
+            "h4" => output.push_str("\n\n#### "),
+            "h5" => output.push_str("\n\n##### "),
+            "h6" => output.push_str("\n\n###### "),
+            _ => {}
+        }
+
+        StartTagOutcome::Continue
+    }
+
+    fn handle_tag_end(&mut self, tag: &HtmlElement, output: &mut MarkdownOutput) {
+        match tag.tag.as_str() {
+            "h1" | "h2" | "h3" | "h4" | "h5" | "h6" => output.push_blank_line(),
+            _ => {}
+        }
     }
 }
 
