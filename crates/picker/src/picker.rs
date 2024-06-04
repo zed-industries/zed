@@ -236,7 +236,12 @@ impl<D: PickerDelegate> Picker<D> {
     /// If `scroll_to_index` is true, the new selected index will be scrolled into view.
     ///
     /// If some effect is bound to `selected_index_changed`, it will be executed.
-    fn set_selected_index(&mut self, ix: usize, scroll_to_index: bool, cx: &mut ViewContext<Self>) {
+    pub fn set_selected_index(
+        &mut self,
+        ix: usize,
+        scroll_to_index: bool,
+        cx: &mut ViewContext<Self>,
+    ) {
         let previous_index = self.delegate.selected_index();
         self.delegate.set_selected_index(ix, cx);
         let current_index = self.delegate.selected_index();

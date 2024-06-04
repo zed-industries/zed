@@ -151,11 +151,18 @@ impl PickerDelegate for PromptPickerDelegate {
 
     fn update_matches(&mut self, query: String, cx: &mut ViewContext<Picker<Self>>) -> Task<()> {
         let search = self.store.search(query);
+        let prev_prompt_id = self.matches.get(self.selected_index).map(|mat| mat.id);
         cx.spawn(|this, mut cx| async move {
             let matches = search.await;
             this.update(&mut cx, |this, cx| {
                 this.delegate.matches = matches;
-                this.delegate.set_selected_index(0, cx);
+                let ix = this
+                    .delegate
+                    .matches
+                    .iter()
+                    .position(|prompt| Some(prompt.id) == prev_prompt_id)
+                    .unwrap_or(0);
+                this.delegate.set_selected_index(ix, cx);
                 cx.notify();
             })
             .ok();
@@ -396,7 +403,7 @@ impl PromptLibrary {
                     .editor
                     .update(cx, |editor, cx| editor.focus(cx));
             }
-            self.active_prompt_id = Some(prompt_id);
+            self.set_active_prompt(Some(prompt_id), cx);
         } else {
             let language_registry = self.language_registry.clone();
             let prompt = self.store.load(prompt_id);
@@ -435,8 +442,7 @@ impl PromptLibrary {
                                 _subscription,
                             },
                         );
-                        this.active_prompt_id = Some(prompt_id);
-                        cx.notify();
+                        this.set_active_prompt(Some(prompt_id), cx);
                     }
                     Err(error) => {
                         // TODO: we should show the error in the UI.
@@ -446,6 +452,32 @@ impl PromptLibrary {
                 .ok();
             });
         }
+    }
+
+    fn set_active_prompt(&mut self, prompt_id: Option<PromptId>, cx: &mut ViewContext<Self>) {
+        self.active_prompt_id = prompt_id;
+        self.picker.update(cx, |picker, cx| {
+            if let Some(prompt_id) = prompt_id {
+                if picker
+                    .delegate
+                    .matches
+                    .get(picker.delegate.selected_index())
+                    .map_or(true, |old_selected_prompt| {
+                        old_selected_prompt.id != prompt_id
+                    })
+                {
+                    if let Some(ix) = picker
+                        .delegate
+                        .matches
+                        .iter()
+                        .position(|mat| mat.id == prompt_id)
+                    {
+                        picker.set_selected_index(ix, true, cx);
+                    }
+                }
+            }
+        });
+        cx.notify();
     }
 
     pub fn delete_prompt(&mut self, prompt_id: PromptId, cx: &mut ViewContext<Self>) {
@@ -464,7 +496,7 @@ impl PromptLibrary {
                 if confirmation.await.ok() == Some(0) {
                     this.update(&mut cx, |this, cx| {
                         if this.active_prompt_id == Some(prompt_id) {
-                            this.active_prompt_id = None;
+                            this.set_active_prompt(None, cx);
                         }
                         this.prompt_editors.remove(&prompt_id);
                         this.store.delete(prompt_id).detach_and_log_err(cx);
