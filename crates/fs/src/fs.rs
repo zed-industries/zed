@@ -463,7 +463,6 @@ impl Fs for RealFs {
             let tx = tx.clone();
             move |event: Result<notify::Event, _>| {
                 if let Some(event) = event.log_err() {
-                    dbg!(&event);
                     tx.try_send(event.paths).ok();
                 }
             }
