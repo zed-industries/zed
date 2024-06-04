@@ -31,10 +31,6 @@ pub struct MarkdownWriter {
 
 impl MarkdownWriter {
     pub fn new() -> Self {
-        let mut handlers: Vec<Box<dyn HandleTag>> = Vec::new();
-        handlers.push(Box::new(HeadingHandler));
-        handlers.push(Box::new(RustdocTableHandler::new()));
-
         Self {
             current_element_stack: VecDeque::new(),
             markdown: String::new(),
@@ -66,6 +62,7 @@ impl MarkdownWriter {
         let mut handlers: Vec<Box<dyn HandleTag>> = Vec::new();
         handlers.push(Box::new(HeadingHandler));
         handlers.push(Box::new(RustdocTableHandler::new()));
+        handlers.push(Box::new(RustdocItemHandler));
 
         self.visit_node(&root_node, &mut handlers)?;
         Ok(Self::prettify_markdown(self.markdown))
@@ -199,10 +196,6 @@ impl MarkdownWriter {
                 if tag.has_any_classes(&classes_to_skip) {
                     return StartTagOutcome::Skip;
                 }
-
-                if self.is_inside_item_name() && tag.has_class("stab") {
-                    self.push_str(" [");
-                }
             }
             _ => {}
         }
@@ -228,15 +221,6 @@ impl MarkdownWriter {
             "pre" => self.push_str("\n```\n"),
             "ul" | "ol" => self.push_newline(),
             "li" => self.push_newline(),
-            "div" | "span" => {
-                if tag.has_class(RUSTDOC_ITEM_NAME_CLASS) {
-                    self.push_str(": ");
-                }
-
-                if self.is_inside_item_name() && tag.has_class("stab") {
-                    self.push_str("]");
-                }
-            }
             _ => {}
         }
     }
@@ -418,10 +402,30 @@ impl HandleTag for RustdocItemHandler {
         tag: &HtmlElement,
         writer: &mut MarkdownWriter,
     ) -> StartTagOutcome {
+        match tag.tag.as_str() {
+            "div" | "span" => {
+                if writer.is_inside_item_name() && tag.has_class("stab") {
+                    writer.push_str(" [");
+                }
+            }
+            _ => {}
+        }
+
         StartTagOutcome::Continue
     }
 
-    fn handle_tag_end(&mut self, _tag: &HtmlElement, _writer: &mut MarkdownWriter) {
-        ()
+    fn handle_tag_end(&mut self, tag: &HtmlElement, writer: &mut MarkdownWriter) {
+        match tag.tag.as_str() {
+            "div" | "span" => {
+                if tag.has_class(RUSTDOC_ITEM_NAME_CLASS) {
+                    writer.push_str(": ");
+                }
+
+                if writer.is_inside_item_name() && tag.has_class("stab") {
+                    writer.push_str("]");
+                }
+            }
+            _ => {}
+        }
     }
 }
