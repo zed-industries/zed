@@ -12,9 +12,12 @@ workspace = true
 path = "src/activity_indicator.rs"
 doctest = false
 
+[features]
+auto_update = ["dep:auto_update"]
+
 [dependencies]
 anyhow.workspace = true
-auto_update.workspace = true
+auto_update = { workspace = true, optional = true }
 editor.workspace = true
 extension.workspace = true
 futures.workspace = true

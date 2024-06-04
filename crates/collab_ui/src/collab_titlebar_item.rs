@@ -1,5 +1,8 @@
 use crate::face_pile::FacePile;
+
+#[cfg(feature = "auto_update")]
 use auto_update::AutoUpdateStatus;
+
 use call::{ActiveCall, ParticipantLocation, Room};
 use client::{proto::PeerId, Client, User, UserStore};
 use gpui::{
@@ -654,7 +657,9 @@ impl CollabTitlebarItem {
     fn render_connection_status(
         &self,
         status: &client::Status,
-        cx: &mut ViewContext<Self>,
+
+        #[cfg(feature = "auto_update")] cx: &mut ViewContext<Self>,
+        #[cfg(not(feature = "auto_update"))] _cx: &mut ViewContext<Self>,
     ) -> Option<AnyElement> {
         match status {
             client::Status::ConnectionError
@@ -668,6 +673,7 @@ impl CollabTitlebarItem {
                     .tooltip(|cx| Tooltip::text("Disconnected", cx))
                     .into_any_element(),
             ),
+            #[cfg(feature = "auto_update")]
             client::Status::UpgradeRequired => {
                 let auto_updater = auto_update::AutoUpdater::get(cx);
                 let label = match auto_updater.map(|auto_update| auto_update.read(cx).status()) {
@@ -695,6 +701,11 @@ impl CollabTitlebarItem {
                         .into_any_element(),
                 )
             }
+            #[cfg(not(feature = "auto_update"))]
+            client::Status::UpgradeRequired => Some(
+                Button::new("connection-status", "Please update Zed to Collaborate")
+                    .into_any_element(),
+            ),
             _ => None,
         }
     }

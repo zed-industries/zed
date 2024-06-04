@@ -14,13 +14,17 @@ workspace = true
 name = "Zed"
 path = "src/main.rs"
 
+[features]
+# default = ["auto_update"]
+auto_update = ["dep:auto_update", "activity_indicator/auto_update", "collab_ui/auto_update"]
+
 [dependencies]
 activity_indicator.workspace = true
 anyhow.workspace = true
 assets.workspace = true
 assistant.workspace = true
 audio.workspace = true
-auto_update.workspace = true
+auto_update = { workspace = true, optional = true }
 backtrace = "0.3"
 breadcrumbs.workspace = true
 call.workspace = true

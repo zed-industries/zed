@@ -380,6 +380,7 @@ fn main() {
         });
         AppState::set_global(Arc::downgrade(&app_state), cx);
 
+        #[cfg(feature = "auto_update")]
         auto_update::init(client.http_client(), cx);
 
         reliability::init(client.http_client(), installation_id, cx);

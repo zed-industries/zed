@@ -27,10 +27,11 @@ test-support = [
     "workspace/test-support",
     "http/test-support",
 ]
+auto_update = ["dep:auto_update"]
 
 [dependencies]
 anyhow.workspace = true
-auto_update.workspace = true
+auto_update = { workspace = true, optional = true }
 call.workspace = true
 channel.workspace = true
 client.workspace = true

@@ -1,4 +1,6 @@
+#[cfg(feature = "auto_update")]
 use auto_update::{AutoUpdateStatus, AutoUpdater, DismissErrorMessage};
+
 use editor::Editor;
 use extension::ExtensionStore;
 use futures::StreamExt;
@@ -26,6 +28,8 @@ pub enum Event {
 pub struct ActivityIndicator {
     statuses: Vec<LspStatus>,
     project: Model<Project>,
+
+    #[cfg(feature = "auto_update")]
     auto_updater: Option<Model<AutoUpdater>>,
 }
 
@@ -54,7 +58,6 @@ impl ActivityIndicator {
         cx: &mut ViewContext<Workspace>,
     ) -> View<ActivityIndicator> {
         let project = workspace.project().clone();
-        let auto_updater = AutoUpdater::get(cx);
         let this = cx.new_view(|cx: &mut ViewContext<Self>| {
             let mut status_events = languages.language_server_binary_statuses();
             cx.spawn(|this, mut cx| async move {
@@ -70,13 +73,20 @@ impl ActivityIndicator {
             .detach();
             cx.observe(&project, |_, _, cx| cx.notify()).detach();
 
-            if let Some(auto_updater) = auto_updater.as_ref() {
-                cx.observe(auto_updater, |_, _, cx| cx.notify()).detach();
-            }
+            #[cfg(feature = "auto_update")]
+            let auto_updater = {
+                let auto_updater = AutoUpdater::get(cx);
+                if let Some(auto_updater) = auto_updater.as_ref() {
+                    cx.observe(auto_updater, |_, _, cx| cx.notify()).detach();
+                }
+                auto_updater
+            };
 
             Self {
                 statuses: Default::default(),
                 project: project.clone(),
+
+                #[cfg(feature = "auto_update")]
                 auto_updater,
             }
         });
@@ -134,6 +144,7 @@ impl ActivityIndicator {
         cx.notify();
     }
 
+    #[cfg(feature = "auto_update")]
     fn dismiss_error_message(&mut self, _: &DismissErrorMessage, cx: &mut ViewContext<Self>) {
         if let Some(updater) = &self.auto_updater {
             updater.update(cx, |updater, cx| {
@@ -264,6 +275,7 @@ impl ActivityIndicator {
         }
 
         // Show any application auto-update info.
+        #[cfg(feature = "auto_update")]
         if let Some(updater) = &self.auto_updater {
             return match &updater.read(cx).status() {
                 AutoUpdateStatus::Checking => Content {
@@ -326,8 +338,12 @@ impl Render for ActivityIndicator {
 
         let mut result = h_flex()
             .id("activity-indicator")
-            .on_action(cx.listener(Self::show_error_message))
-            .on_action(cx.listener(Self::dismiss_error_message));
+            .on_action(cx.listener(Self::show_error_message));
+
+        #[cfg(feature = "auto_update")]
+        {
+            result = result.on_action(cx.listener(Self::dismiss_error_message));
+        }
 
         if let Some(on_click) = content.on_click {
             result = result
