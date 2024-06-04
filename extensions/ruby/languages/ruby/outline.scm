@@ -21,6 +21,6 @@
 
 ; Minitest/RSpec
 (call
-   method: (identifier) @run (#any-of? @run "describe" "context" "test")
+   method: (identifier) @run (#any-of? @run "describe" "context" "test" "it")
    arguments: (argument_list . (_) @name)
 ) @item
