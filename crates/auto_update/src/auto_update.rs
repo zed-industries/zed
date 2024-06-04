@@ -23,7 +23,10 @@ use smol::{fs::File, process::Command};
 use http::{HttpClient, HttpClientWithUrl};
 use release_channel::{AppCommitSha, AppVersion, ReleaseChannel};
 use std::{
-    env::consts::{ARCH, OS},
+    env::{
+        self,
+        consts::{ARCH, OS},
+    },
     ffi::OsString,
     path::PathBuf,
     sync::Arc,
@@ -139,7 +142,7 @@ pub fn init(http_client: Arc<HttpClientWithUrl>, cx: &mut AppContext) {
         let updater = AutoUpdater::new(version, http_client);
 
         if option_env!("ZED_UPDATE_EXPLANATION").is_none()
-            && std::env::var("ZED_UPDATE_EXPLANATION").is_err()
+            && env::var("ZED_UPDATE_EXPLANATION").is_err()
         {
             let mut update_subscription = AutoUpdateSetting::get_global(cx)
                 .0
@@ -173,11 +176,11 @@ pub fn check(_: &Check, cx: &mut WindowContext) {
         return;
     }
 
-    if let Some(message) = option_env!("ZED_UPDATE_EXPLANATION") {
+    if let Some(message) = env::var("ZED_UPDATE_EXPLANATION").ok() {
         drop(cx.prompt(
             gpui::PromptLevel::Info,
             "Zed was installed via a package manager.",
-            Some(message),
+            Some(&message),
             &["Ok"],
         ));
         return;
@@ -523,7 +526,7 @@ async fn install_release_linux(
     cx: &AsyncAppContext,
 ) -> Result<()> {
     let channel = cx.update(|cx| ReleaseChannel::global(cx).dev_name())?;
-    let home_dir = PathBuf::from(std::env::var("HOME").context("no HOME env var set")?);
+    let home_dir = PathBuf::from(env::var("HOME").context("no HOME env var set")?);
 
     let extracted = temp_dir.path().join("zed");
     fs::create_dir_all(&extracted)
