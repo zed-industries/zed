@@ -6,15 +6,15 @@ use std::{fmt, mem, sync::Arc};
 
 use editor::{overlay::Overlay, scroll::Autoscroll, DisplayPoint, Editor};
 use gpui::{
-    actions, column_pixels, impl_actions, point, saturate, AppContext, AsyncAppContext, Bounds,
-    Entity, EntityId, Global, HighlightStyle, Hsla, KeystrokeEvent, Model, ModelContext, Point,
-    Subscription, View, ViewContext, WeakView,
+    actions, impl_actions, saturate, AppContext, AsyncAppContext, Bounds, Entity, EntityId, Global,
+    HighlightStyle, Hsla, KeystrokeEvent, Model, ModelContext, Point, Subscription, View,
+    ViewContext, WeakView,
 };
 use settings::Settings;
 use text::{Bias, SelectionGoal};
 use theme::ThemeSettings;
 use ui::{Context, Pixels, VisualContext, WindowContext};
-use workspace::Workspace;
+use workspace::{item::ItemHandle, Workspace};
 
 use crate::{
     editor_state::{EditorState, InputResult, OverlayState, Selection},
@@ -291,6 +291,7 @@ impl EasyMotion {
         .flatten()
     }
 
+    #[allow(dead_code)]
     fn active_editor_id(cx: &WindowContext) -> Option<EntityId> {
         Self::read_with(cx, |easy, _| {
             easy.active_editor.as_ref().map(|editor| editor.entity_id())
@@ -570,10 +571,6 @@ impl EasyMotion {
     }
 
     fn word_multipane(word_type: WordType, workspace: &Workspace, cx: &mut WindowContext) {
-        let Some(active_editor_id) = Self::active_editor_id(cx) else {
-            return;
-        };
-
         let editors = Self::editors_with_bounding_boxes(workspace, cx);
 
         // get words along with their display points within their editors
@@ -589,16 +586,9 @@ impl EasyMotion {
             })
             .unzip();
 
-        // group each list of matches to a weak view of its corresponding editor
-        let cursor = editors
-            .into_iter()
-            .find(|(editor_view, _)| editor_view.entity_id() == active_editor_id)
-            .map(|(editor_view, bounding_box)| {
-                editor_view.update(cx, |editor, cx| {
-                    Self::get_cursor_pixels(&bounding_box, editor, cx)
-                })
-            })
-            .unwrap();
+        let cursor = Self::active_editor(cx)
+            .and_then(|editor| editor.pixel_position_of_cursor(cx))
+            .unwrap_or_default();
 
         Self::handle_new_match_tasks(cursor, weak_editors, search_tasks, cx);
         Self::insert_multipane_state(EditorState::PendingSearch, cx);
@@ -659,14 +649,9 @@ impl EasyMotion {
             let EditorState::Pattern(pattern) = state else {
                 return;
             };
-            let Some(active_editor_id) = Self::active_editor_id(cx) else {
-                return;
-            };
-
             let editors = Self::editors_with_bounding_boxes(workspace, cx);
             let query = pattern.chars().to_string();
-            let new_state =
-                Self::show_trie_from_query_multipane(query, false, active_editor_id, editors, cx);
+            let new_state = Self::show_trie_from_query_multipane(query, false, editors, cx);
             if let Some(new_state) = new_state {
                 Self::insert_multipane_state(new_state, cx);
             }
@@ -713,7 +698,7 @@ impl EasyMotion {
     }
 
     fn row_multipane(workspace: &Workspace, cx: &mut WindowContext) {
-        let Some(active_editor_id) = Self::active_editor_id(cx) else {
+        let Some(active_editor) = Self::active_editor(cx) else {
             return;
         };
 
@@ -732,16 +717,9 @@ impl EasyMotion {
             })
             .unzip();
 
-        // group each list of matches to a weak view of its corresponding editor
-        let cursor = editors
-            .into_iter()
-            .find(|(editor_view, _)| editor_view.entity_id() == active_editor_id)
-            .map(|(editor_view, bounding_box)| {
-                editor_view.update(cx, |editor, cx| {
-                    Self::get_cursor_pixels(&bounding_box, editor, cx)
-                })
-            })
-            .unwrap();
+        let cursor = active_editor
+            .pixel_position_of_cursor(cx)
+            .unwrap_or_default();
 
         Self::handle_new_match_tasks(cursor, weak_editors, search_tasks, cx);
         Self::insert_multipane_state(EditorState::PendingSearch, cx);
@@ -866,18 +844,8 @@ impl EasyMotion {
                         .and_then(|handle| handle.root(cx).ok())
                         .map(|workspace_view| {
                             workspace_view.update(cx, |workspace, cx| {
-                                let Some(active_editor_id) = Self::active_editor_id(cx) else {
-                                    return None;
-                                };
-
                                 let editors = Self::editors_with_bounding_boxes(workspace, cx);
-                                Self::show_trie_from_query_multipane(
-                                    query,
-                                    false,
-                                    active_editor_id,
-                                    editors,
-                                    cx,
-                                )
+                                Self::show_trie_from_query_multipane(query, false, editors, cx)
                             })
                         })
                         .unwrap_or_default(),
@@ -1043,7 +1011,6 @@ impl EasyMotion {
     fn show_trie_from_query_multipane(
         query: String,
         is_regex: bool,
-        active_editor_id: EntityId,
         editors: Vec<(View<Editor>, Bounds<Pixels>)>,
         cx: &mut WindowContext,
     ) -> Option<EditorState> {
@@ -1077,47 +1044,12 @@ impl EasyMotion {
             return None;
         }
 
-        // group each list of matches to a weak view of its corresponding editor
-        let cursor = editors
-            .into_iter()
-            .find(|(editor_view, _)| editor_view.entity_id() == active_editor_id)
-            .map(|(editor_view, bounding_box)| {
-                editor_view.update(cx, |editor, cx| {
-                    Self::get_cursor_pixels(&bounding_box, editor, cx)
-                })
-            })
-            .unwrap();
+        let cursor = Self::active_editor(cx)
+            .and_then(|editor| editor.pixel_position_of_cursor(cx))
+            .unwrap_or_default();
 
         Self::handle_new_match_tasks(cursor, weak_editors, search_tasks, cx);
         Some(EditorState::PendingSearch)
-    }
-
-    fn get_cursor_pixels(
-        bounding_box: &Bounds<Pixels>,
-        editor: &Editor,
-        cx: &mut ViewContext<Editor>,
-    ) -> Point<Pixels> {
-        let style = cx.text_style();
-        let scroll_position = editor.snapshot(cx).scroll_position();
-        let font_size = style.font_size.to_pixels(cx.rem_size());
-        let line_height = style.line_height_in_pixels(cx.rem_size());
-        let font_id = cx.text_system().resolve_font(&style.font());
-        let em_width = cx
-            .text_system()
-            .typographic_bounds(font_id, font_size, 'm')
-            .unwrap()
-            .size
-            .width;
-        let scroll_pixel_position = point(
-            scroll_position.x * em_width,
-            scroll_position.y * line_height,
-        );
-
-        let selections = editor.selections.newest_display(cx);
-        let cursor = selections.start;
-        let x = bounding_box.origin.x + 2.0 * column_pixels(&style, cursor.column() as usize, cx);
-        let y = bounding_box.origin.y + cursor.row().0 as f32 * line_height;
-        point(x, y) - scroll_pixel_position
     }
 
     fn add_overlays<'a>(
