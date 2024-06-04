@@ -332,6 +332,7 @@ messages!(
     (RegenerateDevServerTokenResponse, Foreground),
     (RenameDevServer, Foreground),
     (OpenNewBuffer, Foreground),
+    (RestartLanguageServers, Foreground),
 );
 
 request_messages!(
@@ -441,7 +442,8 @@ request_messages!(
     (DeleteDevServer, Ack),
     (DeleteDevServerProject, Ack),
     (RegenerateDevServerToken, RegenerateDevServerTokenResponse),
-    (RenameDevServer, Ack)
+    (RenameDevServer, Ack),
+    (RestartLanguageServers, Ack)
 );
 
 entity_messages!(
@@ -471,6 +473,7 @@ entity_messages!(
     JoinProject,
     LeaveProject,
     MultiLspQuery,
+    RestartLanguageServers,
     OnTypeFormatting,
     OpenNewBuffer,
     OpenBufferById,

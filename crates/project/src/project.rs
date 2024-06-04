@@ -697,6 +697,7 @@ impl Project {
         client.add_model_request_handler(Self::handle_lsp_command::<lsp_ext_command::ExpandMacro>);
         client.add_model_request_handler(Self::handle_blame_buffer);
         client.add_model_request_handler(Self::handle_multi_lsp_query);
+        client.add_model_request_handler(Self::handle_restart_language_servers);
         client.add_model_request_handler(Self::handle_task_context_for_location);
         client.add_model_request_handler(Self::handle_task_templates);
     }
@@ -3976,11 +3977,44 @@ impl Project {
         }
     }
 
+    async fn handle_restart_language_servers(
+        project: Model<Self>,
+        envelope: TypedEnvelope<proto::RestartLanguageServers>,
+        _: Arc<Client>,
+        mut cx: AsyncAppContext,
+    ) -> Result<proto::Ack> {
+        project.update(&mut cx, |project, cx| {
+            let buffers: Vec<_> = envelope
+                .payload
+                .buffer_ids
+                .into_iter()
+                .flat_map(|buffer_id| project.buffer_for_id(BufferId::new(buffer_id).log_err()?))
+                .collect();
+            project.restart_language_servers_for_buffers(buffers, cx)
+        })?;
+
+        Ok(proto::Ack {})
+    }
+
     pub fn restart_language_servers_for_buffers(
         &mut self,
         buffers: impl IntoIterator<Item = Model<Buffer>>,
         cx: &mut ModelContext<Self>,
-    ) -> Option<()> {
+    ) {
+        if self.is_remote() {
+            let request = self.client.request(proto::RestartLanguageServers {
+                project_id: self.remote_id().unwrap(),
+                buffer_ids: buffers
+                    .into_iter()
+                    .map(|b| b.read(cx).remote_id().to_proto())
+                    .collect(),
+            });
+            cx.background_executor()
+                .spawn(request)
+                .detach_and_log_err(cx);
+            return;
+        }
+
         let language_server_lookup_info: HashSet<(Model<Worktree>, Arc<Language>)> = buffers
             .into_iter()
             .filter_map(|buffer| {
@@ -3998,8 +4032,6 @@ impl Project {
         for (worktree, language) in language_server_lookup_info {
             self.restart_language_servers(worktree, language, cx);
         }
-
-        None
     }
 
     fn restart_language_servers(
