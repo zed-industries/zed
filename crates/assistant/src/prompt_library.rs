@@ -470,6 +470,10 @@ impl PromptLibrary {
         }
     }
 
+    fn cancel(&mut self, _: &menu::Cancel, cx: &mut ViewContext<Self>) {
+        self.picker.update(cx, |picker, cx| picker.focus(cx));
+    }
+
     fn handle_prompt_editor_event(
         &mut self,
         prompt_id: PromptId,
@@ -607,7 +611,13 @@ impl PromptLibrary {
                                         ),
                                 ),
                         )
-                        .child(div().flex_grow().p(Spacing::Large.rems(cx)).child(editor)),
+                        .child(
+                            div()
+                                .on_action(cx.listener(Self::cancel))
+                                .flex_grow()
+                                .p(Spacing::Large.rems(cx))
+                                .child(editor),
+                        ),
                 )
             }))
     }
