@@ -97,6 +97,25 @@ pub enum Worktree {
     Remote(RemoteWorktree),
 }
 
+/// An entry, created in the worktree.
+#[derive(Debug)]
+pub enum CreatedEntry {
+    /// Got created and indexed by the worktree, receiving a corresponding entry.
+    Included(Entry),
+    /// Got created, but not indexed due to falling under exclusion filters.
+    Excluded { abs_path: PathBuf },
+}
+
+#[cfg(any(test, feature = "test-support"))]
+impl CreatedEntry {
+    pub fn to_included(self) -> Option<Entry> {
+        match self {
+            CreatedEntry::Included(entry) => Some(entry),
+            CreatedEntry::Excluded { .. } => None,
+        }
+    }
+}
+
 pub struct LocalWorktree {
     snapshot: LocalSnapshot,
     scan_requests_tx: channel::Sender<ScanRequest>,
@@ -1322,22 +1341,34 @@ impl LocalWorktree {
         path: impl Into<Arc<Path>>,
         is_dir: bool,
         cx: &mut ModelContext<Worktree>,
-    ) -> Task<Result<Option<Entry>>> {
+    ) -> Task<Result<CreatedEntry>> {
         let path = path.into();
-        let lowest_ancestor = self.lowest_ancestor(&path);
-        let abs_path = self.absolutize(&path);
+        let abs_path = match self.absolutize(&path) {
+            Ok(path) => path,
+            Err(e) => return Task::ready(Err(e.context(format!("absolutizing path {path:?}")))),
+        };
+        let path_excluded = self.is_path_excluded(&abs_path);
         let fs = self.fs.clone();
+        let task_abs_path = abs_path.clone();
         let write = cx.background_executor().spawn(async move {
             if is_dir {
-                fs.create_dir(&abs_path?).await
-            } else {
-                fs.save(&abs_path?, &Default::default(), Default::default())
+                fs.create_dir(&task_abs_path)
                     .await
+                    .with_context(|| format!("creating directory {task_abs_path:?}"))
+            } else {
+                fs.save(&task_abs_path, &Rope::default(), LineEnding::default())
+                    .await
+                    .with_context(|| format!("creating file {task_abs_path:?}"))
             }
         });
 
+        let lowest_ancestor = self.lowest_ancestor(&path);
         cx.spawn(|this, mut cx| async move {
             write.await?;
+            if path_excluded {
+                return Ok(CreatedEntry::Excluded { abs_path });
+            }
+
             let (result, refreshes) = this.update(&mut cx, |this, cx| {
                 let mut refreshes = Vec::new();
                 let refresh_paths = path.strip_prefix(&lowest_ancestor).unwrap();
@@ -1362,7 +1393,10 @@ impl LocalWorktree {
                 refresh.await.log_err();
             }
 
-            result.await
+            Ok(result
+                .await?
+                .map(CreatedEntry::Included)
+                .unwrap_or_else(|| CreatedEntry::Excluded { abs_path }))
         })
     }
 
@@ -1448,19 +1482,22 @@ impl LocalWorktree {
         entry_id: ProjectEntryId,
         new_path: impl Into<Arc<Path>>,
         cx: &mut ModelContext<Worktree>,
-    ) -> Task<Result<Option<Entry>>> {
+    ) -> Task<Result<CreatedEntry>> {
         let old_path = match self.entry_for_id(entry_id) {
             Some(entry) => entry.path.clone(),
-            None => return Task::ready(Ok(None)),
+            None => return Task::ready(Err(anyhow!("no entry to rename for id {entry_id:?}"))),
         };
         let new_path = new_path.into();
         let abs_old_path = self.absolutize(&old_path);
-        let abs_new_path = self.absolutize(&new_path);
+        let Ok(abs_new_path) = self.absolutize(&new_path) else {
+            return Task::ready(Err(anyhow!("absolutizing path {new_path:?}")));
+        };
+        let abs_path = abs_new_path.clone();
         let fs = self.fs.clone();
         let case_sensitive = self.fs_case_sensitive;
         let rename = cx.background_executor().spawn(async move {
             let abs_old_path = abs_old_path?;
-            let abs_new_path = abs_new_path?;
+            let abs_new_path = abs_new_path;
 
             let abs_old_path_lower = abs_old_path.to_str().map(|p| p.to_lowercase());
             let abs_new_path_lower = abs_new_path.to_str().map(|p| p.to_lowercase());
@@ -1480,16 +1517,20 @@ impl LocalWorktree {
                 },
             )
             .await
+            .with_context(|| format!("Renaming {abs_old_path:?} into {abs_new_path:?}"))
         });
 
         cx.spawn(|this, mut cx| async move {
             rename.await?;
-            this.update(&mut cx, |this, cx| {
-                this.as_local_mut()
-                    .unwrap()
-                    .refresh_entry(new_path.clone(), Some(old_path), cx)
-            })?
-            .await
+            Ok(this
+                .update(&mut cx, |this, cx| {
+                    this.as_local_mut()
+                        .unwrap()
+                        .refresh_entry(new_path.clone(), Some(old_path), cx)
+                })?
+                .await?
+                .map(CreatedEntry::Included)
+                .unwrap_or_else(|| CreatedEntry::Excluded { abs_path }))
         })
     }
 

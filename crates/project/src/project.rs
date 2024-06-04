@@ -68,7 +68,7 @@ use project_settings::{LspSettings, ProjectSettings};
 use rand::prelude::*;
 use search_history::SearchHistory;
 use snippet::Snippet;
-use worktree::LocalSnapshot;
+use worktree::{CreatedEntry, LocalSnapshot};
 
 use http::{HttpClient, Url};
 use rpc::{ErrorCode, ErrorExt as _};
@@ -1414,10 +1414,12 @@ impl Project {
         project_path: impl Into<ProjectPath>,
         is_directory: bool,
         cx: &mut ModelContext<Self>,
-    ) -> Task<Result<Option<Entry>>> {
+    ) -> Task<Result<CreatedEntry>> {
         let project_path = project_path.into();
         let Some(worktree) = self.worktree_for_id(project_path.worktree_id, cx) else {
-            return Task::ready(Ok(None));
+            return Task::ready(Err(anyhow!(format!(
+                "No worktree for path {project_path:?}"
+            ))));
         };
         if self.is_local() {
             worktree.update(cx, |worktree, cx| {
@@ -1448,8 +1450,15 @@ impl Project {
                             )
                         })?
                         .await
-                        .map(Some),
-                    None => Ok(None),
+                        .map(CreatedEntry::Included),
+                    None => {
+                        let abs_path = worktree.update(&mut cx, |worktree, _| {
+                            worktree
+                                .absolutize(&project_path.path)
+                                .with_context(|| format!("absolutizing {project_path:?}"))
+                        })??;
+                        Ok(CreatedEntry::Excluded { abs_path })
+                    }
                 }
             })
         }
@@ -1506,9 +1515,9 @@ impl Project {
         entry_id: ProjectEntryId,
         new_path: impl Into<Arc<Path>>,
         cx: &mut ModelContext<Self>,
-    ) -> Task<Result<Option<Entry>>> {
+    ) -> Task<Result<CreatedEntry>> {
         let Some(worktree) = self.worktree_for_entry(entry_id, cx) else {
-            return Task::ready(Ok(None));
+            return Task::ready(Err(anyhow!(format!("No worktree for entry {entry_id:?}"))));
         };
         let new_path = new_path.into();
         if self.is_local() {
@@ -1540,8 +1549,15 @@ impl Project {
                             )
                         })?
                         .await
-                        .map(Some),
-                    None => Ok(None),
+                        .map(CreatedEntry::Included),
+                    None => {
+                        let abs_path = worktree.update(&mut cx, |worktree, _| {
+                            worktree
+                                .absolutize(&new_path)
+                                .with_context(|| format!("absolutizing {new_path:?}"))
+                        })??;
+                        Ok(CreatedEntry::Excluded { abs_path })
+                    }
                 }
             })
         }
@@ -8617,7 +8633,10 @@ impl Project {
             })?
             .await?;
         Ok(proto::ProjectEntryResponse {
-            entry: entry.as_ref().map(|e| e.into()),
+            entry: match &entry {
+                CreatedEntry::Included(entry) => Some(entry.into()),
+                CreatedEntry::Excluded { .. } => None,
+            },
             worktree_scan_id: worktree_scan_id as u64,
         })
     }
@@ -8644,7 +8663,10 @@ impl Project {
             })?
             .await?;
         Ok(proto::ProjectEntryResponse {
-            entry: entry.as_ref().map(|e| e.into()),
+            entry: match &entry {
+                CreatedEntry::Included(entry) => Some(entry.into()),
+                CreatedEntry::Excluded { .. } => None,
+            },
             worktree_scan_id: worktree_scan_id as u64,
         })
     }

@@ -2404,6 +2404,7 @@ dependencies = [
  "util",
  "uuid",
  "workspace",
+ "worktree",
 ]
 
 [[package]]
@@ -7825,6 +7826,7 @@ dependencies = [
  "unicase",
  "util",
  "workspace",
+ "worktree",
 ]
 
 [[package]]
