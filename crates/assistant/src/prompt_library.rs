@@ -137,8 +137,8 @@ enum PromptPickerEvent {
 enum PromptPickerEntry {
     DefaultPromptsHeader,
     DefaultPromptsEmpty,
-    PromptsHeader,
-    PromptsEmpty,
+    AllPromptsHeader,
+    AllPromptsEmpty,
     Prompt(PromptMetadata),
 }
 
@@ -200,9 +200,9 @@ impl PickerDelegate for PromptPickerDelegate {
                         entries.extend(default_prompts.into_iter().map(PromptPickerEntry::Prompt));
                     }
 
-                    entries.push(PromptPickerEntry::PromptsHeader);
+                    entries.push(PromptPickerEntry::AllPromptsHeader);
                     if prompts.is_empty() {
-                        entries.push(PromptPickerEntry::PromptsEmpty);
+                        entries.push(PromptPickerEntry::AllPromptsEmpty);
                     } else {
                         entries.extend(prompts.into_iter().map(PromptPickerEntry::Prompt));
                     }
@@ -257,12 +257,12 @@ impl PickerDelegate for PromptPickerDelegate {
                     .selected(selected)
                     .into_any_element()
             }
-            PromptPickerEntry::PromptsHeader => ListHeader::new("Prompts")
+            PromptPickerEntry::AllPromptsHeader => ListHeader::new("All Prompts")
                 .inset(true)
                 .start_slot(Icon::new(IconName::Library))
                 .selected(selected)
                 .into_any_element(),
-            PromptPickerEntry::PromptsEmpty => ListSubHeader::new("No prompts")
+            PromptPickerEntry::AllPromptsEmpty => ListSubHeader::new("No prompts")
                 .inset(true)
                 .selected(selected)
                 .into_any_element(),
