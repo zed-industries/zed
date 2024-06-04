@@ -1281,6 +1281,19 @@ impl Project {
         self.dev_server_project_id
     }
 
+    pub fn supports_remote_terminal(&self, cx: &AppContext) -> bool {
+        let Some(id) = self.dev_server_project_id else {
+            return false;
+        };
+        let Some(server) = dev_server_projects::Store::global(cx)
+            .read(cx)
+            .dev_server_for_project(id)
+        else {
+            return false;
+        };
+        server.ssh_connection_string.is_some()
+    }
+
     pub fn ssh_connection_string(&self, cx: &ModelContext<Self>) -> Option<SharedString> {
         if self.is_local() {
             return None;
