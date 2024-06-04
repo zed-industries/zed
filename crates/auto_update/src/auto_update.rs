@@ -166,7 +166,7 @@ pub fn check(_: &Check, cx: &mut WindowContext) {
     if let Some(message) = option_env!("ZED_UPDATE_EXPLANATION") {
         drop(cx.prompt(
             gpui::PromptLevel::Info,
-            &format!("Zed was installed via a package manager."),
+            "Zed was installed via a package manager.",
             Some(message),
             &["Ok"],
         ));
@@ -176,7 +176,7 @@ pub fn check(_: &Check, cx: &mut WindowContext) {
     if let Some(message) = option_env!("ZED_UPDATE_EXPLANATION") {
         drop(cx.prompt(
             gpui::PromptLevel::Info,
-            &format!("Zed was installed via a package manager."),
+            "Zed was installed via a package manager.",
             Some(message),
             &["Ok"],
         ));
