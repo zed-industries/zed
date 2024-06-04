@@ -24,16 +24,32 @@ enum StartTagOutcome {
     Skip,
 }
 
-pub struct MarkdownOutput(String);
+pub struct MarkdownWriter {
+    current_element_stack: VecDeque<HtmlElement>,
+    markdown: String,
+}
 
-impl MarkdownOutput {
+impl MarkdownWriter {
     pub fn new() -> Self {
-        Self(String::new())
+        let mut handlers: Vec<Box<dyn HandleTag>> = Vec::new();
+        handlers.push(Box::new(HeadingHandler));
+        handlers.push(Box::new(RustdocTableHandler::new()));
+
+        Self {
+            current_element_stack: VecDeque::new(),
+            markdown: String::new(),
+        }
+    }
+
+    fn is_inside(&self, tag: &str) -> bool {
+        self.current_element_stack
+            .iter()
+            .any(|parent_element| parent_element.tag == tag)
     }
 
     /// Appends the given string slice onto the end of the Markdown output.
     fn push_str(&mut self, str: &str) {
-        self.0.push_str(str);
+        self.markdown.push_str(str);
     }
 
     /// Appends a newline to the end of the Markdown output.
@@ -45,35 +61,14 @@ impl MarkdownOutput {
     fn push_blank_line(&mut self) {
         self.push_str("\n\n");
     }
-}
 
-pub struct MarkdownWriter {
-    current_element_stack: VecDeque<HtmlElement>,
-    handlers: Vec<Box<dyn HandleTag>>,
-}
-
-impl MarkdownWriter {
-    pub fn new() -> Self {
+    pub fn run(mut self, root_node: &Handle) -> Result<String> {
         let mut handlers: Vec<Box<dyn HandleTag>> = Vec::new();
         handlers.push(Box::new(HeadingHandler));
         handlers.push(Box::new(RustdocTableHandler::new()));
 
-        Self {
-            current_element_stack: VecDeque::new(),
-            handlers,
-        }
-    }
-
-    fn is_inside(&self, tag: &str) -> bool {
-        self.current_element_stack
-            .iter()
-            .any(|parent_element| parent_element.tag == tag)
-    }
-
-    pub fn run(mut self, root_node: &Handle) -> Result<String> {
-        let mut output = MarkdownOutput::new();
-        self.visit_node(&root_node, &mut output)?;
-        Ok(Self::prettify_markdown(output.0))
+        self.visit_node(&root_node, &mut handlers)?;
+        Ok(Self::prettify_markdown(self.markdown))
     }
 
     fn prettify_markdown(markdown: String) -> String {
@@ -83,7 +78,7 @@ impl MarkdownWriter {
         markdown.trim().to_string()
     }
 
-    fn visit_node(&mut self, node: &Handle, output: &mut MarkdownOutput) -> Result<()> {
+    fn visit_node(&mut self, node: &Handle, handlers: &mut [Box<dyn HandleTag>]) -> Result<()> {
         let mut current_element = None;
 
         match node.data {
@@ -109,12 +104,12 @@ impl MarkdownWriter {
             }
             NodeData::Text { ref contents } => {
                 let text = contents.borrow().to_string();
-                self.visit_text(text, output)?;
+                self.visit_text(text)?;
             }
         }
 
         if let Some(current_element) = current_element.as_ref() {
-            match self.start_tag(&current_element, output) {
+            match self.start_tag(&current_element, handlers) {
                 StartTagOutcome::Continue => {}
                 StartTagOutcome::Skip => return Ok(()),
             }
@@ -124,21 +119,25 @@ impl MarkdownWriter {
         }
 
         for child in node.children.borrow().iter() {
-            self.visit_node(child, output)?;
+            self.visit_node(child, handlers)?;
         }
 
         if let Some(current_element) = current_element {
             self.current_element_stack.pop_back();
-            self.end_tag(&current_element, output);
+            self.end_tag(&current_element, handlers);
         }
 
         Ok(())
     }
 
-    fn start_tag(&mut self, tag: &HtmlElement, output: &mut MarkdownOutput) -> StartTagOutcome {
-        for handler in &mut self.handlers {
+    fn start_tag(
+        &mut self,
+        tag: &HtmlElement,
+        handlers: &mut [Box<dyn HandleTag>],
+    ) -> StartTagOutcome {
+        for handler in handlers {
             if handler.should_handle(tag.tag.as_str()) {
-                match handler.handle_tag_start(tag, output) {
+                match handler.handle_tag_start(tag, self) {
                     StartTagOutcome::Continue => {}
                     StartTagOutcome::Skip => return StartTagOutcome::Skip,
                 }
@@ -148,8 +147,8 @@ impl MarkdownWriter {
         if tag.is_inline() && self.is_inside("p") {
             if let Some(parent) = self.current_element_stack.iter().last() {
                 if !parent.is_inline() {
-                    if !(output.0.ends_with(' ') || output.0.ends_with('\n')) {
-                        output.push_str(" ");
+                    if !(self.markdown.ends_with(' ') || self.markdown.ends_with('\n')) {
+                        self.push_str(" ");
                     }
                 }
             }
@@ -157,12 +156,12 @@ impl MarkdownWriter {
 
         match tag.tag.as_str() {
             "head" | "script" | "nav" => return StartTagOutcome::Skip,
-            "p" => output.push_blank_line(),
-            "strong" => output.push_str("**"),
-            "em" => output.push_str("_"),
+            "p" => self.push_blank_line(),
+            "strong" => self.push_str("**"),
+            "em" => self.push_str("_"),
             "code" => {
                 if !self.is_inside("pre") {
-                    output.push_str("`");
+                    self.push_str("`");
                 }
             }
             "pre" => {
@@ -181,10 +180,10 @@ impl MarkdownWriter {
                     })
                     .unwrap_or("");
 
-                output.push_str(&format!("\n\n```{language}\n"));
+                self.push_str(&format!("\n\n```{language}\n"));
             }
-            "ul" | "ol" => output.push_newline(),
-            "li" => output.push_str("- "),
+            "ul" | "ol" => self.push_newline(),
+            "li" => self.push_str("- "),
             "summary" => {
                 if tag.has_class("hideme") {
                     return StartTagOutcome::Skip;
@@ -202,7 +201,7 @@ impl MarkdownWriter {
                 }
 
                 if self.is_inside_item_name() && tag.has_class("stab") {
-                    output.push_str(" [");
+                    self.push_str(" [");
                 }
             }
             _ => {}
@@ -211,40 +210,40 @@ impl MarkdownWriter {
         StartTagOutcome::Continue
     }
 
-    fn end_tag(&mut self, tag: &HtmlElement, output: &mut MarkdownOutput) {
-        for handler in &mut self.handlers {
+    fn end_tag(&mut self, tag: &HtmlElement, handlers: &mut [Box<dyn HandleTag>]) {
+        for handler in handlers {
             if handler.should_handle(tag.tag.as_str()) {
-                handler.handle_tag_end(tag, output);
+                handler.handle_tag_end(tag, self);
             }
         }
 
         match tag.tag.as_str() {
-            "strong" => output.push_str("**"),
-            "em" => output.push_str("_"),
+            "strong" => self.push_str("**"),
+            "em" => self.push_str("_"),
             "code" => {
                 if !self.is_inside("pre") {
-                    output.push_str("`");
+                    self.push_str("`");
                 }
             }
-            "pre" => output.push_str("\n```\n"),
-            "ul" | "ol" => output.push_newline(),
-            "li" => output.push_newline(),
+            "pre" => self.push_str("\n```\n"),
+            "ul" | "ol" => self.push_newline(),
+            "li" => self.push_newline(),
             "div" | "span" => {
                 if tag.has_class(RUSTDOC_ITEM_NAME_CLASS) {
-                    output.push_str(": ");
+                    self.push_str(": ");
                 }
 
                 if self.is_inside_item_name() && tag.has_class("stab") {
-                    output.push_str("]");
+                    self.push_str("]");
                 }
             }
             _ => {}
         }
     }
 
-    fn visit_text(&mut self, text: String, output: &mut MarkdownOutput) -> Result<()> {
+    fn visit_text(&mut self, text: String) -> Result<()> {
         if self.is_inside("pre") {
-            output.push_str(&text);
+            self.push_str(&text);
             return Ok(());
         }
 
@@ -253,11 +252,11 @@ impl MarkdownWriter {
             .replace('\n', " ");
 
         if self.is_inside_item_name() && !self.is_inside("span") && !self.is_inside("code") {
-            output.push_str(&format!("`{text}`"));
+            self.push_str(&format!("`{text}`"));
             return Ok(());
         }
 
-        output.push_str(&text);
+        self.push_str(&text);
 
         Ok(())
     }
@@ -277,12 +276,12 @@ trait HandleTag {
     fn handle_tag_start(
         &mut self,
         _tag: &HtmlElement,
-        _output: &mut MarkdownOutput,
+        _writer: &mut MarkdownWriter,
     ) -> StartTagOutcome {
         StartTagOutcome::Continue
     }
 
-    fn handle_tag_end(&mut self, _tag: &HtmlElement, _output: &mut MarkdownOutput) {
+    fn handle_tag_end(&mut self, _tag: &HtmlElement, _writer: &mut MarkdownWriter) {
         ()
     }
 }
@@ -300,24 +299,24 @@ impl HandleTag for HeadingHandler {
     fn handle_tag_start(
         &mut self,
         tag: &HtmlElement,
-        output: &mut MarkdownOutput,
+        writer: &mut MarkdownWriter,
     ) -> StartTagOutcome {
         match tag.tag.as_str() {
-            "h1" => output.push_str("\n\n# "),
-            "h2" => output.push_str("\n\n## "),
-            "h3" => output.push_str("\n\n### "),
-            "h4" => output.push_str("\n\n#### "),
-            "h5" => output.push_str("\n\n##### "),
-            "h6" => output.push_str("\n\n###### "),
+            "h1" => writer.push_str("\n\n# "),
+            "h2" => writer.push_str("\n\n## "),
+            "h3" => writer.push_str("\n\n### "),
+            "h4" => writer.push_str("\n\n#### "),
+            "h5" => writer.push_str("\n\n##### "),
+            "h6" => writer.push_str("\n\n###### "),
             _ => {}
         }
 
         StartTagOutcome::Continue
     }
 
-    fn handle_tag_end(&mut self, tag: &HtmlElement, output: &mut MarkdownOutput) {
+    fn handle_tag_end(&mut self, tag: &HtmlElement, writer: &mut MarkdownWriter) {
         match tag.tag.as_str() {
-            "h1" | "h2" | "h3" | "h4" | "h5" | "h6" => output.push_blank_line(),
+            "h1" | "h2" | "h3" | "h4" | "h5" | "h6" => writer.push_blank_line(),
             _ => {}
         }
     }
@@ -351,27 +350,27 @@ impl HandleTag for RustdocTableHandler {
     fn handle_tag_start(
         &mut self,
         tag: &HtmlElement,
-        output: &mut MarkdownOutput,
+        writer: &mut MarkdownWriter,
     ) -> StartTagOutcome {
         match tag.tag.as_str() {
-            "thead" => output.push_blank_line(),
-            "tr" => output.push_newline(),
+            "thead" => writer.push_blank_line(),
+            "tr" => writer.push_newline(),
             "th" => {
                 self.current_table_columns += 1;
                 if self.is_first_th {
                     self.is_first_th = false;
                 } else {
-                    output.push_str(" ");
+                    writer.push_str(" ");
                 }
-                output.push_str("| ");
+                writer.push_str("| ");
             }
             "td" => {
                 if self.is_first_td {
                     self.is_first_td = false;
                 } else {
-                    output.push_str(" ");
+                    writer.push_str(" ");
                 }
-                output.push_str("| ");
+                writer.push_str("| ");
             }
             _ => {}
         }
@@ -379,21 +378,21 @@ impl HandleTag for RustdocTableHandler {
         StartTagOutcome::Continue
     }
 
-    fn handle_tag_end(&mut self, tag: &HtmlElement, output: &mut MarkdownOutput) {
+    fn handle_tag_end(&mut self, tag: &HtmlElement, writer: &mut MarkdownWriter) {
         match tag.tag.as_str() {
             "thead" => {
-                output.push_newline();
+                writer.push_newline();
                 for ix in 0..self.current_table_columns {
                     if ix > 0 {
-                        output.push_str(" ");
+                        writer.push_str(" ");
                     }
-                    output.push_str("| ---");
+                    writer.push_str("| ---");
                 }
-                output.push_str(" |");
+                writer.push_str(" |");
                 self.is_first_th = true;
             }
             "tr" => {
-                output.push_str(" |");
+                writer.push_str(" |");
                 self.is_first_td = true;
             }
             "table" => {
@@ -401,5 +400,28 @@ impl HandleTag for RustdocTableHandler {
             }
             _ => {}
         }
+    }
+}
+
+struct RustdocItemHandler;
+
+impl HandleTag for RustdocItemHandler {
+    fn should_handle(&self, tag: &str) -> bool {
+        match tag {
+            "div" | "span" => true,
+            _ => false,
+        }
+    }
+
+    fn handle_tag_start(
+        &mut self,
+        tag: &HtmlElement,
+        writer: &mut MarkdownWriter,
+    ) -> StartTagOutcome {
+        StartTagOutcome::Continue
+    }
+
+    fn handle_tag_end(&mut self, _tag: &HtmlElement, _writer: &mut MarkdownWriter) {
+        ()
     }
 }
