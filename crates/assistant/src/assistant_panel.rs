@@ -1380,7 +1380,9 @@ enum ConversationEvent {
         updated: Vec<PendingSlashCommand>,
     },
     SlashCommandFinished {
+        output_range: Range<language::Anchor>,
         sections: Vec<SlashCommandOutputSection<language::Anchor>>,
+        run_commands_in_output: bool,
     },
 }
 
@@ -1647,18 +1649,7 @@ impl Conversation {
                 buffer.line_len(row_range.end - 1),
             ));
 
-            let start_ix = match self
-                .pending_slash_commands
-                .binary_search_by(|probe| probe.source_range.start.cmp(&start, buffer))
-            {
-                Ok(ix) | Err(ix) => ix,
-            };
-            let end_ix = match self.pending_slash_commands[start_ix..]
-                .binary_search_by(|probe| probe.source_range.end.cmp(&end, buffer))
-            {
-                Ok(ix) => start_ix + ix + 1,
-                Err(ix) => start_ix + ix,
-            };
+            let old_range = self.pending_command_indices_for_range(start..end, cx);
 
             let mut new_commands = Vec::new();
             let mut lines = buffer.text_for_range(start..end).lines();
@@ -1693,9 +1684,7 @@ impl Conversation {
                 offset = lines.offset();
             }
 
-            let removed_commands = self
-                .pending_slash_commands
-                .splice(start_ix..end_ix, new_commands);
+            let removed_commands = self.pending_slash_commands.splice(old_range, new_commands);
             removed.extend(removed_commands.map(|command| command.source_range));
         }
 
@@ -1769,19 +1758,53 @@ impl Conversation {
         cx: &mut ModelContext<Self>,
     ) -> Option<&mut PendingSlashCommand> {
         let buffer = self.buffer.read(cx);
-        let ix = self
+        match self
             .pending_slash_commands
-            .binary_search_by(|probe| {
-                if probe.source_range.start.cmp(&position, buffer).is_gt() {
-                    Ordering::Less
-                } else if probe.source_range.end.cmp(&position, buffer).is_lt() {
-                    Ordering::Greater
+            .binary_search_by(|probe| probe.source_range.end.cmp(&position, buffer))
+        {
+            Ok(ix) => Some(&mut self.pending_slash_commands[ix]),
+            Err(ix) => {
+                let cmd = self.pending_slash_commands.get_mut(ix)?;
+                if position.cmp(&cmd.source_range.start, buffer).is_ge()
+                    && position.cmp(&cmd.source_range.end, buffer).is_le()
+                {
+                    Some(cmd)
                 } else {
-                    Ordering::Equal
+                    None
                 }
-            })
-            .ok()?;
-        self.pending_slash_commands.get_mut(ix)
+            }
+        }
+    }
+
+    fn pending_commands_for_range(
+        &self,
+        range: Range<language::Anchor>,
+        cx: &AppContext,
+    ) -> &[PendingSlashCommand] {
+        let range = self.pending_command_indices_for_range(range, cx);
+        &self.pending_slash_commands[range]
+    }
+
+    fn pending_command_indices_for_range(
+        &self,
+        range: Range<language::Anchor>,
+        cx: &AppContext,
+    ) -> Range<usize> {
+        let buffer = self.buffer.read(cx);
+        let start_ix = match self
+            .pending_slash_commands
+            .binary_search_by(|probe| probe.source_range.end.cmp(&range.start, &buffer))
+        {
+            Ok(ix) | Err(ix) => ix,
+        };
+        let end_ix = match self
+            .pending_slash_commands
+            .binary_search_by(|probe| probe.source_range.start.cmp(&range.end, &buffer))
+        {
+            Ok(ix) => ix + 1,
+            Err(ix) => ix,
+        };
+        start_ix..end_ix
     }
 
     fn insert_command_output(
@@ -1802,9 +1825,10 @@ impl Conversation {
                             output.text.push('\n');
                         }
 
-                        let sections = this.buffer.update(cx, |buffer, cx| {
+                        let event = this.buffer.update(cx, |buffer, cx| {
                             let start = command_range.start.to_offset(buffer);
                             let old_end = command_range.end.to_offset(buffer);
+                            let new_end = start + output.text.len();
                             buffer.edit([(start..old_end, output.text)], None, cx);
 
                             let mut sections = output
@@ -1817,9 +1841,14 @@ impl Conversation {
                                 })
                                 .collect::<Vec<_>>();
                             sections.sort_by(|a, b| a.range.cmp(&b.range, buffer));
-                            sections
+                            ConversationEvent::SlashCommandFinished {
+                                output_range: buffer.anchor_after(start)
+                                    ..buffer.anchor_before(new_end),
+                                sections,
+                                run_commands_in_output: output.run_commands_in_text,
+                            }
                         });
-                        cx.emit(ConversationEvent::SlashCommandFinished { sections });
+                        cx.emit(event);
                     }
                     Err(error) => {
                         if let Some(pending_command) =
@@ -2911,8 +2940,31 @@ impl ConversationEditor {
                     );
                 })
             }
-            ConversationEvent::SlashCommandFinished { sections } => {
+            ConversationEvent::SlashCommandFinished {
+                output_range,
+                sections,
+                run_commands_in_output,
+            } => {
                 self.insert_slash_command_output_sections(sections.iter().cloned(), cx);
+
+                if *run_commands_in_output {
+                    let commands = self.conversation.update(cx, |conversation, cx| {
+                        conversation.reparse_slash_commands(cx);
+                        conversation
+                            .pending_commands_for_range(output_range.clone(), cx)
+                            .to_vec()
+                    });
+
+                    for command in commands {
+                        self.run_command(
+                            command.source_range,
+                            &command.name,
+                            command.argument.as_deref(),
+                            self.workspace.clone(),
+                            cx,
+                        );
+                    }
+                }
             }
         }
     }

@@ -797,8 +797,8 @@ impl PromptStore {
         })
     }
 
-    pub fn load_default(&self) -> Task<Result<Vec<(PromptMetadata, String)>>> {
-        let default_metadatas = self
+    pub fn default_prompt_metadata(&self) -> Vec<PromptMetadata> {
+        return self
             .metadata_cache
             .read()
             .metadata
@@ -806,23 +806,6 @@ impl PromptStore {
             .filter(|metadata| metadata.default)
             .cloned()
             .collect::<Vec<_>>();
-        let env = self.env.clone();
-        let bodies = self.bodies;
-        self.executor.spawn(async move {
-            let txn = env.read_txn()?;
-
-            let mut default_prompts = Vec::new();
-            for metadata in default_metadatas {
-                if let Some(body) = bodies.get(&txn, &metadata.id)? {
-                    if !body.is_empty() {
-                        default_prompts.push((metadata, body));
-                    }
-                }
-            }
-
-            default_prompts.sort_unstable_by_key(|(metadata, _)| metadata.saved_at);
-            Ok(default_prompts)
-        })
     }
 
     pub fn delete(&self, id: PromptId) -> Task<Result<()>> {

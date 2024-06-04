@@ -4,7 +4,10 @@ use anyhow::{anyhow, Result};
 use assistant_slash_command::SlashCommandOutputSection;
 use gpui::{AppContext, Task, WeakView};
 use language::LspAdapterDelegate;
-use std::sync::{atomic::AtomicBool, Arc};
+use std::{
+    fmt::Write,
+    sync::{atomic::AtomicBool, Arc},
+};
 use ui::prelude::*;
 use workspace::Workspace;
 
@@ -47,53 +50,31 @@ impl SlashCommand for DefaultSlashCommand {
         let store = PromptStore::global(cx);
         cx.background_executor().spawn(async move {
             let store = store.await?;
-            let mut text = String::new();
-            let mut sections = Vec::new();
+            let prompts = store.default_prompt_metadata();
 
-            let prompts = store.load_default().await?;
-            if !prompts.is_empty() {
-                text.push_str("Default Prompt:\n");
+            let mut text = String::new();
+            writeln!(text, "Default Prompt:").unwrap();
+            for prompt in prompts {
+                if let Some(title) = prompt.title {
+                    writeln!(text, "/prompt {}", title).unwrap();
+                }
             }
 
-            for (metadata, body) in prompts {
-                let section_start = text.len();
-                text.push_str(&body);
-                let section_end = text.len();
-                sections.push(SlashCommandOutputSection {
-                    range: section_start..section_end,
+            Ok(SlashCommandOutput {
+                sections: vec![SlashCommandOutputSection {
+                    range: 0..text.len(),
                     render_placeholder: Arc::new(move |id, unfold, _cx| {
                         PromptPlaceholder {
-                            title: metadata
-                                .title
-                                .clone()
-                                .unwrap_or_else(|| SharedString::from("Untitled")),
+                            title: "Default".into(),
                             id,
                             unfold,
                         }
                         .into_any_element()
                     }),
-                });
-                text.push('\n');
-            }
-
-            if !text.is_empty() {
-                sections.insert(
-                    0,
-                    SlashCommandOutputSection {
-                        range: 0..text.len(),
-                        render_placeholder: Arc::new(move |id, unfold, _cx| {
-                            PromptPlaceholder {
-                                title: "Default".into(),
-                                id,
-                                unfold,
-                            }
-                            .into_any_element()
-                        }),
-                    },
-                )
-            }
-
-            Ok(SlashCommandOutput { text, sections })
+                }],
+                text,
+                run_commands_in_text: true,
+            })
         })
     }
 }

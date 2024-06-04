@@ -181,7 +181,11 @@ impl SlashCommand for SearchSlashCommand {
                         }),
                     });
 
-                    SlashCommandOutput { text, sections }
+                    SlashCommandOutput {
+                        text,
+                        sections,
+                        run_commands_in_text: false,
+                    }
                 })
                 .await;
 

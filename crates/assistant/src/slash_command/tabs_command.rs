@@ -109,7 +109,11 @@ impl SlashCommand for TabsSlashCommand {
                     });
                 }
 
-                Ok(SlashCommandOutput { text, sections })
+                Ok(SlashCommandOutput {
+                    text,
+                    sections,
+                    run_commands_in_text: false,
+                })
             }),
             Err(error) => Task::ready(Err(error)),
         }

@@ -100,6 +100,7 @@ impl SlashCommand for ExtensionSlashCommand {
                         }
                     }),
                 }],
+                run_commands_in_text: false,
             })
         })
     }
