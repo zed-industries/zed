@@ -6,6 +6,7 @@ pub struct ListSubHeader {
     label: SharedString,
     start_slot: Option<IconName>,
     inset: bool,
+    selected: bool,
 }
 
 impl ListSubHeader {
@@ -14,6 +15,7 @@ impl ListSubHeader {
             label: label.into(),
             start_slot: None,
             inset: false,
+            selected: false,
         }
     }
 
@@ -28,12 +30,22 @@ impl ListSubHeader {
     }
 }
 
+impl Selectable for ListSubHeader {
+    fn selected(mut self, selected: bool) -> Self {
+        self.selected = selected;
+        self
+    }
+}
+
 impl RenderOnce for ListSubHeader {
-    fn render(self, _cx: &mut WindowContext) -> impl IntoElement {
+    fn render(self, cx: &mut WindowContext) -> impl IntoElement {
         h_flex().flex_1().w_full().relative().py_1().child(
             div()
                 .h_6()
                 .when(self.inset, |this| this.px_2())
+                .when(self.selected, |this| {
+                    this.bg(cx.theme().colors().ghost_element_selected)
+                })
                 .flex()
                 .flex_1()
                 .w_full()

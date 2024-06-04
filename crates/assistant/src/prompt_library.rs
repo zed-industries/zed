@@ -13,7 +13,7 @@ use futures::{
 };
 use fuzzy::{match_strings, StringMatchCandidate};
 use gpui::{
-    actions, point, size, AppContext, BackgroundExecutor, Bounds, DevicePixels, Empty,
+    actions, point, size, AnyElement, AppContext, BackgroundExecutor, Bounds, DevicePixels,
     EventEmitter, Global, Model, PromptLevel, ReadGlobal, Subscription, Task, TitlebarOptions,
     View, WindowBounds, WindowHandle, WindowOptions,
 };
@@ -33,8 +33,8 @@ use std::{
     time::Duration,
 };
 use ui::{
-    div, prelude::*, IconButtonShape, ListItem, ListItemSpacing, ParentElement, Render,
-    SharedString, Styled, TitleBar, Tooltip, ViewContext, VisualContext,
+    div, prelude::*, IconButtonShape, ListHeader, ListItem, ListItemSpacing, ListSubHeader,
+    ParentElement, Render, SharedString, Styled, TitleBar, Tooltip, ViewContext, VisualContext,
 };
 use util::{paths::PROMPTS_DIR, ResultExt, TryFutureExt};
 use uuid::Uuid;
@@ -123,7 +123,7 @@ struct PromptEditor {
 struct PromptPickerDelegate {
     store: Arc<PromptStore>,
     selected_index: usize,
-    matches: Vec<PromptMetadata>,
+    entries: Vec<PromptPickerEntry>,
 }
 
 enum PromptPickerEvent {
@@ -133,13 +133,31 @@ enum PromptPickerEvent {
     ToggledDefault { prompt_id: PromptId },
 }
 
+#[derive(Debug)]
+enum PromptPickerEntry {
+    DefaultPromptsHeader,
+    DefaultPromptsEmpty,
+    PromptsHeader,
+    PromptsEmpty,
+    Prompt(PromptMetadata),
+}
+
+impl PromptPickerEntry {
+    fn prompt_id(&self) -> Option<PromptId> {
+        match self {
+            PromptPickerEntry::Prompt(metadata) => Some(metadata.id),
+            _ => None,
+        }
+    }
+}
+
 impl EventEmitter<PromptPickerEvent> for Picker<PromptPickerDelegate> {}
 
 impl PickerDelegate for PromptPickerDelegate {
-    type ListItem = ListItem;
+    type ListItem = AnyElement;
 
     fn match_count(&self) -> usize {
-        self.matches.len()
+        self.entries.len()
     }
 
     fn selected_index(&self) -> usize {
@@ -148,7 +166,7 @@ impl PickerDelegate for PromptPickerDelegate {
 
     fn set_selected_index(&mut self, ix: usize, cx: &mut ViewContext<Picker<Self>>) {
         self.selected_index = ix;
-        if let Some(prompt) = self.matches.get(self.selected_index) {
+        if let Some(PromptPickerEntry::Prompt(prompt)) = self.entries.get(self.selected_index) {
             cx.emit(PromptPickerEvent::Selected {
                 prompt_id: prompt.id,
             });
@@ -161,18 +179,49 @@ impl PickerDelegate for PromptPickerDelegate {
 
     fn update_matches(&mut self, query: String, cx: &mut ViewContext<Picker<Self>>) -> Task<()> {
         let search = self.store.search(query);
-        let prev_prompt_id = self.matches.get(self.selected_index).map(|mat| mat.id);
+        let prev_prompt_id = self
+            .entries
+            .get(self.selected_index)
+            .and_then(|mat| mat.prompt_id());
         cx.spawn(|this, mut cx| async move {
-            let matches = search.await;
+            let (entries, selected_index) = cx
+                .background_executor()
+                .spawn(async move {
+                    let prompts = search.await;
+                    let (default_prompts, prompts) = prompts
+                        .into_iter()
+                        .partition::<Vec<_>, _>(|prompt| prompt.default);
+
+                    let mut entries = Vec::new();
+                    entries.push(PromptPickerEntry::DefaultPromptsHeader);
+                    if default_prompts.is_empty() {
+                        entries.push(PromptPickerEntry::DefaultPromptsEmpty);
+                    } else {
+                        entries.extend(default_prompts.into_iter().map(PromptPickerEntry::Prompt));
+                    }
+
+                    entries.push(PromptPickerEntry::PromptsHeader);
+                    if prompts.is_empty() {
+                        entries.push(PromptPickerEntry::PromptsEmpty);
+                    } else {
+                        entries.extend(prompts.into_iter().map(PromptPickerEntry::Prompt));
+                    }
+
+                    let selected_index = prev_prompt_id
+                        .and_then(|prev_prompt_id| {
+                            entries
+                                .iter()
+                                .position(|entry| entry.prompt_id() == Some(prev_prompt_id))
+                        })
+                        .or_else(|| entries.iter().position(|entry| entry.prompt_id().is_some()))
+                        .unwrap_or(0);
+                    (entries, selected_index)
+                })
+                .await;
+
             this.update(&mut cx, |this, cx| {
-                this.delegate.matches = matches;
-                let ix = this
-                    .delegate
-                    .matches
-                    .iter()
-                    .position(|prompt| Some(prompt.id) == prev_prompt_id)
-                    .unwrap_or(0);
-                this.delegate.set_selected_index(ix, cx);
+                this.delegate.entries = entries;
+                this.delegate.set_selected_index(selected_index, cx);
                 cx.notify();
             })
             .ok();
@@ -180,7 +229,7 @@ impl PickerDelegate for PromptPickerDelegate {
     }
 
     fn confirm(&mut self, _secondary: bool, cx: &mut ViewContext<Picker<Self>>) {
-        if let Some(prompt) = self.matches.get(self.selected_index) {
+        if let Some(PromptPickerEntry::Prompt(prompt)) = self.entries.get(self.selected_index) {
             cx.emit(PromptPickerEvent::Confirmed {
                 prompt_id: prompt.id,
             });
@@ -195,61 +244,80 @@ impl PickerDelegate for PromptPickerDelegate {
         selected: bool,
         cx: &mut ViewContext<Picker<Self>>,
     ) -> Option<Self::ListItem> {
-        let prompt = self.matches.get(ix)?;
-        let default = prompt.default;
-        let prompt_id = prompt.id;
-        Some(
-            ListItem::new(ix)
+        let prompt = self.entries.get(ix)?;
+        let element = match prompt {
+            PromptPickerEntry::DefaultPromptsHeader => ListHeader::new("Default Prompts")
                 .inset(true)
-                .spacing(ListItemSpacing::Sparse)
+                .start_slot(Icon::new(IconName::ZedAssistant))
                 .selected(selected)
-                .child(Label::new(
-                    prompt.title.clone().unwrap_or("Untitled".into()),
-                ))
-                .end_slot(if default {
-                    IconButton::new("toggle-default-prompt", IconName::StarFilled)
-                        .shape(IconButtonShape::Square)
-                        .into_any_element()
-                } else {
-                    Empty.into_any()
-                })
-                .end_hover_slot(
-                    h_flex()
-                        .gap_2()
-                        .child(
-                            IconButton::new("delete-prompt", IconName::Trash)
-                                .shape(IconButtonShape::Square)
-                                .tooltip(move |cx| Tooltip::text("Delete Prompt", cx))
-                                .on_click(cx.listener(move |_, _, cx| {
-                                    cx.emit(PromptPickerEvent::Deleted { prompt_id })
-                                })),
-                        )
-                        .child(
-                            IconButton::new(
-                                "toggle-default-prompt",
-                                if default {
-                                    IconName::StarFilled
-                                } else {
-                                    IconName::Star
-                                },
+                .into_any_element(),
+            PromptPickerEntry::DefaultPromptsEmpty => {
+                ListSubHeader::new("Star a prompt to add it to the default context")
+                    .inset(true)
+                    .selected(selected)
+                    .into_any_element()
+            }
+            PromptPickerEntry::PromptsHeader => ListHeader::new("Prompts")
+                .inset(true)
+                .start_slot(Icon::new(IconName::Library))
+                .selected(selected)
+                .into_any_element(),
+            PromptPickerEntry::PromptsEmpty => ListSubHeader::new("No prompts")
+                .inset(true)
+                .selected(selected)
+                .into_any_element(),
+            PromptPickerEntry::Prompt(prompt) => {
+                let default = prompt.default;
+                let prompt_id = prompt.id;
+                ListItem::new(ix)
+                    .inset(true)
+                    .spacing(ListItemSpacing::Sparse)
+                    .selected(selected)
+                    .child(Label::new(
+                        prompt.title.clone().unwrap_or("Untitled".into()),
+                    ))
+                    .end_hover_slot(
+                        h_flex()
+                            .gap_2()
+                            .child(
+                                IconButton::new("delete-prompt", IconName::Trash)
+                                    .shape(IconButtonShape::Square)
+                                    .tooltip(move |cx| Tooltip::text("Delete Prompt", cx))
+                                    .on_click(cx.listener(move |_, _, cx| {
+                                        cx.emit(PromptPickerEvent::Deleted { prompt_id })
+                                    })),
                             )
-                            .shape(IconButtonShape::Square)
-                            .tooltip(move |cx| {
-                                Tooltip::text(
+                            .child(
+                                IconButton::new(
+                                    "toggle-default-prompt",
                                     if default {
-                                        "Remove from Default Prompt"
+                                        IconName::StarFilled
                                     } else {
-                                        "Add to Default Prompt"
+                                        IconName::Star
                                     },
-                                    cx,
                                 )
-                            })
-                            .on_click(cx.listener(move |_, _, cx| {
-                                cx.emit(PromptPickerEvent::ToggledDefault { prompt_id })
-                            })),
-                        ),
-                ),
-        )
+                                .shape(IconButtonShape::Square)
+                                .tooltip(move |cx| {
+                                    Tooltip::text(
+                                        if default {
+                                            "Remove from Default Prompt"
+                                        } else {
+                                            "Add to Default Prompt"
+                                        },
+                                        cx,
+                                    )
+                                })
+                                .on_click(cx.listener(
+                                    move |_, _, cx| {
+                                        cx.emit(PromptPickerEvent::ToggledDefault { prompt_id })
+                                    },
+                                )),
+                            ),
+                    )
+                    .into_any_element()
+            }
+        };
+        Some(element)
     }
 }
 
@@ -262,13 +330,11 @@ impl PromptLibrary {
         let delegate = PromptPickerDelegate {
             store: store.clone(),
             selected_index: 0,
-            matches: Vec::new(),
+            entries: Vec::new(),
         };
 
         let picker = cx.new_view(|cx| {
-            let picker = Picker::uniform_list(delegate, cx)
-                .modal(false)
-                .max_height(None);
+            let picker = Picker::list(delegate, cx).modal(false).max_height(None);
             picker.focus(cx);
             picker
         });
@@ -475,17 +541,17 @@ impl PromptLibrary {
             if let Some(prompt_id) = prompt_id {
                 if picker
                     .delegate
-                    .matches
+                    .entries
                     .get(picker.delegate.selected_index())
                     .map_or(true, |old_selected_prompt| {
-                        old_selected_prompt.id != prompt_id
+                        old_selected_prompt.prompt_id() != Some(prompt_id)
                     })
                 {
                     if let Some(ix) = picker
                         .delegate
-                        .matches
+                        .entries
                         .iter()
-                        .position(|mat| mat.id == prompt_id)
+                        .position(|mat| mat.prompt_id() == Some(prompt_id))
                     {
                         picker.set_selected_index(ix, true, cx);
                     }
