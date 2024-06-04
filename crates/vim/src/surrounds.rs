@@ -648,7 +648,7 @@ mod test {
         cx.simulate_keystrokes("y s s {");
         cx.assert_state(
             indoc! {"
-                ˇ{ The quick brown }•
+                ˇ{ The quick brown• }
             fox jumps over
             the lazy dog."},
             Mode::Normal,
@@ -656,7 +656,7 @@ mod test {
         cx.simulate_keystrokes("2 y s s )");
         cx.assert_state(
             indoc! {"
-                ˇ({ The quick brown }•
+                ˇ({ The quick brown• }
             fox jumps over)
             the lazy dog."},
             Mode::Normal,
