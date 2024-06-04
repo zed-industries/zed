@@ -70,6 +70,26 @@ pub fn word_starts_in_range(
 pub fn word_starts(
     word_type: WordType,
     direction: Direction,
+    editor: &Editor,
+    cx: &mut ViewContext<Editor>,
+) -> Vec<DisplayPoint> {
+    let selections = editor.selections.newest_display(cx);
+    let snapshot = editor.snapshot(cx);
+    let map = &snapshot.display_snapshot;
+    let mut text_layout_details = editor.text_layout_details(cx);
+    text_layout_details.vertical_scroll_margin = 0.0;
+    let Range { start, end } = ranges(direction, map, &selections, &text_layout_details);
+    let full_word = match word_type {
+        WordType::Word => false,
+        WordType::FullWord => true,
+        _ => false,
+    };
+    word_starts_in_range(&map, start, end, full_word)
+}
+
+pub fn word_starts_impl(
+    word_type: WordType,
+    direction: Direction,
     map: &DisplaySnapshot,
     selections: &Selection<DisplayPoint>,
     text_layout_details: &TextLayoutDetails,
@@ -83,7 +103,7 @@ pub fn word_starts(
     word_starts_in_range(&map, start, end, full_word)
 }
 
-pub fn get_word_task(
+pub fn get_word_starts_task(
     word_type: WordType,
     bounding_box: Bounds<Pixels>,
     entity_id: EntityId,
@@ -111,7 +131,8 @@ pub fn get_word_task(
 
         let selections = selections;
         let snapshot = snapshot;
-        let text_layout_details = text_layout_details;
+        let mut text_layout_details = text_layout_details;
+        text_layout_details.vertical_scroll_margin = 0.0;
         let map = &snapshot.display_snapshot;
         let scroll_position = snapshot.scroll_position();
         let scroll_pixel_position = point(
@@ -120,7 +141,7 @@ pub fn get_word_task(
         );
         let bounding_box = bounding_box;
 
-        let words = word_starts(
+        let words = word_starts_impl(
             word_type,
             Direction::BiDirectional,
             map,
@@ -210,7 +231,8 @@ pub fn search_multipane(
         .to_pixels(style.font_size, cx.rem_size())
         .0;
 
-    let text_layout_details = editor.text_layout_details(cx);
+    let mut text_layout_details = editor.text_layout_details(cx);
+    text_layout_details.vertical_scroll_margin = 0.0;
     let window_top = window_top(&map, &text_layout_details);
 
     let ranges = [start..end];

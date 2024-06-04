@@ -19,7 +19,7 @@ use workspace::Workspace;
 use crate::{
     editor_state::{EditorState, InputResult, OverlayState, Selection},
     search::{
-        get_word_task, row_starts, row_starts_multipane, search_multipane, search_window,
+        get_word_starts_task, row_starts, row_starts_multipane, search_multipane, search_window,
         sort_matches_display, sort_matches_pixel, word_starts,
     },
     trie::{TrieBuilder, TrimResult},
@@ -556,15 +556,7 @@ impl EasyMotion {
         let entity_id = active_editor.entity_id();
 
         let new_state = active_editor.update(cx, |editor, cx| {
-            let selections = editor.selections.newest_display(cx);
-            let map = &editor.snapshot(cx).display_snapshot;
-            let word_starts = word_starts(
-                word_type,
-                direction,
-                map,
-                &selections,
-                &editor.text_layout_details(cx),
-            );
+            let word_starts = word_starts(word_type, direction, editor, cx);
 
             Self::handle_new_matches(word_starts, direction, editor, cx)
         });
@@ -591,7 +583,7 @@ impl EasyMotion {
             .map(|(editor, bounding_box)| {
                 let entity_id = editor.entity_id();
                 let task = editor.update(cx, |editor, cx| {
-                    get_word_task(word_type, *bounding_box, entity_id, editor, cx)
+                    get_word_starts_task(word_type, *bounding_box, entity_id, editor, cx)
                 });
                 (editor.downgrade(), task)
             })

@@ -1,8 +1,8 @@
 use std::ops::Range;
 
 use editor::{
-    display_map::{DisplayRow, DisplaySnapshot, ToDisplayPoint},
-    movement::TextLayoutDetails,
+    display_map::{DisplayRow, DisplaySnapshot},
+    movement::{window_bottom as _window_bottom, window_top as _window_top, TextLayoutDetails},
     Anchor, DisplayPoint, RowExt,
 };
 use gpui::Point;
@@ -31,33 +31,20 @@ pub fn start_of_document(map: &DisplaySnapshot) -> DisplayPoint {
 }
 
 pub fn window_top(map: &DisplaySnapshot, text_layout_details: &TextLayoutDetails) -> DisplayPoint {
-    let mut point = text_layout_details
-        .scroll_anchor
-        .anchor
-        .to_display_point(map);
-    *point.column_mut() = 0;
-    map.clip_point(point, text::Bias::Left)
+    _window_top(map, DisplayPoint::zero(), text_layout_details, 1).0
 }
 
 pub fn window_bottom(
     map: &DisplaySnapshot,
     text_layout_details: &TextLayoutDetails,
 ) -> DisplayPoint {
-    let Some(visible_rows) = text_layout_details.visible_rows else {
-        return DisplayPoint::default();
-    };
-
-    let point = text_layout_details
-        .scroll_anchor
-        .anchor
-        .to_display_point(map);
-    let new_row =
-        point.row().0 + (visible_rows + text_layout_details.scroll_anchor.offset.y).floor() as u32;
-    let new_col = point.column().min(map.line_len(point.row()));
-    map.clip_point(
-        DisplayPoint::new(DisplayRow(new_row), new_col),
-        text::Bias::Left,
+    _window_bottom(
+        map,
+        DisplayPoint::new(DisplayRow(0), u32::max_value()),
+        text_layout_details,
+        0,
     )
+    .0
 }
 
 // returns a display point range from the current selection to the start/end
