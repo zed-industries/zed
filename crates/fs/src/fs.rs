@@ -36,6 +36,11 @@ use smol::io::AsyncReadExt;
 #[cfg(any(test, feature = "test-support"))]
 use std::ffi::OsStr;
 
+pub trait Watcher: Send + Sync {
+    fn add(&self, path: &Path) -> Result<()>;
+    fn remove(&self, path: &Path) -> Result<()>;
+}
+
 #[async_trait::async_trait]
 pub trait Fs: Send + Sync {
     async fn create_dir(&self, path: &Path) -> Result<()>;
@@ -79,7 +84,10 @@ pub trait Fs: Send + Sync {
         &self,
         path: &Path,
         latency: Duration,
-    ) -> Pin<Box<dyn Send + Stream<Item = Vec<PathBuf>>>>;
+    ) -> (
+        Pin<Box<dyn Send + Stream<Item = Vec<PathBuf>>>>,
+        Arc<dyn Watcher>,
+    );
 
     fn open_repo(&self, abs_dot_git: &Path) -> Option<Arc<dyn GitRepository>>;
     fn is_fake(&self) -> bool;
@@ -124,6 +132,13 @@ pub struct Metadata {
 pub struct RealFs {
     git_hosting_provider_registry: Arc<GitHostingProviderRegistry>,
     git_binary_path: Option<PathBuf>,
+}
+
+pub struct RealWatcher {
+    #[cfg(target_os = "linux")]
+    root_path: PathBuf,
+    #[cfg(target_os = "linux")]
+    fs_watcher: parking_lot::Mutex<notify::INotifyWatcher>,
 }
 
 impl RealFs {
@@ -409,7 +424,10 @@ impl Fs for RealFs {
         &self,
         path: &Path,
         latency: Duration,
-    ) -> Pin<Box<dyn Send + Stream<Item = Vec<PathBuf>>>> {
+    ) -> (
+        Pin<Box<dyn Send + Stream<Item = Vec<PathBuf>>>>,
+        Arc<dyn Watcher>,
+    ) {
         use fsevent::EventStream;
 
         let (tx, rx) = smol::channel::unbounded();
@@ -421,22 +439,76 @@ impl Fs for RealFs {
             });
         });
 
-        Box::pin(rx.chain(futures::stream::once(async move {
-            drop(handle);
-            vec![]
-        })))
+        (
+            Box::pin(rx.chain(futures::stream::once(async move {
+                drop(handle);
+                vec![]
+            }))),
+            Arc::new(RealWatcher {}),
+        )
     }
 
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(target_os = "linux")]
     async fn watch(
         &self,
         path: &Path,
         _latency: Duration,
-    ) -> Pin<Box<dyn Send + Stream<Item = Vec<PathBuf>>>> {
-        use notify::{event::EventKind, event::ModifyKind, Watcher};
-        // todo(linux): This spawns two threads, while the macOS impl
-        // only spawns one. Can we use a OnceLock or some such to make
-        // this better
+    ) -> (
+        Pin<Box<dyn Send + Stream<Item = Vec<PathBuf>>>>,
+        Arc<dyn Watcher>,
+    ) {
+        let (tx, rx) = smol::channel::unbounded();
+
+        let file_watcher = notify::recommended_watcher({
+            let tx = tx.clone();
+            move |event: Result<notify::Event, _>| {
+                if let Some(event) = event.log_err() {
+                    tx.try_send(event.paths).ok();
+                }
+            }
+        })
+        .expect("Could not start file watcher");
+
+        let watcher = Arc::new(RealWatcher {
+            root_path: path.to_path_buf(),
+            fs_watcher: parking_lot::Mutex::new(file_watcher),
+        });
+
+        watcher.add(path).ok(); // Ignore "file doesn't exist error" and rely on parent watcher.
+
+        // watch the parent dir so we can tell when settings.json is created
+        if let Some(parent) = path.parent() {
+            watcher.add(parent).log_err();
+        }
+
+        (
+            Box::pin(rx.filter_map({
+                let watcher = watcher.clone();
+                move |mut paths| {
+                    paths.retain(|path| path.starts_with(&watcher.root_path));
+                    async move {
+                        if paths.is_empty() {
+                            None
+                        } else {
+                            Some(paths)
+                        }
+                    }
+                }
+            })),
+            watcher,
+        )
+    }
+
+    #[cfg(target_os = "windows")]
+    async fn watch(
+        &self,
+        path: &Path,
+        _latency: Duration,
+    ) -> (
+        Pin<Box<dyn Send + Stream<Item = Vec<PathBuf>>>>,
+        Arc<dyn Watcher>,
+    ) {
+        use notify::Watcher;
 
         let (tx, rx) = smol::channel::unbounded();
 
@@ -452,56 +524,15 @@ impl Fs for RealFs {
 
         file_watcher
             .watch(path, notify::RecursiveMode::Recursive)
-            .ok(); // It's ok if this fails, the parent watcher will add it.
+            .log_err();
 
-        let mut parent_watcher = notify::recommended_watcher({
-            let watched_path = path.to_path_buf();
-            let tx = tx.clone();
-            move |event: Result<notify::Event, _>| {
-                if let Some(event) = event.ok() {
-                    if event.paths.into_iter().any(|path| *path == watched_path) {
-                        match event.kind {
-                            EventKind::Modify(ev) => {
-                                if matches!(ev, ModifyKind::Name(_)) {
-                                    file_watcher
-                                        .watch(
-                                            watched_path.as_path(),
-                                            notify::RecursiveMode::Recursive,
-                                        )
-                                        .log_err();
-                                    let _ = tx.try_send(vec![watched_path.clone()]).ok();
-                                }
-                            }
-                            EventKind::Create(_) => {
-                                file_watcher
-                                    .watch(watched_path.as_path(), notify::RecursiveMode::Recursive)
-                                    .log_err();
-                                let _ = tx.try_send(vec![watched_path.clone()]).ok();
-                            }
-                            EventKind::Remove(_) => {
-                                file_watcher.unwatch(&watched_path).log_err();
-                                let _ = tx.try_send(vec![watched_path.clone()]).ok();
-                            }
-                            _ => {}
-                        }
-                    }
-                }
-            }
-        })
-        .expect("Could not start file watcher");
-
-        parent_watcher
-            .watch(
-                path.parent()
-                    .expect("Watching root is probably not what you want"),
-                notify::RecursiveMode::NonRecursive,
-            )
-            .expect("Could not start watcher on parent directory");
-
-        Box::pin(rx.chain(futures::stream::once(async move {
-            drop(parent_watcher);
-            vec![]
-        })))
+        (
+            Box::pin(rx.chain(futures::stream::once(async move {
+                drop(file_watcher);
+                vec![]
+            }))),
+            Arc::new(RealWatcher {}),
+        )
     }
 
     fn open_repo(&self, dotgit_path: &Path) -> Option<Arc<dyn GitRepository>> {
@@ -557,6 +588,36 @@ impl Fs for RealFs {
     #[cfg(any(test, feature = "test-support"))]
     fn as_fake(&self) -> &FakeFs {
         panic!("called `RealFs::as_fake`")
+    }
+}
+
+#[cfg(not(target_os = "linux"))]
+impl Watcher for RealWatcher {
+    fn add(&self, _: &Path) -> Result<()> {
+        Ok(())
+    }
+
+    fn remove(&self, _: &Path) -> Result<()> {
+        Ok(())
+    }
+}
+
+#[cfg(target_os = "linux")]
+impl Watcher for RealWatcher {
+    fn add(&self, path: &Path) -> Result<()> {
+        use notify::Watcher;
+
+        self.fs_watcher
+            .lock()
+            .watch(path, notify::RecursiveMode::NonRecursive)?;
+        Ok(())
+    }
+
+    fn remove(&self, path: &Path) -> Result<()> {
+        use notify::Watcher;
+
+        self.fs_watcher.lock().unwatch(path)?;
+        Ok(())
     }
 }
 
@@ -1074,6 +1135,20 @@ impl FakeFsEntry {
 }
 
 #[cfg(any(test, feature = "test-support"))]
+struct FakeWatcher {}
+
+#[cfg(any(test, feature = "test-support"))]
+impl Watcher for FakeWatcher {
+    fn add(&self, _: &Path) -> Result<()> {
+        Ok(())
+    }
+
+    fn remove(&self, _: &Path) -> Result<()> {
+        Ok(())
+    }
+}
+
+#[cfg(any(test, feature = "test-support"))]
 #[async_trait::async_trait]
 impl Fs for FakeFs {
     async fn create_dir(&self, path: &Path) -> Result<()> {
@@ -1468,20 +1543,26 @@ impl Fs for FakeFs {
         &self,
         path: &Path,
         _: Duration,
-    ) -> Pin<Box<dyn Send + Stream<Item = Vec<PathBuf>>>> {
+    ) -> (
+        Pin<Box<dyn Send + Stream<Item = Vec<PathBuf>>>>,
+        Arc<dyn Watcher>,
+    ) {
         self.simulate_random_delay().await;
         let (tx, rx) = smol::channel::unbounded();
         self.state.lock().event_txs.push(tx);
         let path = path.to_path_buf();
         let executor = self.executor.clone();
-        Box::pin(futures::StreamExt::filter(rx, move |events| {
-            let result = events.iter().any(|evt_path| evt_path.starts_with(&path));
-            let executor = executor.clone();
-            async move {
-                executor.simulate_random_delay().await;
-                result
-            }
-        }))
+        (
+            Box::pin(futures::StreamExt::filter(rx, move |events| {
+                let result = events.iter().any(|evt_path| evt_path.starts_with(&path));
+                let executor = executor.clone();
+                async move {
+                    executor.simulate_random_delay().await;
+                    result
+                }
+            })),
+            Arc::new(FakeWatcher {}),
+        )
     }
 
     fn open_repo(&self, abs_dot_git: &Path) -> Option<Arc<dyn GitRepository>> {

@@ -155,7 +155,7 @@ impl AssistantPanel {
                 cx.new_view::<Self>(|cx| {
                     const CONVERSATION_WATCH_DURATION: Duration = Duration::from_millis(100);
                     let _watch_saved_conversations = cx.spawn(move |this, mut cx| async move {
-                        let mut events = fs
+                        let (mut events, _) = fs
                             .watch(&CONVERSATIONS_DIR, CONVERSATION_WATCH_DURATION)
                             .await;
                         while events.next().await.is_some() {
