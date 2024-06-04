@@ -2404,6 +2404,7 @@ dependencies = [
  "util",
  "uuid",
  "workspace",
+ "worktree",
 ]
 
 [[package]]
@@ -10380,7 +10381,6 @@ dependencies = [
  "ui",
  "util",
  "workspace",
- "worktree",
 ]
 
 [[package]]

@@ -1143,7 +1143,6 @@ mod tests {
     use project::{Entry, Project, ProjectPath, Worktree};
     use std::path::Path;
     use workspace::AppState;
-    use worktree::CreatedEntry;
 
     // Working directory calculation tests
 
@@ -1309,13 +1308,9 @@ mod tests {
                 })
             })
             .await
+            .unwrap()
+            .to_included()
             .unwrap();
-        let entry = match entry {
-            CreatedEntry::Included(entry) => entry,
-            CreatedEntry::Excluded { abs_path } => {
-                panic!("Unexpected to receive an excluded entry at {abs_path:?}")
-            }
-        };
 
         (wt, entry)
     }

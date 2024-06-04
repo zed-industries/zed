@@ -106,6 +106,16 @@ pub enum CreatedEntry {
     Excluded { abs_path: PathBuf },
 }
 
+#[cfg(any(test, feature = "test-support"))]
+impl CreatedEntry {
+    pub fn to_included(self) -> Option<Entry> {
+        match self {
+            CreatedEntry::Included(entry) => Some(entry),
+            CreatedEntry::Excluded { .. } => None,
+        }
+    }
+}
+
 pub struct LocalWorktree {
     snapshot: LocalSnapshot,
     scan_requests_tx: channel::Sender<ScanRequest>,

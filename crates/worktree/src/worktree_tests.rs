@@ -1,6 +1,6 @@
 use crate::{
-    worktree_settings::WorktreeSettings, CreatedEntry, Entry, EntryKind, Event, PathChange,
-    Snapshot, Worktree, WorktreeModelHandle,
+    worktree_settings::WorktreeSettings, Entry, EntryKind, Event, PathChange, Snapshot, Worktree,
+    WorktreeModelHandle,
 };
 use anyhow::Result;
 use client::Client;
@@ -1204,7 +1204,7 @@ async fn test_create_directory_during_initial_scan(cx: &mut TestAppContext) {
         snapshot
     });
 
-    let entry = match tree
+    let entry = tree
         .update(cx, |tree, cx| {
             tree.as_local_mut()
                 .unwrap()
@@ -1212,12 +1212,8 @@ async fn test_create_directory_during_initial_scan(cx: &mut TestAppContext) {
         })
         .await
         .unwrap()
-    {
-        CreatedEntry::Included(entry) => entry,
-        CreatedEntry::Excluded { abs_path } => {
-            panic!("Unexpected: created excluded path {abs_path:?}")
-        }
-    };
+        .to_included()
+        .unwrap();
     assert!(entry.is_dir());
 
     cx.executor().run_until_parked();
@@ -1265,7 +1261,7 @@ async fn test_create_dir_all_on_create_entry(cx: &mut TestAppContext) {
     .await
     .unwrap();
 
-    let entry = match tree_fake
+    let entry = tree_fake
         .update(cx, |tree, cx| {
             tree.as_local_mut()
                 .unwrap()
@@ -1273,12 +1269,8 @@ async fn test_create_dir_all_on_create_entry(cx: &mut TestAppContext) {
         })
         .await
         .unwrap()
-    {
-        CreatedEntry::Included(entry) => entry,
-        CreatedEntry::Excluded { abs_path } => {
-            panic!("Unexpected: created excluded path {abs_path:?}")
-        }
-    };
+        .to_included()
+        .unwrap();
     assert!(entry.is_file());
 
     cx.executor().run_until_parked();
@@ -1312,7 +1304,7 @@ async fn test_create_dir_all_on_create_entry(cx: &mut TestAppContext) {
     .await
     .unwrap();
 
-    let entry = match tree_real
+    let entry = tree_real
         .update(cx, |tree, cx| {
             tree.as_local_mut()
                 .unwrap()
@@ -1320,12 +1312,8 @@ async fn test_create_dir_all_on_create_entry(cx: &mut TestAppContext) {
         })
         .await
         .unwrap()
-    {
-        CreatedEntry::Included(entry) => entry,
-        CreatedEntry::Excluded { abs_path } => {
-            panic!("Unexpected: created excluded path {abs_path:?}")
-        }
-    };
+        .to_included()
+        .unwrap();
     assert!(entry.is_file());
 
     cx.executor().run_until_parked();
@@ -1336,7 +1324,7 @@ async fn test_create_dir_all_on_create_entry(cx: &mut TestAppContext) {
     });
 
     // Test smallest change
-    let entry = match tree_real
+    let entry = tree_real
         .update(cx, |tree, cx| {
             tree.as_local_mut()
                 .unwrap()
@@ -1344,12 +1332,8 @@ async fn test_create_dir_all_on_create_entry(cx: &mut TestAppContext) {
         })
         .await
         .unwrap()
-    {
-        CreatedEntry::Included(entry) => entry,
-        CreatedEntry::Excluded { abs_path } => {
-            panic!("Unexpected: created excluded path {abs_path:?}")
-        }
-    };
+        .to_included()
+        .unwrap();
     assert!(entry.is_file());
 
     cx.executor().run_until_parked();
@@ -1366,6 +1350,7 @@ async fn test_create_dir_all_on_create_entry(cx: &mut TestAppContext) {
         })
         .await
         .unwrap()
+        .to_included()
         .unwrap();
     assert!(entry.is_file());
 
@@ -1693,7 +1678,7 @@ fn randomly_mutate_worktree(
             );
             let task = worktree.rename_entry(entry.id, new_path, cx);
             cx.background_executor().spawn(async move {
-                task.await?.unwrap();
+                task.await?.to_included().unwrap();
                 Ok(())
             })
         }
