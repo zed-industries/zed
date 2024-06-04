@@ -63,6 +63,7 @@ impl MarkdownWriter {
         handlers.push(Box::new(HeadingHandler));
         handlers.push(Box::new(ListHandler));
         handlers.push(Box::new(RustdocChromeRemover));
+        handlers.push(Box::new(RustdocHeadingHandler));
         handlers.push(Box::new(RustdocCodeHandler));
         handlers.push(Box::new(RustdocTableHandler::new()));
         handlers.push(Box::new(RustdocItemHandler));
@@ -179,21 +180,15 @@ impl MarkdownWriter {
     }
 
     fn visit_text(&mut self, text: String, handlers: &mut [Box<dyn HandleTag>]) -> Result<()> {
-        let mut did_handle = false;
-
         for handler in handlers {
             match handler.handle_text(&text, self) {
-                HandlerOutcome::Handled => did_handle = true,
+                HandlerOutcome::Handled => return Ok(()),
                 HandlerOutcome::NoOp => {}
             }
         }
 
-        if did_handle {
-            return Ok(());
-        }
-
         let text = text
-            .trim_matches(|char| char == '\n' || char == '\r' || char == '§')
+            .trim_matches(|char| char == '\n' || char == '\r')
             .replace('\n', " ");
 
         self.push_str(&text);
@@ -302,6 +297,34 @@ impl HandleTag for ListHandler {
             "li" => writer.push_newline(),
             _ => {}
         }
+    }
+}
+
+struct RustdocHeadingHandler;
+
+impl HandleTag for RustdocHeadingHandler {
+    fn should_handle(&self, _tag: &str) -> bool {
+        // We're only handling text, so we don't need to visit any tags.
+        false
+    }
+
+    fn handle_text(&mut self, text: &str, writer: &mut MarkdownWriter) -> HandlerOutcome {
+        if writer.is_inside("h1")
+            || writer.is_inside("h2")
+            || writer.is_inside("h3")
+            || writer.is_inside("h4")
+            || writer.is_inside("h5")
+            || writer.is_inside("h6")
+        {
+            let text = text
+                .trim_matches(|char| char == '\n' || char == '\r' || char == '§')
+                .replace('\n', " ");
+            writer.push_str(&text);
+
+            return HandlerOutcome::Handled;
+        }
+
+        HandlerOutcome::NoOp
     }
 }
 
