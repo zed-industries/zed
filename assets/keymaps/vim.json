@@ -379,8 +379,8 @@
       "r": ["vim::PushOperator", "Replace"],
       "s": "vim::Substitute",
       "shift-s": "vim::SubstituteLine",
-      "> >": "vim::Indent",
-      "< <": "vim::Outdent",
+      ">": ["vim::PushOperator", "Indent"],
+      "<": ["vim::PushOperator", "Outdent"],
       "ctrl-pagedown": "pane::ActivateNextItem",
       "ctrl-pageup": "pane::ActivatePrevItem",
       // tree-sitter related commands
@@ -457,6 +457,18 @@
     "context": "Editor && vim_operator == ys",
     "bindings": {
       "s": "vim::CurrentLine"
+    }
+  },
+  {
+    "context": "Editor && vim_operator == >",
+    "bindings": {
+      ">": "vim::CurrentLine"
+    }
+  },
+  {
+    "context": "Editor && vim_operator == <",
+    "bindings": {
+      "<": "vim::CurrentLine"
     }
   },
   {
