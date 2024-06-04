@@ -1252,8 +1252,7 @@ impl CompletionsMenu {
             }
         }
 
-        completion.label.text = completion_label_text.clone();
-
+        completion.label.text.clone_from(&completion_label_text);
         //recaulculate the highlighting with the new changes
         if !inline_documentation_exists {
             completion.label.filter_range.end = completion.label.filter_range.end.min(primary_end);
