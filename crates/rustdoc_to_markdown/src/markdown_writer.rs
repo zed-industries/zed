@@ -62,6 +62,7 @@ impl MarkdownWriter {
         let mut handlers: Vec<Box<dyn HandleTag>> = Vec::new();
         handlers.push(Box::new(HeadingHandler));
         handlers.push(Box::new(ListHandler));
+        handlers.push(Box::new(RustdocCodeHandler));
         handlers.push(Box::new(RustdocTableHandler::new()));
         handlers.push(Box::new(RustdocItemHandler));
 
@@ -133,15 +134,6 @@ impl MarkdownWriter {
         tag: &HtmlElement,
         handlers: &mut [Box<dyn HandleTag>],
     ) -> StartTagOutcome {
-        for handler in handlers {
-            if handler.should_handle(tag.tag.as_str()) {
-                match handler.handle_tag_start(tag, self) {
-                    StartTagOutcome::Continue => {}
-                    StartTagOutcome::Skip => return StartTagOutcome::Skip,
-                }
-            }
-        }
-
         if tag.is_inline() && self.is_inside("p") {
             if let Some(parent) = self.current_element_stack.iter().last() {
                 if !parent.is_inline() {
@@ -152,34 +144,20 @@ impl MarkdownWriter {
             }
         }
 
+        for handler in handlers {
+            if handler.should_handle(tag.tag.as_str()) {
+                match handler.handle_tag_start(tag, self) {
+                    StartTagOutcome::Continue => {}
+                    StartTagOutcome::Skip => return StartTagOutcome::Skip,
+                }
+            }
+        }
+
         match tag.tag.as_str() {
             "head" | "script" | "nav" => return StartTagOutcome::Skip,
             "p" => self.push_blank_line(),
             "strong" => self.push_str("**"),
             "em" => self.push_str("_"),
-            "code" => {
-                if !self.is_inside("pre") {
-                    self.push_str("`");
-                }
-            }
-            "pre" => {
-                let classes = tag.classes();
-                let is_rust = classes.iter().any(|class| class == "rust");
-                let language = is_rust
-                    .then(|| "rs")
-                    .or_else(|| {
-                        classes.iter().find_map(|class| {
-                            if let Some((_, language)) = class.split_once("language-") {
-                                Some(language.trim())
-                            } else {
-                                None
-                            }
-                        })
-                    })
-                    .unwrap_or("");
-
-                self.push_str(&format!("\n\n```{language}\n"));
-            }
             "summary" => {
                 if tag.has_class("hideme") {
                     return StartTagOutcome::Skip;
@@ -212,12 +190,6 @@ impl MarkdownWriter {
         match tag.tag.as_str() {
             "strong" => self.push_str("**"),
             "em" => self.push_str("_"),
-            "code" => {
-                if !self.is_inside("pre") {
-                    self.push_str("`");
-                }
-            }
-            "pre" => self.push_str("\n```\n"),
             _ => {}
         }
     }
@@ -331,6 +303,64 @@ impl HandleTag for ListHandler {
         match tag.tag.as_str() {
             "ul" | "ol" => writer.push_newline(),
             "li" => writer.push_newline(),
+            _ => {}
+        }
+    }
+}
+
+struct RustdocCodeHandler;
+
+impl HandleTag for RustdocCodeHandler {
+    fn should_handle(&self, tag: &str) -> bool {
+        match tag {
+            "pre" | "code" => true,
+            _ => false,
+        }
+    }
+
+    fn handle_tag_start(
+        &mut self,
+        tag: &HtmlElement,
+        writer: &mut MarkdownWriter,
+    ) -> StartTagOutcome {
+        match tag.tag.as_str() {
+            "code" => {
+                if !writer.is_inside("pre") {
+                    writer.push_str("`");
+                }
+            }
+            "pre" => {
+                let classes = tag.classes();
+                let is_rust = classes.iter().any(|class| class == "rust");
+                let language = is_rust
+                    .then(|| "rs")
+                    .or_else(|| {
+                        classes.iter().find_map(|class| {
+                            if let Some((_, language)) = class.split_once("language-") {
+                                Some(language.trim())
+                            } else {
+                                None
+                            }
+                        })
+                    })
+                    .unwrap_or("");
+
+                writer.push_str(&format!("\n\n```{language}\n"));
+            }
+            _ => {}
+        }
+
+        StartTagOutcome::Continue
+    }
+
+    fn handle_tag_end(&mut self, tag: &HtmlElement, writer: &mut MarkdownWriter) {
+        match tag.tag.as_str() {
+            "code" => {
+                if !writer.is_inside("pre") {
+                    writer.push_str("`");
+                }
+            }
+            "pre" => writer.push_str("\n```\n"),
             _ => {}
         }
     }
