@@ -230,6 +230,7 @@ dependencies = [
  "schemars",
  "serde",
  "serde_json",
+ "strum",
  "tokio",
 ]
 
@@ -338,6 +339,7 @@ dependencies = [
  "anthropic",
  "anyhow",
  "assistant_slash_command",
+ "async-watch",
  "cargo_toml",
  "chrono",
  "client",
@@ -351,7 +353,7 @@ dependencies = [
  "futures 0.3.28",
  "fuzzy",
  "gpui",
- "gray_matter",
+ "heed",
  "http 0.1.0",
  "indoc",
  "language",
@@ -366,6 +368,7 @@ dependencies = [
  "rand 0.8.5",
  "regex",
  "rope",
+ "rustdoc_to_markdown",
  "schemars",
  "search",
  "semantic_index",
@@ -374,6 +377,7 @@ dependencies = [
  "settings",
  "smol",
  "strsim 0.11.1",
+ "strum",
  "telemetry_events",
  "theme",
  "tiktoken-rs",
@@ -818,6 +822,15 @@ dependencies = [
  "log",
  "pin-project-lite",
  "tungstenite 0.16.0",
+]
+
+[[package]]
+name = "async-watch"
+version = "0.3.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a078faf4e27c0c6cc0efb20e5da59dcccc04968ebf2801d8e0b2195124cdcdb2"
+dependencies = [
+ "event-listener 2.5.3",
 ]
 
 [[package]]
@@ -2391,6 +2404,7 @@ dependencies = [
  "util",
  "uuid",
  "workspace",
+ "worktree",
 ]
 
 [[package]]
@@ -3389,7 +3403,7 @@ version = "0.5.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "330c60081dcc4c72131f8eb70510f1ac07223e5d4163db481a04a0befcffa412"
 dependencies = [
- "libloading 0.7.4",
+ "libloading 0.8.0",
 ]
 
 [[package]]
@@ -4224,6 +4238,7 @@ name = "fs"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "ashpd",
  "async-tar",
  "async-trait",
  "cocoa",
@@ -4803,18 +4818,6 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 1.0.109",
-]
-
-[[package]]
-name = "gray_matter"
-version = "0.2.7"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7188a951c53316d94711b3d944c28cf79968685d295cbe782494e8811fc75554"
-dependencies = [
- "serde",
- "serde_json",
- "toml 0.5.11",
- "yaml-rust",
 ]
 
 [[package]]
@@ -5972,12 +5975,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "linked-hash-map"
-version = "0.5.6"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0717cef1bc8b636c6e1c1bbdefc09e6322da8a9321966e8928ef80d20f7f770f"
-
-[[package]]
 name = "linkify"
 version = "0.10.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -7002,6 +6999,7 @@ dependencies = [
  "schemars",
  "serde",
  "serde_json",
+ "strum",
 ]
 
 [[package]]
@@ -7850,6 +7848,7 @@ dependencies = [
  "unicase",
  "util",
  "workspace",
+ "worktree",
 ]
 
 [[package]]
@@ -8659,6 +8658,8 @@ dependencies = [
  "html5ever",
  "indoc",
  "markup5ever_rcdom",
+ "pretty_assertions",
+ "regex",
 ]
 
 [[package]]
@@ -13094,15 +13095,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "yaml-rust"
-version = "0.4.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "56c1936c4cc7a1c9ab21a1ebb602eb942ba868cbd44a99cb7cdc5892335e1c85"
-dependencies = [
- "linked-hash-map",
-]
-
-[[package]]
 name = "yansi"
 version = "0.5.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -13328,7 +13320,7 @@ dependencies = [
 
 [[package]]
 name = "zed_elixir"
-version = "0.0.4"
+version = "0.0.5"
 dependencies = [
  "zed_extension_api 0.0.6",
 ]
@@ -13427,7 +13419,7 @@ dependencies = [
 
 [[package]]
 name = "zed_php"
-version = "0.0.5"
+version = "0.0.6"
 dependencies = [
  "zed_extension_api 0.0.4",
 ]

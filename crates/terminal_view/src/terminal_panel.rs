@@ -221,7 +221,9 @@ impl TerminalPanel {
 
         let (panel, pane, items) = workspace.update(&mut cx, |workspace, cx| {
             let panel = cx.new_view(|cx| TerminalPanel::new(workspace, cx));
-            let items = if let Some(serialized_panel) = serialized_panel.as_ref() {
+            let items = if let Some((serialized_panel, database_id)) =
+                serialized_panel.as_ref().zip(workspace.database_id())
+            {
                 panel.update(cx, |panel, cx| {
                     cx.notify();
                     panel.height = serialized_panel.height.map(|h| h.round());
@@ -234,7 +236,7 @@ impl TerminalPanel {
                                 TerminalView::deserialize(
                                     workspace.project().clone(),
                                     workspace.weak_handle(),
-                                    workspace.database_id(),
+                                    database_id,
                                     *item_id,
                                     cx,
                                 )

@@ -29,13 +29,9 @@ impl DebouncedDelay {
         let (sender, mut receiver) = oneshot::channel::<()>();
         self.cancel_channel = Some(sender);
 
-        let previous_task = self.task.take();
+        drop(self.task.take());
         self.task = Some(cx.spawn(move |model, mut cx| async move {
             let mut timer = cx.background_executor().timer(delay).fuse();
-            if let Some(previous_task) = previous_task {
-                previous_task.await;
-            }
-
             futures::select_biased! {
                 _ = receiver => return,
                 _ = timer => {}

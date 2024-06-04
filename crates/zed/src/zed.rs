@@ -76,8 +76,11 @@ actions!(
 );
 
 pub fn init(cx: &mut AppContext) {
+    #[cfg(target_os = "macos")]
     cx.on_action(|_: &Hide, cx| cx.hide());
+    #[cfg(target_os = "macos")]
     cx.on_action(|_: &HideOthers, cx| cx.hide_other_apps());
+    #[cfg(target_os = "macos")]
     cx.on_action(|_: &ShowAll, cx| cx.unhide_other_apps());
     cx.on_action(quit);
 }
@@ -3043,8 +3046,14 @@ mod tests {
     fn test_bundled_settings_and_themes(cx: &mut AppContext) {
         cx.text_system()
             .add_fonts(vec![
-                Assets.load("fonts/zed-sans/zed-sans-extended.ttf").unwrap(),
-                Assets.load("fonts/zed-mono/zed-mono-extended.ttf").unwrap(),
+                Assets
+                    .load("fonts/zed-sans/zed-sans-extended.ttf")
+                    .unwrap()
+                    .unwrap(),
+                Assets
+                    .load("fonts/zed-mono/zed-mono-extended.ttf")
+                    .unwrap()
+                    .unwrap(),
             ])
             .unwrap();
         let themes = ThemeRegistry::default();

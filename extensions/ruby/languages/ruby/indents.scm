@@ -2,6 +2,7 @@
 (class "end" @end) @indent
 (module "end" @end) @indent
 (begin "end" @end) @indent
+(singleton_method "end" @end) @indent
 (do_block "end" @end) @indent
 
 (then) @indent

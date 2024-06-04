@@ -46,6 +46,9 @@ notify = "6.1.1"
 [target.'cfg(target_os = "windows")'.dependencies]
 windows.workspace = true
 
+[target.'cfg(target_os = "linux")'.dependencies]
+ashpd.workspace = true
+
 [dev-dependencies]
 gpui = { workspace = true, features = ["test-support"] }
 

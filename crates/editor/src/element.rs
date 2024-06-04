@@ -38,7 +38,7 @@ use gpui::{
 };
 use itertools::Itertools;
 use language::language_settings::{
-    IndentGuideBackgroundColoring, IndentGuideColoring, ShowWhitespaceSetting,
+    IndentGuideBackgroundColoring, IndentGuideColoring, IndentGuideSettings, ShowWhitespaceSetting,
 };
 use lsp::DiagnosticSeverity;
 use multi_buffer::{Anchor, MultiBufferPoint, MultiBufferRow};
@@ -1125,9 +1125,7 @@ impl EditorElement {
                     ix as f32 * line_height - (scroll_pixel_position.y % line_height),
                 );
                 let centering_offset = point(
-                    (gutter_dimensions.right_padding + gutter_dimensions.margin
-                        - fold_indicator_size.width)
-                        / 2.,
+                    (gutter_dimensions.fold_area_width() - fold_indicator_size.width) / 2.,
                     (line_height - fold_indicator_size.height) / 2.,
                 );
                 let origin = gutter_hitbox.origin + position + centering_offset;
@@ -1438,6 +1436,7 @@ impl EditorElement {
                             single_indent_width,
                             depth: indent_guide.depth,
                             active: active_indent_guide_indices.contains(&i),
+                            settings: indent_guide.settings,
                         })
                     } else {
                         None
@@ -2765,14 +2764,6 @@ impl EditorElement {
             return;
         };
 
-        let settings = self
-            .editor
-            .read(cx)
-            .buffer()
-            .read(cx)
-            .settings_at(0, cx)
-            .indent_guides;
-
         let faded_color = |color: Hsla, alpha: f32| {
             let mut faded = color;
             faded.a = alpha;
@@ -2781,6 +2772,7 @@ impl EditorElement {
 
         for indent_guide in indent_guides {
             let indent_accent_colors = cx.theme().accents().color_for_index(indent_guide.depth);
+            let settings = indent_guide.settings;
 
             // TODO fixed for now, expose them through themes later
             const INDENT_AWARE_ALPHA: f32 = 0.2;
@@ -2788,7 +2780,7 @@ impl EditorElement {
             const INDENT_AWARE_BACKGROUND_ALPHA: f32 = 0.1;
             const INDENT_AWARE_BACKGROUND_ACTIVE_ALPHA: f32 = 0.2;
 
-            let line_color = match (&settings.coloring, indent_guide.active) {
+            let line_color = match (settings.coloring, indent_guide.active) {
                 (IndentGuideColoring::Disabled, _) => None,
                 (IndentGuideColoring::Fixed, false) => {
                     Some(cx.theme().colors().editor_indent_guide)
@@ -2804,7 +2796,7 @@ impl EditorElement {
                 }
             };
 
-            let background_color = match (&settings.background_coloring, indent_guide.active) {
+            let background_color = match (settings.background_coloring, indent_guide.active) {
                 (IndentGuideBackgroundColoring::Disabled, _) => None,
                 (IndentGuideBackgroundColoring::IndentAware, false) => Some(faded_color(
                     indent_accent_colors,
@@ -4670,7 +4662,7 @@ impl Element for EditorElement {
                             &mut scroll_width,
                             &gutter_dimensions,
                             em_width,
-                            gutter_dimensions.width + gutter_dimensions.margin,
+                            gutter_dimensions.full_width(),
                             line_height,
                             &line_layouts,
                             cx,
@@ -5330,6 +5322,7 @@ pub struct IndentGuideLayout {
     single_indent_width: Pixels,
     depth: u32,
     active: bool,
+    settings: IndentGuideSettings,
 }
 
 pub struct CursorLayout {

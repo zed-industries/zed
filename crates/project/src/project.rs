@@ -68,7 +68,7 @@ use project_settings::{LspSettings, ProjectSettings};
 use rand::prelude::*;
 use search_history::SearchHistory;
 use snippet::Snippet;
-use worktree::LocalSnapshot;
+use worktree::{CreatedEntry, LocalSnapshot};
 
 use http::{HttpClient, Url};
 use rpc::{ErrorCode, ErrorExt as _};
@@ -1414,10 +1414,12 @@ impl Project {
         project_path: impl Into<ProjectPath>,
         is_directory: bool,
         cx: &mut ModelContext<Self>,
-    ) -> Task<Result<Option<Entry>>> {
+    ) -> Task<Result<CreatedEntry>> {
         let project_path = project_path.into();
         let Some(worktree) = self.worktree_for_id(project_path.worktree_id, cx) else {
-            return Task::ready(Ok(None));
+            return Task::ready(Err(anyhow!(format!(
+                "No worktree for path {project_path:?}"
+            ))));
         };
         if self.is_local() {
             worktree.update(cx, |worktree, cx| {
@@ -1448,8 +1450,15 @@ impl Project {
                             )
                         })?
                         .await
-                        .map(Some),
-                    None => Ok(None),
+                        .map(CreatedEntry::Included),
+                    None => {
+                        let abs_path = worktree.update(&mut cx, |worktree, _| {
+                            worktree
+                                .absolutize(&project_path.path)
+                                .with_context(|| format!("absolutizing {project_path:?}"))
+                        })??;
+                        Ok(CreatedEntry::Excluded { abs_path })
+                    }
                 }
             })
         }
@@ -1506,9 +1515,9 @@ impl Project {
         entry_id: ProjectEntryId,
         new_path: impl Into<Arc<Path>>,
         cx: &mut ModelContext<Self>,
-    ) -> Task<Result<Option<Entry>>> {
+    ) -> Task<Result<CreatedEntry>> {
         let Some(worktree) = self.worktree_for_entry(entry_id, cx) else {
-            return Task::ready(Ok(None));
+            return Task::ready(Err(anyhow!(format!("No worktree for entry {entry_id:?}"))));
         };
         let new_path = new_path.into();
         if self.is_local() {
@@ -1540,8 +1549,15 @@ impl Project {
                             )
                         })?
                         .await
-                        .map(Some),
-                    None => Ok(None),
+                        .map(CreatedEntry::Included),
+                    None => {
+                        let abs_path = worktree.update(&mut cx, |worktree, _| {
+                            worktree
+                                .absolutize(&new_path)
+                                .with_context(|| format!("absolutizing {new_path:?}"))
+                        })??;
+                        Ok(CreatedEntry::Excluded { abs_path })
+                    }
                 }
             })
         }
@@ -4989,21 +5005,20 @@ impl Project {
                     FormatOnSave::On | FormatOnSave::Off,
                 )
                 | (_, FormatOnSave::External { command, arguments }) => {
-                    if let Some(buffer_abs_path) = buffer_abs_path {
-                        format_operation = Self::format_via_external_command(
-                            buffer,
-                            buffer_abs_path,
-                            command,
-                            arguments,
-                            &mut cx,
-                        )
-                        .await
-                        .context(format!(
-                            "failed to format via external command {:?}",
-                            command
-                        ))?
-                        .map(FormatOperation::External);
-                    }
+                    let buffer_abs_path = buffer_abs_path.as_ref().map(|path| path.as_path());
+                    format_operation = Self::format_via_external_command(
+                        buffer,
+                        buffer_abs_path,
+                        command,
+                        arguments,
+                        &mut cx,
+                    )
+                    .await
+                    .context(format!(
+                        "failed to format via external command {:?}",
+                        command
+                    ))?
+                    .map(FormatOperation::External);
                 }
                 (Formatter::Auto, FormatOnSave::On | FormatOnSave::Off) => {
                     let prettier = if prettier_settings.allowed {
@@ -5142,7 +5157,7 @@ impl Project {
 
     async fn format_via_external_command(
         buffer: &Model<Buffer>,
-        buffer_abs_path: &Path,
+        buffer_abs_path: Option<&Path>,
         command: &str,
         arguments: &[String],
         cx: &mut AsyncAppContext,
@@ -5157,46 +5172,51 @@ impl Project {
             Some(worktree_path)
         })?;
 
+        let mut child = smol::process::Command::new(command);
+
         if let Some(working_dir_path) = working_dir_path {
-            let mut child =
-                smol::process::Command::new(command)
-                    .args(arguments.iter().map(|arg| {
-                        arg.replace("{buffer_path}", &buffer_abs_path.to_string_lossy())
-                    }))
-                    .current_dir(&working_dir_path)
-                    .stdin(smol::process::Stdio::piped())
-                    .stdout(smol::process::Stdio::piped())
-                    .stderr(smol::process::Stdio::piped())
-                    .spawn()?;
-            let stdin = child
-                .stdin
-                .as_mut()
-                .ok_or_else(|| anyhow!("failed to acquire stdin"))?;
-            let text = buffer.update(cx, |buffer, _| buffer.as_rope().clone())?;
-            for chunk in text.chunks() {
-                stdin.write_all(chunk.as_bytes()).await?;
-            }
-            stdin.flush().await?;
-
-            let output = child.output().await?;
-            if !output.status.success() {
-                return Err(anyhow!(
-                    "command failed with exit code {:?}:\nstdout: {}\nstderr: {}",
-                    output.status.code(),
-                    String::from_utf8_lossy(&output.stdout),
-                    String::from_utf8_lossy(&output.stderr),
-                ));
-            }
-
-            let stdout = String::from_utf8(output.stdout)?;
-            Ok(Some(
-                buffer
-                    .update(cx, |buffer, cx| buffer.diff(stdout, cx))?
-                    .await,
-            ))
-        } else {
-            Ok(None)
+            child.current_dir(working_dir_path);
         }
+
+        let mut child = child
+            .args(arguments.iter().map(|arg| {
+                if let Some(buffer_abs_path) = buffer_abs_path {
+                    arg.replace("{buffer_path}", &buffer_abs_path.to_string_lossy())
+                } else {
+                    arg.replace("{buffer_path}", "Untitled")
+                }
+            }))
+            .stdin(smol::process::Stdio::piped())
+            .stdout(smol::process::Stdio::piped())
+            .stderr(smol::process::Stdio::piped())
+            .spawn()?;
+
+        let stdin = child
+            .stdin
+            .as_mut()
+            .ok_or_else(|| anyhow!("failed to acquire stdin"))?;
+        let text = buffer.update(cx, |buffer, _| buffer.as_rope().clone())?;
+        for chunk in text.chunks() {
+            stdin.write_all(chunk.as_bytes()).await?;
+        }
+        stdin.flush().await?;
+
+        let output = child.output().await?;
+        if !output.status.success() {
+            return Err(anyhow!(
+                "command failed with exit code {:?}:\nstdout: {}\nstderr: {}",
+                output.status.code(),
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr),
+            ));
+        }
+
+        let stdout = String::from_utf8(output.stdout)?;
+        Ok(Some(
+            buffer
+                .update(cx, |buffer, cx| buffer.diff(stdout, cx))?
+                .await,
+        ))
     }
 
     #[inline(never)]
@@ -7856,10 +7876,7 @@ impl Project {
                                     None
                                 } else {
                                     let relative_path = repo.relativize(&snapshot, &path).ok()?;
-                                    local_repo_entry
-                                        .repo()
-                                        .lock()
-                                        .load_index_text(&relative_path)
+                                    local_repo_entry.repo().load_index_text(&relative_path)
                                 };
                                 Some((buffer, base_text))
                             }
@@ -8194,7 +8211,7 @@ impl Project {
         &self,
         project_path: &ProjectPath,
         cx: &AppContext,
-    ) -> Option<Arc<Mutex<dyn GitRepository>>> {
+    ) -> Option<Arc<dyn GitRepository>> {
         self.worktree_for_id(project_path.worktree_id, cx)?
             .read(cx)
             .as_local()?
@@ -8202,10 +8219,7 @@ impl Project {
             .local_git_repo(&project_path.path)
     }
 
-    pub fn get_first_worktree_root_repo(
-        &self,
-        cx: &AppContext,
-    ) -> Option<Arc<Mutex<dyn GitRepository>>> {
+    pub fn get_first_worktree_root_repo(&self, cx: &AppContext) -> Option<Arc<dyn GitRepository>> {
         let worktree = self.visible_worktrees(cx).next()?.read(cx).as_local()?;
         let root_entry = worktree.root_git_entry()?;
 
@@ -8255,8 +8269,7 @@ impl Project {
 
             cx.background_executor().spawn(async move {
                 let (repo, relative_path, content) = blame_params?;
-                let lock = repo.lock();
-                lock.blame(&relative_path, content)
+                repo.blame(&relative_path, content)
                     .with_context(|| format!("Failed to blame {:?}", relative_path.0))
             })
         } else {
@@ -8620,7 +8633,10 @@ impl Project {
             })?
             .await?;
         Ok(proto::ProjectEntryResponse {
-            entry: entry.as_ref().map(|e| e.into()),
+            entry: match &entry {
+                CreatedEntry::Included(entry) => Some(entry.into()),
+                CreatedEntry::Excluded { .. } => None,
+            },
             worktree_scan_id: worktree_scan_id as u64,
         })
     }
@@ -8647,7 +8663,10 @@ impl Project {
             })?
             .await?;
         Ok(proto::ProjectEntryResponse {
-            entry: entry.as_ref().map(|e| e.into()),
+            entry: match &entry {
+                CreatedEntry::Included(entry) => Some(entry.into()),
+                CreatedEntry::Excluded { .. } => None,
+            },
             worktree_scan_id: worktree_scan_id as u64,
         })
     }

@@ -277,6 +277,7 @@ messages!(
     (ShareProjectResponse, Foreground),
     (ShowContacts, Foreground),
     (StartLanguageServer, Foreground),
+    (SubscribeToChannels, Foreground),
     (SynchronizeBuffers, Foreground),
     (SynchronizeBuffersResponse, Foreground),
     (TaskContextForLocation, Background),

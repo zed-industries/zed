@@ -15,18 +15,17 @@
 pub mod actions;
 mod blame_entry_tooltip;
 mod blink_manager;
+mod debounced_delay;
 pub mod display_map;
 mod editor_settings;
 mod element;
-mod hunk_diff;
-mod inlay_hint_cache;
-
-mod debounced_delay;
 mod git;
 mod highlight_matching_bracket;
 mod hover_links;
 mod hover_popover;
+mod hunk_diff;
 mod indent_guides;
+mod inlay_hint_cache;
 mod inline_completion_provider;
 pub mod items;
 mod mouse_context_menu;
@@ -69,10 +68,10 @@ use gpui::{
     div, impl_actions, point, prelude::*, px, relative, size, uniform_list, Action, AnyElement,
     AppContext, AsyncWindowContext, AvailableSpace, BackgroundExecutor, Bounds, ClipboardItem,
     Context, DispatchPhase, ElementId, EventEmitter, FocusHandle, FocusableView, FontId, FontStyle,
-    FontWeight, HighlightStyle, Hsla, InteractiveText, KeyContext, Model, MouseButton, PaintQuad,
-    ParentElement, Pixels, Render, SharedString, Size, StrikethroughStyle, Styled, StyledText,
-    Subscription, Task, TextStyle, UnderlineStyle, UniformListScrollHandle, View, ViewContext,
-    ViewInputHandler, VisualContext, WeakView, WhiteSpace, WindowContext,
+    FontWeight, HighlightStyle, Hsla, InteractiveText, KeyContext, ListSizingBehavior, Model,
+    MouseButton, PaintQuad, ParentElement, Pixels, Render, SharedString, Size, StrikethroughStyle,
+    Styled, StyledText, Subscription, Task, TextStyle, UnderlineStyle, UniformListScrollHandle,
+    View, ViewContext, ViewInputHandler, VisualContext, WeakView, WhiteSpace, WindowContext,
 };
 use highlight_matching_bracket::refresh_matching_bracket_highlights;
 use hover_popover::{hide_hover, HoverState};
@@ -486,7 +485,7 @@ pub struct Editor {
     current_line_highlight: CurrentLineHighlight,
     collapse_matches: bool,
     autoindent_mode: Option<AutoindentMode>,
-    workspace: Option<(WeakView<Workspace>, WorkspaceId)>,
+    workspace: Option<(WeakView<Workspace>, Option<WorkspaceId>)>,
     keymap_context_layers: BTreeMap<TypeId, KeyContext>,
     input_enabled: bool,
     use_modal_editing: bool,
@@ -555,6 +554,20 @@ pub struct GutterDimensions {
     pub width: Pixels,
     pub margin: Pixels,
     pub git_blame_entries_width: Option<Pixels>,
+}
+
+impl GutterDimensions {
+    /// The full width of the space taken up by the gutter.
+    pub fn full_width(&self) -> Pixels {
+        self.margin + self.width
+    }
+
+    /// The width of the space reserved for the fold indicators,
+    /// use alongside 'justify_end' and `gutter_width` to
+    /// right align content with the line numbers
+    pub fn fold_area_width(&self) -> Pixels {
+        self.margin + self.right_padding
+    }
 }
 
 impl Default for GutterDimensions {
@@ -1116,7 +1129,8 @@ impl CompletionsMenu {
         .occlude()
         .max_h(max_height)
         .track_scroll(self.scroll_handle.clone())
-        .with_width_from_item(widest_completion_ix);
+        .with_width_from_item(widest_completion_ix)
+        .with_sizing_behavior(ListSizingBehavior::Infer);
 
         Popover::new()
             .child(list)
@@ -1463,6 +1477,7 @@ impl CodeActionsMenu {
                 })
                 .map(|(ix, _)| ix),
         )
+        .with_sizing_behavior(ListSizingBehavior::Infer)
         .into_any_element();
 
         let cursor_position = if let Some(row) = self.deployed_from_indicator {
@@ -1700,6 +1715,12 @@ impl Editor {
         cx.on_focus(&focus_handle, Self::handle_focus).detach();
         cx.on_blur(&focus_handle, Self::handle_blur).detach();
 
+        let show_indent_guides = if mode == EditorMode::SingleLine {
+            Some(false)
+        } else {
+            None
+        };
+
         let mut this = Self {
             overlay_map: Default::default(),
             focus_handle,
@@ -1730,7 +1751,7 @@ impl Editor {
             show_git_diff_gutter: None,
             show_code_actions: None,
             show_wrap_guides: None,
-            show_indent_guides: None,
+            show_indent_guides,
             placeholder_text: None,
             highlight_order: 0,
             highlighted_rows: HashMap::default(),
@@ -3765,7 +3786,7 @@ impl Editor {
         }))
     }
 
-    fn show_completions(&mut self, _: &ShowCompletions, cx: &mut ViewContext<Self>) {
+    pub fn show_completions(&mut self, _: &ShowCompletions, cx: &mut ViewContext<Self>) {
         if self.pending_rename.is_some() {
             return;
         }
@@ -3788,6 +3809,9 @@ impl Editor {
         let id = post_inc(&mut self.next_completion_id);
         let task = cx.spawn(|this, mut cx| {
             async move {
+                this.update(&mut cx, |this, _| {
+                    this.completion_tasks.retain(|(task_id, _)| *task_id >= id);
+                })?;
                 let completions = completions.await.log_err();
                 let menu = if let Some(completions) = completions {
                     let mut menu = CompletionsMenu {
@@ -3826,7 +3850,6 @@ impl Editor {
                             let delay_ms = EditorSettings::get_global(cx)
                                 .completion_documentation_secondary_query_debounce;
                             let delay = Duration::from_millis(delay_ms);
-
                             editor
                                 .completion_documentation_pre_resolve_debounce
                                 .fire_new(delay, cx, |editor, cx| {
@@ -3847,8 +3870,6 @@ impl Editor {
                 };
 
                 this.update(&mut cx, |this, cx| {
-                    this.completion_tasks.retain(|(task_id, _)| *task_id >= id);
-
                     let mut context_menu = this.context_menu.write();
                     match context_menu.as_ref() {
                         None => {}
@@ -9791,19 +9812,19 @@ impl Editor {
     }
 
     pub fn toggle_indent_guides(&mut self, _: &ToggleIndentGuides, cx: &mut ViewContext<Self>) {
-        let currently_enabled = self.should_show_indent_guides(cx);
-        self.show_indent_guides = Some(!currently_enabled);
-        cx.notify();
-    }
-
-    fn should_show_indent_guides(&self, cx: &mut ViewContext<Self>) -> bool {
-        self.show_indent_guides.unwrap_or_else(|| {
+        let currently_enabled = self.should_show_indent_guides().unwrap_or_else(|| {
             self.buffer
                 .read(cx)
                 .settings_at(0, cx)
                 .indent_guides
                 .enabled
-        })
+        });
+        self.show_indent_guides = Some(!currently_enabled);
+        cx.notify();
+    }
+
+    fn should_show_indent_guides(&self) -> Option<bool> {
+        self.show_indent_guides
     }
 
     pub fn toggle_line_numbers(&mut self, _: &ToggleLineNumbers, cx: &mut ViewContext<Self>) {
@@ -9978,10 +9999,33 @@ impl Editor {
     }
 
     fn get_permalink_to_line(&mut self, cx: &mut ViewContext<Self>) -> Result<url::Url> {
-        let (path, repo) = maybe!({
+        let (path, selection, repo) = maybe!({
             let project_handle = self.project.as_ref()?.clone();
             let project = project_handle.read(cx);
-            let buffer = self.buffer().read(cx).as_singleton()?;
+
+            let selection = self.selections.newest::<Point>(cx);
+            let selection_range = selection.range();
+
+            let (buffer, selection) = if let Some(buffer) = self.buffer().read(cx).as_singleton() {
+                (buffer, selection_range.start.row..selection_range.end.row)
+            } else {
+                let buffer_ranges = self
+                    .buffer()
+                    .read(cx)
+                    .range_to_buffer_ranges(selection_range, cx);
+
+                let (buffer, range, _) = if selection.reversed {
+                    buffer_ranges.first()
+                } else {
+                    buffer_ranges.last()
+                }?;
+
+                let snapshot = buffer.read(cx).snapshot();
+                let selection = text::ToPoint::to_point(&range.start, &snapshot).row
+                    ..text::ToPoint::to_point(&range.end, &snapshot).row;
+                (buffer.clone(), selection)
+            };
+
             let path = buffer
                 .read(cx)
                 .file()?
@@ -9990,21 +10034,17 @@ impl Editor {
                 .to_str()?
                 .to_string();
             let repo = project.get_repo(&buffer.read(cx).project_path(cx)?, cx)?;
-            Some((path, repo))
+            Some((path, selection, repo))
         })
         .ok_or_else(|| anyhow!("unable to open git repository"))?;
 
         const REMOTE_NAME: &str = "origin";
         let origin_url = repo
-            .lock()
             .remote_url(REMOTE_NAME)
             .ok_or_else(|| anyhow!("remote \"{REMOTE_NAME}\" not found"))?;
         let sha = repo
-            .lock()
             .head_sha()
             .ok_or_else(|| anyhow!("failed to read HEAD SHA"))?;
-        let selections = self.selections.all::<Point>(cx);
-        let selection = selections.iter().peekable().next();
 
         let (provider, remote) =
             parse_git_remote_url(GitHostingProviderRegistry::default_global(cx), &origin_url)
@@ -10015,12 +10055,7 @@ impl Editor {
             BuildPermalinkParams {
                 sha: &sha,
                 path: &path,
-                selection: selection.map(|selection| {
-                    let range = selection.range();
-                    let start = range.start.row;
-                    let end = range.end.row;
-                    start..end
-                }),
+                selection: Some(selection),
             },
         ))
     }

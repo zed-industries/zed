@@ -41,7 +41,12 @@ impl SoundRegistry {
         }
 
         let path = format!("sounds/{}.wav", name);
-        let bytes = self.assets.load(&path)?.into_owned();
+        let bytes = self
+            .assets
+            .load(&path)?
+            .map(|asset| Ok(asset))
+            .unwrap_or_else(|| Err(anyhow::anyhow!("No such asset available")))?
+            .into_owned();
         let cursor = Cursor::new(bytes);
         let source = Decoder::new(cursor)?.convert_samples::<f32>().buffered();
 

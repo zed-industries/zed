@@ -118,16 +118,6 @@ impl RecentProjects {
             modal
         })
     }
-
-    pub fn open_popover(workspace: WeakView<Workspace>, cx: &mut WindowContext<'_>) -> View<Self> {
-        cx.new_view(|cx| {
-            Self::new(
-                RecentProjectsDelegate::new(workspace, false, false),
-                20.,
-                cx,
-            )
-        })
-    }
 }
 
 impl EventEmitter<DismissEvent> for RecentProjects {}
@@ -229,6 +219,7 @@ impl PickerDelegate for RecentProjectsDelegate {
             .workspaces
             .iter()
             .enumerate()
+            .filter(|(_, (id, _))| !self.is_current_workspace(*id, cx))
             .map(|(id, (_, location))| {
                 let combined_string = match location {
                     SerializedWorkspaceLocation::Local(paths, _) => paths
@@ -287,7 +278,7 @@ impl PickerDelegate for RecentProjectsDelegate {
             };
             workspace
                 .update(cx, |workspace, cx| {
-                    if workspace.database_id() == *candidate_workspace_id {
+                    if workspace.database_id() == Some(*candidate_workspace_id) {
                         Task::ready(Ok(()))
                     } else {
                         match candidate_workspace_location {
@@ -393,8 +384,7 @@ impl PickerDelegate for RecentProjectsDelegate {
             return None;
         };
 
-        let (workspace_id, location) = &self.workspaces[hit.candidate_id];
-        let is_current_workspace = self.is_current_workspace(*workspace_id, cx);
+        let (_, location) = self.workspaces.get(hit.candidate_id)?;
 
         let is_remote = matches!(location, SerializedWorkspaceLocation::DevServer(_));
         let dev_server_status =
@@ -487,7 +477,7 @@ impl PickerDelegate for RecentProjectsDelegate {
                             highlighted.render(cx)
                         }),
                 )
-                .when(!is_current_workspace, |el| {
+                .map(|el| {
                     let delete_button = div()
                         .child(
                             IconButton::new("delete", IconName::Close)
@@ -675,7 +665,7 @@ impl RecentProjectsDelegate {
     ) -> bool {
         if let Some(workspace) = self.workspace.upgrade() {
             let workspace = workspace.read(cx);
-            if workspace_id == workspace.database_id() {
+            if Some(workspace_id) == workspace.database_id() {
                 return true;
             }
         }

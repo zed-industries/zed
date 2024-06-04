@@ -313,7 +313,7 @@ impl Item for WelcomePage {
 
     fn clone_on_split(
         &self,
-        _workspace_id: WorkspaceId,
+        _workspace_id: Option<WorkspaceId>,
         cx: &mut ViewContext<Self>,
     ) -> Option<View<Self>> {
         Some(cx.new_view(|cx| WelcomePage {

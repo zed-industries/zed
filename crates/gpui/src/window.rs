@@ -488,7 +488,7 @@ pub struct Window {
     pub(crate) handle: AnyWindowHandle,
     pub(crate) removed: bool,
     pub(crate) platform_window: Box<dyn PlatformWindow>,
-    display_id: DisplayId,
+    display_id: Option<DisplayId>,
     sprite_atlas: Arc<dyn PlatformAtlas>,
     text_system: Arc<WindowTextSystem>,
     rem_size: Pixels,
@@ -634,7 +634,7 @@ impl Window {
                 window_background,
             },
         );
-        let display_id = platform_window.display().id();
+        let display_id = platform_window.display().map(|display| display.id());
         let sprite_atlas = platform_window.sprite_atlas();
         let mouse_position = platform_window.mouse_position();
         let modifiers = platform_window.modifiers();
@@ -1099,7 +1099,12 @@ impl<'a> WindowContext<'a> {
     fn bounds_changed(&mut self) {
         self.window.scale_factor = self.window.platform_window.scale_factor();
         self.window.viewport_size = self.window.platform_window.content_size();
-        self.window.display_id = self.window.platform_window.display().id();
+        self.window.display_id = self
+            .window
+            .platform_window
+            .display()
+            .map(|display| display.id());
+
         self.refresh();
 
         self.window
@@ -1191,7 +1196,7 @@ impl<'a> WindowContext<'a> {
         self.platform
             .displays()
             .into_iter()
-            .find(|display| display.id() == self.window.display_id)
+            .find(|display| Some(display.id()) == self.window.display_id)
     }
 
     /// Show the platform character palette.
@@ -2347,13 +2352,14 @@ impl<'a> WindowContext<'a> {
 
         let raster_bounds = self.text_system().raster_bounds(&params)?;
         if !raster_bounds.is_zero() {
-            let tile =
-                self.window
-                    .sprite_atlas
-                    .get_or_insert_with(&params.clone().into(), &mut || {
-                        let (size, bytes) = self.text_system().rasterize_glyph(&params)?;
-                        Ok((size, Cow::Owned(bytes)))
-                    })?;
+            let tile = self
+                .window
+                .sprite_atlas
+                .get_or_insert_with(&params.clone().into(), &mut || {
+                    let (size, bytes) = self.text_system().rasterize_glyph(&params)?;
+                    Ok(Some((size, Cow::Owned(bytes))))
+                })?
+                .expect("Callback above only errors or returns Some");
             let bounds = Bounds {
                 origin: glyph_origin.map(|px| px.floor()) + raster_bounds.origin.map(Into::into),
                 size: tile.bounds.size.map(Into::into),
@@ -2410,13 +2416,15 @@ impl<'a> WindowContext<'a> {
 
         let raster_bounds = self.text_system().raster_bounds(&params)?;
         if !raster_bounds.is_zero() {
-            let tile =
-                self.window
-                    .sprite_atlas
-                    .get_or_insert_with(&params.clone().into(), &mut || {
-                        let (size, bytes) = self.text_system().rasterize_glyph(&params)?;
-                        Ok((size, Cow::Owned(bytes)))
-                    })?;
+            let tile = self
+                .window
+                .sprite_atlas
+                .get_or_insert_with(&params.clone().into(), &mut || {
+                    let (size, bytes) = self.text_system().rasterize_glyph(&params)?;
+                    Ok(Some((size, Cow::Owned(bytes))))
+                })?
+                .expect("Callback above only errors or returns Some");
+
             let bounds = Bounds {
                 origin: glyph_origin.map(|px| px.floor()) + raster_bounds.origin.map(Into::into),
                 size: tile.bounds.size.map(Into::into),
@@ -2464,13 +2472,18 @@ impl<'a> WindowContext<'a> {
                 .map(|pixels| DevicePixels::from((pixels.0 * 2.).ceil() as i32)),
         };
 
-        let tile =
+        let Some(tile) =
             self.window
                 .sprite_atlas
                 .get_or_insert_with(&params.clone().into(), &mut || {
-                    let bytes = self.svg_renderer.render(&params)?;
-                    Ok((params.size, Cow::Owned(bytes)))
-                })?;
+                    let Some(bytes) = self.svg_renderer.render(&params)? else {
+                        return Ok(None);
+                    };
+                    Ok(Some((params.size, Cow::Owned(bytes))))
+                })?
+        else {
+            return Ok(());
+        };
         let content_mask = self.content_mask().scale(scale_factor);
 
         self.window
@@ -2513,8 +2526,9 @@ impl<'a> WindowContext<'a> {
             .window
             .sprite_atlas
             .get_or_insert_with(&params.clone().into(), &mut || {
-                Ok((data.size(), Cow::Borrowed(data.as_bytes())))
-            })?;
+                Ok(Some((data.size(), Cow::Borrowed(data.as_bytes()))))
+            })?
+            .expect("Callback above only returns Some");
         let content_mask = self.content_mask().scale(scale_factor);
         let corner_radii = corner_radii.scale(scale_factor);
 

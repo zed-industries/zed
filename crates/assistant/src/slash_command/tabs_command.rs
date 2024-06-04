@@ -17,11 +17,11 @@ impl SlashCommand for TabsSlashCommand {
     }
 
     fn description(&self) -> String {
-        "insert content from open tabs".into()
+        "insert open tabs".into()
     }
 
-    fn tooltip_text(&self) -> String {
-        "insert open tabs".into()
+    fn menu_text(&self) -> String {
+        "Insert Open Tabs".into()
     }
 
     fn requires_argument(&self) -> bool {

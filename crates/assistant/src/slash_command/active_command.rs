@@ -19,8 +19,8 @@ impl SlashCommand for ActiveSlashCommand {
         "insert active tab".into()
     }
 
-    fn tooltip_text(&self) -> String {
-        "insert active tab".into()
+    fn menu_text(&self) -> String {
+        "Insert Active Tab".into()
     }
 
     fn complete_argument(

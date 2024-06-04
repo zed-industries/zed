@@ -151,6 +151,7 @@ assets = { path = "crates/assets" }
 assistant = { path = "crates/assistant" }
 assistant_slash_command = { path = "crates/assistant_slash_command" }
 assistant_tooling = { path = "crates/assistant_tooling" }
+async-watch = "0.3.1"
 audio = { path = "crates/audio" }
 auto_update = { path = "crates/auto_update" }
 base64 = "0.13"
@@ -167,6 +168,7 @@ color = { path = "crates/color" }
 command_palette = { path = "crates/command_palette" }
 command_palette_hooks = { path = "crates/command_palette_hooks" }
 copilot = { path = "crates/copilot" }
+dashmap = "5.5.3"
 db = { path = "crates/db" }
 diagnostics = { path = "crates/diagnostics" }
 editor = { path = "crates/editor" }
@@ -259,6 +261,7 @@ zed_actions = { path = "crates/zed_actions" }
 
 anyhow = "1.0.57"
 any_vec = "0.13"
+ashpd = "0.8.0"
 async-compression = { version = "0.4", features = ["gzip", "futures-io"] }
 async-fs = "1.6"
 async-recursion = "1.0.0"
@@ -288,9 +291,7 @@ futures-batch = "0.6.1"
 futures-lite = "1.13"
 git2 = { version = "0.18", default-features = false }
 globset = "0.4"
-heed = { version = "0.20.1", features = [
-    "read-txn-no-tls",
-] }
+heed = { version = "0.20.1", features = ["read-txn-no-tls"] }
 hex = "0.4.3"
 html5ever = "0.27.0"
 ignore = "0.4.22"
@@ -496,11 +497,6 @@ map_entry = "allow"
 non_canonical_partial_ord_impl = "allow"
 reversed_empty_ranges = "allow"
 type_complexity = "allow"
-
-[workspace.lints.rust]
-unexpected_cfgs = { level = "warn", check-cfg = [
-    'cfg(gles)' # used in gpui
-] }
 
 [workspace.metadata.cargo-machete]
 ignored = ["bindgen", "cbindgen", "prost_build", "serde"]

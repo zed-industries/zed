@@ -214,10 +214,11 @@
     }
   },
   {
-    "context": "AssistantPanel", // Used in the assistant crate, which we're replacing
+    "context": "AssistantPanel",
     "bindings": {
       "cmd-g": "search::SelectNextMatch",
-      "cmd-shift-g": "search::SelectPrevMatch"
+      "cmd-shift-g": "search::SelectPrevMatch",
+      "alt-m": "assistant::ToggleModelSelector"
     }
   },
   {
@@ -230,6 +231,14 @@
       "ctrl-r": "assistant::CycleMessageRole",
       "enter": "assistant::ConfirmCommand",
       "alt-enter": "editor::Newline"
+    }
+  },
+  {
+    "context": "PromptLibrary",
+    "bindings": {
+      "cmd-n": "prompt_library::NewPrompt",
+      "cmd-shift-s": "prompt_library::ToggleDefaultPrompt",
+      "cmd-w": "workspace::CloseWindow"
     }
   },
   {
@@ -638,7 +647,7 @@
   {
     "context": "Picker",
     "bindings": {
-      "alt-e": "picker::UseSelectedQuery",
+      "f2": "picker::UseSelectedQuery",
       "alt-enter": ["picker::ConfirmInput", { "secondary": false }],
       "cmd-alt-enter": ["picker::ConfirmInput", { "secondary": true }]
     }
