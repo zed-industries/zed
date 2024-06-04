@@ -36,7 +36,7 @@ pub fn word_starts_in_range(
         let new_point = find_boundary_range(map, from, to, |left, right| {
             let left_kind = coerce_punctuation(char_kind(&scope, left), false);
             let right_kind = coerce_punctuation(char_kind(&scope, right), false);
-            // TODO ignore just punctuation words i.e. ' {} '?
+
             let found = if full_word {
                 left_kind == CharKind::Whitespace && right_kind == CharKind::Word
             } else {
@@ -192,7 +192,7 @@ mod tests {
         let marked_text = "ˇlorem.ipsum hi.helloˇ";
         test_helper(
             marked_text,
-            vec![display_point(0, 0), display_point(11, 0)],
+            vec![display_point(0, 0), display_point(12, 0)],
             true,
             cx,
         );
@@ -205,15 +205,14 @@ mod tests {
             cx,
         );
 
-        let marked_text = "ˇlorem.ipsum \n\n hi.hello \"\"";
+        let marked_text = "ˇlorem.ipsum \n\n hi.hello \"\"ˇ";
         test_helper(
             marked_text,
             vec![display_point(0, 0), display_point(1, 2)],
             true,
             cx,
         );
-
-        let marked_text = "ˇlorem ipsum \n{}\n hi hello \"\"";
+        let marked_text = "ˇlorem ipsum \n{}\n hi hello \"\"ˇ";
         test_helper(
             marked_text,
             vec![
