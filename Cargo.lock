@@ -339,7 +339,6 @@ dependencies = [
  "anthropic",
  "anyhow",
  "assistant_slash_command",
- "async-watch",
  "cargo_toml",
  "chrono",
  "client",
@@ -822,15 +821,6 @@ dependencies = [
  "log",
  "pin-project-lite",
  "tungstenite 0.16.0",
-]
-
-[[package]]
-name = "async-watch"
-version = "0.3.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a078faf4e27c0c6cc0efb20e5da59dcccc04968ebf2801d8e0b2195124cdcdb2"
-dependencies = [
- "event-listener 2.5.3",
 ]
 
 [[package]]

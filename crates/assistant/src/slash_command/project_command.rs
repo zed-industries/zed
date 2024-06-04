@@ -148,6 +148,7 @@ impl SlashCommand for ProjectSlashCommand {
                                 .into_any_element()
                         }),
                     }],
+                    run_commands_in_text: false,
                 })
             })
         });

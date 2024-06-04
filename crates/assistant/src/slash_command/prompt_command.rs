@@ -8,15 +8,7 @@ use std::sync::{atomic::AtomicBool, Arc};
 use ui::{prelude::*, ButtonLike, ElevationIndex};
 use workspace::Workspace;
 
-pub(crate) struct PromptSlashCommand {
-    store: Arc<PromptStore>,
-}
-
-impl PromptSlashCommand {
-    pub fn new(store: Arc<PromptStore>) -> Self {
-        Self { store }
-    }
-}
+pub(crate) struct PromptSlashCommand;
 
 impl SlashCommand for PromptSlashCommand {
     fn name(&self) -> String {
@@ -42,9 +34,9 @@ impl SlashCommand for PromptSlashCommand {
         _workspace: WeakView<Workspace>,
         cx: &mut AppContext,
     ) -> Task<Result<Vec<String>>> {
-        let store = self.store.clone();
+        let store = PromptStore::global(cx);
         cx.background_executor().spawn(async move {
-            let prompts = store.search(query).await;
+            let prompts = store.await?.search(query).await;
             Ok(prompts
                 .into_iter()
                 .filter_map(|prompt| Some(prompt.title?.to_string()))
@@ -63,11 +55,12 @@ impl SlashCommand for PromptSlashCommand {
             return Task::ready(Err(anyhow!("missing prompt name")));
         };
 
-        let store = self.store.clone();
+        let store = PromptStore::global(cx);
         let title = SharedString::from(title.to_string());
         let prompt = cx.background_executor().spawn({
             let title = title.clone();
             async move {
+                let store = store.await?;
                 let prompt_id = store
                     .id_for_title(&title)
                     .with_context(|| format!("no prompt found with title {:?}", title))?;
@@ -91,6 +84,7 @@ impl SlashCommand for PromptSlashCommand {
                         .into_any_element()
                     }),
                 }],
+                run_commands_in_text: true,
             })
         })
     }

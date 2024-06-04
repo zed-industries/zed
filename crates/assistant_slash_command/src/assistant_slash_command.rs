@@ -52,6 +52,7 @@ pub type RenderFoldPlaceholder = Arc<
 pub struct SlashCommandOutput {
     pub text: String,
     pub sections: Vec<SlashCommandOutputSection<usize>>,
+    pub run_commands_in_text: bool,
 }
 
 #[derive(Clone)]

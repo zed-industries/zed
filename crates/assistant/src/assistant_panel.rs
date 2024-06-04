@@ -1,11 +1,11 @@
 use crate::{
     assistant_settings::{AssistantDockPosition, AssistantSettings},
     codegen::{self, Codegen, CodegenKind},
-    prompt_library::{open_prompt_library, PromptMetadata, PromptStore},
+    prompt_library::open_prompt_library,
     prompts::generate_content_prompt,
     search::*,
     slash_command::{
-        prompt_command::PromptPlaceholder, SlashCommandCompletionProvider, SlashCommandLine,
+        default_command::DefaultSlashCommand, SlashCommandCompletionProvider, SlashCommandLine,
         SlashCommandRegistry,
     },
     ApplyEdit, Assist, CompletionProvider, ConfirmCommand, CycleMessageRole, InlineAssist,
@@ -14,7 +14,7 @@ use crate::{
     SavedMessage, Split, ToggleFocus, ToggleHistory, ToggleModelSelector,
 };
 use anyhow::{anyhow, Result};
-use assistant_slash_command::{SlashCommandOutput, SlashCommandOutputSection};
+use assistant_slash_command::{SlashCommand, SlashCommandOutput, SlashCommandOutputSection};
 use client::telemetry::Telemetry;
 use collections::{hash_map, BTreeSet, HashMap, HashSet, VecDeque};
 use editor::{actions::ShowCompletions, GutterDimensions};
@@ -40,10 +40,9 @@ use gpui::{
     Subscription, Task, TextStyle, UniformListScrollHandle, View, ViewContext, VisualContext,
     WeakModel, WeakView, WhiteSpace, WindowContext,
 };
-use language::LspAdapterDelegate;
 use language::{
     language_settings::SoftWrap, AnchorRangeExt, AutoindentMode, Buffer, LanguageRegistry,
-    OffsetRangeExt as _, Point, ToOffset as _,
+    LspAdapterDelegate, OffsetRangeExt as _, Point, ToOffset as _,
 };
 use multi_buffer::MultiBufferRow;
 use parking_lot::Mutex;
@@ -118,14 +117,6 @@ pub struct AssistantPanel {
     _watch_saved_conversations: Task<Result<()>>,
     authentication_prompt: Option<AnyView>,
     model_menu_handle: PopoverMenuHandle<ContextMenu>,
-    default_prompt: DefaultPrompt,
-    _watch_prompt_store: Task<()>,
-}
-
-#[derive(Default)]
-struct DefaultPrompt {
-    text: String,
-    sections: Vec<SlashCommandOutputSection<usize>>,
 }
 
 struct ActiveConversationEditor {
@@ -146,8 +137,6 @@ impl AssistantPanel {
                 .await
                 .log_err()
                 .unwrap_or_default();
-            let prompt_store = cx.update(|cx| PromptStore::global(cx))?.await?;
-            let default_prompts = prompt_store.load_default().await?;
 
             // TODO: deserialize state.
             let workspace_handle = workspace.clone();
@@ -171,22 +160,6 @@ impl AssistantPanel {
                         }
 
                         anyhow::Ok(())
-                    });
-
-                    let _watch_prompt_store = cx.spawn(|this, mut cx| async move {
-                        let mut updates = prompt_store.updates();
-                        while updates.changed().await.is_ok() {
-                            let Some(prompts) = prompt_store.load_default().await.log_err() else {
-                                continue;
-                            };
-
-                            if this
-                                .update(&mut cx, |this, _cx| this.update_default_prompt(prompts))
-                                .is_err()
-                            {
-                                break;
-                            }
-                        }
                     });
 
                     let toolbar = cx.new_view(|cx| {
@@ -216,7 +189,7 @@ impl AssistantPanel {
                     })
                     .detach();
 
-                    let mut this = Self {
+                    Self {
                         workspace: workspace_handle,
                         active_conversation_editor: None,
                         show_saved_conversations: false,
@@ -239,11 +212,7 @@ impl AssistantPanel {
                         _watch_saved_conversations,
                         authentication_prompt: None,
                         model_menu_handle: PopoverMenuHandle::default(),
-                        default_prompt: DefaultPrompt::default(),
-                        _watch_prompt_store,
-                    };
-                    this.update_default_prompt(default_prompts);
-                    this
+                    }
                 })
             })
         })
@@ -264,55 +233,6 @@ impl AssistantPanel {
         self.toolbar
             .update(cx, |toolbar, cx| toolbar.focus_changed(false, cx));
         cx.notify();
-    }
-
-    fn update_default_prompt(&mut self, prompts: Vec<(PromptMetadata, String)>) {
-        self.default_prompt.text.clear();
-        self.default_prompt.sections.clear();
-        if !prompts.is_empty() {
-            self.default_prompt.text.push_str("Default Prompt:\n");
-        }
-
-        for (metadata, body) in prompts {
-            let section_start = self.default_prompt.text.len();
-            self.default_prompt.text.push_str(&body);
-            let section_end = self.default_prompt.text.len();
-            self.default_prompt
-                .sections
-                .push(SlashCommandOutputSection {
-                    range: section_start..section_end,
-                    render_placeholder: Arc::new(move |id, unfold, _cx| {
-                        PromptPlaceholder {
-                            title: metadata
-                                .title
-                                .clone()
-                                .unwrap_or_else(|| SharedString::from("Untitled")),
-                            id,
-                            unfold,
-                        }
-                        .into_any_element()
-                    }),
-                });
-            self.default_prompt.text.push('\n');
-        }
-        self.default_prompt.text.pop();
-
-        if !self.default_prompt.text.is_empty() {
-            self.default_prompt.sections.insert(
-                0,
-                SlashCommandOutputSection {
-                    range: 0..self.default_prompt.text.len(),
-                    render_placeholder: Arc::new(move |id, unfold, _cx| {
-                        PromptPlaceholder {
-                            title: "Default".into(),
-                            id,
-                            unfold,
-                        }
-                        .into_any_element()
-                    }),
-                },
-            )
-        }
     }
 
     fn completion_provider_changed(
@@ -862,7 +782,6 @@ impl AssistantPanel {
 
         let editor = cx.new_view(|cx| {
             ConversationEditor::new(
-                &self.default_prompt,
                 self.languages.clone(),
                 self.slash_commands.clone(),
                 self.fs.clone(),
@@ -1460,7 +1379,9 @@ enum ConversationEvent {
         updated: Vec<PendingSlashCommand>,
     },
     SlashCommandFinished {
+        output_range: Range<language::Anchor>,
         sections: Vec<SlashCommandOutputSection<language::Anchor>>,
+        run_commands_in_output: bool,
     },
 }
 
@@ -1727,18 +1648,7 @@ impl Conversation {
                 buffer.line_len(row_range.end - 1),
             ));
 
-            let start_ix = match self
-                .pending_slash_commands
-                .binary_search_by(|probe| probe.source_range.start.cmp(&start, buffer))
-            {
-                Ok(ix) | Err(ix) => ix,
-            };
-            let end_ix = match self.pending_slash_commands[start_ix..]
-                .binary_search_by(|probe| probe.source_range.end.cmp(&end, buffer))
-            {
-                Ok(ix) => start_ix + ix + 1,
-                Err(ix) => start_ix + ix,
-            };
+            let old_range = self.pending_command_indices_for_range(start..end, cx);
 
             let mut new_commands = Vec::new();
             let mut lines = buffer.text_for_range(start..end).lines();
@@ -1773,9 +1683,7 @@ impl Conversation {
                 offset = lines.offset();
             }
 
-            let removed_commands = self
-                .pending_slash_commands
-                .splice(start_ix..end_ix, new_commands);
+            let removed_commands = self.pending_slash_commands.splice(old_range, new_commands);
             removed.extend(removed_commands.map(|command| command.source_range));
         }
 
@@ -1849,25 +1757,60 @@ impl Conversation {
         cx: &mut ModelContext<Self>,
     ) -> Option<&mut PendingSlashCommand> {
         let buffer = self.buffer.read(cx);
-        let ix = self
+        match self
             .pending_slash_commands
-            .binary_search_by(|probe| {
-                if probe.source_range.start.cmp(&position, buffer).is_gt() {
-                    Ordering::Less
-                } else if probe.source_range.end.cmp(&position, buffer).is_lt() {
-                    Ordering::Greater
+            .binary_search_by(|probe| probe.source_range.end.cmp(&position, buffer))
+        {
+            Ok(ix) => Some(&mut self.pending_slash_commands[ix]),
+            Err(ix) => {
+                let cmd = self.pending_slash_commands.get_mut(ix)?;
+                if position.cmp(&cmd.source_range.start, buffer).is_ge()
+                    && position.cmp(&cmd.source_range.end, buffer).is_le()
+                {
+                    Some(cmd)
                 } else {
-                    Ordering::Equal
+                    None
                 }
-            })
-            .ok()?;
-        self.pending_slash_commands.get_mut(ix)
+            }
+        }
+    }
+
+    fn pending_commands_for_range(
+        &self,
+        range: Range<language::Anchor>,
+        cx: &AppContext,
+    ) -> &[PendingSlashCommand] {
+        let range = self.pending_command_indices_for_range(range, cx);
+        &self.pending_slash_commands[range]
+    }
+
+    fn pending_command_indices_for_range(
+        &self,
+        range: Range<language::Anchor>,
+        cx: &AppContext,
+    ) -> Range<usize> {
+        let buffer = self.buffer.read(cx);
+        let start_ix = match self
+            .pending_slash_commands
+            .binary_search_by(|probe| probe.source_range.end.cmp(&range.start, &buffer))
+        {
+            Ok(ix) | Err(ix) => ix,
+        };
+        let end_ix = match self
+            .pending_slash_commands
+            .binary_search_by(|probe| probe.source_range.start.cmp(&range.end, &buffer))
+        {
+            Ok(ix) => ix + 1,
+            Err(ix) => ix,
+        };
+        start_ix..end_ix
     }
 
     fn insert_command_output(
         &mut self,
         command_range: Range<language::Anchor>,
         output: Task<Result<SlashCommandOutput>>,
+        insert_trailing_newline: bool,
         cx: &mut ModelContext<Self>,
     ) {
         self.reparse_slash_commands(cx);
@@ -1878,13 +1821,14 @@ impl Conversation {
                 let output = output.await;
                 this.update(&mut cx, |this, cx| match output {
                     Ok(mut output) => {
-                        if !output.text.ends_with('\n') {
+                        if insert_trailing_newline {
                             output.text.push('\n');
                         }
 
-                        let sections = this.buffer.update(cx, |buffer, cx| {
+                        let event = this.buffer.update(cx, |buffer, cx| {
                             let start = command_range.start.to_offset(buffer);
                             let old_end = command_range.end.to_offset(buffer);
+                            let new_end = start + output.text.len();
                             buffer.edit([(start..old_end, output.text)], None, cx);
 
                             let mut sections = output
@@ -1897,9 +1841,14 @@ impl Conversation {
                                 })
                                 .collect::<Vec<_>>();
                             sections.sort_by(|a, b| a.range.cmp(&b.range, buffer));
-                            sections
+                            ConversationEvent::SlashCommandFinished {
+                                output_range: buffer.anchor_after(start)
+                                    ..buffer.anchor_before(new_end),
+                                sections,
+                                run_commands_in_output: output.run_commands_in_text,
+                            }
                         });
-                        cx.emit(ConversationEvent::SlashCommandFinished { sections });
+                        cx.emit(event);
                     }
                     Err(error) => {
                         if let Some(pending_command) =
@@ -2596,7 +2545,6 @@ pub struct ConversationEditor {
 
 impl ConversationEditor {
     fn new(
-        default_prompt: &DefaultPrompt,
         language_registry: Arc<LanguageRegistry>,
         slash_command_registry: Arc<SlashCommandRegistry>,
         fs: Arc<dyn Fs>,
@@ -2618,31 +2566,7 @@ impl ConversationEditor {
 
         let mut this =
             Self::for_conversation(conversation, fs, workspace, lsp_adapter_delegate, cx);
-
-        if !default_prompt.text.is_empty() {
-            this.editor
-                .update(cx, |editor, cx| editor.insert(&default_prompt.text, cx));
-            let snapshot = this.conversation.read(cx).buffer.read(cx).text_snapshot();
-            this.insert_slash_command_output_sections(
-                default_prompt
-                    .sections
-                    .iter()
-                    .map(|section| SlashCommandOutputSection {
-                        range: snapshot.anchor_after(section.range.start)
-                            ..snapshot.anchor_before(section.range.end),
-                        render_placeholder: section.render_placeholder.clone(),
-                    }),
-                cx,
-            );
-            this.split(&Split, cx);
-            this.conversation.update(cx, |this, _cx| {
-                this.messages_metadata
-                    .get_mut(&MessageId::default())
-                    .unwrap()
-                    .role = Role::System;
-            });
-        }
-
+        this.insert_default_prompt(cx);
         this
     }
 
@@ -2693,6 +2617,32 @@ impl ConversationEditor {
         };
         this.update_message_headers(cx);
         this
+    }
+
+    fn insert_default_prompt(&mut self, cx: &mut ViewContext<Self>) {
+        let command_name = DefaultSlashCommand.name();
+        self.editor.update(cx, |editor, cx| {
+            editor.insert(&format!("/{command_name}"), cx)
+        });
+        self.split(&Split, cx);
+        let command = self.conversation.update(cx, |conversation, cx| {
+            conversation
+                .messages_metadata
+                .get_mut(&MessageId::default())
+                .unwrap()
+                .role = Role::System;
+            conversation.reparse_slash_commands(cx);
+            conversation.pending_slash_commands[0].clone()
+        });
+
+        self.run_command(
+            command.source_range,
+            &command.name,
+            command.argument.as_deref(),
+            false,
+            self.workspace.clone(),
+            cx,
+        );
     }
 
     fn assist(&mut self, _: &Assist, cx: &mut ViewContext<Self>) {
@@ -2817,6 +2767,7 @@ impl ConversationEditor {
                     command.source_range,
                     &command.name,
                     command.argument.as_deref(),
+                    true,
                     workspace.clone(),
                     cx,
                 );
@@ -2830,6 +2781,7 @@ impl ConversationEditor {
         command_range: Range<language::Anchor>,
         name: &str,
         argument: Option<&str>,
+        insert_trailing_newline: bool,
         workspace: WeakView<Workspace>,
         cx: &mut ViewContext<Self>,
     ) {
@@ -2838,7 +2790,12 @@ impl ConversationEditor {
                 let argument = argument.map(ToString::to_string);
                 let output = command.run(argument.as_deref(), workspace, lsp_adapter_delegate, cx);
                 self.conversation.update(cx, |conversation, cx| {
-                    conversation.insert_command_output(command_range, output, cx)
+                    conversation.insert_command_output(
+                        command_range,
+                        output,
+                        insert_trailing_newline,
+                        cx,
+                    )
                 });
             }
         }
@@ -2938,6 +2895,7 @@ impl ConversationEditor {
                                                 command.source_range.clone(),
                                                 &command.name,
                                                 command.argument.as_deref(),
+                                                false,
                                                 workspace.clone(),
                                                 cx,
                                             );
@@ -2991,8 +2949,32 @@ impl ConversationEditor {
                     );
                 })
             }
-            ConversationEvent::SlashCommandFinished { sections } => {
+            ConversationEvent::SlashCommandFinished {
+                output_range,
+                sections,
+                run_commands_in_output,
+            } => {
                 self.insert_slash_command_output_sections(sections.iter().cloned(), cx);
+
+                if *run_commands_in_output {
+                    let commands = self.conversation.update(cx, |conversation, cx| {
+                        conversation.reparse_slash_commands(cx);
+                        conversation
+                            .pending_commands_for_range(output_range.clone(), cx)
+                            .to_vec()
+                    });
+
+                    for command in commands {
+                        self.run_command(
+                            command.source_range,
+                            &command.name,
+                            command.argument.as_deref(),
+                            false,
+                            self.workspace.clone(),
+                            cx,
+                        );
+                    }
+                }
             }
         }
     }

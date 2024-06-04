@@ -1,33 +1,40 @@
+use crate::{
+    slash_command::SlashCommandLine, CompletionProvider, LanguageModelRequest,
+    LanguageModelRequestMessage, Role,
+};
 use anyhow::{anyhow, Result};
+use assistant_slash_command::SlashCommandRegistry;
 use chrono::{DateTime, Utc};
 use collections::HashMap;
-use editor::{Editor, EditorEvent};
+use editor::{actions::Tab, Editor, EditorEvent};
 use futures::{
     future::{self, BoxFuture, Shared},
     FutureExt,
 };
-use fuzzy::StringMatchCandidate;
+use fuzzy::{match_strings, StringMatchCandidate};
 use gpui::{
-    actions, point, size, AppContext, BackgroundExecutor, Bounds, DevicePixels, Empty,
-    EventEmitter, Global, PromptLevel, ReadGlobal, Subscription, Task, TitlebarOptions, View,
-    WindowBounds, WindowHandle, WindowOptions,
+    actions, point, size, AnyElement, AppContext, BackgroundExecutor, Bounds, DevicePixels,
+    EventEmitter, Global, Model, PromptLevel, ReadGlobal, Subscription, Task, TitlebarOptions,
+    View, WindowBounds, WindowHandle, WindowOptions,
 };
 use heed::{types::SerdeBincode, Database, RoTxn};
-use language::{language_settings::SoftWrap, Buffer, LanguageRegistry};
+use language::{
+    language_settings::SoftWrap, Buffer, Documentation, LanguageRegistry, LanguageServerId, Point,
+    ToPoint as _,
+};
 use parking_lot::RwLock;
 use picker::{Picker, PickerDelegate};
 use rope::Rope;
 use serde::{Deserialize, Serialize};
 use std::{
-    cmp::Reverse,
     future::Future,
     path::PathBuf,
     sync::{atomic::AtomicBool, Arc},
     time::Duration,
 };
 use ui::{
-    div, prelude::*, IconButtonShape, ListItem, ListItemSpacing, ParentElement, Render,
-    SharedString, Styled, TitleBar, Tooltip, ViewContext, VisualContext,
+    div, prelude::*, IconButtonShape, ListHeader, ListItem, ListItemSpacing, ListSubHeader,
+    ParentElement, Render, SharedString, Styled, TitleBar, Tooltip, ViewContext, VisualContext,
 };
 use util::{paths::PROMPTS_DIR, ResultExt, TryFutureExt};
 use uuid::Uuid;
@@ -80,7 +87,7 @@ pub fn open_prompt_library(
                 cx.open_window(
                     WindowOptions {
                         titlebar: Some(TitlebarOptions {
-                            title: None,
+                            title: Some("Prompt Library".into()),
                             appears_transparent: true,
                             traffic_light_position: Some(point(px(9.0), px(9.0))),
                         }),
@@ -106,6 +113,8 @@ pub struct PromptLibrary {
 
 struct PromptEditor {
     editor: View<Editor>,
+    token_count: Option<usize>,
+    pending_token_count: Task<Option<()>>,
     next_body_to_save: Option<Rope>,
     pending_save: Option<Task<Option<()>>>,
     _subscription: Subscription,
@@ -114,30 +123,54 @@ struct PromptEditor {
 struct PromptPickerDelegate {
     store: Arc<PromptStore>,
     selected_index: usize,
-    matches: Vec<PromptMetadata>,
+    entries: Vec<PromptPickerEntry>,
 }
 
 enum PromptPickerEvent {
+    Selected { prompt_id: PromptId },
     Confirmed { prompt_id: PromptId },
     Deleted { prompt_id: PromptId },
     ToggledDefault { prompt_id: PromptId },
 }
 
+#[derive(Debug)]
+enum PromptPickerEntry {
+    DefaultPromptsHeader,
+    DefaultPromptsEmpty,
+    AllPromptsHeader,
+    AllPromptsEmpty,
+    Prompt(PromptMetadata),
+}
+
+impl PromptPickerEntry {
+    fn prompt_id(&self) -> Option<PromptId> {
+        match self {
+            PromptPickerEntry::Prompt(metadata) => Some(metadata.id),
+            _ => None,
+        }
+    }
+}
+
 impl EventEmitter<PromptPickerEvent> for Picker<PromptPickerDelegate> {}
 
 impl PickerDelegate for PromptPickerDelegate {
-    type ListItem = ListItem;
+    type ListItem = AnyElement;
 
     fn match_count(&self) -> usize {
-        self.matches.len()
+        self.entries.len()
     }
 
     fn selected_index(&self) -> usize {
         self.selected_index
     }
 
-    fn set_selected_index(&mut self, ix: usize, _cx: &mut ViewContext<Picker<Self>>) {
+    fn set_selected_index(&mut self, ix: usize, cx: &mut ViewContext<Picker<Self>>) {
         self.selected_index = ix;
+        if let Some(PromptPickerEntry::Prompt(prompt)) = self.entries.get(self.selected_index) {
+            cx.emit(PromptPickerEvent::Selected {
+                prompt_id: prompt.id,
+            });
+        }
     }
 
     fn placeholder_text(&self, _cx: &mut WindowContext) -> Arc<str> {
@@ -146,11 +179,49 @@ impl PickerDelegate for PromptPickerDelegate {
 
     fn update_matches(&mut self, query: String, cx: &mut ViewContext<Picker<Self>>) -> Task<()> {
         let search = self.store.search(query);
+        let prev_prompt_id = self
+            .entries
+            .get(self.selected_index)
+            .and_then(|mat| mat.prompt_id());
         cx.spawn(|this, mut cx| async move {
-            let matches = search.await;
+            let (entries, selected_index) = cx
+                .background_executor()
+                .spawn(async move {
+                    let prompts = search.await;
+                    let (default_prompts, prompts) = prompts
+                        .into_iter()
+                        .partition::<Vec<_>, _>(|prompt| prompt.default);
+
+                    let mut entries = Vec::new();
+                    entries.push(PromptPickerEntry::DefaultPromptsHeader);
+                    if default_prompts.is_empty() {
+                        entries.push(PromptPickerEntry::DefaultPromptsEmpty);
+                    } else {
+                        entries.extend(default_prompts.into_iter().map(PromptPickerEntry::Prompt));
+                    }
+
+                    entries.push(PromptPickerEntry::AllPromptsHeader);
+                    if prompts.is_empty() {
+                        entries.push(PromptPickerEntry::AllPromptsEmpty);
+                    } else {
+                        entries.extend(prompts.into_iter().map(PromptPickerEntry::Prompt));
+                    }
+
+                    let selected_index = prev_prompt_id
+                        .and_then(|prev_prompt_id| {
+                            entries
+                                .iter()
+                                .position(|entry| entry.prompt_id() == Some(prev_prompt_id))
+                        })
+                        .or_else(|| entries.iter().position(|entry| entry.prompt_id().is_some()))
+                        .unwrap_or(0);
+                    (entries, selected_index)
+                })
+                .await;
+
             this.update(&mut cx, |this, cx| {
-                this.delegate.selected_index = 0;
-                this.delegate.matches = matches;
+                this.delegate.entries = entries;
+                this.delegate.set_selected_index(selected_index, cx);
                 cx.notify();
             })
             .ok();
@@ -158,7 +229,7 @@ impl PickerDelegate for PromptPickerDelegate {
     }
 
     fn confirm(&mut self, _secondary: bool, cx: &mut ViewContext<Picker<Self>>) {
-        if let Some(prompt) = self.matches.get(self.selected_index) {
+        if let Some(PromptPickerEntry::Prompt(prompt)) = self.entries.get(self.selected_index) {
             cx.emit(PromptPickerEvent::Confirmed {
                 prompt_id: prompt.id,
             });
@@ -173,61 +244,80 @@ impl PickerDelegate for PromptPickerDelegate {
         selected: bool,
         cx: &mut ViewContext<Picker<Self>>,
     ) -> Option<Self::ListItem> {
-        let prompt = self.matches.get(ix)?;
-        let default = prompt.default;
-        let prompt_id = prompt.id;
-        Some(
-            ListItem::new(ix)
+        let prompt = self.entries.get(ix)?;
+        let element = match prompt {
+            PromptPickerEntry::DefaultPromptsHeader => ListHeader::new("Default Prompts")
                 .inset(true)
-                .spacing(ListItemSpacing::Sparse)
+                .start_slot(Icon::new(IconName::ZedAssistant))
                 .selected(selected)
-                .child(Label::new(
-                    prompt.title.clone().unwrap_or("Untitled".into()),
-                ))
-                .end_slot(if default {
-                    IconButton::new("toggle-default-prompt", IconName::StarFilled)
-                        .shape(IconButtonShape::Square)
-                        .into_any_element()
-                } else {
-                    Empty.into_any()
-                })
-                .end_hover_slot(
-                    h_flex()
-                        .gap_2()
-                        .child(
-                            IconButton::new("delete-prompt", IconName::Trash)
-                                .shape(IconButtonShape::Square)
-                                .tooltip(move |cx| Tooltip::text("Delete Prompt", cx))
-                                .on_click(cx.listener(move |_, _, cx| {
-                                    cx.emit(PromptPickerEvent::Deleted { prompt_id })
-                                })),
-                        )
-                        .child(
-                            IconButton::new(
-                                "toggle-default-prompt",
-                                if default {
-                                    IconName::StarFilled
-                                } else {
-                                    IconName::Star
-                                },
+                .into_any_element(),
+            PromptPickerEntry::DefaultPromptsEmpty => {
+                ListSubHeader::new("Star a prompt to add it to the default context")
+                    .inset(true)
+                    .selected(selected)
+                    .into_any_element()
+            }
+            PromptPickerEntry::AllPromptsHeader => ListHeader::new("All Prompts")
+                .inset(true)
+                .start_slot(Icon::new(IconName::Library))
+                .selected(selected)
+                .into_any_element(),
+            PromptPickerEntry::AllPromptsEmpty => ListSubHeader::new("No prompts")
+                .inset(true)
+                .selected(selected)
+                .into_any_element(),
+            PromptPickerEntry::Prompt(prompt) => {
+                let default = prompt.default;
+                let prompt_id = prompt.id;
+                ListItem::new(ix)
+                    .inset(true)
+                    .spacing(ListItemSpacing::Sparse)
+                    .selected(selected)
+                    .child(Label::new(
+                        prompt.title.clone().unwrap_or("Untitled".into()),
+                    ))
+                    .end_hover_slot(
+                        h_flex()
+                            .gap_2()
+                            .child(
+                                IconButton::new("delete-prompt", IconName::Trash)
+                                    .shape(IconButtonShape::Square)
+                                    .tooltip(move |cx| Tooltip::text("Delete Prompt", cx))
+                                    .on_click(cx.listener(move |_, _, cx| {
+                                        cx.emit(PromptPickerEvent::Deleted { prompt_id })
+                                    })),
                             )
-                            .shape(IconButtonShape::Square)
-                            .tooltip(move |cx| {
-                                Tooltip::text(
+                            .child(
+                                IconButton::new(
+                                    "toggle-default-prompt",
                                     if default {
-                                        "Remove from Default Prompt"
+                                        IconName::ZedAssistantFilled
                                     } else {
-                                        "Add to Default Prompt"
+                                        IconName::ZedAssistant
                                     },
-                                    cx,
                                 )
-                            })
-                            .on_click(cx.listener(move |_, _, cx| {
-                                cx.emit(PromptPickerEvent::ToggledDefault { prompt_id })
-                            })),
-                        ),
-                ),
-        )
+                                .shape(IconButtonShape::Square)
+                                .tooltip(move |cx| {
+                                    Tooltip::text(
+                                        if default {
+                                            "Remove from Default Prompt"
+                                        } else {
+                                            "Add to Default Prompt"
+                                        },
+                                        cx,
+                                    )
+                                })
+                                .on_click(cx.listener(
+                                    move |_, _, cx| {
+                                        cx.emit(PromptPickerEvent::ToggledDefault { prompt_id })
+                                    },
+                                )),
+                            ),
+                    )
+                    .into_any_element()
+            }
+        };
+        Some(element)
     }
 }
 
@@ -240,17 +330,15 @@ impl PromptLibrary {
         let delegate = PromptPickerDelegate {
             store: store.clone(),
             selected_index: 0,
-            matches: Vec::new(),
+            entries: Vec::new(),
         };
 
         let picker = cx.new_view(|cx| {
-            let picker = Picker::uniform_list(delegate, cx)
-                .modal(false)
-                .max_height(None);
+            let picker = Picker::list(delegate, cx).modal(false).max_height(None);
             picker.focus(cx);
             picker
         });
-        let mut this = Self {
+        Self {
             store: store.clone(),
             language_registry,
             prompt_editors: HashMap::default(),
@@ -258,11 +346,7 @@ impl PromptLibrary {
             pending_load: Task::ready(()),
             _subscriptions: vec![cx.subscribe(&picker, Self::handle_picker_event)],
             picker,
-        };
-        if let Some(prompt_id) = store.most_recently_saved() {
-            this.load_prompt(prompt_id, false, cx);
         }
-        this
     }
 
     fn handle_picker_event(
@@ -272,6 +356,9 @@ impl PromptLibrary {
         cx: &mut ViewContext<Self>,
     ) {
         match event {
+            PromptPickerEvent::Selected { prompt_id } => {
+                self.load_prompt(*prompt_id, false, cx);
+            }
             PromptPickerEvent::Confirmed { prompt_id } => {
                 self.load_prompt(*prompt_id, true, cx);
             }
@@ -285,6 +372,15 @@ impl PromptLibrary {
     }
 
     pub fn new_prompt(&mut self, cx: &mut ViewContext<Self>) {
+        // If we already have an untitled prompt, use that instead
+        // of creating a new one.
+        if let Some(metadata) = self.store.first() {
+            if metadata.title.is_none() {
+                self.load_prompt(metadata.id, true, cx);
+                return;
+            }
+        }
+
         let prompt_id = PromptId::new();
         let save = self.store.save(prompt_id, None, false, "".into());
         self.picker.update(cx, |picker, cx| picker.refresh(cx));
@@ -383,7 +479,7 @@ impl PromptLibrary {
                     .editor
                     .update(cx, |editor, cx| editor.focus(cx));
             }
-            self.active_prompt_id = Some(prompt_id);
+            self.set_active_prompt(Some(prompt_id), cx);
         } else {
             let language_registry = self.language_registry.clone();
             let prompt = self.store.load(prompt_id);
@@ -404,6 +500,8 @@ impl PromptLibrary {
                             editor.set_show_gutter(false, cx);
                             editor.set_show_wrap_guides(false, cx);
                             editor.set_show_indent_guides(false, cx);
+                            editor
+                                .set_completion_provider(Box::new(SlashCommandCompletionProvider));
                             if focus {
                                 editor.focus(cx);
                             }
@@ -419,11 +517,13 @@ impl PromptLibrary {
                                 editor,
                                 next_body_to_save: None,
                                 pending_save: None,
+                                token_count: None,
+                                pending_token_count: Task::ready(None),
                                 _subscription,
                             },
                         );
-                        this.active_prompt_id = Some(prompt_id);
-                        cx.notify();
+                        this.set_active_prompt(Some(prompt_id), cx);
+                        this.count_tokens(prompt_id, cx);
                     }
                     Err(error) => {
                         // TODO: we should show the error in the UI.
@@ -433,6 +533,32 @@ impl PromptLibrary {
                 .ok();
             });
         }
+    }
+
+    fn set_active_prompt(&mut self, prompt_id: Option<PromptId>, cx: &mut ViewContext<Self>) {
+        self.active_prompt_id = prompt_id;
+        self.picker.update(cx, |picker, cx| {
+            if let Some(prompt_id) = prompt_id {
+                if picker
+                    .delegate
+                    .entries
+                    .get(picker.delegate.selected_index())
+                    .map_or(true, |old_selected_prompt| {
+                        old_selected_prompt.prompt_id() != Some(prompt_id)
+                    })
+                {
+                    if let Some(ix) = picker
+                        .delegate
+                        .entries
+                        .iter()
+                        .position(|mat| mat.prompt_id() == Some(prompt_id))
+                    {
+                        picker.set_selected_index(ix, true, cx);
+                    }
+                }
+            }
+        });
+        cx.notify();
     }
 
     pub fn delete_prompt(&mut self, prompt_id: PromptId, cx: &mut ViewContext<Self>) {
@@ -451,7 +577,7 @@ impl PromptLibrary {
                 if confirmation.await.ok() == Some(0) {
                     this.update(&mut cx, |this, cx| {
                         if this.active_prompt_id == Some(prompt_id) {
-                            this.active_prompt_id = None;
+                            this.set_active_prompt(None, cx);
                         }
                         this.prompt_editors.remove(&prompt_id);
                         this.store.delete(prompt_id).detach_and_log_err(cx);
@@ -463,6 +589,19 @@ impl PromptLibrary {
             })
             .detach_and_log_err(cx);
         }
+    }
+
+    fn focus_active_prompt(&mut self, _: &Tab, cx: &mut ViewContext<Self>) {
+        if let Some(active_prompt) = self.active_prompt_id {
+            self.prompt_editors[&active_prompt]
+                .editor
+                .update(cx, |editor, cx| editor.focus(cx));
+            cx.stop_propagation();
+        }
+    }
+
+    fn focus_picker(&mut self, _: &menu::Cancel, cx: &mut ViewContext<Self>) {
+        self.picker.update(cx, |picker, cx| picker.focus(cx));
     }
 
     fn handle_prompt_editor_event(
@@ -502,12 +641,53 @@ impl PromptLibrary {
             });
 
             self.save_prompt(prompt_id, cx);
+            self.count_tokens(prompt_id, cx);
+        }
+    }
+
+    fn count_tokens(&mut self, prompt_id: PromptId, cx: &mut ViewContext<Self>) {
+        if let Some(prompt) = self.prompt_editors.get_mut(&prompt_id) {
+            let editor = &prompt.editor.read(cx);
+            let buffer = &editor.buffer().read(cx).as_singleton().unwrap().read(cx);
+            let body = buffer.as_rope().clone();
+            prompt.pending_token_count = cx.spawn(|this, mut cx| {
+                async move {
+                    const DEBOUNCE_TIMEOUT: Duration = Duration::from_secs(1);
+
+                    cx.background_executor().timer(DEBOUNCE_TIMEOUT).await;
+                    let token_count = cx
+                        .update(|cx| {
+                            let provider = CompletionProvider::global(cx);
+                            let model = provider.model();
+                            provider.count_tokens(
+                                LanguageModelRequest {
+                                    model,
+                                    messages: vec![LanguageModelRequestMessage {
+                                        role: Role::System,
+                                        content: body.to_string(),
+                                    }],
+                                    stop: Vec::new(),
+                                    temperature: 1.,
+                                },
+                                cx,
+                            )
+                        })?
+                        .await?;
+                    this.update(&mut cx, |this, cx| {
+                        let prompt_editor = this.prompt_editors.get_mut(&prompt_id).unwrap();
+                        prompt_editor.token_count = Some(token_count);
+                        cx.notify();
+                    })
+                }
+                .log_err()
+            });
         }
     }
 
     fn render_prompt_list(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         v_flex()
             .id("prompt-list")
+            .capture_action(cx.listener(Self::focus_active_prompt))
             .bg(cx.theme().colors().panel_background)
             .h_full()
             .w_1_3()
@@ -545,64 +725,69 @@ impl PromptLibrary {
             .min_w_64()
             .children(self.active_prompt_id.and_then(|prompt_id| {
                 let prompt_metadata = self.store.metadata(prompt_id)?;
-                let editor = self.prompt_editors[&prompt_id].editor.clone();
+                let prompt_editor = &self.prompt_editors[&prompt_id];
                 Some(
-                    v_flex()
+                    h_flex()
                         .size_full()
+                        .items_start()
                         .child(
-                            h_flex()
-                                .h(TitleBar::height(cx))
-                                .px(Spacing::Large.rems(cx))
-                                .justify_end()
-                                .child(
-                                    h_flex()
-                                        .gap_4()
-                                        .child(
-                                            IconButton::new(
-                                                "toggle-default-prompt",
-                                                if prompt_metadata.default {
-                                                    IconName::StarFilled
-                                                } else {
-                                                    IconName::Star
-                                                },
-                                            )
-                                            .shape(IconButtonShape::Square)
-                                            .tooltip(move |cx| {
-                                                Tooltip::for_action(
-                                                    if prompt_metadata.default {
-                                                        "Remove from Default Prompt"
-                                                    } else {
-                                                        "Add to Default Prompt"
-                                                    },
-                                                    &ToggleDefaultPrompt,
-                                                    cx,
-                                                )
-                                            })
-                                            .on_click(
-                                                |_, cx| {
-                                                    cx.dispatch_action(Box::new(
-                                                        ToggleDefaultPrompt,
-                                                    ));
-                                                },
-                                            ),
-                                        )
-                                        .child(
-                                            IconButton::new("delete-prompt", IconName::Trash)
-                                                .shape(IconButtonShape::Square)
-                                                .tooltip(move |cx| {
-                                                    Tooltip::for_action(
-                                                        "Delete Prompt",
-                                                        &DeletePrompt,
-                                                        cx,
-                                                    )
-                                                })
-                                                .on_click(|_, cx| {
-                                                    cx.dispatch_action(Box::new(DeletePrompt));
-                                                }),
-                                        ),
-                                ),
+                            div()
+                                .on_action(cx.listener(Self::focus_picker))
+                                .flex_grow()
+                                .h_full()
+                                .pt(Spacing::Large.rems(cx))
+                                .pl(Spacing::Large.rems(cx))
+                                .child(prompt_editor.editor.clone()),
                         )
-                        .child(div().flex_grow().p(Spacing::Large.rems(cx)).child(editor)),
+                        .child(
+                            v_flex()
+                                .w_12()
+                                .py(Spacing::Large.rems(cx))
+                                .justify_start()
+                                .items_center()
+                                .gap_4()
+                                .child(
+                                    IconButton::new(
+                                        "toggle-default-prompt",
+                                        if prompt_metadata.default {
+                                            IconName::ZedAssistantFilled
+                                        } else {
+                                            IconName::ZedAssistant
+                                        },
+                                    )
+                                    .size(ButtonSize::Large)
+                                    .shape(IconButtonShape::Square)
+                                    .tooltip(move |cx| {
+                                        Tooltip::for_action(
+                                            if prompt_metadata.default {
+                                                "Remove from Default Prompt"
+                                            } else {
+                                                "Add to Default Prompt"
+                                            },
+                                            &ToggleDefaultPrompt,
+                                            cx,
+                                        )
+                                    })
+                                    .on_click(|_, cx| {
+                                        cx.dispatch_action(Box::new(ToggleDefaultPrompt));
+                                    }),
+                                )
+                                .child(
+                                    IconButton::new("delete-prompt", IconName::Trash)
+                                        .shape(IconButtonShape::Square)
+                                        .tooltip(move |cx| {
+                                            Tooltip::for_action("Delete Prompt", &DeletePrompt, cx)
+                                        })
+                                        .on_click(|_, cx| {
+                                            cx.dispatch_action(Box::new(DeletePrompt));
+                                        }),
+                                )
+                                .children(prompt_editor.token_count.map(|token_count| {
+                                    h_flex()
+                                        .justify_center()
+                                        .child(Label::new(token_count.to_string()))
+                                })),
+                        ),
                 )
             }))
     }
@@ -648,7 +833,6 @@ pub struct PromptStore {
     bodies: Database<SerdeBincode<PromptId>, SerdeBincode<String>>,
     metadata: Database<SerdeBincode<PromptId>, SerdeBincode<PromptMetadata>>,
     metadata_cache: RwLock<MetadataCache>,
-    updates: (Arc<async_watch::Sender<()>>, async_watch::Receiver<()>),
 }
 
 #[derive(Default)]
@@ -668,9 +852,7 @@ impl MetadataCache {
             cache.metadata.push(metadata.clone());
             cache.metadata_by_id.insert(prompt_id, metadata);
         }
-        cache
-            .metadata
-            .sort_unstable_by_key(|metadata| Reverse(metadata.saved_at));
+        cache.sort();
         Ok(cache)
     }
 
@@ -681,12 +863,20 @@ impl MetadataCache {
         } else {
             self.metadata.push(metadata);
         }
-        self.metadata.sort_by_key(|m| Reverse(m.saved_at));
+        self.sort();
     }
 
     fn remove(&mut self, id: PromptId) {
         self.metadata.retain(|metadata| metadata.id != id);
         self.metadata_by_id.remove(&id);
+    }
+
+    fn sort(&mut self) {
+        self.metadata.sort_unstable_by(|a, b| {
+            a.title
+                .cmp(&b.title)
+                .then_with(|| b.saved_at.cmp(&a.saved_at))
+        });
     }
 }
 
@@ -715,21 +905,15 @@ impl PromptStore {
                 let metadata_cache = MetadataCache::from_db(metadata, &txn)?;
                 txn.commit()?;
 
-                let (updates_tx, updates_rx) = async_watch::channel(());
                 Ok(PromptStore {
                     executor,
                     env: db_env,
                     bodies,
                     metadata,
                     metadata_cache: RwLock::new(metadata_cache),
-                    updates: (Arc::new(updates_tx), updates_rx),
                 })
             }
         })
-    }
-
-    pub fn updates(&self) -> async_watch::Receiver<()> {
-        self.updates.1.clone()
     }
 
     pub fn load(&self, id: PromptId) -> Task<Result<String>> {
@@ -743,8 +927,8 @@ impl PromptStore {
         })
     }
 
-    pub fn load_default(&self) -> Task<Result<Vec<(PromptMetadata, String)>>> {
-        let default_metadatas = self
+    pub fn default_prompt_metadata(&self) -> Vec<PromptMetadata> {
+        return self
             .metadata_cache
             .read()
             .metadata
@@ -752,23 +936,6 @@ impl PromptStore {
             .filter(|metadata| metadata.default)
             .cloned()
             .collect::<Vec<_>>();
-        let env = self.env.clone();
-        let bodies = self.bodies;
-        self.executor.spawn(async move {
-            let txn = env.read_txn()?;
-
-            let mut default_prompts = Vec::new();
-            for metadata in default_metadatas {
-                if let Some(body) = bodies.get(&txn, &metadata.id)? {
-                    if !body.is_empty() {
-                        default_prompts.push((metadata, body));
-                    }
-                }
-            }
-
-            default_prompts.sort_unstable_by_key(|(metadata, _)| metadata.saved_at);
-            Ok(default_prompts)
-        })
     }
 
     pub fn delete(&self, id: PromptId) -> Task<Result<()>> {
@@ -854,7 +1021,6 @@ impl PromptStore {
         let db_connection = self.env.clone();
         let bodies = self.bodies;
         let metadata = self.metadata;
-        let updates = self.updates.0.clone();
 
         self.executor.spawn(async move {
             let mut txn = db_connection.write_txn()?;
@@ -863,7 +1029,6 @@ impl PromptStore {
             bodies.put(&mut txn, &id, &body.to_string())?;
 
             txn.commit()?;
-            updates.send(()).ok();
 
             Ok(())
         })
@@ -885,24 +1050,18 @@ impl PromptStore {
 
         let db_connection = self.env.clone();
         let metadata = self.metadata;
-        let updates = self.updates.0.clone();
 
         self.executor.spawn(async move {
             let mut txn = db_connection.write_txn()?;
             metadata.put(&mut txn, &id, &prompt_metadata)?;
             txn.commit()?;
-            updates.send(()).ok();
 
             Ok(())
         })
     }
 
-    fn most_recently_saved(&self) -> Option<PromptId> {
-        self.metadata_cache
-            .read()
-            .metadata
-            .first()
-            .map(|metadata| metadata.id)
+    fn first(&self) -> Option<PromptMetadata> {
+        self.metadata_cache.read().metadata.first().cloned()
     }
 }
 
@@ -931,5 +1090,125 @@ fn title_from_body(body: impl IntoIterator<Item = char>) -> Option<SharedString>
         }
     } else {
         None
+    }
+}
+
+struct SlashCommandCompletionProvider;
+
+impl editor::CompletionProvider for SlashCommandCompletionProvider {
+    fn completions(
+        &self,
+        buffer: &Model<Buffer>,
+        buffer_position: language::Anchor,
+        cx: &mut ViewContext<Editor>,
+    ) -> Task<Result<Vec<project::Completion>>> {
+        let Some((command_name, name_range)) = buffer.update(cx, |buffer, _cx| {
+            let position = buffer_position.to_point(buffer);
+            let line_start = Point::new(position.row, 0);
+            let mut lines = buffer.text_for_range(line_start..position).lines();
+            let line = lines.next()?;
+            let call = SlashCommandLine::parse(line)?;
+
+            if call.argument.is_some() {
+                // Don't autocomplete arguments.
+                None
+            } else {
+                let name = line[call.name.clone()].to_string();
+                let name_range_start = Point::new(position.row, call.name.start as u32);
+                let name_range_end = Point::new(position.row, call.name.end as u32);
+                let name_range =
+                    buffer.anchor_after(name_range_start)..buffer.anchor_after(name_range_end);
+                Some((name, name_range))
+            }
+        }) else {
+            return Task::ready(Ok(Vec::new()));
+        };
+
+        let commands = SlashCommandRegistry::global(cx);
+        let candidates = commands
+            .command_names()
+            .into_iter()
+            .enumerate()
+            .map(|(ix, def)| StringMatchCandidate {
+                id: ix,
+                string: def.to_string(),
+                char_bag: def.as_ref().into(),
+            })
+            .collect::<Vec<_>>();
+        let command_name = command_name.to_string();
+        cx.spawn(|_, mut cx| async move {
+            let matches = match_strings(
+                &candidates,
+                &command_name,
+                true,
+                usize::MAX,
+                &Default::default(),
+                cx.background_executor().clone(),
+            )
+            .await;
+            cx.update(|cx| {
+                matches
+                    .into_iter()
+                    .filter_map(|mat| {
+                        let command = commands.command(&mat.string)?;
+                        let mut new_text = mat.string.clone();
+                        let requires_argument = command.requires_argument();
+                        if requires_argument {
+                            new_text.push(' ');
+                        }
+
+                        Some(project::Completion {
+                            old_range: name_range.clone(),
+                            documentation: Some(Documentation::SingleLine(command.description())),
+                            new_text,
+                            label: command.label(cx),
+                            server_id: LanguageServerId(0),
+                            lsp_completion: Default::default(),
+                            show_new_completions_on_confirm: false,
+                            confirm: None,
+                        })
+                    })
+                    .collect()
+            })
+        })
+    }
+
+    fn resolve_completions(
+        &self,
+        _: Model<Buffer>,
+        _: Vec<usize>,
+        _: Arc<RwLock<Box<[project::Completion]>>>,
+        _: &mut ViewContext<Editor>,
+    ) -> Task<Result<bool>> {
+        Task::ready(Ok(true))
+    }
+
+    fn apply_additional_edits_for_completion(
+        &self,
+        _: Model<Buffer>,
+        _: project::Completion,
+        _: bool,
+        _: &mut ViewContext<Editor>,
+    ) -> Task<Result<Option<language::Transaction>>> {
+        Task::ready(Ok(None))
+    }
+
+    fn is_completion_trigger(
+        &self,
+        buffer: &Model<Buffer>,
+        position: language::Anchor,
+        _text: &str,
+        _trigger_in_words: bool,
+        cx: &mut ViewContext<Editor>,
+    ) -> bool {
+        let buffer = buffer.read(cx);
+        let position = position.to_point(buffer);
+        let line_start = Point::new(position.row, 0);
+        let mut lines = buffer.text_for_range(line_start..position).lines();
+        if let Some(line) = lines.next() {
+            SlashCommandLine::parse(line).is_some()
+        } else {
+            false
+        }
     }
 }

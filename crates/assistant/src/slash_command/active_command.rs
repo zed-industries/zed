@@ -96,6 +96,7 @@ impl SlashCommand for ActiveSlashCommand {
                             .into_any_element()
                         }),
                     }],
+                    run_commands_in_text: false,
                 })
             })
         });
