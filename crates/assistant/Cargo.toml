@@ -16,7 +16,6 @@ doctest = false
 anyhow.workspace = true
 anthropic = { workspace = true, features = ["schemars"] }
 assistant_slash_command.workspace = true
-async-watch.workspace = true
 cargo_toml.workspace = true
 chrono.workspace = true
 client.workspace = true
