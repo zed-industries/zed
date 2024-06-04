@@ -70,10 +70,38 @@ cargo test --workspace
 
 Zed has basic support for both modes. The mode is selected at runtime. If you're on wayland and want to run in X11 mode, you can set `WAYLAND_DISPLAY='' cargo run` to do so.
 
+## Notes for packaging Zed
+
+Thank you for taking on the task of packaging Zed!
+
+### Technical requirements
+
+Zed has two main binaries:
+
+* You will need to build `crates/cli` and make it's binary available in `$PATH` with the name `zed`.
+* You will need to build `crates/zed` and put it at `$PATH/to/cli/../../libexec/zed-editor`. For example, if you are going to put the cli at `~/.local/bin/zed` put zed at `~/.local/libexec/zed-editor`.
+* If you are going to provide a `.desktop` file you can find a template in `crates/zed/resources/zed.desktop.in`, and use `envsubst` to populate it with the values required.
+* You will need to ensure that the necessary libraries are installed. You can get the current list by [inspecting the built binary](https://github.com/zed-industries/zed/blob/059a4141b756cf4afac4c977afc488539aec6470/script/bundle-linux#L65-L70) on your system.
+* For an example of a complete build script, see [script/bundle-linux](https://github.com/zed-industries/zed/blob/main/script/bundle-linux).
+
+### Other things to note
+
+At Zed, our priority has been to move fast and bring the latest technology to our users. We've long been frustrated at having software that is slow, out of date, or hard to configure, and so we've built our editor to those tastes.
+
+However, we realize that many distros have other priorities. We want to work with everyone to bring Zed to their favorite platforms. But there is a long way to go:
+
+* Zed is a fast moving early-phase project. We typically release 2-3 builds a week to fix user-reported issues and release major features.
+* There are a couple of other `zed` binaries that may be present on linux systems ([1](https://openzfs.github.io/openzfs-docs/man/v2.2/8/zed.8.html), [2](https://zed.brimdata.io/docs/commands/zed)).
+* We automatically install updates to Zed by default (though we do need a way for [package managers to opt out](https://github.com/zed-industries/zed/issues/12588)).
+* Zed automatically installs the correct version of common developer tools in the same way as rustup/rbenv/pyenv, etc. We understand that this is contentious, [see here](https://github.com/zed-industries/zed/issues/12589).
+* We allow users to install extensions on their own and from [zed-industries/extensions](https://github.com/zed-industries/extensions). These extensions may install further tooling as needed, such as language servers. In the long run we would like to make this safer, [see here](https://github.com/zed-industries/zed/issues/12358).
+* Zed connects to a number of online services by default (AI, telemetry, collaboration). AI and our telemetry can be disabled by your users with their own zed settings or by patching our [default settings file](https://github.com/zed-industries/zed/blob/main/assets/settings/default.json).
+* As a result, zed currently does not play nice with sandboxes, [see here](https://github.com/zed-industries/zed/pull/12006#issuecomment-2130421220)
+
 ## Flatpak
 
 > [!WARNING]
-> Zed's current Flatpak integration simply exits the sandbox on startup. Workflows that rely on Flatpak's sandboxing may not work as expected. 
+> Zed's current Flatpak integration simply exits the sandbox on startup. Workflows that rely on Flatpak's sandboxing may not work as expected.
 
 To build & install the Flatpak package locally follow the steps below:
 
