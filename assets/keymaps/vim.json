@@ -281,8 +281,8 @@
       "5": ["vim::Number", 5],
       "6": ["vim::Number", 6],
       "7": ["vim::Number", 7],
-      "8": ["easy_motion::Row", "biDirectional"],
-      "9": ["easy_motion::Word", "biDirectional"],
+      "8": ["vim::Number", 8],
+      "9": ["vim::Number", 9],
       // window related commands (ctrl-w X)
       "ctrl-w left": ["workspace::ActivatePaneInDirection", "Left"],
       "ctrl-w right": ["workspace::ActivatePaneInDirection", "Right"],
@@ -334,7 +334,12 @@
       "ctrl-w g shift-d": "editor::GoToTypeDefinitionSplit",
       "ctrl-w space": "editor::OpenExcerptsSplit",
       "ctrl-w g space": "editor::OpenExcerptsSplit",
-      "-": "pane::RevealInProjectPanel"
+      "-": "pane::RevealInProjectPanel",
+
+      // easy motion
+      "g w": ["easy_motion::Word", "biDirectional"],
+      "g shift-w": ["easy_motion::FullWord", "biDirectional"],
+      "g r": ["easy_motion::Row", "biDirectional"]
     }
   },
   {
