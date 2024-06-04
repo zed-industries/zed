@@ -512,7 +512,7 @@ impl Fs for RealFs {
 
         let (tx, rx) = smol::channel::unbounded();
 
-        let file_watcher = notify::recommended_watcher({
+        let mut file_watcher = notify::recommended_watcher({
             let tx = tx.clone();
             move |event: Result<notify::Event, _>| {
                 if let Some(event) = event.log_err() {
