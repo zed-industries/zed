@@ -135,9 +135,9 @@ pub struct RealFs {
 }
 
 pub struct RealWatcher {
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(target_os = "linux")]
     root_path: PathBuf,
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(target_os = "linux")]
     fs_watcher: parking_lot::Mutex<notify::INotifyWatcher>,
 }
 
@@ -448,7 +448,7 @@ impl Fs for RealFs {
         )
     }
 
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(target_os = "linux")]
     async fn watch(
         &self,
         path: &Path,
@@ -496,6 +496,42 @@ impl Fs for RealFs {
                 }
             })),
             watcher,
+        )
+    }
+
+    #[cfg(target_os = "windows")]
+    async fn watch(
+        &self,
+        path: &Path,
+        _latency: Duration,
+    ) -> (
+        Pin<Box<dyn Send + Stream<Item = Vec<PathBuf>>>>,
+        Arc<dyn Watcher>,
+    ) {
+        use notify::Watcher;
+
+        let (tx, rx) = smol::channel::unbounded();
+
+        let file_watcher = notify::recommended_watcher({
+            let tx = tx.clone();
+            move |event: Result<notify::Event, _>| {
+                if let Some(event) = event.log_err() {
+                    tx.try_send(event.paths).ok();
+                }
+            }
+        })
+        .expect("Could not start file watcher");
+
+        file_watcher
+            .watch(path, notify::RecursiveMode::Recursive)
+            .log_err();
+
+        (
+            Box::pin(rx.chain(futures::stream::once(async move {
+                drop(file_watcher);
+                vec![]
+            }))),
+            Arc::new(RealWatcher {}),
         )
     }
 
@@ -555,7 +591,7 @@ impl Fs for RealFs {
     }
 }
 
-#[cfg(target_os = "macos")]
+#[cfg(not(target_os = "linux"))]
 impl Watcher for RealWatcher {
     fn add(&self, _: &Path) -> Result<()> {
         Ok(())
@@ -566,7 +602,7 @@ impl Watcher for RealWatcher {
     }
 }
 
-#[cfg(not(target_os = "macos"))]
+#[cfg(target_os = "linux")]
 impl Watcher for RealWatcher {
     fn add(&self, path: &Path) -> Result<()> {
         use notify::Watcher;
