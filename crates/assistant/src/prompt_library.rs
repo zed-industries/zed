@@ -19,7 +19,6 @@ use picker::{Picker, PickerDelegate};
 use rope::Rope;
 use serde::{Deserialize, Serialize};
 use std::{
-    cmp::Reverse,
     future::Future,
     path::PathBuf,
     sync::{atomic::AtomicBool, Arc},
@@ -290,6 +289,15 @@ impl PromptLibrary {
     }
 
     pub fn new_prompt(&mut self, cx: &mut ViewContext<Self>) {
+        // If we already have an untitled prompt, use that instead
+        // of creating a new one.
+        if let Some(metadata) = self.store.first() {
+            if metadata.title.is_none() {
+                self.load_prompt(metadata.id, true, cx);
+                return;
+            }
+        }
+
         let prompt_id = PromptId::new();
         let save = self.store.save(prompt_id, None, false, "".into());
         self.picker.update(cx, |picker, cx| picker.refresh(cx));
@@ -683,9 +691,7 @@ impl MetadataCache {
             cache.metadata.push(metadata.clone());
             cache.metadata_by_id.insert(prompt_id, metadata);
         }
-        cache
-            .metadata
-            .sort_unstable_by_key(|metadata| Reverse(metadata.saved_at));
+        cache.sort();
         Ok(cache)
     }
 
@@ -696,12 +702,20 @@ impl MetadataCache {
         } else {
             self.metadata.push(metadata);
         }
-        self.metadata.sort_by_key(|m| Reverse(m.saved_at));
+        self.sort();
     }
 
     fn remove(&mut self, id: PromptId) {
         self.metadata.retain(|metadata| metadata.id != id);
         self.metadata_by_id.remove(&id);
+    }
+
+    fn sort(&mut self) {
+        self.metadata.sort_unstable_by(|a, b| {
+            a.title
+                .cmp(&b.title)
+                .then_with(|| b.saved_at.cmp(&a.saved_at))
+        });
     }
 }
 
@@ -910,6 +924,10 @@ impl PromptStore {
 
             Ok(())
         })
+    }
+
+    fn first(&self) -> Option<PromptMetadata> {
+        self.metadata_cache.read().metadata.first().cloned()
     }
 }
 
