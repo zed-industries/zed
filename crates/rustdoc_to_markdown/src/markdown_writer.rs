@@ -104,7 +104,7 @@ impl MarkdownWriter {
             }
             NodeData::Text { ref contents } => {
                 let text = contents.borrow().to_string();
-                self.visit_text(text)?;
+                self.visit_text(text, handlers)?;
             }
         }
 
@@ -178,20 +178,23 @@ impl MarkdownWriter {
         }
     }
 
-    fn visit_text(&mut self, text: String) -> Result<()> {
-        if self.is_inside("pre") {
-            self.push_str(&text);
+    fn visit_text(&mut self, text: String, handlers: &mut [Box<dyn HandleTag>]) -> Result<()> {
+        let mut did_handle = false;
+
+        for handler in handlers {
+            match handler.handle_text(&text, self) {
+                HandlerOutcome::Handled => did_handle = true,
+                HandlerOutcome::NoOp => {}
+            }
+        }
+
+        if did_handle {
             return Ok(());
         }
 
         let text = text
             .trim_matches(|char| char == '\n' || char == '\r' || char == '§')
             .replace('\n', " ");
-
-        if self.is_inside_item_name() && !self.is_inside("span") && !self.is_inside("code") {
-            self.push_str(&format!("`{text}`"));
-            return Ok(());
-        }
 
         self.push_str(&text);
 
@@ -207,9 +210,16 @@ impl MarkdownWriter {
     }
 }
 
+enum HandlerOutcome {
+    Handled,
+    NoOp,
+}
+
 trait HandleTag {
+    /// Returns whether this handler should handle the given tag.
     fn should_handle(&self, tag: &str) -> bool;
 
+    /// Handles the start of the given tag.
     fn handle_tag_start(
         &mut self,
         _tag: &HtmlElement,
@@ -218,8 +228,11 @@ trait HandleTag {
         StartTagOutcome::Continue
     }
 
-    fn handle_tag_end(&mut self, _tag: &HtmlElement, _writer: &mut MarkdownWriter) {
-        ()
+    /// Handles the end of the given tag.
+    fn handle_tag_end(&mut self, _tag: &HtmlElement, _writer: &mut MarkdownWriter) {}
+
+    fn handle_text(&mut self, _text: &str, _writer: &mut MarkdownWriter) -> HandlerOutcome {
+        HandlerOutcome::NoOp
     }
 }
 
@@ -348,6 +361,15 @@ impl HandleTag for RustdocCodeHandler {
             _ => {}
         }
     }
+
+    fn handle_text(&mut self, text: &str, writer: &mut MarkdownWriter) -> HandlerOutcome {
+        if writer.is_inside("pre") {
+            writer.push_str(&text);
+            return HandlerOutcome::Handled;
+        }
+
+        HandlerOutcome::NoOp
+    }
 }
 
 struct RustdocTableHandler {
@@ -471,6 +493,15 @@ impl HandleTag for RustdocItemHandler {
             }
             _ => {}
         }
+    }
+
+    fn handle_text(&mut self, text: &str, writer: &mut MarkdownWriter) -> HandlerOutcome {
+        if writer.is_inside_item_name() && !writer.is_inside("span") && !writer.is_inside("code") {
+            writer.push_str(&format!("`{text}`"));
+            return HandlerOutcome::Handled;
+        }
+
+        HandlerOutcome::NoOp
     }
 }
 
