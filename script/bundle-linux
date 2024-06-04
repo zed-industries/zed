@@ -57,9 +57,9 @@ temp_dir=$(mktemp -d)
 zed_dir="${temp_dir}/zed$suffix.app"
 
 # Binary
-mkdir -p "${zed_dir}/bin"
-cp "target/${target_triple}/release/Zed" "${zed_dir}/bin/zed"
-cp "target/${target_triple}/release/cli" "${zed_dir}/bin/cli"
+mkdir -p "${zed_dir}/bin" "${zed_dir}/libexec"
+cp "target/${target_triple}/release/zed" "${zed_dir}/libexec/zed-editor"
+cp "target/${target_triple}/release/cli" "${zed_dir}/bin/zed"
 
 # Libs
 find_libs() {

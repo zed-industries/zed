@@ -191,14 +191,15 @@ mod linux {
                 let cli = env::current_exe()?;
                 let dir = cli
                     .parent()
+                    .and_then(Path::parent)
                     .ok_or_else(|| anyhow!("no parent path for cli"))?;
 
-                match dir.join("zed").canonicalize() {
+                match dir.join("libexec").join("zed-editor").canonicalize() {
                     Ok(path) => Ok(path),
-                    // development builds have Zed capitalized
-                    Err(e) => match dir.join("Zed").canonicalize() {
-                        Ok(path) => Ok(path),
-                        Err(_) => Err(e),
+                    // In development cli and zed are in the ./target/ directory together
+                    Err(e) => match cli.parent().unwrap().join("zed").canonicalize() {
+                        Ok(path) if path != cli => Ok(path),
+                        _ => Err(e),
                     },
                 }
             }?;
@@ -254,10 +255,8 @@ mod linux {
                         eprintln!("failed to setsid: {}", std::io::Error::last_os_error());
                         process::exit(1);
                     }
-                    if std::env::var("ZED_KEEP_FD").is_err() {
-                        if let Err(_) = fork::close_fd() {
-                            eprintln!("failed to close_fd: {}", std::io::Error::last_os_error());
-                        }
+                    if let Err(_) = fork::close_fd() {
+                        eprintln!("failed to close_fd: {}", std::io::Error::last_os_error());
                     }
                     let error =
                         exec::execvp(path.clone(), &[path.as_os_str(), &OsString::from(ipc_url)]);
@@ -333,7 +332,7 @@ mod flatpak {
 
             if !is_app_location_set {
                 args.push("--zed".into());
-                args.push(flatpak_dir.join("bin").join("zed-app").into());
+                args.push(flatpak_dir.join("libexec").join("zed-editor").into());
             }
 
             let error = exec::execvp("/usr/bin/flatpak-spawn", args);
@@ -347,7 +346,7 @@ mod flatpak {
             && env::var("FLATPAK_ID").map_or(false, |id| id.starts_with("dev.zed.Zed"))
         {
             if args.zed.is_none() {
-                args.zed = Some("/app/bin/zed-app".into());
+                args.zed = Some("/app/libexec/zed-editor".into());
                 env::set_var("ZED_IS_FLATPAK_INSTALL", "1");
             }
         }

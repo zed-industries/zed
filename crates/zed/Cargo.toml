@@ -11,7 +11,7 @@ authors = ["Zed Team <hi@zed.dev>"]
 workspace = true
 
 [[bin]]
-name = "Zed"
+name = "zed"
 path = "src/main.rs"
 
 [dependencies]
