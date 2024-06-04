@@ -1074,7 +1074,7 @@ impl CompletionsMenu {
                             max_completion_len,
                         )
                         .unwrap_or_else(|_| {
-                            //this should never trigger, but if it does, we can just use the default, non-truncated completion
+                            //this should never trigger, but just in case, we can use the default, non-truncated completion
                             let (completion_label, _, _, documentation_label) =
                                 Self::generate_default_labels(
                                     &&style,
@@ -1175,7 +1175,7 @@ impl CompletionsMenu {
                 };
 
             if primary_width < max_primary_width {
-                // truncate second part only
+                // only truncate the second part, the first part is short enough
                 if inline_documentation_exists {
                     let documentation_truncation_index = documentation_layout_line
                         .index_for_x(
@@ -1199,7 +1199,7 @@ impl CompletionsMenu {
                     );
                 }
             } else {
-                // truncate the first (and maybe second) part
+                // truncate the first part, if still too long then also truncate the second part
                 let primary_truncation_index = completion_layout_line
                     .index_for_x(max_primary_width - ellipsis_width.width)
                     .unwrap();
@@ -1207,13 +1207,10 @@ impl CompletionsMenu {
                 primary_length_truncated =
                     completion.label.filter_range.end as i32 - primary_end as i32;
 
-                completion_label_text = completion
-                    .label
-                    .text
-                    .chars()
-                    .take(primary_truncation_index)
-                    .collect::<String>()
-                    + "…";
+                completion_label_text = Self::truncate_string_with_ellipses(
+                    completion_label_text.clone(),
+                    primary_truncation_index,
+                );
                 if inline_documentation_exists {
                     completion_label = completion_label.with_text(completion_label_text.clone());
                     let new_completion_layout_line = completion_label.layout_line(font_size, cx)?;
