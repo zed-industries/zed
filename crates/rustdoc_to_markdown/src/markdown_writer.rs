@@ -61,6 +61,7 @@ impl MarkdownWriter {
     pub fn run(mut self, root_node: &Handle) -> Result<String> {
         let mut handlers: Vec<Box<dyn HandleTag>> = Vec::new();
         handlers.push(Box::new(HeadingHandler));
+        handlers.push(Box::new(ListHandler));
         handlers.push(Box::new(RustdocTableHandler::new()));
         handlers.push(Box::new(RustdocItemHandler));
 
@@ -179,8 +180,6 @@ impl MarkdownWriter {
 
                 self.push_str(&format!("\n\n```{language}\n"));
             }
-            "ul" | "ol" => self.push_newline(),
-            "li" => self.push_str("- "),
             "summary" => {
                 if tag.has_class("hideme") {
                     return StartTagOutcome::Skip;
@@ -219,8 +218,6 @@ impl MarkdownWriter {
                 }
             }
             "pre" => self.push_str("\n```\n"),
-            "ul" | "ol" => self.push_newline(),
-            "li" => self.push_newline(),
             _ => {}
         }
     }
@@ -301,6 +298,39 @@ impl HandleTag for HeadingHandler {
     fn handle_tag_end(&mut self, tag: &HtmlElement, writer: &mut MarkdownWriter) {
         match tag.tag.as_str() {
             "h1" | "h2" | "h3" | "h4" | "h5" | "h6" => writer.push_blank_line(),
+            _ => {}
+        }
+    }
+}
+
+struct ListHandler;
+
+impl HandleTag for ListHandler {
+    fn should_handle(&self, tag: &str) -> bool {
+        match tag {
+            "ul" | "ol" | "li" => true,
+            _ => false,
+        }
+    }
+
+    fn handle_tag_start(
+        &mut self,
+        tag: &HtmlElement,
+        writer: &mut MarkdownWriter,
+    ) -> StartTagOutcome {
+        match tag.tag.as_str() {
+            "ul" | "ol" => writer.push_newline(),
+            "li" => writer.push_str("- "),
+            _ => {}
+        }
+
+        StartTagOutcome::Continue
+    }
+
+    fn handle_tag_end(&mut self, tag: &HtmlElement, writer: &mut MarkdownWriter) {
+        match tag.tag.as_str() {
+            "ul" | "ol" => writer.push_newline(),
+            "li" => writer.push_newline(),
             _ => {}
         }
     }
