@@ -22,9 +22,11 @@ use crate::{
     Vim,
 };
 use collections::BTreeSet;
+use editor::display_map::ToDisplayPoint;
 use editor::scroll::Autoscroll;
+use editor::Anchor;
 use editor::Bias;
-use editor::DisplayPoint;
+use editor::Editor;
 use gpui::{actions, ViewContext, WindowContext};
 use language::{Point, SelectionGoal};
 use log::error;
@@ -146,26 +148,9 @@ pub(crate) fn register(workspace: &mut Workspace, cx: &mut ViewContext<Workspace
             vim.record_current_action(cx);
             vim.update_active_editor(cx, |_, editor, cx| {
                 editor.transact(cx, |editor, cx| {
-                    let mut original_positions: HashMap<_, _> = Default::default();
-                    let (map, selections) = editor.selections.all_display(cx);
-                    selections.iter().for_each(|selection| {
-                        let line_start = first_non_whitespace(&map, true, selection.start).column();
-                        original_positions.insert(selection.id, (selection.start, line_start));
-                    });
+                    let mut original_positions = save_selection_starts(editor, cx);
                     editor.indent(&Default::default(), cx);
-                    editor.set_clip_at_line_ends(true, cx);
-                    editor.change_selections(Some(Autoscroll::fit()), cx, |s| {
-                        s.move_with(|map, selection| {
-                            let (mut cursor, original_line_start) =
-                                original_positions.remove(&selection.id).unwrap();
-                            *cursor.column_mut() +=
-                                first_non_whitespace(map, true, DisplayPoint::new(cursor.row(), 0))
-                                    .column()
-                                    - original_line_start;
-                            cursor = map.clip_point(cursor, Bias::Left);
-                            selection.collapse_to(cursor, selection.goal);
-                        });
-                    });
+                    restore_selection_cursors(editor, cx, &mut original_positions);
                 });
             });
             if vim.state().mode.is_visual() {
@@ -179,28 +164,9 @@ pub(crate) fn register(workspace: &mut Workspace, cx: &mut ViewContext<Workspace
             vim.record_current_action(cx);
             vim.update_active_editor(cx, |_, editor, cx| {
                 editor.transact(cx, |editor, cx| {
-                    let mut original_positions: HashMap<_, _> = Default::default();
-                    let (map, selections) = editor.selections.all_display(cx);
-                    selections.iter().for_each(|selection| {
-                        let line_start = first_non_whitespace(&map, true, selection.start).column();
-                        original_positions.insert(selection.id, (selection.start, line_start));
-                    });
+                    let mut original_positions = save_selection_starts(editor, cx);
                     editor.outdent(&Default::default(), cx);
-                    editor.change_selections(Some(Autoscroll::fit()), cx, |s| {
-                        s.move_with(|map, selection| {
-                            let (mut cursor, original_line_start) =
-                                original_positions.remove(&selection.id).unwrap();
-                            *cursor.column_mut() -= original_line_start
-                                - first_non_whitespace(
-                                    map,
-                                    true,
-                                    DisplayPoint::new(cursor.row(), 0),
-                                )
-                                .column();
-                            cursor = map.clip_point(cursor, Bias::Left);
-                            selection.collapse_to(cursor, selection.goal);
-                        });
-                    });
+                    restore_selection_cursors(editor, cx, &mut original_positions);
                 });
             });
             if vim.state().mode.is_visual() {
@@ -434,6 +400,32 @@ fn yank_line(_: &mut Workspace, _: &YankLine, cx: &mut ViewContext<Workspace>) {
         let count = vim.take_count(cx);
         yank_motion(vim, motion::Motion::CurrentLine, count, cx)
     })
+}
+
+fn save_selection_starts(editor: &Editor, cx: &mut ViewContext<Editor>) -> HashMap<usize, Anchor> {
+    let (map, selections) = editor.selections.all_display(cx);
+    selections
+        .iter()
+        .map(|selection| {
+            (
+                selection.id,
+                map.display_point_to_anchor(selection.start, Bias::Right),
+            )
+        })
+        .collect::<HashMap<_, _>>()
+}
+
+fn restore_selection_cursors(
+    editor: &mut Editor,
+    cx: &mut ViewContext<Editor>,
+    positions: &mut HashMap<usize, Anchor>,
+) {
+    editor.change_selections(Some(Autoscroll::fit()), cx, |s| {
+        s.move_with(|map, selection| {
+            let anchor = positions.remove(&selection.id).unwrap();
+            selection.collapse_to(anchor.to_display_point(map), selection.goal);
+        });
+    });
 }
 
 pub(crate) fn normal_replace(text: Arc<str>, cx: &mut WindowContext) {
