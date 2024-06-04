@@ -1941,6 +1941,10 @@ mod test {
     #[gpui::test]
     async fn test_end_of_line_downward(cx: &mut gpui::TestAppContext) {
         let mut cx = NeovimBackedTestContext::new(cx).await;
+        cx.set_shared_state("ˇ one\n two \nthree").await;
+        cx.simulate_shared_keystrokes("g _").await;
+        cx.shared_state().await.assert_eq(" onˇe\n two \nthree");
+
         cx.set_shared_state("ˇ one \n two \nthree").await;
         cx.simulate_shared_keystrokes("g _").await;
         cx.shared_state().await.assert_eq(" onˇe \n two \nthree");
