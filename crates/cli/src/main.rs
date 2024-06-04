@@ -314,7 +314,7 @@ mod flatpak {
         if let Some(flatpak_dir) = get_flatpak_dir() {
             let mut args = vec!["/usr/bin/flatpak-spawn".into(), "--host".into()];
             args.append(&mut get_xdg_env_args());
-            args.push("--env=ZED_IS_FLATPAK_INSTALL=1".into());
+            args.push("--env=ZED_UPDATE_EXPLANATION=Please use flatpak to update zed".into());
             args.push(
                 format!(
                     "--env={EXTRA_LIB_ENV_NAME}={}",
@@ -347,7 +347,7 @@ mod flatpak {
         {
             if args.zed.is_none() {
                 args.zed = Some("/app/libexec/zed-editor".into());
-                env::set_var("ZED_IS_FLATPAK_INSTALL", "1");
+                env::set_var("ZED_UPDATE_EXPLANATION", "Please use flatpak to update zed");
             }
         }
         args
