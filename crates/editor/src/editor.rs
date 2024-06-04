@@ -1065,15 +1065,26 @@ impl CompletionsMenu {
                             &None
                         };
 
-                        let (_completion_width, completion_label, documentation_label) =
-                            Self::truncate_completion(
-                                &style,
-                                cx,
-                                mat,
-                                &mut completion.clone(),
-                                documentation,
-                                max_completion_len,
-                            );
+                        let (completion_label, documentation_label) = Self::truncate_completion(
+                            &style,
+                            cx,
+                            mat,
+                            &mut completion.clone(),
+                            documentation,
+                            max_completion_len,
+                        )
+                        .unwrap_or_else(|_| {
+                            //this should never trigger, but if it does, we can just use the default, non-truncated completion
+                            let (completion_label, _, _, documentation_label) =
+                                Self::generate_default_labels(
+                                    &&style,
+                                    cx,
+                                    mat,
+                                    &&mut completion.clone(),
+                                    documentation,
+                                );
+                            (completion_label, documentation_label)
+                        });
                         div()
                             .min_w(px(widest_completion_pixels + padding_width))
                             .max_w(max_completion_len + px(padding_width))
@@ -1120,54 +1131,13 @@ impl CompletionsMenu {
         completion: &mut Completion,
         documentation: &Option<Documentation>,
         max_completion_len: Pixels,
-    ) -> (Pixels, StyledText, StyledText) {
-        let highlights = gpui::combine_highlights(
-            mat.ranges().map(|range| (range, FontWeight::BOLD.into())),
-            styled_runs_for_code_label(&completion.label, &style.syntax).map(
-                |(range, mut highlight)| {
-                    highlight.font_weight = None;
-
-                    if completion.lsp_completion.deprecated.unwrap_or(false) {
-                        highlight.strikethrough = Some(StrikethroughStyle {
-                            thickness: 1.0.into(),
-                            ..Default::default()
-                        });
-                        highlight.color = Some(cx.theme().colors().text_muted);
-                    }
-
-                    (range, highlight)
-                },
-            ),
-        );
-        let mut completion_label =
-            StyledText::new(completion.label.text.clone()).with_highlights(&style.text, highlights);
-
-        let mut inline_documentation_exists = false;
-
-        let mut documentation_text = if let Some(Documentation::SingleLine(text)) = documentation {
-            inline_documentation_exists = true;
-            text
-        } else {
-            ""
-        }
-        .to_owned();
-        let documentation_style = style.clone().text;
-
-        let documentation_highlight_style = HighlightStyle {
-            color: Some(Color::Muted.color(cx)),
-            ..Default::default()
-        };
-
-        let documentation_highlights = vec![(
-            Range {
-                start: 0,
-                end: documentation_text.len(),
-            },
-            documentation_highlight_style,
-        )];
-        let documentation_label = StyledText::new(documentation_text.clone())
-            .with_highlights(&documentation_style, documentation_highlights);
-
+    ) -> Result<(StyledText, StyledText)> {
+        let (
+            mut completion_label,
+            inline_documentation_exists,
+            mut documentation_text,
+            documentation_label,
+        ) = Self::generate_default_labels(&style, cx, mat, &completion, documentation);
         let font_size = style.text.font_size.to_pixels(cx.rem_size());
 
         let mut primary_end = completion.label.filter_range.end;
@@ -1176,13 +1146,11 @@ impl CompletionsMenu {
 
         let mut actual_width = px(0.);
 
-        let ellipsis_width = cx
-            .text_system()
-            .layout_line("…", font_size, &[style.text.to_run("…".len())])
-            .unwrap();
-
-        let completion_layout_line = completion_label.layout_line(font_size, cx).unwrap();
-        let documentation_layout_line = documentation_label.layout_line(font_size, cx).unwrap();
+        let ellipsis_width =
+            (cx.text_system()
+                .layout_line("…", font_size, &[style.text.to_run("…".len())]))?;
+        let completion_layout_line = completion_label.layout_line(font_size, cx)?;
+        let documentation_layout_line = documentation_label.layout_line(font_size, cx)?;
 
         let primary_percentage = 0.8;
         let secondary_percentage = 0.65;
@@ -1246,8 +1214,7 @@ impl CompletionsMenu {
                         .collect::<String>()
                         + "…";
                     completion_label = completion_label.with_text(completion_label_text.clone());
-                    let new_completion_layout_line =
-                        completion_label.layout_line(font_size, cx).unwrap();
+                    let new_completion_layout_line = completion_label.layout_line(font_size, cx)?;
                     let combined_width = new_completion_layout_line
                         .x_for_index(completion_label_text.len())
                         + secondary_width;
@@ -1279,8 +1246,7 @@ impl CompletionsMenu {
                         + "…"
                         + second_part_text;
                     completion_label = completion_label.with_text(completion_label_text.clone());
-                    let new_completion_layout_line =
-                        completion_label.layout_line(font_size, cx).unwrap();
+                    let new_completion_layout_line = completion_label.layout_line(font_size, cx)?;
                     let combined_width =
                         new_completion_layout_line.x_for_index(completion_label_text.len());
                     if combined_width > max_completion_len {
@@ -1348,7 +1314,68 @@ impl CompletionsMenu {
         let documentation_label = StyledText::new(documentation_text)
             .with_highlights(&documentation_style, documentation_highlights);
 
-        (actual_width, completion_label, documentation_label)
+        Ok((completion_label, documentation_label))
+    }
+
+    fn generate_default_labels(
+        style: &&EditorStyle,
+        cx: &mut ViewContext<Editor>,
+        mat: &StringMatch,
+        completion: &&mut Completion,
+        documentation: &Option<Documentation>,
+    ) -> (StyledText, bool, String, StyledText) {
+        let highlights = gpui::combine_highlights(
+            mat.ranges().map(|range| (range, FontWeight::BOLD.into())),
+            styled_runs_for_code_label(&completion.label, &style.syntax).map(
+                |(range, mut highlight)| {
+                    highlight.font_weight = None;
+
+                    if completion.lsp_completion.deprecated.unwrap_or(false) {
+                        highlight.strikethrough = Some(StrikethroughStyle {
+                            thickness: 1.0.into(),
+                            ..Default::default()
+                        });
+                        highlight.color = Some(cx.theme().colors().text_muted);
+                    }
+
+                    (range, highlight)
+                },
+            ),
+        );
+        let completion_label =
+            StyledText::new(completion.label.text.clone()).with_highlights(&style.text, highlights);
+
+        let mut inline_documentation_exists = false;
+
+        let documentation_text = if let Some(Documentation::SingleLine(text)) = documentation {
+            inline_documentation_exists = true;
+            text
+        } else {
+            ""
+        }
+        .to_owned();
+        let documentation_style = &style.text;
+
+        let documentation_highlight_style = HighlightStyle {
+            color: Some(Color::Muted.color(cx)),
+            ..Default::default()
+        };
+
+        let documentation_highlights = vec![(
+            Range {
+                start: 0,
+                end: documentation_text.len(),
+            },
+            documentation_highlight_style,
+        )];
+        let documentation_label = StyledText::new(documentation_text.clone())
+            .with_highlights(&documentation_style, documentation_highlights);
+        (
+            completion_label,
+            inline_documentation_exists,
+            documentation_text,
+            documentation_label,
+        )
     }
 
     pub async fn filter(&mut self, query: Option<&str>, executor: BackgroundExecutor) {
