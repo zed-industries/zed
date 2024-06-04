@@ -41,6 +41,7 @@ members = [
     "crates/gpui",
     "crates/gpui_macros",
     "crates/headless",
+    "crates/html_to_markdown",
     "crates/http",
     "crates/image_viewer",
     "crates/inline_completion_button",
@@ -76,7 +77,6 @@ members = [
     "crates/rich_text",
     "crates/rope",
     "crates/rpc",
-    "crates/rustdoc_to_markdown",
     "crates/task",
     "crates/tasks_ui",
     "crates/search",
@@ -187,6 +187,7 @@ google_ai = { path = "crates/google_ai" }
 gpui = { path = "crates/gpui" }
 gpui_macros = { path = "crates/gpui_macros" }
 headless = { path = "crates/headless" }
+html_to_markdown = { path = "crates/html_to_markdown" }
 http = { path = "crates/http" }
 install_cli = { path = "crates/install_cli" }
 image_viewer = { path = "crates/image_viewer" }
@@ -223,7 +224,6 @@ dev_server_projects = { path = "crates/dev_server_projects" }
 rich_text = { path = "crates/rich_text" }
 rope = { path = "crates/rope" }
 rpc = { path = "crates/rpc" }
-rustdoc_to_markdown = { path = "crates/rustdoc_to_markdown" }
 task = { path = "crates/task" }
 tasks_ui = { path = "crates/tasks_ui" }
 search = { path = "crates/search" }

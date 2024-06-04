@@ -5,9 +5,9 @@ use anyhow::{anyhow, bail, Context, Result};
 use assistant_slash_command::{SlashCommand, SlashCommandOutput, SlashCommandOutputSection};
 use futures::AsyncReadExt;
 use gpui::{AppContext, Task, WeakView};
+use html_to_markdown::convert_html_to_markdown;
 use http::{AsyncBody, HttpClient, HttpClientWithUrl};
 use language::LspAdapterDelegate;
-use rustdoc_to_markdown::convert_html_to_markdown;
 use ui::{prelude::*, ButtonLike, ElevationIndex};
 use workspace::Workspace;
 

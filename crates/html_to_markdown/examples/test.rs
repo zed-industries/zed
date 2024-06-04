@@ -1,5 +1,5 @@
+use html_to_markdown::convert_rustdoc_to_markdown;
 use indoc::indoc;
-use rustdoc_to_markdown::convert_rustdoc_to_markdown;
 
 pub fn main() {
     let html = indoc! {"
