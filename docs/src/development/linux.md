@@ -91,6 +91,7 @@ At Zed, our priority has been to move fast and bring the latest technology to ou
 However, we realize that many distros have other priorities. We want to work with everyone to bring Zed to their favorite platforms. But there is a long way to go:
 
 * Zed is a fast moving early-phase project. We typically release 2-3 builds a week to fix user-reported issues and release major features.
+* There are a couple of other `zed` binaries that may be present on linux systems ([1](https://openzfs.github.io/openzfs-docs/man/v2.2/8/zed.8.html), [2](https://zed.brimdata.io/docs/commands/zed)).
 * We automatically install updates to Zed by default (though we do need a way for [package managers to opt out](https://github.com/zed-industries/zed/issues/12588)).
 * Zed automatically installs the correct version of common developer tools in the same way as rustup/rbenv/pyenv, etc. We understand that this is contentious, [see here](https://github.com/zed-industries/zed/issues/12589).
 * We allow users to install extensions on their own and from [zed-industries/extensions](https://github.com/zed-industries/extensions). These extensions may install further tooling as needed, such as language servers. In the long run we would like to make this safer, [see here](https://github.com/zed-industries/zed/issues/12358).
