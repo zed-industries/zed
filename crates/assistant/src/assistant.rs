@@ -24,7 +24,7 @@ use semantic_index::{CloudEmbeddingProvider, SemanticIndex};
 use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsStore};
 use slash_command::{
-    active_command, default_command, file_command, project_command, prompt_command,
+    active_command, default_command, fetch_command, file_command, project_command, prompt_command,
     rustdoc_command, search_command, tabs_command,
 };
 use std::{
@@ -305,6 +305,7 @@ fn register_slash_commands(cx: &mut AppContext) {
     slash_command_registry.register_command(prompt_command::PromptSlashCommand, true);
     slash_command_registry.register_command(default_command::DefaultSlashCommand, true);
     slash_command_registry.register_command(rustdoc_command::RustdocSlashCommand, false);
+    slash_command_registry.register_command(fetch_command::FetchSlashCommand, false);
 }
 
 #[cfg(test)]
