@@ -159,7 +159,7 @@ message Envelope {
         SetChannelMemberRole set_channel_member_role = 123;
         RenameChannel rename_channel = 124;
         RenameChannelResponse rename_channel_response = 125;
-        SubscribeToChannels subscribe_to_channels = 207; // current max
+        SubscribeToChannels subscribe_to_channels = 207;
 
         JoinChannelBuffer join_channel_buffer = 126;
         JoinChannelBufferResponse join_channel_buffer_response = 127;
@@ -220,6 +220,7 @@ message Envelope {
 
         MultiLspQuery multi_lsp_query = 175;
         MultiLspQueryResponse multi_lsp_query_response = 176;
+        RestartLanguageServers restart_language_servers = 208;  // current max
 
         CreateDevServerProject create_dev_server_project = 177;
         CreateDevServerProjectResponse create_dev_server_project_response = 188;
@@ -2109,6 +2110,11 @@ message MultiLspQuery {
 }
 
 message AllLanguageServers {}
+
+message RestartLanguageServers {
+    uint64 project_id = 1;
+    repeated uint64 buffer_ids = 2;
+}
 
 message MultiLspQueryResponse {
     repeated LspResponse responses = 1;
