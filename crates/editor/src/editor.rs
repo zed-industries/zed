@@ -1124,6 +1124,12 @@ impl CompletionsMenu {
             .into_any_element()
     }
 
+    fn truncate_string_with_ellipses(text: String, index: usize) -> String {
+        let mut truncated = text;
+        truncated.truncate(index);
+        truncated.push('…');
+        truncated
+    }
     fn truncate_completion(
         style: &EditorStyle,
         cx: &mut ViewContext<Editor>,
@@ -1178,18 +1184,18 @@ impl CompletionsMenu {
                         )
                         .unwrap();
                     primary_end = documentation_truncation_index + 2;
-                    documentation_text = documentation_text
-                        .chars()
-                        .take(documentation_truncation_index)
-                        .collect::<String>()
-                        + "…";
+                    documentation_text = Self::truncate_string_with_ellipses(
+                        documentation_text.clone(),
+                        documentation_truncation_index,
+                    );
                 } else {
                     let type_annotation_truncation_index = completion_layout_line
                         .index_for_x(max_completion_len - ellipsis_width.width)
                         .unwrap();
-                    completion_label_text = format!(
-                        "{}...",
-                        &(completion.label.text)[..type_annotation_truncation_index]
+
+                    completion_label_text = Self::truncate_string_with_ellipses(
+                        completion.label.text.clone(),
+                        type_annotation_truncation_index,
                     );
                 }
             } else {
@@ -1222,11 +1228,10 @@ impl CompletionsMenu {
                                 ))
                                 .unwrap();
 
-                        documentation_text = documentation_text
-                            .chars()
-                            .take(documentation_truncation_index)
-                            .collect::<String>()
-                            + "…";
+                        documentation_text = Self::truncate_string_with_ellipses(
+                            documentation_text.clone(),
+                            documentation_truncation_index,
+                        );
                     }
                 } else {
                     let second_part_text =
@@ -1241,11 +1246,10 @@ impl CompletionsMenu {
                             .index_for_x(max_completion_len - ellipsis_width.width)
                             .unwrap();
 
-                        completion_label_text = completion_label_text
-                            .chars()
-                            .take(type_annotation_truncation_index - 2)
-                            .collect::<String>()
-                            + "…";
+                        completion_label_text = Self::truncate_string_with_ellipses(
+                            completion_label_text.clone(),
+                            type_annotation_truncation_index - 2,
+                        );
                     }
                 }
             }
