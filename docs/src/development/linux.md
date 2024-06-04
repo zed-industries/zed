@@ -72,24 +72,30 @@ Zed has basic support for both modes. The mode is selected at runtime. If you're
 
 ## Notes for packaging Zed
 
-Thank you for taking on the task of packaging Zed! There are a few things to note to make things work smoothly:
+Thank you for taking on the task of packaging Zed!
 
-* Zed is a *very* fast moving project. We typically ship 2-3 [releases per week](/docs/development/releases) to fix user-reported issues and major new features. Please make sure that you are packaging in a way where updates will be available to users within a few hours or days.
-* If at all possible we recommend starting from the tarball that we [build](https://github.com/zed-industries/zed/releases) and release (currently only for "preview" versions) rather than building your own copy. This ensures you're running the same code and configuration that we support and test.
-* If that is not possible, read through [script/bundle-linux](https://github.com/zed-industries/zed/blob/main/script/bundle-linux) to see what is involved.
+### Technical requirements
 
-The minimal technical requirements are (probably) that:
-* You will need to take the built package for `crates/cli` and put it in `$PATH` with the name `zed`.
-* You will need to take the built binary for `crates/zed` and put it at `$PATH/to/cli/../../libexec/zed-editor`. For example if you are going to put the cli at `~/.local/bin/zed` put zed at `~/.local/libexec/zed-editor`.
-* You will need to ensure that the necessary libraries are installed. You can get the current list from the lib directory of the tarball we provide, or by [inspecting the built binary](https://github.com/zed-industries/zed/blob/059a4141b756cf4afac4c977afc488539aec6470/script/bundle-linux#L65-L70) on your system.
+Zed has two main binaries:
 
-Also, beware! Zed does a number of things that are required to build a good IDE, but which are a bit "out there" from the point of view of package managers and linux distributions:
-* We automatically install the correct version of developer tools. Like rustup/rbenv/pyenv, etc. we've found that "one system-wide version" does not work well for many professional development environments. Users expect us to support multiple projects running on multiple versions of the toolchain out of the box.
-* We allow users to install extensions which may install further tooling as needed.
-* We include a number of online tools and services by default (copilot, zed collaboration, telemetry). These can all be disabled in settings by the user as desired.
-* We automatically install updates by default (though we do want a way to work better with package managers here, ideas welcome).
+* You will need to build `crates/cli` and make it's binary available in `$PATH` with the name `zed`.
+* You will need to build `crates/zed` and put it at `$PATH/to/cli/../../libexec/zed-editor`. For example, if you are going to put the cli at `~/.local/bin/zed` put zed at `~/.local/libexec/zed-editor`.
+* If you are going to provide a `.desktop` file you can find a template in `crates/zed/resources/zed.desktop.in`, and use `envsubst` to populate it with the values required.
+* You will need to ensure that the necessary libraries are installed. You can get the current list by [inspecting the built binary](https://github.com/zed-industries/zed/blob/059a4141b756cf4afac4c977afc488539aec6470/script/bundle-linux#L65-L70) on your system.
+* For an example of a complete build script, see [script/bundle-linux](https://github.com/zed-industries/zed/blob/main/script/bundle-linux).
 
-Although this may present some tension, we'd prefer for you to package Zed in a way that ensures that it continues to "just work" out of the box. That way users of your package get to benefit from the work we've put into making Zed work for as many projects as possible.
+### Other things to note
+
+At Zed, our priority has been to move fast and bring the latest technology to our users. We've long been frustrated at having software that is slow, out of date, or hard to configure, and so we've built our editor to those tastes.
+
+However, we realize that many distros have other priorities. We want to work with everyone to bring Zed to their favorite platforms. But there is a long way to go:
+
+* Zed is a fast moving early-phase project. We typically release 2-3 builds a week to fix user-reported issues and release major features.
+* We automatically install updates to Zed by default (though we do need a way for [package managers to opt out](https://github.com/zed-industries/zed/issues/12588)).
+* Zed automatically installs the correct version of common developer tools in the same way as rustup/rbenv/pyenv, etc. We understand that this is contentious, [see here](https://github.com/zed-industries/zed/issues/12589).
+* We allow users to install extensions on their own and from [zed-industries/extensions](https://github.com/zed-industries/extensions). These extensions may install further tooling as needed, such as language servers. In the long run we would like to make this safer, [see here](https://github.com/zed-industries/zed/issues/12358).
+* Zed connects to a number of online services by default (AI, telemetry, collaboration). AI and our telemetry can be disabled by your users with their own zed settings or by patching our [default settings file](https://github.com/zed-industries/zed/blob/main/assets/settings/default.json).
+* As a result, zed currently does not play nice with sandboxes, [see here](https://github.com/zed-industries/zed/pull/12006#issuecomment-2130421220)
 
 ## Flatpak
 
