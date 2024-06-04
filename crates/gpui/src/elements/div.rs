@@ -2526,6 +2526,14 @@ impl ScrollHandle {
         }
     }
 
+    /// Scroll to an offset
+    pub fn scroll_to(&self, mut position: Point<Pixels>) -> bool {
+        let state = self.0.borrow();
+        let mut offset = state.offset.borrow_mut();
+        *offset = position;
+        return true;
+    }
+
     /// Get the logical scroll top, based on a child index and a pixel offset.
     pub fn logical_scroll_top(&self) -> (usize, Pixels) {
         let ix = self.top_item();
