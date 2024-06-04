@@ -577,10 +577,11 @@ mod tests {
     fn test_populate_with() {
         let keys: Arc<str> = "abc".into();
         let values = vec![0, 1, 2];
-        let builder = TrieBuilder::new(keys.clone(), values.len());
-        let trie = builder.populate_with(true, values.into_iter(), |path, val| {
-            (path.to_string(), val)
-        });
+        let trie = TrieBuilder::new(keys.clone(), values.len()).populate_with(
+            true,
+            values,
+            |path, val| (path.to_string(), val),
+        );
         let perms = trie.trie_to_perms();
         assert_eq!(
             perms,
@@ -592,10 +593,8 @@ mod tests {
         );
 
         let values = vec![0, 1, 2, 3, 4, 5, 6, 7, 8, 9];
-        let builder = TrieBuilder::new(keys, values.len());
-        let trie = builder.populate_with(true, values.into_iter(), |path, val| {
-            (path.to_string(), val)
-        });
+        let trie = TrieBuilder::new(keys, values.len())
+            .populate_with(true, values, |path, val| (path.to_string(), val));
         let perms = trie.trie_to_perms();
         assert_eq!(
             perms,

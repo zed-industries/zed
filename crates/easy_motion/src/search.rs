@@ -129,8 +129,8 @@ mod tests {
 
     fn test_helper(text: &str, list: Vec<DisplayPoint>, full_word: bool, cx: &mut AppContext) {
         let (snapshot, display_points) = marked_display_snapshot(text, cx);
-        let point = display_points.first().unwrap().clone();
-        let end = display_points.last().unwrap().clone();
+        let point = *display_points.first().unwrap();
+        let end = *display_points.last().unwrap();
         let starts = word_starts_in_range(&snapshot, point, end, full_word);
         assert_eq!(starts, list, "full_word: {:?}, text: {}", full_word, text);
     }
