@@ -6,7 +6,7 @@ use anyhow::{anyhow, Result};
 use assistant_slash_command::SlashCommandRegistry;
 use chrono::{DateTime, Utc};
 use collections::HashMap;
-use editor::{Editor, EditorEvent};
+use editor::{actions::Tab, Editor, EditorEvent};
 use futures::{
     future::{self, BoxFuture, Shared},
     FutureExt,
@@ -591,7 +591,16 @@ impl PromptLibrary {
         }
     }
 
-    fn cancel(&mut self, _: &menu::Cancel, cx: &mut ViewContext<Self>) {
+    fn focus_active_prompt(&mut self, _: &Tab, cx: &mut ViewContext<Self>) {
+        if let Some(active_prompt) = self.active_prompt_id {
+            self.prompt_editors[&active_prompt]
+                .editor
+                .update(cx, |editor, cx| editor.focus(cx));
+            cx.stop_propagation();
+        }
+    }
+
+    fn focus_picker(&mut self, _: &menu::Cancel, cx: &mut ViewContext<Self>) {
         self.picker.update(cx, |picker, cx| picker.focus(cx));
     }
 
@@ -678,6 +687,7 @@ impl PromptLibrary {
     fn render_prompt_list(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         v_flex()
             .id("prompt-list")
+            .capture_action(cx.listener(Self::focus_active_prompt))
             .bg(cx.theme().colors().panel_background)
             .h_full()
             .w_1_3()
@@ -722,7 +732,7 @@ impl PromptLibrary {
                         .items_start()
                         .child(
                             div()
-                                .on_action(cx.listener(Self::cancel))
+                                .on_action(cx.listener(Self::focus_picker))
                                 .flex_grow()
                                 .h_full()
                                 .pt(Spacing::Large.rems(cx))
