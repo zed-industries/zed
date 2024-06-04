@@ -2377,11 +2377,13 @@ impl Panel for ProjectPanel {
     }
 
     fn starts_open(&self, cx: &WindowContext) -> bool {
-        self.project.read(cx).visible_worktrees(cx).any(|tree| {
-            tree.read(cx)
-                .root_entry()
-                .map_or(false, |entry| entry.is_dir())
-        })
+        let project = &self.project.read(cx);
+        project.dev_server_project_id().is_some()
+            || project.visible_worktrees(cx).any(|tree| {
+                tree.read(cx)
+                    .root_entry()
+                    .map_or(false, |entry| entry.is_dir())
+            })
     }
 }
 
