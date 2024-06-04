@@ -291,9 +291,9 @@ impl PickerDelegate for PromptPickerDelegate {
                                 IconButton::new(
                                     "toggle-default-prompt",
                                     if default {
-                                        IconName::StarFilled
+                                        IconName::ZedAssistantFilled
                                     } else {
-                                        IconName::Star
+                                        IconName::ZedAssistant
                                     },
                                 )
                                 .shape(IconButtonShape::Square)
@@ -740,9 +740,9 @@ impl PromptLibrary {
                                     IconButton::new(
                                         "toggle-default-prompt",
                                         if prompt_metadata.default {
-                                            IconName::StarFilled
+                                            IconName::ZedAssistantFilled
                                         } else {
-                                            IconName::Star
+                                            IconName::ZedAssistant
                                         },
                                     )
                                     .size(ButtonSize::Large)
