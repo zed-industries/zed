@@ -1,4 +1,7 @@
-use crate::slash_command::SlashCommandLine;
+use crate::{
+    slash_command::SlashCommandLine, CompletionProvider, LanguageModelRequest,
+    LanguageModelRequestMessage, Role,
+};
 use anyhow::{anyhow, Result};
 use assistant_slash_command::SlashCommandRegistry;
 use chrono::{DateTime, Utc};
@@ -110,6 +113,8 @@ pub struct PromptLibrary {
 
 struct PromptEditor {
     editor: View<Editor>,
+    token_count: Option<usize>,
+    pending_token_count: Task<Option<()>>,
     next_body_to_save: Option<Rope>,
     pending_save: Option<Task<Option<()>>>,
     _subscription: Subscription,
@@ -446,10 +451,13 @@ impl PromptLibrary {
                                 editor,
                                 next_body_to_save: None,
                                 pending_save: None,
+                                token_count: None,
+                                pending_token_count: Task::ready(None),
                                 _subscription,
                             },
                         );
                         this.set_active_prompt(Some(prompt_id), cx);
+                        this.count_tokens(prompt_id, cx);
                     }
                     Err(error) => {
                         // TODO: we should show the error in the UI.
@@ -558,6 +566,46 @@ impl PromptLibrary {
             });
 
             self.save_prompt(prompt_id, cx);
+            self.count_tokens(prompt_id, cx);
+        }
+    }
+
+    fn count_tokens(&mut self, prompt_id: PromptId, cx: &mut ViewContext<Self>) {
+        if let Some(prompt) = self.prompt_editors.get_mut(&prompt_id) {
+            let editor = &prompt.editor.read(cx);
+            let buffer = &editor.buffer().read(cx).as_singleton().unwrap().read(cx);
+            let body = buffer.as_rope().clone();
+            prompt.pending_token_count = cx.spawn(|this, mut cx| {
+                async move {
+                    const DEBOUNCE_TIMEOUT: Duration = Duration::from_secs(1);
+
+                    cx.background_executor().timer(DEBOUNCE_TIMEOUT).await;
+                    let token_count = cx
+                        .update(|cx| {
+                            let provider = CompletionProvider::global(cx);
+                            let model = provider.model();
+                            provider.count_tokens(
+                                LanguageModelRequest {
+                                    model,
+                                    messages: vec![LanguageModelRequestMessage {
+                                        role: Role::System,
+                                        content: body.to_string(),
+                                    }],
+                                    stop: Vec::new(),
+                                    temperature: 1.,
+                                },
+                                cx,
+                            )
+                        })?
+                        .await?;
+                    this.update(&mut cx, |this, cx| {
+                        let prompt_editor = this.prompt_editors.get_mut(&prompt_id).unwrap();
+                        prompt_editor.token_count = Some(token_count);
+                        cx.notify();
+                    })
+                }
+                .log_err()
+            });
         }
     }
 
@@ -601,69 +649,68 @@ impl PromptLibrary {
             .min_w_64()
             .children(self.active_prompt_id.and_then(|prompt_id| {
                 let prompt_metadata = self.store.metadata(prompt_id)?;
-                let editor = self.prompt_editors[&prompt_id].editor.clone();
+                let prompt_editor = &self.prompt_editors[&prompt_id];
                 Some(
-                    v_flex()
+                    h_flex()
                         .size_full()
-                        .child(
-                            h_flex()
-                                .h(TitleBar::height(cx))
-                                .px(Spacing::Large.rems(cx))
-                                .justify_end()
-                                .child(
-                                    h_flex()
-                                        .gap_4()
-                                        .child(
-                                            IconButton::new(
-                                                "toggle-default-prompt",
-                                                if prompt_metadata.default {
-                                                    IconName::StarFilled
-                                                } else {
-                                                    IconName::Star
-                                                },
-                                            )
-                                            .shape(IconButtonShape::Square)
-                                            .tooltip(move |cx| {
-                                                Tooltip::for_action(
-                                                    if prompt_metadata.default {
-                                                        "Remove from Default Prompt"
-                                                    } else {
-                                                        "Add to Default Prompt"
-                                                    },
-                                                    &ToggleDefaultPrompt,
-                                                    cx,
-                                                )
-                                            })
-                                            .on_click(
-                                                |_, cx| {
-                                                    cx.dispatch_action(Box::new(
-                                                        ToggleDefaultPrompt,
-                                                    ));
-                                                },
-                                            ),
-                                        )
-                                        .child(
-                                            IconButton::new("delete-prompt", IconName::Trash)
-                                                .shape(IconButtonShape::Square)
-                                                .tooltip(move |cx| {
-                                                    Tooltip::for_action(
-                                                        "Delete Prompt",
-                                                        &DeletePrompt,
-                                                        cx,
-                                                    )
-                                                })
-                                                .on_click(|_, cx| {
-                                                    cx.dispatch_action(Box::new(DeletePrompt));
-                                                }),
-                                        ),
-                                ),
-                        )
+                        .items_start()
                         .child(
                             div()
                                 .on_action(cx.listener(Self::cancel))
                                 .flex_grow()
-                                .p(Spacing::Large.rems(cx))
-                                .child(editor),
+                                .h_full()
+                                .pt(Spacing::Large.rems(cx))
+                                .pl(Spacing::Large.rems(cx))
+                                .child(prompt_editor.editor.clone()),
+                        )
+                        .child(
+                            v_flex()
+                                .w_12()
+                                .py(Spacing::Large.rems(cx))
+                                .justify_start()
+                                .items_center()
+                                .gap_4()
+                                .child(
+                                    IconButton::new(
+                                        "toggle-default-prompt",
+                                        if prompt_metadata.default {
+                                            IconName::StarFilled
+                                        } else {
+                                            IconName::Star
+                                        },
+                                    )
+                                    .size(ButtonSize::Large)
+                                    .shape(IconButtonShape::Square)
+                                    .tooltip(move |cx| {
+                                        Tooltip::for_action(
+                                            if prompt_metadata.default {
+                                                "Remove from Default Prompt"
+                                            } else {
+                                                "Add to Default Prompt"
+                                            },
+                                            &ToggleDefaultPrompt,
+                                            cx,
+                                        )
+                                    })
+                                    .on_click(|_, cx| {
+                                        cx.dispatch_action(Box::new(ToggleDefaultPrompt));
+                                    }),
+                                )
+                                .child(
+                                    IconButton::new("delete-prompt", IconName::Trash)
+                                        .shape(IconButtonShape::Square)
+                                        .tooltip(move |cx| {
+                                            Tooltip::for_action("Delete Prompt", &DeletePrompt, cx)
+                                        })
+                                        .on_click(|_, cx| {
+                                            cx.dispatch_action(Box::new(DeletePrompt));
+                                        }),
+                                )
+                                .children(prompt_editor.token_count.map(|token_count| {
+                                    h_flex()
+                                        .justify_center()
+                                        .child(Label::new(token_count.to_string()))
+                                })),
                         ),
                 )
             }))
