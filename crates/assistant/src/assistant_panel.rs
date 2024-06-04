@@ -1,11 +1,11 @@
 use crate::{
     assistant_settings::{AssistantDockPosition, AssistantSettings},
     codegen::{self, Codegen, CodegenKind},
-    prompt_library::{open_prompt_library, PromptMetadata, PromptStore},
+    prompt_library::open_prompt_library,
     prompts::generate_content_prompt,
     search::*,
     slash_command::{
-        prompt_command::PromptPlaceholder, SlashCommandCompletionProvider, SlashCommandLine,
+        default_command::DefaultSlashCommand, SlashCommandCompletionProvider, SlashCommandLine,
         SlashCommandRegistry,
     },
     ApplyEdit, Assist, CompletionProvider, ConfirmCommand, CycleMessageRole, InlineAssist,
@@ -14,7 +14,7 @@ use crate::{
     SavedMessage, Split, ToggleFocus, ToggleHistory, ToggleModelSelector,
 };
 use anyhow::{anyhow, Result};
-use assistant_slash_command::{SlashCommandOutput, SlashCommandOutputSection};
+use assistant_slash_command::{SlashCommand, SlashCommandOutput, SlashCommandOutputSection};
 use client::telemetry::Telemetry;
 use collections::{hash_map, BTreeSet, HashMap, HashSet, VecDeque};
 use editor::{actions::ShowCompletions, GutterDimensions};
@@ -118,14 +118,6 @@ pub struct AssistantPanel {
     _watch_saved_conversations: Task<Result<()>>,
     authentication_prompt: Option<AnyView>,
     model_menu_handle: PopoverMenuHandle<ContextMenu>,
-    default_prompt: DefaultPrompt,
-    _watch_prompt_store: Task<()>,
-}
-
-#[derive(Default)]
-struct DefaultPrompt {
-    text: String,
-    sections: Vec<SlashCommandOutputSection<usize>>,
 }
 
 struct ActiveConversationEditor {
@@ -146,8 +138,6 @@ impl AssistantPanel {
                 .await
                 .log_err()
                 .unwrap_or_default();
-            let prompt_store = cx.update(|cx| PromptStore::global(cx))?.await?;
-            let default_prompts = prompt_store.load_default().await?;
 
             // TODO: deserialize state.
             let workspace_handle = workspace.clone();
@@ -171,22 +161,6 @@ impl AssistantPanel {
                         }
 
                         anyhow::Ok(())
-                    });
-
-                    let _watch_prompt_store = cx.spawn(|this, mut cx| async move {
-                        let mut updates = prompt_store.updates();
-                        while updates.changed().await.is_ok() {
-                            let Some(prompts) = prompt_store.load_default().await.log_err() else {
-                                continue;
-                            };
-
-                            if this
-                                .update(&mut cx, |this, _cx| this.update_default_prompt(prompts))
-                                .is_err()
-                            {
-                                break;
-                            }
-                        }
                     });
 
                     let toolbar = cx.new_view(|cx| {
@@ -216,7 +190,7 @@ impl AssistantPanel {
                     })
                     .detach();
 
-                    let mut this = Self {
+                    Self {
                         workspace: workspace_handle,
                         active_conversation_editor: None,
                         show_saved_conversations: false,
@@ -239,11 +213,7 @@ impl AssistantPanel {
                         _watch_saved_conversations,
                         authentication_prompt: None,
                         model_menu_handle: PopoverMenuHandle::default(),
-                        default_prompt: DefaultPrompt::default(),
-                        _watch_prompt_store,
-                    };
-                    this.update_default_prompt(default_prompts);
-                    this
+                    }
                 })
             })
         })
@@ -264,55 +234,6 @@ impl AssistantPanel {
         self.toolbar
             .update(cx, |toolbar, cx| toolbar.focus_changed(false, cx));
         cx.notify();
-    }
-
-    fn update_default_prompt(&mut self, prompts: Vec<(PromptMetadata, String)>) {
-        self.default_prompt.text.clear();
-        self.default_prompt.sections.clear();
-        if !prompts.is_empty() {
-            self.default_prompt.text.push_str("Default Prompt:\n");
-        }
-
-        for (metadata, body) in prompts {
-            let section_start = self.default_prompt.text.len();
-            self.default_prompt.text.push_str(&body);
-            let section_end = self.default_prompt.text.len();
-            self.default_prompt
-                .sections
-                .push(SlashCommandOutputSection {
-                    range: section_start..section_end,
-                    render_placeholder: Arc::new(move |id, unfold, _cx| {
-                        PromptPlaceholder {
-                            title: metadata
-                                .title
-                                .clone()
-                                .unwrap_or_else(|| SharedString::from("Untitled")),
-                            id,
-                            unfold,
-                        }
-                        .into_any_element()
-                    }),
-                });
-            self.default_prompt.text.push('\n');
-        }
-        self.default_prompt.text.pop();
-
-        if !self.default_prompt.text.is_empty() {
-            self.default_prompt.sections.insert(
-                0,
-                SlashCommandOutputSection {
-                    range: 0..self.default_prompt.text.len(),
-                    render_placeholder: Arc::new(move |id, unfold, _cx| {
-                        PromptPlaceholder {
-                            title: "Default".into(),
-                            id,
-                            unfold,
-                        }
-                        .into_any_element()
-                    }),
-                },
-            )
-        }
     }
 
     fn completion_provider_changed(
@@ -862,7 +783,6 @@ impl AssistantPanel {
 
         let editor = cx.new_view(|cx| {
             ConversationEditor::new(
-                &self.default_prompt,
                 self.languages.clone(),
                 self.slash_commands.clone(),
                 self.fs.clone(),
@@ -2596,7 +2516,6 @@ pub struct ConversationEditor {
 
 impl ConversationEditor {
     fn new(
-        default_prompt: &DefaultPrompt,
         language_registry: Arc<LanguageRegistry>,
         slash_command_registry: Arc<SlashCommandRegistry>,
         fs: Arc<dyn Fs>,
@@ -2618,31 +2537,7 @@ impl ConversationEditor {
 
         let mut this =
             Self::for_conversation(conversation, fs, workspace, lsp_adapter_delegate, cx);
-
-        if !default_prompt.text.is_empty() {
-            this.editor
-                .update(cx, |editor, cx| editor.insert(&default_prompt.text, cx));
-            let snapshot = this.conversation.read(cx).buffer.read(cx).text_snapshot();
-            this.insert_slash_command_output_sections(
-                default_prompt
-                    .sections
-                    .iter()
-                    .map(|section| SlashCommandOutputSection {
-                        range: snapshot.anchor_after(section.range.start)
-                            ..snapshot.anchor_before(section.range.end),
-                        render_placeholder: section.render_placeholder.clone(),
-                    }),
-                cx,
-            );
-            this.split(&Split, cx);
-            this.conversation.update(cx, |this, _cx| {
-                this.messages_metadata
-                    .get_mut(&MessageId::default())
-                    .unwrap()
-                    .role = Role::System;
-            });
-        }
-
+        this.insert_default_prompt(cx);
         this
     }
 
@@ -2693,6 +2588,31 @@ impl ConversationEditor {
         };
         this.update_message_headers(cx);
         this
+    }
+
+    fn insert_default_prompt(&mut self, cx: &mut ViewContext<Self>) {
+        let command_name = DefaultSlashCommand.name();
+        self.editor.update(cx, |editor, cx| {
+            editor.insert(&format!("/{command_name}"), cx)
+        });
+        self.split(&Split, cx);
+        let command = self.conversation.update(cx, |conversation, cx| {
+            conversation
+                .messages_metadata
+                .get_mut(&MessageId::default())
+                .unwrap()
+                .role = Role::System;
+            conversation.reparse_slash_commands(cx);
+            conversation.pending_slash_commands[0].clone()
+        });
+
+        self.run_command(
+            command.source_range,
+            &command.name,
+            command.argument.as_deref(),
+            self.workspace.clone(),
+            cx,
+        );
     }
 
     fn assist(&mut self, _: &Assist, cx: &mut ViewContext<Self>) {

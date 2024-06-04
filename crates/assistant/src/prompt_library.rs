@@ -703,7 +703,6 @@ pub struct PromptStore {
     bodies: Database<SerdeBincode<PromptId>, SerdeBincode<String>>,
     metadata: Database<SerdeBincode<PromptId>, SerdeBincode<PromptMetadata>>,
     metadata_cache: RwLock<MetadataCache>,
-    updates: (Arc<async_watch::Sender<()>>, async_watch::Receiver<()>),
 }
 
 #[derive(Default)]
@@ -776,21 +775,15 @@ impl PromptStore {
                 let metadata_cache = MetadataCache::from_db(metadata, &txn)?;
                 txn.commit()?;
 
-                let (updates_tx, updates_rx) = async_watch::channel(());
                 Ok(PromptStore {
                     executor,
                     env: db_env,
                     bodies,
                     metadata,
                     metadata_cache: RwLock::new(metadata_cache),
-                    updates: (Arc::new(updates_tx), updates_rx),
                 })
             }
         })
-    }
-
-    pub fn updates(&self) -> async_watch::Receiver<()> {
-        self.updates.1.clone()
     }
 
     pub fn load(&self, id: PromptId) -> Task<Result<String>> {
@@ -915,7 +908,6 @@ impl PromptStore {
         let db_connection = self.env.clone();
         let bodies = self.bodies;
         let metadata = self.metadata;
-        let updates = self.updates.0.clone();
 
         self.executor.spawn(async move {
             let mut txn = db_connection.write_txn()?;
@@ -924,7 +916,6 @@ impl PromptStore {
             bodies.put(&mut txn, &id, &body.to_string())?;
 
             txn.commit()?;
-            updates.send(()).ok();
 
             Ok(())
         })
@@ -946,13 +937,11 @@ impl PromptStore {
 
         let db_connection = self.env.clone();
         let metadata = self.metadata;
-        let updates = self.updates.0.clone();
 
         self.executor.spawn(async move {
             let mut txn = db_connection.write_txn()?;
             metadata.put(&mut txn, &id, &prompt_metadata)?;
             txn.commit()?;
-            updates.send(()).ok();
 
             Ok(())
         })
