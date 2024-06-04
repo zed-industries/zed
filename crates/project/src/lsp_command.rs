@@ -2605,7 +2605,8 @@ impl LspCommand for LinkedEditingRange {
         server_id: LanguageServerId,
         mut cx: AsyncAppContext,
     ) -> Result<Vec<Range<Anchor>>> {
-        if let Some(LinkedEditingRanges { ranges, .. }) = message {
+        if let Some(LinkedEditingRanges { mut ranges, .. }) = message {
+            ranges.sort_by_key(|range| range.start);
             // let (lsp_adapter, lsp_server) =
             //     language_server_for_buffer(&project, &buffer, server_id, &mut cx)?;
             let ranges = buffer.read_with(&cx, |buffer, _| {

@@ -25,8 +25,8 @@ use parking_lot::Mutex;
 use project::project_settings::{LspSettings, ProjectSettings};
 use project::FakeFs;
 use serde_json::{self, json};
-use std::sync::atomic;
 use std::sync::atomic::AtomicUsize;
+use std::{any::Any, sync::atomic};
 use std::{cell::RefCell, future::Future, rc::Rc, time::Instant};
 use unindent::Unindent;
 use util::{
@@ -5660,6 +5660,38 @@ async fn test_auto_replace_emoji_shortcode(cx: &mut gpui::TestAppContext) {
             editor.text(cx),
             "Hello 👋 😄👋:1: Test:wave: :wave:".unindent()
         );
+    });
+}
+
+#[gpui::test]
+async fn test_auto_replace_emoji_shortcode(cx: &mut gpui::TestAppContext) {
+    init_test(cx, |_| {});
+
+    let language = Arc::new(Language::new(
+        LanguageConfig::default(),
+        Some(tree_sitter_rust::language()),
+    ));
+
+    let buffer = cx.new_model(|cx| Buffer::local("<html></html>", cx).with_language(language, cx));
+    let buffer = cx.new_model(|cx| MultiBuffer::singleton(buffer, cx));
+    let (editor, cx) = cx.add_window_view(|cx| build_editor(buffer, cx));
+    editor
+        .condition::<crate::EditorEvent>(cx, |view, cx| !view.buffer.read(cx).is_parsing(cx))
+        .await;
+
+    _ = editor.update(cx, |editor, cx| {
+        let (_, _, snapshot) = editor.buffer.read(cx).snapshot(cx).as_singleton().unwrap();
+
+        let ranges: Vec<Range<usize>> = vec![1..5, 8..12];
+        let ranges = ranges
+            .into_iter()
+            .map(|range| range.to_anchor(snapshot))
+            .collect();
+
+        let type_id = LinkedEditingRangeHighlight.type_id();
+        editor
+            .background_highlights
+            .insert(type_id, (|_| Hsla::default(), ranges))
     });
 }
 
