@@ -353,6 +353,7 @@ dependencies = [
  "fuzzy",
  "gpui",
  "heed",
+ "html_to_markdown",
  "http 0.1.0",
  "indoc",
  "language",
@@ -367,7 +368,6 @@ dependencies = [
  "rand 0.8.5",
  "regex",
  "rope",
- "rustdoc_to_markdown",
  "schemars",
  "search",
  "semantic_index",
@@ -5068,6 +5068,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "html_to_markdown"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "html5ever",
+ "indoc",
+ "markup5ever_rcdom",
+ "pretty_assertions",
+ "regex",
+]
+
+[[package]]
 name = "http"
 version = "0.1.0"
 dependencies = [
@@ -8616,18 +8628,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "bfa0f585226d2e68097d4f95d113b15b83a82e819ab25717ec0590d9584ef366"
 dependencies = [
  "semver",
-]
-
-[[package]]
-name = "rustdoc_to_markdown"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "html5ever",
- "indoc",
- "markup5ever_rcdom",
- "pretty_assertions",
- "regex",
 ]
 
 [[package]]

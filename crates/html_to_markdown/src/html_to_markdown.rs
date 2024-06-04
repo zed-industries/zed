@@ -3,7 +3,9 @@
 #![deny(missing_docs)]
 
 mod html_element;
+mod markdown;
 mod markdown_writer;
+mod structure;
 
 use std::io::Read;
 
@@ -14,15 +16,28 @@ use html5ever::tendril::TendrilSink;
 use html5ever::tree_builder::TreeBuilderOpts;
 use markup5ever_rcdom::RcDom;
 
-use crate::markdown_writer::MarkdownWriter;
+use crate::markdown::{HeadingHandler, ListHandler, ParagraphHandler, StyledTextHandler};
+use crate::markdown_writer::{HandleTag, MarkdownWriter};
 
 /// Converts the provided HTML to Markdown.
 pub fn convert_html_to_markdown(html: impl Read) -> Result<String> {
     let dom = parse_html(html).context("failed to parse HTML")?;
 
+    let handlers: Vec<Box<dyn HandleTag>> = vec![
+        Box::new(ParagraphHandler),
+        Box::new(HeadingHandler),
+        Box::new(ListHandler),
+        Box::new(StyledTextHandler),
+        Box::new(structure::rustdoc::RustdocChromeRemover),
+        Box::new(structure::rustdoc::RustdocHeadingHandler),
+        Box::new(structure::rustdoc::RustdocCodeHandler),
+        Box::new(structure::rustdoc::RustdocTableHandler::new()),
+        Box::new(structure::rustdoc::RustdocItemHandler),
+    ];
+
     let markdown_writer = MarkdownWriter::new();
     let markdown = markdown_writer
-        .run(&dom.document)
+        .run(&dom.document, handlers)
         .context("failed to convert HTML to Markdown")?;
 
     Ok(markdown)
@@ -32,9 +47,21 @@ pub fn convert_html_to_markdown(html: impl Read) -> Result<String> {
 pub fn convert_rustdoc_to_markdown(html: impl Read) -> Result<String> {
     let dom = parse_html(html).context("failed to parse rustdoc HTML")?;
 
+    let handlers: Vec<Box<dyn HandleTag>> = vec![
+        Box::new(ParagraphHandler),
+        Box::new(HeadingHandler),
+        Box::new(ListHandler),
+        Box::new(StyledTextHandler),
+        Box::new(structure::rustdoc::RustdocChromeRemover),
+        Box::new(structure::rustdoc::RustdocHeadingHandler),
+        Box::new(structure::rustdoc::RustdocCodeHandler),
+        Box::new(structure::rustdoc::RustdocTableHandler::new()),
+        Box::new(structure::rustdoc::RustdocItemHandler),
+    ];
+
     let markdown_writer = MarkdownWriter::new();
     let markdown = markdown_writer
-        .run(&dom.document)
+        .run(&dom.document, handlers)
         .context("failed to convert rustdoc HTML to Markdown")?;
 
     Ok(markdown)

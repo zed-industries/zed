@@ -1,0 +1,135 @@
+use crate::html_element::HtmlElement;
+use crate::markdown_writer::{HandleTag, MarkdownWriter, StartTagOutcome};
+
+pub struct ParagraphHandler;
+
+impl HandleTag for ParagraphHandler {
+    fn should_handle(&self, _tag: &str) -> bool {
+        true
+    }
+
+    fn handle_tag_start(
+        &mut self,
+        tag: &HtmlElement,
+        writer: &mut MarkdownWriter,
+    ) -> StartTagOutcome {
+        if tag.is_inline() && writer.is_inside("p") {
+            if let Some(parent) = writer.current_element_stack().iter().last() {
+                if !parent.is_inline() {
+                    if !(writer.markdown.ends_with(' ') || writer.markdown.ends_with('\n')) {
+                        writer.push_str(" ");
+                    }
+                }
+            }
+        }
+
+        match tag.tag.as_str() {
+            "p" => writer.push_blank_line(),
+            _ => {}
+        }
+
+        StartTagOutcome::Continue
+    }
+}
+
+pub struct HeadingHandler;
+
+impl HandleTag for HeadingHandler {
+    fn should_handle(&self, tag: &str) -> bool {
+        match tag {
+            "h1" | "h2" | "h3" | "h4" | "h5" | "h6" => true,
+            _ => false,
+        }
+    }
+
+    fn handle_tag_start(
+        &mut self,
+        tag: &HtmlElement,
+        writer: &mut MarkdownWriter,
+    ) -> StartTagOutcome {
+        match tag.tag.as_str() {
+            "h1" => writer.push_str("\n\n# "),
+            "h2" => writer.push_str("\n\n## "),
+            "h3" => writer.push_str("\n\n### "),
+            "h4" => writer.push_str("\n\n#### "),
+            "h5" => writer.push_str("\n\n##### "),
+            "h6" => writer.push_str("\n\n###### "),
+            _ => {}
+        }
+
+        StartTagOutcome::Continue
+    }
+
+    fn handle_tag_end(&mut self, tag: &HtmlElement, writer: &mut MarkdownWriter) {
+        match tag.tag.as_str() {
+            "h1" | "h2" | "h3" | "h4" | "h5" | "h6" => writer.push_blank_line(),
+            _ => {}
+        }
+    }
+}
+
+pub struct ListHandler;
+
+impl HandleTag for ListHandler {
+    fn should_handle(&self, tag: &str) -> bool {
+        match tag {
+            "ul" | "ol" | "li" => true,
+            _ => false,
+        }
+    }
+
+    fn handle_tag_start(
+        &mut self,
+        tag: &HtmlElement,
+        writer: &mut MarkdownWriter,
+    ) -> StartTagOutcome {
+        match tag.tag.as_str() {
+            "ul" | "ol" => writer.push_newline(),
+            "li" => writer.push_str("- "),
+            _ => {}
+        }
+
+        StartTagOutcome::Continue
+    }
+
+    fn handle_tag_end(&mut self, tag: &HtmlElement, writer: &mut MarkdownWriter) {
+        match tag.tag.as_str() {
+            "ul" | "ol" => writer.push_newline(),
+            "li" => writer.push_newline(),
+            _ => {}
+        }
+    }
+}
+
+pub struct StyledTextHandler;
+
+impl HandleTag for StyledTextHandler {
+    fn should_handle(&self, tag: &str) -> bool {
+        match tag {
+            "strong" | "em" => true,
+            _ => false,
+        }
+    }
+
+    fn handle_tag_start(
+        &mut self,
+        tag: &HtmlElement,
+        writer: &mut MarkdownWriter,
+    ) -> StartTagOutcome {
+        match tag.tag.as_str() {
+            "strong" => writer.push_str("**"),
+            "em" => writer.push_str("_"),
+            _ => {}
+        }
+
+        StartTagOutcome::Continue
+    }
+
+    fn handle_tag_end(&mut self, tag: &HtmlElement, writer: &mut MarkdownWriter) {
+        match tag.tag.as_str() {
+            "strong" => writer.push_str("**"),
+            "em" => writer.push_str("_"),
+            _ => {}
+        }
+    }
+}
