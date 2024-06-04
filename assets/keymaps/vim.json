@@ -1,12 +1,12 @@
 [
   {
-    "context": "!EasyMotionControlled && (ProjectPanel || Editor)",
+    "context": "ProjectPanel || Editor",
     "bindings": {
       "ctrl-6": "pane::AlternateFile"
     }
   },
   {
-    "context": "!EasyMotionControlled && (Editor && VimControl && !VimWaiting && !menu)",
+    "context": "Editor && VimControl && !VimWaiting && !menu",
     "bindings": {
       "i": [
         "vim::PushOperator",
@@ -339,14 +339,14 @@
   },
   {
     // escape is in its own section so that it cancels a pending count.
-    "context": "!EasyMotionControlled && (Editor && vim_mode == normal && vim_operator == none && !VimWaiting)",
+    "context": "Editor && vim_mode == normal && vim_operator == none && !VimWaiting",
     "bindings": {
       "escape": "editor::Cancel",
       "ctrl-[": "editor::Cancel"
     }
   },
   {
-    "context": "!EasyMotionControlled && (Editor && vim_mode == normal && vim_operator == none && !VimWaiting)",
+    "context": "Editor && vim_mode == normal && vim_operator == none && !VimWaiting",
     "bindings": {
       ".": "vim::Repeat",
       "c": ["vim::PushOperator", "Change"],
@@ -393,7 +393,7 @@
     }
   },
   {
-    "context": "!EasyMotionControlled && (Editor && vim_mode == visual && vim_operator == none && !VimWaiting)",
+    "context": "Editor && vim_mode == visual && vim_operator == none && !VimWaiting",
     "bindings": {
       // tree-sitter related commands
       "[ x": "editor::SelectLargerSyntaxNode",
@@ -401,20 +401,20 @@
     }
   },
   {
-    "context": "!EasyMotionControlled && (Editor && VimCount)",
+    "context": "Editor && VimCount",
     "bindings": {
       "0": ["vim::Number", 0]
     }
   },
   {
-    "context": "!EasyMotionControlled && (Editor && vim_operator == c)",
+    "context": "Editor && vim_operator == c",
     "bindings": {
       "c": "vim::CurrentLine",
       "d": "editor::Rename" // zed specific
     }
   },
   {
-    "context": "!EasyMotionControlled && (Editor && vim_mode == normal && vim_operator == c)",
+    "context": "Editor && vim_mode == normal && vim_operator == c",
     "bindings": {
       "s": [
         "vim::PushOperator",
@@ -425,25 +425,25 @@
     }
   },
   {
-    "context": "!EasyMotionControlled && (Editor && vim_operator == d)",
+    "context": "Editor && vim_operator == d",
     "bindings": {
       "d": "vim::CurrentLine"
     }
   },
   {
-    "context": "!EasyMotionControlled && (Editor && vim_mode == normal && vim_operator == d)",
+    "context": "Editor && vim_mode == normal && vim_operator == d",
     "bindings": {
       "s": ["vim::PushOperator", "DeleteSurrounds"]
     }
   },
   {
-    "context": "!EasyMotionControlled && (Editor && vim_operator == y)",
+    "context": "Editor && vim_operator == y",
     "bindings": {
       "y": "vim::CurrentLine"
     }
   },
   {
-    "context": "!EasyMotionControlled && (Editor && vim_mode == normal && vim_operator == y)",
+    "context": "Editor && vim_mode == normal && vim_operator == y",
     "bindings": {
       "s": [
         "vim::PushOperator",
@@ -454,13 +454,13 @@
     }
   },
   {
-    "context": "!EasyMotionControlled && (Editor && vim_operator == ys)",
+    "context": "Editor && vim_operator == ys",
     "bindings": {
       "s": "vim::CurrentLine"
     }
   },
   {
-    "context": "!EasyMotionControlled && (Editor && VimObject)",
+    "context": "Editor && VimObject",
     "bindings": {
       "w": "vim::Word",
       "shift-w": [
@@ -490,7 +490,7 @@
     }
   },
   {
-    "context": "!EasyMotionControlled && (Editor && vim_mode == visual && !VimWaiting && !VimObject)",
+    "context": "Editor && vim_mode == visual && !VimWaiting && !VimObject",
     "bindings": {
       "u": "vim::ConvertToLowerCase",
       "U": "vim::ConvertToUpperCase",
@@ -568,19 +568,19 @@
     }
   },
   {
-    "context": "!EasyMotionControlled && (Editor && vim_mode == normal)",
+    "context": "Editor && vim_mode == normal && !VimWaiting",
     "bindings": {
       "g c c": "editor::ToggleComments"
     }
   },
   {
-    "context": "!EasyMotionControlled && (Editor && vim_mode == visual)",
+    "context": "Editor && vim_mode == visual",
     "bindings": {
       "g c": "editor::ToggleComments"
     }
   },
   {
-    "context": "!EasyMotionControlled && (Editor && vim_mode == insert)",
+    "context": "Editor && vim_mode == insert",
     "bindings": {
       "escape": "vim::NormalBefore",
       "ctrl-c": "vim::NormalBefore",
@@ -599,7 +599,7 @@
     }
   },
   {
-    "context": "!EasyMotionControlled && (Editor && vim_mode == replace)",
+    "context": "Editor && vim_mode == replace",
     "bindings": {
       "escape": "vim::NormalBefore",
       "ctrl-c": "vim::NormalBefore",
@@ -608,7 +608,7 @@
     }
   },
   {
-    "context": "!EasyMotionControlled && (Editor && VimWaiting)",
+    "context": "Editor && VimWaiting",
     "bindings": {
       "tab": "vim::Tab",
       "enter": "vim::Enter",
@@ -617,21 +617,21 @@
     }
   },
   {
-    "context": "!EasyMotionControlled && (BufferSearchBar && !in_replace)",
+    "context": "BufferSearchBar && !in_replace",
     "bindings": {
       "enter": "vim::SearchSubmit",
       "escape": "buffer_search::Dismiss"
     }
   },
   {
-    "context": "!EasyMotionControlled && (EmptyPane || SharedScreen)",
+    "context": "EmptyPane || SharedScreen",
     "bindings": {
       ":": "command_palette::Toggle"
     }
   },
   {
     // netrw compatibility
-    "context": "!EasyMotionControlled && (ProjectPanel && not_editing)",
+    "context": "ProjectPanel && not_editing",
     "bindings": {
       ":": "command_palette::Toggle",
       "%": "project_panel::NewFile",
@@ -656,7 +656,7 @@
     }
   },
   {
-    "context": "EasyMotionControlled",
+    "context": "Editor && VimWaiting",
     "bindings": {
       "escape": "easy_motion::Cancel",
       "ctrl-c": "easy_motion::Cancel"
