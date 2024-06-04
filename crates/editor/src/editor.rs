@@ -1144,8 +1144,6 @@ impl CompletionsMenu {
         let mut completion_label_text = completion.label.text.clone();
         let mut primary_length_truncated: i32 = 0;
 
-        let mut actual_width = px(0.);
-
         let ellipsis_width =
             (cx.text_system()
                 .layout_line("…", font_size, &[style.text.to_run("…".len())]))?;
@@ -1155,7 +1153,6 @@ impl CompletionsMenu {
         let primary_percentage = 0.8;
         let secondary_percentage = 0.65;
         if completion_layout_line.width + documentation_layout_line.width > max_completion_len {
-            actual_width = max_completion_len;
             let primary_width =
                 completion_layout_line.x_for_index(completion.label.filter_range.end); // width of the completion
             let secondary_width = match inline_documentation_exists {
@@ -1191,9 +1188,8 @@ impl CompletionsMenu {
                         .index_for_x(max_completion_len - ellipsis_width.width)
                         .unwrap();
                     completion_label_text = format!(
-                        "{}{}",
-                        &(completion.label.text)[..type_annotation_truncation_index],
-                        "…"
+                        "{}...",
+                        &(completion.label.text)[..type_annotation_truncation_index]
                     );
                 }
             } else {
@@ -1205,46 +1201,37 @@ impl CompletionsMenu {
                 primary_length_truncated =
                     completion.label.filter_range.end as i32 - primary_end as i32;
 
+                completion_label_text = completion
+                    .label
+                    .text
+                    .chars()
+                    .take(primary_truncation_index)
+                    .collect::<String>()
+                    + "…";
                 if inline_documentation_exists {
-                    completion_label_text = completion
-                        .label
-                        .text
-                        .chars()
-                        .take(primary_truncation_index)
-                        .collect::<String>()
-                        + "…";
                     completion_label = completion_label.with_text(completion_label_text.clone());
                     let new_completion_layout_line = completion_label.layout_line(font_size, cx)?;
                     let combined_width = new_completion_layout_line
                         .x_for_index(completion_label_text.len())
                         + secondary_width;
                     if combined_width > max_completion_len {
-                        if let Some(documentation_truncation_index) = documentation_layout_line
-                            .index_for_x(
-                                (max_completion_len * secondary_percentage).min(
+                        let documentation_truncation_index =
+                            documentation_layout_line
+                                .index_for_x((max_completion_len * secondary_percentage).min(
                                     max_completion_len - ellipsis_width.width - max_primary_width,
-                                ),
-                            )
-                        {
-                            documentation_text = documentation_text
-                                .chars()
-                                .take(documentation_truncation_index)
-                                .collect::<String>()
-                                + "…";
-                        }
+                                ))
+                                .unwrap();
+
+                        documentation_text = documentation_text
+                            .chars()
+                            .take(documentation_truncation_index)
+                            .collect::<String>()
+                            + "…";
                     }
                 } else {
                     let second_part_text =
                         &completion.label.text.as_str()[completion.label.filter_range.end..];
-
-                    completion_label_text = completion
-                        .label
-                        .text
-                        .chars()
-                        .take(primary_truncation_index)
-                        .collect::<String>()
-                        + "…"
-                        + second_part_text;
+                    completion_label_text += second_part_text;
                     completion_label = completion_label.with_text(completion_label_text.clone());
                     let new_completion_layout_line = completion_label.layout_line(font_size, cx)?;
                     let combined_width =
@@ -1266,6 +1253,7 @@ impl CompletionsMenu {
 
         completion.label.text = completion_label_text.clone();
 
+        //recaulculate the highlighting with the new changes
         if !inline_documentation_exists {
             completion.label.filter_range.end = completion.label.filter_range.end.min(primary_end);
         }
@@ -1273,7 +1261,6 @@ impl CompletionsMenu {
             run.0.start = (run.0.start as i32 - primary_length_truncated).max(0) as usize;
             run.0.end = (run.0.end as i32 - primary_length_truncated).max(0) as usize;
         }
-
         let highlights = gpui::combine_highlights(
             mat.ranges().map(|range| (range, FontWeight::BOLD.into())),
             styled_runs_for_code_label(&completion.label, &style.syntax).map(
@@ -1295,9 +1282,9 @@ impl CompletionsMenu {
             ),
         );
 
+        // generate the completion label and documentation label
         let completion_label =
             StyledText::new(completion_label_text).with_highlights(&style.text, highlights);
-
         let documentation_style = style.clone().text;
         let documentation_highlight_style = HighlightStyle {
             color: Some(Color::Muted.color(cx)),
