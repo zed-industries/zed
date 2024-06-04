@@ -100,18 +100,7 @@ impl LspStdoutHandler {
             }
 
             if let Ok(msg) = serde_json::from_slice::<AnyNotification>(&buffer) {
-                notifications_sender.unbounded_send(msg);
-                // let mut notification_handlers = notification_handlers.lock();
-                // if let Some(handler) = notification_handlers.get_mut(msg.method) {
-                //     handler(
-                //         msg.id,
-                //         msg.params.map(|params| params.get()).unwrap_or("null"),
-                //         cx.clone(),
-                //     );
-                // } else {
-                //     drop(notification_handlers);
-                //     on_unhandled_notification(msg);
-                // }
+                notifications_sender.unbounded_send(msg)?;
             } else if let Ok(AnyResponse {
                 id, error, result, ..
             }) = serde_json::from_slice(&buffer)

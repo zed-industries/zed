@@ -15,9 +15,7 @@ use smol::{
     channel,
     io::{AsyncBufReadExt, AsyncWriteExt, BufReader},
     process::{self, Child},
-    stream::StreamExt,
 };
-use std::str;
 
 #[cfg(target_os = "windows")]
 use smol::process::windows::CommandExt;
@@ -28,7 +26,6 @@ use std::{
     io::Write,
     path::PathBuf,
     pin::Pin,
-    str::{self as _},
     sync::{
         atomic::{AtomicI32, Ordering::SeqCst},
         Arc, Weak,
@@ -39,7 +36,6 @@ use std::{
 use std::{path::Path, process::Stdio};
 use util::{ResultExt, TryFutureExt};
 
-const HEADER_DELIMITER: &'static [u8; 4] = b"\r\n\r\n";
 const JSON_RPC_VERSION: &str = "2.0";
 const CONTENT_LEN_HEADER: &str = "Content-Length: ";
 
@@ -415,6 +411,7 @@ impl LanguageServer {
         Stdout: AsyncRead + Unpin + Send + 'static,
         F: FnMut(AnyNotification) + 'static + Send,
     {
+        use smol::stream::StreamExt;
         let stdout = BufReader::new(stdout);
         let _clear_response_handlers = util::defer({
             let response_handlers = response_handlers.clone();
@@ -463,7 +460,7 @@ impl LanguageServer {
                 return Ok(());
             }
 
-            if let Ok(message) = str::from_utf8(&buffer) {
+            if let Ok(message) = std::str::from_utf8(&buffer) {
                 log::trace!("incoming stderr message:{message}");
                 for handler in io_handlers.lock().values_mut() {
                     handler(IoKind::StdErr, message);
@@ -1148,10 +1145,7 @@ impl FakeLanguageServer {
                         notifications_tx
                             .try_send((
                                 msg.method.to_string(),
-                                msg.params
-                                    .map(|raw_value| raw_value.get())
-                                    .unwrap_or("null")
-                                    .to_string(),
+                                msg.params.unwrap_or(Value::Null).to_string(),
                             ))
                             .ok();
                     },
@@ -1322,6 +1316,7 @@ impl FakeLanguageServer {
 mod tests {
     use super::*;
     use gpui::TestAppContext;
+    use std::str::FromStr;
 
     #[ctor::ctor]
     fn init_logger() {
