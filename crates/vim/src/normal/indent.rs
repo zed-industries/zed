@@ -1,6 +1,8 @@
 use crate::{motion::Motion, object::Object, Vim};
 use collections::HashMap;
+use editor::{display_map::ToDisplayPoint, Bias};
 use gpui::WindowContext;
+use language::SelectionGoal;
 
 #[derive(PartialEq, Eq)]
 pub(super) enum IndentDirection {
@@ -19,11 +21,11 @@ pub fn indent_motion(
     vim.update_active_editor(cx, |_, editor, cx| {
         let text_layout_details = editor.text_layout_details(cx);
         editor.transact(cx, |editor, cx| {
-            let mut original_positions: HashMap<_, _> = Default::default();
+            let mut selection_starts: HashMap<_, _> = Default::default();
             editor.change_selections(None, cx, |s| {
                 s.move_with(|map, selection| {
-                    let cursor = selection.head();
-                    original_positions.insert(selection.id, (cursor, map.line_len(cursor.row())));
+                    let anchor = map.display_point_to_anchor(selection.head(), Bias::Right);
+                    selection_starts.insert(selection.id, anchor);
                     motion.expand_selection(map, selection, times, false, &text_layout_details);
                 });
             });
@@ -34,13 +36,8 @@ pub fn indent_motion(
             }
             editor.change_selections(None, cx, |s| {
                 s.move_with(|map, selection| {
-                    let (mut cursor, line_len) = original_positions.remove(&selection.id).unwrap();
-                    if dir == IndentDirection::In {
-                        *cursor.column_mut() += map.line_len(cursor.row()) - line_len;
-                    } else {
-                        *cursor.column_mut() -= line_len - map.line_len(cursor.row());
-                    }
-                    selection.collapse_to(cursor, selection.goal);
+                    let anchor = selection_starts.remove(&selection.id).unwrap();
+                    selection.collapse_to(anchor.to_display_point(map), SelectionGoal::None);
                 });
             });
         });
@@ -60,8 +57,8 @@ pub fn indent_object(
             let mut original_positions: HashMap<_, _> = Default::default();
             editor.change_selections(None, cx, |s| {
                 s.move_with(|map, selection| {
-                    let cursor = selection.head();
-                    original_positions.insert(selection.id, (cursor, map.line_len(cursor.row())));
+                    let anchor = map.display_point_to_anchor(selection.head(), Bias::Right);
+                    original_positions.insert(selection.id, anchor);
                     object.expand_selection(map, selection, around);
                 });
             });
@@ -72,13 +69,8 @@ pub fn indent_object(
             }
             editor.change_selections(None, cx, |s| {
                 s.move_with(|map, selection| {
-                    let (mut cursor, line_len) = original_positions.remove(&selection.id).unwrap();
-                    if dir == IndentDirection::In {
-                        *cursor.column_mut() += map.line_len(cursor.row()) - line_len;
-                    } else {
-                        *cursor.column_mut() -= line_len - map.line_len(cursor.row());
-                    }
-                    selection.collapse_to(cursor, selection.goal);
+                    let anchor = original_positions.remove(&selection.id).unwrap();
+                    selection.collapse_to(anchor.to_display_point(map), selection.goal);
                 });
             });
         });
