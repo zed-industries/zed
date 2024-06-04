@@ -117,6 +117,7 @@ impl SlashCommandCompletionProvider {
                                                 command_range.clone(),
                                                 &command_name,
                                                 None,
+                                                true,
                                                 workspace.clone(),
                                                 cx,
                                             );
@@ -178,6 +179,7 @@ impl SlashCommandCompletionProvider {
                                             command_range.clone(),
                                             &command_name,
                                             Some(&arg),
+                                            true,
                                             workspace.clone(),
                                             cx,
                                         );

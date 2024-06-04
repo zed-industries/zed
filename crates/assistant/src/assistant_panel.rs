@@ -40,10 +40,9 @@ use gpui::{
     Subscription, Task, TextStyle, UniformListScrollHandle, View, ViewContext, VisualContext,
     WeakModel, WeakView, WhiteSpace, WindowContext,
 };
-use language::LspAdapterDelegate;
 use language::{
     language_settings::SoftWrap, AnchorRangeExt, AutoindentMode, Buffer, LanguageRegistry,
-    OffsetRangeExt as _, Point, ToOffset as _,
+    LspAdapterDelegate, OffsetRangeExt as _, Point, ToOffset as _,
 };
 use multi_buffer::MultiBufferRow;
 use parking_lot::Mutex;
@@ -1811,6 +1810,7 @@ impl Conversation {
         &mut self,
         command_range: Range<language::Anchor>,
         output: Task<Result<SlashCommandOutput>>,
+        insert_trailing_newline: bool,
         cx: &mut ModelContext<Self>,
     ) {
         self.reparse_slash_commands(cx);
@@ -1821,7 +1821,7 @@ impl Conversation {
                 let output = output.await;
                 this.update(&mut cx, |this, cx| match output {
                     Ok(mut output) => {
-                        if !output.text.ends_with('\n') {
+                        if insert_trailing_newline {
                             output.text.push('\n');
                         }
 
@@ -2639,6 +2639,7 @@ impl ConversationEditor {
             command.source_range,
             &command.name,
             command.argument.as_deref(),
+            false,
             self.workspace.clone(),
             cx,
         );
@@ -2766,6 +2767,7 @@ impl ConversationEditor {
                     command.source_range,
                     &command.name,
                     command.argument.as_deref(),
+                    true,
                     workspace.clone(),
                     cx,
                 );
@@ -2779,6 +2781,7 @@ impl ConversationEditor {
         command_range: Range<language::Anchor>,
         name: &str,
         argument: Option<&str>,
+        insert_trailing_newline: bool,
         workspace: WeakView<Workspace>,
         cx: &mut ViewContext<Self>,
     ) {
@@ -2787,7 +2790,12 @@ impl ConversationEditor {
                 let argument = argument.map(ToString::to_string);
                 let output = command.run(argument.as_deref(), workspace, lsp_adapter_delegate, cx);
                 self.conversation.update(cx, |conversation, cx| {
-                    conversation.insert_command_output(command_range, output, cx)
+                    conversation.insert_command_output(
+                        command_range,
+                        output,
+                        insert_trailing_newline,
+                        cx,
+                    )
                 });
             }
         }
@@ -2887,6 +2895,7 @@ impl ConversationEditor {
                                                 command.source_range.clone(),
                                                 &command.name,
                                                 command.argument.as_deref(),
+                                                false,
                                                 workspace.clone(),
                                                 cx,
                                             );
@@ -2960,6 +2969,7 @@ impl ConversationEditor {
                             command.source_range,
                             &command.name,
                             command.argument.as_deref(),
+                            false,
                             self.workspace.clone(),
                             cx,
                         );

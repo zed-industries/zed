@@ -59,6 +59,7 @@ impl SlashCommand for DefaultSlashCommand {
                     writeln!(text, "/prompt {}", title).unwrap();
                 }
             }
+            text.pop();
 
             Ok(SlashCommandOutput {
                 sections: vec![SlashCommandOutputSection {
