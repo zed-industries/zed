@@ -27,7 +27,7 @@ use client::ParticipantIndex;
 use collections::{BTreeMap, HashMap};
 use git::{blame::BlameEntry, diff::DiffHunkStatus, Oid};
 use gpui::{
-    anchored, column_pixels, deferred, div, fill, outline, point, px, quad, relative, size, svg,
+    anchored, deferred, div, fill, outline, point, px, quad, relative, size, svg,
     transparent_black, Action, AnchorCorner, AnyElement, AvailableSpace, Bounds, ClipboardItem,
     ContentMask, Corners, CursorStyle, DispatchPhase, Edges, Element, ElementInputHandler, Entity,
     FontId, GlobalElementId, Hitbox, Hsla, InteractiveElement, IntoElement, Length,
@@ -3732,7 +3732,24 @@ impl EditorElement {
 
     fn column_pixels(&self, column: usize, cx: &WindowContext) -> Pixels {
         let style = &self.style;
-        column_pixels(&style.text, column, cx)
+        let font_size = style.text.font_size.to_pixels(cx.rem_size());
+        let layout = cx
+            .text_system()
+            .shape_line(
+                SharedString::from(" ".repeat(column)),
+                font_size,
+                &[TextRun {
+                    len: column,
+                    font: style.text.font(),
+                    color: Hsla::default(),
+                    background_color: None,
+                    underline: None,
+                    strikethrough: None,
+                }],
+            )
+            .unwrap();
+
+        layout.width
     }
 
     fn max_line_number_width(&self, snapshot: &EditorSnapshot, cx: &WindowContext) -> Pixels {

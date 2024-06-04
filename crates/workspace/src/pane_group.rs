@@ -164,7 +164,7 @@ impl Member {
     }
 
     #[allow(clippy::too_many_arguments)]
-    fn render(
+    pub fn render(
         &self,
         project: &Model<Project>,
         basis: usize,
