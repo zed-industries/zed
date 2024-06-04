@@ -62,6 +62,7 @@ impl MarkdownWriter {
         let mut handlers: Vec<Box<dyn HandleTag>> = Vec::new();
         handlers.push(Box::new(HeadingHandler));
         handlers.push(Box::new(ListHandler));
+        handlers.push(Box::new(RustdocChromeRemover));
         handlers.push(Box::new(RustdocCodeHandler));
         handlers.push(Box::new(RustdocTableHandler::new()));
         handlers.push(Box::new(RustdocItemHandler));
@@ -154,26 +155,9 @@ impl MarkdownWriter {
         }
 
         match tag.tag.as_str() {
-            "head" | "script" | "nav" => return StartTagOutcome::Skip,
             "p" => self.push_blank_line(),
             "strong" => self.push_str("**"),
             "em" => self.push_str("_"),
-            "summary" => {
-                if tag.has_class("hideme") {
-                    return StartTagOutcome::Skip;
-                }
-            }
-            "button" => {
-                if tag.attr("id").as_deref() == Some("copy-path") {
-                    return StartTagOutcome::Skip;
-                }
-            }
-            "div" | "span" => {
-                let classes_to_skip = ["nav-container", "sidebar-elems", "out-of-band"];
-                if tag.has_any_classes(&classes_to_skip) {
-                    return StartTagOutcome::Skip;
-                }
-            }
             _ => {}
         }
 
@@ -487,5 +471,45 @@ impl HandleTag for RustdocItemHandler {
             }
             _ => {}
         }
+    }
+}
+
+struct RustdocChromeRemover;
+
+impl HandleTag for RustdocChromeRemover {
+    fn should_handle(&self, tag: &str) -> bool {
+        match tag {
+            "head" | "script" | "nav" | "summary" | "button" | "div" | "span" => true,
+            _ => false,
+        }
+    }
+
+    fn handle_tag_start(
+        &mut self,
+        tag: &HtmlElement,
+        _writer: &mut MarkdownWriter,
+    ) -> StartTagOutcome {
+        match tag.tag.as_str() {
+            "head" | "script" | "nav" => return StartTagOutcome::Skip,
+            "summary" => {
+                if tag.has_class("hideme") {
+                    return StartTagOutcome::Skip;
+                }
+            }
+            "button" => {
+                if tag.attr("id").as_deref() == Some("copy-path") {
+                    return StartTagOutcome::Skip;
+                }
+            }
+            "div" | "span" => {
+                let classes_to_skip = ["nav-container", "sidebar-elems", "out-of-band"];
+                if tag.has_any_classes(&classes_to_skip) {
+                    return StartTagOutcome::Skip;
+                }
+            }
+            _ => {}
+        }
+
+        StartTagOutcome::Continue
     }
 }
