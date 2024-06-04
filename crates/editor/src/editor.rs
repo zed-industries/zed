@@ -2814,6 +2814,9 @@ impl Editor {
                 }
 
                 if let Some(bracket_pair) = bracket_pair {
+                    let autoclose = self.use_autoclose
+                        && snapshot.settings_at(selection.start, cx).use_autoclose;
+
                     if selection.is_empty() {
                         if is_bracket_pair_start {
                             let prefix_len = bracket_pair.start.len() - text.len();
@@ -2834,8 +2837,6 @@ impl Editor {
                                         ),
                                         &bracket_pair.start[..prefix_len],
                                     ));
-                            let autoclose = self.use_autoclose
-                                && snapshot.settings_at(selection.start, cx).use_autoclose;
                             if autoclose
                                 && following_text_allows_autoclose
                                 && preceding_text_matches_prefix
@@ -2888,7 +2889,10 @@ impl Editor {
                     }
                     // If an opening bracket is 1 character long and is typed while
                     // text is selected, then surround that text with the bracket pair.
-                    else if is_bracket_pair_start && bracket_pair.start.chars().count() == 1 {
+                    else if autoclose
+                        && is_bracket_pair_start
+                        && bracket_pair.start.chars().count() == 1
+                    {
                         edits.push((selection.start..selection.start, text.clone()));
                         edits.push((
                             selection.end..selection.end,
