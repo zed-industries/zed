@@ -656,7 +656,7 @@ impl MacWindow {
                 .as_ref()
                 .and_then(|t| t.title.as_ref().map(AsRef::as_ref))
             {
-                native_window.setTitle_(NSString::alloc(nil).init_str(title));
+                window.set_title(title);
             }
 
             native_window.setMovable_(is_movable as BOOL);
