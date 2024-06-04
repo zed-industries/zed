@@ -40,8 +40,8 @@
         "envsubst < zed.desktop.in > zed.desktop && install -Dm644 zed.desktop /app/share/applications/$APP_ID.desktop",
         "envsubst < flatpak/zed.metainfo.xml.in > zed.metainfo.xml && install -Dm644 zed.metainfo.xml /app/share/metainfo/$APP_ID.metainfo.xml",
         "sed -i -e '/@release_info@/{r flatpak/release-info/$CHANNEL' -e 'd}' /app/share/metainfo/$APP_ID.metainfo.xml",
-        "install -Dm755 bin/cli /app/bin/zed",
-        "install -Dm755 bin/zed /app/bin/zed-app",
+        "install -Dm755 bin/zed /app/bin/zed",
+        "install -Dm755 libexec/zed-editor /app/libexec/zed-editor",
         "install -Dm755 lib/* -t /app/lib"
       ],
       "sources": [
