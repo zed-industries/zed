@@ -15,7 +15,7 @@ name = "Zed"
 path = "src/main.rs"
 
 [features]
-# default = ["auto_update"]
+default = ["auto_update"]
 auto_update = ["dep:auto_update", "activity_indicator/auto_update", "collab_ui/auto_update"]
 
 [dependencies]
