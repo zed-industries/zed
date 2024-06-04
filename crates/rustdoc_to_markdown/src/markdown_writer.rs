@@ -235,24 +235,6 @@ impl MarkdownWriter {
             "pre" => output.push_str("\n```\n"),
             "ul" | "ol" => output.push_newline(),
             "li" => output.push_newline(),
-            // "thead" => {
-            //     self.push_newline();
-            //     for ix in 0..self.current_table_columns {
-            //         if ix > 0 {
-            //             output.push_str(" ");
-            //         }
-            //         output.push_str("| ---");
-            //     }
-            //     output.push_str(" |");
-            //     self.is_first_th = true;
-            // }
-            // "tr" => {
-            //     output.push_str(" |");
-            //     self.is_first_td = true;
-            // }
-            // "table" => {
-            //     self.current_table_columns = 0;
-            // }
             "div" | "span" => {
                 if tag.has_class(RUSTDOC_ITEM_NAME_CLASS) {
                     output.push_str(": ");
