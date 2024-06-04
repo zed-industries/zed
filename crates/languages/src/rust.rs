@@ -38,19 +38,29 @@ impl LspAdapter for RustLspAdapter {
         delegate: &dyn LspAdapterDelegate,
         cx: &AsyncAppContext,
     ) -> Option<LanguageServerBinary> {
-        let configured_binary = cx.update(|cx| {
-            ProjectSettings::get_global(cx)
-                .lsp
-                .get(Self::SERVER_NAME)
-                .and_then(|s| s.binary.clone())
+        let needed_settings = cx.update(|cx| {
+            let ra_settings = ProjectSettings::get_global(cx).lsp.get(Self::SERVER_NAME);
+            let detect_path = ra_settings.map(|s| s.detect_path).unwrap_or_else(|| {
+                log::info!("rust-analyzer settings not found, defaulting to detecting from PATH");
+                true
+            });
+            let binary = ra_settings.and_then(|s| s.binary.clone());
+            (binary, detect_path)
         });
 
-        if let Ok(Some(BinarySettings {
-            path: Some(path),
-            arguments,
-        })) = configured_binary
-        {
-            Some(LanguageServerBinary {
+        let (configured_binary, detect_path) = match needed_settings {
+            Ok((binary, detect_path)) => (Ok(binary), detect_path),
+            Err(e) => {
+                log::error!("Error reading rust-analyzer settings: {e:?}, proceeding with caution");
+                (Err(e), true)
+            }
+        };
+
+        match configured_binary {
+            Ok(Some(BinarySettings {
+                path: Some(path),
+                arguments,
+            })) => Some(LanguageServerBinary {
                 path: path.into(),
                 arguments: arguments
                     .unwrap_or_default()
@@ -58,16 +68,18 @@ impl LspAdapter for RustLspAdapter {
                     .map(|arg| arg.into())
                     .collect(),
                 env: None,
-            })
-        } else {
-            log::info!("Trying to use `rust-analyzer` from PATH");
-            let env = delegate.shell_env().await;
-            let path = delegate.which(Self::SERVER_NAME.as_ref()).await?;
-            Some(LanguageServerBinary {
-                path,
-                arguments: vec![],
-                env: Some(env),
-            })
+            }),
+            _ if detect_path => {
+                log::info!("Trying to use `rust-analyzer` from PATH");
+                let env = delegate.shell_env().await;
+                let path = delegate.which(Self::SERVER_NAME.as_ref()).await?;
+                Some(LanguageServerBinary {
+                    path,
+                    arguments: vec![],
+                    env: Some(env),
+                })
+            }
+            _ => None,
         }
     }
 

@@ -101,6 +101,9 @@ pub struct LspSettings {
     pub binary: Option<BinarySettings>,
     pub initialization_options: Option<serde_json::Value>,
     pub settings: Option<serde_json::Value>,
+
+    #[serde(default = "true_value")]
+    pub detect_path: bool,
 }
 
 impl Settings for ProjectSettings {
