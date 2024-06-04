@@ -7,7 +7,6 @@ pub fn init(cx: &mut AppContext) {
         let editor = cx.view().clone();
         cx.subscribe(&editor, |_, editor, event: &EditorEvent, cx| match event {
             EditorEvent::Focused => cx.window_context().defer(|cx| focused(editor, cx)),
-            EditorEvent::Blurred => cx.window_context().defer(|cx| blurred(editor, cx)),
             _ => {}
         })
         .detach();
@@ -26,8 +25,6 @@ fn focused(editor: View<Editor>, cx: &mut WindowContext) {
     });
 }
 
-fn blurred(_editor: View<Editor>, _cx: &mut WindowContext) {}
-
 fn released(entity_id: EntityId, cx: &mut AppContext) {
     EasyMotion::update(cx, |easy, _cx| {
         if easy
@@ -36,7 +33,6 @@ fn released(entity_id: EntityId, cx: &mut AppContext) {
             .is_some_and(|previous| previous.entity_id() == entity_id)
         {
             easy.active_editor = None;
-            easy.editor_subscription = None;
         }
         easy.editor_states.remove(&entity_id)
     });

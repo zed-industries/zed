@@ -3,21 +3,15 @@ use std::ops::Range;
 use editor::{
     display_map::{DisplayRow, DisplaySnapshot},
     movement::{window_bottom as _window_bottom, window_top as _window_top, TextLayoutDetails},
-    Anchor, DisplayPoint, RowExt,
+    DisplayPoint, RowExt,
 };
-use gpui::Point;
 use text::{Bias, Selection};
-use ui::Pixels;
 
 use crate::Direction;
 
 pub fn manh_distance(point_1: &DisplayPoint, point_2: &DisplayPoint, x_bias: f32) -> f32 {
     x_bias * (point_1.row().as_f32() - point_2.row().as_f32()).abs()
         + (point_1.column() as i32 - point_2.column() as i32).abs() as f32
-}
-
-pub fn manh_distance_pixels(point_1: &Point<Pixels>, point_2: &Point<Pixels>, x_bias: f32) -> f32 {
-    x_bias * (point_1.x.0 - point_2.x.0).abs() + (point_1.y.0 - point_2.y.0).abs()
 }
 
 pub fn end_of_document(map: &DisplaySnapshot) -> DisplayPoint {
@@ -64,25 +58,6 @@ pub fn ranges(
         Direction::BiDirectional | Direction::Forwards => window_bottom(map, &text_layout_details),
         Direction::Backwards => selections.start,
     };
-    start..end
-}
-
-pub fn window_top_bottom_display(
-    map: &DisplaySnapshot,
-    text_layout_details: &TextLayoutDetails,
-) -> Range<DisplayPoint> {
-    let start = window_top(&map, &text_layout_details);
-    let end = window_bottom(&map, &text_layout_details);
-    start..end
-}
-
-pub fn window_top_bottom_anchor(
-    map: &DisplaySnapshot,
-    text_layout_details: &TextLayoutDetails,
-) -> Range<Anchor> {
-    let Range { start, end } = window_top_bottom_display(map, text_layout_details);
-    let start = map.display_point_to_anchor(start, Bias::Left);
-    let end = map.display_point_to_anchor(end, Bias::Left);
     start..end
 }
 
