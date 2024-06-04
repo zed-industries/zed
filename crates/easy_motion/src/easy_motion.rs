@@ -95,7 +95,10 @@ pub struct EasyMotion {
 impl fmt::Debug for EasyMotion {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("EasyMotion")
-            .field("active_editor", &self.active_editor)
+            .field(
+                "active_editor",
+                &self.active_editor.as_ref().map(|editor| editor.entity_id()),
+            )
             .field("dimming", &self.dimming)
             .field("enabled", &self.enabled)
             .field("editor_states(members)", &self.editor_states)
