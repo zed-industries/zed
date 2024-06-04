@@ -24,7 +24,7 @@ pub enum StartTagOutcome {
 
 pub struct MarkdownWriter {
     current_element_stack: VecDeque<HtmlElement>,
-    markdown: String,
+    pub(crate) markdown: String,
 }
 
 impl MarkdownWriter {
@@ -133,16 +133,6 @@ impl MarkdownWriter {
         tag: &HtmlElement,
         handlers: &mut [Box<dyn HandleTag>],
     ) -> StartTagOutcome {
-        if tag.is_inline() && self.is_inside("p") {
-            if let Some(parent) = self.current_element_stack.iter().last() {
-                if !parent.is_inline() {
-                    if !(self.markdown.ends_with(' ') || self.markdown.ends_with('\n')) {
-                        self.push_str(" ");
-                    }
-                }
-            }
-        }
-
         for handler in handlers {
             if handler.should_handle(tag.tag.as_str()) {
                 match handler.handle_tag_start(tag, self) {
@@ -150,13 +140,6 @@ impl MarkdownWriter {
                     StartTagOutcome::Skip => return StartTagOutcome::Skip,
                 }
             }
-        }
-
-        match tag.tag.as_str() {
-            "p" => self.push_blank_line(),
-            "strong" => self.push_str("**"),
-            "em" => self.push_str("_"),
-            _ => {}
         }
 
         StartTagOutcome::Continue
@@ -167,12 +150,6 @@ impl MarkdownWriter {
             if handler.should_handle(tag.tag.as_str()) {
                 handler.handle_tag_end(tag, self);
             }
-        }
-
-        match tag.tag.as_str() {
-            "strong" => self.push_str("**"),
-            "em" => self.push_str("_"),
-            _ => {}
         }
     }
 

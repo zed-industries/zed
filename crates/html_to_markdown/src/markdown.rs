@@ -1,6 +1,37 @@
 use crate::html_element::HtmlElement;
 use crate::markdown_writer::{HandleTag, MarkdownWriter, StartTagOutcome};
 
+pub struct ParagraphHandler;
+
+impl HandleTag for ParagraphHandler {
+    fn should_handle(&self, _tag: &str) -> bool {
+        true
+    }
+
+    fn handle_tag_start(
+        &mut self,
+        tag: &HtmlElement,
+        writer: &mut MarkdownWriter,
+    ) -> StartTagOutcome {
+        if tag.is_inline() && writer.is_inside("p") {
+            if let Some(parent) = writer.current_element_stack().iter().last() {
+                if !parent.is_inline() {
+                    if !(writer.markdown.ends_with(' ') || writer.markdown.ends_with('\n')) {
+                        writer.push_str(" ");
+                    }
+                }
+            }
+        }
+
+        match tag.tag.as_str() {
+            "p" => writer.push_blank_line(),
+            _ => {}
+        }
+
+        StartTagOutcome::Continue
+    }
+}
+
 pub struct HeadingHandler;
 
 impl HandleTag for HeadingHandler {
@@ -65,6 +96,39 @@ impl HandleTag for ListHandler {
         match tag.tag.as_str() {
             "ul" | "ol" => writer.push_newline(),
             "li" => writer.push_newline(),
+            _ => {}
+        }
+    }
+}
+
+pub struct StyledTextHandler;
+
+impl HandleTag for StyledTextHandler {
+    fn should_handle(&self, tag: &str) -> bool {
+        match tag {
+            "strong" | "em" => true,
+            _ => false,
+        }
+    }
+
+    fn handle_tag_start(
+        &mut self,
+        tag: &HtmlElement,
+        writer: &mut MarkdownWriter,
+    ) -> StartTagOutcome {
+        match tag.tag.as_str() {
+            "strong" => writer.push_str("**"),
+            "em" => writer.push_str("_"),
+            _ => {}
+        }
+
+        StartTagOutcome::Continue
+    }
+
+    fn handle_tag_end(&mut self, tag: &HtmlElement, writer: &mut MarkdownWriter) {
+        match tag.tag.as_str() {
+            "strong" => writer.push_str("**"),
+            "em" => writer.push_str("_"),
             _ => {}
         }
     }

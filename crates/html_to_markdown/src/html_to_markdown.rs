@@ -16,7 +16,7 @@ use html5ever::tendril::TendrilSink;
 use html5ever::tree_builder::TreeBuilderOpts;
 use markup5ever_rcdom::RcDom;
 
-use crate::markdown::{HeadingHandler, ListHandler};
+use crate::markdown::{HeadingHandler, ListHandler, ParagraphHandler, StyledTextHandler};
 use crate::markdown_writer::{HandleTag, MarkdownWriter};
 
 /// Converts the provided HTML to Markdown.
@@ -24,8 +24,10 @@ pub fn convert_html_to_markdown(html: impl Read) -> Result<String> {
     let dom = parse_html(html).context("failed to parse HTML")?;
 
     let handlers: Vec<Box<dyn HandleTag>> = vec![
+        Box::new(ParagraphHandler),
         Box::new(HeadingHandler),
         Box::new(ListHandler),
+        Box::new(StyledTextHandler),
         Box::new(structure::rustdoc::RustdocChromeRemover),
         Box::new(structure::rustdoc::RustdocHeadingHandler),
         Box::new(structure::rustdoc::RustdocCodeHandler),
@@ -46,8 +48,10 @@ pub fn convert_rustdoc_to_markdown(html: impl Read) -> Result<String> {
     let dom = parse_html(html).context("failed to parse rustdoc HTML")?;
 
     let handlers: Vec<Box<dyn HandleTag>> = vec![
+        Box::new(ParagraphHandler),
         Box::new(HeadingHandler),
         Box::new(ListHandler),
+        Box::new(StyledTextHandler),
         Box::new(structure::rustdoc::RustdocChromeRemover),
         Box::new(structure::rustdoc::RustdocHeadingHandler),
         Box::new(structure::rustdoc::RustdocCodeHandler),
