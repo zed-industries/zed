@@ -10833,6 +10833,12 @@ impl Editor {
                 self.refresh_inlay_hints(InlayHintRefreshReason::ExcerptsRemoved(ids.clone()), cx);
                 cx.emit(EditorEvent::ExcerptsRemoved { ids: ids.clone() })
             }
+            multi_buffer::Event::ExcerptsEdited { ids } => {
+                cx.emit(EditorEvent::ExcerptsEdited { ids: ids.clone() })
+            }
+            multi_buffer::Event::ExcerptsExpanded { ids } => {
+                cx.emit(EditorEvent::ExcerptsExpanded { ids: ids.clone() })
+            }
             multi_buffer::Event::Reparsed => {
                 self.tasks_update_task = Some(self.refresh_runnables(cx));
 
@@ -11749,6 +11755,12 @@ pub enum EditorEvent {
         excerpts: Vec<(ExcerptId, ExcerptRange<language::Anchor>)>,
     },
     ExcerptsRemoved {
+        ids: Vec<ExcerptId>,
+    },
+    ExcerptsEdited {
+        ids: Vec<ExcerptId>,
+    },
+    ExcerptsExpanded {
         ids: Vec<ExcerptId>,
     },
     BufferEdited,

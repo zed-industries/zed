@@ -11,9 +11,7 @@ use std::{
 use anyhow::Context;
 use collections::{hash_map, BTreeMap, BTreeSet, HashMap, HashSet};
 use db::kvp::KEY_VALUE_STORE;
-use editor::{
-    items::entry_git_aware_label_color, scroll::ScrollAnchor, Editor, EditorEvent, MultiBuffer,
-};
+use editor::{items::entry_git_aware_label_color, scroll::ScrollAnchor, Editor, EditorEvent};
 use file_icons::FileIcons;
 use git::repository::GitFileStatus;
 use gpui::{
@@ -26,13 +24,12 @@ use gpui::{
 };
 use menu::{SelectFirst, SelectLast, SelectNext, SelectPrev};
 
-use language::Buffer;
 use outline_panel_settings::{OutlinePanelDockPosition, OutlinePanelSettings};
 use project::{EntryKind, Fs, Item, Project};
 use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsStore};
 use unicase::UniCase;
-use util::{maybe, NumericPrefixWithSuffix, ResultExt, TryFutureExt};
+use util::{debug_panic, maybe, NumericPrefixWithSuffix, ResultExt, TryFutureExt};
 use workspace::{
     dock::{DockPosition, Panel, PanelEvent},
     item::ItemHandle,
@@ -102,17 +99,6 @@ struct SerializedOutlinePanel {
 struct SelectedEntry {
     worktree_id: WorktreeId,
     entry_id: ProjectEntryId,
-}
-
-struct ActiveItem {
-    item_id: EntityId,
-    editor: View<Editor>,
-    buffer: ActiveBuffer,
-}
-
-enum ActiveBuffer {
-    SingletonBuffer(Model<Buffer>),
-    MultiBuffer(Model<MultiBuffer>),
 }
 
 #[derive(Debug, PartialEq, Eq, Clone)]
@@ -188,78 +174,19 @@ impl OutlinePanel {
                     .expect("have a &mut Workspace"),
                 move |outline_panel, workspace, event, cx| {
                     if let workspace::Event::ActiveItemChanged = event {
-                        if let Some(new_active_item) = outline_panel.active_item(cx) {
-                            let mut new_entries = new_active_item
-                                .editor
-                                .project_entry_ids(cx)
-                                .into_iter()
-                                .filter_map(|entry_id| {
-                                    let worktree_id = workspace
-                                        .read(cx)
-                                        .project()
-                                        .read(cx)
-                                        .worktree_for_entry(entry_id, cx)?
-                                        .read(cx)
-                                        .id();
-                                    Some((worktree_id, entry_id))
-                                })
-                                .fold(
-                                    BTreeMap::<WorktreeId, BTreeSet<ProjectEntryId>>::new(),
-                                    |mut entries, (worktree_id, entry_id)| {
-                                        entries.entry(worktree_id).or_default().insert(entry_id);
-                                        entries
-                                    },
-                                );
-                            let mut added_entries = HashSet::default();
-                            if let Some(displayed_item) = &mut outline_panel.displayed_item {
-                                if displayed_item.item_id != new_active_item.item_id {
-                                    added_entries.extend(new_entries.values().flatten().copied());
-                                    outline_panel.displayed_item = Some(DisplayedActiveItem {
-                                        item_id: new_active_item.item_id,
-                                        _editor_subscrpiption: subscribe_for_editor_changes(
-                                            &new_active_item.editor,
-                                            cx,
-                                        ),
-                                        entries: new_entries,
-                                    });
-                                } else {
-                                    displayed_item.entries.retain(
-                                        |old_workspace_id, old_entries| match new_entries
-                                            .remove(old_workspace_id)
-                                        {
-                                            Some(mut new_entries) => {
-                                                old_entries.retain(|old_entry| {
-                                                    new_entries.remove(old_entry)
-                                                });
-                                                added_entries.extend(new_entries.iter().copied());
-                                                old_entries.extend(new_entries);
-                                                !old_entries.is_empty()
-                                            }
-                                            None => false,
-                                        },
-                                    );
-
-                                    for (new_workspace_id, new_entries) in new_entries {
-                                        added_entries.extend(new_entries.iter().copied());
-                                        displayed_item
-                                            .entries
-                                            .insert(new_workspace_id, new_entries);
-                                    }
-                                }
-                            } else {
-                                added_entries.extend(new_entries.values().flatten().copied());
-                                outline_panel.displayed_item = Some(DisplayedActiveItem {
-                                    item_id: new_active_item.item_id,
-                                    _editor_subscrpiption: subscribe_for_editor_changes(
-                                        &new_active_item.editor,
-                                        cx,
-                                    ),
-                                    entries: new_entries,
+                        if let Some(new_active_editor) = outline_panel.active_editor(cx) {
+                            let active_editor_updated = outline_panel
+                                .displayed_item
+                                .as_ref()
+                                .map_or(true, |displayed_item| {
+                                    displayed_item.item_id != new_active_editor.item_id()
                                 });
-                            }
-                            if !added_entries.is_empty() {
-                                outline_panel.update_visible_entries(added_entries, None, cx);
-                                cx.notify();
+                            if active_editor_updated {
+                                outline_panel.replace_visible_entries(
+                                    workspace,
+                                    new_active_editor,
+                                    cx,
+                                );
                             }
                         } else {
                             outline_panel.displayed_item = None;
@@ -312,24 +239,12 @@ impl OutlinePanel {
         outline_panel
     }
 
-    fn active_item(&self, cx: &WindowContext) -> Option<ActiveItem> {
-        let editor = self
-            .workspace
+    fn active_editor(&self, cx: &WindowContext) -> Option<View<Editor>> {
+        self.workspace
             .upgrade()?
             .read(cx)
             .active_item(cx)?
-            .act_as::<Editor>(cx)?;
-        let item_id = editor.item_id();
-        let multi_buffer = editor.read(cx).buffer().clone();
-        let buffer = match multi_buffer.read(cx).as_singleton() {
-            Some(singleton_buffer) => ActiveBuffer::SingletonBuffer(singleton_buffer),
-            None => ActiveBuffer::MultiBuffer(multi_buffer),
-        };
-        Some(ActiveItem {
-            item_id,
-            editor,
-            buffer,
-        })
+            .act_as::<Editor>(cx)
     }
 
     fn serialize(&mut self, cx: &mut ViewContext<Self>) {
@@ -1102,53 +1017,47 @@ impl OutlinePanel {
                                 .filter(|item| !item.entries.is_empty())
                                 .is_some()
                             {
-                                if let Some(active_item) = outline_panel.active_item(cx) {
-                                    match active_item.buffer {
-                                        ActiveBuffer::SingletonBuffer(_active_singleton_buffer) => {
-                                            // TODO kb add outline entries and navigate to clicked outline's anchor in the buffer
-                                        }
-                                        ActiveBuffer::MultiBuffer(active_multi_buffer) => {
-                                            let multi_buffer_snapshot =
-                                                active_multi_buffer.read(cx).snapshot(cx);
-                                            let scroll_target = outline_panel
-                                                .project
-                                                .update(cx, |project, cx| {
-                                                    project.path_for_entry(entry_id, cx).and_then(
-                                                        |path| project.get_open_buffer(&path, cx),
-                                                    )
-                                                })
-                                                .map(|buffer| {
-                                                    active_multi_buffer
-                                                        .read(cx)
-                                                        .excerpts_for_buffer(&buffer, cx)
-                                                })
-                                                .and_then(|excerpts| {
-                                                    let (excerpt_id, excerpt_range) =
-                                                        excerpts.first()?;
-                                                    multi_buffer_snapshot.anchor_in_excerpt(
-                                                        *excerpt_id,
-                                                        excerpt_range.context.start,
-                                                    )
-                                                });
-                                            if let Some(anchor) = scroll_target {
-                                                outline_panel.selection = Some(SelectedEntry {
-                                                    worktree_id,
-                                                    entry_id,
-                                                });
-                                                active_item.editor.update(cx, |editor, cx| {
-                                                    editor.set_scroll_anchor(
-                                                        ScrollAnchor {
-                                                            offset: Point::new(
-                                                                0.0,
-                                                                -(editor.file_header_size() as f32),
-                                                            ),
-                                                            anchor,
-                                                        },
-                                                        cx,
-                                                    );
-                                                })
-                                            }
-                                        }
+                                if let Some(active_editor) = outline_panel.active_editor(cx) {
+                                    let active_multi_buffer =
+                                        active_editor.read(cx).buffer().clone();
+                                    let multi_buffer_snapshot =
+                                        active_multi_buffer.read(cx).snapshot(cx);
+                                    let scroll_target = outline_panel
+                                        .project
+                                        .update(cx, |project, cx| {
+                                            project
+                                                .path_for_entry(entry_id, cx)
+                                                .and_then(|path| project.get_open_buffer(&path, cx))
+                                        })
+                                        .map(|buffer| {
+                                            active_multi_buffer
+                                                .read(cx)
+                                                .excerpts_for_buffer(&buffer, cx)
+                                        })
+                                        .and_then(|excerpts| {
+                                            let (excerpt_id, excerpt_range) = excerpts.first()?;
+                                            multi_buffer_snapshot.anchor_in_excerpt(
+                                                *excerpt_id,
+                                                excerpt_range.context.start,
+                                            )
+                                        });
+                                    if let Some(anchor) = scroll_target {
+                                        outline_panel.selection = Some(SelectedEntry {
+                                            worktree_id,
+                                            entry_id,
+                                        });
+                                        active_editor.update(cx, |editor, cx| {
+                                            editor.set_scroll_anchor(
+                                                ScrollAnchor {
+                                                    offset: Point::new(
+                                                        0.0,
+                                                        -(editor.file_header_size() as f32),
+                                                    ),
+                                                    anchor,
+                                                },
+                                                cx,
+                                            );
+                                        })
                                     }
                                 }
                             }
@@ -1191,6 +1100,7 @@ impl OutlinePanel {
             .as_ref()
             .filter(|displayed_item| !displayed_item.entries.is_empty())
         else {
+            self.visible_entries.clear();
             return;
         };
 
@@ -1218,6 +1128,7 @@ impl OutlinePanel {
             .map(|entry| entry.id);
 
         self.visible_entries.clear();
+        // TODO kb iterate over excerpts instead
         for worktree in project.visible_worktrees(cx) {
             let snapshot = worktree.read(cx).snapshot();
             let worktree_id = snapshot.id();
@@ -1367,6 +1278,47 @@ impl OutlinePanel {
             });
         }
     }
+
+    fn replace_visible_entries(
+        &mut self,
+        workspace: View<Workspace>,
+        new_active_editor: View<Editor>,
+        cx: &mut ViewContext<Self>,
+    ) {
+        let mut added_entries = HashSet::default();
+        let new_entries = editor_entries(workspace, &new_active_editor, cx);
+        added_entries.extend(new_entries.values().flatten().copied());
+        self.displayed_item = Some(DisplayedActiveItem {
+            item_id: new_active_editor.item_id(),
+            _editor_subscrpiption: subscribe_for_editor_changes(&new_active_editor, cx),
+            entries: new_entries,
+        });
+        self.update_visible_entries(added_entries, None, cx);
+        cx.notify();
+    }
+}
+
+// TODO kb instead, return excerpts?
+fn editor_entries(
+    workspace: View<Workspace>,
+    new_active_editor: &View<Editor>,
+    cx: &mut ViewContext<OutlinePanel>,
+) -> BTreeMap<WorktreeId, BTreeSet<ProjectEntryId>> {
+    let project = workspace.read(cx).project().read(cx);
+    new_active_editor
+        .project_entry_ids(cx)
+        .into_iter()
+        .filter_map(|entry_id| {
+            let worktree_id = project.worktree_for_entry(entry_id, cx)?.read(cx).id();
+            Some((worktree_id, entry_id))
+        })
+        .fold(
+            BTreeMap::<WorktreeId, BTreeSet<ProjectEntryId>>::new(),
+            |mut entries, (worktree_id, entry_id)| {
+                entries.entry(worktree_id).or_default().insert(entry_id);
+                entries
+            },
+        )
 }
 
 impl Panel for OutlinePanel {
@@ -1451,7 +1403,7 @@ impl Render for OutlinePanel {
                 .size_full()
                 .p_4()
                 .track_focus(&self.focus_handle)
-                .child(Label::new("No active editor"))
+                .child(Label::new("No editor outlines available"))
         } else {
             h_flex()
                 .id("outline-panel")
@@ -1528,9 +1480,10 @@ fn subscribe_for_editor_changes(
     cx: &mut ViewContext<OutlinePanel>,
 ) -> Option<Subscription> {
     if OutlinePanelSettings::get_global(cx).auto_reveal_entries {
-        Some(
-            cx.subscribe(editor, |outline_panel, editor, e: &EditorEvent, cx| {
-                if let EditorEvent::SelectionsChanged { local: true } = e {
+        Some(cx.subscribe(
+            editor,
+            |outline_panel, editor, e: &EditorEvent, cx| match e {
+                EditorEvent::SelectionsChanged { local: true } => {
                     if let Some(entry_id) = entry_id_for_selection(&editor, cx) {
                         outline_panel.reveal_entry(
                             outline_panel.project.clone(),
@@ -1541,9 +1494,62 @@ fn subscribe_for_editor_changes(
                         return;
                     }
                 }
-                cx.propagate();
-            }),
-        )
+                EditorEvent::ExcerptsAdded { .. } => {
+                    let workspace_and_editor = outline_panel
+                        .workspace
+                        .upgrade()
+                        .zip(outline_panel.active_editor(cx));
+                    match &mut outline_panel.displayed_item {
+                        Some(displayed_item) => {
+                            if let Some((workspace, active_editor)) = workspace_and_editor {
+                                let active_entries = editor_entries(workspace, &active_editor, cx);
+                                let new_active_entries = active_entries.iter().fold(
+                                    HashSet::default(),
+                                    |mut new_entries, (new_worktree, new_worktree_entries)| {
+                                        match displayed_item.entries.get(new_worktree) {
+                                            Some(existing_entries) => new_entries.extend(
+                                                new_worktree_entries
+                                                    .difference(existing_entries)
+                                                    .copied(),
+                                            ),
+                                            None => new_entries
+                                                .extend(new_worktree_entries.iter().copied()),
+                                        }
+                                        new_entries
+                                    },
+                                );
+                                displayed_item.entries = active_entries;
+                                outline_panel.update_visible_entries(new_active_entries, None, cx);
+                            }
+                        }
+                        None => {
+                            debug_panic!("ExcerptsAdded event without a displayed item");
+                        }
+                    }
+                }
+                EditorEvent::ExcerptsRemoved { .. } => {
+                    let workspace_and_editor = outline_panel
+                        .workspace
+                        .upgrade()
+                        .zip(outline_panel.active_editor(cx));
+                    match &mut outline_panel.displayed_item {
+                        Some(displayed_item) => {
+                            if let Some((workspace, active_editor)) = workspace_and_editor {
+                                let active_entries = editor_entries(workspace, &active_editor, cx);
+                                displayed_item.entries = active_entries;
+                                outline_panel.update_visible_entries(HashSet::default(), None, cx);
+                            }
+                        }
+                        None => {
+                            debug_panic!("ExcerptsRemoved event without a displayed item");
+                        }
+                    }
+                }
+                EditorEvent::ExcerptsEdited { .. } => {}
+                EditorEvent::ExcerptsExpanded { .. } => {}
+                _ => {}
+            },
+        ))
     } else {
         None
     }
@@ -1565,4 +1571,5 @@ fn entry_id_for_selection(
     buffer.read(cx).entry_id(cx)
 }
 
+// TODO kb add outlines
 // TODO kb tests
