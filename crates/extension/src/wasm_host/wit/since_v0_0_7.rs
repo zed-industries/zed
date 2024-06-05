@@ -310,6 +310,15 @@ impl ExtensionImports for WasmState {
         file_type: DownloadedFileType,
     ) -> wasmtime::Result<Result<(), String>> {
         maybe!(async {
+            if !self
+                .host
+                .language_registry
+                .request_download_permission(&url)
+                .await
+            {
+                return Err(anyhow!("Download permission for '{url}' denied"));
+            }
+
             let path = PathBuf::from(path);
             let extension_work_dir = self.host.work_dir.join(self.manifest.id.as_ref());
 

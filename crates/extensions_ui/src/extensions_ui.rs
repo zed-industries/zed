@@ -1,4 +1,5 @@
 mod components;
+mod download_permission;
 mod extension_suggest;
 mod extension_version_selector;
 
@@ -8,6 +9,7 @@ use crate::extension_version_selector::{
 };
 use client::telemetry::Telemetry;
 use client::ExtensionMetadata;
+use download_permission::download_permission;
 use editor::{Editor, EditorElement, EditorStyle};
 use extension::{ExtensionManifest, ExtensionOperation, ExtensionStore};
 use fuzzy::{match_strings, StringMatchCandidate};
@@ -79,6 +81,7 @@ pub fn init(cx: &mut AppContext) {
             _ => {}
         })
         .detach();
+        download_permission(workspace, cx);
     })
     .detach();
 }

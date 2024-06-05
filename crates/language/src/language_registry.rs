@@ -8,12 +8,12 @@ use crate::{
 };
 use anyhow::{anyhow, Context as _, Result};
 use collections::{hash_map, HashMap};
-use futures::TryFutureExt;
 use futures::{
     channel::{mpsc, oneshot},
     future::Shared,
     Future, FutureExt as _,
 };
+use futures::{StreamExt, TryFutureExt};
 use globset::GlobSet;
 use gpui::{AppContext, BackgroundExecutor, Task};
 use lsp::LanguageServerId;
@@ -38,6 +38,7 @@ pub struct LanguageRegistry {
     login_shell_env_loaded: Shared<Task<()>>,
     executor: BackgroundExecutor,
     lsp_binary_status_tx: LspBinaryStatusSender,
+    download_permission_channel: DownloadPermissionChannel,
 }
 
 struct LanguageRegistryState {
@@ -147,6 +148,11 @@ struct LspBinaryStatusSender {
     txs: Arc<Mutex<Vec<mpsc::UnboundedSender<(LanguageServerName, LanguageServerBinaryStatus)>>>>,
 }
 
+#[derive(Default)]
+struct DownloadPermissionChannel {
+    txs: Arc<Mutex<Vec<mpsc::UnboundedSender<(String, mpsc::UnboundedSender<bool>)>>>>,
+}
+
 impl LanguageRegistry {
     pub fn new(login_shell_env_loaded: Task<()>, executor: BackgroundExecutor) -> Self {
         let this = Self {
@@ -170,6 +176,7 @@ impl LanguageRegistry {
             language_server_download_dir: None,
             login_shell_env_loaded: login_shell_env_loaded.shared(),
             lsp_binary_status_tx: Default::default(),
+            download_permission_channel: Default::default(),
             executor,
         };
         this.add(PLAIN_TEXT.clone());
@@ -860,6 +867,16 @@ impl LanguageRegistry {
         self.lsp_binary_status_tx.subscribe()
     }
 
+    pub fn download_request_rx(
+        &self,
+    ) -> mpsc::UnboundedReceiver<(String, mpsc::UnboundedSender<bool>)> {
+        self.download_permission_channel.subscribe()
+    }
+
+    pub async fn request_download_permission(&self, url: &str) -> bool {
+        self.download_permission_channel.request(url).await
+    }
+
     pub fn delete_server_container(
         &self,
         adapter: Arc<CachedLspAdapter>,
@@ -964,5 +981,39 @@ impl LspBinaryStatusSender {
     fn send(&self, name: LanguageServerName, status: LanguageServerBinaryStatus) {
         let mut txs = self.txs.lock();
         txs.retain(|tx| tx.unbounded_send((name.clone(), status.clone())).is_ok());
+    }
+}
+
+impl DownloadPermissionChannel {
+    fn subscribe(&self) -> mpsc::UnboundedReceiver<(String, mpsc::UnboundedSender<bool>)> {
+        let (tx, rx) = mpsc::unbounded();
+        self.txs.lock().push(tx);
+        rx
+    }
+
+    async fn request(&self, url: &str) -> bool {
+        let mut receiver_rxs = {
+            let mut txs = self.txs.lock();
+            let (receiver_txs, receiver_rxs): (Vec<_>, Vec<_>) =
+                (0..txs.len()).map(|_| mpsc::unbounded()).unzip();
+            *txs = txs
+                .iter()
+                .zip(receiver_txs)
+                .filter_map(|(tx, receiver_tx)| {
+                    if tx.unbounded_send((url.to_string(), receiver_tx)).is_ok() {
+                        Some(tx)
+                    } else {
+                        None
+                    }
+                })
+                .cloned()
+                .collect::<Vec<_>>();
+            receiver_rxs
+        };
+
+        futures::future::select_all(receiver_rxs.iter_mut().map(|rx| rx.next()))
+            .await
+            .0
+            .unwrap()
     }
 }
