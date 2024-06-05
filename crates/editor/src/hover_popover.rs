@@ -1,14 +1,15 @@
 use crate::{
     display_map::{InlayOffset, ToDisplayPoint},
     hover_links::{InlayHighlight, RangeInEditor},
+    scroll::ScrollAmount,
     Anchor, AnchorRangeExt, DisplayPoint, DisplayRow, Editor, EditorSettings, EditorSnapshot,
     EditorStyle, ExcerptId, Hover, RangeToAnchorExt,
 };
 use futures::{stream::FuturesUnordered, FutureExt};
 use gpui::{
     div, px, AnyElement, CursorStyle, Hsla, InteractiveElement, IntoElement, MouseButton,
-    ParentElement, Pixels, SharedString, Size, StatefulInteractiveElement, Styled, Task,
-    ViewContext, WeakView,
+    ParentElement, Pixels, ScrollHandle, SharedString, Size, StatefulInteractiveElement, Styled,
+    Task, ViewContext, WeakView,
 };
 use language::{markdown, DiagnosticEntry, Language, LanguageRegistry, ParsedMarkdown};
 
@@ -118,6 +119,7 @@ pub fn hover_at_inlay(editor: &mut Editor, inlay_hover: InlayHover, cx: &mut Vie
                 let hover_popover = InfoPopover {
                     symbol_range: RangeInEditor::Inlay(inlay_hover.range.clone()),
                     parsed_content,
+                    scroll_handle: ScrollHandle::new(),
                 };
 
                 this.update(&mut cx, |this, cx| {
@@ -317,6 +319,7 @@ fn show_hover(
                         InfoPopover {
                             symbol_range: RangeInEditor::Text(range),
                             parsed_content,
+                            scroll_handle: ScrollHandle::new(),
                         },
                     )
                 })
@@ -423,7 +426,7 @@ async fn parse_blocks(
     }
 }
 
-#[derive(Default)]
+#[derive(Default, Debug)]
 pub struct HoverState {
     pub info_popovers: Vec<InfoPopover>,
     pub diagnostic_popover: Option<DiagnosticPopover>,
@@ -487,10 +490,11 @@ impl HoverState {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone, Debug)]
 pub struct InfoPopover {
-    symbol_range: RangeInEditor,
-    parsed_content: ParsedMarkdown,
+    pub symbol_range: RangeInEditor,
+    pub parsed_content: ParsedMarkdown,
+    pub scroll_handle: ScrollHandle,
 }
 
 impl InfoPopover {
@@ -504,22 +508,32 @@ impl InfoPopover {
         div()
             .id("info_popover")
             .elevation_2(cx)
-            .p_2()
             .overflow_y_scroll()
+            .track_scroll(&self.scroll_handle)
             .max_w(max_size.width)
             .max_h(max_size.height)
             // Prevent a mouse down/move on the popover from being propagated to the editor,
             // because that would dismiss the popover.
             .on_mouse_move(|_, cx| cx.stop_propagation())
             .on_mouse_down(MouseButton::Left, |_, cx| cx.stop_propagation())
-            .child(crate::render_parsed_markdown(
+            .child(div().p_2().child(crate::render_parsed_markdown(
                 "content",
                 &self.parsed_content,
                 style,
                 workspace,
                 cx,
-            ))
+            )))
             .into_any_element()
+    }
+
+    pub fn scroll(&self, amount: &ScrollAmount, cx: &mut ViewContext<Editor>) {
+        let mut current = self.scroll_handle.offset();
+        current.y -= amount.pixels(
+            cx.line_height(),
+            self.scroll_handle.bounds().size.height - px(16.),
+        ) / 2.0;
+        cx.notify();
+        self.scroll_handle.set_offset(current);
     }
 }
 
