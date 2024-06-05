@@ -180,6 +180,33 @@ async fn test_indent_outdent(cx: &mut gpui::TestAppContext) {
     // works in visual mode
     cx.simulate_keystrokes("shift-v down >");
     cx.assert_editor_state("aa\n    bb\n    cˇc");
+
+    // works as operator
+    cx.set_state("aa\nbˇb\ncc\n", Mode::Normal);
+    cx.simulate_keystrokes("> j");
+    cx.assert_editor_state("aa\n    bˇb\n    cc\n");
+    cx.simulate_keystrokes("< k");
+    cx.assert_editor_state("aa\nbˇb\n    cc\n");
+    cx.simulate_keystrokes("> i p");
+    cx.assert_editor_state("    aa\n    bˇb\n        cc\n");
+    cx.simulate_keystrokes("< i p");
+    cx.assert_editor_state("aa\nbˇb\n    cc\n");
+    cx.simulate_keystrokes("< i p");
+    cx.assert_editor_state("aa\nbˇb\ncc\n");
+
+    cx.set_state("ˇaa\nbb\ncc\n", Mode::Normal);
+    cx.simulate_keystrokes("> 2 j");
+    cx.assert_editor_state("    ˇaa\n    bb\n    cc\n");
+
+    cx.set_state("aa\nbb\nˇcc\n", Mode::Normal);
+    cx.simulate_keystrokes("> 2 k");
+    cx.assert_editor_state("    aa\n    bb\n    ˇcc\n");
+
+    cx.set_state("a\nb\nccˇc\n", Mode::Normal);
+    cx.simulate_keystrokes("> 2 k");
+    cx.assert_editor_state("    a\n    b\n    ccˇc\n");
+    cx.simulate_keystrokes(".");
+    cx.assert_editor_state("        a\n        b\n        ccˇc\n");
 }
 
 #[gpui::test]

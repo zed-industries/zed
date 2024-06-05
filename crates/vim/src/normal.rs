@@ -2,6 +2,7 @@ mod case;
 mod change;
 mod delete;
 mod increment;
+mod indent;
 pub(crate) mod mark;
 mod paste;
 pub(crate) mod repeat;
@@ -32,6 +33,7 @@ use self::{
     case::{change_case, convert_to_lower_case, convert_to_upper_case},
     change::{change_motion, change_object},
     delete::{delete_motion, delete_object},
+    indent::{indent_motion, indent_object, IndentDirection},
     yank::{yank_motion, yank_object},
 };
 
@@ -182,6 +184,8 @@ pub fn normal_motion(
             Some(Operator::Delete) => delete_motion(vim, motion, times, cx),
             Some(Operator::Yank) => yank_motion(vim, motion, times, cx),
             Some(Operator::AddSurrounds { target: None }) => {}
+            Some(Operator::Indent) => indent_motion(vim, motion, times, IndentDirection::In, cx),
+            Some(Operator::Outdent) => indent_motion(vim, motion, times, IndentDirection::Out, cx),
             Some(operator) => {
                 // Can't do anything for text objects, Ignoring
                 error!("Unexpected normal mode motion operator: {:?}", operator)
@@ -198,6 +202,12 @@ pub fn normal_object(object: Object, cx: &mut WindowContext) {
                 Some(Operator::Change) => change_object(vim, object, around, cx),
                 Some(Operator::Delete) => delete_object(vim, object, around, cx),
                 Some(Operator::Yank) => yank_object(vim, object, around, cx),
+                Some(Operator::Indent) => {
+                    indent_object(vim, object, around, IndentDirection::In, cx)
+                }
+                Some(Operator::Outdent) => {
+                    indent_object(vim, object, around, IndentDirection::Out, cx)
+                }
                 Some(Operator::AddSurrounds { target: None }) => {
                     waiting_operator = Some(Operator::AddSurrounds {
                         target: Some(SurroundsType::Object(object)),

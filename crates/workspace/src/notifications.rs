@@ -122,6 +122,15 @@ impl Workspace {
         }
     }
 
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn notification_ids(&self) -> Vec<NotificationId> {
+        self.notifications
+            .iter()
+            .map(|(id, _)| id)
+            .cloned()
+            .collect()
+    }
+
     pub fn show_notification<V: Notification>(
         &mut self,
         id: NotificationId,
@@ -144,7 +153,7 @@ impl Workspace {
 
     pub fn show_error<E>(&mut self, err: &E, cx: &mut ViewContext<Self>)
     where
-        E: std::fmt::Debug,
+        E: std::fmt::Debug + std::fmt::Display,
     {
         struct WorkspaceErrorNotification;
 
@@ -153,7 +162,7 @@ impl Workspace {
             cx,
             |cx| {
                 cx.new_view(|_cx| {
-                    simple_message_notification::MessageNotification::new(format!("Error: {err:?}"))
+                    simple_message_notification::MessageNotification::new(format!("Error: {err:#}"))
                 })
             },
         );
@@ -464,7 +473,7 @@ pub trait NotifyResultExt {
 
 impl<T, E> NotifyResultExt for Result<T, E>
 where
-    E: std::fmt::Debug,
+    E: std::fmt::Debug + std::fmt::Display,
 {
     type Ok = T;
 
@@ -483,7 +492,7 @@ where
         match self {
             Ok(value) => Some(value),
             Err(err) => {
-                log::error!("TODO {err:?}");
+                log::error!("{err:?}");
                 cx.update_root(|view, cx| {
                     if let Ok(workspace) = view.downcast::<Workspace>() {
                         workspace.update(cx, |workspace, cx| workspace.show_error(&err, cx))
@@ -502,7 +511,7 @@ pub trait NotifyTaskExt {
 
 impl<R, E> NotifyTaskExt for Task<Result<R, E>>
 where
-    E: std::fmt::Debug + Sized + 'static,
+    E: std::fmt::Debug + std::fmt::Display + Sized + 'static,
     R: 'static,
 {
     fn detach_and_notify_err(self, cx: &mut WindowContext) {

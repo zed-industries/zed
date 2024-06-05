@@ -1,5 +1,3 @@
-// todo(linux): remove
-#![cfg_attr(target_os = "linux", allow(dead_code))]
 // todo(windows): remove
 #![cfg_attr(windows, allow(dead_code))]
 
@@ -135,6 +133,10 @@ pub(crate) trait Platform: 'static {
     fn on_reopen(&self, callback: Box<dyn FnMut()>);
 
     fn set_menus(&self, menus: Vec<Menu>, keymap: &Keymap);
+    fn get_menus(&self) -> Option<Vec<OwnedMenu>> {
+        None
+    }
+
     fn set_dock_menu(&self, menu: Vec<MenuItem>, keymap: &Keymap);
     fn add_recent_document(&self, _path: &Path) {}
     fn on_app_menu_action(&self, callback: Box<dyn FnMut(&dyn Action)>);
@@ -203,7 +205,7 @@ pub(crate) trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
     fn content_size(&self) -> Size<Pixels>;
     fn scale_factor(&self) -> f32;
     fn appearance(&self) -> WindowAppearance;
-    fn display(&self) -> Rc<dyn PlatformDisplay>;
+    fn display(&self) -> Option<Rc<dyn PlatformDisplay>>;
     fn mouse_position(&self) -> Point<Pixels>;
     fn modifiers(&self) -> Modifiers;
     fn set_input_handler(&mut self, input_handler: PlatformInputHandler);
@@ -413,6 +415,7 @@ impl PlatformInputHandler {
             .flatten()
     }
 
+    #[cfg_attr(target_os = "linux", allow(dead_code))]
     fn text_for_range(&mut self, range_utf16: Range<usize>) -> Option<String> {
         self.cx
             .update(|cx| self.handler.text_for_range(range_utf16, cx))
@@ -573,13 +576,17 @@ pub(crate) struct WindowParams {
     pub titlebar: Option<TitlebarOptions>,
 
     /// The kind of window to create
+    #[cfg_attr(target_os = "linux", allow(dead_code))]
     pub kind: WindowKind,
 
     /// Whether the window should be movable by the user
+    #[cfg_attr(target_os = "linux", allow(dead_code))]
     pub is_movable: bool,
 
+    #[cfg_attr(target_os = "linux", allow(dead_code))]
     pub focus: bool,
 
+    #[cfg_attr(target_os = "linux", allow(dead_code))]
     pub show: bool,
 
     pub display_id: Option<DisplayId>,
@@ -797,10 +804,6 @@ pub enum CursorStyle {
     /// corresponds to the CSS curosr value `row-resize`
     ResizeRow,
 
-    /// A cursor indicating that something will disappear if moved here
-    /// Does not correspond to a CSS cursor value
-    DisappearingItem,
-
     /// A text input cursor for vertical layout
     /// corresponds to the CSS cursor value `vertical-text`
     IBeamCursorForVerticalLayout,
@@ -865,6 +868,7 @@ impl ClipboardItem {
             .and_then(|m| serde_json::from_str(m).ok())
     }
 
+    #[cfg_attr(target_os = "linux", allow(dead_code))]
     pub(crate) fn text_hash(text: &str) -> u64 {
         let mut hasher = SeaHasher::new();
         text.hash(&mut hasher);

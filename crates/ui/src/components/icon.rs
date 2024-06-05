@@ -177,6 +177,8 @@ pub enum IconName {
     Space,
     Spinner,
     Split,
+    Star,
+    StarFilled,
     Strikethrough,
     Supermaven,
     SupermavenDisabled,
@@ -190,6 +192,7 @@ pub enum IconName {
     WholeWord,
     XCircle,
     ZedAssistant,
+    ZedAssistantFilled,
     ZedXCopilot,
 }
 
@@ -298,6 +301,8 @@ impl IconName {
             IconName::Space => "icons/space.svg",
             IconName::Spinner => "icons/spinner.svg",
             IconName::Split => "icons/split.svg",
+            IconName::Star => "icons/star.svg",
+            IconName::StarFilled => "icons/star_filled.svg",
             IconName::Strikethrough => "icons/strikethrough.svg",
             IconName::Supermaven => "icons/supermaven.svg",
             IconName::SupermavenDisabled => "icons/supermaven_disabled.svg",
@@ -311,6 +316,7 @@ impl IconName {
             IconName::WholeWord => "icons/word_search.svg",
             IconName::XCircle => "icons/error.svg",
             IconName::ZedAssistant => "icons/zed_assistant.svg",
+            IconName::ZedAssistantFilled => "icons/zed_assistant_filled.svg",
             IconName::ZedXCopilot => "icons/zed_x_copilot.svg",
             IconName::ArrowUpFromLine => "icons/arrow_up_from_line.svg",
         }

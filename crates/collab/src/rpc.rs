@@ -545,6 +545,9 @@ impl Server {
             .add_request_handler(user_handler(
                 forward_mutating_project_request::<proto::MultiLspQuery>,
             ))
+            .add_request_handler(user_handler(
+                forward_mutating_project_request::<proto::RestartLanguageServers>,
+            ))
             .add_message_handler(create_buffer_for_peer)
             .add_request_handler(update_buffer)
             .add_message_handler(broadcast_project_message_from_host::<proto::RefreshInlayHints>)
@@ -557,6 +560,7 @@ impl Server {
             .add_request_handler(user_handler(request_contact))
             .add_request_handler(user_handler(remove_contact))
             .add_request_handler(user_handler(respond_to_contact_request))
+            .add_message_handler(subscribe_to_channels)
             .add_request_handler(user_handler(create_channel))
             .add_request_handler(user_handler(delete_channel))
             .add_request_handler(user_handler(invite_channel_member))
@@ -1105,34 +1109,25 @@ impl Server {
                         .await?;
                 }
 
-                let (contacts, channels_for_user, channel_invites, dev_server_projects) =
-                    future::try_join4(
-                        self.app_state.db.get_contacts(user.id),
-                        self.app_state.db.get_channels_for_user(user.id),
-                        self.app_state.db.get_channel_invites_for_user(user.id),
-                        self.app_state.db.dev_server_projects_update(user.id),
-                    )
-                    .await?;
+                let (contacts, dev_server_projects) = future::try_join(
+                    self.app_state.db.get_contacts(user.id),
+                    self.app_state.db.dev_server_projects_update(user.id),
+                )
+                .await?;
 
                 {
                     let mut pool = self.connection_pool.lock();
                     pool.add_connection(connection_id, user.id, user.admin, zed_version);
-                    for membership in &channels_for_user.channel_memberships {
-                        pool.subscribe_to_channel(user.id, membership.channel_id, membership.role)
-                    }
                     self.peer.send(
                         connection_id,
                         build_initial_contacts_update(contacts, &pool),
                     )?;
-                    self.peer.send(
-                        connection_id,
-                        build_update_user_channels(&channels_for_user),
-                    )?;
-                    self.peer.send(
-                        connection_id,
-                        build_channels_update(channels_for_user, channel_invites),
-                    )?;
                 }
+
+                if should_auto_subscribe_to_channels(zed_version) {
+                    subscribe_user_to_channels(user.id, session).await?;
+                }
+
                 send_dev_server_projects_update(user.id, dev_server_projects, session).await;
 
                 if let Some(incoming_call) =
@@ -3399,6 +3394,36 @@ async fn remove_contact(
     Ok(())
 }
 
+fn should_auto_subscribe_to_channels(version: ZedVersion) -> bool {
+    version.0.minor() < 139
+}
+
+async fn subscribe_to_channels(_: proto::SubscribeToChannels, session: Session) -> Result<()> {
+    subscribe_user_to_channels(
+        session.user_id().ok_or_else(|| anyhow!("must be a user"))?,
+        &session,
+    )
+    .await?;
+    Ok(())
+}
+
+async fn subscribe_user_to_channels(user_id: UserId, session: &Session) -> Result<(), Error> {
+    let channels_for_user = session.db().await.get_channels_for_user(user_id).await?;
+    let mut pool = session.connection_pool().await;
+    for membership in &channels_for_user.channel_memberships {
+        pool.subscribe_to_channel(user_id, membership.channel_id, membership.role)
+    }
+    session.peer.send(
+        session.connection_id,
+        build_update_user_channels(&channels_for_user),
+    )?;
+    session.peer.send(
+        session.connection_id,
+        build_channels_update(channels_for_user),
+    )?;
+    Ok(())
+}
+
 /// Creates a new channel.
 async fn create_channel(
     request: proto::CreateChannel,
@@ -5034,7 +5059,7 @@ fn notify_membership_updated(
         ..Default::default()
     };
 
-    let mut update = build_channels_update(result.new_channels, vec![]);
+    let mut update = build_channels_update(result.new_channels);
     update.delete_channels = result
         .removed_channels
         .into_iter()
@@ -5064,10 +5089,7 @@ fn build_update_user_channels(channels: &ChannelsForUser) -> proto::UpdateUserCh
     }
 }
 
-fn build_channels_update(
-    channels: ChannelsForUser,
-    channel_invites: Vec<db::Channel>,
-) -> proto::UpdateChannels {
+fn build_channels_update(channels: ChannelsForUser) -> proto::UpdateChannels {
     let mut update = proto::UpdateChannels::default();
 
     for channel in channels.channels {
@@ -5086,7 +5108,7 @@ fn build_channels_update(
             });
     }
 
-    for channel in channel_invites {
+    for channel in channels.invited_channels {
         update.channel_invitations.push(channel.to_proto());
     }
 

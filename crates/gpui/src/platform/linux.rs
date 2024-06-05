@@ -1,6 +1,3 @@
-// todo(linux): remove
-#![allow(unused)]
-
 mod dispatcher;
 mod headless;
 mod platform;

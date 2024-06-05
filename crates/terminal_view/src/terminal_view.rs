@@ -1309,6 +1309,7 @@ mod tests {
             })
             .await
             .unwrap()
+            .to_included()
             .unwrap();
 
         (wt, entry)

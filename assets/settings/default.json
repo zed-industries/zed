@@ -453,7 +453,8 @@
     // Send anonymized usage data like what languages you're using Zed with.
     "metrics": true
   },
-  // Automatically update Zed
+  // Automatically update Zed. This setting may be ignored on Linux if
+  // installed through a package manager.
   "auto_update": true,
   // Diagnostics configuration.
   "diagnostics": {
@@ -672,9 +673,6 @@
     "Elixir": {
       "language_servers": ["elixir-ls", "!next-ls", "!lexical", "..."]
     },
-    "Gleam": {
-      "tab_size": 2
-    },
     "Go": {
       "code_actions_on_format": {
         "source.organizeImports": true
@@ -700,6 +698,7 @@
       }
     },
     "JavaScript": {
+      "language_servers": ["typescript-language-server", "!vtsls", ".."],
       "prettier": {
         "allowed": true
       }
@@ -708,9 +707,6 @@
       "prettier": {
         "allowed": true
       }
-    },
-    "Make": {
-      "hard_tabs": true
     },
     "Markdown": {
       "format_on_save": "off",
@@ -723,9 +719,6 @@
         "allowed": true,
         "plugins": ["@prettier/plugin-php"]
       }
-    },
-    "Prisma": {
-      "tab_size": 2
     },
     "Ruby": {
       "language_servers": ["solargraph", "!ruby-lsp", "..."]
@@ -748,6 +741,7 @@
       }
     },
     "TSX": {
+      "language_servers": ["typescript-language-server", "!vtsls", ".."],
       "prettier": {
         "allowed": true
       }
@@ -758,6 +752,7 @@
       }
     },
     "TypeScript": {
+      "language_servers": ["typescript-language-server", "!vtsls", ".."],
       "prettier": {
         "allowed": true
       }
