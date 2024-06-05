@@ -6377,31 +6377,17 @@ mod tests {
                 .anchor_in_excerpt(excerpt_3_id, buffer_3.read(cx).anchor_after(buffer_len / 2))
                 .unwrap();
 
-        let mut expected_excerpts = Vec::new();
-
-        expected_excerpts.push(make_expected_excerpt_info(
-            &snapshot,
-            cx,
-            excerpt_1_id,
-            &buffer_1,
-            (buffer_len / 2)..buffer_len,
-        ));
-
-        expected_excerpts.push(make_expected_excerpt_info(
-            &snapshot,
-            cx,
-            excerpt_2_id,
-            &buffer_2,
-            0..buffer_len,
-        ));
-
-        expected_excerpts.push(make_expected_excerpt_info(
-            &snapshot,
-            cx,
-            excerpt_3_id,
-            &buffer_3,
-            0..buffer_len / 2,
-        ));
+        let expected_excerpts = vec![
+            make_expected_excerpt_info(
+                &snapshot,
+                cx,
+                excerpt_1_id,
+                &buffer_1,
+                (buffer_len / 2)..buffer_len,
+            ),
+            make_expected_excerpt_info(&snapshot, cx, excerpt_2_id, &buffer_2, 0..buffer_len),
+            make_expected_excerpt_info(&snapshot, cx, excerpt_3_id, &buffer_3, 0..buffer_len / 2),
+        ];
 
         let excerpts = snapshot
             .excerpts_in_ranges(vec![expected_range.clone()].into_iter())
@@ -6513,7 +6499,7 @@ mod tests {
 
         let snapshot = multibuffer.read(cx).snapshot(cx);
 
-        let ranges = vec![0..buffer_len, (buffer_len / 3)..(buffer_len / 2)];
+        let ranges = [0..buffer_len, (buffer_len / 3)..(buffer_len / 2)];
 
         let expected_excerpts = vec![
             make_expected_excerpt_info(&snapshot, cx, excerpt_1_id, &buffer_1, ranges[0].clone()),
