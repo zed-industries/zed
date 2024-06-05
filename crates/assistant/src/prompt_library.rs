@@ -23,12 +23,14 @@ use parking_lot::RwLock;
 use picker::{Picker, PickerDelegate};
 use rope::Rope;
 use serde::{Deserialize, Serialize};
+use settings::Settings;
 use std::{
     future::Future,
     path::PathBuf,
     sync::{atomic::AtomicBool, Arc},
     time::Duration,
 };
+use theme::ThemeSettings;
 use ui::{
     div, prelude::*, IconButtonShape, ListHeader, ListItem, ListItemSpacing, ListSubHeader,
     ParentElement, Render, SharedString, Styled, TitleBar, Tooltip, ViewContext, VisualContext,
@@ -848,6 +850,14 @@ impl PromptLibrary {
 
 impl Render for PromptLibrary {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+        let (ui_font, ui_font_size) = {
+            let theme_settings = ThemeSettings::get_global(cx);
+            (theme_settings.ui_font.clone(), theme_settings.ui_font_size)
+        };
+
+        let theme = cx.theme().clone();
+        cx.set_rem_size(ui_font_size);
+
         h_flex()
             .id("prompt-manager")
             .key_context("PromptLibrary")
@@ -858,6 +868,8 @@ impl Render for PromptLibrary {
             }))
             .size_full()
             .overflow_hidden()
+            .font(ui_font)
+            .text_color(theme.colors().text)
             .child(self.render_prompt_list(cx))
             .child(self.render_active_prompt(cx))
     }
