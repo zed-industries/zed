@@ -54,10 +54,14 @@ pub enum IconDecoration {
 
 #[derive(Default, PartialEq, Copy, Clone)]
 pub enum IconSize {
+    /// 10px
     Indicator,
+    /// 12px
     XSmall,
+    /// 14px
     Small,
     #[default]
+    /// 16px
     Medium,
 }
 

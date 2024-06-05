@@ -13,9 +13,10 @@ use futures::{
 };
 use fuzzy::StringMatchCandidate;
 use gpui::{
-    actions, point, size, AnyElement, AppContext, BackgroundExecutor, Bounds, DevicePixels,
-    EventEmitter, Global, PromptLevel, ReadGlobal, Subscription, Task, TitlebarOptions,
-    UpdateGlobal, View, WindowBounds, WindowHandle, WindowOptions,
+    actions, percentage, point, size, Animation, AnimationExt, AnyElement, AppContext,
+    BackgroundExecutor, Bounds, DevicePixels, EventEmitter, Global, PromptLevel, ReadGlobal,
+    Subscription, Task, TitlebarOptions, Transformation, UpdateGlobal, View, WindowBounds,
+    WindowHandle, WindowOptions,
 };
 use heed::{types::SerdeBincode, Database, RoTxn};
 use language::{language_settings::SoftWrap, Buffer, LanguageRegistry};
@@ -23,12 +24,14 @@ use parking_lot::RwLock;
 use picker::{Picker, PickerDelegate};
 use rope::Rope;
 use serde::{Deserialize, Serialize};
+use settings::Settings;
 use std::{
     future::Future,
     path::PathBuf,
     sync::{atomic::AtomicBool, Arc},
     time::Duration,
 };
+use theme::ThemeSettings;
 use ui::{
     div, prelude::*, IconButtonShape, ListHeader, ListItem, ListItemSpacing, ListSubHeader,
     ParentElement, Render, SharedString, Styled, TitleBar, Tooltip, ViewContext, VisualContext,
@@ -775,12 +778,21 @@ impl PromptLibrary {
             .flex_none()
             .min_w_64()
             .children(self.active_prompt_id.and_then(|prompt_id| {
+                let buffer_font = ThemeSettings::get_global(cx).buffer_font.family.clone();
                 let prompt_metadata = self.store.metadata(prompt_id)?;
                 let prompt_editor = &self.prompt_editors[&prompt_id];
+                let focus_handle = prompt_editor.editor.focus_handle(cx);
+                let current_model = CompletionProvider::global(cx).model();
+                let token_count = prompt_editor.token_count.map(|count| count.to_string());
+
                 Some(
                     h_flex()
+                        .id("prompt-editor-inner")
                         .size_full()
                         .items_start()
+                        .on_click(cx.listener(move |_, _, cx| {
+                            cx.focus(&focus_handle);
+                        }))
                         .child(
                             div()
                                 .on_action(cx.listener(Self::focus_picker))
@@ -788,8 +800,8 @@ impl PromptLibrary {
                                 .on_action(cx.listener(Self::cancel_last_inline_assist))
                                 .flex_grow()
                                 .h_full()
-                                .pt(Spacing::Large.rems(cx))
-                                .pl(Spacing::Large.rems(cx))
+                                .pt(Spacing::XXLarge.rems(cx))
+                                .pl(Spacing::XXLarge.rems(cx))
                                 .child(prompt_editor.editor.clone()),
                         )
                         .child(
@@ -797,49 +809,105 @@ impl PromptLibrary {
                                 .w_12()
                                 .py(Spacing::Large.rems(cx))
                                 .justify_start()
-                                .items_center()
-                                .gap_4()
+                                .items_end()
+                                .gap_1()
                                 .child(
-                                    IconButton::new(
-                                        "toggle-default-prompt",
-                                        if prompt_metadata.default {
-                                            IconName::ZedAssistantFilled
-                                        } else {
-                                            IconName::ZedAssistant
-                                        },
-                                    )
-                                    .size(ButtonSize::Large)
-                                    .shape(IconButtonShape::Square)
-                                    .tooltip(move |cx| {
-                                        Tooltip::for_action(
-                                            if prompt_metadata.default {
-                                                "Remove from Default Prompt"
-                                            } else {
-                                                "Add to Default Prompt"
+                                    h_flex()
+                                        .h_12()
+                                        .pr_3()
+                                        .font_family(buffer_font)
+                                        .when_some_else(
+                                            token_count,
+                                            |tokens_ready, token_count| {
+                                                tokens_ready.justify_end().child(
+                                                    // This isn't actually a button, it just let's us easily add
+                                                    // a tooltip to the token count.
+                                                    Button::new("token_count", token_count.clone())
+                                                        .style(ButtonStyle::Transparent)
+                                                        .color(Color::Muted)
+                                                        .tooltip(move |cx| {
+                                                            Tooltip::with_meta(
+                                                                format!("{} tokens", token_count,),
+                                                                None,
+                                                                format!(
+                                                                    "Model: {}",
+                                                                    current_model.display_name()
+                                                                ),
+                                                                cx,
+                                                            )
+                                                        }),
+                                                )
                                             },
-                                            &ToggleDefaultPrompt,
-                                            cx,
-                                        )
-                                    })
-                                    .on_click(|_, cx| {
-                                        cx.dispatch_action(Box::new(ToggleDefaultPrompt));
-                                    }),
+                                            |tokens_loading| {
+                                                tokens_loading.w_12().justify_center().child(
+                                                    Icon::new(IconName::ArrowCircle)
+                                                        .size(IconSize::Small)
+                                                        .color(Color::Muted)
+                                                        .with_animation(
+                                                            "arrow-circle",
+                                                            Animation::new(Duration::from_secs(4))
+                                                                .repeat(),
+                                                            |icon, delta| {
+                                                                icon.transform(
+                                                                    Transformation::rotate(
+                                                                        percentage(delta),
+                                                                    ),
+                                                                )
+                                                            },
+                                                        ),
+                                                )
+                                            },
+                                        ),
                                 )
                                 .child(
-                                    IconButton::new("delete-prompt", IconName::Trash)
+                                    h_flex().justify_center().w_12().h_8().child(
+                                        IconButton::new(
+                                            "toggle-default-prompt",
+                                            if prompt_metadata.default {
+                                                IconName::ZedAssistantFilled
+                                            } else {
+                                                IconName::ZedAssistant
+                                            },
+                                        )
+                                        .size(ButtonSize::Large)
+                                        .style(ButtonStyle::Transparent)
                                         .shape(IconButtonShape::Square)
                                         .tooltip(move |cx| {
-                                            Tooltip::for_action("Delete Prompt", &DeletePrompt, cx)
+                                            Tooltip::for_action(
+                                                if prompt_metadata.default {
+                                                    "Remove from Default Prompt"
+                                                } else {
+                                                    "Add to Default Prompt"
+                                                },
+                                                &ToggleDefaultPrompt,
+                                                cx,
+                                            )
                                         })
-                                        .on_click(|_, cx| {
-                                            cx.dispatch_action(Box::new(DeletePrompt));
-                                        }),
+                                        .on_click(
+                                            |_, cx| {
+                                                cx.dispatch_action(Box::new(ToggleDefaultPrompt));
+                                            },
+                                        ),
+                                    ),
                                 )
-                                .children(prompt_editor.token_count.map(|token_count| {
-                                    h_flex()
-                                        .justify_center()
-                                        .child(Label::new(token_count.to_string()))
-                                })),
+                                .child(
+                                    h_flex().justify_center().w_12().h_8().child(
+                                        IconButton::new("delete-prompt", IconName::Trash)
+                                            .size(ButtonSize::Large)
+                                            .style(ButtonStyle::Transparent)
+                                            .shape(IconButtonShape::Square)
+                                            .tooltip(move |cx| {
+                                                Tooltip::for_action(
+                                                    "Delete Prompt",
+                                                    &DeletePrompt,
+                                                    cx,
+                                                )
+                                            })
+                                            .on_click(|_, cx| {
+                                                cx.dispatch_action(Box::new(DeletePrompt));
+                                            }),
+                                    ),
+                                ),
                         ),
                 )
             }))
