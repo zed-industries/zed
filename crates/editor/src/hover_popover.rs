@@ -8,13 +8,13 @@ use futures::{stream::FuturesUnordered, FutureExt};
 use gpui::{
     div, px, AnyElement, ClipboardItem, CursorStyle, Hsla, InteractiveElement, IntoElement,
     MouseButton, ParentElement, Pixels, SharedString, Size, StatefulInteractiveElement, Styled,
-    Task, ViewContext, WeakView,
+    StyledText, Task, ViewContext, WeakView, WindowOptions,
 };
 use language::{
     markdown as old_markdown, DiagnosticEntry, Language, LanguageRegistry, ParsedMarkdown,
 };
 use lsp::DiagnosticSeverity;
-use markdown::MarkdownElement;
+use markdown::{Markdown, MarkdownStyle};
 use multi_buffer::ToOffset;
 use project::{HoverBlock, HoverBlockKind, InlayHintLabelPart};
 use settings::Settings;
@@ -509,7 +509,54 @@ impl InfoPopover {
         cx: &mut ViewContext<Editor>,
     ) -> AnyElement {
         let popover_text = (&self.parsed_content.text).clone();
-        // let markdown_element = MarkdownElement::new();
+        // let markdown_element =
+        //     Markdown::new("This is selectable text".to_string(), style, None, cx);
+        let text = String::from("This is selectable text");
+        // cx.open_window(WindowOptions::default(), |cx| {
+        //     cx.new_view(|cx| {
+        //         Markdown::new(
+        //             text,
+        //             MarkdownStyle {
+        //                 code_block: gpui::TextStyleRefinement {
+        //                     font_family: Some("Zed Mono".into()),
+        //                     color: Some(cx.theme().colors().editor_foreground),
+        //                     background_color: Some(cx.theme().colors().editor_background),
+        //                     ..Default::default()
+        //                 },
+        //                 inline_code: gpui::TextStyleRefinement {
+        //                     font_family: Some("Zed Mono".into()),
+        //                     // @nate: Could we add inline-code specific styles to the theme?
+        //                     color: Some(cx.theme().colors().editor_foreground),
+        //                     background_color: Some(cx.theme().colors().editor_background),
+        //                     ..Default::default()
+        //                 },
+        //                 rule_color: Color::Muted.color(cx),
+        //                 block_quote_border_color: Color::Muted.color(cx),
+        //                 block_quote: gpui::TextStyleRefinement {
+        //                     color: Some(Color::Muted.color(cx)),
+        //                     ..Default::default()
+        //                 },
+        //                 link: gpui::TextStyleRefinement {
+        //                     color: Some(Color::Accent.color(cx)),
+        //                     underline: Some(gpui::UnderlineStyle {
+        //                         thickness: px(1.),
+        //                         color: Some(Color::Accent.color(cx)),
+        //                         wavy: false,
+        //                     }),
+        //                     ..Default::default()
+        //                 },
+        //                 syntax: cx.theme().syntax().clone(),
+        //                 selection_background_color: {
+        //                     let mut selection = cx.theme().players().local().selection;
+        //                     selection.fade_out(0.7);
+        //                     selection
+        //                 },
+        //             },
+        //             None,
+        //             cx,
+        //         )
+        //     })
+        // });
 
         div()
             .id("info_popover")
@@ -527,13 +574,20 @@ impl InfoPopover {
             .on_click(cx.listener(move |_, _, cx| {
                 // cx.write_to_clipboard(ClipboardItem::new(popover_text.clone()));
             }))
-            .child(crate::render_parsed_markdown(
-                "content",
-                &self.parsed_content,
-                style,
-                workspace,
-                cx,
-            ))
+            .child(
+                div()
+                    .on_mouse_down(MouseButton::Left, |_e, _cx| {
+                        println!("ok good");
+                    })
+                    .child("HELLOOOOOO"), //     crate::render_parsed_markdown(
+
+                                          //     "content",
+                                          //     &self.parsed_content,
+                                          //     style,
+                                          //     workspace,
+                                          //     cx,
+                                          // )
+            )
             .into_any_element()
     }
 }
