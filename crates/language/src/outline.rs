@@ -11,7 +11,7 @@ pub struct Outline<T> {
     path_candidate_prefixes: Vec<usize>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct OutlineItem<T> {
     pub depth: usize,
     pub range: Range<T>,
