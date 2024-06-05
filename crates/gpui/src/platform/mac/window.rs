@@ -311,6 +311,7 @@ unsafe fn build_window_class(name: &'static str, superclass: &Class) -> *const C
 }
 
 #[allow(clippy::enum_variant_names)]
+#[derive(Clone)]
 enum ImeInput {
     InsertText(String, Option<Range<usize>>),
     SetMarkedText(String, Option<Range<usize>>, Option<Range<usize>>),
@@ -339,7 +340,7 @@ struct MacWindowState {
     traffic_light_position: Option<Point<Pixels>>,
     previous_modifiers_changed_event: Option<PlatformInput>,
     // State tracking what the IME did after the last request
-    input_during_keydown: Option<SmallVec<[ImeInput; 1]>>,
+    last_ime_inputs: Option<SmallVec<[(String, Option<Range<usize>>); 1]>>,
     previous_keydown_inserted_text: Option<String>,
     external_files_dragged: bool,
     // Whether the next left-mouse click is also the focusing click.
@@ -635,7 +636,7 @@ impl MacWindow {
                     .as_ref()
                     .and_then(|titlebar| titlebar.traffic_light_position),
                 previous_modifiers_changed_event: None,
-                input_during_keydown: None,
+                last_ime_inputs: None,
                 previous_keydown_inserted_text: None,
                 external_files_dragged: false,
                 first_mouse: false,
@@ -1190,14 +1191,30 @@ extern "C" fn handle_key_down(this: &Object, _: Sel, native_event: id) {
 }
 
 // Things to test if you're modifying this method:
+//  U.S. layout:
+//   - The IME consumes characters like 'j' and 'k', which makes paging through `less` in
+//     the terminal behave incorrectly by default. This behavior should be patched by our
+//     IME integration
+//   - `alt-t` should open the tasks menu
+//   - In vim mode, this keybinding should work:
+//     ```
+//        {
+//          "context": "Editor && vim_mode == insert",
+//          "bindings": {"j j": "vim::NormalBefore"}
+//        }
+//     ```
+//     and typing 'j k' in insert mode with this keybinding should insert the two characters
 //  Brazilian layout:
-//   - `" space` should type a quote
+//   - `" space` should create an unmarked quote
 //   - `" backspace` should delete the marked quote
-//   - `" up` should type the quote, unmark it, and move up one line
-//   - `" cmd-down` should not leave a marked quote behind (it maybe should dispatch the key though?)
+//   - `" up` should insert a quote, unmark it, and move up one line
+//   - `" cmd-down` should insert a quote, unmark it, and move to the end of the file
+//      - NOTE: The current implementation does not move the selection to the end of the file
 //   - `cmd-ctrl-space` and clicking on an emoji should type it
 //  Czech (QWERTY) layout:
 //   - in vim mode `option-4`  should go to end of line (same as $)
+//  Japanese (Romaji) layout:
+//   - type `a i left down up enter enter` should create an unmarked text "愛"
 extern "C" fn handle_key_event(this: &Object, native_event: id, key_equivalent: bool) -> BOOL {
     let window_state = unsafe { get_window_state(this) };
     let mut lock = window_state.as_ref().lock();
@@ -1227,7 +1244,7 @@ extern "C" fn handle_key_event(this: &Object, native_event: id, key_equivalent: 
         } else {
             lock.last_fresh_keydown = Some(keydown.clone());
         }
-        lock.input_during_keydown = Some(SmallVec::new());
+        lock.last_ime_inputs = Some(Default::default());
         drop(lock);
 
         // Send the event to the input context for IME handling, unless the `fn` modifier is
@@ -1243,15 +1260,16 @@ extern "C" fn handle_key_event(this: &Object, native_event: id, key_equivalent: 
         let mut handled = false;
         let mut lock = window_state.lock();
         let previous_keydown_inserted_text = lock.previous_keydown_inserted_text.take();
-        let mut input_during_keydown = lock.input_during_keydown.take().unwrap();
+        let mut last_inserts = lock.last_ime_inputs.take().unwrap();
+
         let mut callback = lock.event_callback.take();
         drop(lock);
 
-        let last_ime = input_during_keydown.pop();
+        let last_insert = last_inserts.pop();
         // on a brazilian keyboard typing `"` and then hitting `up` will cause two IME
         // events, one to unmark the quote, and one to send the up arrow.
-        for ime in input_during_keydown {
-            send_to_input_handler(this, ime);
+        for (text, range) in last_inserts {
+            send_to_input_handler(this, ImeInput::InsertText(text, range));
         }
 
         let is_composing =
@@ -1259,20 +1277,18 @@ extern "C" fn handle_key_event(this: &Object, native_event: id, key_equivalent: 
                 .flatten()
                 .is_some();
 
-        if let Some(ime) = last_ime {
-            if let ImeInput::InsertText(text, _) = &ime {
-                if !is_composing {
-                    window_state.lock().previous_keydown_inserted_text = Some(text.clone());
-                    if let Some(callback) = callback.as_mut() {
-                        event.keystroke.ime_key = Some(text.clone());
-                        handled = !callback(PlatformInput::KeyDown(event)).propagate;
-                    }
+        if let Some((text, range)) = last_insert {
+            if !is_composing {
+                window_state.lock().previous_keydown_inserted_text = Some(text.clone());
+                if let Some(callback) = callback.as_mut() {
+                    event.keystroke.ime_key = Some(text.clone());
+                    handled = !callback(PlatformInput::KeyDown(event)).propagate;
                 }
             }
 
             if !handled {
                 handled = true;
-                send_to_input_handler(this, ime);
+                send_to_input_handler(this, ImeInput::InsertText(text, range));
             }
         } else if !is_composing {
             let is_held = event.is_held;
@@ -1654,21 +1670,24 @@ extern "C" fn valid_attributes_for_marked_text(_: &Object, _: Sel) -> id {
 }
 
 extern "C" fn has_marked_text(this: &Object, _: Sel) -> BOOL {
-    with_input_handler(this, |input_handler| input_handler.marked_text_range())
-        .flatten()
-        .is_some() as BOOL
+    let has_marked_text_result =
+        with_input_handler(this, |input_handler| input_handler.marked_text_range()).flatten();
+
+    has_marked_text_result.is_some() as BOOL
 }
 
 extern "C" fn marked_range(this: &Object, _: Sel) -> NSRange {
-    with_input_handler(this, |input_handler| input_handler.marked_text_range())
-        .flatten()
-        .map_or(NSRange::invalid(), |range| range.into())
+    let marked_range_result =
+        with_input_handler(this, |input_handler| input_handler.marked_text_range()).flatten();
+
+    marked_range_result.map_or(NSRange::invalid(), |range| range.into())
 }
 
 extern "C" fn selected_range(this: &Object, _: Sel) -> NSRange {
-    with_input_handler(this, |input_handler| input_handler.selected_text_range())
-        .flatten()
-        .map_or(NSRange::invalid(), |range| range.into())
+    let selected_range_result =
+        with_input_handler(this, |input_handler| input_handler.selected_text_range()).flatten();
+
+    selected_range_result.map_or(NSRange::invalid(), |range| range.into())
 }
 
 extern "C" fn first_rect_for_character_range(
@@ -1761,7 +1780,7 @@ extern "C" fn attributed_substring_for_proposed_range(
             return None;
         }
 
-        let selected_text = input_handler.text_for_range(range)?;
+        let selected_text = input_handler.text_for_range(range.clone())?;
         unsafe {
             let string: id = msg_send![class!(NSAttributedString), alloc];
             let string: id = msg_send![string, initWithString: ns_string(&selected_text)];
@@ -1926,20 +1945,26 @@ fn send_to_input_handler(window: &Object, ime: ImeInput) {
     unsafe {
         let window_state = get_window_state(window);
         let mut lock = window_state.lock();
-        if let Some(ime_input) = lock.input_during_keydown.as_mut() {
-            ime_input.push(ime);
-            return;
-        }
+
         if let Some(mut input_handler) = lock.input_handler.take() {
-            drop(lock);
-            match ime {
+            match ime.clone() {
                 ImeInput::InsertText(text, range) => {
+                    if let Some(ime_input) = lock.last_ime_inputs.as_mut() {
+                        ime_input.push((text, range));
+                        lock.input_handler = Some(input_handler);
+                        return;
+                    }
+                    drop(lock);
                     input_handler.replace_text_in_range(range, &text)
                 }
                 ImeInput::SetMarkedText(text, range, marked_range) => {
+                    drop(lock);
                     input_handler.replace_and_mark_text_in_range(range, &text, marked_range)
                 }
-                ImeInput::UnmarkText => input_handler.unmark_text(),
+                ImeInput::UnmarkText => {
+                    drop(lock);
+                    input_handler.unmark_text()
+                }
             }
             window_state.lock().input_handler = Some(input_handler);
         }
