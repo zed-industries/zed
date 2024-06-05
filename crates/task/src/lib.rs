@@ -66,7 +66,7 @@ pub struct SpawnInTerminal {
     /// Arguments to the command, potentially unsubstituted,
     /// to let the shell that spawns the command to do the substitution, if needed.
     pub args: Vec<String>,
-    /// A command with all of it's arguments appended.
+    /// A command with all of its arguments appended.
     pub command_flattened: String,
     /// Current working directory to spawn the command into.
     pub cwd: Option<TerminalWorkDir>,
