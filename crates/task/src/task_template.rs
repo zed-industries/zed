@@ -567,8 +567,8 @@ mod tests {
                 Some("env_var_2 $ZED_CUSTOM_custom_variable_1 $ZED_CUSTOM_custom_variable_2")
             );
             assert_eq!(
-                spawn_in_terminal.env.get("env_key_3"),
-                Some(&format!("env_var_3 $ZED_SYMBOL")),
+                spawn_in_terminal.env.get("env_key_3").map(|s| s.as_str()),
+                Some("env_var_3 $ZED_SYMBOL"),
                 "Env vars should not be substituted with variables and those should not be shortened"
             );
         }
