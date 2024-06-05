@@ -6,7 +6,7 @@ use anyhow::{anyhow, Result};
 use assistant_slash_command::SlashCommandRegistry;
 use chrono::{DateTime, Utc};
 use collections::HashMap;
-use editor::{actions::Tab, Editor, EditorEvent};
+use editor::{actions::Tab, CurrentLineHighlight, Editor, EditorEvent};
 use futures::{
     future::{self, BoxFuture, Shared},
     FutureExt,
@@ -506,6 +506,7 @@ impl PromptLibrary {
                             editor.set_show_gutter(false, cx);
                             editor.set_show_wrap_guides(false, cx);
                             editor.set_show_indent_guides(false, cx);
+                            editor.set_current_line_highlight(Some(CurrentLineHighlight::None));
                             editor.set_completion_provider(Box::new(
                                 SlashCommandCompletionProvider::new(commands, None, None),
                             ));
