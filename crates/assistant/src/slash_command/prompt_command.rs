@@ -31,7 +31,7 @@ impl SlashCommand for PromptSlashCommand {
         &self,
         query: String,
         _cancellation_flag: Arc<AtomicBool>,
-        _workspace: WeakView<Workspace>,
+        _workspace: Option<WeakView<Workspace>>,
         cx: &mut AppContext,
     ) -> Task<Result<Vec<String>>> {
         let store = PromptStore::global(cx);
