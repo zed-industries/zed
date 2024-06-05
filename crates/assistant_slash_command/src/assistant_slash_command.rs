@@ -25,7 +25,7 @@ pub trait SlashCommand: 'static + Send + Sync {
         &self,
         query: String,
         cancel: Arc<AtomicBool>,
-        workspace: WeakView<Workspace>,
+        workspace: Option<WeakView<Workspace>>,
         cx: &mut AppContext,
     ) -> Task<Result<Vec<String>>>;
     fn requires_argument(&self) -> bool;

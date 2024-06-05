@@ -2580,9 +2580,9 @@ impl ConversationEditor {
         let slash_command_registry = conversation.read(cx).slash_command_registry.clone();
 
         let completion_provider = SlashCommandCompletionProvider::new(
-            cx.view().downgrade(),
             slash_command_registry.clone(),
-            workspace.downgrade(),
+            Some(cx.view().downgrade()),
+            Some(workspace.downgrade()),
         );
 
         let editor = cx.new_view(|cx| {
