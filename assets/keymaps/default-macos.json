@@ -234,6 +234,14 @@
     }
   },
   {
+    "context": "PromptLibrary",
+    "bindings": {
+      "cmd-n": "prompt_library::NewPrompt",
+      "cmd-shift-s": "prompt_library::ToggleDefaultPrompt",
+      "cmd-w": "workspace::CloseWindow"
+    }
+  },
+  {
     "context": "BufferSearchBar",
     "bindings": {
       "escape": "buffer_search::Dismiss",
@@ -639,7 +647,7 @@
   {
     "context": "Picker",
     "bindings": {
-      "alt-e": "picker::UseSelectedQuery",
+      "f2": "picker::UseSelectedQuery",
       "alt-enter": ["picker::ConfirmInput", { "secondary": false }],
       "cmd-alt-enter": ["picker::ConfirmInput", { "secondary": true }]
     }

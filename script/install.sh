@@ -80,7 +80,12 @@ linux() {
     mkdir -p "$HOME/.local/bin" "$HOME/.local/share/applications"
 
     # Link the binary
-    ln -sf ~/.local/zed$suffix.app/bin/cli "$HOME/.local/bin/zed"
+    if [ -f ~/.local/zed$suffix.app/bin/zed ]; then
+        ln -sf ~/.local/zed$suffix.app/bin/zed "$HOME/.local/bin/zed"
+    else
+        # support for versions before 0.139.x.
+        ln -sf ~/.local/zed$suffix.app/bin/cli "$HOME/.local/bin/zed"
+    fi
 
     # Copy .desktop file
     desktop_file_path="$HOME/.local/share/applications/${appid}.desktop"

@@ -83,7 +83,8 @@ impl OutlineView {
         cx: &mut ViewContext<Self>,
     ) -> OutlineView {
         let delegate = OutlineViewDelegate::new(cx.view().downgrade(), outline, editor, cx);
-        let picker = cx.new_view(|cx| Picker::uniform_list(delegate, cx).max_height(vh(0.75, cx)));
+        let picker =
+            cx.new_view(|cx| Picker::uniform_list(delegate, cx).max_height(Some(vh(0.75, cx))));
         OutlineView { picker }
     }
 }

@@ -1,11 +1,11 @@
 use anyhow::Result;
 use async_trait::async_trait;
-use language::{LanguageServerName, LspAdapter, LspAdapterDelegate};
+use language::{ContextProvider, LanguageServerName, LspAdapter, LspAdapterDelegate};
 use lsp::LanguageServerBinary;
 use node_runtime::NodeRuntime;
-use project::ContextProviderWithTasks;
 use std::{
     any::Any,
+    borrow::Cow,
     ffi::OsString,
     path::{Path, PathBuf},
     sync::Arc,
@@ -182,21 +182,92 @@ async fn get_cached_server_binary(
     }
 }
 
-pub(super) fn python_task_context() -> ContextProviderWithTasks {
-    ContextProviderWithTasks::new(TaskTemplates(vec![
-        TaskTemplate {
-            label: "execute selection".to_owned(),
-            command: "python3".to_owned(),
-            args: vec!["-c".to_owned(), VariableName::SelectedText.template_value()],
-            ..TaskTemplate::default()
-        },
-        TaskTemplate {
-            label: format!("run '{}'", VariableName::File.template_value()),
-            command: "python3".to_owned(),
-            args: vec![VariableName::File.template_value()],
-            ..TaskTemplate::default()
-        },
-    ]))
+pub(crate) struct PythonContextProvider;
+
+const PYTHON_UNITTEST_TARGET_TASK_VARIABLE: VariableName =
+    VariableName::Custom(Cow::Borrowed("PYTHON_UNITTEST_TARGET"));
+
+impl ContextProvider for PythonContextProvider {
+    fn build_context(
+        &self,
+        variables: &task::TaskVariables,
+        _location: &project::Location,
+        _cx: &mut gpui::AppContext,
+    ) -> Result<task::TaskVariables> {
+        let python_module_name = python_module_name_from_relative_path(
+            variables.get(&VariableName::RelativeFile).unwrap_or(""),
+        );
+        let unittest_class_name =
+            variables.get(&VariableName::Custom(Cow::Borrowed("_unittest_class_name")));
+        let unittest_method_name = variables.get(&VariableName::Custom(Cow::Borrowed(
+            "_unittest_method_name",
+        )));
+
+        let unittest_target_str = match (unittest_class_name, unittest_method_name) {
+            (Some(class_name), Some(method_name)) => {
+                format!("{}.{}.{}", python_module_name, class_name, method_name)
+            }
+            (Some(class_name), None) => format!("{}.{}", python_module_name, class_name),
+            (None, None) => python_module_name,
+            (None, Some(_)) => return Ok(task::TaskVariables::default()), // should never happen, a TestCase class is the unit of testing
+        };
+
+        let unittest_target = (
+            PYTHON_UNITTEST_TARGET_TASK_VARIABLE.clone(),
+            unittest_target_str,
+        );
+
+        Ok(task::TaskVariables::from_iter([unittest_target]))
+    }
+
+    fn associated_tasks(&self) -> Option<TaskTemplates> {
+        Some(TaskTemplates(vec![
+            TaskTemplate {
+                label: "execute selection".to_owned(),
+                command: "python3".to_owned(),
+                args: vec!["-c".to_owned(), VariableName::SelectedText.template_value()],
+                ..TaskTemplate::default()
+            },
+            TaskTemplate {
+                label: format!("run '{}'", VariableName::File.template_value()),
+                command: "python3".to_owned(),
+                args: vec![VariableName::File.template_value()],
+                ..TaskTemplate::default()
+            },
+            TaskTemplate {
+                label: format!("unittest '{}'", VariableName::File.template_value()),
+                command: "python3".to_owned(),
+                args: vec![
+                    "-m".to_owned(),
+                    "unittest".to_owned(),
+                    VariableName::File.template_value(),
+                ],
+                ..TaskTemplate::default()
+            },
+            TaskTemplate {
+                label: "unittest $ZED_CUSTOM_PYTHON_UNITTEST_TARGET".to_owned(),
+                command: "python3".to_owned(),
+                args: vec![
+                    "-m".to_owned(),
+                    "unittest".to_owned(),
+                    "$ZED_CUSTOM_PYTHON_UNITTEST_TARGET".to_owned(),
+                ],
+                tags: vec![
+                    "python-unittest-class".to_owned(),
+                    "python-unittest-method".to_owned(),
+                ],
+                ..TaskTemplate::default()
+            },
+        ]))
+    }
+}
+
+fn python_module_name_from_relative_path(relative_path: &str) -> String {
+    let path_with_dots = relative_path.replace('/', ".");
+    path_with_dots
+        .strip_suffix(".py")
+        .unwrap_or(&path_with_dots)
+        .to_string()
 }
 
 #[cfg(test)]

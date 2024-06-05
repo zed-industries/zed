@@ -416,7 +416,9 @@ impl Database {
         user_id: UserId,
         tx: &DatabaseTransaction,
     ) -> Result<MembershipUpdated> {
-        let new_channels = self.get_user_channels(user_id, Some(channel), tx).await?;
+        let new_channels = self
+            .get_user_channels(user_id, Some(channel), false, tx)
+            .await?;
         let removed_channels = self
             .get_channel_descendants_excluding_self([channel], tx)
             .await?
@@ -481,44 +483,10 @@ impl Database {
         .await
     }
 
-    /// Returns all channel invites for the user with the given ID.
-    pub async fn get_channel_invites_for_user(&self, user_id: UserId) -> Result<Vec<Channel>> {
-        self.transaction(|tx| async move {
-            let mut role_for_channel: HashMap<ChannelId, ChannelRole> = HashMap::default();
-
-            let channel_invites = channel_member::Entity::find()
-                .filter(
-                    channel_member::Column::UserId
-                        .eq(user_id)
-                        .and(channel_member::Column::Accepted.eq(false)),
-                )
-                .all(&*tx)
-                .await?;
-
-            for invite in channel_invites {
-                role_for_channel.insert(invite.channel_id, invite.role);
-            }
-
-            let channels = channel::Entity::find()
-                .filter(channel::Column::Id.is_in(role_for_channel.keys().copied()))
-                .all(&*tx)
-                .await?;
-
-            let channels = channels.into_iter().map(Channel::from_model).collect();
-
-            Ok(channels)
-        })
-        .await
-    }
-
     /// Returns all channels for the user with the given ID.
     pub async fn get_channels_for_user(&self, user_id: UserId) -> Result<ChannelsForUser> {
-        self.transaction(|tx| async move {
-            let tx = tx;
-
-            self.get_user_channels(user_id, None, &tx).await
-        })
-        .await
+        self.transaction(|tx| async move { self.get_user_channels(user_id, None, true, &tx).await })
+            .await
     }
 
     /// Returns all channels for the user with the given ID that are descendants
@@ -527,25 +495,37 @@ impl Database {
         &self,
         user_id: UserId,
         ancestor_channel: Option<&channel::Model>,
+        include_invites: bool,
         tx: &DatabaseTransaction,
     ) -> Result<ChannelsForUser> {
-        let mut filter = channel_member::Column::UserId
-            .eq(user_id)
-            .and(channel_member::Column::Accepted.eq(true));
-
+        let mut filter = channel_member::Column::UserId.eq(user_id);
+        if !include_invites {
+            filter = filter.and(channel_member::Column::Accepted.eq(true))
+        }
         if let Some(ancestor) = ancestor_channel {
             filter = filter.and(channel_member::Column::ChannelId.eq(ancestor.root_id()));
         }
 
-        let channel_memberships = channel_member::Entity::find()
+        let mut channels = Vec::<channel::Model>::new();
+        let mut invited_channels = Vec::<Channel>::new();
+        let mut channel_memberships = Vec::<channel_member::Model>::new();
+        let mut rows = channel_member::Entity::find()
             .filter(filter)
-            .all(tx)
+            .inner_join(channel::Entity)
+            .select_also(channel::Entity)
+            .stream(tx)
             .await?;
-
-        let channels = channel::Entity::find()
-            .filter(channel::Column::Id.is_in(channel_memberships.iter().map(|m| m.channel_id)))
-            .all(tx)
-            .await?;
+        while let Some(row) = rows.next().await {
+            if let (membership, Some(channel)) = row? {
+                if membership.accepted {
+                    channel_memberships.push(membership);
+                    channels.push(channel);
+                } else {
+                    invited_channels.push(Channel::from_model(channel));
+                }
+            }
+        }
+        drop(rows);
 
         let mut descendants = self
             .get_channel_descendants_excluding_self(channels.iter(), tx)
@@ -643,6 +623,7 @@ impl Database {
         Ok(ChannelsForUser {
             channel_memberships,
             channels,
+            invited_channels,
             hosted_projects,
             channel_participants,
             latest_buffer_versions,

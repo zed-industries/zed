@@ -121,10 +121,10 @@ if (user) {
 }
 
 let buildArgs = ["build"];
-let zedBinary = "target/debug/Zed";
+let zedBinary = "target/debug/zed";
 if (isReleaseMode) {
   buildArgs.push("--release");
-  zedBinary = "target/release/Zed";
+  zedBinary = "target/release/zed";
 }
 
 try {

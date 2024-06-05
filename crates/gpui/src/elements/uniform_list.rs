@@ -6,8 +6,9 @@
 
 use crate::{
     point, px, size, AnyElement, AvailableSpace, Bounds, ContentMask, Element, ElementId,
-    GlobalElementId, Hitbox, InteractiveElement, Interactivity, IntoElement, LayoutId, Pixels,
-    Render, ScrollHandle, Size, StyleRefinement, Styled, View, ViewContext, WindowContext,
+    GlobalElementId, Hitbox, InteractiveElement, Interactivity, IntoElement, LayoutId,
+    ListSizingBehavior, Pixels, Render, ScrollHandle, Size, StyleRefinement, Styled, View,
+    ViewContext, WindowContext,
 };
 use smallvec::SmallVec;
 use std::{cell::RefCell, cmp, ops::Range, rc::Rc};
@@ -55,6 +56,7 @@ where
             ..Default::default()
         },
         scroll_handle: None,
+        sizing_behavior: ListSizingBehavior::default(),
     }
 }
 
@@ -66,6 +68,7 @@ pub struct UniformList {
         Box<dyn for<'a> Fn(Range<usize>, &'a mut WindowContext) -> SmallVec<[AnyElement; 64]>>,
     interactivity: Interactivity,
     scroll_handle: Option<UniformListScrollHandle>,
+    sizing_behavior: ListSizingBehavior,
 }
 
 /// Frame state used by the [UniformList].
@@ -120,24 +123,35 @@ impl Element for UniformList {
         let item_size = self.measure_item(None, cx);
         let layout_id = self
             .interactivity
-            .request_layout(global_id, cx, |style, cx| {
-                cx.request_measured_layout(style, move |known_dimensions, available_space, _cx| {
-                    let desired_height = item_size.height * max_items;
-                    let width = known_dimensions
-                        .width
-                        .unwrap_or(match available_space.width {
-                            AvailableSpace::Definite(x) => x,
-                            AvailableSpace::MinContent | AvailableSpace::MaxContent => {
-                                item_size.width
-                            }
-                        });
-
-                    let height = match available_space.height {
-                        AvailableSpace::Definite(height) => desired_height.min(height),
-                        AvailableSpace::MinContent | AvailableSpace::MaxContent => desired_height,
-                    };
-                    size(width, height)
-                })
+            .request_layout(global_id, cx, |style, cx| match self.sizing_behavior {
+                ListSizingBehavior::Infer => {
+                    cx.with_text_style(style.text_style().cloned(), |cx| {
+                        cx.request_measured_layout(
+                            style,
+                            move |known_dimensions, available_space, _cx| {
+                                let desired_height = item_size.height * max_items;
+                                let width = known_dimensions.width.unwrap_or(match available_space
+                                    .width
+                                {
+                                    AvailableSpace::Definite(x) => x,
+                                    AvailableSpace::MinContent | AvailableSpace::MaxContent => {
+                                        item_size.width
+                                    }
+                                });
+                                let height = match available_space.height {
+                                    AvailableSpace::Definite(height) => desired_height.min(height),
+                                    AvailableSpace::MinContent | AvailableSpace::MaxContent => {
+                                        desired_height
+                                    }
+                                };
+                                size(width, height)
+                            },
+                        )
+                    })
+                }
+                ListSizingBehavior::Auto => cx.with_text_style(style.text_style().cloned(), |cx| {
+                    cx.request_layout(style, None)
+                }),
             });
 
         (
@@ -277,6 +291,12 @@ impl UniformList {
     /// Selects a specific list item for measurement.
     pub fn with_width_from_item(mut self, item_index: Option<usize>) -> Self {
         self.item_to_measure_index = item_index.unwrap_or(0);
+        self
+    }
+
+    /// Sets the sizing behavior, similar to the `List` element.
+    pub fn with_sizing_behavior(mut self, behavior: ListSizingBehavior) -> Self {
+        self.sizing_behavior = behavior;
         self
     }
 

@@ -379,8 +379,8 @@ impl PlatformWindow for WindowsWindow {
         WindowAppearance::Dark
     }
 
-    fn display(&self) -> Rc<dyn PlatformDisplay> {
-        Rc::new(self.0.state.borrow().display)
+    fn display(&self) -> Option<Rc<dyn PlatformDisplay>> {
+        Some(Rc::new(self.0.state.borrow().display))
     }
 
     fn mouse_position(&self) -> Point<Pixels> {

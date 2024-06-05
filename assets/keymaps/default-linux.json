@@ -28,7 +28,6 @@
       "ctrl-0": "zed::ResetBufferFontSize",
       "ctrl-,": "zed::OpenSettings",
       "ctrl-q": "zed::Quit",
-      "alt-f9": "zed::Hide",
       "f11": "zed::ToggleFullScreen"
     }
   },
@@ -215,6 +214,13 @@
       "ctrl-r": "assistant::CycleMessageRole",
       "enter": "assistant::ConfirmCommand",
       "alt-enter": "editor::Newline"
+    }
+  },
+  {
+    "context": "PromptLibrary",
+    "bindings": {
+      "ctrl-n": "prompt_library::NewPrompt",
+      "ctrl-shift-s": "prompt_library::ToggleDefaultPrompt"
     }
   },
   {
@@ -636,12 +642,7 @@
       "pagedown": ["terminal::SendKeystroke", "pagedown"],
       "escape": ["terminal::SendKeystroke", "escape"],
       "enter": ["terminal::SendKeystroke", "enter"],
-      "ctrl-c": ["terminal::SendKeystroke", "ctrl-c"],
-
-      // Some nice conveniences
-      "ctrl-backspace": ["terminal::SendText", "\u0015"],
-      "ctrl-right": ["terminal::SendText", "\u0005"],
-      "ctrl-left": ["terminal::SendText", "\u0001"]
+      "ctrl-c": ["terminal::SendKeystroke", "ctrl-c"]
     }
   }
 ]

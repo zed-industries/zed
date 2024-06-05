@@ -3022,7 +3022,6 @@ async fn test_fs_operations(
     let project_b = client_b.build_dev_server_project(project_id, cx_b).await;
 
     let worktree_a = project_a.read_with(cx_a, |project, _| project.worktrees().next().unwrap());
-
     let worktree_b = project_b.read_with(cx_b, |project, _| project.worktrees().next().unwrap());
 
     let entry = project_b
@@ -3031,6 +3030,7 @@ async fn test_fs_operations(
         })
         .await
         .unwrap()
+        .to_included()
         .unwrap();
 
     worktree_a.read_with(cx_a, |worktree, _| {
@@ -3059,6 +3059,7 @@ async fn test_fs_operations(
         })
         .await
         .unwrap()
+        .to_included()
         .unwrap();
 
     worktree_a.read_with(cx_a, |worktree, _| {
@@ -3087,6 +3088,7 @@ async fn test_fs_operations(
         })
         .await
         .unwrap()
+        .to_included()
         .unwrap();
 
     worktree_a.read_with(cx_a, |worktree, _| {
@@ -3115,20 +3117,25 @@ async fn test_fs_operations(
         })
         .await
         .unwrap()
+        .to_included()
         .unwrap();
+
     project_b
         .update(cx_b, |project, cx| {
             project.create_entry((worktree_id, "DIR/SUBDIR"), true, cx)
         })
         .await
         .unwrap()
+        .to_included()
         .unwrap();
+
     project_b
         .update(cx_b, |project, cx| {
             project.create_entry((worktree_id, "DIR/SUBDIR/f.txt"), false, cx)
         })
         .await
         .unwrap()
+        .to_included()
         .unwrap();
 
     worktree_a.read_with(cx_a, |worktree, _| {

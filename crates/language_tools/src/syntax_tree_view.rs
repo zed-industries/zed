@@ -1,9 +1,9 @@
 use editor::{scroll::Autoscroll, Anchor, Editor, ExcerptId};
 use gpui::{
-    actions, canvas, div, rems, uniform_list, AnyElement, AppContext, Div, EventEmitter,
-    FocusHandle, FocusableView, Hsla, InteractiveElement, IntoElement, Model, MouseButton,
-    MouseDownEvent, MouseMoveEvent, ParentElement, Render, Styled, UniformListScrollHandle, View,
-    ViewContext, VisualContext, WeakView, WindowContext,
+    actions, div, rems, uniform_list, AnyElement, AppContext, Div, EventEmitter, FocusHandle,
+    FocusableView, Hsla, InteractiveElement, IntoElement, Model, MouseButton, MouseDownEvent,
+    MouseMoveEvent, ParentElement, Render, Styled, UniformListScrollHandle, View, ViewContext,
+    VisualContext, WeakView, WindowContext,
 };
 use language::{Buffer, OwnedSyntaxLayer};
 use std::{mem, ops::Range};
@@ -281,7 +281,7 @@ impl Render for SyntaxTreeView {
             .and_then(|buffer| buffer.active_layer.as_ref())
         {
             let layer = layer.clone();
-            let mut list = uniform_list(
+            rendered = rendered.child(uniform_list(
                 cx.view().clone(),
                 "SyntaxTreeView",
                 layer.node().descendant_count(),
@@ -360,18 +360,7 @@ impl Render for SyntaxTreeView {
             )
             .size_full()
             .track_scroll(self.list_scroll_handle.clone())
-            .text_bg(cx.theme().colors().background).into_any_element();
-
-            rendered = rendered.child(
-                canvas(
-                    move |bounds, cx| {
-                        list.prepaint_as_root(bounds.origin, bounds.size.into(), cx);
-                        list
-                    },
-                    |_, mut list, cx| list.paint(cx),
-                )
-                .size_full(),
-            );
+            .text_bg(cx.theme().colors().background).into_any_element());
         }
 
         rendered

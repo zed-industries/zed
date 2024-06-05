@@ -3127,6 +3127,7 @@ async fn test_buffer_identity_across_renames(cx: &mut gpui::TestAppContext) {
         })
         .unwrap()
         .await
+        .to_included()
         .unwrap();
     cx.executor().run_until_parked();
 
@@ -4465,6 +4466,7 @@ async fn test_create_entry(cx: &mut gpui::TestAppContext) {
         })
         .unwrap()
         .await
+        .to_included()
         .unwrap();
 
     // Can't create paths outside the project

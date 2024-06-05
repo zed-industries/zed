@@ -43,7 +43,7 @@ cargo build --release --target "${target_triple}" --package zed --package cli
 
 # Strip the binary of all debug symbols
 # Later, we probably want to do something like this: https://github.com/GabrielMajeri/separate-symbols
-strip "target/${target_triple}/release/Zed"
+strip "target/${target_triple}/release/zed"
 strip "target/${target_triple}/release/cli"
 
 suffix=""
@@ -57,13 +57,13 @@ temp_dir=$(mktemp -d)
 zed_dir="${temp_dir}/zed$suffix.app"
 
 # Binary
-mkdir -p "${zed_dir}/bin"
-cp "target/${target_triple}/release/Zed" "${zed_dir}/bin/zed"
-cp "target/${target_triple}/release/cli" "${zed_dir}/bin/cli"
+mkdir -p "${zed_dir}/bin" "${zed_dir}/libexec"
+cp "target/${target_triple}/release/zed" "${zed_dir}/libexec/zed-editor"
+cp "target/${target_triple}/release/cli" "${zed_dir}/bin/zed"
 
 # Libs
 find_libs() {
-    ldd target/${target_triple}/release/Zed |\
+    ldd target/${target_triple}/release/zed |\
     cut -d' ' -f3 |\
     grep -v '\<\(libstdc++.so\|libc.so\|libgcc_s.so\|libm.so\|libpthread.so\|libdl.so\)'
 }

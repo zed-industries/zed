@@ -47,7 +47,7 @@ impl SlashCommand for SearchSlashCommand {
         &self,
         _query: String,
         _cancel: Arc<AtomicBool>,
-        _workspace: WeakView<Workspace>,
+        _workspace: Option<WeakView<Workspace>>,
         _cx: &mut AppContext,
     ) -> Task<Result<Vec<String>>> {
         Task::ready(Ok(Vec::new()))
@@ -181,7 +181,11 @@ impl SlashCommand for SearchSlashCommand {
                         }),
                     });
 
-                    SlashCommandOutput { text, sections }
+                    SlashCommandOutput {
+                        text,
+                        sections,
+                        run_commands_in_text: false,
+                    }
                 })
                 .await;
 

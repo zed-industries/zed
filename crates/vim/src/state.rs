@@ -61,6 +61,8 @@ pub enum Operator {
     DeleteSurrounds,
     Mark,
     Jump { line: bool },
+    Indent,
+    Outdent,
 }
 
 #[derive(Default, Clone)]
@@ -266,6 +268,8 @@ impl Operator {
             Operator::Mark => "m",
             Operator::Jump { line: true } => "'",
             Operator::Jump { line: false } => "`",
+            Operator::Indent => ">",
+            Operator::Outdent => "<",
         }
     }
 

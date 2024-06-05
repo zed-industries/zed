@@ -881,7 +881,7 @@ fn load_user_themes_in_background(fs: Arc<dyn fs::Fs>, cx: &mut AppContext) {
 fn watch_themes(fs: Arc<dyn fs::Fs>, cx: &mut AppContext) {
     use std::time::Duration;
     cx.spawn(|cx| async move {
-        let mut events = fs
+        let (mut events, _) = fs
             .watch(&paths::THEMES_DIR.clone(), Duration::from_millis(100))
             .await;
 
@@ -920,7 +920,7 @@ fn watch_languages(fs: Arc<dyn fs::Fs>, languages: Arc<LanguageRegistry>, cx: &m
     };
 
     cx.spawn(|_| async move {
-        let mut events = fs.watch(path.as_path(), Duration::from_millis(100)).await;
+        let (mut events, _) = fs.watch(path.as_path(), Duration::from_millis(100)).await;
         while let Some(event) = events.next().await {
             let has_language_file = event.iter().any(|path| {
                 path.extension()
@@ -954,7 +954,7 @@ fn watch_file_types(fs: Arc<dyn fs::Fs>, cx: &mut AppContext) {
     };
 
     cx.spawn(|cx| async move {
-        let mut events = fs.watch(path.as_path(), Duration::from_millis(100)).await;
+        let (mut events, _) = fs.watch(path.as_path(), Duration::from_millis(100)).await;
         while (events.next().await).is_some() {
             cx.update(|cx| {
                 FileIcons::update_global(cx, |file_types, _cx| {
