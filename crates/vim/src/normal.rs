@@ -422,8 +422,9 @@ fn restore_selection_cursors(
 ) {
     editor.change_selections(Some(Autoscroll::fit()), cx, |s| {
         s.move_with(|map, selection| {
-            let anchor = positions.remove(&selection.id).unwrap();
-            selection.collapse_to(anchor.to_display_point(map), SelectionGoal::None);
+            if let Some(anchor) = positions.remove(&selection.id) {
+                selection.collapse_to(anchor.to_display_point(map), SelectionGoal::None);
+            }
         });
     });
 }
