@@ -8,7 +8,7 @@ use futures::{stream::FuturesUnordered, FutureExt};
 use gpui::{
     div, px, AnyElement, ClipboardItem, CursorStyle, Hsla, InteractiveElement, IntoElement,
     MouseButton, ParentElement, Pixels, SharedString, Size, StatefulInteractiveElement, Styled,
-    StyledText, Task, ViewContext, WeakView, WindowOptions,
+    StyledText, Task, View, ViewContext, WeakView, WindowOptions,
 };
 use language::{
     markdown as old_markdown, DiagnosticEntry, Language, LanguageRegistry, ParsedMarkdown,
@@ -494,6 +494,33 @@ impl HoverState {
     }
 }
 
+struct MarkdownExample {
+    markdown: View<Markdown>,
+}
+
+impl MarkdownExample {
+    pub fn new(
+        text: String,
+        style: MarkdownStyle,
+        language_registry: Arc<LanguageRegistry>,
+        cx: &mut WindowContext,
+    ) -> Self {
+        let markdown = cx.new_view(|cx| Markdown::new(text, style, Some(language_registry), cx));
+        Self { markdown }
+    }
+    fn render(&mut self) -> impl IntoElement {
+        div()
+            .id("markdown-example")
+            .debug_selector(|| "foo".into())
+            .relative()
+            .bg(gpui::white())
+            .size_full()
+            .p_4()
+            .overflow_y_scroll()
+            .child(self.markdown.clone())
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct InfoPopover {
     symbol_range: RangeInEditor,
@@ -509,60 +536,72 @@ impl InfoPopover {
         cx: &mut ViewContext<Editor>,
     ) -> AnyElement {
         let popover_text = (&self.parsed_content.text).clone();
+        let markdown_style = MarkdownStyle {
+            code_block: gpui::TextStyleRefinement {
+                font_family: Some("Zed Mono".into()),
+                color: Some(cx.theme().colors().editor_foreground),
+                background_color: Some(cx.theme().colors().editor_background),
+                ..Default::default()
+            },
+            inline_code: gpui::TextStyleRefinement {
+                font_family: Some("Zed Mono".into()),
+                // @nate: Could we add inline-code specific styles to the theme?
+                color: Some(cx.theme().colors().editor_foreground),
+                background_color: Some(cx.theme().colors().editor_background),
+                ..Default::default()
+            },
+            rule_color: Color::Muted.color(cx),
+            block_quote_border_color: Color::Muted.color(cx),
+            block_quote: gpui::TextStyleRefinement {
+                color: Some(Color::Muted.color(cx)),
+                ..Default::default()
+            },
+            link: gpui::TextStyleRefinement {
+                color: Some(Color::Accent.color(cx)),
+                underline: Some(gpui::UnderlineStyle {
+                    thickness: px(1.),
+                    color: Some(Color::Accent.color(cx)),
+                    wavy: false,
+                }),
+                ..Default::default()
+            },
+            syntax: cx.theme().syntax().clone(),
+            selection_background_color: {
+                let mut selection = cx.theme().players().local().selection;
+                selection.fade_out(0.7);
+                selection
+            },
+        };
+        // let markdown_element = Markdown::new(
+        //     "This is selectable text".to_string(),
+        //     markdown_style,
+        //     None,
+        //     cx.view().clone().,
+        // );
+        // cx.spawn(|this, &mut cx| {});
+        let text = "this is selectable text
+            wow so cool
+            omg
+            ## Heading fr"
+            .to_string();
+        // let view = cx.new_view(|v| v);
+        let language_registry = Arc::new(LanguageRegistry::new(
+            Task::ready(()),
+            cx.background_executor().clone(),
+        ));
         // let markdown_element =
-        //     Markdown::new("This is selectable text".to_string(), style, None, cx);
-        let text = String::from("This is selectable text");
-        // cx.open_window(WindowOptions::default(), |cx| {
-        //     cx.new_view(|cx| {
-        //         Markdown::new(
-        //             text,
-        //             MarkdownStyle {
-        //                 code_block: gpui::TextStyleRefinement {
-        //                     font_family: Some("Zed Mono".into()),
-        //                     color: Some(cx.theme().colors().editor_foreground),
-        //                     background_color: Some(cx.theme().colors().editor_background),
-        //                     ..Default::default()
-        //                 },
-        //                 inline_code: gpui::TextStyleRefinement {
-        //                     font_family: Some("Zed Mono".into()),
-        //                     // @nate: Could we add inline-code specific styles to the theme?
-        //                     color: Some(cx.theme().colors().editor_foreground),
-        //                     background_color: Some(cx.theme().colors().editor_background),
-        //                     ..Default::default()
-        //                 },
-        //                 rule_color: Color::Muted.color(cx),
-        //                 block_quote_border_color: Color::Muted.color(cx),
-        //                 block_quote: gpui::TextStyleRefinement {
-        //                     color: Some(Color::Muted.color(cx)),
-        //                     ..Default::default()
-        //                 },
-        //                 link: gpui::TextStyleRefinement {
-        //                     color: Some(Color::Accent.color(cx)),
-        //                     underline: Some(gpui::UnderlineStyle {
-        //                         thickness: px(1.),
-        //                         color: Some(Color::Accent.color(cx)),
-        //                         wavy: false,
-        //                     }),
-        //                     ..Default::default()
-        //                 },
-        //                 syntax: cx.theme().syntax().clone(),
-        //                 selection_background_color: {
-        //                     let mut selection = cx.theme().players().local().selection;
-        //                     selection.fade_out(0.7);
-        //                     selection
-        //                 },
-        //             },
-        //             None,
-        //             cx,
-        //         )
-        //     })
-        // });
-
-        div()
+        //     cx.new_view(|cx| Markdown::new(text, markdown_style, Some(language_registry), cx));
+        let markdown_element = MarkdownExample::new(text, markdown_style, language_registry, cx);
+        markdown_element
+            .markdown
+            .div()
             .id("info_popover")
             .elevation_2(cx)
             .p_2()
             .overflow_y_scroll()
+            .overflow_x_scroll()
+            .min_w(max_size.width)
+            .min_h(max_size.height)
             .max_w(max_size.width)
             .max_h(max_size.height)
             // .cursor(CursorStyle::PointingHand)
@@ -574,20 +613,7 @@ impl InfoPopover {
             .on_click(cx.listener(move |_, _, cx| {
                 // cx.write_to_clipboard(ClipboardItem::new(popover_text.clone()));
             }))
-            .child(
-                div()
-                    .on_mouse_down(MouseButton::Left, |_e, _cx| {
-                        println!("ok good");
-                    })
-                    .child("HELLOOOOOO"), //     crate::render_parsed_markdown(
-
-                                          //     "content",
-                                          //     &self.parsed_content,
-                                          //     style,
-                                          //     workspace,
-                                          //     cx,
-                                          // )
-            )
+            .child(markdown_element.render())
             .into_any_element()
     }
 }
