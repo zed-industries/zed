@@ -4071,6 +4071,7 @@ impl LineWithInvisibles {
                                 if non_whitespace_added || !inside_wrapped_string {
                                     invisibles.push(Invisible::Tab {
                                         line_start_offset: line.len(),
+                                        line_end_offset: line.len() + line_chunk.len(),
                                     });
                                 }
                             } else {
@@ -4186,16 +4187,15 @@ impl LineWithInvisibles {
         whitespace_setting: ShowWhitespaceSetting,
         cx: &mut WindowContext,
     ) {
-        let allowed_invisibles_regions = match whitespace_setting {
-            ShowWhitespaceSetting::None => return,
-            ShowWhitespaceSetting::Selection => Some(selection_ranges),
-            ShowWhitespaceSetting::All => None,
-        };
-
-        for invisible in &self.invisibles {
-            let (&token_offset, invisible_symbol) = match invisible {
-                Invisible::Tab { line_start_offset } => (line_start_offset, &layout.tab_invisible),
-                Invisible::Whitespace { line_offset } => (line_offset, &layout.space_invisible),
+        let extract_whitespace_info = |invisible: &Invisible| {
+            let (token_offset, token_end_offset, invisible_symbol) = match invisible {
+                Invisible::Tab {
+                    line_start_offset,
+                    line_end_offset,
+                } => (*line_start_offset, *line_end_offset, &layout.tab_invisible),
+                Invisible::Whitespace { line_offset } => {
+                    (*line_offset, line_offset + 1, &layout.space_invisible)
+                }
             };
 
             let x_offset = self.x_for_index(token_offset);
@@ -4207,17 +4207,73 @@ impl LineWithInvisibles {
                     line_y,
                 );
 
-            if let Some(allowed_regions) = allowed_invisibles_regions {
-                let invisible_point = DisplayPoint::new(row, token_offset as u32);
-                if !allowed_regions
+            (
+                [token_offset, token_end_offset],
+                Box::new(move |cx: &mut WindowContext| {
+                    invisible_symbol.paint(origin, line_height, cx).log_err();
+                }),
+            )
+        };
+
+        let invisible_iter = self.invisibles.iter().map(extract_whitespace_info);
+        match whitespace_setting {
+            ShowWhitespaceSetting::None => return,
+            ShowWhitespaceSetting::All => invisible_iter.for_each(|(_, paint)| paint(cx)),
+            ShowWhitespaceSetting::Selection => invisible_iter.for_each(|([start, _], paint)| {
+                let invisible_point = DisplayPoint::new(row, start as u32);
+                if !selection_ranges
                     .iter()
                     .any(|region| region.start <= invisible_point && invisible_point < region.end)
                 {
-                    continue;
+                    return;
+                }
+
+                paint(cx);
+            }),
+
+            // For a whitespace to be on a boundary, any of the following conditions need to be met:
+            // - It is a tab
+            // - It is adjacent to an edge (start or end)
+            // - It is adjacent to a whitespace (left or right)
+            ShowWhitespaceSetting::Boundary => {
+                // We'll need to keep track of the last invisible we've seen and then check if we are adjacent to it for some of
+                // the above cases.
+                // Note: We zip in the original `invisibles` to check for tab equality
+                let mut last_seen: Option<(bool, usize, Box<dyn Fn(&mut WindowContext)>)> = None;
+                for (([start, end], paint), invisible) in
+                    invisible_iter.zip_eq(self.invisibles.iter())
+                {
+                    let should_render = match (&last_seen, invisible) {
+                        (_, Invisible::Tab { .. }) => true,
+                        (Some((_, last_end, _)), _) => *last_end == start,
+                        _ => false,
+                    };
+
+                    if should_render || start == 0 || end == self.len {
+                        paint(cx);
+
+                        // Since we are scanning from the left, we will skip over the first available whitespace that is part
+                        // of a boundary between non-whitespace segments, so we correct by manually redrawing it if needed.
+                        if let Some((should_render_last, last_end, paint_last)) = last_seen {
+                            // Note that we need to make sure that the last one is actually adjacent
+                            if !should_render_last && last_end == start {
+                                paint_last(cx);
+                            }
+                        }
+                    }
+
+                    // Manually render anything within a selection
+                    let invisible_point = DisplayPoint::new(row, start as u32);
+                    if selection_ranges.iter().any(|region| {
+                        region.start <= invisible_point && invisible_point < region.end
+                    }) {
+                        paint(cx);
+                    }
+
+                    last_seen = Some((should_render, end, paint));
                 }
             }
-            invisible_symbol.paint(origin, line_height, cx).log_err();
-        }
+        };
     }
 
     pub fn x_for_index(&self, index: usize) -> Pixels {
@@ -4307,8 +4363,18 @@ impl LineWithInvisibles {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Invisible {
-    Tab { line_start_offset: usize },
-    Whitespace { line_offset: usize },
+    /// A tab character
+    ///
+    /// A tab character is internally represented by spaces (configured by the user's tab width)
+    /// aligned to the nearest column, so it's necessary to store the start and end offset for
+    /// adjacency checks.
+    Tab {
+        line_start_offset: usize,
+        line_end_offset: usize,
+    },
+    Whitespace {
+        line_offset: usize,
+    },
 }
 
 impl EditorElement {
@@ -5853,15 +5919,18 @@ mod tests {
         let expected_invisibles = vec![
             Invisible::Tab {
                 line_start_offset: 0,
+                line_end_offset: TAB_SIZE as usize,
             },
             Invisible::Whitespace {
                 line_offset: TAB_SIZE as usize,
             },
             Invisible::Tab {
                 line_start_offset: TAB_SIZE as usize + 1,
+                line_end_offset: TAB_SIZE as usize * 2,
             },
             Invisible::Tab {
                 line_start_offset: TAB_SIZE as usize * 2 + 1,
+                line_end_offset: TAB_SIZE as usize * 3,
             },
             Invisible::Whitespace {
                 line_offset: TAB_SIZE as usize * 3 + 1,
@@ -5915,10 +5984,11 @@ mod tests {
     #[gpui::test]
     fn test_wrapped_invisibles_drawing(cx: &mut TestAppContext) {
         let tab_size = 4;
-        let input_text = "a\tbcd   ".repeat(9);
+        let input_text = "a\tbcd     ".repeat(9);
         let repeated_invisibles = [
             Invisible::Tab {
                 line_start_offset: 1,
+                line_end_offset: tab_size as usize,
             },
             Invisible::Whitespace {
                 line_offset: tab_size as usize + 3,
@@ -5928,6 +5998,12 @@ mod tests {
             },
             Invisible::Whitespace {
                 line_offset: tab_size as usize + 5,
+            },
+            Invisible::Whitespace {
+                line_offset: tab_size as usize + 6,
+            },
+            Invisible::Whitespace {
+                line_offset: tab_size as usize + 7,
             },
         ];
         let expected_invisibles = std::iter::once(repeated_invisibles)
