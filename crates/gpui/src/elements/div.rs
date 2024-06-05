@@ -2526,7 +2526,7 @@ impl ScrollHandle {
         }
     }
 
-    /// Set the offset explcitly. The offset is the distance from the top left of the
+    /// Set the offset explicitly. The offset is the distance from the top left of the
     /// parent container to the top left of the first child.
     /// As you scroll further down the offset becomes more negative.
     pub fn set_offset(&self, mut position: Point<Pixels>) {
