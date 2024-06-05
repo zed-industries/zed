@@ -1290,7 +1290,7 @@ impl OutlinePanel {
         added_entries.extend(new_entries.values().flatten().copied());
         self.displayed_item = Some(DisplayedActiveItem {
             item_id: new_active_editor.item_id(),
-            _editor_subscrpiption: subscribe_for_editor_changes(&new_active_editor, cx),
+            _editor_subscrpiption: subscribe_for_editor_events(&new_active_editor, cx),
             entries: new_entries,
         });
         self.update_visible_entries(added_entries, None, cx);
@@ -1365,7 +1365,7 @@ impl Panel for OutlinePanel {
     fn icon(&self, cx: &WindowContext) -> Option<IconName> {
         OutlinePanelSettings::get_global(cx)
             .button
-            .then(|| IconName::Code)
+            .then(|| IconName::ListTree)
     }
 
     fn icon_tooltip(&self, _: &WindowContext) -> Option<&'static str> {
@@ -1475,7 +1475,7 @@ impl Render for OutlinePanel {
     }
 }
 
-fn subscribe_for_editor_changes(
+fn subscribe_for_editor_events(
     editor: &View<Editor>,
     cx: &mut ViewContext<OutlinePanel>,
 ) -> Option<Subscription> {
@@ -1520,6 +1520,7 @@ fn subscribe_for_editor_changes(
                                 );
                                 displayed_item.entries = active_entries;
                                 outline_panel.update_visible_entries(new_active_entries, None, cx);
+                                cx.notify();
                             }
                         }
                         None => {
@@ -1538,6 +1539,7 @@ fn subscribe_for_editor_changes(
                                 let active_entries = editor_entries(workspace, &active_editor, cx);
                                 displayed_item.entries = active_entries;
                                 outline_panel.update_visible_entries(HashSet::default(), None, cx);
+                                cx.notify();
                             }
                         }
                         None => {

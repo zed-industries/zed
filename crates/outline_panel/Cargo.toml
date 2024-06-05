@@ -32,3 +32,6 @@ unicase.workspace = true
 util.workspace = true
 worktree.workspace = true
 workspace.workspace = true
+
+[package.metadata.cargo-machete]
+ignored = ["log"]
