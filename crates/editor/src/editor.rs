@@ -524,6 +524,7 @@ pub struct Editor {
     expect_bounds_change: Option<Bounds<Pixels>>,
     tasks: BTreeMap<(BufferId, BufferRow), RunnableTasks>,
     tasks_update_task: Option<Task<()>>,
+    previous_search_ranges: Option<Arc<[Range<Anchor>]>>,
 }
 
 #[derive(Clone)]
@@ -1804,6 +1805,7 @@ impl Editor {
                 }),
             ],
             tasks_update_task: None,
+            previous_search_ranges: None,
         };
         this.tasks_update_task = Some(this.refresh_runnables(cx));
         this._subscriptions.extend(project_subscriptions);

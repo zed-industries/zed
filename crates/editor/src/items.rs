@@ -1009,14 +1009,21 @@ impl SearchableItem for Editor {
 
     fn toggle_filtered_search_ranges(&mut self, enabled: bool, cx: &mut ViewContext<Self>) {
         if self.has_filtered_search_ranges() {
-            self.clear_background_highlights::<SearchWithinRange>(cx);
+            self.previous_search_ranges = self
+                .clear_background_highlights::<SearchWithinRange>(cx)
+                .map(|(_, ranges)| ranges)
         }
 
         if !enabled {
             return;
         }
 
-        self.set_search_within_ranges(&self.selections.disjoint_anchor_ranges(), cx);
+        let ranges = self.selections.disjoint_anchor_ranges();
+        if ranges.iter().any(|range| range.start != range.end) {
+            self.set_search_within_ranges(&ranges, cx);
+        } else if let Some(previous_search_ranges) = self.previous_search_ranges.take() {
+            self.set_search_within_ranges(&previous_search_ranges, cx)
+        }
     }
 
     fn query_suggestion(&mut self, cx: &mut ViewContext<Self>) -> String {
