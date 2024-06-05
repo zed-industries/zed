@@ -282,9 +282,9 @@ impl PickerDelegate for PromptPickerDelegate {
                     .inset(true)
                     .spacing(ListItemSpacing::Sparse)
                     .selected(selected)
-                    .child(Label::new(
+                    .child(h_flex().h_5().line_height(relative(1.)).child(Label::new(
                         prompt.title.clone().unwrap_or("Untitled".into()),
-                    ))
+                    )))
                     .end_hover_slot(
                         h_flex()
                             .gap_2()
@@ -330,7 +330,7 @@ impl PickerDelegate for PromptPickerDelegate {
             .rounded_md()
             .overflow_hidden()
             .flex_none()
-            .h_7()
+            .py_1()
             .px_2()
             .mx_2()
             .child(editor.clone())
