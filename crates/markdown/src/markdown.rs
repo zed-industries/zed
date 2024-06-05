@@ -1,3 +1,4 @@
+// pub mod markdown;
 mod parser;
 
 use crate::parser::CodeBlockKind;

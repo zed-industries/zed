@@ -10,9 +10,11 @@ use gpui::{
     MouseButton, ParentElement, Pixels, SharedString, Size, StatefulInteractiveElement, Styled,
     Task, ViewContext, WeakView,
 };
-use language::{markdown, DiagnosticEntry, Language, LanguageRegistry, ParsedMarkdown};
-
+use language::{
+    markdown as old_markdown, DiagnosticEntry, Language, LanguageRegistry, ParsedMarkdown,
+};
 use lsp::DiagnosticSeverity;
+use markdown::MarkdownElement;
 use multi_buffer::ToOffset;
 use project::{HoverBlock, HoverBlockKind, InlayHintLabelPart};
 use settings::Settings;
@@ -355,7 +357,7 @@ async fn parse_blocks(
     blocks: &[HoverBlock],
     language_registry: &Arc<LanguageRegistry>,
     language: Option<Arc<Language>>,
-) -> markdown::ParsedMarkdown {
+) -> old_markdown::ParsedMarkdown {
     let mut text = String::new();
     let mut highlights = Vec::new();
     let mut region_ranges = Vec::new();
@@ -364,12 +366,12 @@ async fn parse_blocks(
     for block in blocks {
         match &block.kind {
             HoverBlockKind::PlainText => {
-                markdown::new_paragraph(&mut text, &mut Vec::new());
+                old_markdown::new_paragraph(&mut text, &mut Vec::new());
                 text.push_str(&block.text.replace("\\n", "\n"));
             }
 
             HoverBlockKind::Markdown => {
-                markdown::parse_markdown_block(
+                old_markdown::parse_markdown_block(
                     &block.text.replace("\\n", "\n"),
                     language_registry,
                     language.clone(),
@@ -387,7 +389,12 @@ async fn parse_blocks(
                     .now_or_never()
                     .and_then(Result::ok)
                 {
-                    markdown::highlight_code(&mut text, &mut highlights, &block.text, &language);
+                    old_markdown::highlight_code(
+                        &mut text,
+                        &mut highlights,
+                        &block.text,
+                        &language,
+                    );
                 } else {
                     text.push_str(&block.text);
                 }
@@ -502,6 +509,8 @@ impl InfoPopover {
         cx: &mut ViewContext<Editor>,
     ) -> AnyElement {
         let popover_text = (&self.parsed_content.text).clone();
+        // let markdown_element = MarkdownElement::new();
+
         div()
             .id("info_popover")
             .elevation_2(cx)
@@ -509,14 +518,14 @@ impl InfoPopover {
             .overflow_y_scroll()
             .max_w(max_size.width)
             .max_h(max_size.height)
-            .cursor(CursorStyle::PointingHand)
-            .tooltip(move |cx| Tooltip::text("Copy to Clipboard", cx))
+            // .cursor(CursorStyle::PointingHand)
+            // .tooltip(move |cx| Tooltip::text("Copy to Clipboard", cx))
             // Prevent a mouse down/move on the popover from being propagated to the editor,
             // because that would dismiss the popover.
             .on_mouse_move(|_, cx| cx.stop_propagation())
             .on_mouse_down(MouseButton::Left, |_, cx| cx.stop_propagation())
             .on_click(cx.listener(move |_, _, cx| {
-                cx.write_to_clipboard(ClipboardItem::new(popover_text.clone()));
+                // cx.write_to_clipboard(ClipboardItem::new(popover_text.clone()));
             }))
             .child(crate::render_parsed_markdown(
                 "content",
