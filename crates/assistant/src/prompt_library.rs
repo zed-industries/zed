@@ -323,6 +323,18 @@ impl PickerDelegate for PromptPickerDelegate {
         };
         Some(element)
     }
+
+    fn render_editor(&self, editor: &View<Editor>, cx: &mut ViewContext<Picker<Self>>) -> Div {
+        h_flex()
+            .bg(cx.theme().colors().editor_background)
+            .rounded_md()
+            .overflow_hidden()
+            .flex_none()
+            .h_7()
+            .px_2()
+            .mx_2()
+            .child(editor.clone())
+    }
 }
 
 impl PromptLibrary {
@@ -750,6 +762,7 @@ impl PromptLibrary {
                     .justify_end()
                     .child(
                         IconButton::new("new-prompt", IconName::Plus)
+                            .style(ButtonStyle::Transparent)
                             .shape(IconButtonShape::Square)
                             .tooltip(move |cx| Tooltip::for_action("New Prompt", &NewPrompt, cx))
                             .on_click(|_, cx| {
