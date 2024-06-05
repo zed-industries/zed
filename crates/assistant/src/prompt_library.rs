@@ -6,7 +6,7 @@ use anyhow::{anyhow, Result};
 use assistant_slash_command::SlashCommandRegistry;
 use chrono::{DateTime, Utc};
 use collections::HashMap;
-use editor::{actions::Tab, Editor, EditorEvent};
+use editor::{actions::Tab, CurrentLineHighlight, Editor, EditorEvent};
 use futures::{
     future::{self, BoxFuture, Shared},
     FutureExt,
@@ -128,7 +128,7 @@ struct PromptPickerDelegate {
 }
 
 enum PromptPickerEvent {
-    Selected { prompt_id: PromptId },
+    Selected { prompt_id: Option<PromptId> },
     Confirmed { prompt_id: PromptId },
     Deleted { prompt_id: PromptId },
     ToggledDefault { prompt_id: PromptId },
@@ -167,11 +167,14 @@ impl PickerDelegate for PromptPickerDelegate {
 
     fn set_selected_index(&mut self, ix: usize, cx: &mut ViewContext<Picker<Self>>) {
         self.selected_index = ix;
-        if let Some(PromptPickerEntry::Prompt(prompt)) = self.entries.get(self.selected_index) {
-            cx.emit(PromptPickerEvent::Selected {
-                prompt_id: prompt.id,
-            });
-        }
+        let prompt_id = if let Some(PromptPickerEntry::Prompt(prompt)) =
+            self.entries.get(self.selected_index)
+        {
+            Some(prompt.id)
+        } else {
+            None
+        };
+        cx.emit(PromptPickerEvent::Selected { prompt_id });
     }
 
     fn placeholder_text(&self, _cx: &mut WindowContext) -> Arc<str> {
@@ -373,7 +376,11 @@ impl PromptLibrary {
     ) {
         match event {
             PromptPickerEvent::Selected { prompt_id } => {
-                self.load_prompt(*prompt_id, false, cx);
+                if let Some(prompt_id) = *prompt_id {
+                    self.load_prompt(prompt_id, false, cx);
+                } else {
+                    self.focus_picker(&Default::default(), cx);
+                }
             }
             PromptPickerEvent::Confirmed { prompt_id } => {
                 self.load_prompt(*prompt_id, true, cx);
@@ -517,6 +524,7 @@ impl PromptLibrary {
                             editor.set_show_gutter(false, cx);
                             editor.set_show_wrap_guides(false, cx);
                             editor.set_show_indent_guides(false, cx);
+                            editor.set_current_line_highlight(Some(CurrentLineHighlight::None));
                             editor.set_completion_provider(Box::new(
                                 SlashCommandCompletionProvider::new(commands, None, None),
                             ));
@@ -909,6 +917,14 @@ impl PromptLibrary {
 
 impl Render for PromptLibrary {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+        let (ui_font, ui_font_size) = {
+            let theme_settings = ThemeSettings::get_global(cx);
+            (theme_settings.ui_font.clone(), theme_settings.ui_font_size)
+        };
+
+        let theme = cx.theme().clone();
+        cx.set_rem_size(ui_font_size);
+
         h_flex()
             .id("prompt-manager")
             .key_context("PromptLibrary")
@@ -919,6 +935,8 @@ impl Render for PromptLibrary {
             }))
             .size_full()
             .overflow_hidden()
+            .font(ui_font)
+            .text_color(theme.colors().text)
             .child(self.render_prompt_list(cx))
             .child(self.render_active_prompt(cx))
     }

@@ -32,7 +32,6 @@ ADDITIONAL_LABELS: set[str] = {
 }
 IGNORED_LABELS: set[str] = {
     "ignore top-ranking issues",
-    "meta",
 }
 ISSUES_PER_LABEL: int = 20
 
