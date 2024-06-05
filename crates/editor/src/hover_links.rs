@@ -185,7 +185,8 @@ impl Editor {
         }) else {
             return false;
         };
-        popover.scroll(amount, cx)
+        popover.scroll(amount, cx);
+        true
     }
 
     fn cmd_click_reveal_task(

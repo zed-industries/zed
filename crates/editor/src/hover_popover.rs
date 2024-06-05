@@ -426,7 +426,7 @@ async fn parse_blocks(
     }
 }
 
-#[derive(Default)]
+#[derive(Default, Debug)]
 pub struct HoverState {
     pub info_popovers: Vec<InfoPopover>,
     pub diagnostic_popover: Option<DiagnosticPopover>,
@@ -490,7 +490,7 @@ impl HoverState {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct InfoPopover {
     pub symbol_range: RangeInEditor,
     pub parsed_content: ParsedMarkdown,
@@ -508,7 +508,6 @@ impl InfoPopover {
         div()
             .id("info_popover")
             .elevation_2(cx)
-            .p_2()
             .overflow_y_scroll()
             .track_scroll(&self.scroll_handle)
             .max_w(max_size.width)
@@ -517,24 +516,24 @@ impl InfoPopover {
             // because that would dismiss the popover.
             .on_mouse_move(|_, cx| cx.stop_propagation())
             .on_mouse_down(MouseButton::Left, |_, cx| cx.stop_propagation())
-            .child(crate::render_parsed_markdown(
+            .child(div().p_2().child(crate::render_parsed_markdown(
                 "content",
                 &self.parsed_content,
                 style,
                 workspace,
                 cx,
-            ))
+            )))
             .into_any_element()
     }
 
-    pub fn scroll(&self, amount: &ScrollAmount, cx: &mut ViewContext<Editor>) -> bool {
+    pub fn scroll(&self, amount: &ScrollAmount, cx: &mut ViewContext<Editor>) {
         let mut current = self.scroll_handle.offset();
         current.y -= amount.pixels(
             cx.line_height(),
             self.scroll_handle.bounds().size.height - px(16.),
         ) / 2.0;
         cx.notify();
-        self.scroll_handle.scroll_to(current)
+        self.scroll_handle.set_offset(current);
     }
 }
 
