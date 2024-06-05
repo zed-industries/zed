@@ -53,8 +53,7 @@ use convert_case::{Case, Casing};
 use debounced_delay::DebouncedDelay;
 use display_map::*;
 pub use display_map::{DisplayPoint, FoldPlaceholder};
-use editor_settings::CurrentLineHighlight;
-pub use editor_settings::EditorSettings;
+pub use editor_settings::{CurrentLineHighlight, EditorSettings};
 use element::LineWithInvisibles;
 pub use element::{
     CursorLayout, EditorElement, HighlightedRange, HighlightedRangeLine, PointForPosition,
@@ -480,7 +479,7 @@ pub struct Editor {
     pending_rename: Option<RenameState>,
     searchable: bool,
     cursor_shape: CursorShape,
-    current_line_highlight: CurrentLineHighlight,
+    current_line_highlight: Option<CurrentLineHighlight>,
     collapse_matches: bool,
     autoindent_mode: Option<AutoindentMode>,
     workspace: Option<(WeakView<Workspace>, Option<WorkspaceId>)>,
@@ -1768,7 +1767,7 @@ impl Editor {
             pending_rename: Default::default(),
             searchable: true,
             cursor_shape: Default::default(),
-            current_line_highlight: EditorSettings::get_global(cx).current_line_highlight,
+            current_line_highlight: None,
             autoindent_mode: Some(AutoindentMode::EachLine),
             collapse_matches: false,
             workspace: None,
@@ -1992,7 +1991,9 @@ impl Editor {
             ongoing_scroll: self.scroll_manager.ongoing_scroll(),
             placeholder_text: self.placeholder_text.clone(),
             is_focused: self.focus_handle.is_focused(cx),
-            current_line_highlight: self.current_line_highlight,
+            current_line_highlight: self
+                .current_line_highlight
+                .unwrap_or_else(|| EditorSettings::get_global(cx).current_line_highlight),
             gutter_hovered: self.gutter_hovered,
         }
     }
@@ -2082,7 +2083,10 @@ impl Editor {
         cx.notify();
     }
 
-    pub fn set_current_line_highlight(&mut self, current_line_highlight: CurrentLineHighlight) {
+    pub fn set_current_line_highlight(
+        &mut self,
+        current_line_highlight: Option<CurrentLineHighlight>,
+    ) {
         self.current_line_highlight = current_line_highlight;
     }
 
@@ -10608,7 +10612,6 @@ impl Editor {
         let editor_settings = EditorSettings::get_global(cx);
         self.scroll_manager.vertical_scroll_margin = editor_settings.vertical_scroll_margin;
         self.show_breadcrumbs = editor_settings.toolbar.breadcrumbs;
-        self.current_line_highlight = editor_settings.current_line_highlight;
 
         if self.mode == EditorMode::Full {
             let inline_blame_enabled = ProjectSettings::get_global(cx).git.inline_blame_enabled();
