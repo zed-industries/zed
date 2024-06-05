@@ -250,7 +250,7 @@ impl PickerDelegate for PromptPickerDelegate {
             PromptPickerEntry::DefaultPromptsHeader => ListHeader::new("Default Prompts")
                 .inset(true)
                 .start_slot(
-                    Icon::new(IconName::ZedAssistant)
+                    Icon::new(IconName::SparkleFilled)
                         .color(Color::Muted)
                         .size(IconSize::XSmall),
                 )
@@ -298,31 +298,24 @@ impl PickerDelegate for PromptPickerDelegate {
                                     })),
                             )
                             .child(
-                                IconButton::new(
-                                    "toggle-default-prompt",
-                                    if default {
-                                        IconName::ZedAssistantFilled
-                                    } else {
-                                        IconName::ZedAssistant
-                                    },
-                                )
-                                .icon_color(if default { Color::Accent } else { Color::Muted })
-                                .shape(IconButtonShape::Square)
-                                .tooltip(move |cx| {
-                                    Tooltip::text(
-                                        if default {
-                                            "Remove from Default Prompt"
-                                        } else {
-                                            "Add to Default Prompt"
-                                        },
-                                        cx,
-                                    )
-                                })
-                                .on_click(cx.listener(
-                                    move |_, _, cx| {
+                                IconButton::new("toggle-default-prompt", IconName::Sparkle)
+                                    .selected(selected)
+                                    .selected_icon(IconName::SparkleFilled)
+                                    .icon_color(if default { Color::Accent } else { Color::Muted })
+                                    .shape(IconButtonShape::Square)
+                                    .tooltip(move |cx| {
+                                        Tooltip::text(
+                                            if default {
+                                                "Remove from Default Prompt"
+                                            } else {
+                                                "Add to Default Prompt"
+                                            },
+                                            cx,
+                                        )
+                                    })
+                                    .on_click(cx.listener(move |_, _, cx| {
                                         cx.emit(PromptPickerEvent::ToggledDefault { prompt_id })
-                                    },
-                                )),
+                                    })),
                             ),
                     )
                     .into_any_element()
@@ -811,83 +804,70 @@ impl PromptLibrary {
                                 .justify_start()
                                 .items_end()
                                 .gap_1()
-                                .child(
-                                    h_flex()
-                                        .h_12()
-                                        .pr_3()
-                                        .font_family(buffer_font)
-                                        .when_some_else(
-                                            token_count,
-                                            |tokens_ready, token_count| {
-                                                tokens_ready.justify_end().child(
-                                                    // This isn't actually a button, it just let's us easily add
-                                                    // a tooltip to the token count.
-                                                    Button::new("token_count", token_count.clone())
-                                                        .style(ButtonStyle::Transparent)
-                                                        .color(Color::Muted)
-                                                        .tooltip(move |cx| {
-                                                            Tooltip::with_meta(
-                                                                format!("{} tokens", token_count,),
-                                                                None,
-                                                                format!(
-                                                                    "Model: {}",
-                                                                    current_model.display_name()
-                                                                ),
-                                                                cx,
-                                                            )
-                                                        }),
-                                                )
-                                            },
-                                            |tokens_loading| {
-                                                tokens_loading.w_12().justify_center().child(
-                                                    Icon::new(IconName::ArrowCircle)
-                                                        .size(IconSize::Small)
-                                                        .color(Color::Muted)
-                                                        .with_animation(
-                                                            "arrow-circle",
-                                                            Animation::new(Duration::from_secs(4))
-                                                                .repeat(),
-                                                            |icon, delta| {
-                                                                icon.transform(
-                                                                    Transformation::rotate(
-                                                                        percentage(delta),
-                                                                    ),
-                                                                )
-                                                            },
+                                .child(h_flex().h_8().font_family(buffer_font).when_some_else(
+                                    token_count,
+                                    |tokens_ready, token_count| {
+                                        tokens_ready.pr_3().justify_end().child(
+                                            // This isn't actually a button, it just let's us easily add
+                                            // a tooltip to the token count.
+                                            Button::new("token_count", token_count.clone())
+                                                .style(ButtonStyle::Transparent)
+                                                .color(Color::Muted)
+                                                .tooltip(move |cx| {
+                                                    Tooltip::with_meta(
+                                                        format!("{} tokens", token_count,),
+                                                        None,
+                                                        format!(
+                                                            "Model: {}",
+                                                            current_model.display_name()
                                                         ),
-                                                )
-                                            },
-                                        ),
-                                )
+                                                        cx,
+                                                    )
+                                                }),
+                                        )
+                                    },
+                                    |tokens_loading| {
+                                        tokens_loading.w_12().justify_center().child(
+                                            Icon::new(IconName::ArrowCircle)
+                                                .size(IconSize::Small)
+                                                .color(Color::Muted)
+                                                .with_animation(
+                                                    "arrow-circle",
+                                                    Animation::new(Duration::from_secs(4)).repeat(),
+                                                    |icon, delta| {
+                                                        icon.transform(Transformation::rotate(
+                                                            percentage(delta),
+                                                        ))
+                                                    },
+                                                ),
+                                        )
+                                    },
+                                ))
                                 .child(
                                     h_flex().justify_center().w_12().h_8().child(
-                                        IconButton::new(
-                                            "toggle-default-prompt",
-                                            if prompt_metadata.default {
-                                                IconName::ZedAssistantFilled
+                                        IconButton::new("toggle-default-prompt", IconName::Sparkle)
+                                            .style(ButtonStyle::Transparent)
+                                            .selected(prompt_metadata.default.clone())
+                                            .selected_icon(IconName::SparkleFilled)
+                                            .icon_color(if prompt_metadata.default.clone() {
+                                                Color::Accent
                                             } else {
-                                                IconName::ZedAssistant
-                                            },
-                                        )
-                                        .size(ButtonSize::Large)
-                                        .style(ButtonStyle::Transparent)
-                                        .shape(IconButtonShape::Square)
-                                        .tooltip(move |cx| {
-                                            Tooltip::for_action(
-                                                if prompt_metadata.default {
-                                                    "Remove from Default Prompt"
-                                                } else {
-                                                    "Add to Default Prompt"
-                                                },
-                                                &ToggleDefaultPrompt,
-                                                cx,
-                                            )
-                                        })
-                                        .on_click(
-                                            |_, cx| {
+                                                Color::Muted
+                                            })
+                                            .shape(IconButtonShape::Square)
+                                            .tooltip(move |cx| {
+                                                Tooltip::text(
+                                                    if prompt_metadata.default {
+                                                        "Remove from Default Prompt"
+                                                    } else {
+                                                        "Add to Default Prompt"
+                                                    },
+                                                    cx,
+                                                )
+                                            })
+                                            .on_click(|_, cx| {
                                                 cx.dispatch_action(Box::new(ToggleDefaultPrompt));
-                                            },
-                                        ),
+                                            }),
                                     ),
                                 )
                                 .child(
