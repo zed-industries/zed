@@ -310,7 +310,6 @@ unsafe fn build_window_class(name: &'static str, superclass: &Class) -> *const C
     decl.register()
 }
 
-#[derive(Debug, Clone)]
 #[allow(clippy::enum_variant_names)]
 enum ImeInput {
     InsertText(String, Option<Range<usize>>),
@@ -340,7 +339,7 @@ struct MacWindowState {
     traffic_light_position: Option<Point<Pixels>>,
     previous_modifiers_changed_event: Option<PlatformInput>,
     // State tracking what the IME did after the last request
-    last_ime_action: Option<ImeInput>,
+    input_during_keydown: Option<SmallVec<[ImeInput; 1]>>,
     previous_keydown_inserted_text: Option<String>,
     external_files_dragged: bool,
     // Whether the next left-mouse click is also the focusing click.
@@ -636,7 +635,7 @@ impl MacWindow {
                     .as_ref()
                     .and_then(|titlebar| titlebar.traffic_light_position),
                 previous_modifiers_changed_event: None,
-                last_ime_action: None,
+                input_during_keydown: None,
                 previous_keydown_inserted_text: None,
                 external_files_dragged: false,
                 first_mouse: false,
@@ -1191,22 +1190,14 @@ extern "C" fn handle_key_down(this: &Object, _: Sel, native_event: id) {
 }
 
 // Things to test if you're modifying this method:
-//  U.S. layout:
-//   - The IME consumes characters like 'j' and 'k', which makes paging through `less` in
-//     the terminal behave incorrectly by default. This behavior should be patched by our
-//     IME integration
 //  Brazilian layout:
-//   - `" space` should create an unmarked quote
+//   - `" space` should type a quote
 //   - `" backspace` should delete the marked quote
-//   - `" up` should insert a quote, unmark it, and move up one line
-//   - `" cmd-down` should insert a quote, unmark it, and move to the end of the file
+//   - `" up` should type the quote, unmark it, and move up one line
+//   - `" cmd-down` should not leave a marked quote behind (it maybe should dispatch the key though?)
 //   - `cmd-ctrl-space` and clicking on an emoji should type it
 //  Czech (QWERTY) layout:
 //   - in vim mode `option-4`  should go to end of line (same as $)
-//  Japanese (Romaji) layout:
-//   - Triggering the IME composer (e.g. via typing 'a i' and then the left key), and then selecting
-//     results of different length (e.g. kana -> kanji -> emoji -> back to kanji via the up and down keys)
-//     should maintain the composing state in the editor
 extern "C" fn handle_key_event(this: &Object, native_event: id, key_equivalent: bool) -> BOOL {
     let window_state = unsafe { get_window_state(this) };
     let mut lock = window_state.as_ref().lock();
@@ -1236,12 +1227,12 @@ extern "C" fn handle_key_event(this: &Object, native_event: id, key_equivalent: 
         } else {
             lock.last_fresh_keydown = Some(keydown.clone());
         }
+        lock.input_during_keydown = Some(SmallVec::new());
         drop(lock);
 
         // Send the event to the input context for IME handling, unless the `fn` modifier is
-        // being pressed. This will call back into other functions like `insert_text`, etc.
-        // Note that the IME expects it's actions to be applied immediately, and buffering them
-        // can break pre-edit
+        // being pressed.
+        // this will call back into `insert_text`, etc.
         if !fn_modifier {
             unsafe {
                 let input_context: id = msg_send![this, inputContext];
@@ -1252,9 +1243,16 @@ extern "C" fn handle_key_event(this: &Object, native_event: id, key_equivalent: 
         let mut handled = false;
         let mut lock = window_state.lock();
         let previous_keydown_inserted_text = lock.previous_keydown_inserted_text.take();
-        let mut last_ime = lock.last_ime_action.take();
+        let mut input_during_keydown = lock.input_during_keydown.take().unwrap();
         let mut callback = lock.event_callback.take();
         drop(lock);
+
+        let last_ime = input_during_keydown.pop();
+        // on a brazilian keyboard typing `"` and then hitting `up` will cause two IME
+        // events, one to unmark the quote, and one to send the up arrow.
+        for ime in input_during_keydown {
+            send_to_input_handler(this, ime);
+        }
 
         let is_composing =
             with_input_handler(this, |input_handler| input_handler.marked_text_range())
@@ -1267,12 +1265,15 @@ extern "C" fn handle_key_event(this: &Object, native_event: id, key_equivalent: 
                     window_state.lock().previous_keydown_inserted_text = Some(text.clone());
                     if let Some(callback) = callback.as_mut() {
                         event.keystroke.ime_key = Some(text.clone());
-                        let _ = callback(PlatformInput::KeyDown(event));
+                        handled = !callback(PlatformInput::KeyDown(event)).propagate;
                     }
                 }
             }
 
-            handled = true;
+            if !handled {
+                handled = true;
+                send_to_input_handler(this, ime);
+            }
         } else if !is_composing {
             let is_held = event.is_held;
 
@@ -1925,8 +1926,10 @@ fn send_to_input_handler(window: &Object, ime: ImeInput) {
     unsafe {
         let window_state = get_window_state(window);
         let mut lock = window_state.lock();
-
-        lock.last_ime_action = Some(ime.clone());
+        if let Some(ime_input) = lock.input_during_keydown.as_mut() {
+            ime_input.push(ime);
+            return;
+        }
         if let Some(mut input_handler) = lock.input_handler.take() {
             drop(lock);
             match ime {
