@@ -9263,11 +9263,15 @@ impl Editor {
                 for (block_id, diagnostic) in &active_diagnostics.blocks {
                     new_styles.insert(
                         *block_id,
-                        diagnostic_block_renderer(diagnostic.clone(), is_valid),
+                        (
+                            None,
+                            diagnostic_block_renderer(diagnostic.clone(), is_valid),
+                        ),
                     );
                 }
-                self.display_map
-                    .update(cx, |display_map, _| display_map.replace_blocks(new_styles));
+                self.display_map.update(cx, |display_map, cx| {
+                    display_map.replace_blocks(new_styles, cx)
+                });
             }
         }
     }
@@ -9624,12 +9628,12 @@ impl Editor {
 
     pub fn replace_blocks(
         &mut self,
-        blocks: HashMap<BlockId, RenderBlock>,
+        blocks: HashMap<BlockId, (Option<u8>, RenderBlock)>,
         autoscroll: Option<Autoscroll>,
         cx: &mut ViewContext<Self>,
     ) {
         self.display_map
-            .update(cx, |display_map, _| display_map.replace_blocks(blocks));
+            .update(cx, |display_map, cx| display_map.replace_blocks(blocks, cx));
         if let Some(autoscroll) = autoscroll {
             self.request_autoscroll(autoscroll, cx);
         }
