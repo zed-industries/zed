@@ -125,7 +125,7 @@ struct PromptPickerDelegate {
 }
 
 enum PromptPickerEvent {
-    Selected { prompt_id: PromptId },
+    Selected { prompt_id: Option<PromptId> },
     Confirmed { prompt_id: PromptId },
     Deleted { prompt_id: PromptId },
     ToggledDefault { prompt_id: PromptId },
@@ -164,11 +164,14 @@ impl PickerDelegate for PromptPickerDelegate {
 
     fn set_selected_index(&mut self, ix: usize, cx: &mut ViewContext<Picker<Self>>) {
         self.selected_index = ix;
-        if let Some(PromptPickerEntry::Prompt(prompt)) = self.entries.get(self.selected_index) {
-            cx.emit(PromptPickerEvent::Selected {
-                prompt_id: prompt.id,
-            });
-        }
+        let prompt_id = if let Some(PromptPickerEntry::Prompt(prompt)) =
+            self.entries.get(self.selected_index)
+        {
+            Some(prompt.id)
+        } else {
+            None
+        };
+        cx.emit(PromptPickerEvent::Selected { prompt_id });
     }
 
     fn placeholder_text(&self, _cx: &mut WindowContext) -> Arc<str> {
@@ -355,7 +358,11 @@ impl PromptLibrary {
     ) {
         match event {
             PromptPickerEvent::Selected { prompt_id } => {
-                self.load_prompt(*prompt_id, false, cx);
+                if let Some(prompt_id) = *prompt_id {
+                    self.load_prompt(prompt_id, false, cx);
+                } else {
+                    self.focus_picker(&Default::default(), cx);
+                }
             }
             PromptPickerEvent::Confirmed { prompt_id } => {
                 self.load_prompt(*prompt_id, true, cx);
