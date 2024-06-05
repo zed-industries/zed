@@ -522,6 +522,7 @@ pub struct Editor {
     expect_bounds_change: Option<Bounds<Pixels>>,
     tasks: BTreeMap<(BufferId, BufferRow), RunnableTasks>,
     tasks_update_task: Option<Task<()>>,
+    previous_search_ranges: Option<Arc<[Range<Anchor>]>>,
 }
 
 #[derive(Clone)]
@@ -1824,6 +1825,7 @@ impl Editor {
                 }),
             ],
             tasks_update_task: None,
+            previous_search_ranges: None,
         };
         this.tasks_update_task = Some(this.refresh_runnables(cx));
         this._subscriptions.extend(project_subscriptions);
@@ -10262,6 +10264,27 @@ impl Editor {
         let end = buffer.anchor_after(buffer.len());
         let theme = cx.theme().colors();
         self.background_highlights_in_range(start..end, &snapshot, theme)
+    }
+
+    #[cfg(feature = "test-support")]
+    pub fn search_background_highlights(
+        &mut self,
+        cx: &mut ViewContext<Self>,
+    ) -> Vec<Range<Point>> {
+        let snapshot = self.buffer().read(cx).snapshot(cx);
+
+        let highlights = self
+            .background_highlights
+            .get(&TypeId::of::<items::BufferSearchHighlights>());
+
+        if let Some((_color, ranges)) = highlights {
+            ranges
+                .iter()
+                .map(|range| range.start.to_point(&snapshot)..range.end.to_point(&snapshot))
+                .collect_vec()
+        } else {
+            vec![]
+        }
     }
 
     fn document_highlights_for_position<'a>(

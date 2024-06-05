@@ -273,6 +273,13 @@ impl SelectionsCollection {
         self.all(cx).last().unwrap().clone()
     }
 
+    pub fn disjoint_anchor_ranges(&self) -> Vec<Range<Anchor>> {
+        self.disjoint_anchors()
+            .iter()
+            .map(|s| s.start..s.end)
+            .collect()
+    }
+
     #[cfg(any(test, feature = "test-support"))]
     pub fn ranges<D: TextDimension + Ord + Sub<D, Output = D> + std::fmt::Debug>(
         &self,
