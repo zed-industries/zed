@@ -1,6 +1,6 @@
 use crate::{
-    slash_command::SlashCommandCompletionProvider, CompletionProvider, LanguageModelRequest,
-    LanguageModelRequestMessage, Role,
+    slash_command::SlashCommandCompletionProvider, AssistantPanel, CompletionProvider,
+    InlineAssist, InlineAssistant, LanguageModelRequest, LanguageModelRequestMessage, Role,
 };
 use anyhow::{anyhow, Result};
 use assistant_slash_command::SlashCommandRegistry;
@@ -14,8 +14,8 @@ use futures::{
 use fuzzy::StringMatchCandidate;
 use gpui::{
     actions, point, size, AnyElement, AppContext, BackgroundExecutor, Bounds, DevicePixels,
-    EventEmitter, Global, PromptLevel, ReadGlobal, Subscription, Task, TitlebarOptions, View,
-    WindowBounds, WindowHandle, WindowOptions,
+    EventEmitter, Global, PromptLevel, ReadGlobal, Subscription, Task, TitlebarOptions,
+    UpdateGlobal, View, WindowBounds, WindowHandle, WindowOptions,
 };
 use heed::{types::SerdeBincode, Database, RoTxn};
 use language::{language_settings::SoftWrap, Buffer, LanguageRegistry};
@@ -35,6 +35,7 @@ use ui::{
 };
 use util::{paths::PROMPTS_DIR, ResultExt, TryFutureExt};
 use uuid::Uuid;
+use workspace::Workspace;
 
 actions!(
     prompt_library,
@@ -603,6 +604,49 @@ impl PromptLibrary {
         self.picker.update(cx, |picker, cx| picker.focus(cx));
     }
 
+    pub fn inline_assist(&mut self, _: &InlineAssist, cx: &mut ViewContext<Self>) {
+        let Some(active_prompt_id) = self.active_prompt_id else {
+            cx.propagate();
+            return;
+        };
+
+        let prompt_editor = &self.prompt_editors[&active_prompt_id].editor;
+        let provider = CompletionProvider::global(cx);
+        if provider.is_authenticated() {
+            InlineAssistant::update_global(cx, |assistant, cx| {
+                assistant.assist(&prompt_editor, None, false, cx)
+            })
+        } else {
+            for window in cx.windows() {
+                if let Some(workspace) = window.downcast::<Workspace>() {
+                    let panel = workspace
+                        .update(cx, |workspace, cx| {
+                            cx.activate_window();
+                            workspace.focus_panel::<AssistantPanel>(cx)
+                        })
+                        .ok()
+                        .flatten();
+                    if panel.is_some() {
+                        return;
+                    }
+                }
+            }
+        }
+    }
+
+    fn cancel_last_inline_assist(
+        &mut self,
+        _: &editor::actions::Cancel,
+        cx: &mut ViewContext<Self>,
+    ) {
+        let canceled = InlineAssistant::update_global(cx, |assistant, cx| {
+            assistant.cancel_last_inline_assist(cx)
+        });
+        if !canceled {
+            cx.propagate();
+        }
+    }
+
     fn handle_prompt_editor_event(
         &mut self,
         prompt_id: PromptId,
@@ -732,6 +776,8 @@ impl PromptLibrary {
                         .child(
                             div()
                                 .on_action(cx.listener(Self::focus_picker))
+                                .on_action(cx.listener(Self::inline_assist))
+                                .on_action(cx.listener(Self::cancel_last_inline_assist))
                                 .flex_grow()
                                 .h_full()
                                 .pt(Spacing::Large.rems(cx))
