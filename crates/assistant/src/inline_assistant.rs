@@ -697,9 +697,17 @@ impl InlineAssistEditor {
         event: &EditorEvent,
         cx: &mut ViewContext<Self>,
     ) {
-        if let EditorEvent::Edited = event {
-            self.pending_prompt = self.prompt_editor.read(cx).text(cx);
-            cx.notify();
+        match event {
+            EditorEvent::Edited => {
+                self.pending_prompt = self.prompt_editor.read(cx).text(cx);
+                cx.notify();
+            }
+            EditorEvent::Blurred => {
+                if !self.confirmed {
+                    cx.emit(InlineAssistEditorEvent::Canceled);
+                }
+            }
+            _ => {}
         }
     }
 
