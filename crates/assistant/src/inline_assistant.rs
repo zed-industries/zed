@@ -7,7 +7,9 @@ use client::telemetry::Telemetry;
 use collections::{hash_map, HashMap, HashSet, VecDeque};
 use editor::{
     actions::{MoveDown, MoveUp},
-    display_map::{BlockContext, BlockDisposition, BlockId, BlockProperties, BlockStyle},
+    display_map::{
+        BlockContext, BlockDisposition, BlockId, BlockProperties, BlockStyle, RenderBlock,
+    },
     scroll::{Autoscroll, AutoscrollStrategy},
     Anchor, Editor, EditorElement, EditorEvent, EditorStyle, GutterDimensions, MultiBuffer,
     MultiBufferSnapshot, ToOffset, ToPoint,
@@ -105,11 +107,11 @@ impl InlineAssistant {
             )
         });
 
-        let measurements = Arc::new(Mutex::new(GutterDimensions::default()));
-        let inline_assistant = cx.new_view(|cx| {
+        let gutter_dimensions = Arc::new(Mutex::new(GutterDimensions::default()));
+        let inline_assist_editor = cx.new_view(|cx| {
             InlineAssistEditor::new(
                 inline_assist_id,
-                measurements.clone(),
+                gutter_dimensions.clone(),
                 self.prompt_history.clone(),
                 codegen.clone(),
                 cx,
@@ -121,16 +123,13 @@ impl InlineAssistant {
             });
             editor.insert_blocks(
                 [BlockProperties {
-                    style: BlockStyle::Flex,
+                    style: BlockStyle::Sticky,
                     position: snapshot.anchor_before(Point::new(point_selection.head().row, 0)),
-                    height: 2,
-                    render: Box::new({
-                        let inline_assistant = inline_assistant.clone();
-                        move |cx: &mut BlockContext| {
-                            *measurements.lock() = *cx.gutter_dimensions;
-                            inline_assistant.clone().into_any_element()
-                        }
-                    }),
+                    height: inline_assist_editor.read(cx).height_in_lines,
+                    render: build_inline_assist_editor_renderer(
+                        &inline_assist_editor,
+                        gutter_dimensions,
+                    ),
                     disposition: if selection.reversed {
                         BlockDisposition::Above
                     } else {
@@ -147,22 +146,24 @@ impl InlineAssistant {
             PendingInlineAssist {
                 include_conversation,
                 editor: editor.downgrade(),
-                inline_assistant: Some((block_id, inline_assistant.clone())),
+                inline_assist_editor: Some((block_id, inline_assist_editor.clone())),
                 codegen: codegen.clone(),
                 workspace,
                 _subscriptions: vec![
-                    cx.subscribe(&inline_assistant, |inline_assistant, event, cx| {
+                    cx.subscribe(&inline_assist_editor, |inline_assist_editor, event, cx| {
                         InlineAssistant::update_global(cx, |this, cx| {
-                            this.handle_inline_assistant_event(inline_assistant, event, cx)
+                            this.handle_inline_assistant_event(inline_assist_editor, event, cx)
                         })
                     }),
                     cx.subscribe(editor, {
-                        let inline_assistant = inline_assistant.downgrade();
+                        let inline_assist_editor = inline_assist_editor.downgrade();
                         move |editor, event, cx| {
-                            if let Some(inline_assistant) = inline_assistant.upgrade() {
+                            if let Some(inline_assist_editor) = inline_assist_editor.upgrade() {
                                 if let EditorEvent::SelectionsChanged { local } = event {
                                     if *local
-                                        && inline_assistant.focus_handle(cx).contains_focused(cx)
+                                        && inline_assist_editor
+                                            .focus_handle(cx)
+                                            .contains_focused(cx)
                                     {
                                         cx.focus_view(&editor);
                                     }
@@ -199,7 +200,7 @@ impl InlineAssistant {
                                     .error()
                                     .map(|error| format!("Inline assistant error: {}", error));
                                 if let Some(error) = error {
-                                    if pending_assist.inline_assistant.is_none() {
+                                    if pending_assist.inline_assist_editor.is_none() {
                                         if let Some(workspace) = pending_assist
                                             .workspace
                                             .as_ref()
@@ -243,11 +244,11 @@ impl InlineAssistant {
 
     fn handle_inline_assistant_event(
         &mut self,
-        inline_assistant: View<InlineAssistEditor>,
+        inline_assist_editor: View<InlineAssistEditor>,
         event: &InlineAssistEditorEvent,
         cx: &mut WindowContext,
     ) {
-        let assist_id = inline_assistant.read(cx).id;
+        let assist_id = inline_assist_editor.read(cx).id;
         match event {
             InlineAssistEditorEvent::Confirmed { prompt } => {
                 self.confirm_inline_assist(assist_id, prompt, cx);
@@ -257,6 +258,9 @@ impl InlineAssistant {
             }
             InlineAssistEditorEvent::Dismissed => {
                 self.hide_inline_assist(assist_id, cx);
+            }
+            InlineAssistEditorEvent::Resized { height_in_lines } => {
+                self.resize_inline_assist(assist_id, *height_in_lines, cx);
             }
         }
     }
@@ -311,12 +315,47 @@ impl InlineAssistant {
     fn hide_inline_assist(&mut self, assist_id: InlineAssistId, cx: &mut WindowContext) {
         if let Some(pending_assist) = self.pending_assists.get_mut(&assist_id) {
             if let Some(editor) = pending_assist.editor.upgrade() {
-                if let Some((block_id, inline_assistant)) = pending_assist.inline_assistant.take() {
+                if let Some((block_id, inline_assist_editor)) =
+                    pending_assist.inline_assist_editor.take()
+                {
                     editor.update(cx, |editor, cx| {
                         editor.remove_blocks(HashSet::from_iter([block_id]), None, cx);
-                        if inline_assistant.focus_handle(cx).contains_focused(cx) {
+                        if inline_assist_editor.focus_handle(cx).contains_focused(cx) {
                             editor.focus(cx);
                         }
+                    });
+                }
+            }
+        }
+    }
+
+    fn resize_inline_assist(
+        &mut self,
+        assist_id: InlineAssistId,
+        height_in_lines: u8,
+        cx: &mut WindowContext,
+    ) {
+        if let Some(pending_assist) = self.pending_assists.get_mut(&assist_id) {
+            if let Some(editor) = pending_assist.editor.upgrade() {
+                if let Some((block_id, inline_assist_editor)) =
+                    pending_assist.inline_assist_editor.as_ref()
+                {
+                    let gutter_dimensions = inline_assist_editor.read(cx).gutter_dimensions.clone();
+                    let mut new_blocks = HashMap::default();
+                    new_blocks.insert(
+                        *block_id,
+                        (
+                            Some(height_in_lines),
+                            build_inline_assist_editor_renderer(
+                                inline_assist_editor,
+                                gutter_dimensions,
+                            ),
+                        ),
+                    );
+                    editor.update(cx, |editor, cx| {
+                        editor
+                            .display_map
+                            .update(cx, |map, cx| map.replace_blocks(new_blocks, cx))
                     });
                 }
             }
@@ -498,6 +537,17 @@ impl InlineAssistant {
     }
 }
 
+fn build_inline_assist_editor_renderer(
+    editor: &View<InlineAssistEditor>,
+    gutter_dimensions: Arc<Mutex<GutterDimensions>>,
+) -> RenderBlock {
+    let editor = editor.clone();
+    Box::new(move |cx: &mut BlockContext| {
+        *gutter_dimensions.lock() = *cx.gutter_dimensions;
+        editor.clone().into_any_element()
+    })
+}
+
 #[derive(Copy, Clone, Default, Debug, PartialEq, Eq, Hash)]
 struct InlineAssistId(usize);
 
@@ -513,10 +563,12 @@ enum InlineAssistEditorEvent {
     Confirmed { prompt: String },
     Canceled,
     Dismissed,
+    Resized { height_in_lines: u8 },
 }
 
 struct InlineAssistEditor {
     id: InlineAssistId,
+    height_in_lines: u8,
     prompt_editor: View<Editor>,
     confirmed: bool,
     gutter_dimensions: Arc<Mutex<GutterDimensions>>,
@@ -535,7 +587,7 @@ impl Render for InlineAssistEditor {
         let icon_size = IconSize::default();
         h_flex()
             .w_full()
-            .py_2()
+            .py_1p5()
             .border_y_1()
             .border_color(cx.theme().colors().border)
             .bg(cx.theme().colors().editor_background)
@@ -564,7 +616,7 @@ impl Render for InlineAssistEditor {
                         None
                     }),
             )
-            .child(h_flex().flex_1().child(self.render_prompt_editor(cx)))
+            .child(div().flex_1().child(self.render_prompt_editor(cx)))
     }
 }
 
@@ -575,6 +627,8 @@ impl FocusableView for InlineAssistEditor {
 }
 
 impl InlineAssistEditor {
+    const MAX_LINES: u8 = 8;
+
     #[allow(clippy::too_many_arguments)]
     fn new(
         id: InlineAssistId,
@@ -584,7 +638,8 @@ impl InlineAssistEditor {
         cx: &mut ViewContext<Self>,
     ) -> Self {
         let prompt_editor = cx.new_view(|cx| {
-            let mut editor = Editor::single_line(cx);
+            let mut editor = Editor::auto_height(Self::MAX_LINES as usize, cx);
+            editor.set_soft_wrap_mode(language::language_settings::SoftWrap::EditorWidth, cx);
             let placeholder = match codegen.read(cx).kind() {
                 CodegenKind::Transform { .. } => "Enter transformation prompt…",
                 CodegenKind::Generate { .. } => "Enter generation prompt…",
@@ -596,11 +651,13 @@ impl InlineAssistEditor {
 
         let subscriptions = vec![
             cx.observe(&codegen, Self::handle_codegen_changed),
+            cx.observe(&prompt_editor, Self::handle_prompt_editor_changed),
             cx.subscribe(&prompt_editor, Self::handle_prompt_editor_events),
         ];
 
-        Self {
+        let mut this = Self {
             id,
+            height_in_lines: 1,
             prompt_editor,
             confirmed: false,
             gutter_dimensions,
@@ -609,7 +666,29 @@ impl InlineAssistEditor {
             pending_prompt: String::new(),
             codegen,
             _subscriptions: subscriptions,
+        };
+        this.count_lines(cx);
+        this
+    }
+
+    fn count_lines(&mut self, cx: &mut ViewContext<Self>) {
+        let height_in_lines = cmp::max(
+            2, // Make the editor at least two lines tall, to account for padding.
+            cmp::min(
+                self.prompt_editor
+                    .update(cx, |editor, cx| editor.max_point(cx).row().0 + 1),
+                Self::MAX_LINES as u32,
+            ),
+        ) as u8;
+
+        if height_in_lines != self.height_in_lines {
+            self.height_in_lines = height_in_lines;
+            cx.emit(InlineAssistEditorEvent::Resized { height_in_lines });
         }
+    }
+
+    fn handle_prompt_editor_changed(&mut self, _: View<Editor>, cx: &mut ViewContext<Self>) {
+        self.count_lines(cx);
     }
 
     fn handle_prompt_editor_events(
@@ -727,7 +806,7 @@ impl InlineAssistEditor {
 
 struct PendingInlineAssist {
     editor: WeakView<Editor>,
-    inline_assistant: Option<(BlockId, View<InlineAssistEditor>)>,
+    inline_assist_editor: Option<(BlockId, View<InlineAssistEditor>)>,
     codegen: Model<Codegen>,
     _subscriptions: Vec<Subscription>,
     workspace: Option<WeakView<Workspace>>,
