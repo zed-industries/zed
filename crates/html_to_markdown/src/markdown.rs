@@ -101,6 +101,87 @@ impl HandleTag for ListHandler {
     }
 }
 
+pub struct TableHandler {
+    /// The number of columns in the current `<table>`.
+    current_table_columns: usize,
+    is_first_th: bool,
+    is_first_td: bool,
+}
+
+impl TableHandler {
+    pub fn new() -> Self {
+        Self {
+            current_table_columns: 0,
+            is_first_th: true,
+            is_first_td: true,
+        }
+    }
+}
+
+impl HandleTag for TableHandler {
+    fn should_handle(&self, tag: &str) -> bool {
+        match tag {
+            "table" | "thead" | "tbody" | "tr" | "th" | "td" => true,
+            _ => false,
+        }
+    }
+
+    fn handle_tag_start(
+        &mut self,
+        tag: &HtmlElement,
+        writer: &mut MarkdownWriter,
+    ) -> StartTagOutcome {
+        match tag.tag.as_str() {
+            "thead" => writer.push_blank_line(),
+            "tr" => writer.push_newline(),
+            "th" => {
+                self.current_table_columns += 1;
+                if self.is_first_th {
+                    self.is_first_th = false;
+                } else {
+                    writer.push_str(" ");
+                }
+                writer.push_str("| ");
+            }
+            "td" => {
+                if self.is_first_td {
+                    self.is_first_td = false;
+                } else {
+                    writer.push_str(" ");
+                }
+                writer.push_str("| ");
+            }
+            _ => {}
+        }
+
+        StartTagOutcome::Continue
+    }
+
+    fn handle_tag_end(&mut self, tag: &HtmlElement, writer: &mut MarkdownWriter) {
+        match tag.tag.as_str() {
+            "thead" => {
+                writer.push_newline();
+                for ix in 0..self.current_table_columns {
+                    if ix > 0 {
+                        writer.push_str(" ");
+                    }
+                    writer.push_str("| ---");
+                }
+                writer.push_str(" |");
+                self.is_first_th = true;
+            }
+            "tr" => {
+                writer.push_str(" |");
+                self.is_first_td = true;
+            }
+            "table" => {
+                self.current_table_columns = 0;
+            }
+            _ => {}
+        }
+    }
+}
+
 pub struct StyledTextHandler;
 
 impl HandleTag for StyledTextHandler {
