@@ -4180,7 +4180,6 @@ impl LineWithInvisibles {
         whitespace_setting: ShowWhitespaceSetting,
         cx: &mut WindowContext,
     ) {
-        // Helper to transform each Invisible into parts needed to optionally paint it later
         let extract_whitespace_info = |invisible: &Invisible| {
             let (token_offset, token_end_offset, invisible_symbol) = match invisible {
                 Invisible::Tab {
@@ -4209,7 +4208,6 @@ impl LineWithInvisibles {
             )
         };
 
-        // Start rendering the whitespace
         let invisible_iter = self.invisibles.iter().map(extract_whitespace_info);
         match whitespace_setting {
             ShowWhitespaceSetting::None => return,
@@ -4239,18 +4237,12 @@ impl LineWithInvisibles {
                     invisible_iter.zip_eq(self.invisibles.iter())
                 {
                     let should_render = match (&last_seen, invisible) {
-                        // Short out early if the invisible is a tab character
                         (_, Invisible::Tab { .. }) => true,
-
-                        // Otherwise, we need to see if the last invisible is adjacent to us
                         (Some((_, last_end, _)), _) => *last_end == start,
-
-                        // All other cases are false
                         _ => false,
                     };
 
-                    // Render the whitespace if the above checks are valid, also making sure to always render starting and ending whitespace
-                    if start == 0 || end == self.len || should_render {
+                    if should_render || start == 0 || end == self.len {
                         paint(cx);
 
                         // Since we are scanning from the left, we will skip over the first available whitespace that is part
@@ -4271,7 +4263,6 @@ impl LineWithInvisibles {
                         paint(cx);
                     }
 
-                    // Keep track of the last for the next iteration
                     last_seen = Some((should_render, end, paint));
                 }
             }
