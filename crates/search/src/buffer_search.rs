@@ -1144,7 +1144,7 @@ mod tests {
     use std::ops::Range;
 
     use super::*;
-    use editor::{display_map::DisplayRow, AnchorRangeExt, DisplayPoint, Editor, MultiBuffer};
+    use editor::{display_map::DisplayRow, DisplayPoint, Editor, MultiBuffer};
     use gpui::{Context, Hsla, TestAppContext, VisualTestContext};
     use language::{Buffer, Point};
     use project::Project;
