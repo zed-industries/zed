@@ -35,6 +35,7 @@ use ui_text_field::{FieldLabelLayout, TextField};
 use util::ResultExt;
 use workspace::{notifications::DetachAndPromptErr, AppState, ModalView, Workspace, WORKSPACE_DB};
 
+use crate::open_dev_server_project;
 use crate::OpenRemote;
 
 pub struct DevServerProjects {
@@ -1042,6 +1043,40 @@ impl Render for DevServerProjects {
                 }
             })
     }
+}
+
+pub fn reconnect_to_dev_server_project(
+    workspace: View<Workspace>,
+    dev_server: DevServer,
+    dev_server_project_id: DevServerProjectId,
+    replace_current_window: bool,
+    cx: &mut WindowContext,
+) -> Task<anyhow::Result<()>> {
+    let store = dev_server_projects::Store::global(cx);
+    let reconnect = reconnect_to_dev_server(workspace.clone(), dev_server, cx);
+    cx.spawn(|mut cx| async move {
+        reconnect.await?;
+
+        cx.background_executor()
+            .timer(Duration::from_millis(1000))
+            .await;
+
+        if let Some(project_id) = store.update(&mut cx, |store, _| {
+            store
+                .dev_server_project(dev_server_project_id)
+                .and_then(|p| p.project_id)
+        })? {
+            workspace
+                .update(&mut cx, move |_, cx| {
+                    open_dev_server_project(replace_current_window, project_id, cx)
+                })?
+                .await?;
+        } else {
+            dbg!("wuh woh");
+        }
+
+        Ok(())
+    })
 }
 
 pub fn reconnect_to_dev_server(
