@@ -66,8 +66,8 @@ pub struct SpawnInTerminal {
     /// Arguments to the command, potentially unsubstituted,
     /// to let the shell that spawns the command to do the substitution, if needed.
     pub args: Vec<String>,
-    /// A human-readable label, containing command and all of its arguments, joined and substituted.
-    pub command_label: String,
+    /// A command with all of it's arguments appended.
+    pub command_flattened: String,
     /// Current working directory to spawn the command into.
     pub cwd: Option<TerminalWorkDir>,
     /// Env overrides for the command, will be appended to the terminal's environment from the settings.

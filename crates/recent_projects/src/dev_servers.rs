@@ -1107,7 +1107,7 @@ pub async fn spawn_ssh_task(
                     label: "Install zed over ssh".into(),
                     command,
                     args,
-                    command_label: ssh_connection_string.clone(),
+                    command_flattened: ssh_connection_string.clone(),
                     cwd: Some(TerminalWorkDir::Ssh {
                         ssh_command: ssh_connection_string,
                         path: None,

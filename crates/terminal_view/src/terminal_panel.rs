@@ -357,7 +357,7 @@ impl TerminalPanel {
             return;
         };
 
-        spawn_task.command_label = format!("{shell} -i -c `{}`", spawn_task.command_label);
+        spawn_task.command_flattened = format!("{shell} -i -c `{}`", spawn_task.command_flattened);
         let task_command = std::mem::replace(&mut spawn_task.command, shell);
         let task_args = std::mem::take(&mut spawn_task.args);
         let combined_command = task_args

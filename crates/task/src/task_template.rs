@@ -143,13 +143,13 @@ impl TaskTemplate {
             &variable_names,
             &mut substituted_variables,
         )?;
-        let command = substitute_all_template_variables_in_str(
+        let _command = substitute_all_template_variables_in_str(
             &self.command,
             &task_variables,
             &variable_names,
             &mut substituted_variables,
         )?;
-        let args_with_substitutions = substitute_all_template_variables_in_vec(
+        let _args_with_substitutions = substitute_all_template_variables_in_vec(
             &self.args,
             &task_variables,
             &variable_names,
@@ -163,12 +163,14 @@ impl TaskTemplate {
             .context("hashing task variables")
             .log_err()?;
         let id = TaskId(format!("{id_base}_{task_hash}_{variables_hash}"));
-        let mut env = substitute_all_template_variables_in_map(
+        let mut _env = substitute_all_template_variables_in_map(
             &self.env,
             &task_variables,
             &variable_names,
             &mut substituted_variables,
         )?;
+        let mut env = self.env.clone();
+
         env.extend(task_variables.into_iter().map(|(k, v)| (k, v.to_owned())));
         Some(ResolvedTask {
             id: id.clone(),
@@ -180,15 +182,15 @@ impl TaskTemplate {
                 cwd,
                 full_label,
                 label: human_readable_label,
-                command_label: args_with_substitutions.iter().fold(
-                    command.clone(),
+                command_flattened: self.args.iter().fold(
+                    self.command.clone(),
                     |mut command_label, arg| {
                         command_label.push(' ');
                         command_label.push_str(arg);
                         command_label
                     },
                 ),
-                command,
+                command: self.command.clone(),
                 args: self.args.clone(),
                 env,
                 use_new_terminal: self.use_new_terminal,
@@ -528,8 +530,8 @@ mod tests {
             );
             assert_eq!(
                 spawn_in_terminal.command,
-                format!("echo test_file {long_value}"),
-                "Command should be substituted with variables and those should not be shortened"
+                format!("echo $ZED_FILE $ZED_SYMBOL"),
+                "Command should not be substituted with variables"
             );
             assert_eq!(
                 spawn_in_terminal.args,
@@ -541,9 +543,12 @@ mod tests {
                 "Args should not be substituted with variables"
             );
             assert_eq!(
-                spawn_in_terminal.command_label,
-                format!("{} arg1 test_selected_text arg2 5678 arg3 {long_value}", spawn_in_terminal.command),
-                "Command label args should be substituted with variables and those should not be shortened"
+                spawn_in_terminal.command_flattened,
+                format!(
+                    "{} arg1 $ZED_SELECTED_TEXT arg2 $ZED_COLUMN arg3 $ZED_SYMBOL",
+                    spawn_in_terminal.command
+                ),
+                "Command label args should not be substituted with variables"
             );
 
             assert_eq!(
@@ -555,16 +560,16 @@ mod tests {
             );
             assert_eq!(
                 spawn_in_terminal.env.get("env_key_1").map(|s| s.as_str()),
-                Some("/test_root/")
+                Some("$ZED_WORKTREE_ROOT")
             );
             assert_eq!(
                 spawn_in_terminal.env.get("env_key_2").map(|s| s.as_str()),
-                Some("env_var_2 test_custom_variable_1 test_custom_variable_2")
+                Some("env_var_2 $ZED_CUSTOM_custom_variable_1 $ZED_CUSTOM_custom_variable_2")
             );
             assert_eq!(
                 spawn_in_terminal.env.get("env_key_3"),
-                Some(&format!("env_var_3 {long_value}")),
-                "Env vars should be substituted with variables and those should not be shortened"
+                Some(&format!("env_var_3 $ZED_SYMBOL")),
+                "Env vars should not be substituted with variables and those should not be shortened"
             );
         }
 
