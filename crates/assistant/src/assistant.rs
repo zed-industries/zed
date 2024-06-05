@@ -1,7 +1,7 @@
 pub mod assistant_panel;
 pub mod assistant_settings;
-mod codegen;
 mod completion_provider;
+mod inline_assistant;
 mod model_selector;
 mod prompt_library;
 mod prompts;
@@ -18,6 +18,7 @@ use client::{proto, Client};
 use command_palette_hooks::CommandPaletteFilter;
 pub(crate) use completion_provider::*;
 use gpui::{actions, AppContext, Global, SharedString, UpdateGlobal};
+pub(crate) use inline_assistant::*;
 pub(crate) use model_selector::*;
 pub(crate) use saved_conversation::*;
 use semantic_index::{CloudEmbeddingProvider, SemanticIndex};
@@ -31,6 +32,7 @@ use std::{
     fmt::{self, Display},
     sync::Arc,
 };
+pub(crate) use streaming_diff::*;
 use util::paths::EMBEDDINGS_DIR;
 
 actions!(
@@ -273,10 +275,11 @@ pub fn init(client: Arc<Client>, cx: &mut AppContext) {
     .detach();
 
     prompt_library::init(cx);
-    completion_provider::init(client, cx);
+    completion_provider::init(client.clone(), cx);
     assistant_slash_command::init(cx);
     register_slash_commands(cx);
     assistant_panel::init(cx);
+    inline_assistant::init(client.telemetry().clone(), cx);
 
     CommandPaletteFilter::update_global(cx, |filter, _cx| {
         filter.hide_namespace(Assistant::NAMESPACE);
