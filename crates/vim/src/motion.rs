@@ -1439,14 +1439,16 @@ pub(crate) fn last_non_whitespace(
     count: usize,
 ) -> DisplayPoint {
     let mut end_of_line = end_of_line(map, false, from, count).to_offset(map, Bias::Left);
-    let mut chars = map.buffer_chars_at(end_of_line).peekable();
     let scope = map.buffer_snapshot.language_scope_at(from.to_point(map));
-    for (ch, offset) in chars
-        .peek()
-        .cloned()
-        .into_iter()
-        .chain(map.reverse_buffer_chars_at(end_of_line))
-    {
+
+    // NOTE: depending on clip_at_line_end we may already be one char back from the end.
+    if let Some((ch, _)) = map.buffer_chars_at(end_of_line).next() {
+        if char_kind(&scope, ch) != CharKind::Whitespace {
+            return end_of_line.to_display_point(map);
+        }
+    }
+
+    for (ch, offset) in map.reverse_buffer_chars_at(end_of_line) {
         if ch == '\n' {
             break;
         }
