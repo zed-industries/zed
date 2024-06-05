@@ -1,6 +1,5 @@
 pub mod assistant_panel;
 pub mod assistant_settings;
-mod codegen;
 mod completion_provider;
 mod inline_assistant;
 mod model_selector;
@@ -33,6 +32,7 @@ use std::{
     fmt::{self, Display},
     sync::Arc,
 };
+pub(crate) use streaming_diff::*;
 use util::paths::EMBEDDINGS_DIR;
 
 actions!(
