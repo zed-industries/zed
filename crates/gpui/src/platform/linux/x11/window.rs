@@ -29,6 +29,7 @@ use std::{
     ptr::NonNull,
     rc::Rc,
     sync::{self, Arc},
+    time::Instant,
 };
 
 use super::{X11Display, XINPUT_MASTER_DEVICE};
@@ -531,18 +532,36 @@ impl X11WindowStatePtr {
     }
 
     pub fn handle_input(&self, input: PlatformInput) {
+        let start = Instant::now();
         if let Some(ref mut fun) = self.callbacks.borrow_mut().input {
+            println!(
+                "handle_input. got input callback. elapsed: {:?}",
+                start.elapsed()
+            );
             if !fun(input.clone()).propagate {
+                println!("handle_input. return here. elapsed: {:?}", start.elapsed());
                 return;
             }
         }
         if let PlatformInput::KeyDown(event) = input {
             let mut state = self.state.borrow_mut();
+            println!(
+                "handle_input. borrowed state. elapsed: {:?}",
+                start.elapsed()
+            );
             if let Some(mut input_handler) = state.input_handler.take() {
                 if let Some(ime_key) = &event.keystroke.ime_key {
                     drop(state);
                     input_handler.replace_text_in_range(None, ime_key);
+                    println!(
+                        "handle_input. replaced text in range. elapsed: {:?}",
+                        start.elapsed()
+                    );
                     state = self.state.borrow_mut();
+                    println!(
+                        "handle_input. borred state again. elapsed: {:?}",
+                        start.elapsed()
+                    );
                 }
                 state.input_handler = Some(input_handler);
             }

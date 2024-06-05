@@ -62,16 +62,16 @@ impl ActivityIndicator {
                     this.update(&mut cx, |this, cx| {
                         this.statuses.retain(|s| s.name != name);
                         this.statuses.push(LspStatus { name, status });
-                        cx.notify();
+                        cx.notify(); // commented back in
                     })?;
                 }
                 anyhow::Ok(())
             })
             .detach();
-            cx.observe(&project, |_, _, cx| cx.notify()).detach();
+            cx.observe(&project, |_, _, cx| cx.notify()).detach(); // commented back in
 
             if let Some(auto_updater) = auto_updater.as_ref() {
-                cx.observe(auto_updater, |_, _, cx| cx.notify()).detach();
+                cx.observe(auto_updater, |_, _, cx| cx.notify()).detach(); // commented back in
             }
 
             Self {

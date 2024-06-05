@@ -735,7 +735,11 @@ impl AppContext {
                     })
                     .collect::<Vec<_>>()
                 {
-                    self.update_window(window, |_, cx| cx.draw()).unwrap();
+                    self.update_window(window, |_, cx| {
+                        println!("flush_effects. cx.draw()");
+                        cx.draw()
+                    })
+                    .unwrap();
                 }
 
                 if self.pending_effects.is_empty() {

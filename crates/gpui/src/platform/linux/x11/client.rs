@@ -296,7 +296,25 @@ impl X11Client {
                 {
                     let xcb_connection = xcb_connection.clone();
                     move |_readiness, _, client| {
+                        println!("---------------------------------------------------");
+                        let mut events_count = 0;
+                        let start = Instant::now();
                         while let Some(event) = xcb_connection.poll_for_event()? {
+                            events_count += 1;
+
+                            let ev_name = event_name(&event);
+                            let event_start = Instant::now();
+                            println!("--> event {}: {}", events_count, ev_name);
+
+                            let _drop = util::defer(move || {
+                                println!(
+                                    "<-- event {}: {}, took: {:?}",
+                                    events_count,
+                                    ev_name,
+                                    event_start.elapsed()
+                                );
+                            });
+
                             let mut state = client.0.borrow_mut();
                             if state.ximc.is_none() || state.xim_handler.is_none() {
                                 drop(state);
@@ -327,6 +345,12 @@ impl X11Client {
                                 client.handle_event(event);
                             }
                         }
+
+                        println!(
+                            "--------------------- events_count: {:?}, took: {:?} ----------",
+                            events_count,
+                            start.elapsed()
+                        );
                         Ok(calloop::PostAction::Continue)
                     }
                 },
@@ -336,8 +360,10 @@ impl X11Client {
             .insert_source(xim_rx, {
                 move |chan_event, _, client| match chan_event {
                     channel::Event::Msg(xim_event) => {
+                        println!(".......... XimCallBackEvent ...............");
                         match xim_event {
                             XimCallbackEvent::XimXEvent(event) => {
+                                println!("--> XimXEvent");
                                 client.handle_event(event);
                             }
                             XimCallbackEvent::XimCommitEvent(window, text) => {
@@ -347,6 +373,7 @@ impl X11Client {
                                 client.xim_handle_preedit(window, text);
                             }
                         };
+                        println!("......... DONE: XimCallBackEvent ...............");
                     }
                     channel::Event::Closed => {
                         log::error!("XIM Event Sender dropped")
@@ -466,6 +493,8 @@ impl X11Client {
     }
 
     fn handle_event(&self, event: Event) -> Option<()> {
+        println!("handle_event: {:?}", event_name(&event));
+
         match event {
             Event::ClientMessage(event) => {
                 let window = self.get_window(event.window)?;
@@ -588,6 +617,7 @@ impl X11Client {
                     keystroke
                 };
                 drop(state);
+                println!("keydown. keystroke.key: {:?}", keystroke.key);
                 window.handle_input(PlatformInput::KeyDown(crate::KeyDownEvent {
                     keystroke,
                     is_held: false,
@@ -959,6 +989,7 @@ impl LinuxClient for X11Client {
             .loop_handle
             .insert_source(calloop::timer::Timer::immediate(), {
                 let refresh_duration = mode_refresh_rate(mode);
+                println!("refresh_duration: {:?}", refresh_duration);
                 move |mut instant, (), client| {
                     let state = client.0.borrow_mut();
                     state
@@ -982,9 +1013,12 @@ impl LinuxClient for X11Client {
                     let _ = state.xcb_connection.flush().unwrap();
                     // Take into account that some frames have been skipped
                     let now = Instant::now();
+                    let mut loop_count = 0;
                     while instant < now {
                         instant += refresh_duration;
+                        loop_count += 1;
                     }
+                    println!("loop_count: {:?}", loop_count);
                     calloop::timer::TimeoutAction::ToInstant(instant)
                 }
             })
@@ -1106,4 +1140,112 @@ pub fn mode_refresh_rate(mode: &randr::ModeInfo) -> Duration {
 
 fn fp3232_to_f32(value: xinput::Fp3232) -> f32 {
     value.integral as f32 + value.frac as f32 / u32::MAX as f32
+}
+
+fn event_name(event: &Event) -> &'static str {
+    match event {
+        Event::Unknown(_) => "Event::Unknown",
+        Event::Error(_) => "Event::Error",
+        Event::ButtonPress(_) => "Event::ButtonPress",
+        Event::ButtonRelease(_) => "Event::ButtonRelease",
+        Event::CirculateNotify(_) => "Event::CirculateNotify",
+        Event::CirculateRequest(_) => "Event::CirculateRequest",
+        Event::ClientMessage(_) => "Event::ClientMessage",
+        Event::ColormapNotify(_) => "Event::ColormapNotify",
+        Event::ConfigureNotify(_) => "Event::ConfigureNotify",
+        Event::ConfigureRequest(_) => "Event::ConfigureRequest",
+        Event::CreateNotify(_) => "Event::CreateNotify",
+        Event::DestroyNotify(_) => "Event::DestroyNotify",
+        Event::EnterNotify(_) => "Event::EnterNotify",
+        Event::Expose(_) => "Event::Expose",
+        Event::FocusIn(_) => "Event::FocusIn",
+        Event::FocusOut(_) => "Event::FocusOut",
+        Event::GeGeneric(_) => "Event::GeGeneric",
+        Event::GraphicsExposure(_) => "Event::GraphicsExposure",
+        Event::GravityNotify(_) => "Event::GravityNotify",
+        Event::KeyPress(_) => "Event::KeyPress",
+        Event::KeyRelease(_) => "Event::KeyRelease",
+        Event::KeymapNotify(_) => "Event::KeymapNotify",
+        Event::LeaveNotify(_) => "Event::LeaveNotify",
+        Event::MapNotify(_) => "Event::MapNotify",
+        Event::MapRequest(_) => "Event::MapRequest",
+        Event::MappingNotify(_) => "Event::MappingNotify",
+        Event::MotionNotify(_) => "Event::MotionNotify",
+        Event::NoExposure(_) => "Event::NoExposure",
+        Event::PropertyNotify(_) => "Event::PropertyNotify",
+        Event::ReparentNotify(_) => "Event::ReparentNotify",
+        Event::ResizeRequest(_) => "Event::ResizeRequest",
+        Event::SelectionClear(_) => "Event::SelectionClear",
+        Event::SelectionNotify(_) => "Event::SelectionNotify",
+        Event::SelectionRequest(_) => "Event::SelectionRequest",
+        Event::UnmapNotify(_) => "Event::UnmapNotify",
+        Event::VisibilityNotify(_) => "Event::VisibilityNotify",
+        Event::RandrNotify(_) => "Event::RandrNotify",
+        Event::RandrScreenChangeNotify(_) => "Event::RandrScreenChangeNotify",
+        Event::ShapeNotify(_) => "Event::ShapeNotify",
+        Event::XfixesCursorNotify(_) => "Event::XfixesCursorNotify",
+        Event::XfixesSelectionNotify(_) => "Event::XfixesSelectionNotify",
+        Event::XinputBarrierHit(_) => "Event::XinputBarrierHit",
+        Event::XinputBarrierLeave(_) => "Event::XinputBarrierLeave",
+        Event::XinputButtonPress(_) => "Event::XinputButtonPress",
+        Event::XinputButtonRelease(_) => "Event::XinputButtonRelease",
+        Event::XinputChangeDeviceNotify(_) => "Event::XinputChangeDeviceNotify",
+        Event::XinputDeviceButtonPress(_) => "Event::XinputDeviceButtonPress",
+        Event::XinputDeviceButtonRelease(_) => "Event::XinputDeviceButtonRelease",
+        Event::XinputDeviceButtonStateNotify(_) => "Event::XinputDeviceButtonStateNotify",
+        Event::XinputDeviceChanged(_) => "Event::XinputDeviceChanged",
+        Event::XinputDeviceFocusIn(_) => "Event::XinputDeviceFocusIn",
+        Event::XinputDeviceFocusOut(_) => "Event::XinputDeviceFocusOut",
+        Event::XinputDeviceKeyPress(_) => "Event::XinputDeviceKeyPress",
+        Event::XinputDeviceKeyRelease(_) => "Event::XinputDeviceKeyRelease",
+        Event::XinputDeviceKeyStateNotify(_) => "Event::XinputDeviceKeyStateNotify",
+        Event::XinputDeviceMappingNotify(_) => "Event::XinputDeviceMappingNotify",
+        Event::XinputDeviceMotionNotify(_) => "Event::XinputDeviceMotionNotify",
+        Event::XinputDevicePresenceNotify(_) => "Event::XinputDevicePresenceNotify",
+        Event::XinputDevicePropertyNotify(_) => "Event::XinputDevicePropertyNotify",
+        Event::XinputDeviceStateNotify(_) => "Event::XinputDeviceStateNotify",
+        Event::XinputDeviceValuator(_) => "Event::XinputDeviceValuator",
+        Event::XinputEnter(_) => "Event::XinputEnter",
+        Event::XinputFocusIn(_) => "Event::XinputFocusIn",
+        Event::XinputFocusOut(_) => "Event::XinputFocusOut",
+        Event::XinputGesturePinchBegin(_) => "Event::XinputGesturePinchBegin",
+        Event::XinputGesturePinchEnd(_) => "Event::XinputGesturePinchEnd",
+        Event::XinputGesturePinchUpdate(_) => "Event::XinputGesturePinchUpdate",
+        Event::XinputGestureSwipeBegin(_) => "Event::XinputGestureSwipeBegin",
+        Event::XinputGestureSwipeEnd(_) => "Event::XinputGestureSwipeEnd",
+        Event::XinputGestureSwipeUpdate(_) => "Event::XinputGestureSwipeUpdate",
+        Event::XinputHierarchy(_) => "Event::XinputHierarchy",
+        Event::XinputKeyPress(_) => "Event::XinputKeyPress",
+        Event::XinputKeyRelease(_) => "Event::XinputKeyRelease",
+        Event::XinputLeave(_) => "Event::XinputLeave",
+        Event::XinputMotion(_) => "Event::XinputMotion",
+        Event::XinputProperty(_) => "Event::XinputProperty",
+        Event::XinputProximityIn(_) => "Event::XinputProximityIn",
+        Event::XinputProximityOut(_) => "Event::XinputProximityOut",
+        Event::XinputRawButtonPress(_) => "Event::XinputRawButtonPress",
+        Event::XinputRawButtonRelease(_) => "Event::XinputRawButtonRelease",
+        Event::XinputRawKeyPress(_) => "Event::XinputRawKeyPress",
+        Event::XinputRawKeyRelease(_) => "Event::XinputRawKeyRelease",
+        Event::XinputRawMotion(_) => "Event::XinputRawMotion",
+        Event::XinputRawTouchBegin(_) => "Event::XinputRawTouchBegin",
+        Event::XinputRawTouchEnd(_) => "Event::XinputRawTouchEnd",
+        Event::XinputRawTouchUpdate(_) => "Event::XinputRawTouchUpdate",
+        Event::XinputTouchBegin(_) => "Event::XinputTouchBegin",
+        Event::XinputTouchEnd(_) => "Event::XinputTouchEnd",
+        Event::XinputTouchOwnership(_) => "Event::XinputTouchOwnership",
+        Event::XinputTouchUpdate(_) => "Event::XinputTouchUpdate",
+        Event::XkbAccessXNotify(_) => "Event::XkbAccessXNotify",
+        Event::XkbActionMessage(_) => "Event::XkbActionMessage",
+        Event::XkbBellNotify(_) => "Event::XkbBellNotify",
+        Event::XkbCompatMapNotify(_) => "Event::XkbCompatMapNotify",
+        Event::XkbControlsNotify(_) => "Event::XkbControlsNotify",
+        Event::XkbExtensionDeviceNotify(_) => "Event::XkbExtensionDeviceNotify",
+        Event::XkbIndicatorMapNotify(_) => "Event::XkbIndicatorMapNotify",
+        Event::XkbIndicatorStateNotify(_) => "Event::XkbIndicatorStateNotify",
+        Event::XkbMapNotify(_) => "Event::XkbMapNotify",
+        Event::XkbNamesNotify(_) => "Event::XkbNamesNotify",
+        Event::XkbNewKeyboardNotify(_) => "Event::XkbNewKeyboardNotify",
+        Event::XkbStateNotify(_) => "Event::XkbStateNotify",
+        _ => "unknown",
+    }
 }

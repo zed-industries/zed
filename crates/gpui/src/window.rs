@@ -691,8 +691,15 @@ impl Window {
                     measure("frame duration", || {
                         handle
                             .update(&mut cx, |_, cx| {
+                                // let start = Instant::now();
                                 cx.draw();
+                                // let elapsed = start.elapsed();
+                                // eprintln!("draw duration: {:?}", elapsed);
+
+                                // let start = Instant::now();
                                 cx.present();
+                                // let elapsed = start.elapsed();
+                                // eprintln!("present duration: {:?}", elapsed);
                             })
                             .log_err();
                     })

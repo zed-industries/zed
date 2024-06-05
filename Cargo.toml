@@ -463,6 +463,12 @@ codegen-units = 1
 [profile.release.package]
 zed = { codegen-units = 16 }
 
+[profile.profiling]
+inherits = "release"
+debug = true
+lto = false
+codegen-units = 16
+
 [workspace.lints.clippy]
 dbg_macro = "deny"
 todo = "deny"

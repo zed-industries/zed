@@ -1,0 +1,118 @@
+Instant { tv_sec: 28071, tv_nsec: 336969 } - expose event
+X11WindowStatePtr.refresh
+Instant { tv_sec: 28071, tv_nsec: 16998891 } - expose event
+X11WindowStatePtr.refresh
+Instant { tv_sec: 28071, tv_nsec: 33681854 } - expose event
+X11WindowStatePtr.refresh
+Instant { tv_sec: 28071, tv_nsec: 50345258 } - expose event
+X11WindowStatePtr.refresh
+Instant { tv_sec: 28071, tv_nsec: 67024970 } - expose event
+X11WindowStatePtr.refresh
+Instant { tv_sec: 28071, tv_nsec: 83681212 } - expose event
+X11WindowStatePtr.refresh
+Instant { tv_sec: 28071, tv_nsec: 100357217 } - expose event
+X11WindowStatePtr.refresh
+Instant { tv_sec: 28071, tv_nsec: 117008879 } - expose event
+X11WindowStatePtr.refresh
+Instant { tv_sec: 28071, tv_nsec: 133684221 } - expose event
+X11WindowStatePtr.refresh
+Instant { tv_sec: 28071, tv_nsec: 150357794 } - expose event
+X11WindowStatePtr.refresh
+Instant { tv_sec: 28071, tv_nsec: 167026818 } - expose event
+X11WindowStatePtr.refresh
+Instant { tv_sec: 28071, tv_nsec: 183683540 } - expose event
+X11WindowStatePtr.refresh
+Instant { tv_sec: 28071, tv_nsec: 200357812 } - expose event
+X11WindowStatePtr.refresh
+Instant { tv_sec: 28071, tv_nsec: 217010536 } - expose event
+X11WindowStatePtr.refresh
+Instant { tv_sec: 28071, tv_nsec: 233686439 } - expose event
+X11WindowStatePtr.refresh
+Instant { tv_sec: 28071, tv_nsec: 250361331 } - expose event
+X11WindowStatePtr.refresh
+Instant { tv_sec: 28071, tv_nsec: 267028773 } - expose event
+X11WindowStatePtr.refresh
+Instant { tv_sec: 28071, tv_nsec: 283685988 } - expose event
+X11WindowStatePtr.refresh
+Instant { tv_sec: 28071, tv_nsec: 300347230 } - expose event
+X11WindowStatePtr.refresh
+Instant { tv_sec: 28071, tv_nsec: 317016592 } - expose event
+X11WindowStatePtr.refresh
+Instant { tv_sec: 28071, tv_nsec: 333688865 } - expose event
+X11WindowStatePtr.refresh
+Instant { tv_sec: 28071, tv_nsec: 350363109 } - expose event
+X11WindowStatePtr.refresh
+Instant { tv_sec: 28071, tv_nsec: 367031611 } - expose event
+X11WindowStatePtr.refresh
+Instant { tv_sec: 28071, tv_nsec: 383657223 } - expose event
+X11WindowStatePtr.refresh
+Instant { tv_sec: 28071, tv_nsec: 400318827 } - expose event
+X11WindowStatePtr.refresh
+Instant { tv_sec: 28071, tv_nsec: 416997110 } - expose event
+X11WindowStatePtr.refresh
+Instant { tv_sec: 28071, tv_nsec: 433689142 } - expose event
+X11WindowStatePtr.refresh
+Instant { tv_sec: 28071, tv_nsec: 450363825 } - expose event
+X11WindowStatePtr.refresh
+Instant { tv_sec: 28071, tv_nsec: 467045469 } - expose event
+X11WindowStatePtr.refresh
+Instant { tv_sec: 28071, tv_nsec: 483690271 } - expose event
+X11WindowStatePtr.refresh
+Instant { tv_sec: 28071, tv_nsec: 500367633 } - expose event
+X11WindowStatePtr.refresh
+Instant { tv_sec: 28071, tv_nsec: 517017787 } - expose event
+X11WindowStatePtr.refresh
+Instant { tv_sec: 28071, tv_nsec: 533691810 } - expose event
+X11WindowStatePtr.refresh
+Instant { tv_sec: 28071, tv_nsec: 550368302 } - expose event
+X11WindowStatePtr.refresh
+Instant { tv_sec: 28071, tv_nsec: 567040074 } - expose event
+X11WindowStatePtr.refresh
+Instant { tv_sec: 28071, tv_nsec: 583673738 } - expose event
+X11WindowStatePtr.refresh
+Instant { tv_sec: 28071, tv_nsec: 600334321 } - expose event
+X11WindowStatePtr.refresh
+Instant { tv_sec: 28071, tv_nsec: 617004243 } - expose event
+X11WindowStatePtr.refresh
+Instant { tv_sec: 28071, tv_nsec: 633664287 } - expose event
+X11WindowStatePtr.refresh
+Instant { tv_sec: 28071, tv_nsec: 650343009 } - expose event
+X11WindowStatePtr.refresh
+Instant { tv_sec: 28071, tv_nsec: 667035452 } - expose event
+X11WindowStatePtr.refresh
+Instant { tv_sec: 28071, tv_nsec: 683693964 } - expose event
+X11WindowStatePtr.refresh
+Instant { tv_sec: 28071, tv_nsec: 700369198 } - expose event
+X11WindowStatePtr.refresh
+Instant { tv_sec: 28071, tv_nsec: 717020391 } - expose event
+X11WindowStatePtr.refresh
+Instant { tv_sec: 28071, tv_nsec: 733696553 } - expose event
+X11WindowStatePtr.refresh
+Instant { tv_sec: 28071, tv_nsec: 750353037 } - expose event
+X11WindowStatePtr.refresh
+Instant { tv_sec: 28071, tv_nsec: 767039729 } - expose event
+X11WindowStatePtr.refresh
+Instant { tv_sec: 28071, tv_nsec: 783695882 } - expose event
+X11WindowStatePtr.refresh
+Instant { tv_sec: 28071, tv_nsec: 800369604 } - expose event
+X11WindowStatePtr.refresh
+Instant { tv_sec: 28071, tv_nsec: 817037228 } - expose event
+X11WindowStatePtr.refresh
+Instant { tv_sec: 28071, tv_nsec: 833697510 } - expose event
+X11WindowStatePtr.refresh
+Instant { tv_sec: 28071, tv_nsec: 850353393 } - expose event
+X11WindowStatePtr.refresh
+Instant { tv_sec: 28071, tv_nsec: 867039107 } - expose event
+X11WindowStatePtr.refresh
+Instant { tv_sec: 28071, tv_nsec: 883697449 } - expose event
+X11WindowStatePtr.refresh
+Instant { tv_sec: 28071, tv_nsec: 900357362 } - expose event
+X11WindowStatePtr.refresh
+Instant { tv_sec: 28071, tv_nsec: 917024804 } - expose event
+X11WindowStatePtr.refresh
+Instant { tv_sec: 28071, tv_nsec: 933699048 } - expose event
+X11WindowStatePtr.refresh
+Instant { tv_sec: 28071, tv_nsec: 950355490 } - expose event
+X11WindowStatePtr.refresh
+Instant { tv_sec: 28071, tv_nsec: 967053933 } - expose event
+X11WindowStatePtr.refresh
