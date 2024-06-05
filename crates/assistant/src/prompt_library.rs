@@ -246,7 +246,11 @@ impl PickerDelegate for PromptPickerDelegate {
         let element = match prompt {
             PromptPickerEntry::DefaultPromptsHeader => ListHeader::new("Default Prompts")
                 .inset(true)
-                .start_slot(Icon::new(IconName::ZedAssistant))
+                .start_slot(
+                    Icon::new(IconName::ZedAssistant)
+                        .color(Color::Muted)
+                        .size(IconSize::XSmall),
+                )
                 .selected(selected)
                 .into_any_element(),
             PromptPickerEntry::DefaultPromptsEmpty => {
@@ -257,7 +261,11 @@ impl PickerDelegate for PromptPickerDelegate {
             }
             PromptPickerEntry::AllPromptsHeader => ListHeader::new("All Prompts")
                 .inset(true)
-                .start_slot(Icon::new(IconName::Library))
+                .start_slot(
+                    Icon::new(IconName::Library)
+                        .color(Color::Muted)
+                        .size(IconSize::XSmall),
+                )
                 .selected(selected)
                 .into_any_element(),
             PromptPickerEntry::AllPromptsEmpty => ListSubHeader::new("No prompts")
@@ -279,6 +287,7 @@ impl PickerDelegate for PromptPickerDelegate {
                             .gap_2()
                             .child(
                                 IconButton::new("delete-prompt", IconName::Trash)
+                                    .icon_color(Color::Muted)
                                     .shape(IconButtonShape::Square)
                                     .tooltip(move |cx| Tooltip::text("Delete Prompt", cx))
                                     .on_click(cx.listener(move |_, _, cx| {
@@ -294,6 +303,7 @@ impl PickerDelegate for PromptPickerDelegate {
                                         IconName::ZedAssistant
                                     },
                                 )
+                                .icon_color(if default { Color::Accent } else { Color::Muted })
                                 .shape(IconButtonShape::Square)
                                 .tooltip(move |cx| {
                                     Tooltip::text(
@@ -738,8 +748,6 @@ impl PromptLibrary {
             .child(
                 h_flex()
                     .p(Spacing::Small.rems(cx))
-                    .border_b_1()
-                    .border_color(cx.theme().colors().border)
                     .h(TitleBar::height(cx))
                     .w_full()
                     .flex_none()
