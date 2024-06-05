@@ -566,6 +566,9 @@ impl BufferSearchBar {
 
     pub fn deploy(&mut self, deploy: &Deploy, cx: &mut ViewContext<Self>) -> bool {
         if self.show(cx) {
+            if let Some(active_item) = self.active_searchable_item.as_mut() {
+                active_item.toggle_filtered_search_ranges(deploy.selection_search_enabled, cx);
+            }
             self.search_suggested(cx);
             self.replace_enabled = deploy.replace_enabled;
             self.selection_search_enabled = deploy.selection_search_enabled;
@@ -582,12 +585,6 @@ impl BufferSearchBar {
                 }
 
                 cx.focus(&handle);
-
-                if let Some(active_item) = self.active_searchable_item.as_mut() {
-                    active_item.toggle_filtered_search_ranges(self.selection_search_enabled, cx);
-                    let _ = self.update_matches(cx);
-                    cx.notify();
-                }
             }
             return true;
         }
