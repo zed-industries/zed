@@ -12898,7 +12898,6 @@ dependencies = [
  "gpui",
  "http 0.1.0",
  "ignore",
- "itertools 0.11.0",
  "language",
  "log",
  "parking_lot",

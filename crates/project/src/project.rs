@@ -38,6 +38,7 @@ use gpui::{
     AnyModel, AppContext, AsyncAppContext, BackgroundExecutor, BorrowAppContext, Context, Entity,
     EventEmitter, Model, ModelContext, PromptLevel, SharedString, Task, WeakModel, WindowContext,
 };
+use http::{HttpClient, Url};
 use itertools::Itertools;
 use language::{
     language_settings::{language_settings, FormatOnSave, Formatter, InlayHintKind},
@@ -66,19 +67,16 @@ use postage::watch;
 use prettier_support::{DefaultPrettier, PrettierInstance};
 use project_settings::{LspSettings, ProjectSettings};
 use rand::prelude::*;
-use search_history::SearchHistory;
-use snippet::Snippet;
-use worktree::{CreatedEntry, LocalSnapshot};
-
-use http::{HttpClient, Url};
 use rpc::{ErrorCode, ErrorExt as _};
 use search::SearchQuery;
+use search_history::SearchHistory;
 use serde::Serialize;
 use settings::{watch_config_file, Settings, SettingsLocation, SettingsStore};
 use sha2::{Digest, Sha256};
 use similar::{ChangeTag, TextDiff};
 use smol::channel::{Receiver, Sender};
 use smol::lock::Semaphore;
+use snippet::Snippet;
 use std::{
     borrow::Cow,
     cmp::{self, Ordering},
@@ -111,7 +109,7 @@ use util::{
     },
     post_inc, ResultExt, TryFutureExt as _,
 };
-use worktree::{Snapshot, Traversal};
+use worktree::{CreatedEntry, Snapshot, Traversal};
 
 pub use fs::*;
 pub use language::Location;
@@ -7231,8 +7229,8 @@ impl Project {
         let snapshots = self
             .visible_worktrees(cx)
             .filter_map(|tree| {
-                let tree = tree.read(cx).as_local()?;
-                Some(tree.snapshot())
+                let tree = tree.read(cx);
+                Some((tree.snapshot(), tree.as_local()?.settings()))
             })
             .collect::<Vec<_>>();
         let include_root = snapshots.len() > 1;
@@ -7240,11 +7238,11 @@ impl Project {
         let background = cx.background_executor().clone();
         let path_count: usize = snapshots
             .iter()
-            .map(|s| {
+            .map(|(snapshot, _)| {
                 if query.include_ignored() {
-                    s.file_count()
+                    snapshot.file_count()
                 } else {
-                    s.visible_file_count()
+                    snapshot.visible_file_count()
                 }
             })
             .sum();
@@ -7400,7 +7398,7 @@ impl Project {
         query: SearchQuery,
         include_root: bool,
         path_count: usize,
-        snapshots: Vec<LocalSnapshot>,
+        snapshots: Vec<(Snapshot, WorktreeSettings)>,
         matching_paths_tx: Sender<SearchMatchCandidate>,
     ) {
         let fs = &fs;
@@ -7456,13 +7454,14 @@ impl Project {
                 }
 
                 if query.include_ignored() {
-                    for snapshot in snapshots {
+                    for (snapshot, settings) in snapshots {
                         for ignored_entry in snapshot.entries(true).filter(|e| e.is_ignored) {
                             let limiter = Arc::clone(&max_concurrent_workers);
                             scope.spawn(async move {
                                 let _guard = limiter.acquire().await;
                                 search_ignored_entry(
                                     snapshot,
+                                    settings,
                                     ignored_entry,
                                     fs,
                                     query,
@@ -11343,7 +11342,7 @@ fn deserialize_code_actions(code_actions: &HashMap<String, bool>) -> Vec<lsp::Co
 
 #[allow(clippy::too_many_arguments)]
 async fn search_snapshots(
-    snapshots: &Vec<LocalSnapshot>,
+    snapshots: &Vec<(Snapshot, WorktreeSettings)>,
     worker_start_ix: usize,
     worker_end_ix: usize,
     query: &SearchQuery,
@@ -11355,7 +11354,7 @@ async fn search_snapshots(
     let mut snapshot_start_ix = 0;
     let mut abs_path = PathBuf::new();
 
-    for snapshot in snapshots {
+    for (snapshot, _) in snapshots {
         let snapshot_end_ix = snapshot_start_ix
             + if query.include_ignored() {
                 snapshot.file_count()
@@ -11421,7 +11420,8 @@ async fn search_snapshots(
 }
 
 async fn search_ignored_entry(
-    snapshot: &LocalSnapshot,
+    snapshot: &Snapshot,
+    settings: &WorktreeSettings,
     ignored_entry: &Entry,
     fs: &Arc<dyn Fs>,
     query: &SearchQuery,
@@ -11455,7 +11455,7 @@ async fn search_ignored_entry(
                 }
             } else if !fs_metadata.is_symlink {
                 if !query.file_matches(Some(&ignored_abs_path))
-                    || snapshot.is_path_excluded(&ignored_entry.path)
+                    || settings.is_path_excluded(&ignored_entry.path)
                 {
                     continue;
                 }

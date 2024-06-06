@@ -29,7 +29,6 @@ use gpui::{
     Task,
 };
 use ignore::IgnoreStack;
-use itertools::Itertools;
 use parking_lot::Mutex;
 use postage::{
     barrier,
@@ -58,11 +57,7 @@ use std::{
 };
 use sum_tree::{Bias, Edit, SeekTarget, SumTree, TreeMap, TreeSet};
 use text::{LineEnding, Rope};
-use util::{
-    paths::{PathMatcher, HOME},
-    ResultExt,
-};
-
+use util::{paths::HOME, ResultExt};
 pub use worktree_settings::WorktreeSettings;
 
 #[cfg(feature = "test-support")]
@@ -109,6 +104,8 @@ pub struct LocalWorktree {
     fs_case_sensitive: bool,
     visible: bool,
     next_entry_id: Arc<AtomicUsize>,
+    settings: WorktreeSettings,
+    share_private_files: bool,
 }
 
 struct ScanRequest {
@@ -275,9 +272,6 @@ pub struct LocalSnapshot {
     /// All of the git repositories in the worktree, indexed by the project entry
     /// id of their parent directory.
     git_repositories: TreeMap<ProjectEntryId, LocalRepositoryEntry>,
-    file_scan_exclusions: Vec<PathMatcher>,
-    private_files: Vec<PathMatcher>,
-    share_private_files: bool,
 }
 
 struct BackgroundScannerState {
@@ -373,42 +367,29 @@ impl Worktree {
         });
 
         cx.new_model(move |cx: &mut ModelContext<Worktree>| {
+            let worktree_id = cx.handle().entity_id().as_u64() as usize;
+            let settings = WorktreeSettings::get(
+                Some(SettingsLocation {
+                    worktree_id,
+                    path: Path::new(""),
+                }),
+                cx,
+            )
+            .clone();
+
             cx.observe_global::<SettingsStore>(move |this, cx| {
                 if let Self::Local(this) = this {
-                    let new_file_scan_exclusions = path_matchers(
-                        WorktreeSettings::get_global(cx)
-                            .file_scan_exclusions
-                            .as_deref(),
-                        "file_scan_exclusions",
-                    );
-                    let new_private_files = path_matchers(
-                        WorktreeSettings::get(Some(settings::SettingsLocation {
-                            worktree_id: cx.handle().entity_id().as_u64() as usize,
-                            path: Path::new("")
-                        }), cx).private_files.as_deref(),
-                        "private_files",
-                    );
+                    let settings = WorktreeSettings::get(
+                        Some(SettingsLocation {
+                            worktree_id,
+                            path: Path::new(""),
+                        }),
+                        cx,
+                    )
+                    .clone();
 
-                    if new_file_scan_exclusions != this.snapshot.file_scan_exclusions
-                        || new_private_files != this.snapshot.private_files
-                    {
-                        this.snapshot.file_scan_exclusions = new_file_scan_exclusions;
-                        this.snapshot.private_files = new_private_files;
-
-                        log::info!(
-                            "Re-scanning directories, new scan exclude files: {:?}, new dotenv files: {:?}",
-                            this.snapshot
-                                .file_scan_exclusions
-                                .iter()
-                                .map(ToString::to_string)
-                                .collect::<Vec<_>>(),
-                            this.snapshot
-                                .private_files
-                                .iter()
-                                .map(ToString::to_string)
-                                .collect::<Vec<_>>()
-                        );
-
+                    if settings != this.settings {
+                        this.settings = settings;
                         this.restart_background_scanners(cx);
                     }
                 }
@@ -420,20 +401,6 @@ impl Worktree {
                 .map_or(String::new(), |f| f.to_string_lossy().to_string());
 
             let mut snapshot = LocalSnapshot {
-                file_scan_exclusions: path_matchers(
-                    WorktreeSettings::get_global(cx)
-                        .file_scan_exclusions
-                        .as_deref(),
-                    "file_scan_exclusions",
-                ),
-                private_files: path_matchers(
-                    WorktreeSettings::get(Some(SettingsLocation {
-                        worktree_id: cx.handle().entity_id().as_u64() as usize,
-                        path: Path::new(""),
-                    }), cx).private_files.as_deref(),
-                    "private_files",
-                ),
-                share_private_files: false,
                 ignores_by_parent_abs_path: Default::default(),
                 git_repositories: Default::default(),
                 snapshot: Snapshot {
@@ -456,7 +423,7 @@ impl Worktree {
                         &metadata,
                         &next_entry_id,
                         snapshot.root_char_bag,
-                        None
+                        None,
                     ),
                     fs.as_ref(),
                 );
@@ -464,27 +431,22 @@ impl Worktree {
 
             let (scan_requests_tx, scan_requests_rx) = channel::unbounded();
             let (path_prefixes_to_scan_tx, path_prefixes_to_scan_rx) = channel::unbounded();
-            let task_snapshot = snapshot.clone();
-            Worktree::Local(LocalWorktree {
+            let mut worktree = LocalWorktree {
+                share_private_files: false,
                 next_entry_id: Arc::clone(&next_entry_id),
                 snapshot,
                 is_scanning: watch::channel_with(true),
                 update_observer: None,
                 scan_requests_tx,
                 path_prefixes_to_scan_tx,
-                _background_scanner_tasks: start_background_scan_tasks(
-                    &abs_path,
-                    task_snapshot,
-                    scan_requests_rx,
-                    path_prefixes_to_scan_rx,
-                    Arc::clone(&next_entry_id),
-                    Arc::clone(&fs),
-                    cx,
-                ),
+                _background_scanner_tasks: Vec::new(),
                 fs,
                 fs_case_sensitive,
                 visible,
-            })
+                settings,
+            };
+            worktree.start_background_scanner(scan_requests_rx, path_prefixes_to_scan_rx, cx);
+            Worktree::Local(worktree)
         })
     }
 
@@ -605,8 +567,8 @@ impl Worktree {
 
     pub fn snapshot(&self) -> Snapshot {
         match self {
-            Worktree::Local(worktree) => worktree.snapshot().snapshot,
-            Worktree::Remote(worktree) => worktree.snapshot(),
+            Worktree::Local(worktree) => worktree.snapshot.snapshot.clone(),
+            Worktree::Remote(worktree) => worktree.snapshot.clone(),
         }
     }
 
@@ -651,104 +613,13 @@ impl Worktree {
     }
 }
 
-fn start_background_scan_tasks(
-    abs_path: &Path,
-    snapshot: LocalSnapshot,
-    scan_requests_rx: channel::Receiver<ScanRequest>,
-    path_prefixes_to_scan_rx: channel::Receiver<Arc<Path>>,
-    next_entry_id: Arc<AtomicUsize>,
-    fs: Arc<dyn Fs>,
-    cx: &mut ModelContext<'_, Worktree>,
-) -> Vec<Task<()>> {
-    let (scan_states_tx, mut scan_states_rx) = mpsc::unbounded();
-    let background_scanner = cx.background_executor().spawn({
-        let abs_path = if cfg!(target_os = "windows") {
-            abs_path
-                .canonicalize()
-                .unwrap_or_else(|_| abs_path.to_path_buf())
-        } else {
-            abs_path.to_path_buf()
-        };
-        let background = cx.background_executor().clone();
-        async move {
-            let (events, watcher) = fs.watch(&abs_path, FS_WATCH_LATENCY).await;
-            let case_sensitive = fs.is_case_sensitive().await.unwrap_or_else(|e| {
-                log::error!("Failed to determine whether filesystem is case sensitive: {e:#}");
-                true
-            });
-
-            let mut scanner = BackgroundScanner {
-                fs,
-                fs_case_sensitive: case_sensitive,
-                status_updates_tx: scan_states_tx,
-                executor: background,
-                scan_requests_rx,
-                path_prefixes_to_scan_rx,
-                next_entry_id,
-                state: Mutex::new(BackgroundScannerState {
-                    prev_snapshot: snapshot.snapshot.clone(),
-                    snapshot,
-                    scanned_dirs: Default::default(),
-                    path_prefixes_to_scan: Default::default(),
-                    paths_to_scan: Default::default(),
-                    removed_entry_ids: Default::default(),
-                    changed_paths: Default::default(),
-                }),
-                phase: BackgroundScannerPhase::InitialScan,
-                watcher,
-            };
-
-            scanner.run(events).await;
-        }
-    });
-    let scan_state_updater = cx.spawn(|this, mut cx| async move {
-        while let Some((state, this)) = scan_states_rx.next().await.zip(this.upgrade()) {
-            this.update(&mut cx, |this, cx| {
-                let this = this.as_local_mut().unwrap();
-                match state {
-                    ScanState::Started => {
-                        *this.is_scanning.0.borrow_mut() = true;
-                    }
-                    ScanState::Updated {
-                        snapshot,
-                        changes,
-                        barrier,
-                        scanning,
-                    } => {
-                        *this.is_scanning.0.borrow_mut() = scanning;
-                        this.set_snapshot(snapshot, changes, cx);
-                        drop(barrier);
-                    }
-                }
-                cx.notify();
-            })
-            .ok();
-        }
-    });
-    vec![background_scanner, scan_state_updater]
-}
-
-fn path_matchers(values: Option<&[String]>, context: &'static str) -> Vec<PathMatcher> {
-    values
-        .unwrap_or(&[])
-        .iter()
-        .sorted()
-        .filter_map(|pattern| {
-            PathMatcher::new(pattern)
-                .map(Some)
-                .unwrap_or_else(|e| {
-                    log::error!(
-                        "Skipping pattern {pattern} in `{}` project settings due to parsing error: {e:#}", context
-                    );
-                    None
-                })
-        })
-        .collect()
-}
-
 impl LocalWorktree {
     pub fn contains_abs_path(&self, path: &Path) -> bool {
         path.starts_with(&self.abs_path)
+    }
+
+    pub fn is_path_private(&self, path: &Path) -> bool {
+        !self.share_private_files && self.settings.is_path_private(path)
     }
 
     fn restart_background_scanners(&mut self, cx: &mut ModelContext<Worktree>) {
@@ -756,27 +627,99 @@ impl LocalWorktree {
         let (path_prefixes_to_scan_tx, path_prefixes_to_scan_rx) = channel::unbounded();
         self.scan_requests_tx = scan_requests_tx;
         self.path_prefixes_to_scan_tx = path_prefixes_to_scan_tx;
-        self._background_scanner_tasks = start_background_scan_tasks(
-            &self.snapshot.abs_path,
-            self.snapshot(),
-            scan_requests_rx,
-            path_prefixes_to_scan_rx,
-            Arc::clone(&self.next_entry_id),
-            Arc::clone(&self.fs),
-            cx,
-        );
+        self.start_background_scanner(scan_requests_rx, path_prefixes_to_scan_rx, cx);
+    }
+
+    fn start_background_scanner(
+        &mut self,
+        scan_requests_rx: channel::Receiver<ScanRequest>,
+        path_prefixes_to_scan_rx: channel::Receiver<Arc<Path>>,
+        cx: &mut ModelContext<Worktree>,
+    ) {
+        let snapshot = self.snapshot();
+        let share_private_files = self.share_private_files;
+        let next_entry_id = self.next_entry_id.clone();
+        let fs = self.fs.clone();
+        let settings = self.settings.clone();
+        let (scan_states_tx, mut scan_states_rx) = mpsc::unbounded();
+        let background_scanner = cx.background_executor().spawn({
+            let abs_path = &snapshot.abs_path;
+            let abs_path = if cfg!(target_os = "windows") {
+                abs_path
+                    .canonicalize()
+                    .unwrap_or_else(|_| abs_path.to_path_buf())
+            } else {
+                abs_path.to_path_buf()
+            };
+            let background = cx.background_executor().clone();
+            async move {
+                let (events, watcher) = fs.watch(&abs_path, FS_WATCH_LATENCY).await;
+                let fs_case_sensitive = fs.is_case_sensitive().await.unwrap_or_else(|e| {
+                    log::error!("Failed to determine whether filesystem is case sensitive: {e:#}");
+                    true
+                });
+
+                let mut scanner = BackgroundScanner {
+                    fs,
+                    fs_case_sensitive,
+                    status_updates_tx: scan_states_tx,
+                    executor: background,
+                    scan_requests_rx,
+                    path_prefixes_to_scan_rx,
+                    next_entry_id,
+                    state: Mutex::new(BackgroundScannerState {
+                        prev_snapshot: snapshot.snapshot.clone(),
+                        snapshot,
+                        scanned_dirs: Default::default(),
+                        path_prefixes_to_scan: Default::default(),
+                        paths_to_scan: Default::default(),
+                        removed_entry_ids: Default::default(),
+                        changed_paths: Default::default(),
+                    }),
+                    phase: BackgroundScannerPhase::InitialScan,
+                    share_private_files,
+                    settings,
+                    watcher,
+                };
+
+                scanner.run(events).await;
+            }
+        });
+        let scan_state_updater = cx.spawn(|this, mut cx| async move {
+            while let Some((state, this)) = scan_states_rx.next().await.zip(this.upgrade()) {
+                this.update(&mut cx, |this, cx| {
+                    let this = this.as_local_mut().unwrap();
+                    match state {
+                        ScanState::Started => {
+                            *this.is_scanning.0.borrow_mut() = true;
+                        }
+                        ScanState::Updated {
+                            snapshot,
+                            changes,
+                            barrier,
+                            scanning,
+                        } => {
+                            *this.is_scanning.0.borrow_mut() = scanning;
+                            this.set_snapshot(snapshot, changes, cx);
+                            drop(barrier);
+                        }
+                    }
+                    cx.notify();
+                })
+                .ok();
+            }
+        });
+        self._background_scanner_tasks = vec![background_scanner, scan_state_updater];
         self.is_scanning = watch::channel_with(true);
     }
 
     fn set_snapshot(
         &mut self,
-        mut new_snapshot: LocalSnapshot,
+        new_snapshot: LocalSnapshot,
         entry_changes: UpdatedEntriesSet,
         cx: &mut ModelContext<Worktree>,
     ) {
         let repo_changes = self.changed_repos(&self.snapshot, &new_snapshot);
-
-        new_snapshot.share_private_files = self.snapshot.share_private_files;
         self.snapshot = new_snapshot;
 
         if let Some(share) = self.update_observer.as_mut() {
@@ -911,6 +854,10 @@ impl LocalWorktree {
         self.snapshot.clone()
     }
 
+    pub fn settings(&self) -> WorktreeSettings {
+        self.settings.clone()
+    }
+
     pub fn metadata_proto(&self) -> proto::WorktreeMetadata {
         proto::WorktreeMetadata {
             id: self.id().to_proto(),
@@ -929,6 +876,7 @@ impl LocalWorktree {
         let abs_path = self.absolutize(&path);
         let fs = self.fs.clone();
         let entry = self.refresh_entry(path.clone(), None, cx);
+        let is_private = self.is_path_private(path.as_ref());
 
         cx.spawn(|this, mut cx| async move {
             let abs_path = abs_path?;
@@ -995,7 +943,6 @@ impl LocalWorktree {
                         .with_context(|| {
                             format!("Excluded file {abs_path:?} got removed during loading")
                         })?;
-                    let is_private = snapshot.is_path_private(path.as_ref());
                     Ok((
                         File {
                             entry_id: None,
@@ -1038,7 +985,7 @@ impl LocalWorktree {
             Ok(path) => path,
             Err(e) => return Task::ready(Err(e.context(format!("absolutizing path {path:?}")))),
         };
-        let path_excluded = self.is_path_excluded(&abs_path);
+        let path_excluded = self.settings.is_path_excluded(&abs_path);
         let fs = self.fs.clone();
         let task_abs_path = abs_path.clone();
         let write = cx.background_executor().spawn(async move {
@@ -1294,7 +1241,7 @@ impl LocalWorktree {
         old_path: Option<Arc<Path>>,
         cx: &mut ModelContext<Worktree>,
     ) -> Task<Result<Option<Entry>>> {
-        if self.is_path_excluded(&path) {
+        if self.settings.is_path_excluded(&path) {
             return Task::ready(Ok(None));
         }
         let paths = if let Some(old_path) = old_path.as_ref() {
@@ -1390,16 +1337,12 @@ impl LocalWorktree {
     }
 
     pub fn share_private_files(&mut self, cx: &mut ModelContext<Worktree>) {
-        self.snapshot.share_private_files = true;
+        self.share_private_files = true;
         self.restart_background_scanners(cx);
     }
 }
 
 impl RemoteWorktree {
-    fn snapshot(&self) -> Snapshot {
-        self.snapshot.clone()
-    }
-
     pub fn disconnected_from_host(&mut self) {
         self.updates_tx.take();
         self.snapshot_subscriptions.clear();
@@ -2161,25 +2104,6 @@ impl LocalSnapshot {
         }
         paths.sort_by(|a, b| a.0.cmp(b.0));
         paths
-    }
-
-    pub fn is_path_private(&self, path: &Path) -> bool {
-        if self.share_private_files {
-            return false;
-        }
-        path.ancestors().any(|ancestor| {
-            self.private_files
-                .iter()
-                .any(|exclude_matcher| exclude_matcher.is_match(&ancestor))
-        })
-    }
-
-    pub fn is_path_excluded(&self, path: &Path) -> bool {
-        path.ancestors().any(|path| {
-            self.file_scan_exclusions
-                .iter()
-                .any(|exclude_matcher| exclude_matcher.is_match(&path))
-        })
     }
 }
 
@@ -2962,6 +2886,8 @@ struct BackgroundScanner {
     next_entry_id: Arc<AtomicUsize>,
     phase: BackgroundScannerPhase,
     watcher: Arc<dyn Watcher>,
+    settings: WorktreeSettings,
+    share_private_files: bool,
 }
 
 #[derive(PartialEq)]
@@ -3205,7 +3131,7 @@ impl BackgroundScanner {
                     return false;
                 }
 
-                if snapshot.is_path_excluded(&relative_path) {
+                if self.settings.is_path_excluded(&relative_path) {
                     if !is_git_related {
                         log::debug!("ignoring FS event for excluded path {relative_path:?}");
                     }
@@ -3377,7 +3303,7 @@ impl BackgroundScanner {
         let root_char_bag;
         {
             let snapshot = &self.state.lock().snapshot;
-            if snapshot.is_path_excluded(&job.path) {
+            if self.settings.is_path_excluded(&job.path) {
                 log::error!("skipping excluded directory {:?}", job.path);
                 return Ok(());
             }
@@ -3462,13 +3388,10 @@ impl BackgroundScanner {
                 }
             }
 
-            {
-                let mut state = self.state.lock();
-                if state.snapshot.is_path_excluded(&child_path) {
-                    log::debug!("skipping excluded child entry {child_path:?}");
-                    state.remove_path(&child_path);
-                    continue;
-                }
+            if self.settings.is_path_excluded(&child_path) {
+                log::debug!("skipping excluded child entry {child_path:?}");
+                self.state.lock().remove_path(&child_path);
+                continue;
             }
 
             let child_metadata = match self.fs.metadata(&child_abs_path).await {
@@ -3561,12 +3484,10 @@ impl BackgroundScanner {
 
             {
                 let relative_path = job.path.join(child_name);
-                let state = self.state.lock();
-                if state.snapshot.is_path_private(&relative_path) {
+                if self.is_path_private(&relative_path) {
                     log::debug!("detected private file: {relative_path:?}");
                     child_entry.is_private = true;
                 }
-                drop(state)
             }
 
             new_entries.push(child_entry);
@@ -3676,7 +3597,7 @@ impl BackgroundScanner {
                     let is_dir = fs_entry.is_dir();
                     fs_entry.is_ignored = ignore_stack.is_abs_path_ignored(&abs_path, is_dir);
                     fs_entry.is_external = !canonical_path.starts_with(&root_canonical_path);
-                    fs_entry.is_private = state.snapshot.is_path_private(path);
+                    fs_entry.is_private = self.is_path_private(path);
 
                     if !is_dir && !fs_entry.is_ignored && !fs_entry.is_external {
                         if let Some((repo_entry, repo)) = state.snapshot.repo_for_path(path) {
@@ -3971,7 +3892,7 @@ impl BackgroundScanner {
                     ids_to_preserve.insert(work_directory_id);
                 } else {
                     let git_dir_abs_path = snapshot.abs_path().join(&entry.git_dir_path);
-                    let git_dir_excluded = snapshot.is_path_excluded(&entry.git_dir_path);
+                    let git_dir_excluded = self.settings.is_path_excluded(&entry.git_dir_path);
                     if git_dir_excluded
                         && !matches!(
                             smol::block_on(self.fs.metadata(&git_dir_abs_path)),
@@ -4208,6 +4129,10 @@ impl BackgroundScanner {
         }
 
         smol::Timer::after(FS_WATCH_LATENCY).await;
+    }
+
+    fn is_path_private(&self, path: &Path) -> bool {
+        !self.share_private_files && self.settings.is_path_private(path)
     }
 }
 
