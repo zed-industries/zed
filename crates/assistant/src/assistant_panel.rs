@@ -1809,11 +1809,10 @@ impl Conversation {
 
             let messages = self
                 .messages(cx)
-                .take(2)
                 .map(|message| message.to_request_message(self.buffer.read(cx)))
                 .chain(Some(LanguageModelRequestMessage {
                     role: Role::User,
-                    content: "Summarize the conversation into one line. It needs to be a short title without punctuation."
+                    content: "Summarize the conversation into a short title without punctuation."
                         .into(),
                 }));
             let request = LanguageModelRequest {
