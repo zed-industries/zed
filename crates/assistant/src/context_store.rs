@@ -9,7 +9,7 @@ use regex::Regex;
 use serde::{Deserialize, Serialize};
 use std::{cmp::Reverse, ffi::OsStr, path::PathBuf, sync::Arc, time::Duration};
 use ui::Context;
-use util::{paths::CONVERSATIONS_DIR, ResultExt, TryFutureExt};
+use util::{paths::CONTEXTS_DIR, ResultExt, TryFutureExt};
 
 #[derive(Serialize, Deserialize)]
 pub struct SavedMessage {
@@ -18,7 +18,7 @@ pub struct SavedMessage {
 }
 
 #[derive(Serialize, Deserialize)]
-pub struct SavedConversation {
+pub struct SavedContext {
     pub id: Option<String>,
     pub zed: String,
     pub version: String,
@@ -28,12 +28,12 @@ pub struct SavedConversation {
     pub summary: String,
 }
 
-impl SavedConversation {
+impl SavedContext {
     pub const VERSION: &'static str = "0.2.0";
 }
 
 #[derive(Serialize, Deserialize)]
-struct SavedConversationV0_1_0 {
+struct SavedContextV0_1_0 {
     id: Option<String>,
     zed: String,
     version: String,
@@ -46,28 +46,26 @@ struct SavedConversationV0_1_0 {
 }
 
 #[derive(Clone)]
-pub struct SavedConversationMetadata {
+pub struct SavedContextMetadata {
     pub title: String,
     pub path: PathBuf,
     pub mtime: chrono::DateTime<chrono::Local>,
 }
 
-pub struct ConversationStore {
-    conversations_metadata: Vec<SavedConversationMetadata>,
+pub struct ContextStore {
+    contexts_metadata: Vec<SavedContextMetadata>,
     fs: Arc<dyn Fs>,
     _watch_updates: Task<Option<()>>,
 }
 
-impl ConversationStore {
+impl ContextStore {
     pub fn new(fs: Arc<dyn Fs>, cx: &mut AppContext) -> Task<Result<Model<Self>>> {
         cx.spawn(|mut cx| async move {
-            const CONVERSATION_WATCH_DURATION: Duration = Duration::from_millis(100);
-            let (mut events, _) = fs
-                .watch(&CONVERSATIONS_DIR, CONVERSATION_WATCH_DURATION)
-                .await;
+            const CONTEXT_WATCH_DURATION: Duration = Duration::from_millis(100);
+            let (mut events, _) = fs.watch(&CONTEXTS_DIR, CONTEXT_WATCH_DURATION).await;
 
             let this = cx.new_model(|cx: &mut ModelContext<Self>| Self {
-                conversations_metadata: Vec::new(),
+                contexts_metadata: Vec::new(),
                 fs,
                 _watch_updates: cx.spawn(|this, mut cx| {
                     async move {
@@ -88,46 +86,41 @@ impl ConversationStore {
         })
     }
 
-    pub fn load(&self, path: PathBuf, cx: &AppContext) -> Task<Result<SavedConversation>> {
+    pub fn load(&self, path: PathBuf, cx: &AppContext) -> Task<Result<SavedContext>> {
         let fs = self.fs.clone();
         cx.background_executor().spawn(async move {
-            let saved_conversation = fs.load(&path).await?;
-            let saved_conversation_json =
-                serde_json::from_str::<serde_json::Value>(&saved_conversation)?;
-            match saved_conversation_json
+            let saved_context = fs.load(&path).await?;
+            let saved_context_json = serde_json::from_str::<serde_json::Value>(&saved_context)?;
+            match saved_context_json
                 .get("version")
                 .ok_or_else(|| anyhow!("version not found"))?
             {
                 serde_json::Value::String(version) => match version.as_str() {
-                    SavedConversation::VERSION => Ok(serde_json::from_value::<SavedConversation>(
-                        saved_conversation_json,
-                    )?),
+                    SavedContext::VERSION => {
+                        Ok(serde_json::from_value::<SavedContext>(saved_context_json)?)
+                    }
                     "0.1.0" => {
-                        let saved_conversation = serde_json::from_value::<SavedConversationV0_1_0>(
-                            saved_conversation_json,
-                        )?;
-                        Ok(SavedConversation {
-                            id: saved_conversation.id,
-                            zed: saved_conversation.zed,
-                            version: saved_conversation.version,
-                            text: saved_conversation.text,
-                            messages: saved_conversation.messages,
-                            message_metadata: saved_conversation.message_metadata,
-                            summary: saved_conversation.summary,
+                        let saved_context =
+                            serde_json::from_value::<SavedContextV0_1_0>(saved_context_json)?;
+                        Ok(SavedContext {
+                            id: saved_context.id,
+                            zed: saved_context.zed,
+                            version: saved_context.version,
+                            text: saved_context.text,
+                            messages: saved_context.messages,
+                            message_metadata: saved_context.message_metadata,
+                            summary: saved_context.summary,
                         })
                     }
-                    _ => Err(anyhow!(
-                        "unrecognized saved conversation version: {}",
-                        version
-                    )),
+                    _ => Err(anyhow!("unrecognized saved context version: {}", version)),
                 },
-                _ => Err(anyhow!("version not found on saved conversation")),
+                _ => Err(anyhow!("version not found on saved context")),
             }
         })
     }
 
-    pub fn search(&self, query: String, cx: &AppContext) -> Task<Vec<SavedConversationMetadata>> {
-        let metadata = self.conversations_metadata.clone();
+    pub fn search(&self, query: String, cx: &AppContext) -> Task<Vec<SavedContextMetadata>> {
+        let metadata = self.contexts_metadata.clone();
         let executor = cx.background_executor().clone();
         cx.background_executor().spawn(async move {
             if query.is_empty() {
@@ -159,10 +152,10 @@ impl ConversationStore {
     fn reload(&mut self, cx: &mut ModelContext<Self>) -> Task<Result<()>> {
         let fs = self.fs.clone();
         cx.spawn(|this, mut cx| async move {
-            fs.create_dir(&CONVERSATIONS_DIR).await?;
+            fs.create_dir(&CONTEXTS_DIR).await?;
 
-            let mut paths = fs.read_dir(&CONVERSATIONS_DIR).await?;
-            let mut conversations = Vec::<SavedConversationMetadata>::new();
+            let mut paths = fs.read_dir(&CONTEXTS_DIR).await?;
+            let mut contexts = Vec::<SavedContextMetadata>::new();
             while let Some(path) = paths.next().await {
                 let path = path?;
                 if path.extension() != Some(OsStr::new("json")) {
@@ -178,13 +171,13 @@ impl ConversationStore {
                     .and_then(|name| name.to_str())
                     .zip(metadata)
                 {
-                    // This is used to filter out conversations saved by the new assistant.
+                    // This is used to filter out contexts saved by the new assistant.
                     if !re.is_match(file_name) {
                         continue;
                     }
 
                     if let Some(title) = re.replace(file_name, "").lines().next() {
-                        conversations.push(SavedConversationMetadata {
+                        contexts.push(SavedContextMetadata {
                             title: title.to_string(),
                             path,
                             mtime: metadata.mtime.into(),
@@ -192,10 +185,10 @@ impl ConversationStore {
                     }
                 }
             }
-            conversations.sort_unstable_by_key(|conversation| Reverse(conversation.mtime));
+            contexts.sort_unstable_by_key(|context| Reverse(context.mtime));
 
             this.update(&mut cx, |this, cx| {
-                this.conversations_metadata = conversations;
+                this.contexts_metadata = contexts;
                 cx.notify();
             })
         })

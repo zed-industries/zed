@@ -66,7 +66,7 @@ impl InlineAssistant {
         &mut self,
         editor: &View<Editor>,
         workspace: Option<WeakView<Workspace>>,
-        include_conversation: bool,
+        include_context: bool,
         cx: &mut WindowContext,
     ) {
         let selection = editor.read(cx).selections.newest_anchor().clone();
@@ -144,7 +144,7 @@ impl InlineAssistant {
         self.pending_assists.insert(
             inline_assist_id,
             PendingInlineAssist {
-                include_conversation,
+                include_context,
                 editor: editor.downgrade(),
                 inline_assist_editor: Some((block_id, inline_assist_editor.clone())),
                 codegen: codegen.clone(),
@@ -375,11 +375,11 @@ impl InlineAssistant {
             return;
         };
 
-        let conversation = if pending_assist.include_conversation {
+        let context = if pending_assist.include_context {
             pending_assist.workspace.as_ref().and_then(|workspace| {
                 let workspace = workspace.upgrade()?.read(cx);
                 let assistant_panel = workspace.panel::<AssistantPanel>(cx)?;
-                assistant_panel.read(cx).active_conversation(cx)
+                assistant_panel.read(cx).active_context(cx)
             })
         } else {
             None
@@ -461,8 +461,8 @@ impl InlineAssistant {
         });
 
         let mut messages = Vec::new();
-        if let Some(conversation) = conversation {
-            let request = conversation.read(cx).to_completion_request(cx);
+        if let Some(context) = context {
+            let request = context.read(cx).to_completion_request(cx);
             messages = request.messages;
         }
         let model = CompletionProvider::global(cx).model();
@@ -818,7 +818,7 @@ struct PendingInlineAssist {
     codegen: Model<Codegen>,
     _subscriptions: Vec<Subscription>,
     workspace: Option<WeakView<Workspace>>,
-    include_conversation: bool,
+    include_context: bool,
 }
 
 #[derive(Debug)]

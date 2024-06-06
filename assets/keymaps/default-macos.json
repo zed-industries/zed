@@ -228,7 +228,7 @@
     }
   },
   {
-    "context": "ConversationEditor > Editor",
+    "context": "ContextEditor > Editor",
     "bindings": {
       "cmd-enter": "assistant::Assist",
       "cmd-s": "workspace::Save",
