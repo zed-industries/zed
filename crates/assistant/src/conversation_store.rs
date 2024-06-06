@@ -183,12 +183,13 @@ impl ConversationStore {
                         continue;
                     }
 
-                    let title = re.replace(file_name, "");
-                    conversations.push(SavedConversationMetadata {
-                        title: title.into_owned(),
-                        path,
-                        mtime: metadata.mtime.into(),
-                    });
+                    if let Some(title) = re.replace(file_name, "").lines().next() {
+                        conversations.push(SavedConversationMetadata {
+                            title: title.to_string(),
+                            path,
+                            mtime: metadata.mtime.into(),
+                        });
+                    }
                 }
             }
             conversations.sort_unstable_by_key(|conversation| Reverse(conversation.mtime));
