@@ -4,7 +4,7 @@ mod parser;
 use crate::parser::CodeBlockKind;
 use futures::FutureExt;
 use gpui::{
-    actions, point, quad, AnyElement, AppContext, Bounds, ClipboardItem, CursorStyle,
+    actions, point, quad, rgb, AnyElement, AppContext, Bounds, ClipboardItem, CursorStyle,
     DispatchPhase, Edges, FocusHandle, FocusableView, FontStyle, FontWeight, GlobalElementId,
     Hitbox, Hsla, KeyContext, MouseButton, MouseDownEvent, MouseEvent, MouseMoveEvent,
     MouseUpEvent, Point, Render, StrikethroughStyle, Style, StyledText, Task, TextLayout, TextRun,
@@ -137,11 +137,14 @@ impl Markdown {
 
 impl Render for Markdown {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
-        MarkdownElement::new(
-            cx.view().clone(),
-            self.style.clone(),
-            self.language_registry.clone(),
-        )
+        div()
+            .bg(rgb(0xe88585)) //make it easier to disr
+            .on_mouse_down(MouseButton::Left, |_, cx| cx.stop_propagation())
+            .child(MarkdownElement::new(
+                cx.view().clone(),
+                self.style.clone(),
+                self.language_registry.clone(),
+            ))
     }
 }
 
