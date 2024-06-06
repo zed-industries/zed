@@ -2956,20 +2956,23 @@ impl Editor {
                 {
                     // find offset from the start of current range to current cursor position
                     let start_byte_offset = edited_range.start.to_offset(&snapshot);
-                    let current_offset = selection.tail().to_offset(&snapshot);
-
-                    let difference = current_offset - start_byte_offset;
-
+                    let start_offset = selection.head().to_offset(&snapshot);
+                    let start_difference = start_offset - start_byte_offset;
+                    let end_offset = selection.tail().to_offset(&snapshot);
+                    let end_difference = end_offset - start_byte_offset;
                     // Current range has associated linked ranges.
                     for range in linked_ranges.iter() {
-                        let offset = range.start.to_offset(&snapshot) + difference;
-                        let point = offset.to_point(&snapshot);
+                        let start_offset = range.start.to_offset(&snapshot);
+                        let end_offset = start_offset + end_difference;
+                        let start_offset = start_offset + start_difference;
+                        let start_point = start_offset.to_point(&snapshot);
+                        let end_point = end_offset.to_point(&snapshot);
                         let text = if range == edited_range {
                             Arc::from("")
                         } else {
                             text.clone()
                         };
-                        edits.push((point..point, text));
+                        edits.push((start_point..end_point, text));
                     }
                 }
             }
