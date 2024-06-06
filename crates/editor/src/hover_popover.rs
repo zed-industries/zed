@@ -532,52 +532,6 @@ omg
             cx.background_executor().clone(),
         ));
 
-        // cx.open_window(WindowOptions::default(), |cx| {
-        //     cx.new_view(|cx| {
-        //         let markdown_style = MarkdownStyle {
-        //             code_block: gpui::TextStyleRefinement {
-        //                 font_family: Some("Zed Mono".into()),
-        //                 color: Some(cx.theme().colors().editor_foreground),
-        //                 background_color: Some(cx.theme().colors().editor_background),
-        //                 ..Default::default()
-        //             },
-        //             inline_code: gpui::TextStyleRefinement {
-        //                 font_family: Some("Zed Mono".into()),
-        //                 // @nate: Could we add inline-code specific styles to the theme?
-        //                 color: Some(cx.theme().colors().editor_foreground),
-        //                 background_color: Some(cx.theme().colors().editor_background),
-        //                 ..Default::default()
-        //             },
-        //             rule_color: Color::Muted.color(cx),
-        //             block_quote_border_color: Color::Muted.color(cx),
-        //             block_quote: gpui::TextStyleRefinement {
-        //                 color: Some(Color::Muted.color(cx)),
-        //                 ..Default::default()
-        //             },
-        //             link: gpui::TextStyleRefinement {
-        //                 color: Some(Color::Accent.color(cx)),
-        //                 underline: Some(gpui::UnderlineStyle {
-        //                     thickness: px(1.),
-        //                     color: Some(Color::Accent.color(cx)),
-        //                     wavy: false,
-        //                 }),
-        //                 ..Default::default()
-        //             },
-        //             syntax: cx.theme().syntax().clone(),
-        //             selection_background_color: {
-        //                 let mut selection = cx.theme().players().local().selection;
-        //                 selection.fade_out(0.7);
-        //                 selection
-        //             },
-        //         };
-        //         let markdown = cx.new_view(|cx| {
-        //             Markdown::new(text.into(), markdown_style, Some(language_registry), cx)
-        //         });
-
-        //         HelloWorld { markdown }
-        //     })
-        // });
-
         let markdown_style = MarkdownStyle {
             code_block: gpui::TextStyleRefinement {
                 font_family: Some("Zed Mono".into()),
@@ -585,46 +539,42 @@ omg
                 background_color: Some(cx.theme().colors().editor_background),
                 ..Default::default()
             },
-            inline_code: gpui::TextStyleRefinement {
-                font_family: Some("Zed Mono".into()),
-                // @nate: Could we add inline-code specific styles to the theme?
-                color: Some(cx.theme().colors().editor_foreground),
-                background_color: Some(cx.theme().colors().editor_background),
-                ..Default::default()
-            },
-            rule_color: Color::Muted.color(cx),
-            block_quote_border_color: Color::Muted.color(cx),
-            block_quote: gpui::TextStyleRefinement {
-                color: Some(Color::Muted.color(cx)),
-                ..Default::default()
-            },
+            inline_code: Default::default(),
+            block_quote: Default::default(),
             link: gpui::TextStyleRefinement {
                 color: Some(Color::Accent.color(cx)),
-                underline: Some(gpui::UnderlineStyle {
-                    thickness: px(1.),
-                    color: Some(Color::Accent.color(cx)),
-                    wavy: false,
-                }),
                 ..Default::default()
             },
+            rule_color: Default::default(),
+            block_quote_border_color: Default::default(),
             syntax: cx.theme().syntax().clone(),
-            selection_background_color: {
-                let mut selection = cx.theme().players().local().selection;
-                selection.fade_out(0.7);
-                selection
-            },
+            selection_background_color: cx.theme().players().local().selection,
         };
-        let language_registry = Arc::new(LanguageRegistry::new(
-            Task::ready(()),
-            cx.background_executor().clone(),
-        ));
-        let markdown_element = cx.new_view(|cx| {
-            // let view = cx.new_view(|v| v);
-
-            Markdown::new(text.into(), markdown_style, Some(language_registry), cx)
+        let markdown = cx.new_view(|cx| {
+            Markdown::new(
+                text.into(),
+                markdown_style.clone(),
+                Some(language_registry.clone()),
+                cx,
+            )
         });
         // let mut markdown_element =
         //     MarkdownExample::new(text, markdown_style, language_registry, cx);
+        //
+        cx.open_window(WindowOptions::default(), |cx| {
+            cx.new_view(|cx| {
+                let markdown = cx.new_view(|cx| {
+                    Markdown::new(
+                        text.into(),
+                        markdown_style.clone(),
+                        Some(language_registry),
+                        cx,
+                    )
+                });
+                // markdown
+                HelloWorld { markdown }
+            })
+        });
         div()
             .id("info_popover")
             .elevation_2(cx)
@@ -644,7 +594,7 @@ omg
             // .on_click(cx.listener(move |_, _, cx| {
             //         // cx.write_to_clipboard(ClipboardItem::new(popover_text.clone()));
             //     }))
-            .child(markdown_element.clone())
+            .child(markdown.clone())
             .child("HELLO")
             .into_any_element()
         // markdown_element.clone().into_any_element()
