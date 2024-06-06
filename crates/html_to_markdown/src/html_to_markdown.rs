@@ -2,7 +2,10 @@
 
 #![deny(missing_docs)]
 
+mod html_element;
+mod markdown;
 mod markdown_writer;
+mod structure;
 
 use std::io::Read;
 
@@ -13,10 +16,60 @@ use html5ever::tendril::TendrilSink;
 use html5ever::tree_builder::TreeBuilderOpts;
 use markup5ever_rcdom::RcDom;
 
-use crate::markdown_writer::MarkdownWriter;
+use crate::markdown::{
+    HeadingHandler, ListHandler, ParagraphHandler, StyledTextHandler, TableHandler,
+};
+use crate::markdown_writer::{HandleTag, MarkdownWriter};
+
+/// Converts the provided HTML to Markdown.
+pub fn convert_html_to_markdown(html: impl Read) -> Result<String> {
+    let dom = parse_html(html).context("failed to parse HTML")?;
+
+    let handlers: Vec<Box<dyn HandleTag>> = vec![
+        Box::new(ParagraphHandler),
+        Box::new(HeadingHandler),
+        Box::new(ListHandler),
+        Box::new(TableHandler::new()),
+        Box::new(StyledTextHandler),
+        Box::new(structure::rustdoc::RustdocChromeRemover),
+        Box::new(structure::rustdoc::RustdocHeadingHandler),
+        Box::new(structure::rustdoc::RustdocCodeHandler),
+        Box::new(structure::rustdoc::RustdocItemHandler),
+    ];
+
+    let markdown_writer = MarkdownWriter::new();
+    let markdown = markdown_writer
+        .run(&dom.document, handlers)
+        .context("failed to convert HTML to Markdown")?;
+
+    Ok(markdown)
+}
 
 /// Converts the provided rustdoc HTML to Markdown.
-pub fn convert_rustdoc_to_markdown(mut html: impl Read) -> Result<String> {
+pub fn convert_rustdoc_to_markdown(html: impl Read) -> Result<String> {
+    let dom = parse_html(html).context("failed to parse rustdoc HTML")?;
+
+    let handlers: Vec<Box<dyn HandleTag>> = vec![
+        Box::new(ParagraphHandler),
+        Box::new(HeadingHandler),
+        Box::new(ListHandler),
+        Box::new(TableHandler::new()),
+        Box::new(StyledTextHandler),
+        Box::new(structure::rustdoc::RustdocChromeRemover),
+        Box::new(structure::rustdoc::RustdocHeadingHandler),
+        Box::new(structure::rustdoc::RustdocCodeHandler),
+        Box::new(structure::rustdoc::RustdocItemHandler),
+    ];
+
+    let markdown_writer = MarkdownWriter::new();
+    let markdown = markdown_writer
+        .run(&dom.document, handlers)
+        .context("failed to convert rustdoc HTML to Markdown")?;
+
+    Ok(markdown)
+}
+
+fn parse_html(mut html: impl Read) -> Result<RcDom> {
     let parse_options = ParseOpts {
         tree_builder: TreeBuilderOpts {
             drop_doctype: true,
@@ -27,14 +80,9 @@ pub fn convert_rustdoc_to_markdown(mut html: impl Read) -> Result<String> {
     let dom = parse_document(RcDom::default(), parse_options)
         .from_utf8()
         .read_from(&mut html)
-        .context("failed to parse rustdoc HTML")?;
+        .context("failed to parse HTML document")?;
 
-    let markdown_writer = MarkdownWriter::new();
-    let markdown = markdown_writer
-        .run(&dom.document)
-        .context("failed to convert rustdoc to HTML")?;
-
-    Ok(markdown)
+    Ok(dom)
 }
 
 #[cfg(test)]
@@ -56,6 +104,91 @@ mod tests {
         "##};
         let expected = indoc! {"
             # Crate serde
+        "}
+        .trim();
+
+        assert_eq!(
+            convert_rustdoc_to_markdown(html.as_bytes()).unwrap(),
+            expected
+        )
+    }
+
+    #[test]
+    fn test_single_paragraph() {
+        let html = indoc! {r#"
+            <p>In particular, the last point is what sets <code>axum</code> apart from other frameworks.
+            <code>axum</code> doesn’t have its own middleware system but instead uses
+            <a href="https://docs.rs/tower-service/0.3.2/x86_64-unknown-linux-gnu/tower_service/trait.Service.html" title="trait tower_service::Service"><code>tower::Service</code></a>. This means <code>axum</code> gets timeouts, tracing, compression,
+            authorization, and more, for free. It also enables you to share middleware with
+            applications written using <a href="http://crates.io/crates/hyper"><code>hyper</code></a> or <a href="http://crates.io/crates/tonic"><code>tonic</code></a>.</p>
+        "#};
+        let expected = indoc! {"
+            In particular, the last point is what sets `axum` apart from other frameworks. `axum` doesn’t have its own middleware system but instead uses `tower::Service`. This means `axum` gets timeouts, tracing, compression, authorization, and more, for free. It also enables you to share middleware with applications written using `hyper` or `tonic`.
+        "}
+        .trim();
+
+        assert_eq!(
+            convert_rustdoc_to_markdown(html.as_bytes()).unwrap(),
+            expected
+        )
+    }
+
+    #[test]
+    fn test_multiple_paragraphs() {
+        let html = indoc! {r##"
+            <h2 id="serde"><a class="doc-anchor" href="#serde">§</a>Serde</h2>
+            <p>Serde is a framework for <em><strong>ser</strong></em>ializing and <em><strong>de</strong></em>serializing Rust data
+            structures efficiently and generically.</p>
+            <p>The Serde ecosystem consists of data structures that know how to serialize
+            and deserialize themselves along with data formats that know how to
+            serialize and deserialize other things. Serde provides the layer by which
+            these two groups interact with each other, allowing any supported data
+            structure to be serialized and deserialized using any supported data format.</p>
+            <p>See the Serde website <a href="https://serde.rs/">https://serde.rs/</a> for additional documentation and
+            usage examples.</p>
+            <h3 id="design"><a class="doc-anchor" href="#design">§</a>Design</h3>
+            <p>Where many other languages rely on runtime reflection for serializing data,
+            Serde is instead built on Rust’s powerful trait system. A data structure
+            that knows how to serialize and deserialize itself is one that implements
+            Serde’s <code>Serialize</code> and <code>Deserialize</code> traits (or uses Serde’s derive
+            attribute to automatically generate implementations at compile time). This
+            avoids any overhead of reflection or runtime type information. In fact in
+            many situations the interaction between data structure and data format can
+            be completely optimized away by the Rust compiler, leaving Serde
+            serialization to perform the same speed as a handwritten serializer for the
+            specific selection of data structure and data format.</p>
+        "##};
+        let expected = indoc! {"
+            ## Serde
+
+            Serde is a framework for _**ser**_ializing and _**de**_serializing Rust data structures efficiently and generically.
+
+            The Serde ecosystem consists of data structures that know how to serialize and deserialize themselves along with data formats that know how to serialize and deserialize other things. Serde provides the layer by which these two groups interact with each other, allowing any supported data structure to be serialized and deserialized using any supported data format.
+
+            See the Serde website https://serde.rs/ for additional documentation and usage examples.
+
+            ### Design
+
+            Where many other languages rely on runtime reflection for serializing data, Serde is instead built on Rust’s powerful trait system. A data structure that knows how to serialize and deserialize itself is one that implements Serde’s `Serialize` and `Deserialize` traits (or uses Serde’s derive attribute to automatically generate implementations at compile time). This avoids any overhead of reflection or runtime type information. In fact in many situations the interaction between data structure and data format can be completely optimized away by the Rust compiler, leaving Serde serialization to perform the same speed as a handwritten serializer for the specific selection of data structure and data format.
+        "}
+        .trim();
+
+        assert_eq!(
+            convert_rustdoc_to_markdown(html.as_bytes()).unwrap(),
+            expected
+        )
+    }
+
+    #[test]
+    fn test_styled_text() {
+        let html = indoc! {r#"
+            <p>This text is <strong>bolded</strong>.</p>
+            <p>This text is <em>italicized</em>.</p>
+        "#};
+        let expected = indoc! {"
+            This text is **bolded**.
+
+            This text is _italicized_.
         "}
         .trim();
 
@@ -201,8 +334,9 @@ mod tests {
         let expected = indoc! {r#"
             ## Feature flags
 
-            axum uses a set of feature flags to reduce the amount of compiled and
-            optional dependencies.The following optional features are available:
+            axum uses a set of feature flags to reduce the amount of compiled and optional dependencies.
+
+            The following optional features are available:
 
             | Name | Description | Default? |
             | --- | --- | --- |

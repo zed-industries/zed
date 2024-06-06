@@ -488,7 +488,7 @@ pub struct Window {
     pub(crate) handle: AnyWindowHandle,
     pub(crate) removed: bool,
     pub(crate) platform_window: Box<dyn PlatformWindow>,
-    display_id: DisplayId,
+    display_id: Option<DisplayId>,
     sprite_atlas: Arc<dyn PlatformAtlas>,
     text_system: Arc<WindowTextSystem>,
     rem_size: Pixels,
@@ -634,7 +634,7 @@ impl Window {
                 window_background,
             },
         );
-        let display_id = platform_window.display().id();
+        let display_id = platform_window.display().map(|display| display.id());
         let sprite_atlas = platform_window.sprite_atlas();
         let mouse_position = platform_window.mouse_position();
         let modifiers = platform_window.modifiers();
@@ -1039,6 +1039,37 @@ impl<'a> WindowContext<'a> {
     /// Subscribe to events emitted by a model or view.
     /// The entity to which you're subscribing must implement the [`EventEmitter`] trait.
     /// The callback will be invoked a handle to the emitting entity (either a [`View`] or [`Model`]), the event, and a window context for the current window.
+    pub fn observe<E, T>(
+        &mut self,
+        entity: &E,
+        mut on_notify: impl FnMut(E, &mut WindowContext<'_>) + 'static,
+    ) -> Subscription
+    where
+        E: Entity<T>,
+    {
+        let entity_id = entity.entity_id();
+        let entity = entity.downgrade();
+        let window_handle = self.window.handle;
+        self.app.new_observer(
+            entity_id,
+            Box::new(move |cx| {
+                window_handle
+                    .update(cx, |_, cx| {
+                        if let Some(handle) = E::upgrade_from(&entity) {
+                            on_notify(handle, cx);
+                            true
+                        } else {
+                            false
+                        }
+                    })
+                    .unwrap_or(false)
+            }),
+        )
+    }
+
+    /// Subscribe to events emitted by a model or view.
+    /// The entity to which you're subscribing must implement the [`EventEmitter`] trait.
+    /// The callback will be invoked a handle to the emitting entity (either a [`View`] or [`Model`]), the event, and a window context for the current window.
     pub fn subscribe<Emitter, E, Evt>(
         &mut self,
         entity: &E,
@@ -1099,7 +1130,12 @@ impl<'a> WindowContext<'a> {
     fn bounds_changed(&mut self) {
         self.window.scale_factor = self.window.platform_window.scale_factor();
         self.window.viewport_size = self.window.platform_window.content_size();
-        self.window.display_id = self.window.platform_window.display().id();
+        self.window.display_id = self
+            .window
+            .platform_window
+            .display()
+            .map(|display| display.id());
+
         self.refresh();
 
         self.window
@@ -1191,7 +1227,7 @@ impl<'a> WindowContext<'a> {
         self.platform
             .displays()
             .into_iter()
-            .find(|display| display.id() == self.window.display_id)
+            .find(|display| Some(display.id()) == self.window.display_id)
     }
 
     /// Show the platform character palette.
