@@ -44,7 +44,7 @@ use language::{
     markdown, point_to_lsp, prepare_completion_documentation,
     proto::{
         deserialize_anchor, deserialize_line_ending, deserialize_version, serialize_anchor,
-        serialize_version, split_operations,
+        serialize_line_ending, serialize_version, split_operations,
     },
     range_from_lsp, Bias, Buffer, BufferSnapshot, CachedLspAdapter, Capability, CodeLabel,
     ContextProvider, Diagnostic, DiagnosticEntry, DiagnosticSet, Diff, Documentation,
@@ -2913,6 +2913,23 @@ impl Project {
                     operation: language::proto::serialize_operation(operation),
                 })
                 .ok();
+            }
+
+            BufferEvent::Reloaded => {
+                if self.is_local() {
+                    if let Some(project_id) = self.remote_id() {
+                        let buffer = buffer.read(cx);
+                        self.client
+                            .send(proto::BufferReloaded {
+                                project_id,
+                                buffer_id: buffer.remote_id().to_proto(),
+                                version: serialize_version(&buffer.version()),
+                                mtime: buffer.saved_mtime().map(|t| t.into()),
+                                line_ending: serialize_line_ending(buffer.line_ending()) as i32,
+                            })
+                            .log_err();
+                    }
+                }
             }
 
             BufferEvent::Edited { .. } => {

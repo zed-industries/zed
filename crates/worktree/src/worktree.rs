@@ -32,10 +32,6 @@ use gpui::{
 };
 use ignore::IgnoreStack;
 use itertools::Itertools;
-use language::{
-    proto::{serialize_line_ending, serialize_version},
-    LineEnding, Rope,
-};
 use parking_lot::Mutex;
 use postage::{
     barrier,
@@ -62,7 +58,7 @@ use std::{
     time::{Duration, Instant, SystemTime},
 };
 use sum_tree::{Bias, Edit, SeekTarget, SumTree, TreeMap, TreeSet};
-use text::BufferId;
+use text::{LineEnding, Rope};
 use util::{
     paths::{PathMatcher, HOME},
     ResultExt,
@@ -351,7 +347,6 @@ enum ScanState {
 }
 
 struct ShareState {
-    project_id: u64,
     snapshots_tx:
         mpsc::UnboundedSender<(LocalSnapshot, UpdatedEntriesSet, UpdatedGitRepositoriesSet)>,
     resume_updates: watch::Sender<()>,
@@ -1399,7 +1394,6 @@ impl LocalWorktree {
         });
 
         self.share = Some(ShareState {
-            project_id,
             snapshots_tx,
             resume_updates: resume_updates_tx,
             _maintain_remote_snapshot,
@@ -2663,29 +2657,6 @@ impl language::LocalFile for File {
         let fs = worktree.fs.clone();
         cx.background_executor()
             .spawn(async move { fs.load(&abs_path?).await })
-    }
-
-    fn buffer_reloaded(
-        &self,
-        buffer_id: BufferId,
-        version: &clock::Global,
-        line_ending: LineEnding,
-        mtime: Option<SystemTime>,
-        cx: &mut AppContext,
-    ) {
-        let worktree = self.worktree.read(cx).as_local().unwrap();
-        if let Some(project_id) = worktree.share.as_ref().map(|share| share.project_id) {
-            worktree
-                .client
-                .send(proto::BufferReloaded {
-                    project_id,
-                    buffer_id: buffer_id.into(),
-                    version: serialize_version(version),
-                    mtime: mtime.map(|time| time.into()),
-                    line_ending: serialize_line_ending(line_ending) as i32,
-                })
-                .log_err();
-        }
     }
 }
 
