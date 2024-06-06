@@ -3015,12 +3015,7 @@ impl Editor {
                 s.select(new_selections)
             });
 
-            if brace_inserted {
-                // If we inserted a brace while composing text (i.e. typing `"` on a
-                // Brazilian keyboard), exit the composing state because most likely
-                // the user wanted to surround the selection.
-                this.unmark_text(cx);
-            } else if EditorSettings::get_global(cx).use_on_type_format {
+            if !brace_inserted && EditorSettings::get_global(cx).use_on_type_format {
                 if let Some(on_type_format_task) =
                     this.trigger_on_type_formatting(text.to_string(), cx)
                 {
