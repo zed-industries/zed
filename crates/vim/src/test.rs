@@ -179,7 +179,7 @@ async fn test_indent_outdent(cx: &mut gpui::TestAppContext) {
 
     // works in visual mode
     cx.simulate_keystrokes("shift-v down >");
-    cx.assert_editor_state("aa\n    bb\n    cˇc");
+    cx.assert_editor_state("aa\n    bˇb\n    cc");
 
     // works as operator
     cx.set_state("aa\nbˇb\ncc\n", Mode::Normal);
@@ -202,11 +202,16 @@ async fn test_indent_outdent(cx: &mut gpui::TestAppContext) {
     cx.simulate_keystrokes("> 2 k");
     cx.assert_editor_state("    aa\n    bb\n    ˇcc\n");
 
+    // works with repeat
     cx.set_state("a\nb\nccˇc\n", Mode::Normal);
     cx.simulate_keystrokes("> 2 k");
     cx.assert_editor_state("    a\n    b\n    ccˇc\n");
     cx.simulate_keystrokes(".");
     cx.assert_editor_state("        a\n        b\n        ccˇc\n");
+    cx.simulate_keystrokes("v k <");
+    cx.assert_editor_state("        a\n    bˇ\n    ccc\n");
+    cx.simulate_keystrokes(".");
+    cx.assert_editor_state("        a\nbˇ\nccc\n");
 }
 
 #[gpui::test]
