@@ -6,10 +6,10 @@ use crate::{
         default_command::DefaultSlashCommand, SlashCommandCompletionProvider, SlashCommandLine,
         SlashCommandRegistry,
     },
-    ApplyEdit, Assist, CompletionProvider, ConfirmCommand, CycleMessageRole, InlineAssist,
-    InlineAssistant, LanguageModelRequest, LanguageModelRequestMessage, MessageId, MessageMetadata,
-    MessageStatus, ModelSelector, QuoteSelection, ResetKey, Role, SavedConversation,
-    SavedConversationMetadata, SavedMessage, Split, ToggleFocus, ToggleHistory,
+    ApplyEdit, Assist, CompletionProvider, ConfirmCommand, ConversationStore, CycleMessageRole,
+    InlineAssist, InlineAssistant, LanguageModelRequest, LanguageModelRequestMessage, MessageId,
+    MessageMetadata, MessageStatus, ModelSelector, QuoteSelection, ResetKey, Role,
+    SavedConversation, SavedConversationMetadata, SavedMessage, Split, ToggleFocus, ToggleHistory,
     ToggleModelSelector,
 };
 use anyhow::{anyhow, Result};
@@ -29,17 +29,18 @@ use fs::Fs;
 use futures::future::Shared;
 use futures::{FutureExt, StreamExt};
 use gpui::{
-    div, point, rems, uniform_list, Action, AnyElement, AnyView, AppContext, AsyncAppContext,
-    AsyncWindowContext, ClipboardItem, Context, Empty, EventEmitter, FocusHandle, FocusableView,
-    InteractiveElement, IntoElement, Model, ModelContext, ParentElement, Pixels, Render,
-    SharedString, StatefulInteractiveElement, Styled, Subscription, Task, UniformListScrollHandle,
-    UpdateGlobal, View, ViewContext, VisualContext, WeakView, WindowContext,
+    div, point, rems, Action, AnyElement, AnyView, AppContext, AsyncAppContext, AsyncWindowContext,
+    ClipboardItem, Context, Empty, EventEmitter, FocusHandle, FocusableView, InteractiveElement,
+    IntoElement, Model, ModelContext, ParentElement, Pixels, Render, SharedString,
+    StatefulInteractiveElement, Styled, Subscription, Task, UpdateGlobal, View, ViewContext,
+    VisualContext, WeakView, WindowContext,
 };
 use language::{
     language_settings::SoftWrap, AnchorRangeExt, AutoindentMode, Buffer, LanguageRegistry,
     LspAdapterDelegate, OffsetRangeExt as _, Point, ToOffset as _,
 };
 use multi_buffer::MultiBufferRow;
+use picker::{Picker, PickerDelegate};
 use project::{Project, ProjectLspAdapterDelegate, ProjectTransaction};
 use search::{buffer_search::DivRegistrar, BufferSearchBar};
 use settings::Settings;
@@ -54,8 +55,8 @@ use std::{
 };
 use telemetry_events::AssistantKind;
 use ui::{
-    popover_menu, prelude::*, ButtonLike, ContextMenu, ElevationIndex, KeyBinding,
-    PopoverMenuHandle, Tab, TabBar, Tooltip,
+    popover_menu, prelude::*, ButtonLike, ContextMenu, ElevationIndex, KeyBinding, ListItem,
+    ListItemSpacing, PopoverMenuHandle, Tab, TabBar, Tooltip,
 };
 use util::{paths::CONVERSATIONS_DIR, post_inc, ResultExt, TryFutureExt};
 use uuid::Uuid;
@@ -93,8 +94,8 @@ pub struct AssistantPanel {
     height: Option<Pixels>,
     active_conversation_editor: Option<ActiveConversationEditor>,
     show_saved_conversations: bool,
-    saved_conversations: Vec<SavedConversationMetadata>,
-    saved_conversations_scroll_handle: UniformListScrollHandle,
+    conversation_store: Model<ConversationStore>,
+    saved_conversation_picker: View<Picker<SavedConversationPickerDelegate>>,
     zoomed: bool,
     focus_handle: FocusHandle,
     toolbar: View<Toolbar>,
@@ -103,9 +104,100 @@ pub struct AssistantPanel {
     fs: Arc<dyn Fs>,
     telemetry: Arc<Telemetry>,
     _subscriptions: Vec<Subscription>,
-    _watch_saved_conversations: Task<Result<()>>,
     authentication_prompt: Option<AnyView>,
     model_menu_handle: PopoverMenuHandle<ContextMenu>,
+}
+
+struct SavedConversationPickerDelegate {
+    store: Model<ConversationStore>,
+    matches: Vec<SavedConversationMetadata>,
+    selected_index: usize,
+}
+
+enum SavedConversationPickerEvent {
+    Confirmed { path: PathBuf },
+}
+
+impl EventEmitter<SavedConversationPickerEvent> for Picker<SavedConversationPickerDelegate> {}
+
+impl SavedConversationPickerDelegate {
+    fn new(store: Model<ConversationStore>) -> Self {
+        Self {
+            store,
+            matches: Vec::new(),
+            selected_index: 0,
+        }
+    }
+}
+
+impl PickerDelegate for SavedConversationPickerDelegate {
+    type ListItem = ListItem;
+
+    fn match_count(&self) -> usize {
+        self.matches.len()
+    }
+
+    fn selected_index(&self) -> usize {
+        self.selected_index
+    }
+
+    fn set_selected_index(&mut self, ix: usize, _cx: &mut ViewContext<Picker<Self>>) {
+        self.selected_index = ix;
+    }
+
+    fn placeholder_text(&self, _cx: &mut WindowContext) -> Arc<str> {
+        "Search...".into()
+    }
+
+    fn update_matches(&mut self, query: String, cx: &mut ViewContext<Picker<Self>>) -> Task<()> {
+        let search = self.store.read(cx).search(query, cx);
+        cx.spawn(|this, mut cx| async move {
+            let matches = search.await;
+            this.update(&mut cx, |this, cx| {
+                this.delegate.matches = matches;
+                this.delegate.selected_index = 0;
+                cx.notify();
+            })
+            .ok();
+        })
+    }
+
+    fn confirm(&mut self, _secondary: bool, cx: &mut ViewContext<Picker<Self>>) {
+        if let Some(metadata) = self.matches.get(self.selected_index) {
+            cx.emit(SavedConversationPickerEvent::Confirmed {
+                path: metadata.path.clone(),
+            })
+        }
+    }
+
+    fn dismissed(&mut self, _cx: &mut ViewContext<Picker<Self>>) {}
+
+    fn render_match(
+        &self,
+        ix: usize,
+        selected: bool,
+        _cx: &mut ViewContext<Picker<Self>>,
+    ) -> Option<Self::ListItem> {
+        let conversation = self.matches.get(ix)?;
+        Some(
+            ListItem::new(ix)
+                .inset(true)
+                .spacing(ListItemSpacing::Sparse)
+                .selected(selected)
+                .child(
+                    div()
+                        .flex()
+                        .w_full()
+                        .gap_2()
+                        .child(
+                            Label::new(conversation.mtime.format("%F %I:%M%p").to_string())
+                                .color(Color::Muted)
+                                .size(LabelSize::Small),
+                        )
+                        .child(Label::new(conversation.title.clone()).size(LabelSize::Small)),
+                ),
+        )
+    }
 }
 
 struct ActiveConversationEditor {
@@ -120,40 +212,28 @@ impl AssistantPanel {
     ) -> Task<Result<View<Self>>> {
         cx.spawn(|mut cx| async move {
             let fs = workspace.update(&mut cx, |workspace, _| workspace.app_state().fs.clone())?;
-            let saved_conversations = SavedConversationMetadata::list(fs.clone())
-                .await
-                .log_err()
-                .unwrap_or_default();
+            let conversation_store = cx
+                .update(|cx| ConversationStore::new(fs.clone(), cx))?
+                .await?;
 
             // TODO: deserialize state.
             let workspace_handle = workspace.clone();
             workspace.update(&mut cx, |workspace, cx| {
                 cx.new_view::<Self>(|cx| {
-                    const CONVERSATION_WATCH_DURATION: Duration = Duration::from_millis(100);
-                    let _watch_saved_conversations = cx.spawn(move |this, mut cx| async move {
-                        let (mut events, _) = fs
-                            .watch(&CONVERSATIONS_DIR, CONVERSATION_WATCH_DURATION)
-                            .await;
-                        while events.next().await.is_some() {
-                            let saved_conversations = SavedConversationMetadata::list(fs.clone())
-                                .await
-                                .log_err()
-                                .unwrap_or_default();
-                            this.update(&mut cx, |this, cx| {
-                                this.saved_conversations = saved_conversations;
-                                cx.notify();
-                            })
-                            .ok();
-                        }
-
-                        anyhow::Ok(())
-                    });
-
                     let toolbar = cx.new_view(|cx| {
                         let mut toolbar = Toolbar::new();
                         toolbar.set_can_navigate(false, cx);
                         toolbar.add_item(cx.new_view(BufferSearchBar::new), cx);
                         toolbar
+                    });
+
+                    let saved_conversation_picker = cx.new_view(|cx| {
+                        Picker::uniform_list(
+                            SavedConversationPickerDelegate::new(conversation_store.clone()),
+                            cx,
+                        )
+                        .modal(false)
+                        .max_height(None)
                     });
 
                     let focus_handle = cx.focus_handle();
@@ -169,6 +249,14 @@ impl AssistantPanel {
                                     CompletionProvider::global(cx).settings_version();
                             }
                         }),
+                        cx.observe(&conversation_store, |this, _, cx| {
+                            this.saved_conversation_picker
+                                .update(cx, |picker, cx| picker.refresh(cx));
+                        }),
+                        cx.subscribe(
+                            &saved_conversation_picker,
+                            Self::handle_saved_conversation_picker_event,
+                        ),
                     ];
 
                     cx.observe_global::<FileIcons>(|_, cx| {
@@ -180,8 +268,8 @@ impl AssistantPanel {
                         workspace: workspace_handle,
                         active_conversation_editor: None,
                         show_saved_conversations: false,
-                        saved_conversations,
-                        saved_conversations_scroll_handle: Default::default(),
+                        saved_conversation_picker,
+                        conversation_store,
                         zoomed: false,
                         focus_handle,
                         toolbar,
@@ -192,7 +280,6 @@ impl AssistantPanel {
                         width: None,
                         height: None,
                         _subscriptions: subscriptions,
-                        _watch_saved_conversations,
                         authentication_prompt: None,
                         model_menu_handle: PopoverMenuHandle::default(),
                     }
@@ -206,8 +293,10 @@ impl AssistantPanel {
             .update(cx, |toolbar, cx| toolbar.focus_changed(true, cx));
         cx.notify();
         if self.focus_handle.is_focused(cx) {
-            if let Some(editor) = self.active_conversation_editor() {
-                cx.focus_view(editor);
+            if self.show_saved_conversations {
+                cx.focus_view(&self.saved_conversation_picker);
+            } else if let Some(conversation) = self.active_conversation_editor() {
+                cx.focus_view(conversation);
             }
         }
     }
@@ -248,6 +337,20 @@ impl AssistantPanel {
                     provider.authentication_prompt(cx)
                 }));
             cx.notify();
+        }
+    }
+
+    fn handle_saved_conversation_picker_event(
+        &mut self,
+        _picker: View<Picker<SavedConversationPickerDelegate>>,
+        event: &SavedConversationPickerEvent,
+        cx: &mut ViewContext<Self>,
+    ) {
+        match event {
+            SavedConversationPickerEvent::Confirmed { path } => {
+                self.open_conversation(path.clone(), cx)
+                    .detach_and_log_err(cx);
+            }
         }
     }
 
@@ -409,13 +512,25 @@ impl AssistantPanel {
     }
 
     fn toggle_history(&mut self, _: &ToggleHistory, cx: &mut ViewContext<Self>) {
-        self.show_saved_conversations = !self.show_saved_conversations;
-        cx.notify();
+        if self.show_saved_conversations {
+            self.hide_history(cx);
+        } else {
+            self.show_history(cx);
+        }
     }
 
     fn show_history(&mut self, cx: &mut ViewContext<Self>) {
+        cx.focus_view(&self.saved_conversation_picker);
         if !self.show_saved_conversations {
             self.show_saved_conversations = true;
+            cx.notify();
+        }
+    }
+
+    fn hide_history(&mut self, cx: &mut ViewContext<Self>) {
+        if let Some(editor) = self.active_conversation_editor() {
+            cx.focus_view(&editor);
+            self.show_saved_conversations = false;
             cx.notify();
         }
     }
@@ -613,37 +728,10 @@ impl AssistantPanel {
             })
     }
 
-    fn render_saved_conversation(
-        &mut self,
-        index: usize,
-        cx: &mut ViewContext<Self>,
-    ) -> impl IntoElement {
-        let conversation = &self.saved_conversations[index];
-        let path = conversation.path.clone();
-
-        ButtonLike::new(index)
-            .on_click(cx.listener(move |this, _, cx| {
-                this.open_conversation(path.clone(), cx)
-                    .detach_and_log_err(cx)
-            }))
-            .full_width()
-            .child(
-                div()
-                    .flex()
-                    .w_full()
-                    .gap_2()
-                    .child(
-                        Label::new(conversation.mtime.format("%F %I:%M%p").to_string())
-                            .color(Color::Muted)
-                            .size(LabelSize::Small),
-                    )
-                    .child(Label::new(conversation.title.clone()).size(LabelSize::Small)),
-            )
-    }
-
     fn open_conversation(&mut self, path: PathBuf, cx: &mut ViewContext<Self>) -> Task<Result<()>> {
         cx.focus(&self.focus_handle);
 
+        let saved_conversation = self.conversation_store.read(cx).load(path.clone(), cx);
         let fs = self.fs.clone();
         let workspace = self.workspace.clone();
         let slash_commands = self.slash_commands.clone();
@@ -658,7 +746,7 @@ impl AssistantPanel {
             .flatten();
 
         cx.spawn(|this, mut cx| async move {
-            let saved_conversation = SavedConversation::load(&path, fs.as_ref()).await?;
+            let saved_conversation = saved_conversation.await?;
             let conversation = Conversation::deserialize(
                 saved_conversation,
                 path.clone(),
@@ -705,7 +793,13 @@ impl AssistantPanel {
                     .h(rems(Tab::CONTAINER_HEIGHT_IN_REMS))
                     .flex_1()
                     .px_2()
-                    .child(Label::new(editor.read(cx).title(cx)).into_element())
+                    .child(
+                        div()
+                            .id("title")
+                            .cursor_pointer()
+                            .on_click(cx.listener(|this, _, cx| this.hide_history(cx)))
+                            .child(Label::new(editor.read(cx).title(cx))),
+                    )
             }))
             .end_child(
                 h_flex()
@@ -780,22 +874,10 @@ impl AssistantPanel {
             })
             .child(contents.flex_1().child(
                 if self.show_saved_conversations || self.active_conversation_editor().is_none() {
-                    let view = cx.view().clone();
-                    let scroll_handle = self.saved_conversations_scroll_handle.clone();
-                    let conversation_count = self.saved_conversations.len();
-                    uniform_list(
-                        view,
-                        "saved_conversations",
-                        conversation_count,
-                        |this, range, cx| {
-                            range
-                                .map(|ix| this.render_saved_conversation(ix, cx))
-                                .collect()
-                        },
-                    )
-                    .size_full()
-                    .track_scroll(scroll_handle)
-                    .into_any_element()
+                    div()
+                        .size_full()
+                        .child(self.saved_conversation_picker.clone())
+                        .into_any_element()
                 } else if let Some(editor) = self.active_conversation_editor() {
                     let editor = editor.clone();
                     div()
@@ -1809,11 +1891,10 @@ impl Conversation {
 
             let messages = self
                 .messages(cx)
-                .take(2)
                 .map(|message| message.to_request_message(self.buffer.read(cx)))
                 .chain(Some(LanguageModelRequestMessage {
                     role: Role::User,
-                    content: "Summarize the conversation into a short title without punctuation"
+                    content: "Summarize the conversation into a short title without punctuation."
                         .into(),
                 }));
             let request = LanguageModelRequest {
@@ -1830,13 +1911,17 @@ impl Conversation {
 
                     while let Some(message) = messages.next().await {
                         let text = message?;
+                        let mut lines = text.lines();
                         this.update(&mut cx, |this, cx| {
-                            this.summary
-                                .get_or_insert(Default::default())
-                                .text
-                                .push_str(&text);
+                            let summary = this.summary.get_or_insert(Default::default());
+                            summary.text.extend(lines.next());
                             cx.emit(ConversationEvent::SummaryChanged);
                         })?;
+
+                        // Stop if the LLM generated multiple lines.
+                        if lines.next().is_some() {
+                            break;
+                        }
                     }
 
                     this.update(&mut cx, |this, cx| {
