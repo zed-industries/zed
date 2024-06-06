@@ -24,7 +24,7 @@ use gpui::{
     StatefulInteractiveElement, Styled, Subscription, Task, UniformListScrollHandle, View,
     ViewContext, VisualContext, WeakView, WindowContext,
 };
-use language::OutlineItem;
+use language::{OffsetRangeExt, OutlineItem, ToOffset};
 use menu::{SelectFirst, SelectLast, SelectNext, SelectPrev};
 
 use outline_panel_settings::{OutlinePanelDockPosition, OutlinePanelSettings};
@@ -726,7 +726,7 @@ impl OutlinePanel {
         outline_item: Option<OutlineItem<language::Anchor>>,
         cx: &mut ViewContext<'_, Self>,
     ) {
-        let file_entry_to_reveal = match outline_item {
+        let file_entry_to_expand = match &outline_item {
             Some(outline_item) => self
                 .visible_entries
                 .iter()
@@ -735,7 +735,7 @@ impl OutlinePanel {
                     if let OutlinePanelEntry::Outline(visible_excerpt_id, visible_outline_item) =
                         entry
                     {
-                        visible_excerpt_id != &excerpt_id || visible_outline_item != &outline_item
+                        visible_excerpt_id != &excerpt_id || visible_outline_item != outline_item
                     } else {
                         true
                     }
@@ -754,13 +754,18 @@ impl OutlinePanel {
                 _ => false,
             }),
         };
-        if self.selected_entry.as_ref() == file_entry_to_reveal {
+        let Some(entry_to_select) = outline_item
+            .map(|outline| OutlinePanelEntry::Outline(excerpt_id, outline))
+            .or_else(|| file_entry_to_expand.cloned())
+        else {
+            return;
+        };
+
+        if self.selected_entry.as_ref() == Some(&entry_to_select) {
             return;
         }
 
-        let file_entry_to_reveal = file_entry_to_reveal.cloned();
-        if let Some(OutlinePanelEntry::File(_, file_worktree_id, file_entry)) =
-            &file_entry_to_reveal
+        if let Some(OutlinePanelEntry::File(_, file_worktree_id, file_entry)) = file_entry_to_expand
         {
             if let Some(worktree) = project.read(cx).worktree_for_id(*file_worktree_id, cx) {
                 let parent_entry = {
@@ -783,7 +788,7 @@ impl OutlinePanel {
             }
         }
 
-        self.update_visible_entries(&editor, HashSet::default(), file_entry_to_reveal, cx);
+        self.update_visible_entries(&editor, HashSet::default(), Some(entry_to_select), cx);
         self.autoscroll(cx);
         cx.notify();
     }
@@ -1083,7 +1088,8 @@ impl OutlinePanel {
                 .map(|outline| outline.items)
                 .unwrap_or_default();
             outlines.retain(|outline| {
-                ranges_intersect(&outline.range, &excerpt_range.context, buffer_snapshot)
+                range_contains(&excerpt_range.context, outline.range.start, buffer_snapshot)
+                    || range_contains(&excerpt_range.context, outline.range.end, buffer_snapshot)
             });
             if !outlines.is_empty() {
                 outline_entries.insert(excerpt_id, outlines);
@@ -1312,17 +1318,6 @@ fn file_name(path: &Path) -> String {
     }
 }
 
-fn ranges_intersect(
-    range_a: &Range<language::Anchor>,
-    range_b: &Range<language::Anchor>,
-    buffer_snapshot: &language::BufferSnapshot,
-) -> bool {
-    (range_a.start.cmp(&range_b.start, buffer_snapshot).is_ge()
-        && range_a.start.cmp(&range_b.end, buffer_snapshot).is_le())
-        || (range_a.end.cmp(&range_b.start, buffer_snapshot).is_ge()
-            && range_a.end.cmp(&range_b.end, buffer_snapshot).is_le())
-}
-
 fn directory_contains(directory_entry: &Entry, chld_entry: &Entry) -> bool {
     debug_assert!(directory_entry.is_dir());
     let Some(relative_path) = chld_entry.path.strip_prefix(&directory_entry.path).ok() else {
@@ -1459,6 +1454,22 @@ impl Render for OutlinePanel {
                                 .iter()
                                 .enumerate()
                                 .filter_map(|(i, visible_item)| {
+                                    if let OutlinePanelEntry::File(_, _, entry) = &visible_item {
+                                        if entry
+                                            .path
+                                            .to_string_lossy()
+                                            .to_string()
+                                            .ends_with("main.rs")
+                                        {
+                                            dbg!(
+                                                "!!!!!!!!!!!!!!!!!!!!!!!",
+                                                &previous_entry,
+                                                depth,
+                                                &visible_item
+                                            );
+                                        }
+                                    }
+
                                     match (previous_entry, visible_item) {
                                         (None, _) => {}
 
@@ -1491,7 +1502,24 @@ impl Render for OutlinePanel {
                                             cmp::Ordering::Greater => depth -= 1,
                                             cmp::Ordering::Equal => {}
                                         },
-                                        (Some(OutlinePanelEntry::Outline(..)), _) => depth = 0,
+                                        // TODO kb next two are wrong, need to keep previous dir's depth?
+                                        (
+                                            Some(OutlinePanelEntry::Outline(..)),
+                                            OutlinePanelEntry::Directory(..),
+                                        ) => {
+                                            depth -= 1;
+                                        }
+                                        (
+                                            Some(OutlinePanelEntry::Outline(outline_excerpt_id, _)),
+                                            OutlinePanelEntry::File(excerpt_id, ..)
+                                            | OutlinePanelEntry::ExternalFile(excerpt_id, _),
+                                        ) => {
+                                            if excerpt_id == outline_excerpt_id {
+                                                depth -= 1;
+                                            } else {
+                                                depth = 0;
+                                            }
+                                        }
                                         (
                                             Some(OutlinePanelEntry::Directory(..)),
                                             OutlinePanelEntry::Outline(..),
@@ -1623,16 +1651,33 @@ fn location_for_selection(
     let outline_item = multi_buffer_snapshot
         .buffer_for_excerpt(selection.excerpt_id)
         .and_then(|buffer_snapshot| {
-            let outline_items = buffer_snapshot.outline(None)?.items;
-            outline_items.into_iter().find(|outline_item| {
-                ranges_intersect(
-                    &outline_item.range,
-                    &(selection.text_anchor..selection.text_anchor),
-                    buffer_snapshot,
-                )
-            })
+            buffer_snapshot
+                .outline(None)
+                .into_iter()
+                .flat_map(|outline| outline.items)
+                .filter(|outline_item| {
+                    range_contains(&outline_item.range, selection.text_anchor, buffer_snapshot)
+                })
+                .min_by_key(|outline| {
+                    let range = outline.range.to_offset(&buffer_snapshot);
+                    let cursor_offset = selection.text_anchor.to_offset(&buffer_snapshot) as isize;
+                    let distance_to_closest_endpoint = cmp::min(
+                        (range.start as isize - cursor_offset).abs(),
+                        (range.end as isize - cursor_offset).abs(),
+                    );
+                    distance_to_closest_endpoint
+                })
         });
     (selection.excerpt_id, outline_item)
+}
+
+fn range_contains(
+    range: &Range<language::Anchor>,
+    anchor: language::Anchor,
+    buffer_snapshot: &language::BufferSnapshot,
+) -> bool {
+    range.start.cmp(&anchor, buffer_snapshot).is_le()
+        && range.end.cmp(&anchor, buffer_snapshot).is_ge()
 }
 
 // TODO kb tests
