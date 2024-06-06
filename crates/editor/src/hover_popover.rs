@@ -21,6 +21,7 @@ use project::{HoverBlock, HoverBlockKind, InlayHintLabelPart};
 use settings::Settings;
 use smol::stream::StreamExt;
 use std::{
+    num::NonZeroU32,
     ops::{Deref, DerefMut, Range},
     sync::Arc,
     time::Duration,
@@ -109,6 +110,51 @@ pub fn hover_at_inlay(editor: &mut Editor, inlay_hover: InlayHover, cx: &mut Vie
             hide_hover(editor, cx);
         }
 
+        let text = r#"
+this is selectable text
+
+wow so cool
+
+omg
+
+## Heading fr
+"#;
+        let language_registry = Arc::new(LanguageRegistry::new(
+            Task::ready(()),
+            cx.background_executor().clone(),
+        ));
+
+        let markdown_style = MarkdownStyle {
+            code_block: gpui::TextStyleRefinement {
+                font_family: Some("Zed Mono".into()),
+                color: Some(cx.theme().colors().editor_foreground),
+                background_color: Some(cx.theme().colors().editor_background),
+                ..Default::default()
+            },
+            inline_code: Default::default(),
+            block_quote: Default::default(),
+            link: gpui::TextStyleRefinement {
+                color: Some(Color::Accent.color(cx)),
+                ..Default::default()
+            },
+            rule_color: Default::default(),
+            block_quote_border_color: Default::default(),
+            syntax: cx.theme().syntax().clone(),
+            selection_background_color: cx.theme().players().local().selection,
+        };
+        let markdown = cx.new_view(|cx| {
+            Markdown::new(
+                text.into(),
+                markdown_style.clone(),
+                Some(language_registry.clone()),
+                cx,
+            )
+        });
+
+        let hw = cx.new_view(|cx| {
+            HelloWorld::new(text.into(), markdown_style.clone(), language_registry, cx)
+        });
+
         let task = cx.spawn(|this, mut cx| {
             async move {
                 cx.background_executor()
@@ -126,6 +172,7 @@ pub fn hover_at_inlay(editor: &mut Editor, inlay_hover: InlayHover, cx: &mut Vie
                     symbol_range: RangeInEditor::Inlay(inlay_hover.range.clone()),
                     parsed_content,
                     scroll_handle: ScrollHandle::new(),
+                    markdown_element: Some(hw),
                 };
 
                 this.update(&mut cx, |this, cx| {
@@ -233,6 +280,49 @@ fn show_hover(
         }
     }
 
+    let text = r#"
+this is selectable text
+
+wow so cool
+
+omg
+
+## Heading fr
+"#;
+    let language_registry = Arc::new(LanguageRegistry::new(
+        Task::ready(()),
+        cx.background_executor().clone(),
+    ));
+
+    let hw = cx.new_view(|cx| {
+        let markdown_style = MarkdownStyle {
+            code_block: gpui::TextStyleRefinement {
+                font_family: Some("Zed Mono".into()),
+                color: Some(cx.theme().colors().editor_foreground),
+                background_color: Some(cx.theme().colors().editor_background),
+                ..Default::default()
+            },
+            inline_code: Default::default(),
+            block_quote: Default::default(),
+            link: gpui::TextStyleRefinement {
+                color: Some(Color::Accent.color(cx)),
+                ..Default::default()
+            },
+            rule_color: Default::default(),
+            block_quote_border_color: Default::default(),
+            syntax: cx.theme().syntax().clone(),
+            selection_background_color: cx.theme().players().local().selection,
+        };
+        let markdown = cx.new_view(|cx| {
+            Markdown::new(
+                text.into(),
+                markdown_style.clone(),
+                Some(language_registry.clone()),
+                cx,
+            )
+        });
+        HelloWorld::new(text.into(), markdown_style.clone(), language_registry, cx)
+    });
     let task = cx.spawn(|this, mut cx| {
         async move {
             // If we need to delay, delay a set amount initially before making the lsp request
@@ -326,6 +416,7 @@ fn show_hover(
                             symbol_range: RangeInEditor::Text(range),
                             parsed_content,
                             scroll_handle: ScrollHandle::new(),
+                            markdown_element: Some(hw.clone()),
                         },
                     )
                 })
@@ -507,6 +598,7 @@ pub struct InfoPopover {
     pub symbol_range: RangeInEditor,
     pub parsed_content: ParsedMarkdown,
     pub scroll_handle: ScrollHandle,
+    pub markdown_element: Option<View<HelloWorld>>,
 }
 
 impl InfoPopover {
@@ -518,68 +610,12 @@ impl InfoPopover {
         cx: &mut ViewContext<Editor>,
     ) -> AnyElement {
         let popover_text = (&self.parsed_content.text).clone();
-        let text = r#"
-this is selectable text
 
-wow so cool
-
-omg
-
-## Heading fr
-"#;
-        let language_registry = Arc::new(LanguageRegistry::new(
-            Task::ready(()),
-            cx.background_executor().clone(),
-        ));
-
-        let markdown_style = MarkdownStyle {
-            code_block: gpui::TextStyleRefinement {
-                font_family: Some("Zed Mono".into()),
-                color: Some(cx.theme().colors().editor_foreground),
-                background_color: Some(cx.theme().colors().editor_background),
-                ..Default::default()
-            },
-            inline_code: Default::default(),
-            block_quote: Default::default(),
-            link: gpui::TextStyleRefinement {
-                color: Some(Color::Accent.color(cx)),
-                ..Default::default()
-            },
-            rule_color: Default::default(),
-            block_quote_border_color: Default::default(),
-            syntax: cx.theme().syntax().clone(),
-            selection_background_color: cx.theme().players().local().selection,
-        };
-        let markdown = cx.new_view(|cx| {
-            Markdown::new(
-                text.into(),
-                markdown_style.clone(),
-                Some(language_registry.clone()),
-                cx,
-            )
-        });
-        // let mut markdown_element =
-        //     MarkdownExample::new(text, markdown_style, language_registry, cx);
-        //
-        cx.open_window(WindowOptions::default(), |cx| {
-            cx.new_view(|cx| {
-                let markdown = cx.new_view(|cx| {
-                    Markdown::new(
-                        text.into(),
-                        markdown_style.clone(),
-                        Some(language_registry),
-                        cx,
-                    )
-                });
-                // markdown
-                HelloWorld { markdown }
-            })
-        });
-        div()
+        let d = div()
             .id("info_popover")
             .elevation_2(cx)
             .overflow_y_scroll()
-            .overflow_x_scroll()
+            //     .overflow_x_scroll()
             .min_w(max_size.width)
             .min_h(max_size.height)
             //     .track_scroll(&self.scroll_handle)
@@ -590,13 +626,18 @@ omg
             //     // Prevent a mouse down/move on the popover from being propagated to the editor,
             //     // because that would dismiss the popover.
             .on_mouse_move(|_, cx| cx.stop_propagation())
-            .on_mouse_down(MouseButton::Left, |_, cx| cx.stop_propagation())
-            // .on_click(cx.listener(move |_, _, cx| {
-            //         // cx.write_to_clipboard(ClipboardItem::new(popover_text.clone()));
-            //     }))
-            .child(markdown.clone())
-            .child("HELLO")
-            .into_any_element()
+            .on_mouse_down(MouseButton::Left, |_, cx| cx.stop_propagation());
+        // .on_click(cx.listener(move |_, _, cx| {
+        //         // cx.write_to_clipboard(ClipboardItem::new(popover_text.clone()));
+        //     }))
+        if self.markdown_element.is_some() {
+            d.child(self.markdown_element.clone().unwrap())
+                .into_any_element()
+        } else {
+            d.child("nope").into_any_element()
+        }
+        // .child(self.markdown_element.clone().unwrap()))
+        // .child("HELLO")
         // markdown_element.clone().into_any_element()
     }
 
@@ -614,16 +655,29 @@ omg
 struct HelloWorld {
     markdown: View<Markdown>,
 }
+impl HelloWorld {
+    pub fn new(
+        text: String,
+        style: MarkdownStyle,
+        language_registry: Arc<LanguageRegistry>,
+        cx: &mut WindowContext,
+    ) -> Self {
+        let markdown = cx.new_view(|cx| Markdown::new(text, style, Some(language_registry), cx));
+        Self { markdown }
+    }
+}
 
 impl Render for HelloWorld {
     fn render(&mut self, _cx: &mut ViewContext<Self>) -> impl IntoElement {
         div()
-            .flex()
+            // .flex()
             .bg(rgb(0x2e7d32))
+            .min_h(px(100.))
+            .size_full()
             // .size(Length::Definite(Pixels(300.0).into()))
-            .justify_center()
-            .items_center()
-            .shadow_lg()
+            // .justify_center()
+            // .items_center()
+            // .shadow_lg()
             .border_1()
             .border_color(rgb(0x0000ff))
             .text_xl()
