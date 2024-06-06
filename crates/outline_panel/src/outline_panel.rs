@@ -84,7 +84,7 @@ pub struct OutlinePanel {
 
 #[derive(Clone, Debug, Eq, Hash)]
 enum OutlinePanelEntry {
-    ExternalFile(Option<PathBuf>, ExcerptId),
+    ExternalFile(ExcerptId, Option<PathBuf>),
     Directory(WorktreeId, Entry),
     File(ExcerptId, WorktreeId, Entry),
     Outline(ExcerptId, OutlineItem<language::Anchor>),
@@ -93,16 +93,18 @@ enum OutlinePanelEntry {
 impl PartialEq for OutlinePanelEntry {
     fn eq(&self, other: &Self) -> bool {
         match (self, other) {
-            (Self::ExternalFile(path1, id1), Self::ExternalFile(path2, id2)) => {
-                path1 == path2 && id1 == id2
+            (Self::ExternalFile(id_a, path_a), Self::ExternalFile(id_b, path_b)) => {
+                path_a == path_b && id_a == id_b
             }
-            (Self::Directory(id1, entry1), Self::Directory(id2, entry2)) => {
-                id1 == id2 && entry1.id == entry2.id
+            (Self::Directory(id_a, entry_a), Self::Directory(id_b, entry_b)) => {
+                id_a == id_b && entry_a.id == entry_b.id
             }
-            (Self::File(id1, worktree1, entry1), Self::File(id2, worktree2, entry2)) => {
-                id1 == id2 && worktree1 == worktree2 && entry1.id == entry2.id
+            (Self::File(id_a, worktree_a, entry_a), Self::File(id_b, worktree_b, entry_b)) => {
+                id_a == id_b && worktree_a == worktree_b && entry_a.id == entry_b.id
             }
-            (Self::Outline(id1, item1), Self::Outline(id2, item2)) => id1 == id2 && item1 == item2,
+            (Self::Outline(id_a, item_a), Self::Outline(id_b, item_b)) => {
+                id_a == id_b && item_a == item_b
+            }
             _ => false,
         }
     }
@@ -110,7 +112,7 @@ impl PartialEq for OutlinePanelEntry {
 impl OutlinePanelEntry {
     fn abs_path(&self, project: &Model<Project>, cx: &AppContext) -> Option<PathBuf> {
         match self {
-            Self::ExternalFile(path, _) => path.clone(),
+            Self::ExternalFile(_, path) => path.clone(),
             Self::Directory(worktree_id, entry) => project
                 .read(cx)
                 .worktree_for_id(*worktree_id, cx)?
@@ -123,16 +125,16 @@ impl OutlinePanelEntry {
                 .read(cx)
                 .absolutize(&entry.path)
                 .ok(),
-            Self::Outline(_, _) => None,
+            Self::Outline(..) => None,
         }
     }
 
     fn relative_path(&self, _: &AppContext) -> Option<&Path> {
         match self {
-            Self::ExternalFile(path, _) => path.as_deref(),
+            Self::ExternalFile(_, path) => path.as_deref(),
             Self::Directory(_, entry) => Some(entry.path.as_ref()),
             Self::File(_, _, entry) => Some(entry.path.as_ref()),
-            Self::Outline(_, _) => None,
+            Self::Outline(..) => None,
         }
     }
 }
@@ -282,7 +284,6 @@ impl OutlinePanel {
                     workspace_subscription,
                 ],
             };
-            // TODO kb calls weak_workspace inside, needs to be passed
             if let Some(editor) = workspace
                 .active_item(cx)
                 .and_then(|item| item.act_as::<Editor>(cx))
@@ -395,7 +396,7 @@ impl OutlinePanel {
                 .skip_while(|entry| entry != &selection)
                 .skip(1)
                 .find(|entry| match selection {
-                    OutlinePanelEntry::ExternalFile(_, _) => false,
+                    OutlinePanelEntry::ExternalFile(..) => false,
                     OutlinePanelEntry::Directory(worktree_id, child_directory_entry) => {
                         if let OutlinePanelEntry::Directory(
                             directory_worktree_id,
@@ -709,7 +710,7 @@ impl OutlinePanel {
                     abs_path.parent().map(|p| p.to_owned())
                 }
                 OutlinePanelEntry::Directory(..) => Some(abs_path),
-                OutlinePanelEntry::Outline(_, _) => None,
+                OutlinePanelEntry::Outline(..) => None,
             };
             if let Some(working_directory) = working_directory {
                 cx.dispatch_action(workspace::OpenTerminal { working_directory }.boxed_clone())
@@ -862,7 +863,7 @@ impl OutlinePanel {
                     icon,
                 )
             }
-            OutlinePanelEntry::ExternalFile(file, excerpt_id) => {
+            OutlinePanelEntry::ExternalFile(excerpt_id, file) => {
                 let name = file.as_ref().map_or_else(
                     || "Untitled".to_string(),
                     |file_path| {
@@ -891,7 +892,6 @@ impl OutlinePanel {
             OutlinePanelEntry::Outline(excerpt_id, outline) => {
                 let name = outline.text.clone();
                 let color = entry_label_color(is_active);
-                let icon = Icon::new(IconName::ArrowCircle);
                 (
                     ElementId::from(SharedString::from(format!(
                         "{:?}|{}",
@@ -899,7 +899,7 @@ impl OutlinePanel {
                     ))),
                     name,
                     color,
-                    Some(icon),
+                    None,
                 )
             }
         };
@@ -934,10 +934,10 @@ impl OutlinePanel {
 
                             // TODO kb
                             match &clicked_entry {
-                                OutlinePanelEntry::ExternalFile(_, _) => {}
-                                OutlinePanelEntry::Directory(_, _) => {}
-                                OutlinePanelEntry::File(_, _, _) => {}
-                                OutlinePanelEntry::Outline(_, _) => {}
+                                OutlinePanelEntry::ExternalFile(excerpt_id, _) => {}
+                                OutlinePanelEntry::Directory(_, directory_entry) => {}
+                                OutlinePanelEntry::File(excerpt_id, _, file_entry) => {}
+                                OutlinePanelEntry::Outline(excerpt_id, outline) => {}
                             }
                             // if kind.is_dir() {
                             //     outline_panel.toggle_expanded(entry_id, cx);
@@ -1151,24 +1151,24 @@ impl OutlinePanel {
                     None => {
                         if let Some(abs_path) = file.worktree.read(cx).absolutize(&file.path).ok() {
                             non_project_entries
-                                .push(OutlinePanelEntry::ExternalFile(Some(abs_path), excerpt_id));
+                                .push(OutlinePanelEntry::ExternalFile(excerpt_id, Some(abs_path)));
                         }
                     }
                 }
             } else {
-                non_project_entries.push(OutlinePanelEntry::ExternalFile(None, excerpt_id));
+                non_project_entries.push(OutlinePanelEntry::ExternalFile(excerpt_id, None));
             }
         }
 
         non_project_entries.sort_by(|entry_a, entry_b| match (entry_a, entry_b) {
             (
-                OutlinePanelEntry::ExternalFile(path_a, excerpt_a),
-                OutlinePanelEntry::ExternalFile(path_b, excerpt_b),
+                OutlinePanelEntry::ExternalFile(excerpt_a, path_a),
+                OutlinePanelEntry::ExternalFile(excerpt_b, path_b),
             ) => path_a
                 .cmp(&path_b)
                 .then(excerpt_a.cmp(&excerpt_b, &multi_buffer_snapshot)),
-            (OutlinePanelEntry::ExternalFile(_, _), _) => cmp::Ordering::Less,
-            (_, OutlinePanelEntry::ExternalFile(_, _)) => cmp::Ordering::Greater,
+            (OutlinePanelEntry::ExternalFile(..), _) => cmp::Ordering::Less,
+            (_, OutlinePanelEntry::ExternalFile(..)) => cmp::Ordering::Greater,
             _ => cmp::Ordering::Equal,
         });
 
@@ -1258,10 +1258,10 @@ impl OutlinePanel {
             .chain(worktree_items_with_outlines.into_iter())
             .flat_map(|entry| {
                 let excerpt_id = match &entry {
-                    OutlinePanelEntry::ExternalFile(_, excerpt_id) => Some(*excerpt_id),
+                    OutlinePanelEntry::ExternalFile(excerpt_id, _) => Some(*excerpt_id),
                     OutlinePanelEntry::File(excerpt_id, _, _) => Some(*excerpt_id),
-                    OutlinePanelEntry::Directory(_, _) => None,
-                    OutlinePanelEntry::Outline(_, _) => None,
+                    OutlinePanelEntry::Directory(..) => None,
+                    OutlinePanelEntry::Outline(..) => None,
                 };
                 let outlines =
                     excerpt_id.and_then(|excerpt_id| outline_entries.remove(&excerpt_id));
@@ -1449,7 +1449,6 @@ impl Render for OutlinePanel {
                 .child(
                     uniform_list(cx.view().clone(), "entries", self.visible_entries.len(), {
                         |outline_panel, range, cx| {
-                            // TODO kb consider outline item depth too
                             let mut depth = 0;
                             let mut previous_entry = None::<&OutlinePanelEntry>;
                             outline_panel
@@ -1461,36 +1460,38 @@ impl Render for OutlinePanel {
                                         (None, _) => {}
 
                                         (
-                                            Some(OutlinePanelEntry::Directory(_, _)),
-                                            OutlinePanelEntry::File(_, _, _),
+                                            Some(OutlinePanelEntry::Directory(..)),
+                                            OutlinePanelEntry::File(..),
                                         ) => depth += 1,
 
                                         (
-                                            Some(OutlinePanelEntry::File(_, _, _)),
-                                            OutlinePanelEntry::Outline(_, _),
+                                            Some(OutlinePanelEntry::File(..)),
+                                            OutlinePanelEntry::Outline(..),
                                         ) => depth += 1,
                                         (
-                                            Some(OutlinePanelEntry::File(_, _, _)),
-                                            OutlinePanelEntry::File(_, _, _),
+                                            Some(OutlinePanelEntry::File(..)),
+                                            OutlinePanelEntry::File(..),
                                         ) => {}
 
                                         (
-                                            Some(OutlinePanelEntry::ExternalFile(_, _)),
-                                            OutlinePanelEntry::Outline(_, _),
+                                            Some(OutlinePanelEntry::ExternalFile(..)),
+                                            OutlinePanelEntry::Outline(_, outline),
                                         ) => depth += 1,
-                                        (Some(OutlinePanelEntry::ExternalFile(_, _)), _) => {}
-                                        (Some(_), OutlinePanelEntry::ExternalFile(_, _)) => {
-                                            depth = 0
-                                        }
+                                        (Some(OutlinePanelEntry::ExternalFile(..)), _) => {}
+                                        (Some(_), OutlinePanelEntry::ExternalFile(..)) => depth = 0,
 
                                         (
-                                            Some(OutlinePanelEntry::Outline(_, _)),
-                                            OutlinePanelEntry::Outline(_, _),
-                                        ) => {}
-                                        (Some(OutlinePanelEntry::Outline(_, _)), _) => depth = 0,
+                                            Some(OutlinePanelEntry::Outline(_, previous_outline)),
+                                            OutlinePanelEntry::Outline(_, outline),
+                                        ) => match previous_outline.depth.cmp(&outline.depth) {
+                                            cmp::Ordering::Less => depth += 1,
+                                            cmp::Ordering::Greater => depth -= 1,
+                                            cmp::Ordering::Equal => {}
+                                        },
+                                        (Some(OutlinePanelEntry::Outline(..)), _) => depth = 0,
                                         (
-                                            Some(OutlinePanelEntry::Directory(_, _)),
-                                            OutlinePanelEntry::Outline(_, _),
+                                            Some(OutlinePanelEntry::Directory(..)),
+                                            OutlinePanelEntry::Outline(..),
                                         ) => {
                                             debug_panic!(
                                                 "Unexpected: outlines after a directory entry"
