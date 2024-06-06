@@ -868,9 +868,9 @@ impl PromptLibrary {
                                     h_flex().justify_center().w_12().h_8().child(
                                         IconButton::new("toggle-default-prompt", IconName::Sparkle)
                                             .style(ButtonStyle::Transparent)
-                                            .selected(prompt_metadata.default.clone())
+                                            .selected(prompt_metadata.default)
                                             .selected_icon(IconName::SparkleFilled)
-                                            .icon_color(if prompt_metadata.default.clone() {
+                                            .icon_color(if prompt_metadata.default {
                                                 Color::Accent
                                             } else {
                                                 Color::Muted
