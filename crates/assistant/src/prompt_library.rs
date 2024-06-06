@@ -1,43 +1,43 @@
 use crate::{
-    slash_command::SlashCommandLine, CompletionProvider, LanguageModelRequest,
-    LanguageModelRequestMessage, Role,
+    slash_command::SlashCommandCompletionProvider, AssistantPanel, CompletionProvider,
+    InlineAssist, InlineAssistant, LanguageModelRequest, LanguageModelRequestMessage, Role,
 };
 use anyhow::{anyhow, Result};
 use assistant_slash_command::SlashCommandRegistry;
 use chrono::{DateTime, Utc};
 use collections::HashMap;
-use editor::{actions::Tab, Editor, EditorEvent};
+use editor::{actions::Tab, CurrentLineHighlight, Editor, EditorEvent};
 use futures::{
     future::{self, BoxFuture, Shared},
     FutureExt,
 };
-use fuzzy::{match_strings, StringMatchCandidate};
+use fuzzy::StringMatchCandidate;
 use gpui::{
     actions, point, size, AnyElement, AppContext, BackgroundExecutor, Bounds, DevicePixels,
-    EventEmitter, Global, Model, PromptLevel, ReadGlobal, Subscription, Task, TitlebarOptions,
-    View, WindowBounds, WindowHandle, WindowOptions,
+    EventEmitter, Global, PromptLevel, ReadGlobal, Subscription, Task, TitlebarOptions,
+    UpdateGlobal, View, WindowBounds, WindowHandle, WindowOptions,
 };
 use heed::{types::SerdeBincode, Database, RoTxn};
-use language::{
-    language_settings::SoftWrap, Buffer, Documentation, LanguageRegistry, LanguageServerId, Point,
-    ToPoint as _,
-};
+use language::{language_settings::SoftWrap, Buffer, LanguageRegistry};
 use parking_lot::RwLock;
 use picker::{Picker, PickerDelegate};
 use rope::Rope;
 use serde::{Deserialize, Serialize};
+use settings::Settings;
 use std::{
     future::Future,
     path::PathBuf,
     sync::{atomic::AtomicBool, Arc},
     time::Duration,
 };
+use theme::ThemeSettings;
 use ui::{
     div, prelude::*, IconButtonShape, ListHeader, ListItem, ListItemSpacing, ListSubHeader,
     ParentElement, Render, SharedString, Styled, TitleBar, Tooltip, ViewContext, VisualContext,
 };
 use util::{paths::PROMPTS_DIR, ResultExt, TryFutureExt};
 use uuid::Uuid;
+use workspace::Workspace;
 
 actions!(
     prompt_library,
@@ -127,7 +127,7 @@ struct PromptPickerDelegate {
 }
 
 enum PromptPickerEvent {
-    Selected { prompt_id: PromptId },
+    Selected { prompt_id: Option<PromptId> },
     Confirmed { prompt_id: PromptId },
     Deleted { prompt_id: PromptId },
     ToggledDefault { prompt_id: PromptId },
@@ -166,11 +166,14 @@ impl PickerDelegate for PromptPickerDelegate {
 
     fn set_selected_index(&mut self, ix: usize, cx: &mut ViewContext<Picker<Self>>) {
         self.selected_index = ix;
-        if let Some(PromptPickerEntry::Prompt(prompt)) = self.entries.get(self.selected_index) {
-            cx.emit(PromptPickerEvent::Selected {
-                prompt_id: prompt.id,
-            });
-        }
+        let prompt_id = if let Some(PromptPickerEntry::Prompt(prompt)) =
+            self.entries.get(self.selected_index)
+        {
+            Some(prompt.id)
+        } else {
+            None
+        };
+        cx.emit(PromptPickerEvent::Selected { prompt_id });
     }
 
     fn placeholder_text(&self, _cx: &mut WindowContext) -> Arc<str> {
@@ -357,7 +360,11 @@ impl PromptLibrary {
     ) {
         match event {
             PromptPickerEvent::Selected { prompt_id } => {
-                self.load_prompt(*prompt_id, false, cx);
+                if let Some(prompt_id) = *prompt_id {
+                    self.load_prompt(prompt_id, false, cx);
+                } else {
+                    self.focus_picker(&Default::default(), cx);
+                }
             }
             PromptPickerEvent::Confirmed { prompt_id } => {
                 self.load_prompt(*prompt_id, true, cx);
@@ -482,6 +489,7 @@ impl PromptLibrary {
             self.set_active_prompt(Some(prompt_id), cx);
         } else {
             let language_registry = self.language_registry.clone();
+            let commands = SlashCommandRegistry::global(cx);
             let prompt = self.store.load(prompt_id);
             self.pending_load = cx.spawn(|this, mut cx| async move {
                 let prompt = prompt.await;
@@ -500,8 +508,10 @@ impl PromptLibrary {
                             editor.set_show_gutter(false, cx);
                             editor.set_show_wrap_guides(false, cx);
                             editor.set_show_indent_guides(false, cx);
-                            editor
-                                .set_completion_provider(Box::new(SlashCommandCompletionProvider));
+                            editor.set_current_line_highlight(Some(CurrentLineHighlight::None));
+                            editor.set_completion_provider(Box::new(
+                                SlashCommandCompletionProvider::new(commands, None, None),
+                            ));
                             if focus {
                                 editor.focus(cx);
                             }
@@ -602,6 +612,49 @@ impl PromptLibrary {
 
     fn focus_picker(&mut self, _: &menu::Cancel, cx: &mut ViewContext<Self>) {
         self.picker.update(cx, |picker, cx| picker.focus(cx));
+    }
+
+    pub fn inline_assist(&mut self, _: &InlineAssist, cx: &mut ViewContext<Self>) {
+        let Some(active_prompt_id) = self.active_prompt_id else {
+            cx.propagate();
+            return;
+        };
+
+        let prompt_editor = &self.prompt_editors[&active_prompt_id].editor;
+        let provider = CompletionProvider::global(cx);
+        if provider.is_authenticated() {
+            InlineAssistant::update_global(cx, |assistant, cx| {
+                assistant.assist(&prompt_editor, None, false, cx)
+            })
+        } else {
+            for window in cx.windows() {
+                if let Some(workspace) = window.downcast::<Workspace>() {
+                    let panel = workspace
+                        .update(cx, |workspace, cx| {
+                            cx.activate_window();
+                            workspace.focus_panel::<AssistantPanel>(cx)
+                        })
+                        .ok()
+                        .flatten();
+                    if panel.is_some() {
+                        return;
+                    }
+                }
+            }
+        }
+    }
+
+    fn cancel_last_inline_assist(
+        &mut self,
+        _: &editor::actions::Cancel,
+        cx: &mut ViewContext<Self>,
+    ) {
+        let canceled = InlineAssistant::update_global(cx, |assistant, cx| {
+            assistant.cancel_last_inline_assist(cx)
+        });
+        if !canceled {
+            cx.propagate();
+        }
     }
 
     fn handle_prompt_editor_event(
@@ -733,6 +786,8 @@ impl PromptLibrary {
                         .child(
                             div()
                                 .on_action(cx.listener(Self::focus_picker))
+                                .on_action(cx.listener(Self::inline_assist))
+                                .on_action(cx.listener(Self::cancel_last_inline_assist))
                                 .flex_grow()
                                 .h_full()
                                 .pt(Spacing::Large.rems(cx))
@@ -795,6 +850,14 @@ impl PromptLibrary {
 
 impl Render for PromptLibrary {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+        let (ui_font, ui_font_size) = {
+            let theme_settings = ThemeSettings::get_global(cx);
+            (theme_settings.ui_font.clone(), theme_settings.ui_font_size)
+        };
+
+        let theme = cx.theme().clone();
+        cx.set_rem_size(ui_font_size);
+
         h_flex()
             .id("prompt-manager")
             .key_context("PromptLibrary")
@@ -805,6 +868,8 @@ impl Render for PromptLibrary {
             }))
             .size_full()
             .overflow_hidden()
+            .font(ui_font)
+            .text_color(theme.colors().text)
             .child(self.render_prompt_list(cx))
             .child(self.render_active_prompt(cx))
     }
@@ -1090,125 +1155,5 @@ fn title_from_body(body: impl IntoIterator<Item = char>) -> Option<SharedString>
         }
     } else {
         None
-    }
-}
-
-struct SlashCommandCompletionProvider;
-
-impl editor::CompletionProvider for SlashCommandCompletionProvider {
-    fn completions(
-        &self,
-        buffer: &Model<Buffer>,
-        buffer_position: language::Anchor,
-        cx: &mut ViewContext<Editor>,
-    ) -> Task<Result<Vec<project::Completion>>> {
-        let Some((command_name, name_range)) = buffer.update(cx, |buffer, _cx| {
-            let position = buffer_position.to_point(buffer);
-            let line_start = Point::new(position.row, 0);
-            let mut lines = buffer.text_for_range(line_start..position).lines();
-            let line = lines.next()?;
-            let call = SlashCommandLine::parse(line)?;
-
-            if call.argument.is_some() {
-                // Don't autocomplete arguments.
-                None
-            } else {
-                let name = line[call.name.clone()].to_string();
-                let name_range_start = Point::new(position.row, call.name.start as u32);
-                let name_range_end = Point::new(position.row, call.name.end as u32);
-                let name_range =
-                    buffer.anchor_after(name_range_start)..buffer.anchor_after(name_range_end);
-                Some((name, name_range))
-            }
-        }) else {
-            return Task::ready(Ok(Vec::new()));
-        };
-
-        let commands = SlashCommandRegistry::global(cx);
-        let candidates = commands
-            .command_names()
-            .into_iter()
-            .enumerate()
-            .map(|(ix, def)| StringMatchCandidate {
-                id: ix,
-                string: def.to_string(),
-                char_bag: def.as_ref().into(),
-            })
-            .collect::<Vec<_>>();
-        let command_name = command_name.to_string();
-        cx.spawn(|_, mut cx| async move {
-            let matches = match_strings(
-                &candidates,
-                &command_name,
-                true,
-                usize::MAX,
-                &Default::default(),
-                cx.background_executor().clone(),
-            )
-            .await;
-            cx.update(|cx| {
-                matches
-                    .into_iter()
-                    .filter_map(|mat| {
-                        let command = commands.command(&mat.string)?;
-                        let mut new_text = mat.string.clone();
-                        let requires_argument = command.requires_argument();
-                        if requires_argument {
-                            new_text.push(' ');
-                        }
-
-                        Some(project::Completion {
-                            old_range: name_range.clone(),
-                            documentation: Some(Documentation::SingleLine(command.description())),
-                            new_text,
-                            label: command.label(cx),
-                            server_id: LanguageServerId(0),
-                            lsp_completion: Default::default(),
-                            show_new_completions_on_confirm: false,
-                            confirm: None,
-                        })
-                    })
-                    .collect()
-            })
-        })
-    }
-
-    fn resolve_completions(
-        &self,
-        _: Model<Buffer>,
-        _: Vec<usize>,
-        _: Arc<RwLock<Box<[project::Completion]>>>,
-        _: &mut ViewContext<Editor>,
-    ) -> Task<Result<bool>> {
-        Task::ready(Ok(true))
-    }
-
-    fn apply_additional_edits_for_completion(
-        &self,
-        _: Model<Buffer>,
-        _: project::Completion,
-        _: bool,
-        _: &mut ViewContext<Editor>,
-    ) -> Task<Result<Option<language::Transaction>>> {
-        Task::ready(Ok(None))
-    }
-
-    fn is_completion_trigger(
-        &self,
-        buffer: &Model<Buffer>,
-        position: language::Anchor,
-        _text: &str,
-        _trigger_in_words: bool,
-        cx: &mut ViewContext<Editor>,
-    ) -> bool {
-        let buffer = buffer.read(cx);
-        let position = position.to_point(buffer);
-        let line_start = Point::new(position.row, 0);
-        let mut lines = buffer.text_for_range(line_start..position).lines();
-        if let Some(line) = lines.next() {
-            SlashCommandLine::parse(line).is_some()
-        } else {
-            false
-        }
     }
 }

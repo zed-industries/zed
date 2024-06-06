@@ -1,14 +1,15 @@
 use crate::{
     display_map::{InlayOffset, ToDisplayPoint},
     hover_links::{InlayHighlight, RangeInEditor},
+    scroll::ScrollAmount,
     Anchor, AnchorRangeExt, DisplayPoint, DisplayRow, Editor, EditorSettings, EditorSnapshot,
     EditorStyle, ExcerptId, Hover, RangeToAnchorExt,
 };
 use futures::{stream::FuturesUnordered, FutureExt};
 use gpui::{
-    div, px, AnyElement, ClipboardItem, CursorStyle, Hsla, InteractiveElement, IntoElement,
-    MouseButton, ParentElement, Pixels, SharedString, Size, StatefulInteractiveElement, Styled,
-    StyledText, Task, View, ViewContext, WeakView, WindowOptions,
+    div, px, AnyElement, CursorStyle, Hsla, InteractiveElement, IntoElement, MouseButton,
+    ParentElement, Pixels, ScrollHandle, SharedString, Size, StatefulInteractiveElement, Styled,
+    Task, View, ViewContext, WeakView, WindowOptions,
 };
 use language::{
     markdown as old_markdown, DiagnosticEntry, Language, LanguageRegistry, ParsedMarkdown,
@@ -120,6 +121,7 @@ pub fn hover_at_inlay(editor: &mut Editor, inlay_hover: InlayHover, cx: &mut Vie
                 let hover_popover = InfoPopover {
                     symbol_range: RangeInEditor::Inlay(inlay_hover.range.clone()),
                     parsed_content,
+                    scroll_handle: ScrollHandle::new(),
                 };
 
                 this.update(&mut cx, |this, cx| {
@@ -319,6 +321,7 @@ fn show_hover(
                         InfoPopover {
                             symbol_range: RangeInEditor::Text(range),
                             parsed_content,
+                            scroll_handle: ScrollHandle::new(),
                         },
                     )
                 })
@@ -430,7 +433,7 @@ async fn parse_blocks(
     }
 }
 
-#[derive(Default)]
+#[derive(Default, Debug)]
 pub struct HoverState {
     pub info_popovers: Vec<InfoPopover>,
     pub diagnostic_popover: Option<DiagnosticPopover>,
@@ -522,9 +525,11 @@ impl MarkdownExample {
 }
 
 #[derive(Debug, Clone)]
+
 pub struct InfoPopover {
-    symbol_range: RangeInEditor,
-    parsed_content: ParsedMarkdown,
+    pub symbol_range: RangeInEditor,
+    pub parsed_content: ParsedMarkdown,
+    pub scroll_handle: ScrollHandle,
 }
 
 impl InfoPopover {
@@ -536,42 +541,7 @@ impl InfoPopover {
         cx: &mut ViewContext<Editor>,
     ) -> AnyElement {
         let popover_text = (&self.parsed_content.text).clone();
-        let markdown_style = MarkdownStyle {
-            code_block: gpui::TextStyleRefinement {
-                font_family: Some("Zed Mono".into()),
-                color: Some(cx.theme().colors().editor_foreground),
-                background_color: Some(cx.theme().colors().editor_background),
-                ..Default::default()
-            },
-            inline_code: gpui::TextStyleRefinement {
-                font_family: Some("Zed Mono".into()),
-                // @nate: Could we add inline-code specific styles to the theme?
-                color: Some(cx.theme().colors().editor_foreground),
-                background_color: Some(cx.theme().colors().editor_background),
-                ..Default::default()
-            },
-            rule_color: Color::Muted.color(cx),
-            block_quote_border_color: Color::Muted.color(cx),
-            block_quote: gpui::TextStyleRefinement {
-                color: Some(Color::Muted.color(cx)),
-                ..Default::default()
-            },
-            link: gpui::TextStyleRefinement {
-                color: Some(Color::Accent.color(cx)),
-                underline: Some(gpui::UnderlineStyle {
-                    thickness: px(1.),
-                    color: Some(Color::Accent.color(cx)),
-                    wavy: false,
-                }),
-                ..Default::default()
-            },
-            syntax: cx.theme().syntax().clone(),
-            selection_background_color: {
-                let mut selection = cx.theme().players().local().selection;
-                selection.fade_out(0.7);
-                selection
-            },
-        };
+
         // let markdown_element = Markdown::new(
         //     "This is selectable text".to_string(),
         //     markdown_style,
@@ -589,19 +559,55 @@ impl InfoPopover {
             Task::ready(()),
             cx.background_executor().clone(),
         ));
-        // let markdown_element =
-        //     cx.new_view(|cx| Markdown::new(text, markdown_style, Some(language_registry), cx));
-        let markdown_element = MarkdownExample::new(text, markdown_style, language_registry, cx);
-        markdown_element
-            .markdown
-            .div()
+        let markdown_element = cx.new_view(|cx| {
+            let markdown_style = MarkdownStyle {
+                code_block: gpui::TextStyleRefinement {
+                    font_family: Some("Zed Mono".into()),
+                    color: Some(cx.theme().colors().editor_foreground),
+                    background_color: Some(cx.theme().colors().editor_background),
+                    ..Default::default()
+                },
+                inline_code: gpui::TextStyleRefinement {
+                    font_family: Some("Zed Mono".into()),
+                    // @nate: Could we add inline-code specific styles to the theme?
+                    color: Some(cx.theme().colors().editor_foreground),
+                    background_color: Some(cx.theme().colors().editor_background),
+                    ..Default::default()
+                },
+                rule_color: Color::Muted.color(cx),
+                block_quote_border_color: Color::Muted.color(cx),
+                block_quote: gpui::TextStyleRefinement {
+                    color: Some(Color::Muted.color(cx)),
+                    ..Default::default()
+                },
+                link: gpui::TextStyleRefinement {
+                    color: Some(Color::Accent.color(cx)),
+                    underline: Some(gpui::UnderlineStyle {
+                        thickness: px(1.),
+                        color: Some(Color::Accent.color(cx)),
+                        wavy: false,
+                    }),
+                    ..Default::default()
+                },
+                syntax: cx.theme().syntax().clone(),
+                selection_background_color: {
+                    let mut selection = cx.theme().players().local().selection;
+                    selection.fade_out(0.7);
+                    selection
+                },
+            };
+            Markdown::new(text, markdown_style, Some(language_registry), cx)
+        });
+        // let mut markdown_element =
+        //     MarkdownExample::new(text, markdown_style, language_registry, cx);
+        div()
             .id("info_popover")
             .elevation_2(cx)
-            .p_2()
             .overflow_y_scroll()
             .overflow_x_scroll()
             .min_w(max_size.width)
             .min_h(max_size.height)
+            .track_scroll(&self.scroll_handle)
             .max_w(max_size.width)
             .max_h(max_size.height)
             // .cursor(CursorStyle::PointingHand)
@@ -613,8 +619,18 @@ impl InfoPopover {
             .on_click(cx.listener(move |_, _, cx| {
                 // cx.write_to_clipboard(ClipboardItem::new(popover_text.clone()));
             }))
-            .child(markdown_element.render())
+            .child(markdown_element)
             .into_any_element()
+    }
+
+    pub fn scroll(&self, amount: &ScrollAmount, cx: &mut ViewContext<Editor>) {
+        let mut current = self.scroll_handle.offset();
+        current.y -= amount.pixels(
+            cx.line_height(),
+            self.scroll_handle.bounds().size.height - px(16.),
+        ) / 2.0;
+        cx.notify();
+        self.scroll_handle.set_offset(current);
     }
 }
 

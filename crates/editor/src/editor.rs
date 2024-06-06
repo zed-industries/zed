@@ -53,8 +53,7 @@ use convert_case::{Case, Casing};
 use debounced_delay::DebouncedDelay;
 use display_map::*;
 pub use display_map::{DisplayPoint, FoldPlaceholder};
-use editor_settings::CurrentLineHighlight;
-pub use editor_settings::EditorSettings;
+pub use editor_settings::{CurrentLineHighlight, EditorSettings};
 use element::LineWithInvisibles;
 pub use element::{
     CursorLayout, EditorElement, HighlightedRange, HighlightedRangeLine, PointForPosition,
@@ -480,7 +479,7 @@ pub struct Editor {
     pending_rename: Option<RenameState>,
     searchable: bool,
     cursor_shape: CursorShape,
-    current_line_highlight: CurrentLineHighlight,
+    current_line_highlight: Option<CurrentLineHighlight>,
     collapse_matches: bool,
     autoindent_mode: Option<AutoindentMode>,
     workspace: Option<(WeakView<Workspace>, Option<WorkspaceId>)>,
@@ -523,6 +522,7 @@ pub struct Editor {
     expect_bounds_change: Option<Bounds<Pixels>>,
     tasks: BTreeMap<(BufferId, BufferRow), RunnableTasks>,
     tasks_update_task: Option<Task<()>>,
+    previous_search_ranges: Option<Arc<[Range<Anchor>]>>,
 }
 
 #[derive(Clone)]
@@ -1768,7 +1768,7 @@ impl Editor {
             pending_rename: Default::default(),
             searchable: true,
             cursor_shape: Default::default(),
-            current_line_highlight: EditorSettings::get_global(cx).current_line_highlight,
+            current_line_highlight: None,
             autoindent_mode: Some(AutoindentMode::EachLine),
             collapse_matches: false,
             workspace: None,
@@ -1825,6 +1825,7 @@ impl Editor {
                 }),
             ],
             tasks_update_task: None,
+            previous_search_ranges: None,
         };
         this.tasks_update_task = Some(this.refresh_runnables(cx));
         this._subscriptions.extend(project_subscriptions);
@@ -1992,7 +1993,9 @@ impl Editor {
             ongoing_scroll: self.scroll_manager.ongoing_scroll(),
             placeholder_text: self.placeholder_text.clone(),
             is_focused: self.focus_handle.is_focused(cx),
-            current_line_highlight: self.current_line_highlight,
+            current_line_highlight: self
+                .current_line_highlight
+                .unwrap_or_else(|| EditorSettings::get_global(cx).current_line_highlight),
             gutter_hovered: self.gutter_hovered,
         }
     }
@@ -2082,7 +2085,10 @@ impl Editor {
         cx.notify();
     }
 
-    pub fn set_current_line_highlight(&mut self, current_line_highlight: CurrentLineHighlight) {
+    pub fn set_current_line_highlight(
+        &mut self,
+        current_line_highlight: Option<CurrentLineHighlight>,
+    ) {
         self.current_line_highlight = current_line_highlight;
     }
 
@@ -9263,11 +9269,15 @@ impl Editor {
                 for (block_id, diagnostic) in &active_diagnostics.blocks {
                     new_styles.insert(
                         *block_id,
-                        diagnostic_block_renderer(diagnostic.clone(), is_valid),
+                        (
+                            None,
+                            diagnostic_block_renderer(diagnostic.clone(), is_valid),
+                        ),
                     );
                 }
-                self.display_map
-                    .update(cx, |display_map, _| display_map.replace_blocks(new_styles));
+                self.display_map.update(cx, |display_map, cx| {
+                    display_map.replace_blocks(new_styles, cx)
+                });
             }
         }
     }
@@ -9624,12 +9634,12 @@ impl Editor {
 
     pub fn replace_blocks(
         &mut self,
-        blocks: HashMap<BlockId, RenderBlock>,
+        blocks: HashMap<BlockId, (Option<u8>, RenderBlock)>,
         autoscroll: Option<Autoscroll>,
         cx: &mut ViewContext<Self>,
     ) {
         self.display_map
-            .update(cx, |display_map, _| display_map.replace_blocks(blocks));
+            .update(cx, |display_map, cx| display_map.replace_blocks(blocks, cx));
         if let Some(autoscroll) = autoscroll {
             self.request_autoscroll(autoscroll, cx);
         }
@@ -10256,6 +10266,27 @@ impl Editor {
         self.background_highlights_in_range(start..end, &snapshot, theme)
     }
 
+    #[cfg(feature = "test-support")]
+    pub fn search_background_highlights(
+        &mut self,
+        cx: &mut ViewContext<Self>,
+    ) -> Vec<Range<Point>> {
+        let snapshot = self.buffer().read(cx).snapshot(cx);
+
+        let highlights = self
+            .background_highlights
+            .get(&TypeId::of::<items::BufferSearchHighlights>());
+
+        if let Some((_color, ranges)) = highlights {
+            ranges
+                .iter()
+                .map(|range| range.start.to_point(&snapshot)..range.end.to_point(&snapshot))
+                .collect_vec()
+        } else {
+            vec![]
+        }
+    }
+
     fn document_highlights_for_position<'a>(
         &'a self,
         position: Anchor,
@@ -10604,7 +10635,6 @@ impl Editor {
         let editor_settings = EditorSettings::get_global(cx);
         self.scroll_manager.vertical_scroll_margin = editor_settings.vertical_scroll_margin;
         self.show_breadcrumbs = editor_settings.toolbar.breadcrumbs;
-        self.current_line_highlight = editor_settings.current_line_highlight;
 
         if self.mode == EditorMode::Full {
             let inline_blame_enabled = ProjectSettings::get_global(cx).git.inline_blame_enabled();
