@@ -461,16 +461,16 @@ async fn test_open_gitignored_files(cx: &mut TestAppContext) {
     // Open a file that is nested inside of a gitignored directory that
     // has not yet been expanded.
     let prev_read_dir_count = fs.read_dir_call_count();
-    let buffer = tree
+    let (file, _, _) = tree
         .update(cx, |tree, cx| {
             tree.as_local_mut()
                 .unwrap()
-                .load_buffer("one/node_modules/b/b1.js".as_ref(), cx)
+                .load_file("one/node_modules/b/b1.js".as_ref(), cx)
         })
         .await
         .unwrap();
 
-    tree.read_with(cx, |tree, cx| {
+    tree.read_with(cx, |tree, _| {
         assert_eq!(
             tree.entries(true)
                 .map(|entry| (entry.path.as_ref(), entry.is_ignored))
@@ -491,10 +491,7 @@ async fn test_open_gitignored_files(cx: &mut TestAppContext) {
             ]
         );
 
-        assert_eq!(
-            buffer.read(cx).file().unwrap().path().as_ref(),
-            Path::new("one/node_modules/b/b1.js")
-        );
+        assert_eq!(file.path.as_ref(), Path::new("one/node_modules/b/b1.js"));
 
         // Only the newly-expanded directories are scanned.
         assert_eq!(fs.read_dir_call_count() - prev_read_dir_count, 2);
@@ -503,16 +500,16 @@ async fn test_open_gitignored_files(cx: &mut TestAppContext) {
     // Open another file in a different subdirectory of the same
     // gitignored directory.
     let prev_read_dir_count = fs.read_dir_call_count();
-    let buffer = tree
+    let (file, _, _) = tree
         .update(cx, |tree, cx| {
             tree.as_local_mut()
                 .unwrap()
-                .load_buffer("one/node_modules/a/a2.js".as_ref(), cx)
+                .load_file("one/node_modules/a/a2.js".as_ref(), cx)
         })
         .await
         .unwrap();
 
-    tree.read_with(cx, |tree, cx| {
+    tree.read_with(cx, |tree, _| {
         assert_eq!(
             tree.entries(true)
                 .map(|entry| (entry.path.as_ref(), entry.is_ignored))
@@ -535,10 +532,7 @@ async fn test_open_gitignored_files(cx: &mut TestAppContext) {
             ]
         );
 
-        assert_eq!(
-            buffer.read(cx).file().unwrap().path().as_ref(),
-            Path::new("one/node_modules/a/a2.js")
-        );
+        assert_eq!(file.path.as_ref(), Path::new("one/node_modules/a/a2.js"));
 
         // Only the newly-expanded directory is scanned.
         assert_eq!(fs.read_dir_call_count() - prev_read_dir_count, 1);

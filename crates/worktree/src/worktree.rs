@@ -33,8 +33,8 @@ use gpui::{
 use ignore::IgnoreStack;
 use itertools::Itertools;
 use language::{
-    proto::{deserialize_version, serialize_line_ending, serialize_version},
-    Buffer, Capability, DiagnosticEntry, File as _, LineEnding, PointUtf16, Rope, Unclipped,
+    proto::{serialize_line_ending, serialize_version},
+    DiagnosticEntry, LineEnding, PointUtf16, Rope, Unclipped,
 };
 use lsp::{DiagnosticSeverity, LanguageServerId};
 use parking_lot::Mutex;
@@ -46,7 +46,6 @@ use postage::{
 use serde::Serialize;
 use settings::{Settings, SettingsLocation, SettingsStore};
 use smol::channel::{self, Sender};
-use std::time::Instant;
 use std::{
     any::Any,
     cmp::{self, Ordering},
@@ -62,7 +61,7 @@ use std::{
         atomic::{AtomicUsize, Ordering::SeqCst},
         Arc,
     },
-    time::{Duration, SystemTime},
+    time::{Duration, Instant, SystemTime},
 };
 use sum_tree::{Bias, Edit, SeekTarget, SumTree, TreeMap, TreeSet};
 use text::BufferId;
@@ -147,8 +146,6 @@ struct ScanRequest {
 pub struct RemoteWorktree {
     snapshot: Snapshot,
     background_snapshot: Arc<Mutex<Snapshot>>,
-    project_id: u64,
-    client: Arc<Client>,
     updates_tx: Option<UnboundedSender<proto::UpdateWorktree>>,
     snapshot_subscriptions: VecDeque<(usize, oneshot::Sender<()>)>,
     replica_id: ReplicaId,
@@ -525,10 +522,8 @@ impl Worktree {
     }
 
     pub fn remote(
-        project_remote_id: u64,
         replica_id: ReplicaId,
         worktree: proto::WorktreeMetadata,
-        client: Arc<Client>,
         cx: &mut AppContext,
     ) -> Model<Self> {
         cx.new_model(|cx: &mut ModelContext<Self>| {
@@ -590,13 +585,11 @@ impl Worktree {
             .detach();
 
             Worktree::Remote(RemoteWorktree {
-                project_id: project_remote_id,
                 replica_id,
                 snapshot: snapshot.clone(),
                 background_snapshot,
                 updates_tx: Some(updates_tx),
                 snapshot_subscriptions: Default::default(),
-                client: client.clone(),
                 diagnostic_summaries: Default::default(),
                 visible: worktree.visible,
                 disconnected: false,
@@ -805,59 +798,6 @@ fn path_matchers(values: Option<&[String]>, context: &'static str) -> Vec<PathMa
 impl LocalWorktree {
     pub fn contains_abs_path(&self, path: &Path) -> bool {
         path.starts_with(&self.abs_path)
-    }
-
-    pub fn load_buffer(
-        &mut self,
-        path: &Path,
-        cx: &mut ModelContext<Worktree>,
-    ) -> Task<Result<Model<Buffer>>> {
-        let path = Arc::from(path);
-        let reservation = cx.reserve_model();
-        let buffer_id = BufferId::from(reservation.entity_id().as_non_zero_u64());
-        cx.spawn(move |this, mut cx| async move {
-            let (file, contents, diff_base) = this
-                .update(&mut cx, |t, cx| t.as_local().unwrap().load(&path, cx))?
-                .await?;
-            let text_buffer = cx
-                .background_executor()
-                .spawn(async move { text::Buffer::new(0, buffer_id, contents) })
-                .await;
-            cx.insert_model(reservation, |_| {
-                Buffer::build(
-                    text_buffer,
-                    diff_base,
-                    Some(Arc::new(file)),
-                    Capability::ReadWrite,
-                )
-            })
-        })
-    }
-
-    pub fn new_buffer(
-        &mut self,
-        path: Arc<Path>,
-        cx: &mut ModelContext<Worktree>,
-    ) -> Model<Buffer> {
-        let worktree = cx.handle();
-        cx.new_model(|cx| {
-            let buffer_id = BufferId::from(cx.entity_id().as_non_zero_u64());
-            let text_buffer = text::Buffer::new(0, buffer_id, "".into());
-            Buffer::build(
-                text_buffer,
-                None,
-                Some(Arc::new(File {
-                    worktree,
-                    path,
-                    mtime: None,
-                    entry_id: None,
-                    is_local: true,
-                    is_deleted: false,
-                    is_private: false,
-                })),
-                Capability::ReadWrite,
-            )
-        })
     }
 
     pub fn diagnostics_for_path(
@@ -1138,7 +1078,7 @@ impl LocalWorktree {
         }
     }
 
-    fn load(
+    pub fn load_file(
         &self,
         path: &Path,
         cx: &mut ModelContext<Worktree>,
@@ -1232,97 +1172,6 @@ impl LocalWorktree {
         })
     }
 
-    pub fn save_buffer(
-        &self,
-        buffer_handle: Model<Buffer>,
-        path: Arc<Path>,
-        mut has_changed_file: bool,
-        cx: &mut ModelContext<Worktree>,
-    ) -> Task<Result<()>> {
-        let buffer = buffer_handle.read(cx);
-
-        let rpc = self.client.clone();
-        let buffer_id: u64 = buffer.remote_id().into();
-        let project_id = self.share.as_ref().map(|share| share.project_id);
-
-        if buffer.file().is_some_and(|file| !file.is_created()) {
-            has_changed_file = true;
-        }
-
-        let text = buffer.as_rope().clone();
-        let version = buffer.version();
-        let save = self.write_file(path.as_ref(), text, buffer.line_ending(), cx);
-        let fs = Arc::clone(&self.fs);
-        let abs_path = self.absolutize(&path);
-        let is_private = self.snapshot.is_path_private(&path);
-
-        cx.spawn(move |this, mut cx| async move {
-            let entry = save.await?;
-            let abs_path = abs_path?;
-            let this = this.upgrade().context("worktree dropped")?;
-
-            let (entry_id, mtime, path, is_dotenv) = match entry {
-                Some(entry) => (Some(entry.id), entry.mtime, entry.path, entry.is_private),
-                None => {
-                    let metadata = fs
-                        .metadata(&abs_path)
-                        .await
-                        .with_context(|| {
-                            format!(
-                                "Fetching metadata after saving the excluded buffer {abs_path:?}"
-                            )
-                        })?
-                        .with_context(|| {
-                            format!("Excluded buffer {path:?} got removed during saving")
-                        })?;
-                    (None, Some(metadata.mtime), path, is_private)
-                }
-            };
-
-            if has_changed_file {
-                let new_file = Arc::new(File {
-                    entry_id,
-                    worktree: this,
-                    path,
-                    mtime,
-                    is_local: true,
-                    is_deleted: false,
-                    is_private: is_dotenv,
-                });
-
-                if let Some(project_id) = project_id {
-                    rpc.send(proto::UpdateBufferFile {
-                        project_id,
-                        buffer_id,
-                        file: Some(new_file.to_proto()),
-                    })
-                    .log_err();
-                }
-
-                buffer_handle.update(&mut cx, |buffer, cx| {
-                    if has_changed_file {
-                        buffer.file_updated(new_file, cx);
-                    }
-                })?;
-            }
-
-            if let Some(project_id) = project_id {
-                rpc.send(proto::BufferSaved {
-                    project_id,
-                    buffer_id,
-                    version: serialize_version(&version),
-                    mtime: mtime.map(|time| time.into()),
-                })?;
-            }
-
-            buffer_handle.update(&mut cx, |buffer, cx| {
-                buffer.did_save(version.clone(), mtime, cx);
-            })?;
-
-            Ok(())
-        })
-    }
-
     /// Find the lowest path in the worktree's datastructures that is an ancestor
     fn lowest_ancestor(&self, path: &Path) -> PathBuf {
         let mut lowest_ancestor = None;
@@ -1400,7 +1249,7 @@ impl LocalWorktree {
         })
     }
 
-    pub(crate) fn write_file(
+    pub fn write_file(
         &self,
         path: impl Into<Arc<Path>>,
         text: Rope,
@@ -1741,37 +1590,6 @@ impl RemoteWorktree {
         self.updates_tx.take();
         self.snapshot_subscriptions.clear();
         self.disconnected = true;
-    }
-
-    pub fn save_buffer(
-        &self,
-        buffer_handle: Model<Buffer>,
-        new_path: Option<proto::ProjectPath>,
-        cx: &mut ModelContext<Worktree>,
-    ) -> Task<Result<()>> {
-        let buffer = buffer_handle.read(cx);
-        let buffer_id = buffer.remote_id().into();
-        let version = buffer.version();
-        let rpc = self.client.clone();
-        let project_id = self.project_id;
-        cx.spawn(move |_, mut cx| async move {
-            let response = rpc
-                .request(proto::SaveBuffer {
-                    project_id,
-                    buffer_id,
-                    new_path,
-                    version: serialize_version(&version),
-                })
-                .await?;
-            let version = deserialize_version(&response.version);
-            let mtime = response.mtime.map(|mtime| mtime.into());
-
-            buffer_handle.update(&mut cx, |buffer, cx| {
-                buffer.did_save(version.clone(), mtime, cx);
-            })?;
-
-            Ok(())
-        })
     }
 
     pub fn update_from_remote(&mut self, update: proto::UpdateWorktree) {
