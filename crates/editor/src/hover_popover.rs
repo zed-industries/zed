@@ -106,13 +106,14 @@ pub fn hover_at_inlay(editor: &mut Editor, inlay_hover: InlayHover, cx: &mut Vie
         }
 
         let text = r#"
-this is selectable text
+this text should be selectable
 
 wow so cool
 
-omg
-
-## Heading fr
+## Heading 2
+```rust
+let inline_code = "rendered";
+```
 "#;
         let language_registry = Arc::new(LanguageRegistry::new(
             Task::ready(()),
@@ -137,14 +138,6 @@ omg
             syntax: cx.theme().syntax().clone(),
             selection_background_color: cx.theme().players().local().selection,
         };
-        let markdown = cx.new_view(|cx| {
-            Markdown::new(
-                text.into(),
-                markdown_style.clone(),
-                Some(language_registry.clone()),
-                cx,
-            )
-        });
 
         let hw = cx.new_view(|cx| {
             HelloWorld::new(text.into(), markdown_style.clone(), language_registry, cx)
@@ -276,13 +269,14 @@ fn show_hover(
     }
 
     let text = r#"
-this is selectable text
+this text should be selectable
 
 wow so cool
 
-omg
-
-## Heading fr
+## Heading 2
+```rust
+let inline_code = "rendered";
+```
 "#;
     let language_registry = Arc::new(LanguageRegistry::new(
         Task::ready(()),
@@ -308,14 +302,7 @@ omg
             syntax: cx.theme().syntax().clone(),
             selection_background_color: cx.theme().players().local().selection,
         };
-        let markdown = cx.new_view(|cx| {
-            Markdown::new(
-                text.into(),
-                markdown_style.clone(),
-                Some(language_registry.clone()),
-                cx,
-            )
-        });
+
         HelloWorld::new(text.into(), markdown_style.clone(), language_registry, cx)
     });
     let task = cx.spawn(|this, mut cx| {
@@ -613,7 +600,7 @@ impl InfoPopover {
             //     .overflow_x_scroll()
             .min_w(max_size.width)
             .min_h(max_size.height)
-            //     .track_scroll(&self.scroll_handle)
+            .track_scroll(&self.scroll_handle)
             .max_w(max_size.width)
             .max_h(max_size.height)
             //     // .cursor(CursorStyle::PointingHand)
@@ -622,9 +609,6 @@ impl InfoPopover {
             //     // because that would dismiss the popover.
             .on_mouse_move(|_, cx| cx.stop_propagation())
             .on_mouse_down(MouseButton::Left, |_, cx| cx.stop_propagation())
-            // .on_click(cx.listener(move |_, _, cx| {
-            //         // cx.write_to_clipboard(ClipboardItem::new(popover_text.clone()));
-            //     }))
             .child(self.markdown_element.clone())
             .into_any_element()
     }
@@ -657,10 +641,7 @@ impl HelloWorld {
 
 impl Render for HelloWorld {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
-        div()
-            .elevation_2(cx)
-            .on_mouse_down(MouseButton::Left, |_, cx| cx.stop_propagation())
-            .child(self.markdown.clone())
+        div().child(self.markdown.clone())
     }
 }
 
