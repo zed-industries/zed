@@ -4503,8 +4503,6 @@ impl Editor {
                         }
                     }
 
-                    // dbg!(read_ranges.len());
-
                     this.highlight_background::<LinkedEditingRangeHighlight>(
                         &ranges,
                         |theme| theme.editor_document_highlight_read_background,
