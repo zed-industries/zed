@@ -111,7 +111,7 @@ use rpc::{proto::*, ErrorExt};
 use scroll::{Autoscroll, OngoingScroll, ScrollAnchor, ScrollManager, ScrollbarAutoHide};
 use selections_collection::{resolve_multiple, MutableSelectionsCollection, SelectionsCollection};
 use serde::{Deserialize, Serialize};
-use settings::{Settings, SettingsStore};
+use settings::{update_settings_file, Settings, SettingsStore};
 use smallvec::SmallVec;
 use snippet::Snippet;
 use std::ops::Not as _;
@@ -143,7 +143,7 @@ use workspace::notifications::{DetachAndPromptErr, NotificationId};
 use workspace::{
     searchable::SearchEvent, ItemNavHistory, SplitDirection, ViewId, Workspace, WorkspaceId,
 };
-use workspace::{OpenInTerminal, OpenTerminal, Toast};
+use workspace::{OpenInTerminal, OpenTerminal, TabBarSettings, Toast};
 
 use crate::hover_links::find_url;
 
@@ -9798,6 +9798,17 @@ impl Editor {
             self.soft_wrap_mode_override = Some(soft_wrap);
         }
         cx.notify();
+    }
+
+    pub fn toggle_tab_bar(&mut self, _: &ToggleTabBar, cx: &mut ViewContext<Self>) {
+        let Some(workspace) = self.workspace() else {
+            return;
+        };
+        let fs = workspace.read(cx).app_state().fs.clone();
+        let current_show = TabBarSettings::get_global(cx).show;
+        update_settings_file::<TabBarSettings>(fs, cx, move |setting| {
+            setting.show = Some(!current_show);
+        });
     }
 
     pub fn toggle_indent_guides(&mut self, _: &ToggleIndentGuides, cx: &mut ViewContext<Self>) {

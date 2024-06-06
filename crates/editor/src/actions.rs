@@ -289,6 +289,7 @@ gpui::actions!(
         ToggleLineNumbers,
         ToggleIndentGuides,
         ToggleSoftWrap,
+        ToggleTabBar,
         Transpose,
         Undo,
         UndoSelection,
