@@ -209,7 +209,7 @@ impl LspCommand for PrepareRename {
                 if buffer.clip_point_utf16(start, Bias::Left) == start.0
                     && buffer.clip_point_utf16(end, Bias::Left) == end.0
                 {
-                    return Ok(Some(buffer.anchor_after(start)..buffer.anchor_before(end)));
+                    return Ok(Some(buffer.anchor_after(start)..buffer.anchor_after(end)));
                 }
             }
             Ok(None)
