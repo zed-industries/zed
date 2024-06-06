@@ -1295,7 +1295,7 @@ async fn test_restarting_server_with_diagnostics_running(cx: &mut gpui::TestAppC
             project
                 .language_servers_running_disk_based_diagnostics()
                 .collect::<Vec<_>>(),
-            [LanguageServerId(0); 0]
+            [] as [language::LanguageServerId; 0]
         );
     });
 }

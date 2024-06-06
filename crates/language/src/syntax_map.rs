@@ -48,7 +48,6 @@ pub struct SyntaxMapMatches<'a> {
 
 #[derive(Debug)]
 pub struct SyntaxMapCapture<'a> {
-    pub depth: usize,
     pub node: Node<'a>,
     pub index: u32,
     pub grammar_index: usize,
@@ -886,7 +885,9 @@ impl<'a> SyntaxMapCaptures<'a> {
 
             // TODO - add a Tree-sitter API to remove the need for this.
             let cursor = unsafe {
-                std::mem::transmute::<_, &'static mut QueryCursor>(query_cursor.deref_mut())
+                std::mem::transmute::<&mut tree_sitter::QueryCursor, &'static mut QueryCursor>(
+                    query_cursor.deref_mut(),
+                )
             };
 
             cursor.set_byte_range(range.clone());
@@ -933,7 +934,6 @@ impl<'a> SyntaxMapCaptures<'a> {
         let layer = self.layers[..self.active_layer_count].first()?;
         let capture = layer.next_capture?;
         Some(SyntaxMapCapture {
-            depth: layer.depth,
             grammar_index: layer.grammar_index,
             index: capture.index,
             node: capture.node,
@@ -1004,7 +1004,9 @@ impl<'a> SyntaxMapMatches<'a> {
 
             // TODO - add a Tree-sitter API to remove the need for this.
             let cursor = unsafe {
-                std::mem::transmute::<_, &'static mut QueryCursor>(query_cursor.deref_mut())
+                std::mem::transmute::<&mut tree_sitter::QueryCursor, &'static mut QueryCursor>(
+                    query_cursor.deref_mut(),
+                )
             };
 
             cursor.set_byte_range(range.clone());
