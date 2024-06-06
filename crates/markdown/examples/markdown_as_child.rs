@@ -10,15 +10,12 @@ use ui::div;
 use ui::prelude::*;
 
 const MARKDOWN_EXAMPLE: &'static str = r#"
-this is selectable text
+this text should be selectable
 
 wow so cool
 
-omg
-
-## Heading fr
+## Heading 2
 "#;
-
 pub fn main() {
     env_logger::init();
     App::new().with_assets(Assets).run(|cx| {

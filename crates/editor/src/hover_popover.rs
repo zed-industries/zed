@@ -105,16 +105,13 @@ pub fn hover_at_inlay(editor: &mut Editor, inlay_hover: InlayHover, cx: &mut Vie
             hide_hover(editor, cx);
         }
 
-        let text = r#"
+        let text = "
 this text should be selectable
 
 wow so cool
 
 ## Heading 2
-```rust
-let inline_code = "rendered";
-```
-"#;
+";
         let language_registry = Arc::new(LanguageRegistry::new(
             Task::ready(()),
             cx.background_executor().clone(),
@@ -140,7 +137,12 @@ let inline_code = "rendered";
         };
 
         let hw = cx.new_view(|cx| {
-            HelloWorld::new(text.into(), markdown_style.clone(), language_registry, cx)
+            Markdown::new(
+                text.into(),
+                markdown_style.clone(),
+                Some(language_registry),
+                cx,
+            )
         });
 
         let task = cx.spawn(|this, mut cx| {
@@ -268,16 +270,13 @@ fn show_hover(
         }
     }
 
-    let text = r#"
+    let text = "
 this text should be selectable
 
 wow so cool
 
 ## Heading 2
-```rust
-let inline_code = "rendered";
-```
-"#;
+";
     let language_registry = Arc::new(LanguageRegistry::new(
         Task::ready(()),
         cx.background_executor().clone(),
@@ -303,7 +302,12 @@ let inline_code = "rendered";
             selection_background_color: cx.theme().players().local().selection,
         };
 
-        HelloWorld::new(text.into(), markdown_style.clone(), language_registry, cx)
+        Markdown::new(
+            text.into(),
+            markdown_style.clone(),
+            Some(language_registry),
+            cx,
+        )
     });
     let task = cx.spawn(|this, mut cx| {
         async move {
@@ -580,7 +584,7 @@ pub struct InfoPopover {
     pub symbol_range: RangeInEditor,
     pub parsed_content: ParsedMarkdown,
     pub scroll_handle: ScrollHandle,
-    pub markdown_element: View<HelloWorld>,
+    pub markdown_element: View<Markdown>,
 }
 
 impl InfoPopover {
@@ -621,27 +625,6 @@ impl InfoPopover {
         ) / 2.0;
         cx.notify();
         self.scroll_handle.set_offset(current);
-    }
-}
-
-struct HelloWorld {
-    markdown: View<Markdown>,
-}
-impl HelloWorld {
-    pub fn new(
-        text: String,
-        style: MarkdownStyle,
-        language_registry: Arc<LanguageRegistry>,
-        cx: &mut WindowContext,
-    ) -> Self {
-        let markdown = cx.new_view(|cx| Markdown::new(text, style, Some(language_registry), cx));
-        Self { markdown }
-    }
-}
-
-impl Render for HelloWorld {
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
-        div().child(self.markdown.clone())
     }
 }
 
