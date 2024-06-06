@@ -2955,7 +2955,6 @@ async fn test_rescan_and_remote_updates(cx: &mut gpui::TestAppContext) {
     }));
 
     let project = Project::test(Arc::new(RealFs::default()), [dir.path()], cx).await;
-    let rpc = project.update(cx, |p, _| p.client.clone());
 
     let buffer_for_path = |path: &'static str, cx: &mut gpui::TestAppContext| {
         let buffer = project.update(cx, |p, cx| p.open_local_buffer(dir.path().join(path), cx));
@@ -2987,7 +2986,7 @@ async fn test_rescan_and_remote_updates(cx: &mut gpui::TestAppContext) {
 
     let updates = Arc::new(Mutex::new(Vec::new()));
     tree.update(cx, |tree, cx| {
-        let _ = tree.as_local_mut().unwrap().observe_updates(0, cx, {
+        tree.as_local_mut().unwrap().observe_updates(0, cx, {
             let updates = updates.clone();
             move |update| {
                 updates.lock().push(update);
@@ -2996,7 +2995,7 @@ async fn test_rescan_and_remote_updates(cx: &mut gpui::TestAppContext) {
         });
     });
 
-    let remote = cx.update(|cx| Worktree::remote(1, 1, metadata, rpc.clone(), cx));
+    let remote = cx.update(|cx| Worktree::remote(1, metadata, cx));
 
     cx.executor().run_until_parked();
 

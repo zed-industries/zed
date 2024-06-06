@@ -382,16 +382,6 @@ pub trait LocalFile: File {
     /// Loads the file's contents from disk.
     fn load(&self, cx: &AppContext) -> Task<Result<String>>;
 
-    /// Called when the buffer is reloaded from disk.
-    fn buffer_reloaded(
-        &self,
-        buffer_id: BufferId,
-        version: &clock::Global,
-        line_ending: LineEnding,
-        mtime: Option<SystemTime>,
-        cx: &mut AppContext,
-    );
-
     /// Returns true if the file should not be shared with collaborators.
     fn is_private(&self, _: &AppContext) -> bool {
         false
@@ -884,15 +874,6 @@ impl Buffer {
         self.saved_version = version;
         self.text.set_line_ending(line_ending);
         self.saved_mtime = mtime;
-        if let Some(file) = self.file.as_ref().and_then(|f| f.as_local()) {
-            file.buffer_reloaded(
-                self.remote_id(),
-                &self.saved_version,
-                self.line_ending(),
-                self.saved_mtime,
-                cx,
-            );
-        }
         cx.emit(Event::Reloaded);
         cx.notify();
     }

@@ -12887,7 +12887,6 @@ name = "worktree"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "client",
  "clock",
  "collections",
  "env_logger",
@@ -12902,7 +12901,6 @@ dependencies = [
  "itertools 0.11.0",
  "language",
  "log",
- "lsp",
  "parking_lot",
  "postage",
  "pretty_assertions",

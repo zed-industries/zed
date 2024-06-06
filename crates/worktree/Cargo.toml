@@ -14,7 +14,6 @@ workspace = true
 
 [features]
 test-support = [
-    "client/test-support",
     "language/test-support",
     "settings/test-support",
     "text/test-support",
@@ -24,7 +23,6 @@ test-support = [
 
 [dependencies]
 anyhow.workspace = true
-client.workspace = true
 clock.workspace = true
 collections.workspace = true
 fs.workspace = true
@@ -36,7 +34,6 @@ ignore.workspace = true
 itertools.workspace = true
 language.workspace = true
 log.workspace = true
-lsp.workspace = true
 parking_lot.workspace = true
 postage.workspace = true
 rpc.workspace = true
