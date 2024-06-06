@@ -36,7 +36,7 @@ pub(super) fn json_task_context() -> ContextProviderWithTasks {
         },
         TaskTemplate {
             label: "composer script $ZED_CUSTOM_script".to_owned(),
-            command: "composer".to_owned(),
+            command: "composer -d $ZED_DIRNAME".to_owned(),
             args: vec![VariableName::Custom("script".into()).template_value()],
             tags: vec!["composer-script".into()],
             ..TaskTemplate::default()
