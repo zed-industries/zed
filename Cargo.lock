@@ -12902,7 +12902,6 @@ dependencies = [
  "itertools 0.11.0",
  "language",
  "log",
- "lsp",
  "parking_lot",
  "postage",
  "pretty_assertions",

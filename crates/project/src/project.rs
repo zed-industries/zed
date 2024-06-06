@@ -121,9 +121,9 @@ pub use task_inventory::{
     BasicContextProvider, ContextProviderWithTasks, Inventory, TaskSourceKind,
 };
 pub use worktree::{
-    DiagnosticSummary, Entry, EntryKind, File, LocalWorktree, PathChange, ProjectEntryId,
-    RepositoryEntry, UpdatedEntriesSet, UpdatedGitRepositoriesSet, Worktree, WorktreeId,
-    WorktreeSettings, FS_WATCH_LATENCY,
+    Entry, EntryKind, File, LocalWorktree, PathChange, ProjectEntryId, RepositoryEntry,
+    UpdatedEntriesSet, UpdatedGitRepositoriesSet, Worktree, WorktreeId, WorktreeSettings,
+    FS_WATCH_LATENCY,
 };
 
 const MAX_SERVER_REINSTALL_ATTEMPT_COUNT: u64 = 4;
@@ -180,6 +180,18 @@ pub struct Project {
     next_entry_id: Arc<AtomicUsize>,
     join_project_response_message_id: u32,
     next_diagnostic_group_id: usize,
+    diagnostic_summaries:
+        HashMap<WorktreeId, HashMap<Arc<Path>, HashMap<LanguageServerId, DiagnosticSummary>>>,
+    diagnostics: HashMap<
+        WorktreeId,
+        HashMap<
+            Arc<Path>,
+            Vec<(
+                LanguageServerId,
+                Vec<DiagnosticEntry<Unclipped<PointUtf16>>>,
+            )>,
+        >,
+    >,
     user_store: Model<UserStore>,
     fs: Arc<dyn Fs>,
     client_state: ProjectClientState,
@@ -749,6 +761,8 @@ impl Project {
                 fs,
                 next_entry_id: Default::default(),
                 next_diagnostic_group_id: Default::default(),
+                diagnostics: Default::default(),
+                diagnostic_summaries: Default::default(),
                 supplementary_language_servers: HashMap::default(),
                 language_servers: Default::default(),
                 language_server_ids: HashMap::default(),
@@ -872,6 +886,8 @@ impl Project {
                 fs,
                 next_entry_id: Default::default(),
                 next_diagnostic_group_id: Default::default(),
+                diagnostic_summaries: Default::default(),
+                diagnostics: Default::default(),
                 client_subscriptions: Default::default(),
                 _subscriptions: vec![
                     cx.on_release(Self::release),
@@ -1740,14 +1756,37 @@ impl Project {
                                     })
                                 })?
                                 .await;
-                            if update_project.log_err().is_some() {
+                            if update_project.log_err().is_none() {
+                                continue;
+                            }
+                            this.update(&mut cx, |this, cx| {
                                 for worktree in worktrees {
-                                    worktree.update(&mut cx, |worktree, cx| {
+                                    worktree.update(cx, |worktree, cx| {
+                                        if let Some(summaries) =
+                                            this.diagnostic_summaries.get(&worktree.id())
+                                        {
+                                            for (path, summaries) in summaries {
+                                                for (&server_id, summary) in summaries {
+                                                    this.client.send(
+                                                        proto::UpdateDiagnosticSummary {
+                                                            project_id,
+                                                            worktree_id: cx.entity_id().as_u64(),
+                                                            summary: Some(
+                                                                summary.to_proto(server_id, path),
+                                                            ),
+                                                        },
+                                                    )?;
+                                                }
+                                            }
+                                        }
+
                                         let worktree = worktree.as_local_mut().unwrap();
-                                        worktree.share(project_id, cx).detach_and_log_err(cx)
+                                        worktree.share(project_id, cx).detach_and_log_err(cx);
+                                        anyhow::Ok(())
                                     })?;
                                 }
-                            }
+                                anyhow::Ok(())
+                            })??;
                         }
                         LocalProjectUpdate::CreateBufferForPeer { peer_id, buffer_id } => {
                             let buffer = this.update(&mut cx, |this, _| {
@@ -2634,8 +2673,10 @@ impl Project {
             let language = buffer.language().cloned();
             let worktree_id = file.worktree_id(cx);
 
-            if let Some(local_worktree) = file.worktree.read(cx).as_local() {
-                for (server_id, diagnostics) in local_worktree.diagnostics_for_path(file.path()) {
+            if let Some(diagnostics) = self.diagnostics.get(&worktree_id) {
+                for (server_id, diagnostics) in
+                    diagnostics.get(file.path()).cloned().unwrap_or_default()
+                {
                     self.update_buffer_diagnostics(buffer_handle, server_id, None, diagnostics, cx)
                         .log_err();
                 }
@@ -4074,14 +4115,43 @@ impl Project {
                     });
                 }
             }
-            for worktree in &self.worktrees {
-                if let Some(worktree) = worktree.upgrade() {
-                    worktree.update(cx, |worktree, cx| {
-                        if let Some(worktree) = worktree.as_local_mut() {
-                            worktree.clear_diagnostics_for_language_server(server_id, cx);
+
+            let project_id = self.remote_id();
+            for (worktree_id, summaries) in self.diagnostic_summaries.iter_mut() {
+                summaries.retain(|path, summaries_by_server_id| {
+                    if summaries_by_server_id.remove(&server_id).is_some() {
+                        if let Some(project_id) = project_id {
+                            self.client
+                                .send(proto::UpdateDiagnosticSummary {
+                                    project_id,
+                                    worktree_id: worktree_id.to_proto(),
+                                    summary: Some(proto::DiagnosticSummary {
+                                        path: path.to_string_lossy().to_string(),
+                                        language_server_id: server_id.0 as u64,
+                                        error_count: 0,
+                                        warning_count: 0,
+                                    }),
+                                })
+                                .log_err();
                         }
-                    });
-                }
+                        !summaries_by_server_id.is_empty()
+                    } else {
+                        true
+                    }
+                });
+            }
+
+            for diagnostics in self.diagnostics.values_mut() {
+                diagnostics.retain(|_, diagnostics_by_server_id| {
+                    if let Ok(ix) =
+                        diagnostics_by_server_id.binary_search_by_key(&server_id, |e| e.0)
+                    {
+                        diagnostics_by_server_id.remove(ix);
+                        !diagnostics_by_server_id.is_empty()
+                    } else {
+                        true
+                    }
+                });
             }
 
             self.language_server_watched_paths.remove(&server_id);
@@ -4818,10 +4888,13 @@ impl Project {
         }
 
         let updated = worktree.update(cx, |worktree, cx| {
-            worktree
-                .as_local_mut()
-                .ok_or_else(|| anyhow!("not a local worktree"))?
-                .update_diagnostics(server_id, project_path.path.clone(), diagnostics, cx)
+            self.update_worktree_diagnostics(
+                worktree.id(),
+                server_id,
+                project_path.path.clone(),
+                diagnostics,
+                cx,
+            )
         })?;
         if updated {
             cx.emit(Event::DiagnosticsUpdated {
@@ -4830,6 +4903,67 @@ impl Project {
             });
         }
         Ok(())
+    }
+
+    pub fn update_worktree_diagnostics(
+        &mut self,
+        worktree_id: WorktreeId,
+        server_id: LanguageServerId,
+        worktree_path: Arc<Path>,
+        diagnostics: Vec<DiagnosticEntry<Unclipped<PointUtf16>>>,
+        _: &mut ModelContext<Worktree>,
+    ) -> Result<bool> {
+        let summaries_for_tree = self.diagnostic_summaries.entry(worktree_id).or_default();
+        let diagnostics_for_tree = self.diagnostics.entry(worktree_id).or_default();
+        let summaries_by_server_id = summaries_for_tree.entry(worktree_path.clone()).or_default();
+
+        let old_summary = summaries_by_server_id
+            .remove(&server_id)
+            .unwrap_or_default();
+
+        let new_summary = DiagnosticSummary::new(&diagnostics);
+        if new_summary.is_empty() {
+            if let Some(diagnostics_by_server_id) = diagnostics_for_tree.get_mut(&worktree_path) {
+                if let Ok(ix) = diagnostics_by_server_id.binary_search_by_key(&server_id, |e| e.0) {
+                    diagnostics_by_server_id.remove(ix);
+                }
+                if diagnostics_by_server_id.is_empty() {
+                    diagnostics_for_tree.remove(&worktree_path);
+                }
+            }
+        } else {
+            summaries_by_server_id.insert(server_id, new_summary);
+            let diagnostics_by_server_id = diagnostics_for_tree
+                .entry(worktree_path.clone())
+                .or_default();
+            match diagnostics_by_server_id.binary_search_by_key(&server_id, |e| e.0) {
+                Ok(ix) => {
+                    diagnostics_by_server_id[ix] = (server_id, diagnostics);
+                }
+                Err(ix) => {
+                    diagnostics_by_server_id.insert(ix, (server_id, diagnostics));
+                }
+            }
+        }
+
+        if !old_summary.is_empty() || !new_summary.is_empty() {
+            if let Some(project_id) = self.remote_id() {
+                self.client
+                    .send(proto::UpdateDiagnosticSummary {
+                        project_id,
+                        worktree_id: worktree_id.to_proto(),
+                        summary: Some(proto::DiagnosticSummary {
+                            path: worktree_path.to_string_lossy().to_string(),
+                            language_server_id: server_id.0 as u64,
+                            error_count: new_summary.error_count as u32,
+                            warning_count: new_summary.warning_count as u32,
+                        }),
+                    })
+                    .log_err();
+            }
+        }
+
+        Ok(!old_summary.is_empty() || !new_summary.is_empty())
     }
 
     fn update_buffer_diagnostics(
@@ -7648,6 +7782,9 @@ impl Project {
     }
 
     pub fn remove_worktree(&mut self, id_to_remove: WorktreeId, cx: &mut ModelContext<Self>) {
+        self.diagnostics.remove(&id_to_remove);
+        self.diagnostic_summaries.remove(&id_to_remove);
+
         let mut servers_to_remove = HashMap::default();
         let mut servers_to_preserve = HashSet::default();
         for ((worktree_id, server_name), &server_id) in &self.language_server_ids {
@@ -8273,23 +8410,34 @@ impl Project {
         include_ignored: bool,
         cx: &'a AppContext,
     ) -> impl Iterator<Item = (ProjectPath, LanguageServerId, DiagnosticSummary)> + 'a {
-        self.visible_worktrees(cx).flat_map(move |worktree| {
-            let worktree = worktree.read(cx);
-            let worktree_id = worktree.id();
-            worktree
-                .diagnostic_summaries()
-                .filter_map(move |(path, server_id, summary)| {
-                    if include_ignored
-                        || worktree
-                            .entry_for_path(path.as_ref())
-                            .map_or(false, |entry| !entry.is_ignored)
-                    {
-                        Some((ProjectPath { worktree_id, path }, server_id, summary))
-                    } else {
-                        None
-                    }
-                })
-        })
+        self.visible_worktrees(cx)
+            .filter_map(|worktree| {
+                let worktree = worktree.read(cx);
+                Some((worktree, self.diagnostic_summaries.get(&worktree.id())?))
+            })
+            .flat_map(move |(worktree, summaries)| {
+                let worktree_id = worktree.id();
+                summaries
+                    .iter()
+                    .filter(move |(path, _)| {
+                        include_ignored
+                            || worktree
+                                .entry_for_path(path.as_ref())
+                                .map_or(false, |entry| !entry.is_ignored)
+                    })
+                    .flat_map(move |(path, summaries)| {
+                        summaries.iter().map(move |(server_id, summary)| {
+                            (
+                                ProjectPath {
+                                    worktree_id,
+                                    path: path.clone(),
+                                },
+                                *server_id,
+                                *summary,
+                            )
+                        })
+                    })
+            })
     }
 
     pub fn disk_based_diagnostics_started(
@@ -8950,23 +9098,41 @@ impl Project {
     ) -> Result<()> {
         this.update(&mut cx, |this, cx| {
             let worktree_id = WorktreeId::from_proto(envelope.payload.worktree_id);
-            if let Some(worktree) = this.worktree_for_id(worktree_id, cx) {
-                if let Some(summary) = envelope.payload.summary {
-                    let project_path = ProjectPath {
-                        worktree_id,
-                        path: Path::new(&summary.path).into(),
-                    };
-                    worktree.update(cx, |worktree, _| {
-                        worktree
-                            .as_remote_mut()
-                            .unwrap()
-                            .update_diagnostic_summary(project_path.path.clone(), &summary);
-                    });
-                    cx.emit(Event::DiagnosticsUpdated {
-                        language_server_id: LanguageServerId(summary.language_server_id as usize),
-                        path: project_path,
-                    });
+            if let Some(message) = envelope.payload.summary {
+                let project_path = ProjectPath {
+                    worktree_id,
+                    path: Path::new(&message.path).into(),
+                };
+                let path = project_path.path.clone();
+                let server_id = LanguageServerId(message.language_server_id as usize);
+                let summary = DiagnosticSummary {
+                    error_count: message.error_count as usize,
+                    warning_count: message.warning_count as usize,
+                };
+
+                if summary.is_empty() {
+                    if let Some(worktree_summaries) =
+                        this.diagnostic_summaries.get_mut(&worktree_id)
+                    {
+                        if let Some(summaries) = worktree_summaries.get_mut(&path) {
+                            summaries.remove(&server_id);
+                            if summaries.is_empty() {
+                                worktree_summaries.remove(&path);
+                            }
+                        }
+                    }
+                } else {
+                    this.diagnostic_summaries
+                        .entry(worktree_id)
+                        .or_default()
+                        .entry(path)
+                        .or_default()
+                        .insert(server_id, summary);
                 }
+                cx.emit(Event::DiagnosticsUpdated {
+                    language_server_id: LanguageServerId(message.language_server_id as usize),
+                    path: project_path,
+                });
             }
             Ok(())
         })?
@@ -11889,4 +12055,48 @@ fn deserialize_location(
             range: start..end,
         })
     })
+}
+
+#[derive(Copy, Clone, Debug, Default, PartialEq, Serialize)]
+pub struct DiagnosticSummary {
+    pub error_count: usize,
+    pub warning_count: usize,
+}
+
+impl DiagnosticSummary {
+    pub fn new<'a, T: 'a>(diagnostics: impl IntoIterator<Item = &'a DiagnosticEntry<T>>) -> Self {
+        let mut this = Self {
+            error_count: 0,
+            warning_count: 0,
+        };
+
+        for entry in diagnostics {
+            if entry.diagnostic.is_primary {
+                match entry.diagnostic.severity {
+                    DiagnosticSeverity::ERROR => this.error_count += 1,
+                    DiagnosticSeverity::WARNING => this.warning_count += 1,
+                    _ => {}
+                }
+            }
+        }
+
+        this
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.error_count == 0 && self.warning_count == 0
+    }
+
+    pub fn to_proto(
+        &self,
+        language_server_id: LanguageServerId,
+        path: &Path,
+    ) -> proto::DiagnosticSummary {
+        proto::DiagnosticSummary {
+            path: path.to_string_lossy().to_string(),
+            language_server_id: language_server_id.0 as u64,
+            error_count: self.error_count as u32,
+            warning_count: self.warning_count as u32,
+        }
+    }
 }
