@@ -87,7 +87,7 @@ pub fn main() {
                     )
                 });
 
-                HelloWorld { markdown: markdown }
+                HelloWorld { markdown }
             })
         });
     });

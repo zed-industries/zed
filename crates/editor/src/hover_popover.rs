@@ -7,7 +7,7 @@ use crate::{
 };
 use futures::{stream::FuturesUnordered, FutureExt};
 use gpui::{
-    div, px, AnyElement, CursorStyle, Hsla, InteractiveElement, IntoElement, MouseButton,
+    div, px, rgb, AnyElement, CursorStyle, Hsla, InteractiveElement, IntoElement, MouseButton,
     ParentElement, Pixels, ScrollHandle, SharedString, Size, StatefulInteractiveElement, Styled,
     Task, View, ViewContext, WeakView, WindowOptions,
 };
@@ -21,7 +21,7 @@ use project::{HoverBlock, HoverBlockKind, InlayHintLabelPart};
 use settings::Settings;
 use smol::stream::StreamExt;
 use std::{
-    ops::{Deref, Range},
+    ops::{Deref, DerefMut, Range},
     sync::Arc,
     time::Duration,
 };
@@ -518,6 +518,65 @@ impl InfoPopover {
         cx: &mut ViewContext<Editor>,
     ) -> AnyElement {
         let popover_text = (&self.parsed_content.text).clone();
+        let text = r#"
+this is selectable text
+
+wow so cool
+
+omg
+
+## Heading fr
+"#;
+        let language_registry = Arc::new(LanguageRegistry::new(
+            Task::ready(()),
+            cx.background_executor().clone(),
+        ));
+
+        cx.open_window(WindowOptions::default(), |cx| {
+            cx.new_view(|cx| {
+                let markdown_style = MarkdownStyle {
+                    code_block: gpui::TextStyleRefinement {
+                        font_family: Some("Zed Mono".into()),
+                        color: Some(cx.theme().colors().editor_foreground),
+                        background_color: Some(cx.theme().colors().editor_background),
+                        ..Default::default()
+                    },
+                    inline_code: gpui::TextStyleRefinement {
+                        font_family: Some("Zed Mono".into()),
+                        // @nate: Could we add inline-code specific styles to the theme?
+                        color: Some(cx.theme().colors().editor_foreground),
+                        background_color: Some(cx.theme().colors().editor_background),
+                        ..Default::default()
+                    },
+                    rule_color: Color::Muted.color(cx),
+                    block_quote_border_color: Color::Muted.color(cx),
+                    block_quote: gpui::TextStyleRefinement {
+                        color: Some(Color::Muted.color(cx)),
+                        ..Default::default()
+                    },
+                    link: gpui::TextStyleRefinement {
+                        color: Some(Color::Accent.color(cx)),
+                        underline: Some(gpui::UnderlineStyle {
+                            thickness: px(1.),
+                            color: Some(Color::Accent.color(cx)),
+                            wavy: false,
+                        }),
+                        ..Default::default()
+                    },
+                    syntax: cx.theme().syntax().clone(),
+                    selection_background_color: {
+                        let mut selection = cx.theme().players().local().selection;
+                        selection.fade_out(0.7);
+                        selection
+                    },
+                };
+                let markdown = cx.new_view(|cx| {
+                    Markdown::new(text.into(), markdown_style, Some(language_registry), cx)
+                });
+
+                HelloWorld { markdown }
+            })
+        });
 
         // let markdown_element = Markdown::new(
         //     "This is selectable text".to_string(),
@@ -527,60 +586,51 @@ impl InfoPopover {
         // );
         // cx.spawn(|this, &mut cx| {});
         //
-        let a = cx.deref().deref();
-        let markdown_element = cx.new_view(|cx| {
-            let text = r#"
-this is selectable text
 
-wow so cool
-
-omg
-
-## Heading fr
-                "#
-            .to_string();
-            // let view = cx.new_view(|v| v);
-            let language_registry = Arc::new(LanguageRegistry::new(
-                Task::ready(()),
-                cx.background_executor().clone(),
-            ));
-            let markdown_style = MarkdownStyle {
-                code_block: gpui::TextStyleRefinement {
-                    font_family: Some("Zed Mono".into()),
-                    color: Some(cx.theme().colors().editor_foreground),
-                    background_color: Some(cx.theme().colors().editor_background),
-                    ..Default::default()
-                },
-                inline_code: gpui::TextStyleRefinement {
-                    font_family: Some("Zed Mono".into()),
-                    // @nate: Could we add inline-code specific styles to the theme?
-                    color: Some(cx.theme().colors().editor_foreground),
-                    background_color: Some(cx.theme().colors().editor_background),
-                    ..Default::default()
-                },
-                rule_color: Color::Muted.color(cx),
-                block_quote_border_color: Color::Muted.color(cx),
-                block_quote: gpui::TextStyleRefinement {
-                    color: Some(Color::Muted.color(cx)),
-                    ..Default::default()
-                },
-                link: gpui::TextStyleRefinement {
+        let markdown_style = MarkdownStyle {
+            code_block: gpui::TextStyleRefinement {
+                font_family: Some("Zed Mono".into()),
+                color: Some(cx.theme().colors().editor_foreground),
+                background_color: Some(cx.theme().colors().editor_background),
+                ..Default::default()
+            },
+            inline_code: gpui::TextStyleRefinement {
+                font_family: Some("Zed Mono".into()),
+                // @nate: Could we add inline-code specific styles to the theme?
+                color: Some(cx.theme().colors().editor_foreground),
+                background_color: Some(cx.theme().colors().editor_background),
+                ..Default::default()
+            },
+            rule_color: Color::Muted.color(cx),
+            block_quote_border_color: Color::Muted.color(cx),
+            block_quote: gpui::TextStyleRefinement {
+                color: Some(Color::Muted.color(cx)),
+                ..Default::default()
+            },
+            link: gpui::TextStyleRefinement {
+                color: Some(Color::Accent.color(cx)),
+                underline: Some(gpui::UnderlineStyle {
+                    thickness: px(1.),
                     color: Some(Color::Accent.color(cx)),
-                    underline: Some(gpui::UnderlineStyle {
-                        thickness: px(1.),
-                        color: Some(Color::Accent.color(cx)),
-                        wavy: false,
-                    }),
-                    ..Default::default()
-                },
-                syntax: cx.theme().syntax().clone(),
-                selection_background_color: {
-                    let mut selection = cx.theme().players().local().selection;
-                    selection.fade_out(0.7);
-                    selection
-                },
-            };
-            Markdown::new(text, markdown_style, Some(language_registry), cx)
+                    wavy: false,
+                }),
+                ..Default::default()
+            },
+            syntax: cx.theme().syntax().clone(),
+            selection_background_color: {
+                let mut selection = cx.theme().players().local().selection;
+                selection.fade_out(0.7);
+                selection
+            },
+        };
+        let language_registry = Arc::new(LanguageRegistry::new(
+            Task::ready(()),
+            cx.background_executor().clone(),
+        ));
+        let markdown_element = cx.new_view(|cx| {
+            // let view = cx.new_view(|v| v);
+
+            Markdown::new(text.into(), markdown_style, Some(language_registry), cx)
         });
         // let mut markdown_element =
         //     MarkdownExample::new(text, markdown_style, language_registry, cx);
@@ -615,6 +665,27 @@ omg
         ) / 2.0;
         cx.notify();
         self.scroll_handle.set_offset(current);
+    }
+}
+
+struct HelloWorld {
+    markdown: View<Markdown>,
+}
+
+impl Render for HelloWorld {
+    fn render(&mut self, _cx: &mut ViewContext<Self>) -> impl IntoElement {
+        div()
+            .flex()
+            .bg(rgb(0x2e7d32))
+            // .size(Length::Definite(Pixels(300.0).into()))
+            .justify_center()
+            .items_center()
+            .shadow_lg()
+            .border_1()
+            .border_color(rgb(0x0000ff))
+            .text_xl()
+            .text_color(rgb(0xffffff))
+            .child(self.markdown.clone())
     }
 }
 
