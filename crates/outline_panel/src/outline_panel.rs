@@ -720,67 +720,70 @@ impl OutlinePanel {
 
     fn reveal_entry(
         &mut self,
+        editor: &View<Editor>,
         project: Model<Project>,
         excerpt_id: ExcerptId,
-        outline_item: OutlineItem<language::Anchor>,
+        outline_item: Option<OutlineItem<language::Anchor>>,
         cx: &mut ViewContext<'_, Self>,
     ) {
-        let entry_to_reveal = OutlinePanelEntry::Outline(excerpt_id, outline_item);
-        if self.selected_entry.as_ref() == Some(&entry_to_reveal) {
+        let file_entry_to_reveal = match outline_item {
+            Some(outline_item) => self
+                .visible_entries
+                .iter()
+                .rev()
+                .skip_while(|entry| {
+                    if let OutlinePanelEntry::Outline(visible_excerpt_id, visible_outline_item) =
+                        entry
+                    {
+                        visible_excerpt_id != &excerpt_id || visible_outline_item != &outline_item
+                    } else {
+                        true
+                    }
+                })
+                .skip(1)
+                .find(|entry| match entry {
+                    OutlinePanelEntry::ExternalFile(file_excerpt_id, _)
+                    | OutlinePanelEntry::File(file_excerpt_id, _, _) => {
+                        file_excerpt_id == &excerpt_id
+                    }
+                    _ => false,
+                }),
+            None => self.visible_entries.iter().find(|entry| match entry {
+                OutlinePanelEntry::ExternalFile(file_excerpt_id, _)
+                | OutlinePanelEntry::File(file_excerpt_id, _, _) => file_excerpt_id == &excerpt_id,
+                _ => false,
+            }),
+        };
+        if self.selected_entry.as_ref() == file_entry_to_reveal {
             return;
         }
 
-        let mut entries = self
-            .visible_entries
-            .iter()
-            .rev()
-            .skip_while(|entry| entry != &&entry_to_reveal)
-            .skip(1)
-            .skip_while(|entry| {
-                if let OutlinePanelEntry::File(file_excerpt_id, _, _) = entry {
-                    file_excerpt_id == &excerpt_id
-                } else {
-                    true
+        let file_entry_to_reveal = file_entry_to_reveal.cloned();
+        if let Some(OutlinePanelEntry::File(_, file_worktree_id, file_entry)) =
+            &file_entry_to_reveal
+        {
+            if let Some(worktree) = project.read(cx).worktree_for_id(*file_worktree_id, cx) {
+                let parent_entry = {
+                    let mut traversal = worktree.read(cx).traverse_from_path(
+                        true,
+                        true,
+                        true,
+                        file_entry.path.as_ref(),
+                    );
+                    if traversal.back_to_parent() {
+                        traversal.entry()
+                    } else {
+                        None
+                    }
+                    .cloned()
+                };
+                if let Some(directory_entry) = parent_entry {
+                    self.expand_entry(worktree.read(cx).id(), directory_entry.id, cx);
                 }
-            });
-        let Some((worktree, file_entry)) = entries.next().and_then(|entry| {
-            if let OutlinePanelEntry::File(_, file_worktree_id, file_entry) = entry {
-                project
-                    .read(cx)
-                    .worktree_for_id(*file_worktree_id, cx)
-                    .zip(Some(file_entry))
-            } else {
-                None
             }
-        }) else {
-            return;
-        };
-        let Some(editor) = self.workspace.upgrade().and_then(|workspace| {
-            workspace
-                .read(cx)
-                .active_item(cx)
-                .and_then(|item| item.act_as::<Editor>(cx))
-        }) else {
-            return;
-        };
-
-        let parent_entry = {
-            let mut traversal =
-                worktree
-                    .read(cx)
-                    .traverse_from_path(true, true, true, file_entry.path.as_ref());
-            if traversal.back_to_parent() {
-                traversal.entry()
-            } else {
-                None
-            }
-            .cloned()
-        };
-        if let Some(directory_entry) = parent_entry {
-            self.expand_entry(worktree.read(cx).id(), directory_entry.id, cx);
         }
 
-        self.update_visible_entries(&editor, HashSet::default(), Some(entry_to_reveal), cx);
+        self.update_visible_entries(&editor, HashSet::default(), file_entry_to_reveal, cx);
         self.autoscroll(cx);
         cx.notify();
     }
@@ -1475,7 +1478,7 @@ impl Render for OutlinePanel {
 
                                         (
                                             Some(OutlinePanelEntry::ExternalFile(..)),
-                                            OutlinePanelEntry::Outline(_, outline),
+                                            OutlinePanelEntry::Outline(..),
                                         ) => depth += 1,
                                         (Some(OutlinePanelEntry::ExternalFile(..)), _) => {}
                                         (Some(_), OutlinePanelEntry::ExternalFile(..)) => depth = 0,
@@ -1572,15 +1575,15 @@ fn subscribe_for_editor_events(
             editor,
             |outline_panel, editor, e: &EditorEvent, cx| match e {
                 EditorEvent::SelectionsChanged { local: true } => {
-                    if let Some((excerpt_id, outline_item)) = outline_for_selection(&editor, cx) {
-                        outline_panel.reveal_entry(
-                            outline_panel.project.clone(),
-                            excerpt_id,
-                            outline_item,
-                            cx,
-                        );
-                        return;
-                    }
+                    let (excerpt_id, outline_item) = location_for_selection(&editor, cx);
+                    outline_panel.reveal_entry(
+                        &editor,
+                        outline_panel.project.clone(),
+                        excerpt_id,
+                        outline_item,
+                        cx,
+                    );
+                    cx.notify();
                 }
                 EditorEvent::ExcerptsAdded { excerpts, .. } => {
                     outline_panel.update_visible_entries(
@@ -1605,10 +1608,10 @@ fn subscribe_for_editor_events(
     }
 }
 
-fn outline_for_selection(
+fn location_for_selection(
     editor: &View<Editor>,
     cx: &mut ViewContext<OutlinePanel>,
-) -> Option<(ExcerptId, OutlineItem<language::Anchor>)> {
+) -> (ExcerptId, Option<OutlineItem<language::Anchor>>) {
     let selection = editor
         .read(cx)
         .selections
@@ -1617,22 +1620,19 @@ fn outline_for_selection(
     let multi_buffer = editor.read(cx).buffer();
     let multi_buffer_snapshot = multi_buffer.read(cx).snapshot(cx);
     let selection = multi_buffer_snapshot.anchor_before(selection);
-
-    let (excerpt_id, buffer_snapshot, _) = multi_buffer_snapshot
-        .excerpts_in_ranges(Some(selection..selection))
-        .next()?;
-    let outline_item = buffer_snapshot
-        .outline(None)?
-        .items
-        .into_iter()
-        .find(|outline_item| {
-            ranges_intersect(
-                &outline_item.range,
-                &(selection.text_anchor..selection.text_anchor),
-                buffer_snapshot,
-            )
+    let outline_item = multi_buffer_snapshot
+        .buffer_for_excerpt(selection.excerpt_id)
+        .and_then(|buffer_snapshot| {
+            let outline_items = buffer_snapshot.outline(None)?.items;
+            outline_items.into_iter().find(|outline_item| {
+                ranges_intersect(
+                    &outline_item.range,
+                    &(selection.text_anchor..selection.text_anchor),
+                    buffer_snapshot,
+                )
+            })
         });
-    Some(excerpt_id).zip(outline_item)
+    (selection.excerpt_id, outline_item)
 }
 
 // TODO kb tests
