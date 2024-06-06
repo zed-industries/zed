@@ -340,6 +340,8 @@ pub enum Event {
     UpdatedGitRepositories(UpdatedGitRepositoriesSet),
 }
 
+static EMPTY_PATH: &str = "";
+
 impl EventEmitter<Event> for Worktree {}
 
 impl Worktree {
@@ -350,10 +352,7 @@ impl Worktree {
         next_entry_id: Arc<AtomicUsize>,
         cx: &mut AsyncAppContext,
     ) -> Result<Model<Self>> {
-        // After determining whether the root entry is a file or a directory, populate the
-        // snapshot's "root name", which will be used for the purpose of fuzzy matching.
         let abs_path = path.into();
-
         let metadata = fs
             .metadata(&abs_path)
             .await
@@ -367,27 +366,16 @@ impl Worktree {
         });
 
         cx.new_model(move |cx: &mut ModelContext<Worktree>| {
-            let worktree_id = cx.handle().entity_id().as_u64() as usize;
-            let settings = WorktreeSettings::get(
-                Some(SettingsLocation {
-                    worktree_id,
-                    path: Path::new(""),
-                }),
-                cx,
-            )
-            .clone();
+            let worktree_id = cx.handle().entity_id().as_u64();
+            let settings_location = Some(SettingsLocation {
+                worktree_id: worktree_id as usize,
+                path: Path::new(EMPTY_PATH),
+            });
 
+            let settings = WorktreeSettings::get(settings_location, cx).clone();
             cx.observe_global::<SettingsStore>(move |this, cx| {
                 if let Self::Local(this) = this {
-                    let settings = WorktreeSettings::get(
-                        Some(SettingsLocation {
-                            worktree_id,
-                            path: Path::new(""),
-                        }),
-                        cx,
-                    )
-                    .clone();
-
+                    let settings = WorktreeSettings::get(settings_location, cx).clone();
                     if settings != this.settings {
                         this.settings = settings;
                         this.restart_background_scanners(cx);
@@ -396,24 +384,16 @@ impl Worktree {
             })
             .detach();
 
-            let root_name = abs_path
-                .file_name()
-                .map_or(String::new(), |f| f.to_string_lossy().to_string());
-
             let mut snapshot = LocalSnapshot {
                 ignores_by_parent_abs_path: Default::default(),
                 git_repositories: Default::default(),
-                snapshot: Snapshot {
-                    id: WorktreeId::from_usize(cx.entity_id().as_u64() as usize),
-                    abs_path: abs_path.to_path_buf().into(),
-                    root_name: root_name.clone(),
-                    root_char_bag: root_name.chars().map(|c| c.to_ascii_lowercase()).collect(),
-                    entries_by_path: Default::default(),
-                    entries_by_id: Default::default(),
-                    repository_entries: Default::default(),
-                    scan_id: 1,
-                    completed_scan_id: 0,
-                },
+                snapshot: Snapshot::new(
+                    cx.entity_id().as_u64(),
+                    abs_path
+                        .file_name()
+                        .map_or(String::new(), |f| f.to_string_lossy().to_string()),
+                    abs_path.into(),
+                ),
             };
 
             if let Some(metadata) = metadata {
@@ -433,7 +413,7 @@ impl Worktree {
             let (path_prefixes_to_scan_tx, path_prefixes_to_scan_rx) = channel::unbounded();
             let mut worktree = LocalWorktree {
                 share_private_files: false,
-                next_entry_id: Arc::clone(&next_entry_id),
+                next_entry_id,
                 snapshot,
                 is_scanning: watch::channel_with(true),
                 update_observer: None,
@@ -456,21 +436,11 @@ impl Worktree {
         cx: &mut AppContext,
     ) -> Model<Self> {
         cx.new_model(|cx: &mut ModelContext<Self>| {
-            let snapshot = Snapshot {
-                id: WorktreeId(worktree.id as usize),
-                abs_path: Arc::from(PathBuf::from(worktree.abs_path)),
-                root_name: worktree.root_name.clone(),
-                root_char_bag: worktree
-                    .root_name
-                    .chars()
-                    .map(|c| c.to_ascii_lowercase())
-                    .collect(),
-                entries_by_path: Default::default(),
-                entries_by_id: Default::default(),
-                repository_entries: Default::default(),
-                scan_id: 1,
-                completed_scan_id: 0,
-            };
+            let snapshot = Snapshot::new(
+                worktree.id,
+                worktree.root_name,
+                Arc::from(PathBuf::from(worktree.abs_path)),
+            );
 
             let (updates_tx, mut updates_rx) = mpsc::unbounded();
             let background_snapshot = Arc::new(Mutex::new(snapshot.clone()));
@@ -515,7 +485,7 @@ impl Worktree {
 
             Worktree::Remote(RemoteWorktree {
                 replica_id,
-                snapshot: snapshot.clone(),
+                snapshot,
                 background_snapshot,
                 updates_tx: Some(updates_tx),
                 snapshot_subscriptions: Default::default(),
@@ -1422,6 +1392,20 @@ impl RemoteWorktree {
 }
 
 impl Snapshot {
+    pub fn new(id: u64, root_name: String, abs_path: Arc<Path>) -> Self {
+        Snapshot {
+            id: WorktreeId::from_usize(id as usize),
+            abs_path,
+            root_char_bag: root_name.chars().map(|c| c.to_ascii_lowercase()).collect(),
+            root_name,
+            entries_by_path: Default::default(),
+            entries_by_id: Default::default(),
+            repository_entries: Default::default(),
+            scan_id: 1,
+            completed_scan_id: 0,
+        }
+    }
+
     pub fn id(&self) -> WorktreeId {
         self.id
     }
