@@ -8,7 +8,7 @@ use std::{
 };
 
 use anyhow::Context;
-use collections::{BTreeMap, BTreeSet, HashMap, HashSet};
+use collections::{hash_map, BTreeMap, BTreeSet, HashMap, HashSet};
 use db::kvp::KEY_VALUE_STORE;
 use editor::{
     items::{entry_git_aware_label_color, entry_label_color},
@@ -32,7 +32,7 @@ use project::{EntryKind, Fs, Project};
 use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsStore};
 use unicase::UniCase;
-use util::{debug_panic, maybe, NumericPrefixWithSuffix, ResultExt, TryFutureExt};
+use util::{maybe, NumericPrefixWithSuffix, ResultExt, TryFutureExt};
 use workspace::{
     dock::{DockPosition, Panel, PanelEvent},
     item::ItemHandle,
@@ -82,25 +82,29 @@ pub struct OutlinePanel {
     _subscriptions: Vec<Subscription>,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+enum FileWithOutlines {
+    External(Option<PathBuf>),
+    Worktree(WorktreeId, ProjectEntryId),
+}
+
 #[derive(Clone, Debug, Eq, Hash)]
 enum OutlinePanelEntry {
-    ExternalFile(ExcerptId, Option<PathBuf>),
+    ExternalFile(Option<PathBuf>),
     Directory(WorktreeId, Entry),
-    File(ExcerptId, WorktreeId, Entry),
+    File(WorktreeId, Entry),
     Outline(ExcerptId, OutlineItem<language::Anchor>),
 }
 
 impl PartialEq for OutlinePanelEntry {
     fn eq(&self, other: &Self) -> bool {
         match (self, other) {
-            (Self::ExternalFile(id_a, path_a), Self::ExternalFile(id_b, path_b)) => {
-                path_a == path_b && id_a == id_b
-            }
+            (Self::ExternalFile(path_a), Self::ExternalFile(path_b)) => path_a == path_b,
             (Self::Directory(id_a, entry_a), Self::Directory(id_b, entry_b)) => {
                 id_a == id_b && entry_a.id == entry_b.id
             }
-            (Self::File(id_a, worktree_a, entry_a), Self::File(id_b, worktree_b, entry_b)) => {
-                id_a == id_b && worktree_a == worktree_b && entry_a.id == entry_b.id
+            (Self::File(worktree_a, entry_a), Self::File(worktree_b, entry_b)) => {
+                worktree_a == worktree_b && entry_a.id == entry_b.id
             }
             (Self::Outline(id_a, item_a), Self::Outline(id_b, item_b)) => {
                 id_a == id_b && item_a == item_b
@@ -109,17 +113,18 @@ impl PartialEq for OutlinePanelEntry {
         }
     }
 }
+
 impl OutlinePanelEntry {
     fn abs_path(&self, project: &Model<Project>, cx: &AppContext) -> Option<PathBuf> {
         match self {
-            Self::ExternalFile(_, path) => path.clone(),
+            Self::ExternalFile(path) => path.clone(),
             Self::Directory(worktree_id, entry) => project
                 .read(cx)
                 .worktree_for_id(*worktree_id, cx)?
                 .read(cx)
                 .absolutize(&entry.path)
                 .ok(),
-            Self::File(_, worktree_id, entry) => project
+            Self::File(worktree_id, entry) => project
                 .read(cx)
                 .worktree_for_id(*worktree_id, cx)?
                 .read(cx)
@@ -131,9 +136,9 @@ impl OutlinePanelEntry {
 
     fn relative_path(&self, _: &AppContext) -> Option<&Path> {
         match self {
-            Self::ExternalFile(_, path) => path.as_deref(),
+            Self::ExternalFile(path) => path.as_deref(),
             Self::Directory(_, entry) => Some(entry.path.as_ref()),
-            Self::File(_, _, entry) => Some(entry.path.as_ref()),
+            Self::File(_, entry) => Some(entry.path.as_ref()),
             Self::Outline(..) => None,
         }
     }
@@ -409,7 +414,7 @@ impl OutlinePanel {
                             false
                         }
                     }
-                    OutlinePanelEntry::File(_, worktree_id, file_entry) => {
+                    OutlinePanelEntry::File(worktree_id, file_entry) => {
                         if let OutlinePanelEntry::Directory(
                             directory_worktree_id,
                             directory_entry,
@@ -421,13 +426,10 @@ impl OutlinePanel {
                             false
                         }
                     }
-                    OutlinePanelEntry::Outline(excerpt_id, _) => {
-                        if let OutlinePanelEntry::File(file_excerpt_id, _, _) = entry {
-                            excerpt_id == file_excerpt_id
-                        } else {
-                            false
-                        }
-                    }
+                    OutlinePanelEntry::Outline(..) => matches!(
+                        entry,
+                        OutlinePanelEntry::File(..) | OutlinePanelEntry::ExternalFile(_)
+                    ),
                 });
 
             if let Some(parent_entry) = parent_entry {
@@ -718,14 +720,8 @@ impl OutlinePanel {
         }
     }
 
-    fn reveal_entry(
-        &mut self,
-        editor: &View<Editor>,
-        project: Model<Project>,
-        excerpt_id: ExcerptId,
-        outline_item: Option<OutlineItem<language::Anchor>>,
-        cx: &mut ViewContext<'_, Self>,
-    ) {
+    fn reveal_entry(&mut self, editor: &View<Editor>, cx: &mut ViewContext<'_, Self>) {
+        let (excerpt_id, outline_item) = location_for_selection(editor, cx);
         let file_entry_to_expand = match &outline_item {
             Some(outline_item) => self
                 .visible_entries
@@ -742,20 +738,20 @@ impl OutlinePanel {
                 })
                 .skip(1)
                 .find(|entry| match entry {
-                    OutlinePanelEntry::ExternalFile(file_excerpt_id, _)
-                    | OutlinePanelEntry::File(file_excerpt_id, _, _) => {
+                    OutlinePanelEntry::ExternalFile(_) | OutlinePanelEntry::File(_, _) => {
                         file_excerpt_id == &excerpt_id
                     }
                     _ => false,
                 }),
             None => self.visible_entries.iter().find(|entry| match entry {
-                OutlinePanelEntry::ExternalFile(file_excerpt_id, _)
-                | OutlinePanelEntry::File(file_excerpt_id, _, _) => file_excerpt_id == &excerpt_id,
+                OutlinePanelEntry::ExternalFile(_) | OutlinePanelEntry::File(_, _) => {
+                    file_excerpt_id == &excerpt_id
+                }
                 _ => false,
             }),
         };
         let Some(entry_to_select) = outline_item
-            .map(|outline| OutlinePanelEntry::Outline(excerpt_id, outline))
+            .map(|outline| OutlinePanelEntry::Outline(_, outline))
             .or_else(|| file_entry_to_expand.cloned())
         else {
             return;
@@ -765,9 +761,8 @@ impl OutlinePanel {
             return;
         }
 
-        if let Some(OutlinePanelEntry::File(_, file_worktree_id, file_entry)) = file_entry_to_expand
-        {
-            if let Some(worktree) = project.read(cx).worktree_for_id(*file_worktree_id, cx) {
+        if let Some(OutlinePanelEntry::File(file_worktree_id, file_entry)) = file_entry_to_expand {
+            if let Some(worktree) = self.project.read(cx).worktree_for_id(*file_worktree_id, cx) {
                 let parent_entry = {
                     let mut traversal = worktree.read(cx).traverse_from_path(
                         true,
@@ -832,7 +827,7 @@ impl OutlinePanel {
         let settings = OutlinePanelSettings::get_global(cx);
         let is_active = self.selected_entry.as_ref() == Some(rendered_entry);
         let (item_id, name, text_color, icon) = match rendered_entry {
-            OutlinePanelEntry::File(_, worktree_id, entry) => {
+            OutlinePanelEntry::File(worktree_id, entry) => {
                 let name = self.entry_name(worktree_id, entry, cx);
                 let color =
                     entry_git_aware_label_color(entry.git_status, entry.is_ignored, is_active);
@@ -871,7 +866,7 @@ impl OutlinePanel {
                     icon,
                 )
             }
-            OutlinePanelEntry::ExternalFile(excerpt_id, file) => {
+            OutlinePanelEntry::ExternalFile(file) => {
                 let name = file.as_ref().map_or_else(
                     || "Untitled".to_string(),
                     |file_path| {
@@ -941,12 +936,6 @@ impl OutlinePanel {
                             }
 
                             // TODO kb
-                            match &clicked_entry {
-                                OutlinePanelEntry::ExternalFile(excerpt_id, _) => {}
-                                OutlinePanelEntry::Directory(_, directory_entry) => {}
-                                OutlinePanelEntry::File(excerpt_id, _, file_entry) => {}
-                                OutlinePanelEntry::Outline(excerpt_id, outline) => {}
-                            }
                             // if kind.is_dir() {
                             //     outline_panel.toggle_expanded(entry_id, cx);
                             // } else if outline_panel
@@ -1077,10 +1066,13 @@ impl OutlinePanel {
         let project = self.project.read(cx);
         let displayed_multi_buffer = active_editor.read(cx).buffer().clone();
         let multi_buffer_snapshot = displayed_multi_buffer.read(cx).snapshot(cx);
-        let mut new_workspace_entries = BTreeMap::<WorktreeId, HashSet<&Entry>>::new();
-        let mut outline_entries = HashMap::default();
-        let mut non_project_entries = Vec::default();
-        let mut project_entries_excerpts = HashMap::default();
+        let mut outline_entries =
+            HashMap::<FileWithOutlines, Vec<OutlineItem<language::Anchor>>>::default();
+        let mut processed_outlines = HashMap::default();
+
+        let mut new_workspace_entries = HashMap::<WorktreeId, HashSet<&Entry>>::default();
+        let mut external_entries = Vec::default();
+        let mut project_entries_excerpts = HashMap::<ProjectEntryId, HashSet<ExcerptId>>::default();
         for (excerpt_id, buffer_snapshot, excerpt_range) in multi_buffer_snapshot.excerpts() {
             let is_new = new_entries.contains(&excerpt_id);
             let mut outlines = buffer_snapshot
@@ -1141,17 +1133,18 @@ impl OutlinePanel {
                                 }
                             }
 
-                            if new_workspace_entries
+                            let new_entry_added = new_workspace_entries
                                 .entry(worktree.id())
                                 .or_default()
-                                .insert(current_entry)
-                            {
-                                project_entries_excerpts.insert(current_entry.id, excerpt_id);
-                                if traversal.back_to_parent() {
-                                    if let Some(parent_entry) = traversal.entry() {
-                                        current_entry = parent_entry;
-                                        continue;
-                                    }
+                                .insert(current_entry);
+                            project_entries_excerpts
+                                .entry(current_entry.id)
+                                .or_default()
+                                .insert(excerpt_id);
+                            if new_entry_added && traversal.back_to_parent() {
+                                if let Some(parent_entry) = traversal.entry() {
+                                    current_entry = parent_entry;
+                                    continue;
                                 }
                             }
                             break;
@@ -1159,23 +1152,19 @@ impl OutlinePanel {
                     }
                     None => {
                         if let Some(abs_path) = file.worktree.read(cx).absolutize(&file.path).ok() {
-                            non_project_entries
-                                .push(OutlinePanelEntry::ExternalFile(excerpt_id, Some(abs_path)));
+                            external_entries.push(OutlinePanelEntry::ExternalFile(Some(abs_path)));
                         }
                     }
                 }
             } else {
-                non_project_entries.push(OutlinePanelEntry::ExternalFile(excerpt_id, None));
+                external_entries.push(OutlinePanelEntry::ExternalFile(None));
             }
         }
 
-        non_project_entries.sort_by(|entry_a, entry_b| match (entry_a, entry_b) {
-            (
-                OutlinePanelEntry::ExternalFile(excerpt_a, path_a),
-                OutlinePanelEntry::ExternalFile(excerpt_b, path_b),
-            ) => path_a
-                .cmp(&path_b)
-                .then(excerpt_a.cmp(&excerpt_b, &multi_buffer_snapshot)),
+        external_entries.sort_by(|entry_a, entry_b| match (entry_a, entry_b) {
+            (OutlinePanelEntry::ExternalFile(path_a), OutlinePanelEntry::ExternalFile(path_b)) => {
+                path_a.cmp(&path_b)
+            }
             (OutlinePanelEntry::ExternalFile(..), _) => cmp::Ordering::Less,
             (_, OutlinePanelEntry::ExternalFile(..)) => cmp::Ordering::Greater,
             _ => cmp::Ordering::Equal,
@@ -1190,59 +1179,7 @@ impl OutlinePanel {
                         .read(cx)
                         .snapshot();
                     let mut entries = entries.into_iter().cloned().collect::<Vec<_>>();
-                    entries.sort_by(|entry_a, entry_b| {
-                        let mut components_a = entry_a.path.components().peekable();
-                        let mut components_b = entry_b.path.components().peekable();
-                        loop {
-                            match (components_a.next(), components_b.next()) {
-                                (Some(component_a), Some(component_b)) => {
-                                    let a_is_file =
-                                        components_a.peek().is_none() && entry_a.is_file();
-                                    let b_is_file =
-                                        components_b.peek().is_none() && entry_b.is_file();
-                                    let ordering = a_is_file.cmp(&b_is_file).then_with(|| {
-                                        let maybe_numeric_ordering = maybe!({
-                                            let num_and_remainder_a = Path::new(
-                                                component_a.as_os_str(),
-                                            )
-                                            .file_stem()
-                                            .and_then(|s| s.to_str())
-                                            .and_then(
-                                                NumericPrefixWithSuffix::from_numeric_prefixed_str,
-                                            )?;
-                                            let num_and_remainder_b = Path::new(
-                                                component_b.as_os_str(),
-                                            )
-                                            .file_stem()
-                                            .and_then(|s| s.to_str())
-                                            .and_then(
-                                                NumericPrefixWithSuffix::from_numeric_prefixed_str,
-                                            )?;
-
-                                            num_and_remainder_a.partial_cmp(&num_and_remainder_b)
-                                        });
-
-                                        maybe_numeric_ordering.unwrap_or_else(|| {
-                                            let name_a = UniCase::new(
-                                                component_a.as_os_str().to_string_lossy(),
-                                            );
-                                            let name_b = UniCase::new(
-                                                component_b.as_os_str().to_string_lossy(),
-                                            );
-
-                                            name_a.cmp(&name_b)
-                                        })
-                                    });
-                                    if !ordering.is_eq() {
-                                        return ordering;
-                                    }
-                                }
-                                (Some(_), None) => break cmp::Ordering::Greater,
-                                (None, Some(_)) => break cmp::Ordering::Less,
-                                (None, None) => break cmp::Ordering::Equal,
-                            }
-                        }
-                    });
+                    sort_worktree_entries(&mut entries);
                     worktree_snapshot.propagate_git_statuses(&mut entries);
                     Some((worktree_id, entries))
                 });
@@ -1253,32 +1190,42 @@ impl OutlinePanel {
                 if entry.is_dir() {
                     worktree_items_with_outlines
                         .push(OutlinePanelEntry::Directory(worktree_id, entry))
-                } else if let Some(excerpt_id) = project_entries_excerpts.remove(&entry.id) {
-                    worktree_items_with_outlines.push(OutlinePanelEntry::File(
-                        excerpt_id,
-                        worktree_id,
-                        entry,
-                    ))
+                } else if let Some(excerpts) = project_entries_excerpts.remove(&entry.id) {
+                    for excerpt_id in excerpts {
+                        worktree_items_with_outlines
+                            .push(OutlinePanelEntry::File(worktree_id, entry.clone()))
+                    }
                 }
             }
         }
-        self.visible_entries = non_project_entries
+
+        self.visible_entries = external_entries
             .into_iter()
             .chain(worktree_items_with_outlines.into_iter())
             .flat_map(|entry| {
-                let excerpt_id = match &entry {
-                    OutlinePanelEntry::ExternalFile(excerpt_id, _) => Some(*excerpt_id),
-                    OutlinePanelEntry::File(excerpt_id, _, _) => Some(*excerpt_id),
-                    OutlinePanelEntry::Directory(..) => None,
-                    OutlinePanelEntry::Outline(..) => None,
+                let outlines = match &entry {
+                    OutlinePanelEntry::ExternalFile(file_path) => (
+                        file_path.is_none() || processed_external_paths.insert(file_path),
+                        external_outlines.remove(&entry.id),
+                    ),
+                    OutlinePanelEntry::File(_, file_entry) => (
+                        processed_worktree_items.insert(file_entry.id),
+                        Some(*excerpt_id),
+                    ),
+                    OutlinePanelEntry::Directory(..) => (true, None),
+                    OutlinePanelEntry::Outline(..) => (true, None),
                 };
                 let outlines =
                     excerpt_id.and_then(|excerpt_id| outline_entries.remove(&excerpt_id));
-                Some(entry)
-                    .into_iter()
-                    .chain(outlines.into_iter().flatten().flat_map(move |outline| {
-                        Some(OutlinePanelEntry::Outline(excerpt_id?, outline))
-                    }))
+                Some(entry).filter(|_| include_entry).into_iter().chain(
+                    outlines
+                        .into_iter()
+                        .flatten()
+                        .filter(|o| processed_outlines.insert(o.clone()))
+                        .flat_map(move |outline| {
+                            Some(OutlinePanelEntry::Outline(excerpt_id, outline))
+                        }),
+                )
             })
             .collect();
 
@@ -1303,6 +1250,48 @@ impl OutlinePanel {
         self.update_visible_entries(&new_active_editor, new_entries, None, cx);
         cx.notify();
     }
+}
+
+fn sort_worktree_entries(entries: &mut Vec<Entry>) {
+    entries.sort_by(|entry_a, entry_b| {
+        let mut components_a = entry_a.path.components().peekable();
+        let mut components_b = entry_b.path.components().peekable();
+        loop {
+            match (components_a.next(), components_b.next()) {
+                (Some(component_a), Some(component_b)) => {
+                    let a_is_file = components_a.peek().is_none() && entry_a.is_file();
+                    let b_is_file = components_b.peek().is_none() && entry_b.is_file();
+                    let ordering = a_is_file.cmp(&b_is_file).then_with(|| {
+                        let maybe_numeric_ordering = maybe!({
+                            let num_and_remainder_a = Path::new(component_a.as_os_str())
+                                .file_stem()
+                                .and_then(|s| s.to_str())
+                                .and_then(NumericPrefixWithSuffix::from_numeric_prefixed_str)?;
+                            let num_and_remainder_b = Path::new(component_b.as_os_str())
+                                .file_stem()
+                                .and_then(|s| s.to_str())
+                                .and_then(NumericPrefixWithSuffix::from_numeric_prefixed_str)?;
+
+                            num_and_remainder_a.partial_cmp(&num_and_remainder_b)
+                        });
+
+                        maybe_numeric_ordering.unwrap_or_else(|| {
+                            let name_a = UniCase::new(component_a.as_os_str().to_string_lossy());
+                            let name_b = UniCase::new(component_b.as_os_str().to_string_lossy());
+
+                            name_a.cmp(&name_b)
+                        })
+                    });
+                    if !ordering.is_eq() {
+                        return ordering;
+                    }
+                }
+                (Some(_), None) => break cmp::Ordering::Greater,
+                (None, Some(_)) => break cmp::Ordering::Less,
+                (None, None) => break cmp::Ordering::Equal,
+            }
+        }
+    });
 }
 
 fn file_name(path: &Path) -> String {
@@ -1471,7 +1460,7 @@ impl Render for OutlinePanel {
                                             depths.push(depth);
                                             depth += 1;
                                         }
-                                        OutlinePanelEntry::File(_, _, file_entry) => {
+                                        OutlinePanelEntry::File(_, file_entry) => {
                                             outline_depth = None::<usize>;
                                             while !parent_entry_stack.is_empty()
                                                 && !file_entry
@@ -1539,14 +1528,7 @@ fn subscribe_for_editor_events(
             editor,
             |outline_panel, editor, e: &EditorEvent, cx| match e {
                 EditorEvent::SelectionsChanged { local: true } => {
-                    let (excerpt_id, outline_item) = location_for_selection(&editor, cx);
-                    outline_panel.reveal_entry(
-                        &editor,
-                        outline_panel.project.clone(),
-                        excerpt_id,
-                        outline_item,
-                        cx,
-                    );
+                    outline_panel.reveal_entry(&editor, cx);
                     cx.notify();
                 }
                 EditorEvent::ExcerptsAdded { excerpts, .. } => {
@@ -1562,8 +1544,14 @@ fn subscribe_for_editor_events(
                     outline_panel.update_visible_entries(&editor, HashSet::default(), None, cx);
                     cx.notify();
                 }
-                EditorEvent::ExcerptsEdited { .. } => {}
-                EditorEvent::ExcerptsExpanded { .. } => {}
+                EditorEvent::ExcerptsExpanded { .. } => {
+                    outline_panel.update_visible_entries(&editor, HashSet::default(), None, cx);
+                    cx.notify();
+                }
+                EditorEvent::Reparsed => {
+                    outline_panel.update_visible_entries(&editor, HashSet::default(), None, cx);
+                    cx.notify();
+                }
                 _ => {}
             },
         ))
