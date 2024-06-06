@@ -322,7 +322,6 @@ pub fn update_inlay_link_and_hover_points(
                                     hover_popover::hover_at_inlay(
                                         editor,
                                         InlayHover {
-                                            excerpt: excerpt_id,
                                             tooltip: match tooltip {
                                                 InlayHintTooltip::String(text) => HoverBlock {
                                                     text,
@@ -370,7 +369,6 @@ pub fn update_inlay_link_and_hover_points(
                                         hover_popover::hover_at_inlay(
                                             editor,
                                             InlayHover {
-                                                excerpt: excerpt_id,
                                                 tooltip: match tooltip {
                                                     InlayHintLabelPartTooltip::String(text) => {
                                                         HoverBlock {

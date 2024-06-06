@@ -129,10 +129,10 @@ where
 impl Clamp for RGBAColor {
     fn clamp(self) -> Self {
         RGBAColor {
-            r: self.r.min(1.0).max(0.0),
-            g: self.g.min(1.0).max(0.0),
-            b: self.b.min(1.0).max(0.0),
-            a: self.a.min(1.0).max(0.0),
+            r: self.r.clamp(0., 1.),
+            g: self.g.clamp(0., 1.),
+            b: self.b.clamp(0., 1.),
+            a: self.a.clamp(0., 1.),
         }
     }
 }

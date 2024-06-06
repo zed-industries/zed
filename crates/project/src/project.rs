@@ -10282,7 +10282,7 @@ impl Project {
     fn deserialize_symbol(serialized_symbol: proto::Symbol) -> Result<CoreSymbol> {
         let source_worktree_id = WorktreeId::from_proto(serialized_symbol.source_worktree_id);
         let worktree_id = WorktreeId::from_proto(serialized_symbol.worktree_id);
-        let kind = unsafe { mem::transmute(serialized_symbol.kind) };
+        let kind = unsafe { mem::transmute::<i32, lsp::SymbolKind>(serialized_symbol.kind) };
         let path = ProjectPath {
             worktree_id,
             path: PathBuf::from(serialized_symbol.path).into(),
@@ -11393,7 +11393,7 @@ fn serialize_symbol(symbol: &Symbol) -> proto::Symbol {
         worktree_id: symbol.path.worktree_id.to_proto(),
         path: symbol.path.path.to_string_lossy().to_string(),
         name: symbol.name.clone(),
-        kind: unsafe { mem::transmute(symbol.kind) },
+        kind: unsafe { mem::transmute::<lsp::SymbolKind, i32>(symbol.kind) },
         start: Some(proto::PointUtf16 {
             row: symbol.range.start.0.row,
             column: symbol.range.start.0.column,
