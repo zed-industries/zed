@@ -1447,129 +1447,65 @@ impl Render for OutlinePanel {
                 .child(
                     uniform_list(cx.view().clone(), "entries", self.visible_entries.len(), {
                         |outline_panel, range, cx| {
+                            let mut depths = Vec::new();
+                            let mut outline_depth = None;
                             let mut depth = 0;
-                            let mut previous_entry = None::<&OutlinePanelEntry>;
+                            let mut parent_entry_stack = Vec::new();
                             outline_panel
                                 .visible_entries
                                 .iter()
                                 .enumerate()
                                 .filter_map(|(i, visible_item)| {
-                                    if let OutlinePanelEntry::File(_, _, entry) = &visible_item {
-                                        if entry
-                                            .path
-                                            .to_string_lossy()
-                                            .to_string()
-                                            .ends_with("main.rs")
-                                        {
-                                            dbg!(
-                                                "!!!!!!!!!!!!!!!!!!!!!!!",
-                                                &previous_entry,
-                                                depth,
-                                                &visible_item
-                                            );
-                                        }
-                                    }
-
-                                    match (previous_entry, visible_item) {
-                                        (None, _) => {}
-
-                                        (
-                                            Some(OutlinePanelEntry::Directory(..)),
-                                            OutlinePanelEntry::File(..),
-                                        ) => depth += 1,
-
-                                        (
-                                            Some(OutlinePanelEntry::File(..)),
-                                            OutlinePanelEntry::Outline(..),
-                                        ) => depth += 1,
-                                        (
-                                            Some(OutlinePanelEntry::File(..)),
-                                            OutlinePanelEntry::File(..),
-                                        ) => {}
-
-                                        (
-                                            Some(OutlinePanelEntry::ExternalFile(..)),
-                                            OutlinePanelEntry::Outline(..),
-                                        ) => depth += 1,
-                                        (Some(OutlinePanelEntry::ExternalFile(..)), _) => {}
-                                        (Some(_), OutlinePanelEntry::ExternalFile(..)) => depth = 0,
-
-                                        (
-                                            Some(OutlinePanelEntry::Outline(_, previous_outline)),
-                                            OutlinePanelEntry::Outline(_, outline),
-                                        ) => match previous_outline.depth.cmp(&outline.depth) {
-                                            cmp::Ordering::Less => depth += 1,
-                                            cmp::Ordering::Greater => depth -= 1,
-                                            cmp::Ordering::Equal => {}
-                                        },
-                                        // TODO kb next two are wrong, need to keep previous dir's depth?
-                                        (
-                                            Some(OutlinePanelEntry::Outline(..)),
-                                            OutlinePanelEntry::Directory(..),
-                                        ) => {
-                                            depth -= 1;
-                                        }
-                                        (
-                                            Some(OutlinePanelEntry::Outline(outline_excerpt_id, _)),
-                                            OutlinePanelEntry::File(excerpt_id, ..)
-                                            | OutlinePanelEntry::ExternalFile(excerpt_id, _),
-                                        ) => {
-                                            if excerpt_id == outline_excerpt_id {
+                                    match visible_item {
+                                        OutlinePanelEntry::Directory(_, dir_entry) => {
+                                            outline_depth = None;
+                                            while !parent_entry_stack.is_empty()
+                                                && !dir_entry
+                                                    .path
+                                                    .starts_with(parent_entry_stack.last().unwrap())
+                                            {
+                                                parent_entry_stack.pop();
                                                 depth -= 1;
-                                            } else {
-                                                depth = 0;
                                             }
-                                        }
-                                        (
-                                            Some(OutlinePanelEntry::Directory(..)),
-                                            OutlinePanelEntry::Outline(..),
-                                        ) => {
-                                            debug_panic!(
-                                                "Unexpected: outlines after a directory entry"
-                                            );
+                                            parent_entry_stack.push(&dir_entry.path);
+                                            depths.push(depth);
                                             depth += 1;
                                         }
-
-                                        (
-                                            Some(OutlinePanelEntry::Directory(
-                                                _,
-                                                previous_directory,
-                                            )),
-                                            OutlinePanelEntry::Directory(_, directory),
-                                        ) => {
-                                            if directory.path.starts_with(&previous_directory.path)
+                                        OutlinePanelEntry::File(_, _, file_entry) => {
+                                            outline_depth = None::<usize>;
+                                            while !parent_entry_stack.is_empty()
+                                                && !file_entry
+                                                    .path
+                                                    .starts_with(parent_entry_stack.last().unwrap())
                                             {
-                                                depth += 1;
-                                            } else {
-                                                match directory.path.parent() {
-                                                    Some(parent_path) => {
-                                                        if !previous_directory
-                                                            .path
-                                                            .starts_with(parent_path)
-                                                        {
-                                                            depth -= 1;
-                                                        }
-                                                    }
-                                                    None => depth = 0,
-                                                }
-                                            }
-                                        }
-                                        (
-                                            Some(OutlinePanelEntry::File(_, _, file_entry)),
-                                            OutlinePanelEntry::Directory(_, directory_entry),
-                                        ) => {
-                                            if let Some(file_parent) = file_entry.path.parent() {
-                                                if !directory_entry.path.starts_with(file_parent) {
-                                                    depth -= 1;
-                                                }
-                                            } else {
+                                                parent_entry_stack.pop();
                                                 depth -= 1;
                                             }
+                                            depths.push(depth);
                                         }
-                                    }
-                                    previous_entry = Some(visible_item);
+                                        OutlinePanelEntry::Outline(_, outline) => {
+                                            let mut depth = *depths.last().unwrap_or(&0);
+                                            if let Some(outline_depth) = outline_depth {
+                                                match outline_depth.cmp(&outline.depth) {
+                                                    cmp::Ordering::Less => depth += 1,
+                                                    cmp::Ordering::Equal => {}
+                                                    cmp::Ordering::Greater => depth -= 1,
+                                                };
+                                            }
+
+                                            outline_depth = Some(outline.depth);
+                                            depths.push(depth);
+                                        }
+                                        OutlinePanelEntry::ExternalFile(..) => {
+                                            outline_depth = None;
+                                            depth = 0;
+                                            parent_entry_stack.clear();
+                                            depths.push(depth);
+                                        }
+                                    };
 
                                     if range.contains(&i) {
+                                        let depth = depths.last().cloned().unwrap_or(0);
                                         Some(outline_panel.render_entry(visible_item, depth, cx))
                                     } else {
                                         None
