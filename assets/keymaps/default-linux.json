@@ -545,7 +545,7 @@
     }
   },
   {
-    "context": "ConversationEditor > Editor",
+    "context": "ContextEditor > Editor",
     "bindings": {
       "ctrl-enter": "assistant::Assist",
       "ctrl-s": "workspace::Save",

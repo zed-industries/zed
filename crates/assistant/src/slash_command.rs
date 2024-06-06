@@ -1,4 +1,4 @@
-use crate::assistant_panel::ConversationEditor;
+use crate::assistant_panel::ContextEditor;
 use anyhow::Result;
 pub use assistant_slash_command::{SlashCommand, SlashCommandOutput, SlashCommandRegistry};
 use editor::{CompletionProvider, Editor};
@@ -29,7 +29,7 @@ pub mod tabs_command;
 pub(crate) struct SlashCommandCompletionProvider {
     commands: Arc<SlashCommandRegistry>,
     cancel_flag: Mutex<Arc<AtomicBool>>,
-    editor: Option<WeakView<ConversationEditor>>,
+    editor: Option<WeakView<ContextEditor>>,
     workspace: Option<WeakView<Workspace>>,
 }
 
@@ -43,7 +43,7 @@ pub(crate) struct SlashCommandLine {
 impl SlashCommandCompletionProvider {
     pub fn new(
         commands: Arc<SlashCommandRegistry>,
-        editor: Option<WeakView<ConversationEditor>>,
+        editor: Option<WeakView<ContextEditor>>,
         workspace: Option<WeakView<Workspace>>,
     ) -> Self {
         Self {
