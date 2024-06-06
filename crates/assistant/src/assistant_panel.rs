@@ -293,8 +293,10 @@ impl AssistantPanel {
             .update(cx, |toolbar, cx| toolbar.focus_changed(true, cx));
         cx.notify();
         if self.focus_handle.is_focused(cx) {
-            if let Some(editor) = self.active_conversation_editor() {
-                cx.focus_view(editor);
+            if self.show_saved_conversations {
+                cx.focus_view(&self.saved_conversation_picker);
+            } else if let Some(conversation) = self.active_conversation_editor() {
+                cx.focus_view(conversation);
             }
         }
     }
@@ -518,8 +520,7 @@ impl AssistantPanel {
     }
 
     fn show_history(&mut self, cx: &mut ViewContext<Self>) {
-        self.saved_conversation_picker
-            .update(cx, |picker, cx| picker.focus(cx));
+        cx.focus_view(&self.saved_conversation_picker);
         if !self.show_saved_conversations {
             self.show_saved_conversations = true;
             cx.notify();
@@ -527,12 +528,8 @@ impl AssistantPanel {
     }
 
     fn hide_history(&mut self, cx: &mut ViewContext<Self>) {
-        if let Some(conversation) = self.active_conversation_editor() {
-            conversation.update(cx, |conversation, cx| {
-                conversation
-                    .editor
-                    .update(cx, |editor, cx| editor.focus(cx))
-            });
+        if let Some(editor) = self.active_conversation_editor() {
+            cx.focus_view(&editor);
             self.show_saved_conversations = false;
             cx.notify();
         }
