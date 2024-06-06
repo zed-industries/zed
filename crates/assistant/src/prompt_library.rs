@@ -253,7 +253,7 @@ impl PickerDelegate for PromptPickerDelegate {
             PromptPickerEntry::DefaultPromptsHeader => ListHeader::new("Default Prompts")
                 .inset(true)
                 .start_slot(
-                    Icon::new(IconName::SparkleFilled)
+                    Icon::new(IconName::Sparkle)
                         .color(Color::Muted)
                         .size(IconSize::XSmall),
                 )
@@ -302,7 +302,7 @@ impl PickerDelegate for PromptPickerDelegate {
                             )
                             .child(
                                 IconButton::new("toggle-default-prompt", IconName::Sparkle)
-                                    .selected(selected)
+                                    .selected(default)
                                     .selected_icon(IconName::SparkleFilled)
                                     .icon_color(if default { Color::Accent } else { Color::Muted })
                                     .shape(IconButtonShape::Square)
