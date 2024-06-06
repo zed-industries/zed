@@ -54,10 +54,14 @@ pub enum IconDecoration {
 
 #[derive(Default, PartialEq, Copy, Clone)]
 pub enum IconSize {
+    /// 10px
     Indicator,
+    /// 12px
     XSmall,
+    /// 14px
     Small,
     #[default]
+    /// 16px
     Medium,
 }
 
@@ -176,6 +180,8 @@ pub enum IconName {
     Sliders,
     Snip,
     Space,
+    Sparkle,
+    SparkleFilled,
     Spinner,
     Split,
     Star,
@@ -301,6 +307,8 @@ impl IconName {
             IconName::Sliders => "icons/sliders.svg",
             IconName::Snip => "icons/snip.svg",
             IconName::Space => "icons/space.svg",
+            IconName::Sparkle => "icons/sparkle.svg",
+            IconName::SparkleFilled => "icons/sparkle_filled.svg",
             IconName::Spinner => "icons/spinner.svg",
             IconName::Split => "icons/split.svg",
             IconName::Star => "icons/star.svg",
