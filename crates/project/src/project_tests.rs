@@ -2986,7 +2986,7 @@ async fn test_rescan_and_remote_updates(cx: &mut gpui::TestAppContext) {
 
     let updates = Arc::new(Mutex::new(Vec::new()));
     tree.update(cx, |tree, cx| {
-        let _ = tree.as_local_mut().unwrap().observe_updates(0, cx, {
+        tree.as_local_mut().unwrap().observe_updates(0, cx, {
             let updates = updates.clone();
             move |update| {
                 updates.lock().push(update);

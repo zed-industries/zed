@@ -12887,7 +12887,6 @@ name = "worktree"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "client",
  "clock",
  "collections",
  "env_logger",

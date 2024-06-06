@@ -1748,6 +1748,7 @@ impl Project {
                             let worktrees = this.update(&mut cx, |this, _cx| {
                                 this.worktrees().collect::<Vec<_>>()
                             })?;
+
                             let update_project = this
                                 .update(&mut cx, |this, cx| {
                                     this.client.request(proto::UpdateProject {
@@ -1759,6 +1760,7 @@ impl Project {
                             if update_project.log_err().is_none() {
                                 continue;
                             }
+
                             this.update(&mut cx, |this, cx| {
                                 for worktree in worktrees {
                                     worktree.update(cx, |worktree, cx| {
@@ -1780,8 +1782,19 @@ impl Project {
                                             }
                                         }
 
-                                        let worktree = worktree.as_local_mut().unwrap();
-                                        worktree.share(project_id, cx).detach_and_log_err(cx);
+                                        worktree.as_local_mut().unwrap().observe_updates(
+                                            project_id,
+                                            cx,
+                                            {
+                                                let client = client.clone();
+                                                move |update| {
+                                                    client
+                                                        .request(update)
+                                                        .map(|result| result.is_ok())
+                                                }
+                                            },
+                                        );
+
                                         anyhow::Ok(())
                                     })?;
                                 }
@@ -1931,7 +1944,7 @@ impl Project {
             for worktree_handle in self.worktrees.iter_mut() {
                 if let WorktreeHandle::Strong(worktree) = worktree_handle {
                     let is_visible = worktree.update(cx, |worktree, _| {
-                        worktree.as_local_mut().unwrap().unshare();
+                        worktree.as_local_mut().unwrap().stop_observing_updates();
                         worktree.is_visible()
                     });
                     if !is_visible {
@@ -7749,7 +7762,6 @@ impl Project {
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<Model<Worktree>>> {
         let fs = self.fs.clone();
-        let client = self.client.clone();
         let next_entry_id = self.next_entry_id.clone();
         let path: Arc<Path> = abs_path.as_ref().into();
         let task = self
@@ -7758,15 +7770,9 @@ impl Project {
             .or_insert_with(|| {
                 cx.spawn(move |project, mut cx| {
                     async move {
-                        let worktree = Worktree::local(
-                            client.clone(),
-                            path.clone(),
-                            visible,
-                            fs,
-                            next_entry_id,
-                            &mut cx,
-                        )
-                        .await;
+                        let worktree =
+                            Worktree::local(path.clone(), visible, fs, next_entry_id, &mut cx)
+                                .await;
 
                         project.update(&mut cx, |project, _| {
                             project.loading_local_worktrees.remove(&path);

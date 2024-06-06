@@ -5,11 +5,9 @@ mod worktree_tests;
 
 use ::ignore::gitignore::{Gitignore, GitignoreBuilder};
 use anyhow::{anyhow, Context as _, Result};
-use client::{proto, Client};
 use clock::ReplicaId;
 use collections::{HashMap, HashSet, VecDeque};
-use fs::{copy_recursive, RemoveOptions};
-use fs::{Fs, Watcher};
+use fs::{copy_recursive, Fs, RemoveOptions, Watcher};
 use futures::{
     channel::{
         mpsc::{self, UnboundedSender},
@@ -21,9 +19,9 @@ use futures::{
     FutureExt as _, Stream, StreamExt,
 };
 use fuzzy::CharBag;
-use git::status::GitStatus;
 use git::{
     repository::{GitFileStatus, GitRepository, RepoPath},
+    status::GitStatus,
     DOT_GIT, GITIGNORE,
 };
 use gpui::{
@@ -38,6 +36,7 @@ use postage::{
     prelude::{Sink as _, Stream as _},
     watch,
 };
+use rpc::proto;
 use settings::{Settings, SettingsLocation, SettingsStore};
 use smol::channel::{self, Sender};
 use std::{
@@ -99,28 +98,16 @@ pub enum CreatedEntry {
     Excluded { abs_path: PathBuf },
 }
 
-#[cfg(any(test, feature = "test-support"))]
-impl CreatedEntry {
-    pub fn to_included(self) -> Option<Entry> {
-        match self {
-            CreatedEntry::Included(entry) => Some(entry),
-            CreatedEntry::Excluded { .. } => None,
-        }
-    }
-}
-
 pub struct LocalWorktree {
     snapshot: LocalSnapshot,
     scan_requests_tx: channel::Sender<ScanRequest>,
     path_prefixes_to_scan_tx: channel::Sender<Arc<Path>>,
     is_scanning: (watch::Sender<bool>, watch::Receiver<bool>),
     _background_scanner_tasks: Vec<Task<()>>,
-    share: Option<ShareState>,
-    client: Arc<Client>,
+    update_observer: Option<ShareState>,
     fs: Arc<dyn Fs>,
     fs_case_sensitive: bool,
     visible: bool,
-
     next_entry_id: Arc<AtomicUsize>,
 }
 
@@ -363,7 +350,6 @@ impl EventEmitter<Event> for Worktree {}
 
 impl Worktree {
     pub async fn local(
-        client: Arc<Client>,
         path: impl Into<Arc<Path>>,
         visible: bool,
         fs: Arc<dyn Fs>,
@@ -483,7 +469,7 @@ impl Worktree {
                 next_entry_id: Arc::clone(&next_entry_id),
                 snapshot,
                 is_scanning: watch::channel_with(true),
-                share: None,
+                update_observer: None,
                 scan_requests_tx,
                 path_prefixes_to_scan_tx,
                 _background_scanner_tasks: start_background_scan_tasks(
@@ -495,7 +481,6 @@ impl Worktree {
                     Arc::clone(&fs),
                     cx,
                 ),
-                client,
                 fs,
                 fs_case_sensitive,
                 visible,
@@ -794,7 +779,7 @@ impl LocalWorktree {
         new_snapshot.share_private_files = self.snapshot.share_private_files;
         self.snapshot = new_snapshot;
 
-        if let Some(share) = self.share.as_mut() {
+        if let Some(share) = self.update_observer.as_mut() {
             share
                 .snapshots_tx
                 .unbounded_send((
@@ -1336,8 +1321,7 @@ impl LocalWorktree {
         project_id: u64,
         cx: &mut ModelContext<Worktree>,
         callback: F,
-    ) -> oneshot::Receiver<()>
-    where
+    ) where
         F: 'static + Send + Fn(proto::UpdateWorktree) -> Fut,
         Fut: Send + Future<Output = bool>,
     {
@@ -1346,12 +1330,9 @@ impl LocalWorktree {
         #[cfg(not(any(test, feature = "test-support")))]
         const MAX_CHUNK_SIZE: usize = 256;
 
-        let (share_tx, share_rx) = oneshot::channel();
-
-        if let Some(share) = self.share.as_mut() {
-            share_tx.send(()).ok();
-            *share.resume_updates.borrow_mut() = ();
-            return share_rx;
+        if let Some(observer) = self.update_observer.as_mut() {
+            *observer.resume_updates.borrow_mut() = ();
+            return;
         }
 
         let (resume_updates_tx, mut resume_updates_rx) = watch::channel::<()>();
@@ -1389,33 +1370,23 @@ impl LocalWorktree {
                     }
                 }
             }
-            share_tx.send(()).ok();
             Some(())
         });
 
-        self.share = Some(ShareState {
+        self.update_observer = Some(ShareState {
             snapshots_tx,
             resume_updates: resume_updates_tx,
             _maintain_remote_snapshot,
         });
-        share_rx
     }
 
-    pub fn share(&mut self, project_id: u64, cx: &mut ModelContext<Worktree>) -> Task<Result<()>> {
-        let client = self.client.clone();
-        let rx = self.observe_updates(project_id, cx, move |update| {
-            client.request(update).map(|result| result.is_ok())
-        });
-        cx.background_executor()
-            .spawn(async move { rx.await.map_err(|_| anyhow!("share ended")) })
+    pub fn stop_observing_updates(&mut self) {
+        self.update_observer.take();
     }
 
-    pub fn unshare(&mut self) {
-        self.share.take();
-    }
-
-    pub fn is_shared(&self) -> bool {
-        self.share.is_some()
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn has_update_observer(&self) -> bool {
+        self.update_observer.is_some()
     }
 
     pub fn share_private_files(&mut self, cx: &mut ModelContext<Worktree>) {
@@ -4718,5 +4689,15 @@ impl ProjectEntryId {
 
     pub fn to_usize(&self) -> usize {
         self.0
+    }
+}
+
+#[cfg(any(test, feature = "test-support"))]
+impl CreatedEntry {
+    pub fn to_included(self) -> Option<Entry> {
+        match self {
+            CreatedEntry::Included(entry) => Some(entry),
+            CreatedEntry::Excluded { .. } => None,
+        }
     }
 }
