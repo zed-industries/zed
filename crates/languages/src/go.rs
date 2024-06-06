@@ -81,6 +81,7 @@ impl super::LspAdapter for GoLspAdapter {
         if let Ok(Some(BinarySettings {
             path: Some(path),
             arguments,
+            ..
         })) = configured_binary
         {
             Some(LanguageServerBinary {

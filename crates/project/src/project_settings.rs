@@ -93,6 +93,7 @@ const fn true_value() -> bool {
 pub struct BinarySettings {
     pub path: Option<String>,
     pub arguments: Option<Vec<String>>,
+    pub path_lookup: Option<bool>,
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
@@ -101,9 +102,6 @@ pub struct LspSettings {
     pub binary: Option<BinarySettings>,
     pub initialization_options: Option<serde_json::Value>,
     pub settings: Option<serde_json::Value>,
-
-    #[serde(default = "true_value")]
-    pub detect_path: bool,
 }
 
 impl Settings for ProjectSettings {
