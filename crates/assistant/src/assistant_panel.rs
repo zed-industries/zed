@@ -1813,7 +1813,7 @@ impl Conversation {
                 .map(|message| message.to_request_message(self.buffer.read(cx)))
                 .chain(Some(LanguageModelRequestMessage {
                     role: Role::User,
-                    content: "Summarize the conversation into a short title without punctuation"
+                    content: "Summarize the conversation into one line. It needs to be a short title without punctuation."
                         .into(),
                 }));
             let request = LanguageModelRequest {
@@ -1830,13 +1830,17 @@ impl Conversation {
 
                     while let Some(message) = messages.next().await {
                         let text = message?;
+                        let mut lines = text.lines();
                         this.update(&mut cx, |this, cx| {
-                            this.summary
-                                .get_or_insert(Default::default())
-                                .text
-                                .push_str(&text);
+                            let summary = this.summary.get_or_insert(Default::default());
+                            summary.text.extend(lines.next());
                             cx.emit(ConversationEvent::SummaryChanged);
                         })?;
+
+                        // Stop if the LLM generated multiple lines.
+                        if lines.next().is_some() {
+                            break;
+                        }
                     }
 
                     this.update(&mut cx, |this, cx| {
