@@ -38,7 +38,7 @@ impl super::LspAdapter for CLspAdapter {
         if let Ok(Some(BinarySettings {
             path: Some(path),
             arguments,
-            path_lookup: _,
+            ..
         })) = configured_binary
         {
             Some(LanguageServerBinary {
