@@ -2946,8 +2946,13 @@ impl Editor {
                 let selection = self.selections.newest_anchor();
                 let selection_head = selection.head();
                 let is_currently_edited_range = |range: &&Range<Anchor>| {
-                    range.start.cmp(&selection_head, &snapshot).is_le()
-                        && range.end.cmp(&selection_head, &snapshot).is_ge()
+                    if range.start.cmp(&selection_head, &snapshot).is_le() {
+                        let end_offset = range.end.to_offset(&snapshot);
+                        let selection_offset = selection.end.to_offset(&snapshot);
+                        end_offset >= selection_offset || end_offset >= selection_offset + 1
+                    } else {
+                        false
+                    }
                 };
 
                 // This editor has associated linked editing ranges.
@@ -5151,8 +5156,13 @@ impl Editor {
                 let selection = this.selections.newest_anchor();
                 let selection_head = selection.head();
                 let is_currently_edited_range = |range: &&Range<Anchor>| {
-                    range.start.cmp(&selection_head, &snapshot).is_le()
-                        && range.end.cmp(&selection_head, &snapshot).is_ge()
+                    if range.start.cmp(&selection_head, &snapshot).is_le() {
+                        let end_offset = range.end.to_offset(&snapshot);
+                        let selection_offset = selection.end.to_offset(&snapshot);
+                        end_offset >= selection_offset || end_offset >= selection_offset + 1
+                    } else {
+                        false
+                    }
                 };
 
                 // This editor has associated linked editing ranges.
