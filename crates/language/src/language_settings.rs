@@ -391,7 +391,7 @@ pub enum ShowWhitespaceSetting {
     None,
     /// Draw all invisible symbols.
     All,
-    /// Draw whitespace only at boundaries.
+    /// Draw whitespaces at boundaries only.
     ///
     /// For a whitespace to be on a boundary, any of the following conditions need to be met:
     /// - It is a tab
