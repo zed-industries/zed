@@ -3969,8 +3969,7 @@ impl Workspace {
     fn adjust_padding(padding: Option<f32>) -> f32 {
         padding
             .unwrap_or(Self::DEFAULT_PADDING)
-            .min(Self::MAX_PADDING)
-            .max(0.0)
+            .clamp(0.0, Self::MAX_PADDING)
     }
 }
 

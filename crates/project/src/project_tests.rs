@@ -1295,7 +1295,7 @@ async fn test_restarting_server_with_diagnostics_running(cx: &mut gpui::TestAppC
             project
                 .language_servers_running_disk_based_diagnostics()
                 .collect::<Vec<_>>(),
-            [LanguageServerId(0); 0]
+            [] as [language::LanguageServerId; 0]
         );
     });
 }
@@ -3127,6 +3127,7 @@ async fn test_buffer_identity_across_renames(cx: &mut gpui::TestAppContext) {
         })
         .unwrap()
         .await
+        .to_included()
         .unwrap();
     cx.executor().run_until_parked();
 
@@ -4465,6 +4466,7 @@ async fn test_create_entry(cx: &mut gpui::TestAppContext) {
         })
         .unwrap()
         .await
+        .to_included()
         .unwrap();
 
     // Can't create paths outside the project

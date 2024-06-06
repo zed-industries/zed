@@ -21,7 +21,7 @@ lazy_static::lazy_static! {
     } else {
         HOME.join(".config").join("zed")
     };
-    pub static ref CONVERSATIONS_DIR: PathBuf = if cfg!(target_os = "macos") {
+    pub static ref CONTEXTS_DIR: PathBuf = if cfg!(target_os = "macos") {
         CONFIG_DIR.join("conversations")
     } else {
         SUPPORT_DIR.join("conversations")

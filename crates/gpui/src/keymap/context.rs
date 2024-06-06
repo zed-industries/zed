@@ -304,6 +304,14 @@ impl KeyBindingContextPredicate {
                     source,
                 ))
             }
+            _ if is_vim_operator_char(next) => {
+                let (operator, rest) = source.split_at(1);
+                source = skip_whitespace(rest);
+                Ok((
+                    KeyBindingContextPredicate::Identifier(operator.to_string().into()),
+                    source,
+                ))
+            }
             _ => Err(anyhow!("unexpected character {next:?}")),
         }
     }
@@ -345,6 +353,10 @@ const PRECEDENCE_NOT: u32 = 5;
 
 fn is_identifier_char(c: char) -> bool {
     c.is_alphanumeric() || c == '_' || c == '-'
+}
+
+fn is_vim_operator_char(c: char) -> bool {
+    c == '>' || c == '<'
 }
 
 fn skip_whitespace(source: &str) -> &str {

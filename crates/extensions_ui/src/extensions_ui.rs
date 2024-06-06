@@ -12,7 +12,7 @@ use editor::{Editor, EditorElement, EditorStyle};
 use extension::{ExtensionManifest, ExtensionOperation, ExtensionStore};
 use fuzzy::{match_strings, StringMatchCandidate};
 use gpui::{
-    actions, canvas, uniform_list, AnyElement, AppContext, EventEmitter, FocusableView, FontStyle,
+    actions, uniform_list, AnyElement, AppContext, EventEmitter, FocusableView, FontStyle,
     InteractiveElement, KeyContext, ParentElement, Render, Styled, Task, TextStyle,
     UniformListScrollHandle, View, ViewContext, VisualContext, WeakView, WhiteSpace, WindowContext,
 };
@@ -938,24 +938,10 @@ impl Render for ExtensionsPage {
                 let view = cx.view().clone();
                 let scroll_handle = self.list.clone();
                 this.child(
-                    canvas(
-                        move |bounds, cx| {
-                            let mut list = uniform_list::<_, ExtensionCard, _>(
-                                view,
-                                "entries",
-                                count,
-                                Self::render_extensions,
-                            )
-                            .size_full()
-                            .pb_4()
-                            .track_scroll(scroll_handle)
-                            .into_any_element();
-                            list.prepaint_as_root(bounds.origin, bounds.size.into(), cx);
-                            list
-                        },
-                        |_bounds, mut list, cx| list.paint(cx),
-                    )
-                    .size_full(),
+                    uniform_list(view, "entries", count, Self::render_extensions)
+                        .flex_grow()
+                        .pb_4()
+                        .track_scroll(scroll_handle),
                 )
             }))
     }

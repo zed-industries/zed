@@ -105,7 +105,7 @@ impl SlashCommand for ProjectSlashCommand {
         &self,
         _query: String,
         _cancel: Arc<AtomicBool>,
-        _workspace: WeakView<Workspace>,
+        _workspace: Option<WeakView<Workspace>>,
         _cx: &mut AppContext,
     ) -> Task<Result<Vec<String>>> {
         Task::ready(Err(anyhow!("this command does not require argument")))
@@ -148,6 +148,7 @@ impl SlashCommand for ProjectSlashCommand {
                                 .into_any_element()
                         }),
                     }],
+                    run_commands_in_text: false,
                 })
             })
         });

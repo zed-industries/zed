@@ -38,6 +38,7 @@ pub struct GitSettings {
 
 impl GitSettings {
     pub fn inline_blame_enabled(&self) -> bool {
+        #[allow(unknown_lints, clippy::manual_unwrap_or_default)]
         match self.inline_blame {
             Some(InlineBlameSettings { enabled, .. }) => enabled,
             _ => false,

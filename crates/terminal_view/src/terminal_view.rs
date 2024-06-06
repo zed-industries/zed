@@ -972,6 +972,7 @@ impl SearchableItem for TerminalView {
             word: false,
             regex: true,
             replacement: false,
+            selection: false,
         }
     }
 
@@ -1309,6 +1310,7 @@ mod tests {
             })
             .await
             .unwrap()
+            .to_included()
             .unwrap();
 
         (wt, entry)
