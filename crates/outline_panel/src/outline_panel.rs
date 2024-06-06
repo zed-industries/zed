@@ -82,7 +82,7 @@ pub struct OutlinePanel {
     _subscriptions: Vec<Subscription>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Debug, Eq, Hash)]
 enum OutlinePanelEntry {
     ExternalFile(Option<PathBuf>, ExcerptId),
     Directory(WorktreeId, Entry),
@@ -90,6 +90,23 @@ enum OutlinePanelEntry {
     Outline(ExcerptId, OutlineItem<language::Anchor>),
 }
 
+impl PartialEq for OutlinePanelEntry {
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (Self::ExternalFile(path1, id1), Self::ExternalFile(path2, id2)) => {
+                path1 == path2 && id1 == id2
+            }
+            (Self::Directory(id1, entry1), Self::Directory(id2, entry2)) => {
+                id1 == id2 && entry1.id == entry2.id
+            }
+            (Self::File(id1, worktree1, entry1), Self::File(id2, worktree2, entry2)) => {
+                id1 == id2 && worktree1 == worktree2 && entry1.id == entry2.id
+            }
+            (Self::Outline(id1, item1), Self::Outline(id2, item2)) => id1 == id2 && item1 == item2,
+            _ => false,
+        }
+    }
+}
 impl OutlinePanelEntry {
     fn abs_path(&self, project: &Model<Project>, cx: &AppContext) -> Option<PathBuf> {
         match self {
@@ -206,9 +223,13 @@ impl OutlinePanel {
                     .weak_handle()
                     .upgrade()
                     .expect("have a &mut Workspace"),
-                move |outline_panel, _, event, cx| {
+                move |outline_panel, workspace, event, cx| {
                     if let workspace::Event::ActiveItemChanged = event {
-                        if let Some(new_active_editor) = outline_panel.active_editor(cx) {
+                        if let Some(new_active_editor) = workspace
+                            .read(cx)
+                            .active_item(cx)
+                            .and_then(|item| item.act_as::<Editor>(cx))
+                        {
                             let active_editor_updated = outline_panel
                                 .displayed_item
                                 .as_ref()
@@ -220,7 +241,7 @@ impl OutlinePanel {
                             }
                         } else {
                             outline_panel.displayed_item = None;
-                            outline_panel.update_visible_entries(HashSet::default(), None, cx);
+                            outline_panel.visible_entries.clear();
                             cx.notify();
                         }
                     }
@@ -261,19 +282,17 @@ impl OutlinePanel {
                     workspace_subscription,
                 ],
             };
-            outline_panel.update_visible_entries(HashSet::default(), None, cx);
+            // TODO kb calls weak_workspace inside, needs to be passed
+            if let Some(editor) = workspace
+                .active_item(cx)
+                .and_then(|item| item.act_as::<Editor>(cx))
+            {
+                outline_panel.update_visible_entries(&editor, HashSet::default(), None, cx);
+            }
             outline_panel
         });
 
         outline_panel
-    }
-
-    fn active_editor(&self, cx: &WindowContext) -> Option<View<Editor>> {
-        self.workspace
-            .upgrade()?
-            .read(cx)
-            .active_item(cx)?
-            .act_as::<Editor>(cx)
     }
 
     fn serialize(&mut self, cx: &mut ViewContext<Self>) {
@@ -300,9 +319,17 @@ impl OutlinePanel {
     }
 
     fn unfold_directory(&mut self, _: &UnfoldDirectory, cx: &mut ViewContext<Self>) {
+        let Some(editor) = self.workspace.upgrade().and_then(|workspace| {
+            workspace
+                .read(cx)
+                .active_item(cx)
+                .and_then(|item| item.act_as::<Editor>(cx))
+        }) else {
+            return;
+        };
         if let Some(OutlinePanelEntry::Directory(_, selected_entry)) = &self.selected_entry {
             self.unfolded_dir_ids.insert(selected_entry.id);
-            self.update_visible_entries(HashSet::default(), None, cx);
+            self.update_visible_entries(&editor, HashSet::default(), None, cx);
             self.autoscroll(cx);
             cx.notify();
         }
@@ -310,6 +337,15 @@ impl OutlinePanel {
 
     fn fold_directory(&mut self, _: &FoldDirectory, cx: &mut ViewContext<Self>) {
         if let Some(selected_dir @ OutlinePanelEntry::Directory(..)) = &self.selected_entry {
+            let Some(editor) = self.workspace.upgrade().and_then(|workspace| {
+                workspace
+                    .read(cx)
+                    .active_item(cx)
+                    .and_then(|item| item.act_as::<Editor>(cx))
+            }) else {
+                return;
+            };
+
             for folded_dir_entry_id in self
                 .visible_entries
                 .iter()
@@ -326,7 +362,7 @@ impl OutlinePanel {
                 self.unfolded_dir_ids.remove(&folded_dir_entry_id);
             }
 
-            self.update_visible_entries(HashSet::default(), None, cx);
+            self.update_visible_entries(&editor, HashSet::default(), None, cx);
             self.autoscroll(cx);
             cx.notify();
         }
@@ -510,10 +546,18 @@ impl OutlinePanel {
 
             let entry_id = selected_dir_entry.id;
             if expanded_dir_ids.insert(entry_id) {
+                let Some(editor) = self.workspace.upgrade().and_then(|workspace| {
+                    workspace
+                        .read(cx)
+                        .active_item(cx)
+                        .and_then(|item| item.act_as::<Editor>(cx))
+                }) else {
+                    return;
+                };
                 self.project.update(cx, |project, cx| {
                     project.expand_entry(*worktree_id, entry_id, cx);
                 });
-                self.update_visible_entries(HashSet::default(), None, cx);
+                self.update_visible_entries(&editor, HashSet::default(), None, cx);
                 cx.notify()
             } else {
                 self.select_next(&SelectNext, cx)
@@ -531,20 +575,36 @@ impl OutlinePanel {
                 } else {
                     return;
                 };
+            let Some(editor) = self.workspace.upgrade().and_then(|workspace| {
+                workspace
+                    .read(cx)
+                    .active_item(cx)
+                    .and_then(|item| item.act_as::<Editor>(cx))
+            }) else {
+                return;
+            };
 
             let entry_id = selected_dir_entry.id;
             expanded_dir_ids.remove(&entry_id);
-            self.update_visible_entries(HashSet::default(), Some(dir_entry.clone()), cx);
+            self.update_visible_entries(&editor, HashSet::default(), Some(dir_entry.clone()), cx);
             cx.notify();
         }
     }
 
     pub fn collapse_all_entries(&mut self, _: &CollapseAllEntries, cx: &mut ViewContext<Self>) {
+        let Some(editor) = self.workspace.upgrade().and_then(|workspace| {
+            workspace
+                .read(cx)
+                .active_item(cx)
+                .and_then(|item| item.act_as::<Editor>(cx))
+        }) else {
+            return;
+        };
         // By keeping entries for fully collapsed worktrees, we avoid expanding them within update_visible_entries
         // (which is it's default behaviour when there's no entry for a worktree in expanded_dir_ids).
         self.expanded_dir_ids
             .retain(|_, expanded_entries| expanded_entries.is_empty());
-        self.update_visible_entries(HashSet::default(), None, cx);
+        self.update_visible_entries(&editor, HashSet::default(), None, cx);
         cx.notify();
     }
 
@@ -562,6 +622,15 @@ impl OutlinePanel {
             };
 
             if let Some(expanded_dir_ids) = self.expanded_dir_ids.get_mut(&worktree_id) {
+                let Some(editor) = self.workspace.upgrade().and_then(|workspace| {
+                    workspace
+                        .read(cx)
+                        .active_item(cx)
+                        .and_then(|item| item.act_as::<Editor>(cx))
+                }) else {
+                    return;
+                };
+
                 self.project.update(cx, |project, cx| {
                     if !expanded_dir_ids.remove(&entry_id) {
                         project.expand_entry(worktree_id, entry_id, cx);
@@ -569,6 +638,7 @@ impl OutlinePanel {
                     }
                 });
                 self.update_visible_entries(
+                    &editor,
                     HashSet::default(),
                     Some(dir_entry_to_toggle.clone()),
                     cx,
@@ -684,6 +754,14 @@ impl OutlinePanel {
         }) else {
             return;
         };
+        let Some(editor) = self.workspace.upgrade().and_then(|workspace| {
+            workspace
+                .read(cx)
+                .active_item(cx)
+                .and_then(|item| item.act_as::<Editor>(cx))
+        }) else {
+            return;
+        };
 
         let parent_entry = {
             let mut traversal =
@@ -701,7 +779,7 @@ impl OutlinePanel {
             self.expand_entry(worktree.read(cx).id(), directory_entry.id, cx);
         }
 
-        self.update_visible_entries(HashSet::default(), Some(entry_to_reveal), cx);
+        self.update_visible_entries(&editor, HashSet::default(), Some(entry_to_reveal), cx);
         self.autoscroll(cx);
         cx.notify();
     }
@@ -745,8 +823,8 @@ impl OutlinePanel {
         let settings = OutlinePanelSettings::get_global(cx);
         let is_active = self.selected_entry.as_ref() == Some(rendered_entry);
         let (item_id, name, text_color, icon) = match rendered_entry {
-            OutlinePanelEntry::File(_, _, entry) => {
-                let name = entry_file_name(entry);
+            OutlinePanelEntry::File(_, worktree_id, entry) => {
+                let name = self.entry_name(worktree_id, entry, cx);
                 let color =
                     entry_git_aware_label_color(entry.git_status, entry.is_ignored, is_active);
                 let icon = if settings.file_icons {
@@ -763,7 +841,8 @@ impl OutlinePanel {
                 )
             }
             OutlinePanelEntry::Directory(worktree_id, entry) => {
-                let name = entry_file_name(entry);
+                let name = self.entry_name(worktree_id, entry, cx);
+
                 let is_expanded = self
                     .expanded_dir_ids
                     .get(worktree_id)
@@ -854,7 +933,7 @@ impl OutlinePanel {
                             }
 
                             // TODO kb
-                            match dbg!(&clicked_entry) {
+                            match &clicked_entry {
                                 OutlinePanelEntry::ExternalFile(_, _) => {}
                                 OutlinePanelEntry::Directory(_, _) => {}
                                 OutlinePanelEntry::File(_, _, _) => {}
@@ -946,15 +1025,45 @@ impl OutlinePanel {
             })
     }
 
+    fn entry_name(
+        &self,
+        worktree_id: &WorktreeId,
+        entry: &Entry,
+        cx: &ViewContext<OutlinePanel>,
+    ) -> String {
+        let name = match self.project.read(cx).worktree_for_id(*worktree_id, cx) {
+            Some(worktree) => {
+                let worktree = worktree.read(cx);
+                match worktree.snapshot().root_entry() {
+                    Some(root_entry) => {
+                        if root_entry.id == entry.id {
+                            file_name(worktree.abs_path().as_ref())
+                        } else {
+                            let path = worktree.absolutize(entry.path.as_ref()).ok();
+                            let path = path.as_deref().unwrap_or_else(|| entry.path.as_ref());
+                            file_name(path)
+                        }
+                    }
+                    None => {
+                        let path = worktree.absolutize(entry.path.as_ref()).ok();
+                        let path = path.as_deref().unwrap_or_else(|| entry.path.as_ref());
+                        file_name(path)
+                    }
+                }
+            }
+            None => file_name(entry.path.as_ref()),
+        };
+        name
+    }
+
     fn update_visible_entries(
         &mut self,
+        active_editor: &View<Editor>,
         new_entries: HashSet<ExcerptId>,
         new_selected_entry: Option<OutlinePanelEntry>,
         cx: &mut ViewContext<Self>,
     ) -> Option<()> {
         self.visible_entries.clear();
-
-        let active_editor = self.active_editor(cx)?;
 
         let auto_collapse_dirs = OutlinePanelSettings::get_global(cx).auto_fold_dirs;
         let project = self.project.read(cx);
@@ -1182,20 +1291,20 @@ impl OutlinePanel {
             item_id: new_active_editor.item_id(),
             _editor_subscrpiption: subscribe_for_editor_events(&new_active_editor, cx),
         });
-        self.update_visible_entries(new_entries, None, cx);
+        self.update_visible_entries(&new_active_editor, new_entries, None, cx);
         cx.notify();
     }
 }
 
-fn entry_file_name(entry: &Entry) -> String {
-    let mut current_path = entry.path.as_ref();
+fn file_name(path: &Path) -> String {
+    let mut current_path = path;
     loop {
         if let Some(file_name) = current_path.file_name() {
             return file_name.to_string_lossy().into_owned();
         }
         match current_path.parent() {
             Some(parent) => current_path = parent,
-            None => return entry.path.to_string_lossy().into_owned(),
+            None => return path.to_string_lossy().into_owned(),
         }
     }
 }
@@ -1474,6 +1583,7 @@ fn subscribe_for_editor_events(
                 }
                 EditorEvent::ExcerptsAdded { excerpts, .. } => {
                     outline_panel.update_visible_entries(
+                        &editor,
                         excerpts.iter().map(|&(excerpt_id, _)| excerpt_id).collect(),
                         None,
                         cx,
@@ -1481,7 +1591,7 @@ fn subscribe_for_editor_events(
                     cx.notify();
                 }
                 EditorEvent::ExcerptsRemoved { .. } => {
-                    outline_panel.update_visible_entries(HashSet::default(), None, cx);
+                    outline_panel.update_visible_entries(&editor, HashSet::default(), None, cx);
                     cx.notify();
                 }
                 EditorEvent::ExcerptsEdited { .. } => {}
