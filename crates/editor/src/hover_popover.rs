@@ -20,7 +20,7 @@ use multi_buffer::ToOffset;
 use project::{HoverBlock, HoverBlockKind, InlayHintLabelPart};
 use settings::Settings;
 use smol::stream::StreamExt;
-use std::{ops::Range, sync::Arc, time::Duration};
+use std::{borrow::Borrow, ops::Range, sync::Arc, time::Duration};
 use ui::{prelude::*, Tooltip};
 use util::TryFutureExt;
 use workspace::Workspace;
@@ -111,6 +111,10 @@ this text should be selectable
 wow so cool
 
 ## Heading 2
+
+```javascript
+console.log('hello world');
+```
 ";
         let language_registry = Arc::new(LanguageRegistry::new(
             Task::ready(()),
@@ -276,6 +280,10 @@ this text should be selectable
 wow so cool
 
 ## Heading 2
+
+```javascript
+console.log('hello world');
+```
 ";
     let language_registry = Arc::new(LanguageRegistry::new(
         Task::ready(()),
@@ -602,7 +610,7 @@ impl InfoPopover {
             .elevation_2(cx)
             .overflow_y_scroll()
             //     .overflow_x_scroll()
-            .min_w(max_size.width)
+            .min_w(max_size.width) //add min sizing to show differnece in behaviour depending on where is clicked
             .min_h(max_size.height)
             .track_scroll(&self.scroll_handle)
             .max_w(max_size.width)
