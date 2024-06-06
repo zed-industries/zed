@@ -3451,6 +3451,7 @@ dependencies = [
  "git",
  "gpui",
  "http 0.1.0",
+ "indexmap 2.2.6",
  "indoc",
  "itertools 0.11.0",
  "language",

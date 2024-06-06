@@ -20,6 +20,7 @@ mod editor_settings;
 mod element;
 mod hunk_diff;
 mod inlay_hint_cache;
+mod linked_editing_ranges;
 
 mod debounced_delay;
 mod git;
@@ -49,7 +50,7 @@ use anyhow::{anyhow, Context as _, Result};
 use blink_manager::BlinkManager;
 use client::{Collaborator, ParticipantIndex};
 use clock::ReplicaId;
-use collections::{BTreeMap, Bound, HashMap, HashSet, VecDeque};
+use collections::{BTreeMap, BTreeSet, Bound, HashMap, HashSet, VecDeque};
 use convert_case::{Case, Casing};
 use debounced_delay::DebouncedDelay;
 use display_map::*;
@@ -78,6 +79,7 @@ use hover_popover::{hide_hover, HoverState};
 use hunk_diff::ExpandedHunks;
 pub(crate) use hunk_diff::HunkToExpand;
 use indent_guides::ActiveIndentGuidesState;
+use indexmap::{set::IndexSet, IndexMap};
 use inlay_hint_cache::{InlayHintCache, InlaySplice, InvalidationStrategy};
 pub use inline_completion_provider::*;
 pub use items::MAX_TAB_TITLE_LEN;
@@ -479,8 +481,8 @@ pub struct Editor {
     available_code_actions: Option<(Location, Arc<[CodeAction]>)>,
     code_actions_task: Option<Task<()>>,
     document_highlights_task: Option<Task<()>>,
-    linked_editing_range_task: Option<Task<()>>,
-    linked_edit_ranges: BTreeMap<Range<Anchor>, Vec<Range<Anchor>>>,
+    linked_editing_range_task: Option<Task<Option<()>>>,
+    linked_edit_ranges: linked_editing_ranges::LinkedEditingRanges,
     pending_rename: Option<RenameState>,
     searchable: bool,
     cursor_shape: CursorShape,
@@ -4433,94 +4435,11 @@ impl Editor {
         }
     }
 
-    fn refresh_linked_ranges(&mut self, cx: &mut ViewContext<Self>) -> Option<()> {
-        if self.pending_rename.is_some() {
-            return None;
-        }
-
-        let project = self.project.clone()?;
-        let buffer = self.buffer.read(cx);
-        let newest_selection = self.selections.newest_anchor().clone();
-        let cursor_position = newest_selection.head();
-        let (cursor_buffer, cursor_buffer_position) =
-            buffer.text_anchor_for_position(cursor_position, cx)?;
-        let (tail_buffer, _) = buffer.text_anchor_for_position(newest_selection.tail(), cx)?;
-        if cursor_buffer != tail_buffer {
-            return None;
-        }
-        self.linked_editing_range_task = Some(cx.spawn(|this, mut cx| async move {
-            let highlights = if let Some(highlights) = project
-                .update(&mut cx, |project, cx| {
-                    project.linked_edit(&cursor_buffer, cursor_buffer_position, cx)
-                })
-                .log_err()
-            {
-                highlights.await.log_err()
-            } else {
-                None
-            };
-
-            if let Some(highlights) = highlights {
-                this.update(&mut cx, |this, cx| {
-                    if this.pending_rename.is_some() {
-                        return;
-                    }
-
-                    let buffer_id = cursor_position.buffer_id;
-                    let buffer = this.buffer.read(cx);
-                    if !buffer
-                        .text_anchor_for_position(cursor_position, cx)
-                        .map_or(false, |(buffer, _)| buffer == cursor_buffer)
-                    {
-                        return;
-                    }
-                    let cursor_buffer_snapshot = cursor_buffer.read(cx);
-                    let mut ranges = vec![];
-                    for highlight in highlights {
-                        for (excerpt_id, excerpt_range) in
-                            buffer.excerpts_for_buffer(&cursor_buffer, cx)
-                        {
-                            let start = highlight
-                                .start
-                                .max(&excerpt_range.context.start, cursor_buffer_snapshot);
-                            let end = highlight
-                                .end
-                                .min(&excerpt_range.context.end, cursor_buffer_snapshot);
-                            if start.cmp(&end, cursor_buffer_snapshot).is_ge() {
-                                continue;
-                            }
-
-                            let range = Anchor {
-                                buffer_id,
-                                excerpt_id,
-                                text_anchor: start,
-                            }..Anchor {
-                                buffer_id,
-                                excerpt_id,
-                                text_anchor: end,
-                            };
-                            ranges.push(range);
-                        }
-                    }
-
-                    this.highlight_background::<LinkedEditingRangeHighlight>(
-                        &ranges,
-                        |theme| theme.editor_document_highlight_read_background,
-                        cx,
-                    );
-                    cx.notify();
-                })
-                .log_err();
-            }
-        }));
-        None
-    }
-
     fn refresh_document_highlights(&mut self, cx: &mut ViewContext<Self>) -> Option<()> {
         if self.pending_rename.is_some() {
             return None;
         }
-        self.refresh_linked_ranges(cx);
+        linked_editing_ranges::refresh_linked_ranges(self, cx);
         let project = self.project.clone()?;
         let buffer = self.buffer.read(cx);
         let newest_selection = self.selections.newest_anchor().clone();
