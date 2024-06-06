@@ -20,12 +20,7 @@ use multi_buffer::ToOffset;
 use project::{HoverBlock, HoverBlockKind, InlayHintLabelPart};
 use settings::Settings;
 use smol::stream::StreamExt;
-use std::{
-    num::NonZeroU32,
-    ops::{Deref, DerefMut, Range},
-    sync::Arc,
-    time::Duration,
-};
+use std::{ops::Range, sync::Arc, time::Duration};
 use ui::{prelude::*, Tooltip};
 use util::TryFutureExt;
 use workspace::Workspace;
@@ -172,7 +167,7 @@ omg
                     symbol_range: RangeInEditor::Inlay(inlay_hover.range.clone()),
                     parsed_content,
                     scroll_handle: ScrollHandle::new(),
-                    markdown_element: Some(hw),
+                    markdown_element: hw,
                 };
 
                 this.update(&mut cx, |this, cx| {
@@ -416,7 +411,7 @@ omg
                             symbol_range: RangeInEditor::Text(range),
                             parsed_content,
                             scroll_handle: ScrollHandle::new(),
-                            markdown_element: Some(hw.clone()),
+                            markdown_element: hw.clone(),
                         },
                     )
                 })
@@ -598,7 +593,7 @@ pub struct InfoPopover {
     pub symbol_range: RangeInEditor,
     pub parsed_content: ParsedMarkdown,
     pub scroll_handle: ScrollHandle,
-    pub markdown_element: Option<View<HelloWorld>>,
+    pub markdown_element: View<HelloWorld>,
 }
 
 impl InfoPopover {
@@ -611,7 +606,7 @@ impl InfoPopover {
     ) -> AnyElement {
         let popover_text = (&self.parsed_content.text).clone();
 
-        let d = div()
+        div()
             .id("info_popover")
             .elevation_2(cx)
             .overflow_y_scroll()
@@ -626,19 +621,12 @@ impl InfoPopover {
             //     // Prevent a mouse down/move on the popover from being propagated to the editor,
             //     // because that would dismiss the popover.
             .on_mouse_move(|_, cx| cx.stop_propagation())
-            .on_mouse_down(MouseButton::Left, |_, cx| cx.stop_propagation());
-        // .on_click(cx.listener(move |_, _, cx| {
-        //         // cx.write_to_clipboard(ClipboardItem::new(popover_text.clone()));
-        //     }))
-        if self.markdown_element.is_some() {
-            d.child(self.markdown_element.clone().unwrap())
-                .into_any_element()
-        } else {
-            d.child("nope").into_any_element()
-        }
-        // .child(self.markdown_element.clone().unwrap()))
-        // .child("HELLO")
-        // markdown_element.clone().into_any_element()
+            .on_mouse_down(MouseButton::Left, |_, cx| cx.stop_propagation())
+            // .on_click(cx.listener(move |_, _, cx| {
+            //         // cx.write_to_clipboard(ClipboardItem::new(popover_text.clone()));
+            //     }))
+            .child(self.markdown_element.clone())
+            .into_any_element()
     }
 
     pub fn scroll(&self, amount: &ScrollAmount, cx: &mut ViewContext<Editor>) {
@@ -668,20 +656,10 @@ impl HelloWorld {
 }
 
 impl Render for HelloWorld {
-    fn render(&mut self, _cx: &mut ViewContext<Self>) -> impl IntoElement {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         div()
-            // .flex()
-            .bg(rgb(0x2e7d32))
-            .min_h(px(100.))
-            .size_full()
-            // .size(Length::Definite(Pixels(300.0).into()))
-            // .justify_center()
-            // .items_center()
-            // .shadow_lg()
-            .border_1()
-            .border_color(rgb(0x0000ff))
-            .text_xl()
-            .text_color(rgb(0xffffff))
+            .elevation_2(cx)
+            .on_mouse_down(MouseButton::Left, |_, cx| cx.stop_propagation())
             .child(self.markdown.clone())
     }
 }
@@ -753,9 +731,9 @@ impl DiagnosticPopover {
             // Prevent a mouse move on the popover from being propagated to the editor,
             // because that would dismiss the popover.
             .on_mouse_move(|_, cx| cx.stop_propagation())
+            .on_mouse_down(MouseButton::Left, |_, cx| cx.stop_propagation())
             // Prevent a mouse down on the popover from being propagated to the editor,
             // because that would move the cursor.
-            .on_mouse_down(MouseButton::Left, |_, cx| cx.stop_propagation())
             .on_click(cx.listener(|editor, _, cx| editor.go_to_diagnostic(&Default::default(), cx)))
             .child(SharedString::from(text))
             .into_any_element()
