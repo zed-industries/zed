@@ -2,7 +2,7 @@ use super::{file_command::FilePlaceholder, SlashCommand, SlashCommandOutput};
 use anyhow::Result;
 use assistant_slash_command::SlashCommandOutputSection;
 use gpui::{AppContext, Task, WeakView};
-use language::{LineEnding, LspAdapterDelegate};
+use language::{CodeLabel, HighlightId, LineEnding, LspAdapterDelegate};
 use semantic_index::SemanticIndex;
 use std::{
     fmt::Write,
@@ -20,12 +20,23 @@ impl SlashCommand for SearchSlashCommand {
         "search".into()
     }
 
-    fn description(&self) -> String {
-        "semantically search files".into()
+    fn label(&self, cx: &AppContext) -> CodeLabel {
+        let mut label = CodeLabel::default();
+        label.push_str("search ", None);
+        label.push_str(
+            "--n",
+            cx.theme().syntax().highlight_id("comment").map(HighlightId),
+        );
+        label.filter_range = 0.."search".len();
+        label
     }
 
-    fn tooltip_text(&self) -> String {
-        "search".into()
+    fn description(&self) -> String {
+        "semantic search".into()
+    }
+
+    fn menu_text(&self) -> String {
+        "Semantic Search".into()
     }
 
     fn requires_argument(&self) -> bool {
@@ -36,6 +47,7 @@ impl SlashCommand for SearchSlashCommand {
         &self,
         _query: String,
         _cancel: Arc<AtomicBool>,
+        _workspace: Option<WeakView<Workspace>>,
         _cx: &mut AppContext,
     ) -> Task<Result<Vec<String>>> {
         Task::ready(Ok(Vec::new()))
@@ -54,12 +66,27 @@ impl SlashCommand for SearchSlashCommand {
         let Some(argument) = argument else {
             return Task::ready(Err(anyhow::anyhow!("missing search query")));
         };
-        if argument.is_empty() {
+
+        let mut limit = None;
+        let mut query = String::new();
+        for part in argument.split(' ') {
+            if let Some(parameter) = part.strip_prefix("--") {
+                if let Ok(count) = parameter.parse::<usize>() {
+                    limit = Some(count);
+                    continue;
+                }
+            }
+
+            query.push_str(part);
+            query.push(' ');
+        }
+        query.pop();
+
+        if query.is_empty() {
             return Task::ready(Err(anyhow::anyhow!("missing search query")));
         }
 
         let project = workspace.read(cx).project().clone();
-        let argument = argument.to_string();
         let fs = project.read(cx).fs().clone();
         let project_index =
             cx.update_global(|index: &mut SemanticIndex, cx| index.project_index(project, cx));
@@ -67,7 +94,7 @@ impl SlashCommand for SearchSlashCommand {
         cx.spawn(|cx| async move {
             let results = project_index
                 .read_with(&cx, |project_index, cx| {
-                    project_index.search(argument.clone(), 5, cx)
+                    project_index.search(query.clone(), limit.unwrap_or(5), cx)
                 })?
                 .await?;
 
@@ -92,7 +119,7 @@ impl SlashCommand for SearchSlashCommand {
             let output = cx
                 .background_executor()
                 .spawn(async move {
-                    let mut text = format!("Search results for {argument}:\n");
+                    let mut text = format!("Search results for {query}:\n");
                     let mut sections = Vec::new();
                     for (result, full_path, file_content) in loaded_results {
                         let range_start = result.range.start.min(file_content.len());
@@ -140,7 +167,7 @@ impl SlashCommand for SearchSlashCommand {
                         });
                     }
 
-                    let argument = SharedString::from(argument);
+                    let query = SharedString::from(query);
                     sections.push(SlashCommandOutputSection {
                         range: 0..text.len(),
                         render_placeholder: Arc::new(move |id, unfold, _cx| {
@@ -148,13 +175,17 @@ impl SlashCommand for SearchSlashCommand {
                                 .style(ButtonStyle::Filled)
                                 .layer(ElevationIndex::ElevatedSurface)
                                 .child(Icon::new(IconName::MagnifyingGlass))
-                                .child(Label::new(argument.clone()))
+                                .child(Label::new(query.clone()))
                                 .on_click(move |_, cx| unfold(cx))
                                 .into_any_element()
                         }),
                     });
 
-                    SlashCommandOutput { text, sections }
+                    SlashCommandOutput {
+                        text,
+                        sections,
+                        run_commands_in_text: false,
+                    }
                 })
                 .await;
 

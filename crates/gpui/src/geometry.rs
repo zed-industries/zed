@@ -712,7 +712,7 @@ impl Size<Length> {
 /// assert_eq!(bounds.origin, origin);
 /// assert_eq!(bounds.size, size);
 /// ```
-#[derive(Refineable, Clone, Default, Debug, Eq, PartialEq)]
+#[derive(Refineable, Clone, Default, Debug, Eq, PartialEq, Hash)]
 #[refineable(Debug)]
 #[repr(C)]
 pub struct Bounds<T: Clone + Default + Debug> {

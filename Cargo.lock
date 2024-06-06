@@ -88,9 +88,8 @@ dependencies = [
 
 [[package]]
 name = "alacritty_terminal"
-version = "0.23.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f6d1ea4484c8676f295307a4892d478c70ac8da1dbd8c7c10830a504b7f1022f"
+version = "0.24.1-dev"
+source = "git+https://github.com/alacritty/alacritty?rev=cacdb5bb3b72bad2c729227537979d95af75978f#cacdb5bb3b72bad2c729227537979d95af75978f"
 dependencies = [
  "base64 0.22.0",
  "bitflags 2.4.2",
@@ -107,7 +106,7 @@ dependencies = [
  "signal-hook",
  "unicode-width",
  "vte",
- "windows-sys 0.48.0",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -230,6 +229,7 @@ dependencies = [
  "schemars",
  "serde",
  "serde_json",
+ "strum",
  "tokio",
 ]
 
@@ -351,7 +351,8 @@ dependencies = [
  "futures 0.3.28",
  "fuzzy",
  "gpui",
- "gray_matter",
+ "heed",
+ "html_to_markdown",
  "http 0.1.0",
  "indoc",
  "language",
@@ -374,6 +375,7 @@ dependencies = [
  "settings",
  "smol",
  "strsim 0.11.1",
+ "strum",
  "telemetry_events",
  "theme",
  "tiktoken-rs",
@@ -1509,7 +1511,7 @@ dependencies = [
 [[package]]
 name = "blade-graphics"
 version = "0.4.0"
-source = "git+https://github.com/kvark/blade?rev=9c9cabf69e869fc7d9aef2fc76f7d5c354d5710a#9c9cabf69e869fc7d9aef2fc76f7d5c354d5710a"
+source = "git+https://github.com/kvark/blade?rev=bdaf8c534fbbc9fbca71d1cf272f45640b3a068d#bdaf8c534fbbc9fbca71d1cf272f45640b3a068d"
 dependencies = [
  "ash",
  "ash-window",
@@ -1539,11 +1541,22 @@ dependencies = [
 [[package]]
 name = "blade-macros"
 version = "0.2.1"
-source = "git+https://github.com/kvark/blade?rev=9c9cabf69e869fc7d9aef2fc76f7d5c354d5710a#9c9cabf69e869fc7d9aef2fc76f7d5c354d5710a"
+source = "git+https://github.com/kvark/blade?rev=bdaf8c534fbbc9fbca71d1cf272f45640b3a068d#bdaf8c534fbbc9fbca71d1cf272f45640b3a068d"
 dependencies = [
  "proc-macro2",
  "quote",
  "syn 2.0.59",
+]
+
+[[package]]
+name = "blade-util"
+version = "0.1.0"
+source = "git+https://github.com/kvark/blade?rev=bdaf8c534fbbc9fbca71d1cf272f45640b3a068d#bdaf8c534fbbc9fbca71d1cf272f45640b3a068d"
+dependencies = [
+ "blade-graphics",
+ "bytemuck",
+ "log",
+ "profiling",
 ]
 
 [[package]]
@@ -2380,6 +2393,7 @@ dependencies = [
  "util",
  "uuid",
  "workspace",
+ "worktree",
 ]
 
 [[package]]
@@ -4192,6 +4206,7 @@ name = "fs"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "ashpd",
  "async-tar",
  "async-trait",
  "cocoa",
@@ -4690,6 +4705,7 @@ dependencies = [
  "bindgen 0.65.1",
  "blade-graphics",
  "blade-macros",
+ "blade-util",
  "block",
  "bytemuck",
  "calloop",
@@ -4770,18 +4786,6 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 1.0.109",
-]
-
-[[package]]
-name = "gray_matter"
-version = "0.2.7"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7188a951c53316d94711b3d944c28cf79968685d295cbe782494e8811fc75554"
-dependencies = [
- "serde",
- "serde_json",
- "toml 0.5.11",
- "yaml-rust",
 ]
 
 [[package]]
@@ -5048,6 +5052,32 @@ name = "hound"
 version = "3.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4d13cdbd5dbb29f9c88095bbdc2590c9cba0d0a1269b983fef6b2cdd7e9f4db1"
+
+[[package]]
+name = "html5ever"
+version = "0.27.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c13771afe0e6e846f1e67d038d4cb29998a6779f93c809212e4e9c32efd244d4"
+dependencies = [
+ "log",
+ "mac",
+ "markup5ever",
+ "proc-macro2",
+ "quote",
+ "syn 2.0.59",
+]
+
+[[package]]
+name = "html_to_markdown"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "html5ever",
+ "indoc",
+ "markup5ever_rcdom",
+ "pretty_assertions",
+ "regex",
+]
 
 [[package]]
 name = "http"
@@ -5708,7 +5738,7 @@ dependencies = [
  "tree-sitter-embedded-template",
  "tree-sitter-heex",
  "tree-sitter-html",
- "tree-sitter-json 0.20.2",
+ "tree-sitter-json",
  "tree-sitter-markdown",
  "tree-sitter-ruby",
  "tree-sitter-rust",
@@ -5798,7 +5828,7 @@ dependencies = [
  "tree-sitter-gomod",
  "tree-sitter-gowork",
  "tree-sitter-jsdoc",
- "tree-sitter-json 0.20.2",
+ "tree-sitter-json",
  "tree-sitter-markdown",
  "tree-sitter-proto",
  "tree-sitter-python",
@@ -5923,12 +5953,6 @@ checksum = "f30344350a2a51da54c1d53be93fade8a237e545dbcc4bdbe635413f2117cab9"
 dependencies = [
  "safemem",
 ]
-
-[[package]]
-name = "linked-hash-map"
-version = "0.5.6"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0717cef1bc8b636c6e1c1bbdefc09e6322da8a9321966e8928ef80d20f7f770f"
 
 [[package]]
 name = "linkify"
@@ -6168,6 +6192,32 @@ dependencies = [
  "theme",
  "ui",
  "workspace",
+]
+
+[[package]]
+name = "markup5ever"
+version = "0.12.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "16ce3abbeba692c8b8441d036ef91aea6df8da2c6b6e21c7e14d3c18e526be45"
+dependencies = [
+ "log",
+ "phf",
+ "phf_codegen",
+ "string_cache",
+ "string_cache_codegen",
+ "tendril",
+]
+
+[[package]]
+name = "markup5ever_rcdom"
+version = "0.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "edaa21ab3701bfee5099ade5f7e1f84553fd19228cf332f13cd6e964bf59be18"
+dependencies = [
+ "html5ever",
+ "markup5ever",
+ "tendril",
+ "xml5ever",
 ]
 
 [[package]]
@@ -6929,6 +6979,7 @@ dependencies = [
  "schemars",
  "serde",
  "serde_json",
+ "strum",
 ]
 
 [[package]]
@@ -7275,7 +7326,27 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ade2d8b8f33c7333b51bcf0428d37e217e9f32192ae4772156f65063b8ce03dc"
 dependencies = [
  "phf_macros",
- "phf_shared",
+ "phf_shared 0.11.2",
+]
+
+[[package]]
+name = "phf_codegen"
+version = "0.11.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e8d39688d359e6b34654d328e262234662d16cc0f60ec8dcbe5e718709342a5a"
+dependencies = [
+ "phf_generator 0.11.2",
+ "phf_shared 0.11.2",
+]
+
+[[package]]
+name = "phf_generator"
+version = "0.10.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5d5285893bb5eb82e6aaf5d59ee909a06a16737a8970984dd7746ba9283498d6"
+dependencies = [
+ "phf_shared 0.10.0",
+ "rand 0.8.5",
 ]
 
 [[package]]
@@ -7284,7 +7355,7 @@ version = "0.11.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "48e4cc64c2ad9ebe670cb8fd69dd50ae301650392e81c05f9bfcb2d5bdbc24b0"
 dependencies = [
- "phf_shared",
+ "phf_shared 0.11.2",
  "rand 0.8.5",
 ]
 
@@ -7294,11 +7365,20 @@ version = "0.11.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3444646e286606587e49f3bcf1679b8cef1dc2c5ecc29ddacaffc305180d464b"
 dependencies = [
- "phf_generator",
- "phf_shared",
+ "phf_generator 0.11.2",
+ "phf_shared 0.11.2",
  "proc-macro2",
  "quote",
  "syn 2.0.59",
+]
+
+[[package]]
+name = "phf_shared"
+version = "0.10.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b6796ad771acdc0123d2a88dc428b5e38ef24456743ddb1744ed628f9815c096"
+dependencies = [
+ "siphasher 0.3.11",
 ]
 
 [[package]]
@@ -7545,6 +7625,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5b40af805b3121feab8a3c29f04d8ad262fa8e0561883e7653e024ae4479e6de"
 
 [[package]]
+name = "precomputed-hash"
+version = "0.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "925383efa346730478fb4838dbe9137d2a47675ad789c546d150a6e1dd4ab31c"
+
+[[package]]
 name = "prettier"
 version = "0.1.0"
 dependencies = [
@@ -7742,6 +7828,7 @@ dependencies = [
  "unicase",
  "util",
  "workspace",
+ "worktree",
 ]
 
 [[package]]
@@ -9107,7 +9194,7 @@ dependencies = [
  "serde_json_lenient",
  "smallvec",
  "tree-sitter",
- "tree-sitter-json 0.19.0",
+ "tree-sitter-json",
  "unindent",
  "util",
 ]
@@ -9789,6 +9876,32 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6637bab7722d379c8b41ba849228d680cc12d0a45ba1fa2b48f2a30577a06731"
 dependencies = [
  "float-cmp",
+]
+
+[[package]]
+name = "string_cache"
+version = "0.8.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f91138e76242f575eb1d3b38b4f1362f10d3a43f47d182a5b359af488a02293b"
+dependencies = [
+ "new_debug_unreachable",
+ "once_cell",
+ "parking_lot",
+ "phf_shared 0.10.0",
+ "precomputed-hash",
+ "serde",
+]
+
+[[package]]
+name = "string_cache_codegen"
+version = "0.5.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6bb30289b722be4ff74a408c3cc27edeaad656e06cb1fe8fa9231fa59c728988"
+dependencies = [
+ "phf_generator 0.10.0",
+ "phf_shared 0.10.0",
+ "proc-macro2",
+ "quote",
 ]
 
 [[package]]
@@ -10975,16 +11088,6 @@ dependencies = [
 name = "tree-sitter-jsdoc"
 version = "0.20.0"
 source = "git+https://github.com/tree-sitter/tree-sitter-jsdoc?rev=6a6cf9e7341af32d8e2b2e24a37fbfebefc3dc55#6a6cf9e7341af32d8e2b2e24a37fbfebefc3dc55"
-dependencies = [
- "cc",
- "tree-sitter",
-]
-
-[[package]]
-name = "tree-sitter-json"
-version = "0.19.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "90b04c4e1a92139535eb9fca4ec8fa9666cc96b618005d3ae35f3c957fa92f92"
 dependencies = [
  "cc",
  "tree-sitter",
@@ -12785,7 +12888,6 @@ name = "worktree"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "client",
  "clock",
  "collections",
  "env_logger",
@@ -12800,7 +12902,6 @@ dependencies = [
  "itertools 0.11.0",
  "language",
  "log",
- "lsp",
  "parking_lot",
  "postage",
  "pretty_assertions",
@@ -12927,6 +13028,17 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "054a8e68b76250b253f671d1268cb7f1ae089ec35e195b2efb2a4e9a836d0621"
 
 [[package]]
+name = "xml5ever"
+version = "0.18.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7c376f76ed09df711203e20c3ef5ce556f0166fa03d39590016c0fd625437fad"
+dependencies = [
+ "log",
+ "mac",
+ "markup5ever",
+]
+
+[[package]]
 name = "xmlparser"
 version = "0.13.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -12946,15 +13058,6 @@ dependencies = [
  "cargo_toml",
  "clap 4.4.4",
  "toml 0.8.10",
-]
-
-[[package]]
-name = "yaml-rust"
-version = "0.4.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "56c1936c4cc7a1c9ab21a1ebb602eb942ba868cbd44a99cb7cdc5892335e1c85"
-dependencies = [
- "linked-hash-map",
 ]
 
 [[package]]
@@ -13047,7 +13150,7 @@ dependencies = [
 
 [[package]]
 name = "zed"
-version = "0.138.0"
+version = "0.140.0"
 dependencies = [
  "activity_indicator",
  "anyhow",
@@ -13182,7 +13285,7 @@ dependencies = [
 
 [[package]]
 name = "zed_elixir"
-version = "0.0.4"
+version = "0.0.5"
 dependencies = [
  "zed_extension_api 0.0.6",
 ]
@@ -13281,7 +13384,7 @@ dependencies = [
 
 [[package]]
 name = "zed_php"
-version = "0.0.5"
+version = "0.0.6"
 dependencies = [
  "zed_extension_api 0.0.4",
 ]
@@ -13337,7 +13440,7 @@ dependencies = [
 
 [[package]]
 name = "zed_vue"
-version = "0.0.2"
+version = "0.0.3"
 dependencies = [
  "zed_extension_api 0.0.6",
 ]

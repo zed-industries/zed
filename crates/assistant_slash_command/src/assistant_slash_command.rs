@@ -2,7 +2,7 @@ mod slash_command_registry;
 
 use anyhow::Result;
 use gpui::{AnyElement, AppContext, ElementId, Task, WeakView, WindowContext};
-use language::LspAdapterDelegate;
+use language::{CodeLabel, LspAdapterDelegate};
 pub use slash_command_registry::*;
 use std::{
     ops::Range,
@@ -16,12 +16,16 @@ pub fn init(cx: &mut AppContext) {
 
 pub trait SlashCommand: 'static + Send + Sync {
     fn name(&self) -> String;
+    fn label(&self, _cx: &AppContext) -> CodeLabel {
+        CodeLabel::plain(self.name(), None)
+    }
     fn description(&self) -> String;
-    fn tooltip_text(&self) -> String;
+    fn menu_text(&self) -> String;
     fn complete_argument(
         &self,
         query: String,
         cancel: Arc<AtomicBool>,
+        workspace: Option<WeakView<Workspace>>,
         cx: &mut AppContext,
     ) -> Task<Result<Vec<String>>>;
     fn requires_argument(&self) -> bool;
@@ -48,6 +52,7 @@ pub type RenderFoldPlaceholder = Arc<
 pub struct SlashCommandOutput {
     pub text: String,
     pub sections: Vec<SlashCommandOutputSection<usize>>,
+    pub run_commands_in_text: bool,
 }
 
 #[derive(Clone)]

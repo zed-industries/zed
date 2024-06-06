@@ -535,7 +535,7 @@ async fn try_fetch_server_binary<L: LspAdapter + 'static + Send + Sync + ?Sized>
     binary
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct CodeLabel {
     /// The text to display.
     pub text: String,
@@ -1539,6 +1539,15 @@ impl CodeLabel {
             }
         }
         result
+    }
+
+    pub fn push_str(&mut self, text: &str, highlight: Option<HighlightId>) {
+        let start_ix = self.text.len();
+        self.text.push_str(text);
+        let end_ix = self.text.len();
+        if let Some(highlight) = highlight {
+            self.runs.push((start_ix..end_ix, highlight));
+        }
     }
 }
 

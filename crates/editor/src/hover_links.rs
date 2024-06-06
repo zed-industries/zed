@@ -1,5 +1,6 @@
 use crate::{
     hover_popover::{self, InlayHover},
+    scroll::ScrollAmount,
     Anchor, Editor, EditorSnapshot, FindAllReferences, GoToDefinition, GoToTypeDefinition, InlayId,
     PointForPosition, SelectPhase,
 };
@@ -38,7 +39,11 @@ impl RangeInEditor {
         }
     }
 
-    fn point_within_range(&self, trigger_point: &TriggerPoint, snapshot: &EditorSnapshot) -> bool {
+    pub fn point_within_range(
+        &self,
+        trigger_point: &TriggerPoint,
+        snapshot: &EditorSnapshot,
+    ) -> bool {
         match (self, trigger_point) {
             (Self::Text(range), TriggerPoint::Text(point)) => {
                 let point_after_start = range.start.cmp(point, &snapshot.buffer_snapshot).is_le();
@@ -167,6 +172,21 @@ impl Editor {
             }
         })
         .detach();
+    }
+
+    pub fn scroll_hover(&mut self, amount: &ScrollAmount, cx: &mut ViewContext<Self>) -> bool {
+        let selection = self.selections.newest_anchor().head();
+        let snapshot = self.snapshot(cx);
+
+        let Some(popover) = self.hover_state.info_popovers.iter().find(|popover| {
+            popover
+                .symbol_range
+                .point_within_range(&TriggerPoint::Text(selection), &snapshot)
+        }) else {
+            return false;
+        };
+        popover.scroll(amount, cx);
+        true
     }
 
     fn cmd_click_reveal_task(
@@ -302,7 +322,6 @@ pub fn update_inlay_link_and_hover_points(
                                     hover_popover::hover_at_inlay(
                                         editor,
                                         InlayHover {
-                                            excerpt: excerpt_id,
                                             tooltip: match tooltip {
                                                 InlayHintTooltip::String(text) => HoverBlock {
                                                     text,
@@ -350,7 +369,6 @@ pub fn update_inlay_link_and_hover_points(
                                         hover_popover::hover_at_inlay(
                                             editor,
                                             InlayHover {
-                                                excerpt: excerpt_id,
                                                 tooltip: match tooltip {
                                                     InlayHintLabelPartTooltip::String(text) => {
                                                         HoverBlock {

@@ -54,10 +54,14 @@ pub enum IconDecoration {
 
 #[derive(Default, PartialEq, Copy, Clone)]
 pub enum IconSize {
+    /// 10px
     Indicator,
+    /// 12px
     XSmall,
+    /// 14px
     Small,
     #[default]
+    /// 16px
     Medium,
 }
 
@@ -163,19 +167,25 @@ pub enum IconName {
     ReplaceAll,
     ReplaceNext,
     ReplyArrowRight,
+    Rerun,
     Return,
     Reveal,
     Save,
     Screen,
     SelectAll,
+    SearchSelection,
     Server,
     Settings,
     Shift,
     Sliders,
     Snip,
     Space,
+    Sparkle,
+    SparkleFilled,
     Spinner,
     Split,
+    Star,
+    StarFilled,
     Strikethrough,
     Supermaven,
     SupermavenDisabled,
@@ -189,6 +199,7 @@ pub enum IconName {
     WholeWord,
     XCircle,
     ZedAssistant,
+    ZedAssistantFilled,
     ZedXCopilot,
 }
 
@@ -284,18 +295,24 @@ impl IconName {
             IconName::ReplaceAll => "icons/replace_all.svg",
             IconName::ReplaceNext => "icons/replace_next.svg",
             IconName::ReplyArrowRight => "icons/reply_arrow_right.svg",
+            IconName::Rerun => "icons/rerun.svg",
             IconName::Return => "icons/return.svg",
             IconName::Save => "icons/save.svg",
             IconName::Screen => "icons/desktop.svg",
             IconName::SelectAll => "icons/select_all.svg",
+            IconName::SearchSelection => "icons/search_selection.svg",
             IconName::Server => "icons/server.svg",
             IconName::Settings => "icons/file_icons/settings.svg",
             IconName::Shift => "icons/shift.svg",
             IconName::Sliders => "icons/sliders.svg",
             IconName::Snip => "icons/snip.svg",
             IconName::Space => "icons/space.svg",
+            IconName::Sparkle => "icons/sparkle.svg",
+            IconName::SparkleFilled => "icons/sparkle_filled.svg",
             IconName::Spinner => "icons/spinner.svg",
             IconName::Split => "icons/split.svg",
+            IconName::Star => "icons/star.svg",
+            IconName::StarFilled => "icons/star_filled.svg",
             IconName::Strikethrough => "icons/strikethrough.svg",
             IconName::Supermaven => "icons/supermaven.svg",
             IconName::SupermavenDisabled => "icons/supermaven_disabled.svg",
@@ -309,6 +326,7 @@ impl IconName {
             IconName::WholeWord => "icons/word_search.svg",
             IconName::XCircle => "icons/error.svg",
             IconName::ZedAssistant => "icons/zed_assistant.svg",
+            IconName::ZedAssistantFilled => "icons/zed_assistant_filled.svg",
             IconName::ZedXCopilot => "icons/zed_x_copilot.svg",
             IconName::ArrowUpFromLine => "icons/arrow_up_from_line.svg",
         }

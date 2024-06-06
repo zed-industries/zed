@@ -1133,11 +1133,19 @@ impl Pane {
             }
         }
 
-        // If a buffer is open both in a singleton editor and in a multibuffer, make sure
-        // to focus the singleton buffer when prompting to save that buffer, as opposed
-        // to focusing the multibuffer, because this gives the user a more clear idea
-        // of what content they would be saving.
-        items_to_close.sort_by_key(|item| !item.is_singleton(cx));
+        let active_item_id = self.active_item().map(|item| item.item_id());
+
+        items_to_close.sort_by_key(|item| {
+            // Put the currently active item at the end, because if the currently active item is not closed last
+            // closing the currently active item will cause the focus to switch to another item
+            // This will cause Zed to expand the content of the currently active item
+            active_item_id.filter(|&id| id == item.item_id()).is_some()
+              // If a buffer is open both in a singleton editor and in a multibuffer, make sure
+              // to focus the singleton buffer when prompting to save that buffer, as opposed
+              // to focusing the multibuffer, because this gives the user a more clear idea
+              // of what content they would be saving.
+              || !item.is_singleton(cx)
+        });
 
         let workspace = self.workspace.clone();
         cx.spawn(|pane, mut cx| async move {

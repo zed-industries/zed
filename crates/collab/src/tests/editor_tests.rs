@@ -42,7 +42,7 @@ use std::{
     },
 };
 use text::Point;
-use workspace::{Workspace, WorkspaceId};
+use workspace::Workspace;
 
 #[gpui::test(iterations = 10)]
 async fn test_host_disconnect(
@@ -83,16 +83,13 @@ async fn test_host_disconnect(
     let project_b = client_b.build_dev_server_project(project_id, cx_b).await;
     cx_a.background_executor.run_until_parked();
 
-    assert!(worktree_a.read_with(cx_a, |tree, _| tree.as_local().unwrap().is_shared()));
+    assert!(worktree_a.read_with(cx_a, |tree, _| tree
+        .as_local()
+        .unwrap()
+        .has_update_observer()));
 
-    let workspace_b = cx_b.add_window(|cx| {
-        Workspace::new(
-            WorkspaceId::default(),
-            project_b.clone(),
-            client_b.app_state.clone(),
-            cx,
-        )
-    });
+    let workspace_b = cx_b
+        .add_window(|cx| Workspace::new(None, project_b.clone(), client_b.app_state.clone(), cx));
     let cx_b = &mut VisualTestContext::from_window(*workspace_b, cx_b);
     let workspace_b_view = workspace_b.root_view(cx_b).unwrap();
 
@@ -126,7 +123,10 @@ async fn test_host_disconnect(
 
     project_b.read_with(cx_b, |project, _| project.is_read_only());
 
-    assert!(worktree_a.read_with(cx_a, |tree, _| !tree.as_local().unwrap().is_shared()));
+    assert!(worktree_a.read_with(cx_a, |tree, _| !tree
+        .as_local()
+        .unwrap()
+        .has_update_observer()));
 
     // Ensure client B's edited state is reset and that the whole window is blurred.
 

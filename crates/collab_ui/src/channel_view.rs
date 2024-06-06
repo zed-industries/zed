@@ -400,7 +400,11 @@ impl Item for ChannelView {
         None
     }
 
-    fn clone_on_split(&self, _: WorkspaceId, cx: &mut ViewContext<Self>) -> Option<View<Self>> {
+    fn clone_on_split(
+        &self,
+        _: Option<WorkspaceId>,
+        cx: &mut ViewContext<Self>,
+    ) -> Option<View<Self>> {
         Some(cx.new_view(|cx| {
             Self::new(
                 self.project.clone(),

@@ -10,7 +10,7 @@ use language::Buffer;
 use multi_buffer::{
     Anchor, ExcerptRange, MultiBuffer, MultiBufferRow, MultiBufferSnapshot, ToPoint,
 };
-use settings::{Settings, SettingsStore};
+use settings::SettingsStore;
 use text::{BufferId, Point};
 use ui::{
     div, ActiveTheme, Context as _, IntoElement, ParentElement, Styled, ViewContext, VisualContext,
@@ -21,7 +21,7 @@ use crate::{
     editor_settings::CurrentLineHighlight,
     git::{diff_hunk_to_display, DisplayDiffHunk},
     hunk_status, hunks_for_selections, BlockDisposition, BlockId, BlockProperties, BlockStyle,
-    DiffRowHighlight, Editor, EditorSettings, EditorSnapshot, ExpandAllHunkDiffs, RangeToAnchorExt,
+    DiffRowHighlight, Editor, EditorSnapshot, ExpandAllHunkDiffs, RangeToAnchorExt,
     RevertSelectedHunks, ToDisplayPoint, ToggleHunkDiff,
 };
 
@@ -309,17 +309,18 @@ impl Editor {
         let deleted_hunk_color = deleted_hunk_color(cx);
         let (editor_height, editor_with_deleted_text) =
             editor_with_deleted_text(diff_base_buffer, deleted_hunk_color, hunk, cx);
-        let parent_gutter_offset = self.gutter_dimensions.width + self.gutter_dimensions.margin;
+        let editor_model = cx.model().clone();
         let mut new_block_ids = self.insert_blocks(
             Some(BlockProperties {
                 position: hunk.multi_buffer_range.start,
                 height: editor_height.max(deleted_text_height),
                 style: BlockStyle::Flex,
-                render: Box::new(move |_| {
+                render: Box::new(move |cx| {
+                    let gutter_dimensions = editor_model.read(cx).gutter_dimensions;
                     div()
                         .bg(deleted_hunk_color)
                         .size_full()
-                        .pl(parent_gutter_offset)
+                        .pl(gutter_dimensions.full_width())
                         .child(editor_with_deleted_text.clone())
                         .into_any_element()
                 }),
@@ -590,7 +591,7 @@ fn editor_with_deleted_text(
         let subscription_editor = parent_editor.clone();
         editor._subscriptions.extend([
             cx.on_blur(&editor.focus_handle, |editor, cx| {
-                editor.set_current_line_highlight(CurrentLineHighlight::None);
+                editor.set_current_line_highlight(Some(CurrentLineHighlight::None));
                 editor.change_selections(None, cx, |s| {
                     s.try_cancel();
                 });
@@ -601,14 +602,14 @@ fn editor_with_deleted_text(
                 {
                     parent_editor.read(cx).current_line_highlight
                 } else {
-                    EditorSettings::get_global(cx).current_line_highlight
+                    None
                 };
                 editor.set_current_line_highlight(restored_highlight);
                 cx.notify();
             }),
             cx.observe_global::<SettingsStore>(|editor, cx| {
                 if !editor.is_focused(cx) {
-                    editor.set_current_line_highlight(CurrentLineHighlight::None);
+                    editor.set_current_line_highlight(Some(CurrentLineHighlight::None));
                 }
             }),
         ]);
