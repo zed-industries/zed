@@ -20,7 +20,11 @@ use multi_buffer::ToOffset;
 use project::{HoverBlock, HoverBlockKind, InlayHintLabelPart};
 use settings::Settings;
 use smol::stream::StreamExt;
-use std::{ops::Range, sync::Arc, time::Duration};
+use std::{
+    ops::{Deref, Range},
+    sync::Arc,
+    time::Duration,
+};
 use ui::{prelude::*, Tooltip};
 use util::TryFutureExt;
 use workspace::Workspace;
@@ -497,33 +501,6 @@ impl HoverState {
     }
 }
 
-struct MarkdownExample {
-    markdown: View<Markdown>,
-}
-
-impl MarkdownExample {
-    pub fn new(
-        text: String,
-        style: MarkdownStyle,
-        language_registry: Arc<LanguageRegistry>,
-        cx: &mut WindowContext,
-    ) -> Self {
-        let markdown = cx.new_view(|cx| Markdown::new(text, style, Some(language_registry), cx));
-        Self { markdown }
-    }
-    fn render(&mut self) -> impl IntoElement {
-        div()
-            .id("markdown-example")
-            .debug_selector(|| "foo".into())
-            .relative()
-            .bg(gpui::white())
-            .size_full()
-            .p_4()
-            .overflow_y_scroll()
-            .child(self.markdown.clone())
-    }
-}
-
 #[derive(Debug, Clone)]
 
 pub struct InfoPopover {
@@ -549,17 +526,24 @@ impl InfoPopover {
         //     cx.view().clone().,
         // );
         // cx.spawn(|this, &mut cx| {});
-        let text = "this is selectable text
-            wow so cool
-            omg
-            ## Heading fr"
-            .to_string();
-        // let view = cx.new_view(|v| v);
-        let language_registry = Arc::new(LanguageRegistry::new(
-            Task::ready(()),
-            cx.background_executor().clone(),
-        ));
+        //
+        let a = cx.deref().deref();
         let markdown_element = cx.new_view(|cx| {
+            let text = r#"
+this is selectable text
+
+wow so cool
+
+omg
+
+## Heading fr
+                "#
+            .to_string();
+            // let view = cx.new_view(|v| v);
+            let language_registry = Arc::new(LanguageRegistry::new(
+                Task::ready(()),
+                cx.background_executor().clone(),
+            ));
             let markdown_style = MarkdownStyle {
                 code_block: gpui::TextStyleRefinement {
                     font_family: Some("Zed Mono".into()),
@@ -619,7 +603,7 @@ impl InfoPopover {
             .on_click(cx.listener(move |_, _, cx| {
                 // cx.write_to_clipboard(ClipboardItem::new(popover_text.clone()));
             }))
-            .child(markdown_element)
+            .child(markdown_element.clone())
             .into_any_element()
     }
 
