@@ -2568,7 +2568,7 @@ impl LspCommand for InlayHints {
 impl LspCommand for LinkedEditingRange {
     type Response = Vec<Range<Anchor>>;
     type LspRequest = lsp::request::LinkedEditingRange;
-    type ProtoRequest = proto::OnTypeFormatting;
+    type ProtoRequest = proto::LinkedEditingRanges;
 
     fn check_capabilities(&self, server_capabilities: &lsp::ServerCapabilities) -> bool {
         let Some(linked_editing_options) = &server_capabilities.linked_editing_range_provider
@@ -2625,7 +2625,7 @@ impl LspCommand for LinkedEditingRange {
         }
     }
 
-    fn to_proto(&self, _project_id: u64, _buffer: &Buffer) -> proto::OnTypeFormatting {
+    fn to_proto(&self, _project_id: u64, _buffer: &Buffer) -> proto::LinkedEditingRanges {
         unimplemented!();
         // proto::OnTypeFormatting {
         //     project_id,
@@ -2639,7 +2639,7 @@ impl LspCommand for LinkedEditingRange {
     }
 
     async fn from_proto(
-        _message: proto::OnTypeFormatting,
+        _message: proto::LinkedEditingRanges,
         _: Model<Project>,
         _buffer: Model<Buffer>,
         _cx: AsyncAppContext,
@@ -2673,7 +2673,7 @@ impl LspCommand for LinkedEditingRange {
         _: PeerId,
         _: &clock::Global,
         _: &mut AppContext,
-    ) -> proto::OnTypeFormattingResponse {
+    ) -> proto::LinkedEditingRangesResponse {
         unimplemented!()
         // proto::OnTypeFormattingResponse {
         //     transaction: response
@@ -2683,7 +2683,7 @@ impl LspCommand for LinkedEditingRange {
 
     async fn response_from_proto(
         self,
-        _message: proto::OnTypeFormattingResponse,
+        _message: proto::LinkedEditingRangesResponse,
         _: Model<Project>,
         _: Model<Buffer>,
         _: AsyncAppContext,
@@ -2695,7 +2695,7 @@ impl LspCommand for LinkedEditingRange {
         // Ok(Some(language::proto::deserialize_transaction(transaction)?))
     }
 
-    fn buffer_id_from_proto(message: &proto::OnTypeFormatting) -> Result<BufferId> {
+    fn buffer_id_from_proto(message: &proto::LinkedEditingRanges) -> Result<BufferId> {
         BufferId::new(message.buffer_id)
     }
 }

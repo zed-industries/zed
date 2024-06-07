@@ -333,6 +333,8 @@ messages!(
     (RenameDevServer, Foreground),
     (OpenNewBuffer, Foreground),
     (RestartLanguageServers, Foreground),
+    (LinkedEditingRanges, Background),
+    (LinkedEditingRangesResponse, Foreground)
 );
 
 request_messages!(
@@ -373,6 +375,7 @@ request_messages!(
     (GetReferences, GetReferencesResponse),
     (GetSupermavenApiKey, GetSupermavenApiKeyResponse),
     (GetTypeDefinition, GetTypeDefinitionResponse),
+    (LinkedEditingRanges, LinkedEditingRangesResponse),
     (GetUsers, UsersResponse),
     (IncomingCall, Ack),
     (InlayHints, InlayHintsResponse),
@@ -471,6 +474,7 @@ entity_messages!(
     GetTypeDefinition,
     InlayHints,
     JoinProject,
+    LinkedEditingRanges,
     LeaveProject,
     MultiLspQuery,
     RestartLanguageServers,
