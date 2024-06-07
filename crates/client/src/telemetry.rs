@@ -315,6 +315,8 @@ impl Telemetry {
     pub fn report_app_event(self: &Arc<Self>, operation: String) -> Event {
         let event = Event::App(AppEvent { operation });
 
+        dbg!(&event);
+
         self.report_event(event.clone());
 
         event
