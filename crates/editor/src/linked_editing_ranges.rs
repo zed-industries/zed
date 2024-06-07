@@ -41,7 +41,7 @@ pub(super) fn refresh_linked_ranges(this: &mut Editor, cx: &mut ViewContext<Edit
     if this.pending_rename.is_some() {
         return None;
     }
-    this.linked_edit_ranges.0.clear();
+    // this.linked_edit_ranges.0.clear();
     let project = this.project.clone()?;
     let buffer = this.buffer.read(cx);
     let mut applicable_selections = vec![];

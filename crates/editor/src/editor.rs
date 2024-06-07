@@ -5059,6 +5059,58 @@ impl Editor {
     pub fn backspace(&mut self, _: &Backspace, cx: &mut ViewContext<Self>) {
         self.transact(cx, |this, cx| {
             this.select_autoclose_pair(cx);
+
+            if !this.linked_edit_ranges.is_empty() {
+                let mut linked_ranges = vec![];
+                let selections = this.selections.all::<MultiBufferPoint>(cx);
+                let snapshot = this.buffer.read(cx).snapshot(cx);
+                for selection in selections.iter() {
+                    dbg!(&selection);
+                    let selection_start = snapshot.anchor_after(selection.start).text_anchor;
+                    let selection_end = snapshot.anchor_after(selection.end).text_anchor;
+                    if selection_start.buffer_id != selection_end.buffer_id {
+                        continue;
+                    }
+                    let Some(buffer_id) = selection_start.buffer_id else {
+                        continue;
+                    };
+                    let Some(buffer_snapshot) = this
+                        .buffer
+                        .read(cx)
+                        .buffer(buffer_id)
+                        .map(|buffer| buffer.read(cx).text_snapshot())
+                    else {
+                        continue;
+                    };
+                    if let Some((base_range, associated_ranges)) = this.linked_edit_ranges.get(
+                        buffer_id,
+                        selection_start..selection_end,
+                        &buffer_snapshot,
+                    ) {
+                        use text::ToOffset as TO;
+                        // find offset from the start of current range to current cursor position
+                        let start_byte_offset = TO::to_offset(&base_range.start, &buffer_snapshot);
+                        let start_offset = TO::to_offset(&selection.head(), &buffer_snapshot);
+                        let start_difference = start_offset - start_byte_offset;
+                        let end_offset = TO::to_offset(&selection.tail(), &buffer_snapshot);
+                        let end_difference = end_offset - start_byte_offset;
+                        // Current range has associated linked ranges.
+                        for range in associated_ranges.iter() {
+                            let start_offset = TO::to_offset(&range.start, &buffer_snapshot);
+                            let end_offset = start_offset + end_difference;
+                            let start_offset = start_offset + start_difference - 1;
+                            let start_point = start_offset.to_point(&snapshot);
+                            let end_point = end_offset.to_point(&snapshot);
+
+                            linked_ranges.push((start_point..end_point, Arc::from("")));
+                        }
+                        dbg!(&linked_ranges);
+                    }
+                }
+                this.buffer
+                    .update(cx, |this, cx| this.edit(linked_ranges, None, cx));
+            }
+
             let mut selections = this.selections.all::<MultiBufferPoint>(cx);
             if !this.selections.line_mode {
                 let display_map = this.display_map.update(cx, |map, cx| map.snapshot(cx));
@@ -5096,6 +5148,8 @@ impl Editor {
                     }
                 }
             }
+            dbg!("Yo");
+
             if let Some((_, linked_ranges)) = this
                 .background_highlights
                 .get(&TypeId::of::<LinkedEditingRangeHighlight>())
