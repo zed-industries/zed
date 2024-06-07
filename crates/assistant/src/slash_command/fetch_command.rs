@@ -5,7 +5,7 @@ use anyhow::{anyhow, bail, Context, Result};
 use assistant_slash_command::{SlashCommand, SlashCommandOutput, SlashCommandOutputSection};
 use futures::AsyncReadExt;
 use gpui::{AppContext, Task, WeakView};
-use html_to_markdown::convert_html_to_markdown;
+use html_to_markdown::{convert_html_to_markdown, markdown, HandleTag};
 use http::{AsyncBody, HttpClient, HttpClientWithUrl};
 use language::LspAdapterDelegate;
 use ui::{prelude::*, ButtonLike, ElevationIndex};
@@ -37,7 +37,21 @@ impl FetchSlashCommand {
             );
         }
 
-        convert_html_to_markdown(&body[..])
+        let mut handlers: Vec<Box<dyn HandleTag>> = vec![
+            Box::new(markdown::ParagraphHandler),
+            Box::new(markdown::HeadingHandler),
+            Box::new(markdown::ListHandler),
+            Box::new(markdown::TableHandler::new()),
+            Box::new(markdown::StyledTextHandler),
+            Box::new(markdown::CodeHandler),
+        ];
+        if url.contains("wikipedia.org") {
+            use html_to_markdown::structure::wikipedia;
+
+            handlers.push(Box::new(wikipedia::WikipediaChromeRemover));
+        }
+
+        convert_html_to_markdown(&body[..], handlers)
     }
 }
 
