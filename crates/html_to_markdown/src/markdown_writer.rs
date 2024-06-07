@@ -162,7 +162,7 @@ impl MarkdownWriter {
         }
 
         let text = text
-            .trim_matches(|char| char == '\n' || char == '\r')
+            .trim_matches(|char| char == '\n' || char == '\r' || char == '\t')
             .replace('\n', " ");
 
         self.push_str(&text);

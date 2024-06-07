@@ -43,12 +43,15 @@ impl FetchSlashCommand {
             Box::new(markdown::ListHandler),
             Box::new(markdown::TableHandler::new()),
             Box::new(markdown::StyledTextHandler),
-            Box::new(markdown::CodeHandler),
         ];
         if url.contains("wikipedia.org") {
             use html_to_markdown::structure::wikipedia;
 
             handlers.push(Box::new(wikipedia::WikipediaChromeRemover));
+            handlers.push(Box::new(wikipedia::WikipediaInfoboxHandler));
+            handlers.push(Box::new(wikipedia::WikipediaCodeHandler::new()));
+        } else {
+            handlers.push(Box::new(markdown::CodeHandler));
         }
 
         convert_html_to_markdown(&body[..], handlers)
