@@ -9,7 +9,7 @@ use crate::{
     SplitDirection, ToggleZoom, Workspace,
 };
 use anyhow::Result;
-use collections::{HashMap, HashSet, VecDeque};
+use collections::{BTreeSet, HashMap, HashSet, VecDeque};
 use futures::{stream::FuturesUnordered, StreamExt};
 use gpui::{
     actions, anchored, deferred, impl_actions, prelude::*, Action, AnchorCorner, AnyElement,
@@ -20,7 +20,7 @@ use gpui::{
 };
 use itertools::Itertools;
 use parking_lot::Mutex;
-use project::{Project, ProjectEntryId, ProjectPath};
+use project::{Project, ProjectEntryId, ProjectPath, WorktreeId};
 use serde::Deserialize;
 use settings::{Settings, SettingsStore};
 use std::{
@@ -42,6 +42,30 @@ use ui::{
 };
 use ui::{v_flex, ContextMenu};
 use util::{debug_panic, maybe, truncate_and_remove_front, ResultExt};
+
+/// A selected entry in e.g. project panel.
+#[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub struct SelectedEntry {
+    pub worktree_id: WorktreeId,
+    pub entry_id: ProjectEntryId,
+}
+
+/// A group of selected entries from project panel.
+#[derive(Debug)]
+pub struct DraggedSelection {
+    pub active_selection: SelectedEntry,
+    pub marked_selections: Arc<BTreeSet<SelectedEntry>>,
+}
+
+impl DraggedSelection {
+    pub fn items<'a>(&'a self) -> Box<dyn Iterator<Item = &'a SelectedEntry> + 'a> {
+        if self.marked_selections.contains(&self.active_selection) {
+            Box::new(self.marked_selections.iter())
+        } else {
+            Box::new(std::iter::once(&self.active_selection))
+        }
+    }
+}
 
 #[derive(PartialEq, Clone, Copy, Deserialize, Debug)]
 #[serde(rename_all = "camelCase")]
@@ -1594,7 +1618,7 @@ impl Pane {
             .drag_over::<DraggedTab>(|tab, _, cx| {
                 tab.bg(cx.theme().colors().drop_target_background)
             })
-            .drag_over::<ProjectEntryId>(|tab, _, cx| {
+            .drag_over::<DraggedSelection>(|tab, _, cx| {
                 tab.bg(cx.theme().colors().drop_target_background)
             })
             .when_some(self.can_drop_predicate.clone(), |this, p| {
@@ -1604,9 +1628,9 @@ impl Pane {
                 this.drag_split_direction = None;
                 this.handle_tab_drop(dragged_tab, ix, cx)
             }))
-            .on_drop(cx.listener(move |this, entry_id: &ProjectEntryId, cx| {
+            .on_drop(cx.listener(move |this, selection: &DraggedSelection, cx| {
                 this.drag_split_direction = None;
-                this.handle_project_entry_drop(entry_id, cx)
+                this.handle_project_entry_drop(&selection.active_selection.entry_id, cx)
             }))
             .on_drop(cx.listener(move |this, paths, cx| {
                 this.drag_split_direction = None;
@@ -1812,16 +1836,16 @@ impl Pane {
                     .drag_over::<DraggedTab>(|bar, _, cx| {
                         bar.bg(cx.theme().colors().drop_target_background)
                     })
-                    .drag_over::<ProjectEntryId>(|bar, _, cx| {
+                    .drag_over::<DraggedSelection>(|bar, _, cx| {
                         bar.bg(cx.theme().colors().drop_target_background)
                     })
                     .on_drop(cx.listener(move |this, dragged_tab: &DraggedTab, cx| {
                         this.drag_split_direction = None;
                         this.handle_tab_drop(dragged_tab, this.items.len(), cx)
                     }))
-                    .on_drop(cx.listener(move |this, entry_id: &ProjectEntryId, cx| {
+                    .on_drop(cx.listener(move |this, selection: &DraggedSelection, cx| {
                         this.drag_split_direction = None;
-                        this.handle_project_entry_drop(entry_id, cx)
+                        this.handle_project_entry_drop(&selection.active_selection.entry_id, cx)
                     }))
                     .on_drop(cx.listener(move |this, paths, cx| {
                         this.drag_split_direction = None;
@@ -2171,7 +2195,7 @@ impl Render for Pane {
                     .relative()
                     .group("")
                     .on_drag_move::<DraggedTab>(cx.listener(Self::handle_drag_move))
-                    .on_drag_move::<ProjectEntryId>(cx.listener(Self::handle_drag_move))
+                    .on_drag_move::<DraggedSelection>(cx.listener(Self::handle_drag_move))
                     .on_drag_move::<ExternalPaths>(cx.listener(Self::handle_drag_move))
                     .map(|div| {
                         if let Some(item) = self.active_item() {
@@ -2197,7 +2221,7 @@ impl Render for Pane {
                             .absolute()
                             .bg(cx.theme().colors().drop_target_background)
                             .group_drag_over::<DraggedTab>("", |style| style.visible())
-                            .group_drag_over::<ProjectEntryId>("", |style| style.visible())
+                            .group_drag_over::<DraggedSelection>("", |style| style.visible())
                             .group_drag_over::<ExternalPaths>("", |style| style.visible())
                             .when_some(self.can_drop_predicate.clone(), |this, p| {
                                 this.can_drop(move |a, cx| p(a, cx))
@@ -2205,8 +2229,11 @@ impl Render for Pane {
                             .on_drop(cx.listener(move |this, dragged_tab, cx| {
                                 this.handle_tab_drop(dragged_tab, this.active_item_index(), cx)
                             }))
-                            .on_drop(cx.listener(move |this, entry_id, cx| {
-                                this.handle_project_entry_drop(entry_id, cx)
+                            .on_drop(cx.listener(move |this, selection: &DraggedSelection, cx| {
+                                this.handle_project_entry_drop(
+                                    &selection.active_selection.entry_id,
+                                    cx,
+                                )
                             }))
                             .on_drop(cx.listener(move |this, paths, cx| {
                                 this.handle_external_paths_drop(paths, cx)

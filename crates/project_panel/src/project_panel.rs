@@ -35,7 +35,7 @@ use util::{maybe, NumericPrefixWithSuffix, ResultExt, TryFutureExt};
 use workspace::{
     dock::{DockPosition, Panel, PanelEvent},
     notifications::DetachAndPromptErr,
-    OpenInTerminal, Workspace,
+    DraggedSelection, OpenInTerminal, SelectedEntry, Workspace,
 };
 
 const PROJECT_PANEL_KEY: &str = "ProjectPanel";
@@ -63,26 +63,6 @@ pub struct ProjectPanel {
     pending_serialization: Task<Option<()>>,
 }
 
-#[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
-struct SelectedEntry {
-    worktree_id: WorktreeId,
-    entry_id: ProjectEntryId,
-}
-
-struct DraggedSelection {
-    active_selection: SelectedEntry,
-    marked_selections: Arc<BTreeSet<SelectedEntry>>,
-}
-
-impl DraggedSelection {
-    fn items<'a>(&'a self) -> Box<dyn Iterator<Item = &'a SelectedEntry> + 'a> {
-        if self.marked_selections.contains(&self.active_selection) {
-            Box::new(self.marked_selections.iter())
-        } else {
-            Box::new(std::iter::once(&self.active_selection))
-        }
-    }
-}
 #[derive(Clone, Debug)]
 struct EditState {
     worktree_id: WorktreeId,
