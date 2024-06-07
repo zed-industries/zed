@@ -122,7 +122,11 @@ pub(super) fn refresh_linked_ranges(this: &mut Editor, cx: &mut ViewContext<Edit
                 return;
             }
             for (buffer_id, ranges) in highlights.into_iter().filter_map(|x| x) {
-                this.linked_edit_ranges.0.insert(buffer_id, ranges);
+                this.linked_edit_ranges
+                    .0
+                    .entry(buffer_id)
+                    .or_default()
+                    .extend(ranges);
             }
 
             cx.notify();

@@ -2970,9 +2970,9 @@ impl Editor {
             // If not handling any auto-close operation, then just replace the selected
             // text with the given input and move the selection to the end of the
             // newly inserted text.
-            let start_anchor = snapshot.anchor_after(selection.start);
             let anchor = snapshot.anchor_after(selection.end);
             if !self.linked_edit_ranges.is_empty() {
+                let start_anchor = snapshot.anchor_after(selection.start);
                 if let Some(((base_range, linked_ranges), buffer_snapshot)) =
                     anchor.buffer_id.and_then(|end_buffer_id| {
                         if start_anchor.buffer_id == Some(end_buffer_id) {
@@ -2990,7 +2990,6 @@ impl Editor {
                                 )
                                 .map(|ranges| (ranges, snapshot))
                         } else {
-                            dbg!("Nope");
                             None
                         }
                     })
