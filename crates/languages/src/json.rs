@@ -25,6 +25,8 @@ const SERVER_PATH: &str = "node_modules/vscode-json-languageserver/bin/vscode-js
 
 // Origin: https://github.com/SchemaStore/schemastore
 const TSCONFIG_SCHEMA: &str = include_str!("json/schemas/tsconfig.json");
+const PACKAGE_JSON_SCHEMA: &str = include_str!("json/schemas/package.json");
+
 pub(super) fn json_task_context() -> ContextProviderWithTasks {
     ContextProviderWithTasks::new(TaskTemplates(vec![
         TaskTemplate {
@@ -78,6 +80,8 @@ impl JsonLspAdapter {
         );
         let tasks_schema = task::TaskTemplates::generate_json_schema();
         let tsconfig_schema = serde_json::Value::from_str(TSCONFIG_SCHEMA).unwrap();
+        let package_json_schema = serde_json::Value::from_str(PACKAGE_JSON_SCHEMA).unwrap();
+
         serde_json::json!({
             "json": {
                 "format": {
@@ -87,6 +91,10 @@ impl JsonLspAdapter {
                     {
                         "fileMatch": ["tsconfig.json"],
                         "schema":tsconfig_schema
+                    },
+                    {
+                        "fileMatch": ["package.json"],
+                        "schema":package_json_schema
                     },
                     {
                         "fileMatch": [
