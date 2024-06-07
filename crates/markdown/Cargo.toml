@@ -26,6 +26,7 @@ language.workspace = true
 linkify.workspace = true
 log.workspace = true
 pulldown-cmark.workspace = true
+settings.workspace = true
 theme.workspace = true
 ui.workspace = true
 util.workspace = true

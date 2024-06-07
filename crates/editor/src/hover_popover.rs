@@ -25,6 +25,7 @@ use project::{HoverBlock, HoverBlockKind, InlayHintLabelPart};
 use settings::Settings;
 use smol::stream::StreamExt;
 use std::{ops::Range, sync::Arc, time::Duration};
+use theme::ThemeSettings;
 use ui::{prelude::*, Tooltip};
 use util::TryFutureExt;
 use workspace::Workspace;
@@ -376,23 +377,8 @@ async fn parse_blocks(
 
     for block in blocks {
         let rendered_block = cx.new_view(|cx| {
-            let markdown_style = MarkdownStyle {
-                code_block: gpui::TextStyleRefinement {
-                    color: Some(cx.theme().colors().editor_foreground),
-                    background_color: Some(cx.theme().colors().editor_background),
-                    ..Default::default()
-                },
-                inline_code: Default::default(),
-                block_quote: Default::default(),
-                link: gpui::TextStyleRefinement {
-                    color: Some(Color::Accent.color(cx)),
-                    ..Default::default()
-                },
-                rule_color: Default::default(),
-                block_quote_border_color: Default::default(),
-                syntax: cx.theme().syntax().clone(),
-                selection_background_color: cx.theme().players().local().selection,
-            };
+            let s = ThemeSettings::get_global(cx);
+            let markdown_style = MarkdownStyle::get_themed_default(cx);
             Markdown::new(
                 block.clone().text.into(),
                 markdown_style.clone(),
@@ -407,25 +393,6 @@ async fn parse_blocks(
         }
     }
     parsed_blocks
-    // let leading_space = text.chars().take_while(|c| c.is_whitespace()).count();
-    // if leading_space > 0 {
-    //     highlights = highlights
-    //         .into_iter()
-    //         .map(|(range, style)| {
-    //             (
-    //                 range.start.saturating_sub(leading_space)
-    //                     ..range.end.saturating_sub(leading_space),
-    //                 style,
-    //             )
-    //         })
-    //         .collect();
-    //     region_ranges = region_ranges
-    //         .into_iter()
-    //         .map(|range| {
-    //             range.start.saturating_sub(leading_space)..range.end.saturating_sub(leading_space)
-    //         })
-    //         .collect();
-    // }
 }
 
 #[derive(Default, Debug)]
@@ -511,8 +478,6 @@ impl InfoPopover {
     ) -> AnyElement {
         div()
             .id("info_popover")
-            .px_2()
-            .py_1()
             .elevation_2(cx)
             .overflow_y_scroll()
             //     .overflow_x_scroll()
