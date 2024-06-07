@@ -236,7 +236,7 @@ impl HandleTag for CodeHandler {
                     writer.push_str("`");
                 }
             }
-            "pre" => writer.push_str(&format!("\n\n```\n")),
+            "pre" => writer.push_str("\n\n```\n"),
             _ => {}
         }
 
