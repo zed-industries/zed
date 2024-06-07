@@ -137,14 +137,11 @@ impl Markdown {
 
 impl Render for Markdown {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
-        div()
-            .bg(rgb(0xe88585)) //make it easier to disr
-            .on_mouse_down(MouseButton::Left, |_, cx| cx.stop_propagation())
-            .child(MarkdownElement::new(
-                cx.view().clone(),
-                self.style.clone(),
-                self.language_registry.clone(),
-            ))
+        MarkdownElement::new(
+            cx.view().clone(),
+            self.style.clone(),
+            self.language_registry.clone(),
+        )
     }
 }
 
@@ -351,7 +348,7 @@ impl MarkdownElement {
                                 reversed: false,
                                 pending: true,
                             };
-                            cx.focus(&markdown.focus_handle);
+                            // Need to remove cx.focus(&markdown.focus_handle); in order to allow popovers to stay open.
                             cx.prevent_default()
                         }
 

@@ -607,11 +607,11 @@ impl InfoPopover {
 
         div()
             .id("info_popover")
+            .px_2()
+            .py_1()
             .elevation_2(cx)
             .overflow_y_scroll()
             //     .overflow_x_scroll()
-            .min_w(max_size.width) //add min sizing to show differnece in behaviour depending on where is clicked
-            .min_h(max_size.height)
             .track_scroll(&self.scroll_handle)
             .max_w(max_size.width)
             .max_h(max_size.height)
