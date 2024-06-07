@@ -94,6 +94,12 @@ pub enum CreatedEntry {
     Excluded { abs_path: PathBuf },
 }
 
+pub struct LoadedFile {
+    pub file: Arc<File>,
+    pub text: String,
+    pub diff_base: Option<String>,
+}
+
 pub struct LocalWorktree {
     snapshot: LocalSnapshot,
     scan_requests_tx: channel::Sender<ScanRequest>,
@@ -573,6 +579,15 @@ impl Worktree {
         }
     }
 
+    pub fn metadata_proto(&self) -> proto::WorktreeMetadata {
+        proto::WorktreeMetadata {
+            id: self.id().to_proto(),
+            root_name: self.root_name().to_string(),
+            visible: self.is_visible(),
+            abs_path: self.abs_path().as_os_str().to_string_lossy().into(),
+        }
+    }
+
     pub fn completed_scan_id(&self) -> usize {
         match self {
             Worktree::Local(worktree) => worktree.snapshot.completed_scan_id,
@@ -641,6 +656,34 @@ impl Worktree {
         match self {
             Worktree::Local(this) => this.update_observer.is_some(),
             Worktree::Remote(this) => this.update_observer.lock().is_some(),
+        }
+    }
+
+    pub fn load_file(
+        &self,
+        path: &Path,
+        cx: &mut ModelContext<Worktree>,
+    ) -> Task<Result<LoadedFile>> {
+        match self {
+            Worktree::Local(this) => this.load_file(path, cx),
+            Worktree::Remote(_) => {
+                Task::ready(Err(anyhow!("remote worktrees can't yet load files")))
+            }
+        }
+    }
+
+    pub fn write_file(
+        &self,
+        path: &Path,
+        text: Rope,
+        line_ending: LineEnding,
+        cx: &mut ModelContext<Worktree>,
+    ) -> Task<Result<Arc<File>>> {
+        match self {
+            Worktree::Local(this) => this.write_file(path, text, line_ending, cx),
+            Worktree::Remote(_) => {
+                Task::ready(Err(anyhow!("remote worktree can't yet write files")))
+            }
         }
     }
 
@@ -1169,20 +1212,7 @@ impl LocalWorktree {
         self.settings.clone()
     }
 
-    pub fn metadata_proto(&self) -> proto::WorktreeMetadata {
-        proto::WorktreeMetadata {
-            id: self.id().to_proto(),
-            root_name: self.root_name().to_string(),
-            visible: self.visible,
-            abs_path: self.abs_path().as_os_str().to_string_lossy().into(),
-        }
-    }
-
-    pub fn load_file(
-        &self,
-        path: &Path,
-        cx: &mut ModelContext<Worktree>,
-    ) -> Task<Result<(File, String, Option<String>)>> {
+    fn load_file(&self, path: &Path, cx: &mut ModelContext<Worktree>) -> Task<Result<LoadedFile>> {
         let path = Arc::from(path);
         let abs_path = self.absolutize(&path);
         let fs = self.fs.clone();
@@ -1202,7 +1232,7 @@ impl LocalWorktree {
                             let fs = fs.clone();
                             let abs_path = abs_path.clone();
                             async move {
-                                let abs_path_metadata = fs
+                                let metadata = fs
                                     .metadata(&abs_path)
                                     .await
                                     .with_context(|| {
@@ -1210,7 +1240,7 @@ impl LocalWorktree {
                                     })
                                     .log_err()
                                     .flatten()?;
-                                if abs_path_metadata.is_dir || abs_path_metadata.is_symlink {
+                                if metadata.is_dir || metadata.is_symlink {
                                     None
                                 } else {
                                     git_repo.load_index_text(&repo_path)
@@ -1230,20 +1260,8 @@ impl LocalWorktree {
             let worktree = this
                 .upgrade()
                 .ok_or_else(|| anyhow!("worktree was dropped"))?;
-            match entry.await? {
-                Some(entry) => Ok((
-                    File {
-                        entry_id: Some(entry.id),
-                        worktree,
-                        path: entry.path,
-                        mtime: entry.mtime,
-                        is_local: true,
-                        is_deleted: false,
-                        is_private: entry.is_private,
-                    },
-                    text,
-                    diff_base,
-                )),
+            let file = match entry.await? {
+                Some(entry) => File::for_entry(entry, worktree),
                 None => {
                     let metadata = fs
                         .metadata(&abs_path)
@@ -1254,21 +1272,23 @@ impl LocalWorktree {
                         .with_context(|| {
                             format!("Excluded file {abs_path:?} got removed during loading")
                         })?;
-                    Ok((
-                        File {
-                            entry_id: None,
-                            worktree,
-                            path,
-                            mtime: Some(metadata.mtime),
-                            is_local: true,
-                            is_deleted: false,
-                            is_private,
-                        },
-                        text,
-                        diff_base,
-                    ))
+                    Arc::new(File {
+                        entry_id: None,
+                        worktree,
+                        path,
+                        mtime: Some(metadata.mtime),
+                        is_local: true,
+                        is_deleted: false,
+                        is_private,
+                    })
                 }
-            }
+            };
+
+            Ok(LoadedFile {
+                file,
+                text,
+                diff_base,
+            })
         })
     }
 
@@ -1349,26 +1369,58 @@ impl LocalWorktree {
         })
     }
 
-    pub fn write_file(
+    fn write_file(
         &self,
         path: impl Into<Arc<Path>>,
         text: Rope,
         line_ending: LineEnding,
         cx: &mut ModelContext<Worktree>,
-    ) -> Task<Result<Option<Entry>>> {
-        let path: Arc<Path> = path.into();
-        let abs_path = self.absolutize(&path);
+    ) -> Task<Result<Arc<File>>> {
+        let path = path.into();
         let fs = self.fs.clone();
-        let write = cx
-            .background_executor()
-            .spawn(async move { fs.save(&abs_path?, &text, line_ending).await });
+        let is_private = self.is_path_private(&path);
+        let Ok(abs_path) = self.absolutize(&path) else {
+            return Task::ready(Err(anyhow!("invalid path {path:?}")));
+        };
 
-        cx.spawn(|this, mut cx| async move {
+        let write = cx.background_executor().spawn({
+            let fs = fs.clone();
+            let abs_path = abs_path.clone();
+            async move { fs.save(&abs_path, &text, line_ending).await }
+        });
+
+        cx.spawn(move |this, mut cx| async move {
             write.await?;
-            this.update(&mut cx, |this, cx| {
-                this.as_local_mut().unwrap().refresh_entry(path, None, cx)
-            })?
-            .await
+            let entry = this
+                .update(&mut cx, |this, cx| {
+                    this.as_local_mut()
+                        .unwrap()
+                        .refresh_entry(path.clone(), None, cx)
+                })?
+                .await?;
+            let worktree = this.upgrade().ok_or_else(|| anyhow!("worktree dropped"))?;
+            if let Some(entry) = entry {
+                Ok(File::for_entry(entry, worktree))
+            } else {
+                let metadata = fs
+                    .metadata(&abs_path)
+                    .await
+                    .with_context(|| {
+                        format!("Fetching metadata after saving the excluded buffer {abs_path:?}")
+                    })?
+                    .with_context(|| {
+                        format!("Excluded buffer {path:?} got removed during saving")
+                    })?;
+                Ok(Arc::new(File {
+                    worktree,
+                    path,
+                    mtime: Some(metadata.mtime),
+                    entry_id: None,
+                    is_local: true,
+                    is_deleted: false,
+                    is_private,
+                }))
+            }
         })
     }
 

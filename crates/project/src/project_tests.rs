@@ -2981,8 +2981,7 @@ async fn test_rescan_and_remote_updates(cx: &mut gpui::TestAppContext) {
 
     // Create a remote copy of this worktree.
     let tree = project.update(cx, |project, _| project.worktrees().next().unwrap());
-
-    let metadata = tree.update(cx, |tree, _| tree.as_local().unwrap().metadata_proto());
+    let metadata = tree.update(cx, |tree, _| tree.metadata_proto());
 
     let updates = Arc::new(Mutex::new(Vec::new()));
     tree.update(cx, |tree, cx| {

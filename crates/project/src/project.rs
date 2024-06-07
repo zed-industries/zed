@@ -2065,21 +2065,20 @@ impl Project {
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<Model<Buffer>>> {
         let load_buffer = worktree.update(cx, |worktree, cx| {
-            let worktree = worktree.as_local_mut().unwrap();
-            let file = worktree.load_file(path.as_ref(), cx);
+            let load_file = worktree.load_file(path.as_ref(), cx);
             let reservation = cx.reserve_model();
             let buffer_id = BufferId::from(reservation.entity_id().as_non_zero_u64());
             cx.spawn(move |_, mut cx| async move {
-                let (file, contents, diff_base) = file.await?;
+                let loaded = load_file.await?;
                 let text_buffer = cx
                     .background_executor()
-                    .spawn(async move { text::Buffer::new(0, buffer_id, contents) })
+                    .spawn(async move { text::Buffer::new(0, buffer_id, loaded.text) })
                     .await;
                 cx.insert_model(reservation, |_| {
                     Buffer::build(
                         text_buffer,
-                        diff_base,
-                        Some(Arc::new(file)),
+                        loaded.diff_base,
+                        Some(loaded.file),
                         Capability::ReadWrite,
                     )
                 })
@@ -2233,10 +2232,11 @@ impl Project {
         };
         let worktree = file.worktree.clone();
         let path = file.path.clone();
-        worktree.update(cx, |worktree, cx| match worktree {
-            Worktree::Local(worktree) => self.save_local_buffer(&worktree, buffer, path, false, cx),
-            Worktree::Remote(_) => self.save_remote_buffer(buffer, None, cx),
-        })
+        if self.is_local() {
+            self.save_local_buffer(worktree, buffer, path, false, cx)
+        } else {
+            self.save_remote_buffer(buffer, None, cx)
+        }
     }
 
     pub fn save_buffer_as(
@@ -2245,26 +2245,21 @@ impl Project {
         path: ProjectPath,
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<()>> {
-        let old_file = File::from_dyn(buffer.read(cx).file())
-            .filter(|f| f.is_local())
-            .cloned();
+        let old_file = File::from_dyn(buffer.read(cx).file()).cloned();
         let Some(worktree) = self.worktree_for_id(path.worktree_id, cx) else {
             return Task::ready(Err(anyhow!("worktree does not exist")));
         };
 
         cx.spawn(move |this, mut cx| async move {
             this.update(&mut cx, |this, cx| {
-                if let Some(old_file) = &old_file {
-                    this.unregister_buffer_from_language_servers(&buffer, old_file, cx);
+                if this.is_local() {
+                    if let Some(old_file) = &old_file {
+                        this.unregister_buffer_from_language_servers(&buffer, old_file, cx);
+                    }
+                    this.save_local_buffer(worktree, buffer.clone(), path.path, true, cx)
+                } else {
+                    this.save_remote_buffer(buffer.clone(), Some(path.to_proto()), cx)
                 }
-                worktree.update(cx, |worktree, cx| match worktree {
-                    Worktree::Local(worktree) => {
-                        this.save_local_buffer(worktree, buffer.clone(), path.path, true, cx)
-                    }
-                    Worktree::Remote(_) => {
-                        this.save_remote_buffer(buffer.clone(), Some(path.to_proto()), cx)
-                    }
-                })
             })?
             .await?;
 
@@ -2278,70 +2273,39 @@ impl Project {
 
     pub fn save_local_buffer(
         &self,
-        worktree: &LocalWorktree,
+        worktree: Model<Worktree>,
         buffer_handle: Model<Buffer>,
         path: Arc<Path>,
         mut has_changed_file: bool,
-        cx: &mut ModelContext<Worktree>,
+        cx: &mut ModelContext<Self>,
     ) -> Task<Result<()>> {
         let buffer = buffer_handle.read(cx);
-
-        let rpc = self.client.clone();
-        let buffer_id: u64 = buffer.remote_id().into();
-        let project_id = self.remote_id();
-
+        let buffer_id = buffer.remote_id();
+        let text = buffer.as_rope().clone();
+        let line_ending = buffer.line_ending();
+        let version = buffer.version();
         if buffer.file().is_some_and(|file| !file.is_created()) {
             has_changed_file = true;
         }
 
-        let text = buffer.as_rope().clone();
-        let version = buffer.version();
-        let save = worktree.write_file(path.as_ref(), text, buffer.line_ending(), cx);
-        let fs = Arc::clone(&self.fs);
-        let abs_path = worktree.absolutize(&path);
-        let is_private = worktree.is_path_private(&path);
+        let save = worktree.update(cx, |worktree, cx| {
+            worktree.write_file(path.as_ref(), text, line_ending, cx)
+        });
 
-        cx.spawn(move |this, mut cx| async move {
-            let entry = save.await?;
-            let abs_path = abs_path?;
-            let this = this.upgrade().context("worktree dropped")?;
-
-            let (entry_id, mtime, path, is_private) = match entry {
-                Some(entry) => (Some(entry.id), entry.mtime, entry.path, entry.is_private),
-                None => {
-                    let metadata = fs
-                        .metadata(&abs_path)
-                        .await
-                        .with_context(|| {
-                            format!(
-                                "Fetching metadata after saving the excluded buffer {abs_path:?}"
-                            )
-                        })?
-                        .with_context(|| {
-                            format!("Excluded buffer {path:?} got removed during saving")
-                        })?;
-                    (None, Some(metadata.mtime), path, is_private)
-                }
-            };
-
+        let client = self.client.clone();
+        let project_id = self.remote_id();
+        cx.spawn(move |_, mut cx| async move {
+            let new_file = save.await?;
+            let mtime = new_file.mtime;
             if has_changed_file {
-                let new_file = Arc::new(File {
-                    entry_id,
-                    worktree: this,
-                    path,
-                    mtime,
-                    is_local: true,
-                    is_deleted: false,
-                    is_private,
-                });
-
                 if let Some(project_id) = project_id {
-                    rpc.send(proto::UpdateBufferFile {
-                        project_id,
-                        buffer_id,
-                        file: Some(new_file.to_proto()),
-                    })
-                    .log_err();
+                    client
+                        .send(proto::UpdateBufferFile {
+                            project_id,
+                            buffer_id: buffer_id.into(),
+                            file: Some(new_file.to_proto()),
+                        })
+                        .log_err();
                 }
 
                 buffer_handle.update(&mut cx, |buffer, cx| {
@@ -2352,9 +2316,9 @@ impl Project {
             }
 
             if let Some(project_id) = project_id {
-                rpc.send(proto::BufferSaved {
+                client.send(proto::BufferSaved {
                     project_id,
-                    buffer_id,
+                    buffer_id: buffer_id.into(),
                     version: serialize_version(&version),
                     mtime: mtime.map(|time| time.into()),
                 })?;
@@ -2372,7 +2336,7 @@ impl Project {
         &self,
         buffer_handle: Model<Buffer>,
         new_path: Option<proto::ProjectPath>,
-        cx: &mut ModelContext<Worktree>,
+        cx: &mut ModelContext<Self>,
     ) -> Task<Result<()>> {
         let buffer = buffer_handle.read(cx);
         let buffer_id = buffer.remote_id().into();
@@ -2476,7 +2440,6 @@ impl Project {
 
         self.detect_language_for_buffer(buffer, cx);
         self.register_buffer_with_language_servers(buffer, cx);
-        // self.register_buffer_with_copilot(buffer, cx);
         cx.observe_release(buffer, |this, buffer, cx| {
             if let Some(file) = File::from_dyn(buffer.file()) {
                 if file.is_local() {
@@ -2625,16 +2588,6 @@ impl Project {
             }
         });
     }
-
-    // fn register_buffer_with_copilot(
-    //     &self,
-    //     buffer_handle: &Model<Buffer>,
-    //     cx: &mut ModelContext<Self>,
-    // ) {
-    //     if let Some(copilot) = Copilot::global(cx) {
-    //         copilot.update(cx, |copilot, cx| copilot.register_buffer(buffer_handle, cx));
-    //     }
-    // }
 
     async fn send_buffer_ordered_messages(
         this: WeakModel<Self>,
@@ -5356,7 +5309,7 @@ impl Project {
     ) -> Result<Option<Diff>> {
         let working_dir_path = buffer.update(cx, |buffer, cx| {
             let file = File::from_dyn(buffer.file())?;
-            let worktree = file.worktree.read(cx).as_local()?;
+            let worktree = file.worktree.read(cx);
             let mut worktree_path = worktree.abs_path().to_path_buf();
             if worktree.root_entry()?.is_file() {
                 worktree_path.pop();
@@ -5543,9 +5496,6 @@ impl Project {
                 if !worktree.is_visible() {
                     continue;
                 }
-                let Some(worktree) = worktree.as_local() else {
-                    continue;
-                };
                 let worktree_abs_path = worktree.abs_path().clone();
 
                 let (adapter, language, server) = match self.language_servers.get(server_id) {
@@ -5709,15 +5659,14 @@ impl Project {
 
             let worktree_abs_path = if let Some(worktree_abs_path) = self
                 .worktree_for_id(symbol.path.worktree_id, cx)
-                .and_then(|worktree| worktree.read(cx).as_local())
-                .map(|local_worktree| local_worktree.abs_path())
+                .map(|worktree| worktree.read(cx).abs_path())
             {
                 worktree_abs_path
             } else {
                 return Task::ready(Err(anyhow!("worktree not found for symbol")));
             };
 
-            let symbol_abs_path = resolve_path(worktree_abs_path, &symbol.path.path);
+            let symbol_abs_path = resolve_path(&worktree_abs_path, &symbol.path.path);
             let symbol_uri = if let Ok(uri) = lsp::Url::from_file_path(symbol_abs_path) {
                 uri
             } else {
@@ -8110,7 +8059,7 @@ impl Project {
         changes: &UpdatedEntriesSet,
         cx: &mut ModelContext<Self>,
     ) {
-        if worktree.read(cx).as_local().is_none() {
+        if worktree.read(cx).is_remote() {
             return;
         }
         let project_id = self.remote_id();
