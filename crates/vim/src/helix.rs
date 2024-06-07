@@ -1,10 +1,22 @@
-use editor::{movement, scroll::Autoscroll};
+use editor::{
+    display_map::{DisplaySnapshot, ToDisplayPoint},
+    movement::{self, FindRange},
+    scroll::Autoscroll,
+    DisplayPoint, ToPoint,
+};
 use gpui::actions;
-use language::{char_kind, CharKind};
+use language::{char_kind, CharKind, Selection};
+use log::error;
 use ui::{ViewContext, WindowContext};
 use workspace::Workspace;
 
-use crate::{motion::Motion, normal::normal_motion, visual::visual_motion, Vim};
+use crate::{
+    motion::{next_word_end, next_word_start, previous_word_end, previous_word_start, Motion},
+    normal::normal_motion,
+    utils::coerce_punctuation,
+    visual::visual_motion,
+    Vim,
+};
 
 actions!(helix, [SelectNextLine,]);
 
@@ -24,18 +36,16 @@ pub fn helix_normal_motion(motion: Motion, times: Option<usize>, cx: &mut Window
             normal_motion(motion.to_owned(), None, None, cx);
             select_current(cx);
         }
-        Motion::NextWordStart { .. } => {
+        Motion::NextWordStart { .. } | Motion::NextWordEnd { .. } => {
             next_word(motion, cx);
         }
-        Motion::NextWordEnd { .. } => {
-            next_word(motion, cx);
+        Motion::PreviousWordStart { .. } | Motion::PreviousWordEnd { .. } => {
+            prev_word(motion, cx);
         }
-        Motion::PreviousWordStart { .. } => {
-            // TODO same problem as NextWordEnd (single punctuation in word)
-            clear_selection(cx);
-            normal_motion(Motion::Left, None, None, cx);
-            visual_motion(motion.to_owned(), None, cx);
-        }
+        Motion::FindForward { .. }
+        | Motion::FindBackward { .. }
+        | Motion::RepeatFind { .. }
+        | Motion::RepeatFindReversed { .. } => find(motion, times, cx),
         _ => {
             clear_selection(cx);
             visual_motion(motion.to_owned(), None, cx);
@@ -43,104 +53,171 @@ pub fn helix_normal_motion(motion: Motion, times: Option<usize>, cx: &mut Window
     };
 }
 
-// calling this with motion other than NextWordStart or NextWordEnd panicks
-fn next_word(motion: Motion, cx: &mut WindowContext) {
-    // TODO: single punctuation in word are skipped in NextWordEnd
-
-    // exceptions from simple "select from next char to delimiter"
-    let mut select_cur = false;
-    let mut rev = false;
-    let (left_kind, right_kind) = get_left_right_kind(cx);
-    if !is_selection_reverse(cx) {
-        match motion {
-            Motion::NextWordStart { .. } => {
-                if !(left_kind == CharKind::Whitespace && right_kind != CharKind::Whitespace) {
-                    select_cur = true;
-                }
-            }
-            Motion::NextWordEnd { .. } => {
-                if !(left_kind != CharKind::Whitespace && right_kind == CharKind::Whitespace) {
-                    select_cur = true;
-                }
-            }
-            _ => todo!("error"),
-        }
-        if (left_kind == CharKind::Punctuation || right_kind == CharKind::Punctuation)
-            && left_kind != right_kind
-        {
-            select_cur = false;
-        }
-    } else {
-        if left_kind == CharKind::Whitespace && right_kind != CharKind::Whitespace {
-            rev = true;
-        }
-    }
-    println!(
-        "{:?}, {:?}; rev: {rev}, sel_cur: {select_cur}",
-        left_kind, right_kind
-    );
-    if select_cur {
-        select_current(cx);
-    } else if rev {
-        normal_motion(Motion::Right, None, None, cx);
-        clear_selection(cx);
-    } else {
-        clear_selection(cx);
-    }
-    visual_motion(motion.to_owned(), None, cx);
-    match motion {
-        Motion::NextWordStart { .. } => visual_motion(Motion::Left, None, cx),
-        _ => {}
-    }
-}
-
-fn is_selection_reverse(cx: &mut WindowContext) -> bool {
-    let mut rev = false;
-    Vim::update(cx, |vim, cx| {
-        vim.update_active_editor(cx, |_, editor, cx| {
-            editor.change_selections(Some(Autoscroll::fit()), cx, |s| {
-                s.move_with(|_, selection| {
-                    rev = selection.reversed;
-                });
-            });
-        });
-    });
-    rev
-}
-
-fn get_left_right_kind(cx: &mut WindowContext) -> (CharKind, CharKind) {
-    let mut right_kind = CharKind::Whitespace;
-    let mut left_kind = CharKind::Whitespace;
+fn prev_word(motion: Motion, cx: &mut WindowContext) {
     Vim::update(cx, |vim, cx| {
         vim.update_active_editor(cx, |_, editor, cx| {
             editor.change_selections(Some(Autoscroll::fit()), cx, |s| {
                 s.move_with(|map, selection| {
-                    let scope = map
-                        .buffer_snapshot
-                        .language_scope_at(selection.end.to_point(map));
-
-                    // find chars around cursor
-                    let mut chars = map.display_chars_at(selection.start);
-                    if !selection.reversed {
-                        for ch in chars {
-                            if ch.1 == selection.head() {
-                                right_kind = char_kind(&scope, ch.0);
-                                break;
-                            } else {
-                                left_kind = char_kind(&scope, ch.0);
-                            }
-                        }
-                    } else {
-                        if let (Some(left), Some(right)) = (chars.next(), chars.next()) {
-                            (left_kind, right_kind) =
-                                (char_kind(&scope, left.0), char_kind(&scope, right.0));
-                        }
-                    }
-                });
-            });
+                    prev_word_selection_update(map, selection, motion.clone());
+                })
+            })
         });
-    });
-    (left_kind, right_kind)
+    })
+}
+
+fn next_word(motion: Motion, cx: &mut WindowContext) {
+    Vim::update(cx, |vim, cx| {
+        vim.update_active_editor(cx, |_, editor, cx| {
+            editor.change_selections(Some(Autoscroll::fit()), cx, |s| {
+                s.move_with(|map, selection| {
+                    next_word_selection_update(map, selection, motion.clone());
+                })
+            })
+        });
+    })
+}
+
+trait NextPrevCharExt {
+    fn prev_char(&self, map: &DisplaySnapshot) -> Option<(char, DisplayPoint)>;
+    fn next_char(&self, map: &DisplaySnapshot) -> Option<(char, DisplayPoint)>;
+}
+
+impl NextPrevCharExt for DisplayPoint {
+    fn prev_char(&self, map: &DisplaySnapshot) -> Option<(char, DisplayPoint)> {
+        let mut prev = *self;
+        map.reverse_buffer_chars_at(self.to_offset(map, editor::Bias::Right))
+            .next()
+            .map(|(c, offset)| (c, offset.to_display_point(map)))
+    }
+    fn next_char(&self, map: &DisplaySnapshot) -> Option<(char, DisplayPoint)> {
+        map.display_chars_at(*self)
+            .nth(1)
+            .map(|(c, offset)| (c, offset))
+    }
+}
+
+trait CursorSelectionExt {
+    fn cursor(&self, map: &DisplaySnapshot) -> DisplayPoint;
+}
+
+impl CursorSelectionExt for Selection<DisplayPoint> {
+    fn cursor(&self, map: &DisplaySnapshot) -> DisplayPoint {
+        if !self.reversed {
+            self.end
+                .prev_char(map)
+                .map_or(self.start, |(_, offset)| offset)
+        } else {
+            self.start
+        }
+    }
+}
+
+fn next_word_selection_update(
+    map: &DisplaySnapshot,
+    selection: &mut Selection<DisplayPoint>,
+    motion: Motion,
+) {
+    let (a, b);
+    let next_word_fn: &dyn Fn(DisplayPoint) -> DisplayPoint = match motion {
+        Motion::NextWordStart { ignore_punctuation } => {
+            a = |point| next_word_start(map, point, false, 1);
+            &a
+        }
+        Motion::NextWordEnd { ignore_punctuation } => {
+            b = |point| next_word_end(map, point, false, 1, true);
+            &b
+        }
+        _ => unreachable!(),
+    };
+    let cursor = selection.cursor(map);
+    let mut anchor = selection.cursor(map);
+    let mut head = selection.head();
+    let mut skipped = false;
+    // skip new lines directly after cursor
+    {
+        let mut curr = cursor;
+        loop {
+            match curr.next_char(map) {
+                Some((val, next)) if val == '\n' => {
+                    skipped = true;
+                    curr = next;
+                }
+                Some((_, next)) => {
+                    head = next;
+                    break;
+                }
+                None => {
+                    break;
+                }
+            }
+        }
+    }
+    if skipped {
+        anchor = head;
+    }
+
+    let mut next = next_word_fn(anchor);
+    if next == head {
+        anchor = next;
+        next = next_word_fn(next);
+    }
+    selection.start = anchor;
+    selection.reversed = false;
+    selection.end = next;
+}
+
+fn prev_word_selection_update(
+    map: &DisplaySnapshot,
+    selection: &mut Selection<DisplayPoint>,
+    motion: Motion,
+) {
+    let (a, b);
+    let prev_word_fn: &dyn Fn(DisplayPoint) -> DisplayPoint = match motion {
+        Motion::PreviousWordStart { ignore_punctuation } => {
+            a = |point| previous_word_start(map, point, false, 1);
+            &a
+        }
+        Motion::PreviousWordEnd { ignore_punctuation } => {
+            b = |point| previous_word_end(map, point, false, 1);
+            &b
+        }
+        _ => unreachable!(),
+    };
+    let cursor = selection.cursor(map);
+    let mut anchor = cursor.next_char(map).map_or(cursor, |(_, next)| next);
+    let mut head = cursor;
+    let mut skipped = false;
+    // skip new lines directly before cursor
+    {
+        let mut curr = cursor;
+        loop {
+            match curr.prev_char(map) {
+                Some((val, prev)) if val == '\n' => {
+                    skipped = true;
+                    head = prev;
+                    curr = prev;
+                }
+                Some((val, prev)) => {
+                    break;
+                }
+                None => {
+                    break;
+                }
+            }
+        }
+    }
+    if skipped {
+        anchor = head;
+    }
+
+    let mut prev = prev_word_fn(anchor);
+    if prev == head {
+        anchor = prev;
+        prev = prev_word_fn(prev);
+    }
+    selection.reversed = true;
+    selection.end = anchor;
+    selection.start = prev;
 }
 
 fn clear_selection(cx: &mut WindowContext) {
@@ -174,96 +251,61 @@ fn select_current(cx: &mut WindowContext) {
     });
 }
 
-// fn next_word_start(motion: Motion, cx: &mut WindowContext) {
-//     let mut select_cur = false;
-//     let mut rev = false;
-//     Vim::update(cx, |vim, cx| {
-//         vim.update_active_editor(cx, |_, editor, cx| {
-//             editor.change_selections(Some(Autoscroll::fit()), cx, |s| {
-//                 s.move_with(|map, selection| {
-//                     let mut current_char = ' ';
-//                     let mut next_char = ' ';
-
-//                     let mut chars = map.display_chars_at(selection.start);
-//                     if !selection.reversed {
-//                         for ch in chars {
-//                             if ch.1 == selection.head() {
-//                                 next_char = ch.0;
-//                                 break;
-//                             } else {
-//                                 current_char = ch.0;
-//                             }
-//                         }
-//                         // if on space right before word, dont select that space
-//                         if !(current_char == ' ' && next_char != ' ') {
-//                             select_cur = true;
-//                         }
-//                     } else {
-//                         if let (Some(cur), Some(next)) = (chars.next(), chars.next()) {
-//                             if cur.0 == ' ' && next.0 != ' ' {
-//                                 rev = true;
-//                             }
-//                         }
-//                     }
-//                 });
-//             });
-//         });
-//     });
-
-//     if select_cur {
-//         select_current(cx);
-//     } else if rev {
-//         normal_motion(Motion::Right, None, None, cx);
-//         clear_selection(cx);
-//     } else {
-//         clear_selection(cx);
-//     }
-//     visual_motion(motion.to_owned(), None, cx);
-//     visual_motion(Motion::Left, None, cx);
-// }
-
-// fn next_word_end(motion: Motion, cx: &mut WindowContext) {
-//     let mut select_cur = false;
-//     let mut rev = false;
-//     Vim::update(cx, |vim, cx| {
-//         vim.update_active_editor(cx, |_, editor, cx| {
-//             editor.change_selections(Some(Autoscroll::fit()), cx, |s| {
-//                 s.move_with(|map, selection| {
-//                     let mut current_char = ' ';
-//                     let mut next_char = ' ';
-
-//                     let mut chars = map.display_chars_at(selection.start);
-//                     if !selection.reversed {
-//                         for ch in chars {
-//                             if ch.1 == selection.head() {
-//                                 next_char = ch.0;
-//                                 break;
-//                             } else {
-//                                 current_char = ch.0;
-//                             }
-//                         }
-//                         if !(current_char != ' ' && next_char == ' ') {
-//                             select_cur = true;
-//                         }
-//                     } else {
-//                         if let (Some(cur), Some(next)) = (chars.next(), chars.next()) {
-//                             if cur.0 == ' ' && next.0 != ' ' {
-//                                 rev = true;
-//                             }
-//                         }
-//                     }
-//                     // if on space right before word, dont select that space
-//                 });
-//             });
-//         });
-//     });
-//     if select_cur {
-//         select_current(cx);
-//     } else if rev {
-//         normal_motion(Motion::Right, None, None, cx);
-//         clear_selection(cx);
-//     } else {
-//         clear_selection(cx);
-//     }
-//     visual_motion(motion.to_owned(), None, cx);
-// }
+fn find(motion: Motion, times: Option<usize>, cx: &mut WindowContext) {
+    Vim::update(cx, |vim, cx| {
+        vim.update_active_editor(cx, |_, editor, cx| {
+            editor.change_selections(Some(Autoscroll::fit()), cx, |s| {
+                s.move_with(|map, selection| {
+                    let cursor = selection.cursor(map);
+                    let pos = match motion {
+                        Motion::FindForward {
+                            before,
+                            char,
+                            mode,
+                            smartcase,
+                        } => {
+                            let pos = crate::motion::find_forward(
+                                map,
+                                cursor,
+                                before,
+                                char,
+                                1,
+                                FindRange::SingleLine,
+                                smartcase,
+                            );
+                            if let Some(pos) = pos {
+                                selection.start = cursor;
+                                selection.end =
+                                    pos.next_char(map).map_or(pos, |(_, offset)| offset);
+                                selection.reversed = false;
+                            }
+                        }
+                        Motion::FindBackward {
+                            after,
+                            char,
+                            mode,
+                            smartcase,
+                        } => {
+                            let pos = crate::motion::find_backward(
+                                map,
+                                cursor,
+                                after,
+                                char,
+                                1,
+                                FindRange::SingleLine,
+                                smartcase,
+                            );
+                            if pos != cursor {
+                                selection.start = pos;
+                                selection.end =
+                                    cursor.next_char(map).map_or(cursor, |(_, offset)| offset);
+                                selection.reversed = true;
+                            }
+                        }
+                        _ => unreachable!(),
+                    };
+                })
+            });
+        })
+    });
+}
