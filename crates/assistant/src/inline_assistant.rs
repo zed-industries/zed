@@ -11,8 +11,8 @@ use editor::{
         BlockContext, BlockDisposition, BlockId, BlockProperties, BlockStyle, RenderBlock,
     },
     scroll::{Autoscroll, AutoscrollStrategy},
-    Anchor, Editor, EditorElement, EditorEvent, EditorStyle, GutterDimensions, MultiBuffer,
-    MultiBufferSnapshot, ToOffset, ToPoint,
+    Anchor, AnchorRangeExt, Editor, EditorElement, EditorEvent, EditorStyle, GutterDimensions,
+    MultiBuffer, MultiBufferSnapshot, ToOffset, ToPoint,
 };
 use futures::{channel::mpsc, SinkExt, Stream, StreamExt};
 use gpui::{
@@ -25,7 +25,8 @@ use multi_buffer::MultiBufferRow;
 use parking_lot::Mutex;
 use rope::Rope;
 use settings::Settings;
-use std::{cmp, future, ops::Range, sync::Arc, time::Instant};
+use similar::TextDiff;
+use std::{cmp, future, mem, ops::Range, sync::Arc, time::Instant};
 use theme::ThemeSettings;
 use ui::{prelude::*, Tooltip};
 use workspace::{notifications::NotificationId, Toast, Workspace};
@@ -149,6 +150,7 @@ impl InlineAssistant {
                 inline_assist_editor: Some((block_id, inline_assist_editor.clone())),
                 codegen: codegen.clone(),
                 workspace,
+                removed_line_block_ids: HashSet::default(),
                 _subscriptions: vec![
                     cx.subscribe(&inline_assist_editor, |inline_assist_editor, event, cx| {
                         InlineAssistant::update_global(cx, |this, cx| {
@@ -177,6 +179,7 @@ impl InlineAssistant {
                             if let Some(editor) = editor.upgrade() {
                                 InlineAssistant::update_global(cx, |this, cx| {
                                     this.update_highlights_for_editor(&editor, cx);
+                                    this.update_diff(inline_assist_id, cx);
                                 })
                             }
                         }
@@ -535,6 +538,103 @@ impl InlineAssistant {
             }
         });
     }
+
+    fn update_diff(&mut self, assist_id: InlineAssistId, cx: &mut WindowContext) {
+        let Some(pending_assist) = self.pending_assists.get_mut(&assist_id) else {
+            return;
+        };
+
+        let Some(editor) = pending_assist.editor.upgrade() else {
+            return;
+        };
+
+        let codegen = pending_assist.codegen.read(cx);
+        let old_range = codegen.range().to_point(&codegen.snapshot);
+        let old_text = codegen
+            .snapshot
+            .text_for_range(
+                Point::new(old_range.start.row, 0)
+                    ..Point::new(
+                        old_range.end.row,
+                        codegen.snapshot.line_len(MultiBufferRow(old_range.end.row)),
+                    ),
+            )
+            .collect::<String>();
+
+        let buffer = codegen.buffer.read(cx).read(cx);
+        let new_range = codegen.range().to_point(&buffer);
+        let new_text = buffer
+            .text_for_range(
+                Point::new(new_range.start.row, 0)
+                    ..Point::new(
+                        new_range.end.row,
+                        buffer.line_len(MultiBufferRow(new_range.end.row)),
+                    ),
+            )
+            .collect::<String>();
+
+        let mut row = new_range.start.row;
+        let diff = TextDiff::from_lines(old_text.as_str(), new_text.as_str());
+
+        let mut deleted_rows = Vec::new();
+        let mut inserted_rows = Vec::new();
+        for change in diff.iter_all_changes() {
+            let line_count = change.value().lines().count() as u32;
+            match change.tag() {
+                similar::ChangeTag::Equal => {
+                    row += line_count;
+                }
+                similar::ChangeTag::Delete => {
+                    for line in change.value().lines() {
+                        let deleted_line = SharedString::from(Arc::from(line));
+                        deleted_rows.push(BlockProperties {
+                            position: buffer.anchor_before(Point::new(row, 0)),
+                            height: line_count as u8,
+                            style: BlockStyle::Flex,
+                            render: Box::new(move |cx| {
+                                div()
+                                    .pl(cx.gutter_dimensions.full_width())
+                                    .child(deleted_line.clone())
+                                    .into_any()
+                            }),
+                            disposition: BlockDisposition::Above,
+                        });
+                    }
+                }
+                similar::ChangeTag::Insert => {
+                    let end_row = row + line_count - 1;
+                    let start = buffer.anchor_before(Point::new(row, 0));
+                    let end = buffer.anchor_before(Point::new(
+                        end_row,
+                        buffer.line_len(MultiBufferRow(end_row)),
+                    ));
+                    inserted_rows.push(start..=end);
+                    row += line_count;
+                }
+            }
+        }
+        drop(buffer);
+
+        editor.update(cx, |editor, cx| {
+            let removed_line_block_ids = mem::take(&mut pending_assist.removed_line_block_ids);
+            editor.remove_blocks(removed_line_block_ids, None, cx);
+            pending_assist.removed_line_block_ids = editor
+                .insert_blocks(deleted_rows, None, cx)
+                .into_iter()
+                .collect();
+
+            enum InsertedLines {}
+            editor.clear_row_highlights::<InsertedLines>();
+            for range in inserted_rows {
+                editor.highlight_rows::<InsertedLines>(
+                    range,
+                    Some(cx.theme().status().created_background),
+                    false,
+                    cx,
+                );
+            }
+        })
+    }
 }
 
 fn build_inline_assist_editor_renderer(
@@ -819,6 +919,7 @@ struct PendingInlineAssist {
     _subscriptions: Vec<Subscription>,
     workspace: Option<WeakView<Workspace>>,
     include_context: bool,
+    removed_line_block_ids: HashSet<BlockId>,
 }
 
 #[derive(Debug)]
