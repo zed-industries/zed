@@ -74,7 +74,6 @@ ui.workspace = true
 url.workspace = true
 util.workspace = true
 workspace.workspace = true
-indexmap = "2.2.6"
 
 [dev-dependencies]
 ctor.workspace = true

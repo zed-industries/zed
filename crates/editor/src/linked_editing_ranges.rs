@@ -1,9 +1,8 @@
 use std::ops::Range;
 
 use collections::HashMap;
-use indexmap::set::IndexSet;
 use itertools::Itertools;
-use text::{AnchorRangeExt, BufferId};
+use text::BufferId;
 use ui::ViewContext;
 use util::ResultExt;
 

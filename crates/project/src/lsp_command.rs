@@ -2603,7 +2603,7 @@ impl LspCommand for LinkedEditingRange {
         _project: Model<Project>,
         buffer: Model<Buffer>,
         _server_id: LanguageServerId,
-        mut cx: AsyncAppContext,
+        cx: AsyncAppContext,
     ) -> Result<Vec<Range<Anchor>>> {
         if let Some(LinkedEditingRanges { mut ranges, .. }) = message {
             ranges.sort_by_key(|range| range.start);
@@ -2625,7 +2625,7 @@ impl LspCommand for LinkedEditingRange {
         }
     }
 
-    fn to_proto(&self, project_id: u64, buffer: &Buffer) -> proto::OnTypeFormatting {
+    fn to_proto(&self, _project_id: u64, _buffer: &Buffer) -> proto::OnTypeFormatting {
         todo!();
         // proto::OnTypeFormatting {
         //     project_id,
@@ -2639,10 +2639,10 @@ impl LspCommand for LinkedEditingRange {
     }
 
     async fn from_proto(
-        message: proto::OnTypeFormatting,
+        _message: proto::OnTypeFormatting,
         _: Model<Project>,
-        buffer: Model<Buffer>,
-        mut cx: AsyncAppContext,
+        _buffer: Model<Buffer>,
+        _cx: AsyncAppContext,
     ) -> Result<Self> {
         todo!();
         // let position = message
@@ -2668,7 +2668,7 @@ impl LspCommand for LinkedEditingRange {
     }
 
     fn response_to_proto(
-        response: Vec<Range<Anchor>>,
+        _response: Vec<Range<Anchor>>,
         _: &mut Project,
         _: PeerId,
         _: &clock::Global,
@@ -2683,7 +2683,7 @@ impl LspCommand for LinkedEditingRange {
 
     async fn response_from_proto(
         self,
-        message: proto::OnTypeFormattingResponse,
+        _message: proto::OnTypeFormattingResponse,
         _: Model<Project>,
         _: Model<Buffer>,
         _: AsyncAppContext,
