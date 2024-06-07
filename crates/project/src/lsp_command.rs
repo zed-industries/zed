@@ -2585,7 +2585,7 @@ impl LspCommand for LinkedEditingRange {
         &self,
         path: &Path,
         _: &Buffer,
-        server: &Arc<LanguageServer>,
+        _server: &Arc<LanguageServer>,
         _: &AppContext,
     ) -> lsp::LinkedEditingRangeParams {
         lsp::LinkedEditingRangeParams {
@@ -2600,9 +2600,9 @@ impl LspCommand for LinkedEditingRange {
     async fn response_from_lsp(
         self,
         message: Option<LinkedEditingRanges>,
-        project: Model<Project>,
+        _project: Model<Project>,
         buffer: Model<Buffer>,
-        server_id: LanguageServerId,
+        _server_id: LanguageServerId,
         mut cx: AsyncAppContext,
     ) -> Result<Vec<Range<Anchor>>> {
         if let Some(LinkedEditingRanges { mut ranges, .. }) = message {
@@ -2614,7 +2614,7 @@ impl LspCommand for LinkedEditingRange {
                     .into_iter()
                     .map(|range| {
                         buffer.anchor_before(point_from_lsp(range.start))
-                            ..buffer.anchor_before(point_from_lsp(range.end))
+                            ..buffer.anchor_after(point_from_lsp(range.end))
                     })
                     .collect()
             });

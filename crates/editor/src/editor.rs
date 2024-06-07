@@ -2995,7 +2995,6 @@ impl Editor {
                         }
                     })
                 {
-                    dbg!("Got linked ranges");
                     use text::ToOffset as TO;
 
                     // find offset from the start of current range to current cursor position
