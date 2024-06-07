@@ -1,3 +1,4 @@
+(identifier) @variable
 (attribute attribute: (identifier) @property)
 (type (identifier) @type)
 
@@ -43,10 +44,6 @@
   (integer)
   (float)
 ] @number
-
-; Variables
-(assignment
-  left: (identifier) @variable)
 
 (comment) @comment
 (string) @string
