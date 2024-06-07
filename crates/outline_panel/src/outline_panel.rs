@@ -18,12 +18,12 @@ use editor::{
 use file_icons::FileIcons;
 use git::repository::GitFileStatus;
 use gpui::{
-    actions, anchored, deferred, div, px, uniform_list, Action, AppContext, AssetSource,
+    actions, anchored, deferred, div, px, relative, uniform_list, Action, AppContext, AssetSource,
     AsyncWindowContext, ClipboardItem, DismissEvent, Div, ElementId, EntityId, EventEmitter,
-    FocusHandle, FocusableView, InteractiveElement, IntoElement, KeyContext, Model, MouseButton,
-    MouseDownEvent, ParentElement, Pixels, Point, Render, SharedString, Stateful, Styled,
-    Subscription, Task, UniformListScrollHandle, View, ViewContext, VisualContext, WeakView,
-    WindowContext,
+    FocusHandle, FocusableView, FontStyle, FontWeight, HighlightStyle, InteractiveElement,
+    IntoElement, KeyContext, Model, MouseButton, MouseDownEvent, ParentElement, Pixels, Point,
+    Render, SharedString, Stateful, Styled, StyledText, Subscription, Task, TextStyle,
+    UniformListScrollHandle, View, ViewContext, VisualContext, WeakView, WhiteSpace, WindowContext,
 };
 use language::{BufferId, OffsetRangeExt, OutlineItem, ToOffset};
 use menu::{SelectFirst, SelectLast, SelectNext, SelectPrev};
@@ -32,6 +32,7 @@ use outline_panel_settings::{OutlinePanelDockPosition, OutlinePanelSettings};
 use project::{EntryKind, File, Fs, Project};
 use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsStore};
+use theme::{color_alpha, ThemeSettings};
 use unicase::UniCase;
 use util::{maybe, NumericPrefixWithSuffix, ResultExt, TryFutureExt};
 use workspace::{
@@ -863,7 +864,7 @@ impl OutlinePanel {
     ) -> Stateful<Div> {
         let settings = OutlinePanelSettings::get_global(cx);
         let is_active = self.selected_entry.as_ref() == Some(rendered_entry);
-        let (item_id, name, text_color, icon) = match rendered_entry {
+        let (item_id, label_element, icon) = match rendered_entry {
             OutlinePanelEntry::File(worktree_id, entry) => {
                 let name = self.entry_name(worktree_id, entry, cx);
                 let color =
@@ -873,11 +874,14 @@ impl OutlinePanel {
                 } else {
                     None
                 }
-                .map(Icon::from_path);
+                .map(Icon::from_path)
+                .map(|icon| icon.color(color));
                 (
                     ElementId::from(entry.id.to_proto() as usize),
-                    name,
-                    color,
+                    Label::new(name)
+                        .single_line()
+                        .color(color)
+                        .into_any_element(),
                     icon,
                 )
             }
@@ -895,15 +899,19 @@ impl OutlinePanel {
                 } else {
                     FileIcons::get_chevron_icon(is_expanded, cx)
                 }
-                .map(Icon::from_path);
+                .map(Icon::from_path)
+                .map(|icon| icon.color(color));
                 (
                     ElementId::from(entry.id.to_proto() as usize),
-                    name,
-                    color,
+                    Label::new(name)
+                        .single_line()
+                        .color(color)
+                        .into_any_element(),
                     icon,
                 )
             }
             OutlinePanelEntry::ExternalFile(buffer_id) => {
+                let color = entry_label_color(is_active);
                 let (icon, name) = match self.project.read(cx).buffer_for_id(*buffer_id) {
                     Some(buffer) => match buffer.read(cx).file() {
                         Some(file) => {
@@ -913,24 +921,44 @@ impl OutlinePanel {
                             } else {
                                 None
                             }
-                            .map(Icon::from_path);
+                            .map(Icon::from_path)
+                            .map(|icon| icon.color(color));
                             (icon, file_name(path.as_ref()))
                         }
                         None => (None, "Untitled".to_string()),
                     },
                     None => (None, "Unknown buffer".to_string()),
                 };
-                let color = entry_label_color(is_active);
                 (
                     ElementId::from(buffer_id.to_proto() as usize),
-                    name,
-                    color,
+                    Label::new(name)
+                        .single_line()
+                        .color(color)
+                        .into_any_element(),
                     icon,
                 )
             }
             OutlinePanelEntry::Outline(outline) => {
-                let name = outline.text.clone();
-                let color = entry_label_color(is_active);
+                // TODO kb deduplicate
+                let settings = ThemeSettings::get_global(cx);
+                let text_style = TextStyle {
+                    color: cx.theme().colors().text,
+                    font_family: settings.buffer_font.family.clone(),
+                    font_features: settings.buffer_font.features.clone(),
+                    font_size: settings.buffer_font_size(cx).into(),
+                    font_weight: FontWeight::NORMAL,
+                    font_style: FontStyle::Normal,
+                    line_height: relative(1.),
+                    background_color: None,
+                    underline: None,
+                    strikethrough: None,
+                    white_space: WhiteSpace::Normal,
+                };
+
+                let mut highlight_style = HighlightStyle::default();
+                highlight_style.background_color =
+                    Some(color_alpha(cx.theme().colors().text_accent, 0.3));
+
                 (
                     ElementId::from(SharedString::from(format!(
                         "{:?}|{}",
@@ -941,8 +969,9 @@ impl OutlinePanel {
                             .or(outline.range.end.buffer_id),
                         &outline.text,
                     ))),
-                    name,
-                    color,
+                    StyledText::new(outline.text.clone())
+                        .with_highlights(&text_style, outline.highlight_ranges.clone())
+                        .into_any_element(),
                     None,
                 )
             }
@@ -957,19 +986,14 @@ impl OutlinePanel {
                     .indent_step_size(px(settings.indent_size))
                     .selected(is_active)
                     .child(if let Some(icon) = icon {
-                        h_flex().child(icon.color(text_color))
+                        h_flex().child(icon)
                     } else {
                         h_flex()
                             .size(IconSize::default().rems())
                             .invisible()
                             .flex_none()
                     })
-                    .child(
-                        h_flex()
-                            .h_6()
-                            .child(Label::new(name).single_line().color(text_color))
-                            .ml_1(),
-                    )
+                    .child(h_flex().h_6().child(label_element).ml_1())
                     .on_click(
                         cx.listener(move |outline_panel, event: &gpui::ClickEvent, cx| {
                             if event.down.button == MouseButton::Right || event.down.first_mouse {
@@ -1187,7 +1211,7 @@ impl OutlinePanel {
         name
     }
 
-    // TODO kb make async + rebounce
+    // TODO kb make async, run in the background + debounce
     fn update_visible_entries(
         &mut self,
         active_editor: &View<Editor>,
@@ -1222,7 +1246,7 @@ impl OutlinePanel {
                 };
             outline_entries.entry(container).or_default().extend(
                 buffer_snapshot
-                    .outline(None)
+                    .outline(Some(&cx.theme().syntax()))
                     .map(|outline| outline.items)
                     .unwrap_or_default()
                     .into_iter()
@@ -1727,7 +1751,7 @@ fn location_for_editor_selection(
         None => OutlinesContainer::ExternalFile(buffer_snapshot.remote_id()),
     };
     let outline_item = buffer_snapshot
-        .outline(None)
+        .outline(Some(&cx.theme().syntax()))
         .into_iter()
         .flat_map(|outline| outline.items)
         .filter(|outline_item| {

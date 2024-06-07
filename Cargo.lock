@@ -7162,6 +7162,7 @@ dependencies = [
  "serde",
  "serde_json",
  "settings",
+ "theme",
  "unicase",
  "util",
  "workspace",
