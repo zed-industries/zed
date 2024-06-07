@@ -80,6 +80,7 @@
       "g shift-e": ["vim::PreviousWordEnd", { "ignorePunctuation": true }],
 
       "/": "vim::Search",
+      "g /": "pane::DeploySearch",
       "?": [
         "vim::Search",
         {
@@ -431,6 +432,27 @@
     "context": "Editor && vim_operator == d",
     "bindings": {
       "d": "vim::CurrentLine"
+    }
+  },
+  {
+    "context": "Editor && vim_operator == gu",
+    "bindings": {
+      "g u": "vim::CurrentLine",
+      "u": "vim::CurrentLine"
+    }
+  },
+  {
+    "context": "Editor && vim_operator == gU",
+    "bindings": {
+      "g shift-u": "vim::CurrentLine",
+      "shift-u": "vim::CurrentLine"
+    }
+  },
+  {
+    "context": "Editor && vim_operator == g~",
+    "bindings": {
+      "g ~": "vim::CurrentLine",
+      "~": "vim::CurrentLine"
     }
   },
   {
