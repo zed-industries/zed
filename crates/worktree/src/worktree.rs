@@ -13,6 +13,7 @@ use futures::{
         mpsc::{self, UnboundedSender},
         oneshot,
     },
+    future::BoxFuture,
     select_biased,
     stream::select,
     task::Poll,
@@ -35,7 +36,7 @@ use postage::{
     prelude::{Sink as _, Stream as _},
     watch,
 };
-use rpc::proto;
+use rpc::proto::{self, EnvelopedMessage as _, RequestMessage};
 use settings::{Settings, SettingsLocation, SettingsStore};
 use smol::channel::{self, Sender};
 use std::{
@@ -116,11 +117,21 @@ struct ScanRequest {
 pub struct RemoteWorktree {
     snapshot: Snapshot,
     background_snapshot: Arc<Mutex<Snapshot>>,
+    project_id: u64,
+    client: Box<dyn RemoteWorktreeClient>,
     updates_tx: Option<UnboundedSender<proto::UpdateWorktree>>,
     snapshot_subscriptions: VecDeque<(usize, oneshot::Sender<()>)>,
     replica_id: ReplicaId,
     visible: bool,
     disconnected: bool,
+}
+
+pub trait RemoteWorktreeClient {
+    fn request(
+        &self,
+        envelope: proto::Envelope,
+        request_type: &'static str,
+    ) -> BoxFuture<'static, Result<proto::Envelope>>;
 }
 
 #[derive(Clone)]
@@ -431,8 +442,10 @@ impl Worktree {
     }
 
     pub fn remote(
+        project_id: u64,
         replica_id: ReplicaId,
         worktree: proto::WorktreeMetadata,
+        client: Box<dyn RemoteWorktreeClient>,
         cx: &mut AppContext,
     ) -> Model<Self> {
         cx.new_model(|cx: &mut ModelContext<Self>| {
@@ -484,6 +497,8 @@ impl Worktree {
             .detach();
 
             Worktree::Remote(RemoteWorktree {
+                client,
+                project_id,
                 replica_id,
                 snapshot,
                 background_snapshot,
@@ -580,6 +595,287 @@ impl Worktree {
     pub fn root_file(&self, cx: &mut ModelContext<Self>) -> Option<Arc<File>> {
         let entry = self.root_entry()?;
         Some(File::for_entry(entry.clone(), cx.handle()))
+    }
+
+    pub fn create_entry(
+        &mut self,
+        path: impl Into<Arc<Path>>,
+        is_directory: bool,
+        cx: &mut ModelContext<Worktree>,
+    ) -> Task<Result<CreatedEntry>> {
+        let path = path.into();
+        let worktree_id = self.id();
+        match self {
+            Worktree::Local(this) => this.create_entry(path, is_directory, cx),
+            Worktree::Remote(this) => {
+                let project_id = this.project_id;
+                let request = this.rpc_request(proto::CreateProjectEntry {
+                    worktree_id: worktree_id.to_proto(),
+                    project_id,
+                    path: path.to_string_lossy().into(),
+                    is_directory,
+                });
+                cx.spawn(move |this, mut cx| async move {
+                    let response = request.await?;
+                    match response.entry {
+                        Some(entry) => this
+                            .update(&mut cx, |worktree, cx| {
+                                worktree.as_remote_mut().unwrap().insert_entry(
+                                    entry,
+                                    response.worktree_scan_id as usize,
+                                    cx,
+                                )
+                            })?
+                            .await
+                            .map(CreatedEntry::Included),
+                        None => {
+                            let abs_path = this.update(&mut cx, |worktree, _| {
+                                worktree
+                                    .absolutize(&path)
+                                    .with_context(|| format!("absolutizing {path:?}"))
+                            })??;
+                            Ok(CreatedEntry::Excluded { abs_path })
+                        }
+                    }
+                })
+            }
+        }
+    }
+
+    pub fn delete_entry(
+        &mut self,
+        entry_id: ProjectEntryId,
+        trash: bool,
+        cx: &mut ModelContext<Worktree>,
+    ) -> Option<Task<Result<()>>> {
+        match self {
+            Worktree::Local(this) => this.delete_entry(entry_id, trash, cx),
+            Worktree::Remote(this) => {
+                let response = this.rpc_request(proto::DeleteProjectEntry {
+                    project_id: this.project_id,
+                    entry_id: entry_id.to_proto(),
+                    use_trash: trash,
+                });
+                Some(cx.spawn(move |this, mut cx| async move {
+                    let response = response.await?;
+                    this.update(&mut cx, move |worktree, cx| {
+                        worktree.as_remote_mut().unwrap().delete_entry(
+                            entry_id,
+                            response.worktree_scan_id as usize,
+                            cx,
+                        )
+                    })?
+                    .await
+                }))
+            }
+        }
+    }
+
+    pub fn rename_entry(
+        &mut self,
+        entry_id: ProjectEntryId,
+        new_path: impl Into<Arc<Path>>,
+        cx: &mut ModelContext<Self>,
+    ) -> Task<Result<CreatedEntry>> {
+        let new_path = new_path.into();
+        match self {
+            Worktree::Local(this) => this.rename_entry(entry_id, new_path, cx),
+            Worktree::Remote(this) => {
+                let response = this.rpc_request(proto::RenameProjectEntry {
+                    project_id: this.project_id,
+                    entry_id: entry_id.to_proto(),
+                    new_path: new_path.to_string_lossy().into(),
+                });
+                cx.spawn(move |this, mut cx| async move {
+                    let response = response.await?;
+                    match response.entry {
+                        Some(entry) => this
+                            .update(&mut cx, |this, cx| {
+                                this.as_remote_mut().unwrap().insert_entry(
+                                    entry,
+                                    response.worktree_scan_id as usize,
+                                    cx,
+                                )
+                            })?
+                            .await
+                            .map(CreatedEntry::Included),
+                        None => {
+                            let abs_path = this.update(&mut cx, |worktree, _| {
+                                worktree
+                                    .absolutize(&new_path)
+                                    .with_context(|| format!("absolutizing {new_path:?}"))
+                            })??;
+                            Ok(CreatedEntry::Excluded { abs_path })
+                        }
+                    }
+                })
+            }
+        }
+    }
+
+    pub fn copy_entry(
+        &mut self,
+        entry_id: ProjectEntryId,
+        new_path: impl Into<Arc<Path>>,
+        cx: &mut ModelContext<Self>,
+    ) -> Task<Result<Option<Entry>>> {
+        let new_path = new_path.into();
+        match self {
+            Worktree::Local(this) => this.copy_entry(entry_id, new_path, cx),
+            Worktree::Remote(this) => {
+                let response = this.rpc_request(proto::CopyProjectEntry {
+                    project_id: this.project_id,
+                    entry_id: entry_id.to_proto(),
+                    new_path: new_path.to_string_lossy().into(),
+                });
+                cx.spawn(move |this, mut cx| async move {
+                    let response = response.await?;
+                    match response.entry {
+                        Some(entry) => this
+                            .update(&mut cx, |worktree, cx| {
+                                worktree.as_remote_mut().unwrap().insert_entry(
+                                    entry,
+                                    response.worktree_scan_id as usize,
+                                    cx,
+                                )
+                            })?
+                            .await
+                            .map(Some),
+                        None => Ok(None),
+                    }
+                })
+            }
+        }
+    }
+
+    pub fn expand_entry(
+        &mut self,
+        entry_id: ProjectEntryId,
+        cx: &mut ModelContext<Worktree>,
+    ) -> Option<Task<Result<()>>> {
+        match self {
+            Worktree::Local(this) => this.expand_entry(entry_id, cx),
+            Worktree::Remote(this) => {
+                let response = this.rpc_request(proto::ExpandProjectEntry {
+                    project_id: this.project_id,
+                    entry_id: entry_id.to_proto(),
+                });
+                Some(cx.spawn(move |this, mut cx| async move {
+                    let response = response.await?;
+                    this.update(&mut cx, |this, _| {
+                        this.as_remote_mut()
+                            .unwrap()
+                            .wait_for_snapshot(response.worktree_scan_id as usize)
+                    })?
+                    .await?;
+                    Ok(())
+                }))
+            }
+        }
+    }
+
+    pub async fn handle_create_entry(
+        this: Model<Self>,
+        request: proto::CreateProjectEntry,
+        mut cx: AsyncAppContext,
+    ) -> Result<proto::ProjectEntryResponse> {
+        let (scan_id, entry) = this.update(&mut cx, |this, cx| {
+            (
+                this.scan_id(),
+                this.create_entry(PathBuf::from(request.path), request.is_directory, cx),
+            )
+        })?;
+        Ok(proto::ProjectEntryResponse {
+            entry: match &entry.await? {
+                CreatedEntry::Included(entry) => Some(entry.into()),
+                CreatedEntry::Excluded { .. } => None,
+            },
+            worktree_scan_id: scan_id as u64,
+        })
+    }
+
+    pub async fn handle_delete_entry(
+        this: Model<Self>,
+        request: proto::DeleteProjectEntry,
+        mut cx: AsyncAppContext,
+    ) -> Result<proto::ProjectEntryResponse> {
+        let (scan_id, task) = this.update(&mut cx, |this, cx| {
+            (
+                this.scan_id(),
+                this.delete_entry(
+                    ProjectEntryId::from_proto(request.entry_id),
+                    request.use_trash,
+                    cx,
+                ),
+            )
+        })?;
+        task.ok_or_else(|| anyhow!("invalid entry"))?.await?;
+        Ok(proto::ProjectEntryResponse {
+            entry: None,
+            worktree_scan_id: scan_id as u64,
+        })
+    }
+
+    pub async fn handle_expand_entry(
+        this: Model<Self>,
+        request: proto::ExpandProjectEntry,
+        mut cx: AsyncAppContext,
+    ) -> Result<proto::ExpandProjectEntryResponse> {
+        let (scan_id, task) = this.update(&mut cx, |this, cx| {
+            (
+                this.scan_id(),
+                this.expand_entry(ProjectEntryId::from_proto(request.entry_id), cx),
+            )
+        })?;
+        task.ok_or_else(|| anyhow!("no such entry"))?.await?;
+        Ok(proto::ExpandProjectEntryResponse {
+            worktree_scan_id: scan_id as u64,
+        })
+    }
+
+    pub async fn handle_rename_entry(
+        this: Model<Self>,
+        request: proto::RenameProjectEntry,
+        mut cx: AsyncAppContext,
+    ) -> Result<proto::ProjectEntryResponse> {
+        let (scan_id, task) = this.update(&mut cx, |this, cx| {
+            (
+                this.scan_id(),
+                this.rename_entry(
+                    ProjectEntryId::from_proto(request.entry_id),
+                    PathBuf::from(request.new_path),
+                    cx,
+                ),
+            )
+        })?;
+        Ok(proto::ProjectEntryResponse {
+            entry: match &task.await? {
+                CreatedEntry::Included(entry) => Some(entry.into()),
+                CreatedEntry::Excluded { .. } => None,
+            },
+            worktree_scan_id: scan_id as u64,
+        })
+    }
+
+    pub async fn handle_copy_entry(
+        this: Model<Self>,
+        request: proto::CopyProjectEntry,
+        mut cx: AsyncAppContext,
+    ) -> Result<proto::ProjectEntryResponse> {
+        let (scan_id, task) = this.update(&mut cx, |this, cx| {
+            (
+                this.scan_id(),
+                this.copy_entry(
+                    ProjectEntryId::from_proto(request.entry_id),
+                    PathBuf::from(request.new_path),
+                    cx,
+                ),
+            )
+        })?;
+        Ok(proto::ProjectEntryResponse {
+            entry: task.await?.as_ref().map(|e| e.into()),
+            worktree_scan_id: scan_id as u64,
+        })
     }
 }
 
@@ -944,7 +1240,7 @@ impl LocalWorktree {
         lowest_ancestor.unwrap_or_else(|| PathBuf::from(""))
     }
 
-    pub fn create_entry(
+    fn create_entry(
         &self,
         path: impl Into<Arc<Path>>,
         is_dir: bool,
@@ -1031,7 +1327,7 @@ impl LocalWorktree {
         })
     }
 
-    pub fn delete_entry(
+    fn delete_entry(
         &self,
         entry_id: ProjectEntryId,
         trash: bool,
@@ -1085,7 +1381,7 @@ impl LocalWorktree {
         }))
     }
 
-    pub fn rename_entry(
+    fn rename_entry(
         &self,
         entry_id: ProjectEntryId,
         new_path: impl Into<Arc<Path>>,
@@ -1142,7 +1438,7 @@ impl LocalWorktree {
         })
     }
 
-    pub fn copy_entry(
+    fn copy_entry(
         &self,
         entry_id: ProjectEntryId,
         new_path: impl Into<Arc<Path>>,
@@ -1177,7 +1473,7 @@ impl LocalWorktree {
         })
     }
 
-    pub fn expand_entry(
+    fn expand_entry(
         &mut self,
         entry_id: ProjectEntryId,
         cx: &mut ModelContext<Worktree>,
@@ -1190,7 +1486,7 @@ impl LocalWorktree {
         }))
     }
 
-    pub fn refresh_entries_for_paths(&self, paths: Vec<Arc<Path>>) -> barrier::Receiver {
+    fn refresh_entries_for_paths(&self, paths: Vec<Arc<Path>>) -> barrier::Receiver {
         let (tx, rx) = barrier::channel();
         self.scan_requests_tx
             .try_send(ScanRequest {
@@ -1317,6 +1613,19 @@ impl RemoteWorktree {
         self.updates_tx.take();
         self.snapshot_subscriptions.clear();
         self.disconnected = true;
+    }
+
+    fn rpc_request<T: RequestMessage>(
+        &self,
+        request: T,
+    ) -> impl Future<Output = Result<T::Response>> {
+        let envelope = request.into_envelope(0, None, None);
+        let response = self.client.request(envelope, T::NAME);
+        async move {
+            let response = response.await?;
+            Ok(T::Response::from_envelope(response)
+                .ok_or_else(|| anyhow!("received response of the wrong type"))?)
+        }
     }
 
     pub fn update_from_remote(&mut self, update: proto::UpdateWorktree) {

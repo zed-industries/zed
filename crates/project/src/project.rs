@@ -27,6 +27,7 @@ use futures::{
         oneshot,
     },
     future::{join_all, try_join_all, Shared},
+    prelude::future::BoxFuture,
     select,
     stream::FuturesUnordered,
     AsyncWriteExt, Future, FutureExt, StreamExt, TryFutureExt,
@@ -109,7 +110,7 @@ use util::{
     },
     post_inc, ResultExt, TryFutureExt as _,
 };
-use worktree::{CreatedEntry, Snapshot, Traversal};
+use worktree::{CreatedEntry, RemoteWorktreeClient, Snapshot, Traversal};
 
 pub use fs::*;
 pub use language::Location;
@@ -854,7 +855,13 @@ impl Project {
             // That's because Worktree's identifier is entity id, which should probably be changed.
             let mut worktrees = Vec::new();
             for worktree in response.payload.worktrees {
-                let worktree = Worktree::remote(replica_id, worktree, cx);
+                let worktree = Worktree::remote(
+                    remote_id,
+                    replica_id,
+                    worktree,
+                    Box::new(CollabRemoteWorktreeClient(client.clone())),
+                    cx,
+                );
                 worktrees.push(worktree);
             }
 
@@ -1448,47 +1455,9 @@ impl Project {
                 "No worktree for path {project_path:?}"
             ))));
         };
-        if self.is_local() {
-            worktree.update(cx, |worktree, cx| {
-                worktree
-                    .as_local_mut()
-                    .unwrap()
-                    .create_entry(project_path.path, is_directory, cx)
-            })
-        } else {
-            let client = self.client.clone();
-            let project_id = self.remote_id().unwrap();
-            cx.spawn(move |_, mut cx| async move {
-                let response = client
-                    .request(proto::CreateProjectEntry {
-                        worktree_id: project_path.worktree_id.to_proto(),
-                        project_id,
-                        path: project_path.path.to_string_lossy().into(),
-                        is_directory,
-                    })
-                    .await?;
-                match response.entry {
-                    Some(entry) => worktree
-                        .update(&mut cx, |worktree, cx| {
-                            worktree.as_remote_mut().unwrap().insert_entry(
-                                entry,
-                                response.worktree_scan_id as usize,
-                                cx,
-                            )
-                        })?
-                        .await
-                        .map(CreatedEntry::Included),
-                    None => {
-                        let abs_path = worktree.update(&mut cx, |worktree, _| {
-                            worktree
-                                .absolutize(&project_path.path)
-                                .with_context(|| format!("absolutizing {project_path:?}"))
-                        })??;
-                        Ok(CreatedEntry::Excluded { abs_path })
-                    }
-                }
-            })
-        }
+        worktree.update(cx, |worktree, cx| {
+            worktree.create_entry(project_path.path, is_directory, cx)
+        })
     }
 
     pub fn copy_entry(
@@ -1500,41 +1469,9 @@ impl Project {
         let Some(worktree) = self.worktree_for_entry(entry_id, cx) else {
             return Task::ready(Ok(None));
         };
-        let new_path = new_path.into();
-        if self.is_local() {
-            worktree.update(cx, |worktree, cx| {
-                worktree
-                    .as_local_mut()
-                    .unwrap()
-                    .copy_entry(entry_id, new_path, cx)
-            })
-        } else {
-            let client = self.client.clone();
-            let project_id = self.remote_id().unwrap();
-
-            cx.spawn(move |_, mut cx| async move {
-                let response = client
-                    .request(proto::CopyProjectEntry {
-                        project_id,
-                        entry_id: entry_id.to_proto(),
-                        new_path: new_path.to_string_lossy().into(),
-                    })
-                    .await?;
-                match response.entry {
-                    Some(entry) => worktree
-                        .update(&mut cx, |worktree, cx| {
-                            worktree.as_remote_mut().unwrap().insert_entry(
-                                entry,
-                                response.worktree_scan_id as usize,
-                                cx,
-                            )
-                        })?
-                        .await
-                        .map(Some),
-                    None => Ok(None),
-                }
-            })
-        }
+        worktree.update(cx, |worktree, cx| {
+            worktree.copy_entry(entry_id, new_path, cx)
+        })
     }
 
     pub fn rename_entry(
@@ -1546,48 +1483,9 @@ impl Project {
         let Some(worktree) = self.worktree_for_entry(entry_id, cx) else {
             return Task::ready(Err(anyhow!(format!("No worktree for entry {entry_id:?}"))));
         };
-        let new_path = new_path.into();
-        if self.is_local() {
-            worktree.update(cx, |worktree, cx| {
-                worktree
-                    .as_local_mut()
-                    .unwrap()
-                    .rename_entry(entry_id, new_path, cx)
-            })
-        } else {
-            let client = self.client.clone();
-            let project_id = self.remote_id().unwrap();
-
-            cx.spawn(move |_, mut cx| async move {
-                let response = client
-                    .request(proto::RenameProjectEntry {
-                        project_id,
-                        entry_id: entry_id.to_proto(),
-                        new_path: new_path.to_string_lossy().into(),
-                    })
-                    .await?;
-                match response.entry {
-                    Some(entry) => worktree
-                        .update(&mut cx, |worktree, cx| {
-                            worktree.as_remote_mut().unwrap().insert_entry(
-                                entry,
-                                response.worktree_scan_id as usize,
-                                cx,
-                            )
-                        })?
-                        .await
-                        .map(CreatedEntry::Included),
-                    None => {
-                        let abs_path = worktree.update(&mut cx, |worktree, _| {
-                            worktree
-                                .absolutize(&new_path)
-                                .with_context(|| format!("absolutizing {new_path:?}"))
-                        })??;
-                        Ok(CreatedEntry::Excluded { abs_path })
-                    }
-                }
-            })
-        }
+        worktree.update(cx, |worktree, cx| {
+            worktree.rename_entry(entry_id, new_path, cx)
+        })
     }
 
     pub fn delete_entry(
@@ -1597,38 +1495,10 @@ impl Project {
         cx: &mut ModelContext<Self>,
     ) -> Option<Task<Result<()>>> {
         let worktree = self.worktree_for_entry(entry_id, cx)?;
-
         cx.emit(Event::DeletedEntry(entry_id));
-
-        if self.is_local() {
-            worktree.update(cx, |worktree, cx| {
-                worktree
-                    .as_local_mut()
-                    .unwrap()
-                    .delete_entry(entry_id, trash, cx)
-            })
-        } else {
-            let client = self.client.clone();
-            let project_id = self.remote_id().unwrap();
-            Some(cx.spawn(move |_, mut cx| async move {
-                let response = client
-                    .request(proto::DeleteProjectEntry {
-                        project_id,
-                        entry_id: entry_id.to_proto(),
-                        use_trash: trash,
-                    })
-                    .await?;
-                worktree
-                    .update(&mut cx, move |worktree, cx| {
-                        worktree.as_remote_mut().unwrap().delete_entry(
-                            entry_id,
-                            response.worktree_scan_id as usize,
-                            cx,
-                        )
-                    })?
-                    .await
-            }))
-        }
+        worktree.update(cx, |worktree, cx| {
+            worktree.delete_entry(entry_id, trash, cx)
+        })
     }
 
     pub fn expand_entry(
@@ -1638,31 +1508,7 @@ impl Project {
         cx: &mut ModelContext<Self>,
     ) -> Option<Task<Result<()>>> {
         let worktree = self.worktree_for_id(worktree_id, cx)?;
-        if self.is_local() {
-            worktree.update(cx, |worktree, cx| {
-                worktree.as_local_mut().unwrap().expand_entry(entry_id, cx)
-            })
-        } else {
-            let worktree = worktree.downgrade();
-            let request = self.client.request(proto::ExpandProjectEntry {
-                project_id: self.remote_id().unwrap(),
-                entry_id: entry_id.to_proto(),
-            });
-            Some(cx.spawn(move |_, mut cx| async move {
-                let response = request.await?;
-                if let Some(worktree) = worktree.upgrade() {
-                    worktree
-                        .update(&mut cx, |worktree, _| {
-                            worktree
-                                .as_remote_mut()
-                                .unwrap()
-                                .wait_for_snapshot(response.worktree_scan_id as usize)
-                        })?
-                        .await?;
-                }
-                Ok(())
-            }))
-        }
+        worktree.update(cx, |worktree, cx| worktree.expand_entry(entry_id, cx))
     }
 
     pub fn shared(&mut self, project_id: u64, cx: &mut ModelContext<Self>) -> Result<()> {
@@ -8984,21 +8830,7 @@ impl Project {
             this.worktree_for_id(worktree_id, cx)
                 .ok_or_else(|| anyhow!("worktree not found"))
         })??;
-        let worktree_scan_id = worktree.update(&mut cx, |worktree, _| worktree.scan_id())?;
-        let entry = worktree
-            .update(&mut cx, |worktree, cx| {
-                let worktree = worktree.as_local_mut().unwrap();
-                let path = PathBuf::from(envelope.payload.path);
-                worktree.create_entry(path, envelope.payload.is_directory, cx)
-            })?
-            .await?;
-        Ok(proto::ProjectEntryResponse {
-            entry: match &entry {
-                CreatedEntry::Included(entry) => Some(entry.into()),
-                CreatedEntry::Excluded { .. } => None,
-            },
-            worktree_scan_id: worktree_scan_id as u64,
-        })
+        Worktree::handle_create_entry(worktree, envelope.payload, cx).await
     }
 
     async fn handle_rename_project_entry(
@@ -9012,23 +8844,7 @@ impl Project {
             this.worktree_for_entry(entry_id, cx)
                 .ok_or_else(|| anyhow!("worktree not found"))
         })??;
-        let worktree_scan_id = worktree.update(&mut cx, |worktree, _| worktree.scan_id())?;
-        let entry = worktree
-            .update(&mut cx, |worktree, cx| {
-                let new_path = PathBuf::from(envelope.payload.new_path);
-                worktree
-                    .as_local_mut()
-                    .unwrap()
-                    .rename_entry(entry_id, new_path, cx)
-            })?
-            .await?;
-        Ok(proto::ProjectEntryResponse {
-            entry: match &entry {
-                CreatedEntry::Included(entry) => Some(entry.into()),
-                CreatedEntry::Excluded { .. } => None,
-            },
-            worktree_scan_id: worktree_scan_id as u64,
-        })
+        Worktree::handle_rename_entry(worktree, envelope.payload, cx).await
     }
 
     async fn handle_copy_project_entry(
@@ -9042,20 +8858,7 @@ impl Project {
             this.worktree_for_entry(entry_id, cx)
                 .ok_or_else(|| anyhow!("worktree not found"))
         })??;
-        let worktree_scan_id = worktree.update(&mut cx, |worktree, _| worktree.scan_id())?;
-        let entry = worktree
-            .update(&mut cx, |worktree, cx| {
-                let new_path = PathBuf::from(envelope.payload.new_path);
-                worktree
-                    .as_local_mut()
-                    .unwrap()
-                    .copy_entry(entry_id, new_path, cx)
-            })?
-            .await?;
-        Ok(proto::ProjectEntryResponse {
-            entry: entry.as_ref().map(|e| e.into()),
-            worktree_scan_id: worktree_scan_id as u64,
-        })
+        Worktree::handle_copy_entry(worktree, envelope.payload, cx).await
     }
 
     async fn handle_delete_project_entry(
@@ -9065,28 +8868,12 @@ impl Project {
         mut cx: AsyncAppContext,
     ) -> Result<proto::ProjectEntryResponse> {
         let entry_id = ProjectEntryId::from_proto(envelope.payload.entry_id);
-        let trash = envelope.payload.use_trash;
-
-        this.update(&mut cx, |_, cx| cx.emit(Event::DeletedEntry(entry_id)))?;
-
         let worktree = this.update(&mut cx, |this, cx| {
             this.worktree_for_entry(entry_id, cx)
                 .ok_or_else(|| anyhow!("worktree not found"))
         })??;
-        let worktree_scan_id = worktree.update(&mut cx, |worktree, _| worktree.scan_id())?;
-        worktree
-            .update(&mut cx, |worktree, cx| {
-                worktree
-                    .as_local_mut()
-                    .unwrap()
-                    .delete_entry(entry_id, trash, cx)
-                    .ok_or_else(|| anyhow!("invalid entry"))
-            })??
-            .await?;
-        Ok(proto::ProjectEntryResponse {
-            entry: None,
-            worktree_scan_id: worktree_scan_id as u64,
-        })
+        this.update(&mut cx, |_, cx| cx.emit(Event::DeletedEntry(entry_id)))?;
+        Worktree::handle_delete_entry(worktree, envelope.payload, cx).await
     }
 
     async fn handle_expand_project_entry(
@@ -9099,17 +8886,7 @@ impl Project {
         let worktree = this
             .update(&mut cx, |this, cx| this.worktree_for_entry(entry_id, cx))?
             .ok_or_else(|| anyhow!("invalid request"))?;
-        worktree
-            .update(&mut cx, |worktree, cx| {
-                worktree
-                    .as_local_mut()
-                    .unwrap()
-                    .expand_entry(entry_id, cx)
-                    .ok_or_else(|| anyhow!("invalid entry"))
-            })??
-            .await?;
-        let worktree_scan_id = worktree.update(&mut cx, |worktree, _| worktree.scan_id())? as u64;
-        Ok(proto::ExpandProjectEntryResponse { worktree_scan_id })
+        Worktree::handle_expand_entry(worktree, envelope.payload, cx).await
     }
 
     async fn handle_update_diagnostic_summary(
@@ -10562,6 +10339,7 @@ impl Project {
         cx: &mut ModelContext<Project>,
     ) -> Result<()> {
         let replica_id = self.replica_id();
+        let remote_id = self.remote_id().ok_or_else(|| anyhow!("invalid project"))?;
 
         let mut old_worktrees_by_id = self
             .worktrees
@@ -10578,8 +10356,16 @@ impl Project {
             {
                 self.worktrees.push(WorktreeHandle::Strong(old_worktree));
             } else {
-                let worktree = Worktree::remote(replica_id, worktree, cx);
-                let _ = self.add_worktree(&worktree, cx);
+                self.add_worktree(
+                    &Worktree::remote(
+                        remote_id,
+                        replica_id,
+                        worktree,
+                        Box::new(CollabRemoteWorktreeClient(self.client.clone())),
+                        cx,
+                    ),
+                    cx,
+                );
             }
         }
 
@@ -11528,6 +11314,18 @@ impl OpenBuffer {
             OpenBuffer::Weak(handle) => handle.upgrade(),
             OpenBuffer::Operations(_) => None,
         }
+    }
+}
+
+pub struct CollabRemoteWorktreeClient(Arc<Client>);
+
+impl RemoteWorktreeClient for CollabRemoteWorktreeClient {
+    fn request(
+        &self,
+        envelope: proto::Envelope,
+        request_type: &'static str,
+    ) -> BoxFuture<'static, Result<proto::Envelope>> {
+        self.0.request_dynamic(envelope, request_type).boxed()
     }
 }
 

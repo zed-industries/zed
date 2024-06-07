@@ -1429,6 +1429,31 @@ impl Client {
         }
     }
 
+    pub fn request_dynamic(
+        &self,
+        envelope: proto::Envelope,
+        request_type: &'static str,
+    ) -> impl Future<Output = Result<proto::Envelope>> {
+        let client_id = self.id();
+        log::debug!(
+            "rpc request start. client_id:{}. name:{}",
+            client_id,
+            request_type
+        );
+        let response = self
+            .connection_id()
+            .map(|conn_id| self.peer.request_dynamic(conn_id, envelope, request_type));
+        async move {
+            let response = response?.await;
+            log::debug!(
+                "rpc request finish. client_id:{}. name:{}",
+                client_id,
+                request_type
+            );
+            Ok(response?.0)
+        }
+    }
+
     fn respond<T: RequestMessage>(&self, receipt: Receipt<T>, response: T::Response) -> Result<()> {
         log::debug!("rpc respond. client_id:{}. name:{}", self.id(), T::NAME);
         self.peer.respond(receipt, response)

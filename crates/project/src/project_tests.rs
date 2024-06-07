@@ -2995,7 +2995,15 @@ async fn test_rescan_and_remote_updates(cx: &mut gpui::TestAppContext) {
         });
     });
 
-    let remote = cx.update(|cx| Worktree::remote(1, metadata, cx));
+    let remote = cx.update(|cx| {
+        Worktree::remote(
+            0,
+            1,
+            metadata,
+            Box::new(CollabRemoteWorktreeClient(project.read(cx).client())),
+            cx,
+        )
+    });
 
     cx.executor().run_until_parked();
 
