@@ -217,6 +217,7 @@ pub struct Project {
     hosted_project_id: Option<ProjectId>,
     dev_server_project_id: Option<client::DevServerProjectId>,
     search_history: SearchHistory,
+    yarn_worktree_ids_reported: Vec<WorktreeId>,
 }
 
 pub enum LanguageServerToQuery {
@@ -773,6 +774,7 @@ impl Project {
                 hosted_project_id: None,
                 dev_server_project_id: None,
                 search_history: Self::new_search_history(),
+                yarn_worktree_ids_reported: Vec::new(),
             }
         })
     }
@@ -930,6 +932,7 @@ impl Project {
                     .dev_server_project_id
                     .map(|dev_server_project_id| DevServerProjectId(dev_server_project_id)),
                 search_history: Self::new_search_history(),
+                yarn_worktree_ids_reported: Vec::new(),
             };
             this.set_role(role, cx);
             for worktree in worktrees {
@@ -7592,6 +7595,8 @@ impl Project {
                         worktree.read(cx).id(),
                         changes.clone(),
                     ));
+
+                    this.report_yarn_project(&worktree, changes, cx);
                 }
                 worktree::Event::UpdatedGitRepositories(updated_repos) => {
                     if is_local {
@@ -7642,6 +7647,32 @@ impl Project {
 
         cx.emit(Event::WorktreeAdded);
         self.metadata_changed(cx);
+    }
+
+    fn report_yarn_project(
+        &mut self,
+        worktree: &Model<Worktree>,
+        updated_entries_set: &UpdatedEntriesSet,
+        cx: &mut ModelContext<Self>,
+    ) {
+        let worktree_id = worktree.update(cx, |worktree, _| worktree.id());
+
+        if !self.yarn_worktree_ids_reported.contains(&worktree_id) {
+            let is_yarn_project = updated_entries_set.iter().any(|(path, _, _)| {
+                path.as_ref()
+                    .file_name()
+                    .and_then(|name| name.to_str())
+                    .map(|name_str| name_str == "yarn.lock")
+                    .unwrap_or(false)
+            });
+
+            if is_yarn_project {
+                self.client()
+                    .telemetry()
+                    .report_app_event("open yarn project".to_string());
+                self.yarn_worktree_ids_reported.push(worktree_id);
+            }
+        }
     }
 
     fn update_local_worktree_buffers(
