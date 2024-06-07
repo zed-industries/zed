@@ -68,9 +68,9 @@ pub struct OutlinePanel {
     fs: Arc<dyn Fs>,
     width: Option<Pixels>,
     project: Model<Project>,
+    active: bool,
     scroll_handle: UniformListScrollHandle,
     context_menu: Option<(View<ContextMenu>, Point<Pixels>, Subscription)>,
-    workspace: WeakView<Workspace>,
     focus_handle: FocusHandle,
     pending_serialization: Task<Option<()>>,
     depth_map: Vec<usize>,
@@ -167,6 +167,7 @@ impl OutlinePanelEntry {
 
 struct DisplayedActiveItem {
     item_id: EntityId,
+    active_editor: WeakView<Editor>,
     _editor_subscrpiption: Option<Subscription>,
 }
 
@@ -291,6 +292,7 @@ impl OutlinePanel {
             });
 
             let mut outline_panel = Self {
+                active: false,
                 project: project.clone(),
                 fs: workspace.app_state().fs.clone(),
                 scroll_handle: UniformListScrollHandle::new(),
@@ -301,7 +303,6 @@ impl OutlinePanel {
                 unfolded_dir_ids: Default::default(),
                 selected_entry: None,
                 context_menu: None,
-                workspace: workspace.weak_handle(),
                 width: None,
                 pending_serialization: Task::ready(None),
                 displayed_item: None,
@@ -348,12 +349,11 @@ impl OutlinePanel {
     }
 
     fn unfold_directory(&mut self, _: &UnfoldDirectory, cx: &mut ViewContext<Self>) {
-        let Some(editor) = self.workspace.upgrade().and_then(|workspace| {
-            workspace
-                .read(cx)
-                .active_item(cx)
-                .and_then(|item| item.act_as::<Editor>(cx))
-        }) else {
+        let Some(editor) = self
+            .displayed_item
+            .as_ref()
+            .and_then(|item| item.active_editor.upgrade())
+        else {
             return;
         };
         if let Some(OutlinePanelEntry::Directory(_, selected_entry)) = &self.selected_entry {
@@ -366,12 +366,11 @@ impl OutlinePanel {
 
     fn fold_directory(&mut self, _: &FoldDirectory, cx: &mut ViewContext<Self>) {
         if let Some(selected_dir @ OutlinePanelEntry::Directory(..)) = &self.selected_entry {
-            let Some(editor) = self.workspace.upgrade().and_then(|workspace| {
-                workspace
-                    .read(cx)
-                    .active_item(cx)
-                    .and_then(|item| item.act_as::<Editor>(cx))
-            }) else {
+            let Some(editor) = self
+                .displayed_item
+                .as_ref()
+                .and_then(|item| item.active_editor.upgrade())
+            else {
                 return;
             };
 
@@ -572,12 +571,11 @@ impl OutlinePanel {
 
             let entry_id = selected_dir_entry.id;
             if expanded_dir_ids.insert(entry_id) {
-                let Some(editor) = self.workspace.upgrade().and_then(|workspace| {
-                    workspace
-                        .read(cx)
-                        .active_item(cx)
-                        .and_then(|item| item.act_as::<Editor>(cx))
-                }) else {
+                let Some(editor) = self
+                    .displayed_item
+                    .as_ref()
+                    .and_then(|item| item.active_editor.upgrade())
+                else {
                     return;
                 };
                 self.project.update(cx, |project, cx| {
@@ -601,12 +599,11 @@ impl OutlinePanel {
                 } else {
                     return;
                 };
-            let Some(editor) = self.workspace.upgrade().and_then(|workspace| {
-                workspace
-                    .read(cx)
-                    .active_item(cx)
-                    .and_then(|item| item.act_as::<Editor>(cx))
-            }) else {
+            let Some(editor) = self
+                .displayed_item
+                .as_ref()
+                .and_then(|item| item.active_editor.upgrade())
+            else {
                 return;
             };
 
@@ -618,12 +615,11 @@ impl OutlinePanel {
     }
 
     pub fn collapse_all_entries(&mut self, _: &CollapseAllEntries, cx: &mut ViewContext<Self>) {
-        let Some(editor) = self.workspace.upgrade().and_then(|workspace| {
-            workspace
-                .read(cx)
-                .active_item(cx)
-                .and_then(|item| item.act_as::<Editor>(cx))
-        }) else {
+        let Some(editor) = self
+            .displayed_item
+            .as_ref()
+            .and_then(|item| item.active_editor.upgrade())
+        else {
             return;
         };
         // By keeping entries for fully collapsed worktrees, we avoid expanding them within update_visible_entries
@@ -648,12 +644,11 @@ impl OutlinePanel {
             };
 
             if let Some(expanded_dir_ids) = self.expanded_dir_ids.get_mut(&worktree_id) {
-                let Some(editor) = self.workspace.upgrade().and_then(|workspace| {
-                    workspace
-                        .read(cx)
-                        .active_item(cx)
-                        .and_then(|item| item.act_as::<Editor>(cx))
-                }) else {
+                let Some(editor) = self
+                    .displayed_item
+                    .as_ref()
+                    .and_then(|item| item.active_editor.upgrade())
+                else {
                     return;
                 };
 
@@ -981,10 +976,10 @@ impl OutlinePanel {
                                 return;
                             }
 
-                            let Some(active_editor) =
-                                outline_panel.workspace.upgrade().and_then(|workspace| {
-                                    workspace.read(cx).active_item(cx)?.act_as::<Editor>(cx)
-                                })
+                            let Some(active_editor) = outline_panel
+                                .displayed_item
+                                .as_ref()
+                                .and_then(|item| item.active_editor.upgrade())
                             else {
                                 return;
                             };
@@ -1193,7 +1188,6 @@ impl OutlinePanel {
     }
 
     // TODO kb make async + rebounce
-    // TODO kb do not update when hidden, but update on open?
     fn update_visible_entries(
         &mut self,
         active_editor: &View<Editor>,
@@ -1201,6 +1195,10 @@ impl OutlinePanel {
         new_selected_entry: Option<OutlinePanelEntry>,
         cx: &mut ViewContext<Self>,
     ) -> Option<()> {
+        if !self.active {
+            return None;
+        }
+
         self.visible_entries.clear();
         self.depth_map.clear();
 
@@ -1436,6 +1434,7 @@ impl OutlinePanel {
         self.displayed_item = Some(DisplayedActiveItem {
             item_id: new_active_editor.item_id(),
             _editor_subscrpiption: subscribe_for_editor_events(&new_active_editor, cx),
+            active_editor: new_active_editor.downgrade(),
         });
         self.update_visible_entries(&new_active_editor, new_entries, None, cx);
         cx.notify();
@@ -1562,6 +1561,20 @@ impl Panel for OutlinePanel {
 
     fn starts_open(&self, _: &WindowContext) -> bool {
         self.displayed_item.is_some()
+    }
+
+    fn set_active(&mut self, active: bool, cx: &mut ViewContext<Self>) {
+        let old_active = self.active;
+        self.active = active;
+        if active && old_active != active {
+            if let Some(active_editor) = self
+                .displayed_item
+                .as_ref()
+                .and_then(|item| item.active_editor.upgrade())
+            {
+                self.replace_visible_entries(active_editor, cx);
+            }
+        }
     }
 }
 
