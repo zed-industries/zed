@@ -2947,6 +2947,15 @@ impl language::File for File {
         &self.path
     }
 
+    fn abs_path(&self, cx: &AppContext) -> PathBuf {
+        let worktree_path = &self.worktree.read(cx).abs_path;
+        if self.path.as_ref() == Path::new("") {
+            worktree_path.to_path_buf()
+        } else {
+            worktree_path.join(&self.path)
+        }
+    }
+
     fn full_path(&self, cx: &AppContext) -> PathBuf {
         let mut full_path = PathBuf::new();
         let worktree = self.worktree.read(cx);
@@ -3007,15 +3016,6 @@ impl language::File for File {
 }
 
 impl language::LocalFile for File {
-    fn abs_path(&self, cx: &AppContext) -> PathBuf {
-        let worktree_path = &self.worktree.read(cx).as_local().unwrap().abs_path;
-        if self.path.as_ref() == Path::new("") {
-            worktree_path.to_path_buf()
-        } else {
-            worktree_path.join(&self.path)
-        }
-    }
-
     fn load(&self, cx: &AppContext) -> Task<Result<String>> {
         let worktree = self.worktree.read(cx).as_local().unwrap();
         let abs_path = worktree.absolutize(&self.path);

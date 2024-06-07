@@ -950,79 +950,99 @@ impl Workspace {
                 }
             }
 
-            let workspace_id = if let Some(serialized_workspace) = serialized_workspace.as_ref() {
-                serialized_workspace.id
-            } else {
-                DB.next_id().await.unwrap_or_else(|_| Default::default())
-            };
-
-            let window = if let Some(window) = requesting_window {
-                cx.update_window(window.into(), |_, cx| {
-                    cx.replace_root_view(|cx| {
-                        Workspace::new(
-                            Some(workspace_id),
-                            project_handle.clone(),
-                            app_state.clone(),
-                            cx,
-                        )
-                    });
-                })?;
-                window
-            } else {
-                let window_bounds_override = window_bounds_env_override();
-
-                let (window_bounds, display) = if let Some(bounds) = window_bounds_override {
-                    (Some(WindowBounds::Windowed(bounds)), None)
-                } else {
-                    let restorable_bounds = serialized_workspace
-                        .as_ref()
-                        .and_then(|workspace| Some((workspace.display?, workspace.window_bounds?)))
-                        .or_else(|| {
-                            let (display, window_bounds) = DB.last_window().log_err()?;
-                            Some((display?, window_bounds?))
-                        });
-
-                    if let Some((serialized_display, serialized_status)) = restorable_bounds {
-                        (Some(serialized_status.0), Some(serialized_display))
-                    } else {
-                        (None, None)
-                    }
-                };
-
-                // Use the serialized workspace to construct the new window
-                let mut options = cx.update(|cx| (app_state.build_window_options)(display, cx))?;
-                options.window_bounds = window_bounds;
-                let centered_layout = serialized_workspace
-                    .as_ref()
-                    .map(|w| w.centered_layout)
-                    .unwrap_or(false);
-                cx.open_window(options, {
-                    let app_state = app_state.clone();
-                    let project_handle = project_handle.clone();
-                    move |cx| {
-                        cx.new_view(|cx| {
-                            let mut workspace =
-                                Workspace::new(Some(workspace_id), project_handle, app_state, cx);
-                            workspace.centered_layout = centered_layout;
-                            workspace
-                        })
-                    }
-                })?
-            };
-
-            notify_if_database_failed(window, &mut cx);
-            let opened_items = window
-                .update(&mut cx, |_workspace, cx| {
-                    open_items(serialized_workspace, project_paths, app_state, cx)
-                })?
-                .await
-                .unwrap_or_default();
-
-            window
-                .update(&mut cx, |_, cx| cx.activate_window())
-                .log_err();
-            Ok((window, opened_items))
+            Workspace::reopen_serialized(
+                project_handle,
+                serialized_workspace,
+                project_paths,
+                app_state,
+                requesting_window,
+                &mut cx,
+            )
+            .await
         })
+    }
+
+    async fn reopen_serialized(
+        project_handle: Model<Project>,
+        serialized_workspace: Option<SerializedWorkspace>,
+        project_paths: Vec<(PathBuf, Option<ProjectPath>)>,
+        app_state: Arc<AppState>,
+        requesting_window: Option<WindowHandle<Workspace>>,
+        cx: &mut AsyncAppContext,
+    ) -> anyhow::Result<(
+        WindowHandle<Workspace>,
+        Vec<Option<Result<Box<dyn ItemHandle>, anyhow::Error>>>,
+    )> {
+        let workspace_id = if let Some(serialized_workspace) = serialized_workspace.as_ref() {
+            serialized_workspace.id
+        } else {
+            DB.next_id().await.unwrap_or_else(|_| Default::default())
+        };
+
+        let window = if let Some(window) = requesting_window {
+            cx.update_window(window.into(), |_, cx| {
+                cx.replace_root_view(|cx| {
+                    Workspace::new(
+                        Some(workspace_id),
+                        project_handle.clone(),
+                        app_state.clone(),
+                        cx,
+                    )
+                });
+            })?;
+            window
+        } else {
+            let window_bounds_override = window_bounds_env_override();
+
+            let (window_bounds, display) = if let Some(bounds) = window_bounds_override {
+                (Some(WindowBounds::Windowed(bounds)), None)
+            } else {
+                let restorable_bounds = serialized_workspace
+                    .as_ref()
+                    .and_then(|workspace| Some((workspace.display?, workspace.window_bounds?)))
+                    .or_else(|| {
+                        let (display, window_bounds) = DB.last_window().log_err()?;
+                        Some((display?, window_bounds?))
+                    });
+
+                if let Some((serialized_display, serialized_status)) = restorable_bounds {
+                    (Some(serialized_status.0), Some(serialized_display))
+                } else {
+                    (None, None)
+                }
+            };
+
+            // Use the serialized workspace to construct the new window
+            let mut options = cx.update(|cx| (app_state.build_window_options)(display, cx))?;
+            options.window_bounds = window_bounds;
+            let centered_layout = serialized_workspace
+                .as_ref()
+                .map(|w| w.centered_layout)
+                .unwrap_or(false);
+            cx.open_window(options, {
+                let app_state = app_state.clone();
+                let project_handle = project_handle.clone();
+                move |cx| {
+                    cx.new_view(|cx| {
+                        let mut workspace =
+                            Workspace::new(Some(workspace_id), project_handle, app_state, cx);
+                        workspace.centered_layout = centered_layout;
+                        workspace
+                    })
+                }
+            })?
+        };
+
+        notify_if_database_failed(window, cx);
+        let opened_items = window
+            .update(cx, |_workspace, cx| {
+                open_items(serialized_workspace, project_paths, app_state, cx)
+            })?
+            .await
+            .unwrap_or_default();
+
+        window.update(cx, |_, cx| cx.activate_window()).log_err();
+        Ok((window, opened_items))
     }
 
     pub fn weak_handle(&self) -> WeakView<Self> {
@@ -4984,36 +5004,19 @@ pub fn join_dev_server_project(
                 cx.clone(),
             )
             .await?;
-
             let serialized_workspace: Option<SerializedWorkspace> =
                 persistence::DB.workspace_for_dev_server_project(dev_server_project_id);
 
-            let workspace_id = if let Some(serialized_workspace) = serialized_workspace {
-                serialized_workspace.id
-            } else {
-                persistence::DB.next_id().await?
-            };
-
-            if let Some(window_to_replace) = window_to_replace {
-                cx.update_window(window_to_replace.into(), |_, cx| {
-                    cx.replace_root_view(|cx| {
-                        Workspace::new(Some(workspace_id), project, app_state.clone(), cx)
-                    });
-                })?;
-                window_to_replace
-            } else {
-                let window_bounds_override = window_bounds_env_override();
-                cx.update(|cx| {
-                    let mut options = (app_state.build_window_options)(None, cx);
-                    options.window_bounds =
-                        window_bounds_override.map(|bounds| WindowBounds::Windowed(bounds));
-                    cx.open_window(options, |cx| {
-                        cx.new_view(|cx| {
-                            Workspace::new(Some(workspace_id), project, app_state.clone(), cx)
-                        })
-                    })
-                })?
-            }
+            Workspace::reopen_serialized(
+                project,
+                serialized_workspace,
+                vec![],
+                app_state,
+                window_to_replace,
+                &mut cx,
+            )
+            .await?
+            .0
         };
 
         workspace.update(&mut cx, |_, cx| {

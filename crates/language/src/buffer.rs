@@ -343,6 +343,9 @@ pub trait File: Send + Sync {
     /// Returns the path of this file relative to the worktree's root directory.
     fn path(&self) -> &Arc<Path>;
 
+    /// Returns the path of this file relative to the worktree's root directory.
+    fn abs_path(&self, cx: &AppContext) -> PathBuf;
+
     /// Returns the path of this file relative to the worktree's parent directory (this means it
     /// includes the name of the worktree's root folder).
     fn full_path(&self, cx: &AppContext) -> PathBuf;
@@ -376,9 +379,6 @@ pub trait File: Send + Sync {
 
 /// The file associated with a buffer, in the case where the file is on the local disk.
 pub trait LocalFile: File {
-    /// Returns the absolute path of this file.
-    fn abs_path(&self, cx: &AppContext) -> PathBuf;
-
     /// Loads the file's contents from disk.
     fn load(&self, cx: &AppContext) -> Task<Result<String>>;
 
@@ -3904,6 +3904,10 @@ pub struct TestFile {
 impl File for TestFile {
     fn path(&self) -> &Arc<Path> {
         &self.path
+    }
+
+    fn abs_path(&self, cx: &AppContext) -> PathBuf {
+        panic!("unimplemented")
     }
 
     fn full_path(&self, _: &gpui::AppContext) -> PathBuf {

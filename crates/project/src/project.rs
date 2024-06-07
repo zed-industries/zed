@@ -48,7 +48,7 @@ use language::{
     },
     range_from_lsp, Bias, Buffer, BufferSnapshot, CachedLspAdapter, Capability, CodeLabel,
     ContextProvider, Diagnostic, DiagnosticEntry, DiagnosticSet, Diff, Documentation,
-    Event as BufferEvent, File as _, Language, LanguageRegistry, LanguageServerName, LocalFile,
+    Event as BufferEvent, File as _, Language, LanguageRegistry, LanguageServerName,
     LspAdapterDelegate, Operation, Patch, PendingLanguageServer, PointUtf16, TextBufferSnapshot,
     ToOffset, ToPointUtf16, Transaction, Unclipped,
 };
@@ -7423,6 +7423,21 @@ impl Project {
             cx.background_executor()
                 .spawn(async move { Ok((worktree.await?, PathBuf::new())) })
         }
+    }
+
+    pub fn find_worktree(
+        &self,
+        abs_path: &Path,
+        cx: &AppContext,
+    ) -> Option<(Model<Worktree>, PathBuf)> {
+        for tree in &self.worktrees {
+            if let Some(tree) = tree.upgrade() {
+                if let Some(relative_path) = abs_path.strip_prefix(&tree.read(cx).abs_path()).ok() {
+                    return Some((tree.clone(), relative_path.into()));
+                }
+            }
+        }
+        None
     }
 
     pub fn find_local_worktree(

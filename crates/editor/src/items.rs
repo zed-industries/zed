@@ -859,15 +859,11 @@ impl Item for Editor {
             item_id: ItemId,
             cx: &mut AppContext,
         ) {
-            if let Some(file) = buffer.read(cx).file().and_then(|file| file.as_local()) {
-                let path = file.abs_path(cx);
+            if let Some(file) = buffer.read(cx).file() {
+                let path = file.abs_path(cx).to_path_buf();
 
                 cx.background_executor()
-                    .spawn(async move {
-                        DB.save_path(item_id, workspace_id, path.clone())
-                            .await
-                            .log_err()
-                    })
+                    .spawn(async move { DB.save_path(item_id, workspace_id, path).await.log_err() })
                     .detach();
             }
         }
@@ -943,7 +939,7 @@ impl Item for Editor {
                 .context("No path stored for this editor")?;
 
             let (worktree, path) = project
-                .find_local_worktree(&path, cx)
+                .find_worktree(&path, cx)
                 .with_context(|| format!("No worktree for path: {path:?}"))?;
             let project_path = ProjectPath {
                 worktree_id: worktree.read(cx).id(),
