@@ -100,7 +100,7 @@ pub struct LocalWorktree {
     path_prefixes_to_scan_tx: channel::Sender<Arc<Path>>,
     is_scanning: (watch::Sender<bool>, watch::Receiver<bool>),
     _background_scanner_tasks: Vec<Task<()>>,
-    update_observer: Option<ShareState>,
+    update_observer: Option<UpdateObservationState>,
     fs: Arc<dyn Fs>,
     fs_case_sensitive: bool,
     visible: bool,
@@ -120,6 +120,9 @@ pub struct RemoteWorktree {
     project_id: u64,
     client: Box<dyn RemoteWorktreeClient>,
     updates_tx: Option<UnboundedSender<proto::UpdateWorktree>>,
+    update_observer: Arc<
+        Mutex<Option<Box<dyn Send + FnMut(proto::UpdateWorktree) -> BoxFuture<'static, bool>>>>,
+    >,
     snapshot_subscriptions: VecDeque<(usize, oneshot::Sender<()>)>,
     replica_id: ReplicaId,
     visible: bool,
@@ -338,7 +341,7 @@ enum ScanState {
     },
 }
 
-struct ShareState {
+struct UpdateObservationState {
     snapshots_tx:
         mpsc::UnboundedSender<(LocalSnapshot, UpdatedEntriesSet, UpdatedGitRepositoriesSet)>,
     resume_updates: watch::Sender<()>,
@@ -458,19 +461,35 @@ impl Worktree {
             let (updates_tx, mut updates_rx) = mpsc::unbounded();
             let background_snapshot = Arc::new(Mutex::new(snapshot.clone()));
             let (mut snapshot_updated_tx, mut snapshot_updated_rx) = watch::channel();
+            let update_observer = Arc::new(Mutex::new(None));
+
+            let worktree = RemoteWorktree {
+                client,
+                project_id,
+                replica_id,
+                snapshot,
+                background_snapshot: background_snapshot.clone(),
+                update_observer: update_observer.clone(),
+                updates_tx: Some(updates_tx),
+                snapshot_subscriptions: Default::default(),
+                visible: worktree.visible,
+                disconnected: false,
+            };
 
             cx.background_executor()
-                .spawn({
-                    let background_snapshot = background_snapshot.clone();
-                    async move {
-                        while let Some(update) = updates_rx.next().await {
-                            if let Err(error) =
-                                background_snapshot.lock().apply_remote_update(update)
-                            {
-                                log::error!("error applying worktree update: {}", error);
-                            }
-                            snapshot_updated_tx.send(()).await.ok();
+                .spawn(async move {
+                    while let Some(update) = updates_rx.next().await {
+                        let call = update_observer
+                            .lock()
+                            .as_mut()
+                            .map(|observer| (observer)(update.clone()));
+                        if let Some(call) = call {
+                            call.await;
                         }
+                        if let Err(error) = background_snapshot.lock().apply_remote_update(update) {
+                            log::error!("error applying worktree update: {}", error);
+                        }
+                        snapshot_updated_tx.send(()).await.ok();
                     }
                 })
                 .detach();
@@ -496,17 +515,7 @@ impl Worktree {
             })
             .detach();
 
-            Worktree::Remote(RemoteWorktree {
-                client,
-                project_id,
-                replica_id,
-                snapshot,
-                background_snapshot,
-                updates_tx: Some(updates_tx),
-                snapshot_subscriptions: Default::default(),
-                visible: worktree.visible,
-                disconnected: false,
-            })
+            Worktree::Remote(worktree)
         })
     }
 
@@ -595,6 +604,44 @@ impl Worktree {
     pub fn root_file(&self, cx: &mut ModelContext<Self>) -> Option<Arc<File>> {
         let entry = self.root_entry()?;
         Some(File::for_entry(entry.clone(), cx.handle()))
+    }
+
+    pub fn observe_updates<F, Fut>(
+        &mut self,
+        project_id: u64,
+        cx: &mut ModelContext<Worktree>,
+        callback: F,
+    ) where
+        F: 'static + Send + Fn(proto::UpdateWorktree) -> Fut,
+        Fut: 'static + Send + Future<Output = bool>,
+    {
+        match self {
+            Worktree::Local(this) => this.observe_updates(project_id, cx, callback),
+            Worktree::Remote(this) => {
+                this.update_observer
+                    .lock()
+                    .replace(Box::new(move |update| callback(update).boxed()));
+            }
+        }
+    }
+
+    pub fn stop_observing_updates(&mut self) {
+        match self {
+            Worktree::Local(this) => {
+                this.update_observer.take();
+            }
+            Worktree::Remote(this) => {
+                this.update_observer.lock().take();
+            }
+        }
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn has_update_observer(&self) -> bool {
+        match self {
+            Worktree::Local(this) => this.update_observer.is_some(),
+            Worktree::Remote(this) => this.update_observer.lock().is_some(),
+        }
     }
 
     pub fn create_entry(
@@ -1529,7 +1576,7 @@ impl LocalWorktree {
         })
     }
 
-    pub fn observe_updates<F, Fut>(
+    fn observe_updates<F, Fut>(
         &mut self,
         project_id: u64,
         cx: &mut ModelContext<Worktree>,
@@ -1586,20 +1633,11 @@ impl LocalWorktree {
             Some(())
         });
 
-        self.update_observer = Some(ShareState {
+        self.update_observer = Some(UpdateObservationState {
             snapshots_tx,
             resume_updates: resume_updates_tx,
             _maintain_remote_snapshot,
         });
-    }
-
-    pub fn stop_observing_updates(&mut self) {
-        self.update_observer.take();
-    }
-
-    #[cfg(any(test, feature = "test-support"))]
-    pub fn has_update_observer(&self) -> bool {
-        self.update_observer.is_some()
     }
 
     pub fn share_private_files(&mut self, cx: &mut ModelContext<Worktree>) {

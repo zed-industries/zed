@@ -1626,18 +1626,12 @@ impl Project {
                                             }
                                         }
 
-                                        worktree.as_local_mut().unwrap().observe_updates(
-                                            project_id,
-                                            cx,
-                                            {
-                                                let client = client.clone();
-                                                move |update| {
-                                                    client
-                                                        .request(update)
-                                                        .map(|result| result.is_ok())
-                                                }
-                                            },
-                                        );
+                                        worktree.observe_updates(project_id, cx, {
+                                            let client = client.clone();
+                                            move |update| {
+                                                client.request(update).map(|result| result.is_ok())
+                                            }
+                                        });
 
                                         anyhow::Ok(())
                                     })?;
@@ -1788,7 +1782,7 @@ impl Project {
             for worktree_handle in self.worktrees.iter_mut() {
                 if let WorktreeHandle::Strong(worktree) = worktree_handle {
                     let is_visible = worktree.update(cx, |worktree, _| {
-                        worktree.as_local_mut().unwrap().stop_observing_updates();
+                        worktree.stop_observing_updates();
                         worktree.is_visible()
                     });
                     if !is_visible {
