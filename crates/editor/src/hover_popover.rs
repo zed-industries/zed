@@ -5,27 +5,18 @@ use crate::{
     Anchor, AnchorRangeExt, DisplayPoint, DisplayRow, Editor, EditorSettings, EditorSnapshot,
     EditorStyle, ExcerptId, Hover, RangeToAnchorExt,
 };
-use futures::{stream::FuturesUnordered, FutureExt};
 use gpui::{
     div, px, AnyElement, AsyncWindowContext, CursorStyle, Hsla, InteractiveElement, IntoElement,
     MouseButton, ParentElement, Pixels, ScrollHandle, SharedString, Size,
     StatefulInteractiveElement, Styled, Task, View, ViewContext, WeakView,
 };
-use language::{
-    // markdown as old_markdown,
-    DiagnosticEntry,
-    Language,
-    LanguageRegistry,
-    // ParsedMarkdown,
-};
+use language::{DiagnosticEntry, Language, LanguageRegistry};
 use lsp::DiagnosticSeverity;
 use markdown::{Markdown, MarkdownStyle};
 use multi_buffer::ToOffset;
-use project::{HoverBlock, HoverBlockKind, InlayHintLabelPart};
+use project::{HoverBlock, InlayHintLabelPart};
 use settings::Settings;
-use smol::stream::StreamExt;
 use std::{ops::Range, sync::Arc, time::Duration};
-use theme::ThemeSettings;
 use ui::{prelude::*, Tooltip};
 use util::TryFutureExt;
 use workspace::Workspace;
@@ -410,7 +401,7 @@ impl HoverState {
         style: &EditorStyle,
         visible_rows: Range<DisplayRow>,
         max_size: Size<Pixels>,
-        workspace: Option<WeakView<Workspace>>,
+        _workspace: Option<WeakView<Workspace>>,
         cx: &mut ViewContext<Editor>,
     ) -> Option<(DisplayPoint, Vec<AnyElement>)> {
         // If there is a diagnostic, position the popovers based on that.
@@ -448,7 +439,7 @@ impl HoverState {
             elements.push(diagnostic_popover.render(style, max_size, cx));
         }
         for info_popover in &mut self.info_popovers {
-            elements.push(info_popover.render(style, max_size, workspace.clone(), cx));
+            elements.push(info_popover.render(max_size, cx));
         }
 
         Some((point, elements))
@@ -465,13 +456,7 @@ pub struct InfoPopover {
 }
 
 impl InfoPopover {
-    pub fn render(
-        &mut self,
-        style: &EditorStyle,
-        max_size: Size<Pixels>,
-        workspace: Option<WeakView<Workspace>>,
-        cx: &mut ViewContext<Editor>,
-    ) -> AnyElement {
+    pub fn render(&mut self, max_size: Size<Pixels>, cx: &mut ViewContext<Editor>) -> AnyElement {
         div()
             .id("info_popover")
             .elevation_2(cx)
