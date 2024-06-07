@@ -2626,7 +2626,7 @@ impl LspCommand for LinkedEditingRange {
     }
 
     fn to_proto(&self, _project_id: u64, _buffer: &Buffer) -> proto::OnTypeFormatting {
-        todo!();
+        unimplemented!();
         // proto::OnTypeFormatting {
         //     project_id,
         //     buffer_id: buffer.remote_id().into(),
@@ -2644,7 +2644,7 @@ impl LspCommand for LinkedEditingRange {
         _buffer: Model<Buffer>,
         _cx: AsyncAppContext,
     ) -> Result<Self> {
-        todo!();
+        unimplemented!();
         // let position = message
         //     .position
         //     .and_then(deserialize_anchor)
@@ -2674,7 +2674,7 @@ impl LspCommand for LinkedEditingRange {
         _: &clock::Global,
         _: &mut AppContext,
     ) -> proto::OnTypeFormattingResponse {
-        todo!()
+        unimplemented!()
         // proto::OnTypeFormattingResponse {
         //     transaction: response
         //         .map(|transaction| language::proto::serialize_transaction(&transaction)),

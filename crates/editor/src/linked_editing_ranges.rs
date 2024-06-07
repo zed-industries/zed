@@ -40,7 +40,6 @@ pub(super) fn refresh_linked_ranges(this: &mut Editor, cx: &mut ViewContext<Edit
     if this.pending_rename.is_some() {
         return None;
     }
-    // this.linked_edit_ranges.0.clear();
     let project = this.project.clone()?;
     let buffer = this.buffer.read(cx);
     let mut applicable_selections = vec![];
@@ -66,7 +65,7 @@ pub(super) fn refresh_linked_ranges(this: &mut Editor, cx: &mut ViewContext<Edit
                 for (buffer, start, end) in &applicable_selections {
                     let snapshot = buffer.read(cx).snapshot();
                     let buffer_id = buffer.read(cx).remote_id();
-                    let linked_edits_task = project.linked_edit(&buffer, start.clone(), cx);
+                    let linked_edits_task = project.linked_edit(&buffer, *start, cx);
                     let highlights = move || async move {
                         let edits = linked_edits_task.await.log_err()?;
 
@@ -121,7 +120,7 @@ pub(super) fn refresh_linked_ranges(this: &mut Editor, cx: &mut ViewContext<Edit
                 return;
             }
             this.linked_edit_ranges.0.clear();
-            for (buffer_id, ranges) in highlights.into_iter().filter_map(|x| x) {
+            for (buffer_id, ranges) in highlights.into_iter().flatten() {
                 this.linked_edit_ranges
                     .0
                     .entry(buffer_id)

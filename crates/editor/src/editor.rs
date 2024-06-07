@@ -5159,7 +5159,7 @@ impl Editor {
                     if range.start.cmp(&selection_head, &snapshot).is_le() {
                         let end_offset = range.end.to_offset(&snapshot);
                         let selection_offset = selection.end.to_offset(&snapshot);
-                        end_offset >= selection_offset || end_offset >= selection_offset + 1
+                        end_offset > selection_offset
                     } else {
                         false
                     }
@@ -5190,7 +5190,7 @@ impl Editor {
                     }
                 }
                 this.buffer
-                    .update(cx, |this, cx| this.edit(edits.into_iter(), None, cx));
+                    .update(cx, |this, cx| this.edit(edits, None, cx));
             }
             this.change_selections(Some(Autoscroll::fit()), cx, |s| s.select(selections));
             this.insert("", cx);
