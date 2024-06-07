@@ -94,7 +94,7 @@ enum OutlinePanelEntry {
     ExternalFile(BufferId),
     Directory(WorktreeId, Entry),
     File(WorktreeId, Entry),
-    Outline(ExcerptId, OutlineItem<language::Anchor>),
+    Outline(OutlineItem<language::Anchor>),
 }
 
 impl PartialEq for OutlinePanelEntry {
@@ -107,9 +107,7 @@ impl PartialEq for OutlinePanelEntry {
             (Self::File(worktree_a, entry_a), Self::File(worktree_b, entry_b)) => {
                 worktree_a == worktree_b && entry_a.id == entry_b.id
             }
-            (Self::Outline(id_a, item_a), Self::Outline(id_b, item_b)) => {
-                id_a == id_b && item_a == item_b
-            }
+            (Self::Outline(item_a), Self::Outline(item_b)) => item_a == item_b,
             _ => false,
         }
     }
@@ -747,8 +745,7 @@ impl OutlinePanel {
         editor: &View<Editor>,
         cx: &mut ViewContext<'_, Self>,
     ) {
-        let Some((excerpt_id, outlines_container, outline_item)) =
-            location_for_editor_selection(editor, cx)
+        let Some((outlines_container, outline_item)) = location_for_editor_selection(editor, cx)
         else {
             return;
         };
@@ -759,10 +756,8 @@ impl OutlinePanel {
                 .iter()
                 .rev()
                 .skip_while(|entry| {
-                    if let OutlinePanelEntry::Outline(visible_excerpt_id, visible_outline_item) =
-                        entry
-                    {
-                        visible_excerpt_id != &excerpt_id || visible_outline_item != outline_item
+                    if let OutlinePanelEntry::Outline(visible_outline_item) = entry {
+                        visible_outline_item != outline_item
                     } else {
                         true
                     }
@@ -795,7 +790,7 @@ impl OutlinePanel {
                 }),
         };
         let Some(entry_to_select) = outline_item
-            .map(|outline| OutlinePanelEntry::Outline(excerpt_id, outline))
+            .map(|outline| OutlinePanelEntry::Outline(outline))
             .or_else(|| file_entry_to_expand.cloned())
         else {
             return;
@@ -935,13 +930,18 @@ impl OutlinePanel {
                     icon,
                 )
             }
-            OutlinePanelEntry::Outline(excerpt_id, outline) => {
+            OutlinePanelEntry::Outline(outline) => {
                 let name = outline.text.clone();
                 let color = entry_label_color(is_active);
                 (
                     ElementId::from(SharedString::from(format!(
                         "{:?}|{}",
-                        excerpt_id, &outline.text,
+                        outline
+                            .range
+                            .start
+                            .buffer_id
+                            .or(outline.range.end.buffer_id),
+                        &outline.text,
                     ))),
                     name,
                     color,
@@ -1057,9 +1057,23 @@ impl OutlinePanel {
                                         })
                                     }
                                 }
-                                OutlinePanelEntry::Outline(excerpt_id, outline) => {
-                                    let scroll_target = multi_buffer_snapshot
-                                        .anchor_in_excerpt(*excerpt_id, outline.range.start);
+                                OutlinePanelEntry::Outline(outline) => {
+                                    let scroll_target = multi_buffer_snapshot.excerpts().find_map(
+                                        |(excerpt_id, buffer_snapshot, excerpt_range)| {
+                                            if Some(buffer_snapshot.remote_id())
+                                                == outline.range.start.buffer_id
+                                                || Some(buffer_snapshot.remote_id())
+                                                    == outline.range.end.buffer_id
+                                            {
+                                                multi_buffer_snapshot.anchor_in_excerpt(
+                                                    excerpt_id,
+                                                    excerpt_range.context.start,
+                                                )
+                                            } else {
+                                                None
+                                            }
+                                        },
+                                    );
                                     if let Some(anchor) = scroll_target {
                                         outline_panel.selected_entry = Some(clicked_entry.clone());
                                         active_editor.update(cx, |editor, cx| {
@@ -1152,14 +1166,9 @@ impl OutlinePanel {
         let project = self.project.read(cx);
         let displayed_multi_buffer = active_editor.read(cx).buffer().clone();
         let multi_buffer_snapshot = displayed_multi_buffer.read(cx).snapshot(cx);
-        let mut outline_entries = HashMap::<
-            OutlinesContainer,
-            Vec<(ExcerptId, Vec<OutlineItem<language::Anchor>>)>,
-        >::default();
-        let mut processed_outlines: HashMap<
-            OutlinesContainer,
-            HashSet<OutlineItem<language::Anchor>>,
-        > = HashMap::default();
+        let mut outline_entries =
+            HashMap::<OutlinesContainer, Vec<OutlineItem<language::Anchor>>>::default();
+        let mut processed_outlines = HashSet::default();
         let mut processed_excernal_buffers = HashSet::default();
 
         let mut new_workspace_entries = HashMap::<WorktreeId, HashSet<&Entry>>::default();
@@ -1171,31 +1180,25 @@ impl OutlinePanel {
                     Some(id) => OutlinesContainer::WorktreeFile(id),
                     None => OutlinesContainer::ExternalFile(buffer_snapshot.remote_id()),
                 };
-            let processed_outlines = processed_outlines.entry(container.clone()).or_default();
-            let mut outlines = buffer_snapshot
-                .outline(None)
-                .map(|outline| outline.items)
-                .unwrap_or_default();
-            outlines.retain(|outline| {
-                let intersects =
-                    range_contains(&excerpt_range.context, outline.range.start, buffer_snapshot)
-                        || range_contains(
+            outline_entries.entry(container).or_default().extend(
+                buffer_snapshot
+                    .outline(None)
+                    .map(|outline| outline.items)
+                    .unwrap_or_default()
+                    .into_iter()
+                    .filter(|outline| {
+                        let intersects = range_contains(
+                            &excerpt_range.context,
+                            outline.range.start,
+                            buffer_snapshot,
+                        ) || range_contains(
                             &excerpt_range.context,
                             outline.range.end,
                             buffer_snapshot,
                         );
-                if intersects {
-                    processed_outlines.insert(outline.clone())
-                } else {
-                    false
-                }
-            });
-            if !outlines.is_empty() {
-                outline_entries
-                    .entry(container)
-                    .or_default()
-                    .push((excerpt_id, outlines));
-            }
+                        intersects && processed_outlines.insert(outline.clone())
+                    }),
+            );
 
             if let Some(file) = File::from_dyn(buffer_snapshot.file()) {
                 let worktree = file.worktree.read(cx);
@@ -1311,18 +1314,12 @@ impl OutlinePanel {
                 let outlines = entry
                     .outlines_container()
                     .and_then(|container| outline_entries.remove(&container));
-                Some(entry)
-                    .into_iter()
-                    .chain(
-                        outlines
-                            .into_iter()
-                            .flatten()
-                            .flat_map(|(excerpt_id, outlines)| {
-                                outlines.into_iter().map(move |outline| {
-                                    OutlinePanelEntry::Outline(excerpt_id, outline)
-                                })
-                            }),
-                    )
+                Some(entry).into_iter().chain(
+                    outlines
+                        .unwrap_or_default()
+                        .into_iter()
+                        .map(OutlinePanelEntry::Outline),
+                )
             })
             .collect();
 
@@ -1569,7 +1566,7 @@ impl Render for OutlinePanel {
                                             }
                                             depths.push(depth);
                                         }
-                                        OutlinePanelEntry::Outline(_, outline) => {
+                                        OutlinePanelEntry::Outline(outline) => {
                                             let mut depth = *depths.last().unwrap_or(&0);
                                             if let Some(outline_depth) = outline_depth {
                                                 match outline_depth.cmp(&outline.depth) {
@@ -1660,11 +1657,7 @@ fn subscribe_for_editor_events(
 fn location_for_editor_selection(
     editor: &View<Editor>,
     cx: &mut ViewContext<OutlinePanel>,
-) -> Option<(
-    ExcerptId,
-    OutlinesContainer,
-    Option<OutlineItem<language::Anchor>>,
-)> {
+) -> Option<(OutlinesContainer, Option<OutlineItem<language::Anchor>>)> {
     let selection = editor
         .read(cx)
         .selections
@@ -1694,7 +1687,7 @@ fn location_for_editor_selection(
             );
             distance_to_closest_endpoint
         });
-    Some((selection.excerpt_id, container, outline_item))
+    Some((container, outline_item))
 }
 
 fn range_contains(
