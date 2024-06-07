@@ -305,9 +305,6 @@ jobs:
             exit 1
           fi
 
-      - name: Generate license file
-        run: script/generate-licenses
-
       - name: Create and upload Linux .tar.gz bundle
         run: script/bundle-linux
 

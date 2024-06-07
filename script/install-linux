@@ -1,0 +1,76 @@
+#!/usr/bin/env bash
+
+set -euxo pipefail
+
+# Function for displaying help info
+help_info() {
+  echo "
+Usage: ${0##*/} [PREFIX]
+Builds and installs zed onto your system.
+
+PREFIX defaults to ~/.local, such that the cli is available as ~/.local/bin/zed.
+
+If you try to install to a prefix that your user cannot write to, we will prompt for sudo when copying files.
+  "
+}
+
+install_prefix=""
+if [[ $# -ge 1 ]]; then
+    if [[ "$1" == -* || $# -ge 2 ]]; then
+        help_info
+        exit 0
+    else
+        install_prefix="$1"
+    fi
+else
+    install_prefix="$HOME/.local"
+fi
+install_prefix="${install_prefix%/}"
+
+channel=$(<crates/zed/RELEASE_CHANNEL)
+version="$(script/get-crate-version zed)"
+export RELEASE_VERSION="${version}"
+
+version_info=$(rustc --version --verbose)
+host_line=$(echo "$version_info" | grep host)
+target_triple=${host_line#*: }
+
+ZED_UPDATE_EXPLANATION="You may need to rebuild zed from $(pwd)" cargo build --release --target "${target_triple}" --package zed --package cli
+
+suffix=""
+if [ "$channel" != "stable" ]; then
+  suffix="-$channel"
+fi
+
+function maybesudo() {
+    if [[ -e "$install_prefix" && ! -w "$install_prefix" ]]; then
+      sudo "$@"
+    else
+       "$@"
+    fi
+}
+
+# Binary
+maybesudo mkdir -p "${install_prefix}/bin" "${install_prefix}/libexec"
+maybesudo cp "target/${target_triple}/release/zed" "${install_prefix}/libexec/zed-editor"
+maybesudo cp "target/${target_triple}/release/cli" "${install_prefix}/bin/zed"
+
+# .desktop
+export DO_STARTUP_NOTIFY="true"
+export APP_ICON="${install_prefix}/share/icons/hicolor/512x512/apps/zed.png"
+if [[ "$channel" == "preview" ]]; then
+  export APP_NAME="Zed Preview"
+elif [[ "$channel" == "nightly" ]]; then
+  export APP_NAME="Zed Nightly"
+elif [[ "$channel" == "dev" ]]; then
+  export APP_NAME="Zed Devel"
+else
+  export APP_NAME="Zed"
+fi
+
+maybesudo mkdir -p "$(dirname "$APP_ICON")"
+maybesudo cp "crates/zed/resources/app-icon$suffix.png" "$APP_ICON"
+maybesudo mkdir -p "${install_prefix}/share/applications"
+maybesudo envsubst < "crates/zed/resources/zed.desktop.in" > "${install_prefix}/share/applications/zed$suffix.desktop"
+
+echo "zed is installed as ${install_prefix}/bin/zed"

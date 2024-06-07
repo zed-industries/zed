@@ -66,6 +66,24 @@ And to run the tests:
 cargo test --workspace
 ```
 
+## Installing a development build
+
+You can install a development build on your machine with:
+
+```
+./script/install-linux
+```
+
+This will build the main editor, and the cli, and make it available at ~/.local/bin/zed, installing .desktop files to ~/.local/share.
+
+If you'd like to install things to a different prefix you can use:
+
+```
+./script/install-linux /usr/
+```
+
+In this case the binary will be `/usr/bin/zed` and the `.desktop` file in `/usr/share`. The script should prompt for sudo as required so that the rust build runs as the current user.
+
 ## Wayland & X11
 
 Zed has basic support for both modes. The mode is selected at runtime. If you're on wayland and want to run in X11 mode, you can set `WAYLAND_DISPLAY='' cargo run` to do so.
