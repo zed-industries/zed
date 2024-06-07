@@ -111,6 +111,10 @@ impl DisconnectedOverlay {
             });
         }
     }
+
+    fn cancel(&mut self, _: &menu::Cancel, cx: &mut ViewContext<Self>) {
+        cx.emit(DismissEvent)
+    }
 }
 
 impl Render for DisconnectedOverlay {
@@ -118,16 +122,9 @@ impl Render for DisconnectedOverlay {
         div()
             .track_focus(&self.focus_handle)
             .elevation_3(cx)
-            // .on_action(cx.listener(Self::cancel))
-            // .on_action(cx.listener(Self::confirm))
-            .capture_any_mouse_down(cx.listener(|this, _, cx| {
-                this.focus_handle(cx).focus(cx);
-            }))
-            // .capture_any_mouse_down(|_, cx| cx.stop_propagation())
-            // .capture_any_mouse_up(|_, cx| cx.stop_propagation())
-            .on_mouse_down_out(cx.listener(|this, _, cx| {
-                // cancel these.
-            }))
+            .on_action(cx.listener(Self::cancel))
+            .occlude()
+            .on_mouse_down_out(cx.listener(|_, _, cx| cx.emit(DismissEvent)))
             .w(rems(24.))
             .max_h(rems(40.))
             .child(

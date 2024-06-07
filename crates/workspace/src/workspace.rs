@@ -2279,6 +2279,9 @@ impl Workspace {
         cx: &mut WindowContext,
     ) -> Task<Result<(Option<ProjectEntryId>, WorkspaceItemBuilder)>> {
         let project = self.project().clone();
+        if project.read(cx).is_disconnected() {
+            return Task::ready(Err(anyhow!(ErrorCode::Disconnected)));
+        }
         let project_item_builders = cx.default_global::<ProjectItemOpeners>().clone();
         let Some(open_project_item) = project_item_builders
             .iter()
