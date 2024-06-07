@@ -1253,17 +1253,24 @@ impl OutlinePanel {
                         let mut traversal =
                             worktree.traverse_from_path(true, true, true, entry.path.as_ref());
 
+                        let mut entries_to_add = HashMap::<WorktreeId, HashSet<&Entry>>::default();
                         let mut current_entry = entry;
                         loop {
-                            if entry.is_dir() {
-                                if is_new || worktree_snapshot.root_entry() == Some(entry) {
-                                    collapsed_dir_ids.remove(&entry.id);
-                                } else if collapsed_dir_ids.contains(&entry.id) {
+                            if current_entry.is_dir() {
+                                if is_new || worktree_snapshot.root_entry() == Some(current_entry) {
+                                    collapsed_dir_ids.remove(&current_entry.id);
+                                } else if collapsed_dir_ids.contains(&current_entry.id) {
+                                    entries_to_add.clear();
+                                    entries_to_add
+                                        .entry(worktree.id())
+                                        .or_default()
+                                        // TODO kb displays does not remove folded dir inside a folded dir
+                                        .insert(current_entry);
                                     break;
                                 }
                             }
 
-                            let new_entry_added = new_workspace_entries
+                            let new_entry_added = entries_to_add
                                 .entry(worktree.id())
                                 .or_default()
                                 .insert(current_entry);
@@ -1274,6 +1281,12 @@ impl OutlinePanel {
                                 }
                             }
                             break;
+                        }
+                        for (workspace_id, new_entries) in entries_to_add {
+                            new_workspace_entries
+                                .entry(workspace_id)
+                                .or_default()
+                                .extend(new_entries);
                         }
                     }
                     None => {
