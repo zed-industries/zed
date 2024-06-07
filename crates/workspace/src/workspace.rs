@@ -651,7 +651,6 @@ impl Workspace {
                     for pane in panes_to_unfollow {
                         this.unfollow(&pane, cx);
                     }
-                    cx.disable_focus();
                 }
 
                 project::Event::Closed => {

@@ -559,7 +559,27 @@ impl DevServerProjects {
                             h_flex()
                                 .visible_on_hover("dev-server")
                                 .gap_1()
-                                .child(
+                                .child(if dev_server.ssh_connection_string.is_some() {
+                                    let dev_server = dev_server.clone();
+                                    IconButton::new("reconnect-dev-server", IconName::ArrowCircle)
+                                        .on_click(cx.listener(move |this, _, cx| {
+                                            let Some(workspace) = this.workspace.upgrade() else {
+                                                return;
+                                            };
+
+                                            reconnect_to_dev_server(
+                                                workspace,
+                                                dev_server.clone(),
+                                                cx,
+                                            )
+                                            .detach_and_prompt_err(
+                                                "Failed to reconnect",
+                                                cx,
+                                                |_, _| None,
+                                            );
+                                        }))
+                                        .tooltip(|cx| Tooltip::text("Reconnect", cx))
+                                } else {
                                     IconButton::new("edit-dev-server", IconName::Pencil)
                                         .on_click(cx.listener(move |this, _, cx| {
                                             this.mode = Mode::CreateDevServer(CreateDevServer {
@@ -578,8 +598,8 @@ impl DevServerProjects {
                                                 },
                                             )
                                         }))
-                                        .tooltip(|cx| Tooltip::text("Edit dev server", cx)),
-                                )
+                                        .tooltip(|cx| Tooltip::text("Edit dev server", cx))
+                                })
                                 .child({
                                     let dev_server_id = dev_server.id;
                                     IconButton::new("remove-dev-server", IconName::Trash)
@@ -1071,8 +1091,6 @@ pub fn reconnect_to_dev_server_project(
                     open_dev_server_project(replace_current_window, project_id, cx)
                 })?
                 .await?;
-        } else {
-            dbg!("wuh woh");
         }
 
         Ok(())
