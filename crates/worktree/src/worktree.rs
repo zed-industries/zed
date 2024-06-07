@@ -403,7 +403,7 @@ impl Worktree {
                     abs_path
                         .file_name()
                         .map_or(String::new(), |f| f.to_string_lossy().to_string()),
-                    abs_path.into(),
+                    abs_path,
                 ),
             };
 
@@ -1622,9 +1622,8 @@ impl RemoteWorktree {
         let envelope = request.into_envelope(0, None, None);
         let response = self.client.request(envelope, T::NAME);
         async move {
-            let response = response.await?;
-            Ok(T::Response::from_envelope(response)
-                .ok_or_else(|| anyhow!("received response of the wrong type"))?)
+            T::Response::from_envelope(response.await?)
+                .ok_or_else(|| anyhow!("received response of the wrong type"))
         }
     }
 
@@ -1661,7 +1660,7 @@ impl RemoteWorktree {
         }
     }
 
-    pub fn insert_entry(
+    fn insert_entry(
         &mut self,
         entry: proto::Entry,
         scan_id: usize,
@@ -1680,7 +1679,7 @@ impl RemoteWorktree {
         })
     }
 
-    pub fn delete_entry(
+    fn delete_entry(
         &mut self,
         id: ProjectEntryId,
         scan_id: usize,
