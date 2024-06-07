@@ -3,7 +3,9 @@
 #![deny(missing_docs)]
 
 mod html_element;
+mod markdown;
 mod markdown_writer;
+mod structure;
 
 use std::io::Read;
 
@@ -14,10 +16,60 @@ use html5ever::tendril::TendrilSink;
 use html5ever::tree_builder::TreeBuilderOpts;
 use markup5ever_rcdom::RcDom;
 
-use crate::markdown_writer::MarkdownWriter;
+use crate::markdown::{
+    HeadingHandler, ListHandler, ParagraphHandler, StyledTextHandler, TableHandler,
+};
+use crate::markdown_writer::{HandleTag, MarkdownWriter};
+
+/// Converts the provided HTML to Markdown.
+pub fn convert_html_to_markdown(html: impl Read) -> Result<String> {
+    let dom = parse_html(html).context("failed to parse HTML")?;
+
+    let handlers: Vec<Box<dyn HandleTag>> = vec![
+        Box::new(ParagraphHandler),
+        Box::new(HeadingHandler),
+        Box::new(ListHandler),
+        Box::new(TableHandler::new()),
+        Box::new(StyledTextHandler),
+        Box::new(structure::rustdoc::RustdocChromeRemover),
+        Box::new(structure::rustdoc::RustdocHeadingHandler),
+        Box::new(structure::rustdoc::RustdocCodeHandler),
+        Box::new(structure::rustdoc::RustdocItemHandler),
+    ];
+
+    let markdown_writer = MarkdownWriter::new();
+    let markdown = markdown_writer
+        .run(&dom.document, handlers)
+        .context("failed to convert HTML to Markdown")?;
+
+    Ok(markdown)
+}
 
 /// Converts the provided rustdoc HTML to Markdown.
-pub fn convert_rustdoc_to_markdown(mut html: impl Read) -> Result<String> {
+pub fn convert_rustdoc_to_markdown(html: impl Read) -> Result<String> {
+    let dom = parse_html(html).context("failed to parse rustdoc HTML")?;
+
+    let handlers: Vec<Box<dyn HandleTag>> = vec![
+        Box::new(ParagraphHandler),
+        Box::new(HeadingHandler),
+        Box::new(ListHandler),
+        Box::new(TableHandler::new()),
+        Box::new(StyledTextHandler),
+        Box::new(structure::rustdoc::RustdocChromeRemover),
+        Box::new(structure::rustdoc::RustdocHeadingHandler),
+        Box::new(structure::rustdoc::RustdocCodeHandler),
+        Box::new(structure::rustdoc::RustdocItemHandler),
+    ];
+
+    let markdown_writer = MarkdownWriter::new();
+    let markdown = markdown_writer
+        .run(&dom.document, handlers)
+        .context("failed to convert rustdoc HTML to Markdown")?;
+
+    Ok(markdown)
+}
+
+fn parse_html(mut html: impl Read) -> Result<RcDom> {
     let parse_options = ParseOpts {
         tree_builder: TreeBuilderOpts {
             drop_doctype: true,
@@ -28,14 +80,9 @@ pub fn convert_rustdoc_to_markdown(mut html: impl Read) -> Result<String> {
     let dom = parse_document(RcDom::default(), parse_options)
         .from_utf8()
         .read_from(&mut html)
-        .context("failed to parse rustdoc HTML")?;
+        .context("failed to parse HTML document")?;
 
-    let markdown_writer = MarkdownWriter::new();
-    let markdown = markdown_writer
-        .run(&dom.document)
-        .context("failed to convert rustdoc to HTML")?;
-
-    Ok(markdown)
+    Ok(dom)
 }
 
 #[cfg(test)]

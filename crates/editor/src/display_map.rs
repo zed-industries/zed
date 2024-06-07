@@ -277,8 +277,55 @@ impl DisplayMap {
         block_map.insert(blocks)
     }
 
-    pub fn replace_blocks(&mut self, styles: HashMap<BlockId, RenderBlock>) {
-        self.block_map.replace(styles);
+    pub fn replace_blocks(
+        &mut self,
+        heights_and_renderers: HashMap<BlockId, (Option<u8>, RenderBlock)>,
+        cx: &mut ModelContext<Self>,
+    ) {
+        //
+        // Note: previous implementation of `replace_blocks` simply called
+        // `self.block_map.replace(styles)` which just modified the render by replacing
+        // the `RenderBlock` with the new one.
+        //
+        // ```rust
+        //  for block in &self.blocks {
+        //           if let Some(render) = renderers.remove(&block.id) {
+        //               *block.render.lock() = render;
+        //           }
+        //       }
+        // ```
+        //
+        // If height changes however, we need to update the tree. There's a performance
+        // cost to this, so we'll split the replace blocks into handling the old behavior
+        // directly and the new behavior separately.
+        //
+        //
+        let mut only_renderers = HashMap::<BlockId, RenderBlock>::default();
+        let mut full_replace = HashMap::<BlockId, (u8, RenderBlock)>::default();
+        for (id, (height, render)) in heights_and_renderers {
+            if let Some(height) = height {
+                full_replace.insert(id, (height, render));
+            } else {
+                only_renderers.insert(id, render);
+            }
+        }
+        self.block_map.replace_renderers(only_renderers);
+
+        if full_replace.is_empty() {
+            return;
+        }
+
+        let snapshot = self.buffer.read(cx).snapshot(cx);
+        let edits = self.buffer_subscription.consume().into_inner();
+        let tab_size = Self::tab_size(&self.buffer, cx);
+        let (snapshot, edits) = self.inlay_map.sync(snapshot, edits);
+        let (snapshot, edits) = self.fold_map.read(snapshot, edits);
+        let (snapshot, edits) = self.tab_map.sync(snapshot, edits, tab_size);
+        let (snapshot, edits) = self
+            .wrap_map
+            .update(cx, |map, cx| map.sync(snapshot, edits, cx));
+        let mut block_map = self.block_map.write(snapshot, edits);
+        block_map.replace(full_replace);
     }
 
     pub fn remove_blocks(&mut self, ids: HashSet<BlockId>, cx: &mut ModelContext<Self>) {

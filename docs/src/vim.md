@@ -27,12 +27,14 @@ g S   Find symbol in entire project
 
 g ]   Go to next diagnostic
 g [   Go to previous diagnostic
+] d   Go to next diagnostic
+[ d   Go to previous diagnostic
 g h   Show inline error (hover)
 g .   Open the code actions menu
 
 # Git
-] c   Go to previous git change
-[ c   Go to next git change
+] c   Go to next git change
+[ c   Go to previous git change
 
 # Treesitter
 ] x   Select a smaller syntax node

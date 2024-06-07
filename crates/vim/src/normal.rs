@@ -2,6 +2,7 @@ mod case;
 mod change;
 mod delete;
 mod increment;
+mod indent;
 pub(crate) mod mark;
 mod paste;
 pub(crate) mod repeat;
@@ -10,6 +11,7 @@ pub(crate) mod search;
 pub mod substitute;
 mod yank;
 
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use crate::{
@@ -20,8 +22,11 @@ use crate::{
     Vim,
 };
 use collections::BTreeSet;
+use editor::display_map::ToDisplayPoint;
 use editor::scroll::Autoscroll;
+use editor::Anchor;
 use editor::Bias;
+use editor::Editor;
 use gpui::{actions, ViewContext, WindowContext};
 use language::{Point, SelectionGoal};
 use log::error;
@@ -32,6 +37,7 @@ use self::{
     case::{change_case, convert_to_lower_case, convert_to_upper_case},
     change::{change_motion, change_object},
     delete::{delete_motion, delete_object},
+    indent::{indent_motion, indent_object, IndentDirection},
     yank::{yank_motion, yank_object},
 };
 
@@ -141,7 +147,11 @@ pub(crate) fn register(workspace: &mut Workspace, cx: &mut ViewContext<Workspace
         Vim::update(cx, |vim, cx| {
             vim.record_current_action(cx);
             vim.update_active_editor(cx, |_, editor, cx| {
-                editor.transact(cx, |editor, cx| editor.indent(&Default::default(), cx))
+                editor.transact(cx, |editor, cx| {
+                    let mut original_positions = save_selection_starts(editor, cx);
+                    editor.indent(&Default::default(), cx);
+                    restore_selection_cursors(editor, cx, &mut original_positions);
+                });
             });
             if vim.state().mode.is_visual() {
                 vim.switch_mode(Mode::Normal, false, cx)
@@ -153,7 +163,11 @@ pub(crate) fn register(workspace: &mut Workspace, cx: &mut ViewContext<Workspace
         Vim::update(cx, |vim, cx| {
             vim.record_current_action(cx);
             vim.update_active_editor(cx, |_, editor, cx| {
-                editor.transact(cx, |editor, cx| editor.outdent(&Default::default(), cx))
+                editor.transact(cx, |editor, cx| {
+                    let mut original_positions = save_selection_starts(editor, cx);
+                    editor.outdent(&Default::default(), cx);
+                    restore_selection_cursors(editor, cx, &mut original_positions);
+                });
             });
             if vim.state().mode.is_visual() {
                 vim.switch_mode(Mode::Normal, false, cx)
@@ -182,6 +196,8 @@ pub fn normal_motion(
             Some(Operator::Delete) => delete_motion(vim, motion, times, cx),
             Some(Operator::Yank) => yank_motion(vim, motion, times, cx),
             Some(Operator::AddSurrounds { target: None }) => {}
+            Some(Operator::Indent) => indent_motion(vim, motion, times, IndentDirection::In, cx),
+            Some(Operator::Outdent) => indent_motion(vim, motion, times, IndentDirection::Out, cx),
             Some(operator) => {
                 // Can't do anything for text objects, Ignoring
                 error!("Unexpected normal mode motion operator: {:?}", operator)
@@ -198,6 +214,12 @@ pub fn normal_object(object: Object, cx: &mut WindowContext) {
                 Some(Operator::Change) => change_object(vim, object, around, cx),
                 Some(Operator::Delete) => delete_object(vim, object, around, cx),
                 Some(Operator::Yank) => yank_object(vim, object, around, cx),
+                Some(Operator::Indent) => {
+                    indent_object(vim, object, around, IndentDirection::In, cx)
+                }
+                Some(Operator::Outdent) => {
+                    indent_object(vim, object, around, IndentDirection::Out, cx)
+                }
                 Some(Operator::AddSurrounds { target: None }) => {
                     waiting_operator = Some(Operator::AddSurrounds {
                         target: Some(SurroundsType::Object(object)),
@@ -378,6 +400,33 @@ fn yank_line(_: &mut Workspace, _: &YankLine, cx: &mut ViewContext<Workspace>) {
         let count = vim.take_count(cx);
         yank_motion(vim, motion::Motion::CurrentLine, count, cx)
     })
+}
+
+fn save_selection_starts(editor: &Editor, cx: &mut ViewContext<Editor>) -> HashMap<usize, Anchor> {
+    let (map, selections) = editor.selections.all_display(cx);
+    selections
+        .iter()
+        .map(|selection| {
+            (
+                selection.id,
+                map.display_point_to_anchor(selection.start, Bias::Right),
+            )
+        })
+        .collect::<HashMap<_, _>>()
+}
+
+fn restore_selection_cursors(
+    editor: &mut Editor,
+    cx: &mut ViewContext<Editor>,
+    positions: &mut HashMap<usize, Anchor>,
+) {
+    editor.change_selections(Some(Autoscroll::fit()), cx, |s| {
+        s.move_with(|map, selection| {
+            if let Some(anchor) = positions.remove(&selection.id) {
+                selection.collapse_to(anchor.to_display_point(map), SelectionGoal::None);
+            }
+        });
+    });
 }
 
 pub(crate) fn normal_replace(text: Arc<str>, cx: &mut WindowContext) {

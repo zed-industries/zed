@@ -36,7 +36,7 @@ use util::{maybe, NumericPrefixWithSuffix, ResultExt, TryFutureExt};
 use workspace::{
     dock::{DockPosition, Panel, PanelEvent},
     notifications::{DetachAndPromptErr, NotifyTaskExt},
-    OpenInTerminal, Workspace,
+    DraggedSelection, OpenInTerminal, SelectedEntry, Workspace,
 };
 use worktree::CreatedEntry;
 
@@ -65,26 +65,6 @@ pub struct ProjectPanel {
     pending_serialization: Task<Option<()>>,
 }
 
-#[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
-struct SelectedEntry {
-    worktree_id: WorktreeId,
-    entry_id: ProjectEntryId,
-}
-
-struct DraggedSelection {
-    active_selection: SelectedEntry,
-    marked_selections: Arc<BTreeSet<SelectedEntry>>,
-}
-
-impl DraggedSelection {
-    fn items<'a>(&'a self) -> Box<dyn Iterator<Item = &'a SelectedEntry> + 'a> {
-        if self.marked_selections.contains(&self.active_selection) {
-            Box::new(self.marked_selections.iter())
-        } else {
-            Box::new(std::iter::once(&self.active_selection))
-        }
-    }
-}
 #[derive(Clone, Debug)]
 struct EditState {
     worktree_id: WorktreeId,
@@ -2377,11 +2357,13 @@ impl Panel for ProjectPanel {
     }
 
     fn starts_open(&self, cx: &WindowContext) -> bool {
-        self.project.read(cx).visible_worktrees(cx).any(|tree| {
-            tree.read(cx)
-                .root_entry()
-                .map_or(false, |entry| entry.is_dir())
-        })
+        let project = &self.project.read(cx);
+        project.dev_server_project_id().is_some()
+            || project.visible_worktrees(cx).any(|tree| {
+                tree.read(cx)
+                    .root_entry()
+                    .map_or(false, |entry| entry.is_dir())
+            })
     }
 }
 
