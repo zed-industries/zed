@@ -1,7 +1,7 @@
 mod dev_servers;
 mod disconnected_overlay;
 
-use client::ProjectId;
+use client::{DevServerProjectId, ProjectId};
 use dev_servers::reconnect_to_dev_server_project;
 pub use dev_servers::DevServerProjects;
 use disconnected_overlay::DisconnectedOverlay;
@@ -340,7 +340,7 @@ impl PickerDelegate for RecentProjectsDelegate {
                                         })
                                     }
                                 };
-                                open_dev_server_project(replace_current_window, project_id, cx)
+                                open_dev_server_project(replace_current_window, dev_server_project.id, project_id, cx)
                         }
                     }
                 }
@@ -530,6 +530,7 @@ impl PickerDelegate for RecentProjectsDelegate {
 
 fn open_dev_server_project(
     replace_current_window: bool,
+    dev_server_project_id: DevServerProjectId,
     project_id: ProjectId,
     cx: &mut ViewContext<Workspace>,
 ) -> Task<anyhow::Result<()>> {
@@ -551,6 +552,7 @@ fn open_dev_server_project(
                     workspace
                         .update(&mut cx, |_workspace, cx| {
                             workspace::join_dev_server_project(
+                                dev_server_project_id,
                                 project_id,
                                 app_state,
                                 Some(handle),
@@ -562,7 +564,13 @@ fn open_dev_server_project(
                 Ok(())
             })
         } else {
-            let task = workspace::join_dev_server_project(project_id, app_state, None, cx);
+            let task = workspace::join_dev_server_project(
+                dev_server_project_id,
+                project_id,
+                app_state,
+                None,
+                cx,
+            );
             cx.spawn(|_, _| async move {
                 task.await?;
                 Ok(())

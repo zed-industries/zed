@@ -212,7 +212,11 @@ impl DevServerProjects {
                                     this.mode = Mode::Default(None);
                                     if let Some(app_state) = AppState::global(cx).upgrade() {
                                         workspace::join_dev_server_project(
-                                            project_id, app_state, None, cx,
+                                            DevServerProjectId(dev_server_project_id),
+                                            project_id,
+                                            app_state,
+                                            None,
+                                            cx,
                                         )
                                         .detach_and_prompt_err(
                                             "Could not join project",
@@ -702,7 +706,7 @@ impl DevServerProjects {
             .on_click(cx.listener(move |_, _, cx| {
                 if let Some(project_id) = project_id {
                     if let Some(app_state) = AppState::global(cx).upgrade() {
-                        workspace::join_dev_server_project(project_id, app_state, None, cx)
+                        workspace::join_dev_server_project(dev_server_project_id, project_id, app_state, None, cx)
                             .detach_and_prompt_err("Could not join project", cx, |_, _| None)
                     }
                 } else {
@@ -1088,7 +1092,12 @@ pub fn reconnect_to_dev_server_project(
         })? {
             workspace
                 .update(&mut cx, move |_, cx| {
-                    open_dev_server_project(replace_current_window, project_id, cx)
+                    open_dev_server_project(
+                        replace_current_window,
+                        dev_server_project_id,
+                        project_id,
+                        cx,
+                    )
                 })?
                 .await?;
         }

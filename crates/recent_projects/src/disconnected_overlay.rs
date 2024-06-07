@@ -77,11 +77,8 @@ impl DisconnectedOverlay {
             .and_then(|project| project.project_id)
         {
             return workspace.update(cx, move |_, cx| {
-                open_dev_server_project(true, project_id, cx).detach_and_prompt_err(
-                    "Failed to reconnect",
-                    cx,
-                    |_, _| None,
-                )
+                open_dev_server_project(true, dev_server_project_id, project_id, cx)
+                    .detach_and_prompt_err("Failed to reconnect", cx, |_, _| None)
             });
         }
 

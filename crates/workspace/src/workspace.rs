@@ -16,7 +16,7 @@ use anyhow::{anyhow, Context as _, Result};
 use call::{call_settings::CallSettings, ActiveCall};
 use client::{
     proto::{self, ErrorCode, PeerId},
-    ChannelId, Client, ErrorExt, ProjectId, Status, TypedEnvelope, UserStore,
+    ChannelId, Client, DevServerProjectId, ErrorExt, ProjectId, Status, TypedEnvelope, UserStore,
 };
 use collections::{hash_map, HashMap, HashSet};
 use derive_more::{Deref, DerefMut};
@@ -2279,9 +2279,6 @@ impl Workspace {
         cx: &mut WindowContext,
     ) -> Task<Result<(Option<ProjectEntryId>, WorkspaceItemBuilder)>> {
         let project = self.project().clone();
-        if project.read(cx).is_disconnected() {
-            return Task::ready(Err(anyhow!(ErrorCode::Disconnected)));
-        }
         let project_item_builders = cx.default_global::<ProjectItemOpeners>().clone();
         let Some(open_project_item) = project_item_builders
             .iter()
@@ -4953,6 +4950,7 @@ pub fn join_hosted_project(
 }
 
 pub fn join_dev_server_project(
+    dev_server_project_id: DevServerProjectId,
     project_id: ProjectId,
     app_state: Arc<AppState>,
     window_to_replace: Option<WindowHandle<Workspace>>,
@@ -4987,10 +4985,19 @@ pub fn join_dev_server_project(
             )
             .await?;
 
+            let serialized_workspace: Option<SerializedWorkspace> =
+                persistence::DB.workspace_for_dev_server_project(dev_server_project_id);
+
+            let workspace_id = if let Some(serialized_workspace) = serialized_workspace {
+                serialized_workspace.id
+            } else {
+                persistence::DB.next_id().await?
+            };
+
             if let Some(window_to_replace) = window_to_replace {
                 cx.update_window(window_to_replace.into(), |_, cx| {
                     cx.replace_root_view(|cx| {
-                        Workspace::new(Default::default(), project, app_state.clone(), cx)
+                        Workspace::new(Some(workspace_id), project, app_state.clone(), cx)
                     });
                 })?;
                 window_to_replace
@@ -5002,7 +5009,7 @@ pub fn join_dev_server_project(
                         window_bounds_override.map(|bounds| WindowBounds::Windowed(bounds));
                     cx.open_window(options, |cx| {
                         cx.new_view(|cx| {
-                            Workspace::new(Default::default(), project, app_state.clone(), cx)
+                            Workspace::new(Some(workspace_id), project, app_state.clone(), cx)
                         })
                     })
                 })?
