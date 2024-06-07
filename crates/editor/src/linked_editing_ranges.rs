@@ -11,6 +11,7 @@ use crate::Editor;
 
 #[derive(Clone, Default)]
 pub(super) struct LinkedEditingRanges(
+    /// Ranges are non-overlapping and sorted by .0 (thus, [x + 1].start > [x].end must hold)
     HashMap<BufferId, Vec<(Range<text::Anchor>, Vec<Range<text::Anchor>>)>>,
 );
 
@@ -20,18 +21,20 @@ impl LinkedEditingRanges {
         id: BufferId,
         anchor: Range<text::Anchor>,
         snapshot: &text::BufferSnapshot,
-    ) -> Option<&[Range<text::Anchor>]> {
+    ) -> Option<&(Range<text::Anchor>, Vec<Range<text::Anchor>>)> {
         let ranges_for_buffer = self.0.get(&id)?;
         let lower_bound = ranges_for_buffer
-            .partition_point(|(range, _)| range.start.cmp(&anchor.start, snapshot).is_lt());
-        let entry = ranges_for_buffer.get(lower_bound)?;
-        if anchor.start.cmp(&entry.0.start, snapshot).is_ge()
-            && anchor.end.cmp(&entry.0.end, snapshot).is_le()
-        {
-            Some(&entry.1)
-        } else {
-            None
+            .partition_point(|(range, _)| range.start.cmp(&anchor.start, snapshot).is_le());
+        if lower_bound == 0 {
+            // None of the linked ranges contains `anchor`.
+            return None;
         }
+        ranges_for_buffer
+            .get(lower_bound - 1)
+            .filter(|(range, _)| range.end.cmp(&anchor.end, snapshot).is_ge())
+    }
+    pub(super) fn is_empty(&self) -> bool {
+        self.0.is_empty()
     }
 }
 pub(super) fn refresh_linked_ranges(this: &mut Editor, cx: &mut ViewContext<Editor>) -> Option<()> {
@@ -65,7 +68,7 @@ pub(super) fn refresh_linked_ranges(this: &mut Editor, cx: &mut ViewContext<Edit
                     let snapshot = buffer.read(cx).snapshot();
                     let buffer_id = buffer.read(cx).remote_id();
                     let linked_edits_task = project.linked_edit(&buffer, start.clone(), cx);
-                    let mut highlights = move || async move {
+                    let highlights = move || async move {
                         let edits = linked_edits_task.await.log_err()?;
 
                         // Find the range containing our current selection.
@@ -85,7 +88,7 @@ pub(super) fn refresh_linked_ranges(this: &mut Editor, cx: &mut ViewContext<Edit
                                 let lower_bound = siblings.partition_point(|entry| {
                                     entry.0.start.cmp(&key.start, &snapshot).is_lt()
                                 });
-                                dbg!(&lower_bound);
+
                                 if siblings
                                     .get(lower_bound)
                                     .filter(|entry| entry.0.end.cmp(&key.end, &snapshot).is_ge())

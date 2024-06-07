@@ -2970,54 +2970,58 @@ impl Editor {
             // If not handling any auto-close operation, then just replace the selected
             // text with the given input and move the selection to the end of the
             // newly inserted text.
-
+            let start_anchor = snapshot.anchor_after(selection.start);
             let anchor = snapshot.anchor_after(selection.end);
-            if let Some((_, linked_ranges)) = self
-                .background_highlights
-                .get(&TypeId::of::<LinkedEditingRangeHighlight>())
-            {
-                let selection = self.selections.newest_anchor();
-                let selection_head = selection.head();
-                let is_currently_edited_range = |range: &&Range<Anchor>| {
-                    if range.start.cmp(&selection_head, &snapshot).is_le() {
-                        let end_offset = range.end.to_offset(&snapshot);
-                        let selection_offset = selection.end.to_offset(&snapshot);
-                        end_offset >= selection_offset || end_offset >= selection_offset + 1
-                    } else {
-                        false
-                    }
-                };
-
-                // This editor has associated linked editing ranges.
-                if let Some(edited_range) =
-                    linked_ranges.into_iter().find(is_currently_edited_range)
+            if !self.linked_edit_ranges.is_empty() {
+                if let Some(((base_range, linked_ranges), buffer_snapshot)) =
+                    anchor.buffer_id.and_then(|end_buffer_id| {
+                        if start_anchor.buffer_id == Some(end_buffer_id) {
+                            let snapshot = self
+                                .buffer
+                                .read(cx)
+                                .buffer(end_buffer_id)?
+                                .read(cx)
+                                .snapshot();
+                            self.linked_edit_ranges
+                                .get(
+                                    end_buffer_id,
+                                    start_anchor.text_anchor..anchor.text_anchor,
+                                    &snapshot,
+                                )
+                                .map(|ranges| (ranges, snapshot))
+                        } else {
+                            dbg!("Nope");
+                            None
+                        }
+                    })
                 {
+                    dbg!("Got linked ranges");
+                    use text::ToOffset as TO;
+
                     // find offset from the start of current range to current cursor position
-                    let start_byte_offset = edited_range.start.to_offset(&snapshot);
-                    let start_offset = selection.head().to_offset(&snapshot);
+                    let start_byte_offset = TO::to_offset(&base_range.start, &buffer_snapshot);
+                    let start_offset = TO::to_offset(&selection.head(), &buffer_snapshot);
                     let start_difference = start_offset - start_byte_offset;
-                    let end_offset = selection.tail().to_offset(&snapshot);
+                    let end_offset = TO::to_offset(&selection.tail(), &buffer_snapshot);
                     let end_difference = end_offset - start_byte_offset;
                     // Current range has associated linked ranges.
                     for range in linked_ranges.iter() {
-                        let start_offset = range.start.to_offset(&snapshot);
+                        let start_offset = TO::to_offset(&range.start, &buffer_snapshot);
                         let end_offset = start_offset + end_difference;
                         let start_offset = start_offset + start_difference;
                         let start_point = start_offset.to_point(&snapshot);
                         let end_point = end_offset.to_point(&snapshot);
-                        let text = if range == edited_range {
-                            Arc::from("")
-                        } else {
-                            text.clone()
-                        };
+                        let text = text.clone();
                         edits.push((start_point..end_point, text));
                     }
                 }
             }
+
             new_selections.push((selection.map(|_| anchor), 0));
             edits.push((selection.start..selection.end, text.clone()));
+            edits.sort_by_key(|(a, _)| a.start);
         }
-        edits.sort_by_key(|(a, _)| a.start);
+
         drop(snapshot);
 
         self.transact(cx, |this, cx| {
