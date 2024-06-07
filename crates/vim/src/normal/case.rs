@@ -1,12 +1,97 @@
-use editor::scroll::Autoscroll;
+use collections::HashMap;
+use editor::{display_map::ToDisplayPoint, scroll::Autoscroll};
 use gpui::ViewContext;
-use language::{Bias, Point};
+use language::{Bias, Point, SelectionGoal};
 use multi_buffer::MultiBufferRow;
+use ui::WindowContext;
 use workspace::Workspace;
 
 use crate::{
-    normal::ChangeCase, normal::ConvertToLowerCase, normal::ConvertToUpperCase, state::Mode, Vim,
+    motion::Motion,
+    normal::{ChangeCase, ConvertToLowerCase, ConvertToUpperCase},
+    object::Object,
+    state::Mode,
+    Vim,
 };
+
+pub enum CaseTarget {
+    Lowercase,
+    Uppercase,
+    OppositeCase,
+}
+
+pub fn change_case_motion(
+    vim: &mut Vim,
+    motion: Motion,
+    times: Option<usize>,
+    mode: CaseTarget,
+    cx: &mut WindowContext,
+) {
+    vim.stop_recording();
+    vim.update_active_editor(cx, |_, editor, cx| {
+        let text_layout_details = editor.text_layout_details(cx);
+        editor.transact(cx, |editor, cx| {
+            let mut selection_starts: HashMap<_, _> = Default::default();
+            editor.change_selections(None, cx, |s| {
+                s.move_with(|map, selection| {
+                    let anchor = map.display_point_to_anchor(selection.head(), Bias::Left);
+                    selection_starts.insert(selection.id, anchor);
+                    motion.expand_selection(map, selection, times, false, &text_layout_details);
+                });
+            });
+            match mode {
+                CaseTarget::Lowercase => editor.convert_to_lower_case(&Default::default(), cx),
+                CaseTarget::Uppercase => editor.convert_to_upper_case(&Default::default(), cx),
+                CaseTarget::OppositeCase => {
+                    editor.convert_to_opposite_case(&Default::default(), cx)
+                }
+            }
+            editor.change_selections(None, cx, |s| {
+                s.move_with(|map, selection| {
+                    let anchor = selection_starts.remove(&selection.id).unwrap();
+                    selection.collapse_to(anchor.to_display_point(map), SelectionGoal::None);
+                });
+            });
+        });
+    });
+}
+
+pub fn change_case_object(
+    vim: &mut Vim,
+    object: Object,
+    around: bool,
+    mode: CaseTarget,
+    cx: &mut WindowContext,
+) {
+    vim.stop_recording();
+    vim.update_active_editor(cx, |_, editor, cx| {
+        editor.transact(cx, |editor, cx| {
+            let mut original_positions: HashMap<_, _> = Default::default();
+            editor.change_selections(None, cx, |s| {
+                s.move_with(|map, selection| {
+                    object.expand_selection(map, selection, around);
+                    original_positions.insert(
+                        selection.id,
+                        map.display_point_to_anchor(selection.start, Bias::Left),
+                    );
+                });
+            });
+            match mode {
+                CaseTarget::Lowercase => editor.convert_to_lower_case(&Default::default(), cx),
+                CaseTarget::Uppercase => editor.convert_to_upper_case(&Default::default(), cx),
+                CaseTarget::OppositeCase => {
+                    editor.convert_to_opposite_case(&Default::default(), cx)
+                }
+            }
+            editor.change_selections(None, cx, |s| {
+                s.move_with(|map, selection| {
+                    let anchor = original_positions.remove(&selection.id).unwrap();
+                    selection.collapse_to(anchor.to_display_point(map), SelectionGoal::None);
+                });
+            });
+        });
+    });
+}
 
 pub fn change_case(_: &mut Workspace, _: &ChangeCase, cx: &mut ViewContext<Workspace>) {
     manipulate_text(cx, |c| {
@@ -179,5 +264,30 @@ mod test {
         cx.set_shared_state("ˇAa\nBb\nCc").await;
         cx.simulate_shared_keystrokes("ctrl-v j u").await;
         cx.shared_state().await.assert_eq("ˇaa\nbb\nCc");
+    }
+
+    #[gpui::test]
+    async fn test_change_case_motion(cx: &mut gpui::TestAppContext) {
+        let mut cx = NeovimBackedTestContext::new(cx).await;
+        // works in visual mode
+        cx.set_shared_state("ˇabc def").await;
+        cx.simulate_shared_keystrokes("g shift-u w").await;
+        cx.shared_state().await.assert_eq("ˇABC def");
+
+        cx.simulate_shared_keystrokes("g u w").await;
+        cx.shared_state().await.assert_eq("ˇabc def");
+
+        cx.simulate_shared_keystrokes("g ~ w").await;
+        cx.shared_state().await.assert_eq("ˇABC def");
+
+        cx.simulate_shared_keystrokes(".").await;
+        cx.shared_state().await.assert_eq("ˇabc def");
+
+        cx.set_shared_state("abˇc def").await;
+        cx.simulate_shared_keystrokes("g ~ i w").await;
+        cx.shared_state().await.assert_eq("ˇABC def");
+
+        cx.simulate_shared_keystrokes(".").await;
+        cx.shared_state().await.assert_eq("ˇabc def");
     }
 }
