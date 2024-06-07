@@ -23,6 +23,7 @@ if [[ -n $apt ]]; then
     libzstd-dev
     libvulkan1
     libgit2-dev
+    make
   )
   $maysudo "$apt" install -y "${deps[@]}"
   exit 0

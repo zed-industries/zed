@@ -1,5 +1,5 @@
 use crate::{
-    assistant_settings::ZedDotDevModel, count_open_ai_tokens, CompletionProvider, LanguageModel,
+    assistant_settings::CloudModel, count_open_ai_tokens, CompletionProvider, LanguageModel,
     LanguageModelRequest,
 };
 use anyhow::{anyhow, Result};
@@ -10,17 +10,17 @@ use std::{future, sync::Arc};
 use strum::IntoEnumIterator;
 use ui::prelude::*;
 
-pub struct ZedDotDevCompletionProvider {
+pub struct CloudCompletionProvider {
     client: Arc<Client>,
-    model: ZedDotDevModel,
+    model: CloudModel,
     settings_version: usize,
     status: client::Status,
     _maintain_client_status: Task<()>,
 }
 
-impl ZedDotDevCompletionProvider {
+impl CloudCompletionProvider {
     pub fn new(
-        model: ZedDotDevModel,
+        model: CloudModel,
         client: Arc<Client>,
         settings_version: usize,
         cx: &mut AppContext,
@@ -30,7 +30,7 @@ impl ZedDotDevCompletionProvider {
         let maintain_client_status = cx.spawn(|mut cx| async move {
             while let Some(status) = status_rx.next().await {
                 let _ = cx.update_global::<CompletionProvider, _>(|provider, _cx| {
-                    if let CompletionProvider::ZedDotDev(provider) = provider {
+                    if let CompletionProvider::Cloud(provider) = provider {
                         provider.status = status;
                     } else {
                         unreachable!()
@@ -47,20 +47,20 @@ impl ZedDotDevCompletionProvider {
         }
     }
 
-    pub fn update(&mut self, model: ZedDotDevModel, settings_version: usize) {
+    pub fn update(&mut self, model: CloudModel, settings_version: usize) {
         self.model = model;
         self.settings_version = settings_version;
     }
 
-    pub fn available_models(&self) -> impl Iterator<Item = ZedDotDevModel> {
-        let mut custom_model = if let ZedDotDevModel::Custom(custom_model) = self.model.clone() {
+    pub fn available_models(&self) -> impl Iterator<Item = CloudModel> {
+        let mut custom_model = if let CloudModel::Custom(custom_model) = self.model.clone() {
             Some(custom_model)
         } else {
             None
         };
-        ZedDotDevModel::iter().filter_map(move |model| {
-            if let ZedDotDevModel::Custom(_) = model {
-                Some(ZedDotDevModel::Custom(custom_model.take()?))
+        CloudModel::iter().filter_map(move |model| {
+            if let CloudModel::Custom(_) = model {
+                Some(CloudModel::Custom(custom_model.take()?))
             } else {
                 Some(model)
             }
@@ -71,7 +71,7 @@ impl ZedDotDevCompletionProvider {
         self.settings_version
     }
 
-    pub fn model(&self) -> ZedDotDevModel {
+    pub fn model(&self) -> CloudModel {
         self.model.clone()
     }
 
@@ -94,21 +94,19 @@ impl ZedDotDevCompletionProvider {
         cx: &AppContext,
     ) -> BoxFuture<'static, Result<usize>> {
         match request.model {
-            LanguageModel::ZedDotDev(ZedDotDevModel::Gpt4)
-            | LanguageModel::ZedDotDev(ZedDotDevModel::Gpt4Turbo)
-            | LanguageModel::ZedDotDev(ZedDotDevModel::Gpt4Omni)
-            | LanguageModel::ZedDotDev(ZedDotDevModel::Gpt3Point5Turbo) => {
+            LanguageModel::Cloud(CloudModel::Gpt4)
+            | LanguageModel::Cloud(CloudModel::Gpt4Turbo)
+            | LanguageModel::Cloud(CloudModel::Gpt4Omni)
+            | LanguageModel::Cloud(CloudModel::Gpt3Point5Turbo) => {
                 count_open_ai_tokens(request, cx.background_executor())
             }
-            LanguageModel::ZedDotDev(
-                ZedDotDevModel::Claude3Opus
-                | ZedDotDevModel::Claude3Sonnet
-                | ZedDotDevModel::Claude3Haiku,
+            LanguageModel::Cloud(
+                CloudModel::Claude3Opus | CloudModel::Claude3Sonnet | CloudModel::Claude3Haiku,
             ) => {
                 // Can't find a tokenizer for Claude 3, so for now just use the same as OpenAI's as an approximation.
                 count_open_ai_tokens(request, cx.background_executor())
             }
-            LanguageModel::ZedDotDev(ZedDotDevModel::Custom(model)) => {
+            LanguageModel::Cloud(CloudModel::Custom(model)) => {
                 let request = self.client.request(proto::CountTokensWithLanguageModel {
                     model,
                     messages: request
@@ -129,8 +127,10 @@ impl ZedDotDevCompletionProvider {
 
     pub fn complete(
         &self,
-        request: LanguageModelRequest,
+        mut request: LanguageModelRequest,
     ) -> BoxFuture<'static, Result<BoxStream<'static, Result<String>>>> {
+        request.preprocess();
+
         let request = proto::CompleteWithLanguageModel {
             model: request.model.id().to_string(),
             messages: request

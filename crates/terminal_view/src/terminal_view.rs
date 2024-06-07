@@ -972,6 +972,7 @@ impl SearchableItem for TerminalView {
             word: false,
             regex: true,
             replacement: false,
+            selection: false,
         }
     }
 
@@ -1300,15 +1301,10 @@ mod tests {
             .unwrap();
 
         let entry = cx
-            .update(|cx| {
-                wt.update(cx, |wt, cx| {
-                    wt.as_local()
-                        .unwrap()
-                        .create_entry(Path::new(""), is_dir, cx)
-                })
-            })
+            .update(|cx| wt.update(cx, |wt, cx| wt.create_entry(Path::new(""), is_dir, cx)))
             .await
             .unwrap()
+            .to_included()
             .unwrap();
 
         (wt, entry)

@@ -1,5 +1,5 @@
 [package]
-name = "rustdoc_to_markdown"
+name = "html_to_markdown"
 version = "0.1.0"
 edition = "2021"
 publish = false
@@ -9,7 +9,7 @@ license = "GPL-3.0-or-later"
 workspace = true
 
 [lib]
-path = "src/rustdoc_to_markdown.rs"
+path = "src/html_to_markdown.rs"
 
 [dependencies]
 anyhow.workspace = true
