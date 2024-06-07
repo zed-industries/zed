@@ -74,6 +74,7 @@ pub fn main() {
                         selection.fade_out(0.7);
                         selection
                     },
+                    pad_blocks: true,
                 };
                 let markdown = cx.new_view(|cx| {
                     Markdown::new(

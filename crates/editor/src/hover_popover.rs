@@ -365,22 +365,20 @@ fn show_hover(
 async fn parse_blocks(
     blocks: &[HoverBlock],
     language_registry: &Arc<LanguageRegistry>,
-    language: Option<Arc<Language>>,
+    _language: Option<Arc<Language>>,
     cx: &mut AsyncWindowContext,
 ) -> Vec<View<Markdown>> {
-    // let mut text = String::new();
-    // let mut highlights = Vec::new();
-    // let mut region_ranges = Vec::new();
-    // let mut regions = Vec::new();
-
     let mut parsed_blocks: Vec<View<Markdown>> = Vec::new();
 
     for block in blocks {
+        let text = block.clone().text;
         let rendered_block = cx.new_view(|cx| {
-            let s = ThemeSettings::get_global(cx);
-            let markdown_style = MarkdownStyle::get_themed_default(cx);
+            let markdown_style = MarkdownStyle {
+                pad_blocks: false,
+                ..MarkdownStyle::get_themed_default(cx)
+            };
             Markdown::new(
-                block.clone().text.into(),
+                text.into(),
                 markdown_style.clone(),
                 Some(language_registry.clone()),
                 cx,
@@ -388,8 +386,6 @@ async fn parse_blocks(
         });
         if rendered_block.is_ok() {
             parsed_blocks.push(rendered_block.unwrap());
-        } else {
-            println!("Error parsing hover block: {:?}", block);
         }
     }
     parsed_blocks
@@ -480,16 +476,14 @@ impl InfoPopover {
             .id("info_popover")
             .elevation_2(cx)
             .overflow_y_scroll()
-            //     .overflow_x_scroll()
             .track_scroll(&self.scroll_handle)
             .max_w(max_size.width)
             .max_h(max_size.height)
-            //     // .cursor(CursorStyle::PointingHand)
-            //     // .tooltip(move |cx| Tooltip::text("Copy to Clipboard", cx))
-            //     // Prevent a mouse down/move on the popover from being propagated to the editor,
-            //     // because that would dismiss the popover.
+            // Prevent a mouse down/move on the popover from being propagated to the editor,
+            // because that would dismiss the popover.
             .on_mouse_move(|_, cx| cx.stop_propagation())
             .on_mouse_down(MouseButton::Left, |_, cx| cx.stop_propagation())
+            .p_2()
             .children(self.parsed_content.clone().into_iter())
             .into_any_element()
     }

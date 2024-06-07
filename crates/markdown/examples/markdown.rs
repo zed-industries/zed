@@ -142,6 +142,7 @@ pub fn main() {
                             selection.fade_out(0.7);
                             selection
                         },
+                        pad_blocks: true,
                     },
                     language_registry,
                     cx,

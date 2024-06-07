@@ -29,6 +29,7 @@ pub struct MarkdownStyle {
     pub block_quote_border_color: Hsla,
     pub syntax: Arc<SyntaxTheme>,
     pub selection_background_color: Hsla,
+    pub pad_blocks: bool,
 }
 
 impl MarkdownStyle {
@@ -69,6 +70,7 @@ impl MarkdownStyle {
                 selection.fade_out(0.7);
                 selection
             },
+            pad_blocks: true,
         }
     }
 }
@@ -83,6 +85,7 @@ impl Default for MarkdownStyle {
             block_quote_border_color: Default::default(),
             syntax: Arc::new(SyntaxTheme::default()),
             selection_background_color: Default::default(),
+            pad_blocks: true,
         }
     }
 }
@@ -543,11 +546,12 @@ impl Element for MarkdownElement {
                         MarkdownTag::BlockQuote => {
                             builder.push_text_style(self.style.block_quote.clone());
                             builder.push_div(
-                                div()
-                                    .pl_4()
-                                    .mb_2()
-                                    .border_l_4()
-                                    .border_color(self.style.block_quote_border_color),
+                                if self.style.pad_blocks {
+                                    div().pl_4().mb_2().border_l_4()
+                                } else {
+                                    div()
+                                }
+                                .border_color(self.style.block_quote_border_color),
                             );
                         }
                         MarkdownTag::CodeBlock(kind) => {
@@ -559,10 +563,18 @@ impl Element for MarkdownElement {
 
                             builder.push_code_block(language);
                             builder.push_text_style(self.style.code_block.clone());
-                            builder.push_div(div().rounded_lg().p_4().mb_2().w_full().when_some(
-                                self.style.code_block.background_color,
-                                |div, color| div.bg(color),
-                            ));
+                            builder.push_div(
+                                if self.style.pad_blocks {
+                                    div().p_4().mb_2()
+                                } else {
+                                    div()
+                                }
+                                .rounded_lg()
+                                .w_full()
+                                .when_some(self.style.code_block.background_color, |div, color| {
+                                    div.bg(color)
+                                }),
+                            );
                         }
                         MarkdownTag::HtmlBlock => builder.push_div(div()),
                         MarkdownTag::List(bullet_index) => {
