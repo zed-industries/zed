@@ -21,12 +21,16 @@ impl HandleTag for WikipediaChromeRemover {
                     return StartTagOutcome::Skip;
                 }
             }
-            "div" | "span" => {
+            "div" | "span" | "a" => {
                 if tag.attr("id").as_deref() == Some("p-lang-btn") {
                     return StartTagOutcome::Skip;
                 }
 
-                let classes_to_skip = ["mw-editsection"];
+                if tag.attr("id").as_deref() == Some("p-search") {
+                    return StartTagOutcome::Skip;
+                }
+
+                let classes_to_skip = ["mw-editsection", "mw-jump-link"];
                 if tag.has_any_classes(&classes_to_skip) {
                     return StartTagOutcome::Skip;
                 }

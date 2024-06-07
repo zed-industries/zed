@@ -41,7 +41,9 @@ impl FetchSlashCommand {
             Box::new(markdown::ParagraphHandler),
             Box::new(markdown::HeadingHandler),
             Box::new(markdown::ListHandler),
+            Box::new(markdown::TableHandler::new()),
             Box::new(markdown::StyledTextHandler),
+            Box::new(markdown::CodeHandler),
         ];
         if url.contains("wikipedia.org") {
             use html_to_markdown::structure::wikipedia;
