@@ -45,6 +45,14 @@
   (float)
 ] @number
 
+; Self references
+
+[
+  (parameter (identifier) @type)
+  (attribute (identifier) @type)
+  (#match? @type "^self$")
+]
+
 (comment) @comment
 (string) @string
 (escape_sequence) @escape
