@@ -8364,14 +8364,12 @@ impl Project {
         self.worktree_for_id(project_path.worktree_id, cx)?
             .read(cx)
             .as_local()?
-            .snapshot()
             .local_git_repo(&project_path.path)
     }
 
     pub fn get_first_worktree_root_repo(&self, cx: &AppContext) -> Option<Arc<dyn GitRepository>> {
         let worktree = self.visible_worktrees(cx).next()?.read(cx).as_local()?;
         let root_entry = worktree.root_git_entry()?;
-
         worktree.get_local_repo(&root_entry)?.repo().clone().into()
     }
 

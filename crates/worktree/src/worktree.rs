@@ -1212,6 +1212,15 @@ impl LocalWorktree {
         self.settings.clone()
     }
 
+    pub fn local_git_repo(&self, path: &Path) -> Option<Arc<dyn GitRepository>> {
+        self.repo_for_path(path)
+            .map(|(_, entry)| entry.repo_ptr.clone())
+    }
+
+    pub fn get_local_repo(&self, repo: &RepositoryEntry) -> Option<&LocalRepositoryEntry> {
+        self.git_repositories.get(&repo.work_directory.0)
+    }
+
     fn load_file(&self, path: &Path, cx: &mut ModelContext<Worktree>) -> Task<Result<LoadedFile>> {
         let path = Arc::from(path);
         let abs_path = self.absolutize(&path);
@@ -2204,19 +2213,10 @@ impl Snapshot {
 }
 
 impl LocalSnapshot {
-    pub fn get_local_repo(&self, repo: &RepositoryEntry) -> Option<&LocalRepositoryEntry> {
-        self.git_repositories.get(&repo.work_directory.0)
-    }
-
     pub fn repo_for_path(&self, path: &Path) -> Option<(RepositoryEntry, &LocalRepositoryEntry)> {
         let (_, repo_entry) = self.repository_and_work_directory_for_path(path)?;
         let work_directory_id = repo_entry.work_directory_id();
         Some((repo_entry, self.git_repositories.get(&work_directory_id)?))
-    }
-
-    pub fn local_git_repo(&self, path: &Path) -> Option<Arc<dyn GitRepository>> {
-        self.repo_for_path(path)
-            .map(|(_, entry)| entry.repo_ptr.clone())
     }
 
     fn build_update(

@@ -846,7 +846,7 @@ async fn test_write_file(cx: &mut TestAppContext) {
     tree.flush_fs_events(cx).await;
 
     tree.update(cx, |tree, cx| {
-        tree.as_local().unwrap().write_file(
+        tree.write_file(
             Path::new("tracked-dir/file.txt"),
             "hello".into(),
             Default::default(),
@@ -856,7 +856,7 @@ async fn test_write_file(cx: &mut TestAppContext) {
     .await
     .unwrap();
     tree.update(cx, |tree, cx| {
-        tree.as_local().unwrap().write_file(
+        tree.write_file(
             Path::new("ignored-dir/file.txt"),
             "world".into(),
             Default::default(),
