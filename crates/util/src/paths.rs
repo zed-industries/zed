@@ -343,36 +343,40 @@ impl<P> PathLikeWithPosition<P> {
 
 #[derive(Clone, Debug)]
 pub struct PathMatcher {
-    maybe_path: PathBuf,
+    source: String,
     glob: GlobMatcher,
 }
 
 impl std::fmt::Display for PathMatcher {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        self.maybe_path.to_string_lossy().fmt(f)
+        self.source.fmt(f)
     }
 }
 
 impl PartialEq for PathMatcher {
     fn eq(&self, other: &Self) -> bool {
-        self.maybe_path.eq(&other.maybe_path)
+        self.source.eq(&other.source)
     }
 }
 
 impl Eq for PathMatcher {}
 
 impl PathMatcher {
-    pub fn new(maybe_glob: &str) -> Result<Self, globset::Error> {
+    pub fn new(source: &str) -> Result<Self, globset::Error> {
         Ok(PathMatcher {
-            glob: Glob::new(maybe_glob)?.compile_matcher(),
-            maybe_path: PathBuf::from(maybe_glob),
+            glob: Glob::new(source)?.compile_matcher(),
+            source: String::from(source),
         })
+    }
+
+    pub fn source(&self) -> &str {
+        &self.source
     }
 
     pub fn is_match<P: AsRef<Path>>(&self, other: P) -> bool {
         let other_path = other.as_ref();
-        other_path.starts_with(&self.maybe_path)
-            || other_path.ends_with(&self.maybe_path)
+        other_path.starts_with(Path::new(&self.source))
+            || other_path.ends_with(Path::new(&self.source))
             || self.glob.is_match(other_path)
             || self.check_with_end_separator(other_path)
     }
