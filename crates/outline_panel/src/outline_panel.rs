@@ -76,9 +76,8 @@ pub struct OutlinePanel {
     pending_serialization: Task<Option<()>>,
     depth_map: Vec<usize>,
     visible_entries: Vec<OutlinePanelEntry>,
-    // TODO kb has to include files with outlines later?
+    // TODO kb should instead keep the folded dir ids, as outlines are expand-all first
     expanded_dir_ids: HashMap<WorktreeId, BTreeSet<ProjectEntryId>>,
-    unfolded_dir_ids: HashSet<ProjectEntryId>,
     // Currently selected entry in a file tree
     selected_entry: Option<OutlinePanelEntry>,
     displayed_item: Option<DisplayedActiveItem>,
@@ -301,7 +300,6 @@ impl OutlinePanel {
                 visible_entries: Vec::new(),
                 depth_map: Vec::new(),
                 expanded_dir_ids: HashMap::default(),
-                unfolded_dir_ids: Default::default(),
                 selected_entry: None,
                 context_menu: None,
                 width: None,
@@ -357,8 +355,7 @@ impl OutlinePanel {
         else {
             return;
         };
-        if let Some(OutlinePanelEntry::Directory(_, selected_entry)) = &self.selected_entry {
-            self.unfolded_dir_ids.insert(selected_entry.id);
+        if let Some(OutlinePanelEntry::Directory(_, _selected_entry)) = &self.selected_entry {
             self.update_visible_entries(&editor, HashSet::default(), None, cx);
             self.autoscroll(cx);
             cx.notify();
@@ -366,7 +363,7 @@ impl OutlinePanel {
     }
 
     fn fold_directory(&mut self, _: &FoldDirectory, cx: &mut ViewContext<Self>) {
-        if let Some(selected_dir @ OutlinePanelEntry::Directory(..)) = &self.selected_entry {
+        if let Some(_selected_dir @ OutlinePanelEntry::Directory(..)) = &self.selected_entry {
             let Some(editor) = self
                 .displayed_item
                 .as_ref()
@@ -374,22 +371,6 @@ impl OutlinePanel {
             else {
                 return;
             };
-
-            for folded_dir_entry_id in self
-                .visible_entries
-                .iter()
-                .skip_while(|entry| entry != &selected_dir)
-                .take_while(|entry| matches!(entry, OutlinePanelEntry::Directory(..)))
-                .filter_map(|entry| {
-                    if let OutlinePanelEntry::Directory(_, entry) = entry {
-                        Some(entry.id)
-                    } else {
-                        None
-                    }
-                })
-            {
-                self.unfolded_dir_ids.remove(&folded_dir_entry_id);
-            }
 
             self.update_visible_entries(&editor, HashSet::default(), None, cx);
             self.autoscroll(cx);
@@ -544,19 +525,11 @@ impl OutlinePanel {
     }
 
     fn is_unfoldable(&self, entry: &OutlinePanelEntry) -> bool {
-        if let OutlinePanelEntry::Directory(_, entry) = entry {
-            !self.unfolded_dir_ids.contains(&entry.id)
-        } else {
-            false
-        }
+        false
     }
 
     fn is_foldable(&self, entry: &OutlinePanelEntry) -> bool {
-        if let OutlinePanelEntry::Directory(_, entry) = entry {
-            self.unfolded_dir_ids.contains(&entry.id)
-        } else {
-            false
-        }
+        false
     }
 
     fn expand_selected_entry(&mut self, _: &ExpandSelectedEntry, cx: &mut ViewContext<Self>) {
@@ -1218,16 +1191,13 @@ impl OutlinePanel {
         new_entries: HashSet<ExcerptId>,
         new_selected_entry: Option<OutlinePanelEntry>,
         cx: &mut ViewContext<Self>,
-    ) -> Option<()> {
+    ) -> Task<Option<()>> {
         if !self.active {
-            return None;
+            return Task::ready(None);
         }
 
-        self.visible_entries.clear();
-        self.depth_map.clear();
-
-        let auto_collapse_dirs = OutlinePanelSettings::get_global(cx).auto_fold_dirs;
-        let project = self.project.read(cx);
+        // TODO kb implement
+        // OutlinePanelSettings::get_global(cx).auto_fold_dirs
         let displayed_multi_buffer = active_editor.read(cx).buffer().clone();
         let multi_buffer_snapshot = displayed_multi_buffer.read(cx).snapshot(cx);
         let mut outline_entries =
@@ -1280,29 +1250,6 @@ impl OutlinePanel {
                         let mut current_entry = entry;
                         loop {
                             if entry.is_dir() {
-                                if auto_collapse_dirs && !self.unfolded_dir_ids.contains(&entry.id)
-                                {
-                                    if let Some(root_path) = worktree_snapshot.root_entry() {
-                                        let mut child_entries =
-                                            worktree_snapshot.child_entries(&entry.path);
-                                        if let Some(child) = child_entries.next() {
-                                            if entry.path != root_path.path
-                                                && child_entries.next().is_none()
-                                                && child.kind.is_dir()
-                                            {
-                                                if traversal.back_to_parent() {
-                                                    if let Some(parent_entry) = traversal.entry() {
-                                                        current_entry = parent_entry;
-                                                        continue;
-                                                    }
-                                                } else {
-                                                    break;
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-
                                 if is_new || worktree_snapshot.root_entry() == Some(entry) {
                                     expanded_dir_ids.insert(entry.id);
                                 } else if !expanded_dir_ids.contains(&entry.id) {
@@ -1349,7 +1296,9 @@ impl OutlinePanel {
             new_workspace_entries
                 .into_iter()
                 .filter_map(|(worktree_id, entries)| {
-                    let worktree_snapshot = project
+                    let worktree_snapshot = self
+                        .project
+                        .read(cx)
                         .worktree_for_id(worktree_id, cx)?
                         .read(cx)
                         .snapshot();
@@ -1374,7 +1323,8 @@ impl OutlinePanel {
         let mut outline_depth = None;
         let mut depth = 0;
         let mut parent_entry_stack = Vec::new();
-        self.visible_entries = external_entries
+        let mut new_depth_map = Vec::new();
+        let new_visible_entries = external_entries
             .into_iter()
             .chain(worktree_items_with_outlines.into_iter())
             .flat_map(|entry| {
@@ -1401,7 +1351,7 @@ impl OutlinePanel {
                             depth -= 1;
                         }
                         parent_entry_stack.push(dir_entry.path.clone());
-                        self.depth_map.push(depth);
+                        new_depth_map.push(depth);
                         depth += 1;
                     }
                     OutlinePanelEntry::File(_, file_entry) => {
@@ -1414,10 +1364,10 @@ impl OutlinePanel {
                             parent_entry_stack.pop();
                             depth -= 1;
                         }
-                        self.depth_map.push(depth);
+                        new_depth_map.push(depth);
                     }
                     OutlinePanelEntry::Outline(outline) => {
-                        let mut depth = *self.depth_map.last().unwrap_or(&0);
+                        let mut depth = *new_depth_map.last().unwrap_or(&0);
                         if let Some(outline_depth) = outline_depth {
                             match outline_depth.cmp(&outline.depth) {
                                 cmp::Ordering::Less => depth += 1,
@@ -1427,13 +1377,13 @@ impl OutlinePanel {
                         }
 
                         outline_depth = Some(outline.depth);
-                        self.depth_map.push(depth);
+                        new_depth_map.push(depth);
                     }
                     OutlinePanelEntry::ExternalFile(..) => {
                         outline_depth = None;
                         depth = 0;
                         parent_entry_stack.clear();
-                        self.depth_map.push(depth);
+                        new_depth_map.push(depth);
                     }
                 }
 
@@ -1441,11 +1391,13 @@ impl OutlinePanel {
             })
             .collect();
 
+        self.visible_entries = new_visible_entries;
+        self.depth_map = new_depth_map;
         if new_selected_entry.is_some() {
             self.selected_entry = new_selected_entry;
         }
 
-        Some(())
+        Task::ready(Some(()))
     }
 
     fn replace_visible_entries(
