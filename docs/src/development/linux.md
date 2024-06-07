@@ -116,6 +116,13 @@ To build & install the Flatpak package locally follow the steps below:
 
 Before reporting the issue, make sure that you have the latest rustc version with `rustup update`.
 
+#### PKG_CONFIG errors
+Export env var and rebuild
+```shell
+export RUST_FONTCONFIG_DLOPEN=on
+cargo clean
+```
+
 ### Cargo errors claiming that a dependency is using unstable features
 
 Try `cargo clean` and `cargo build`.
