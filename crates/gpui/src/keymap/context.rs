@@ -295,7 +295,7 @@ impl KeyBindingContextPredicate {
             }
             _ if is_identifier_char(next) => {
                 let len = source
-                    .find(|c: char| !is_identifier_char(c))
+                    .find(|c: char| !is_identifier_char(c) && !is_vim_operator_char(c))
                     .unwrap_or(source.len());
                 let (identifier, rest) = source.split_at(len);
                 source = skip_whitespace(rest);
@@ -356,7 +356,7 @@ fn is_identifier_char(c: char) -> bool {
 }
 
 fn is_vim_operator_char(c: char) -> bool {
-    c == '>' || c == '<'
+    c == '>' || c == '<' || c == '~'
 }
 
 fn skip_whitespace(source: &str) -> &str {
