@@ -63,6 +63,10 @@ pub enum Operator {
     Jump { line: bool },
     Indent,
     Outdent,
+
+    Lowercase,
+    Uppercase,
+    OppositeCase,
 }
 
 #[derive(Default, Clone)]
@@ -270,6 +274,9 @@ impl Operator {
             Operator::Jump { line: false } => "`",
             Operator::Indent => ">",
             Operator::Outdent => "<",
+            Operator::Uppercase => "gU",
+            Operator::Lowercase => "gu",
+            Operator::OppositeCase => "g~",
         }
     }
 
