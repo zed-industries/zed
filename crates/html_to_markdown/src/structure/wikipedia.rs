@@ -1,5 +1,5 @@
 use crate::html_element::HtmlElement;
-use crate::markdown_writer::{MarkdownWriter, StartTagOutcome};
+use crate::markdown_writer::{HandlerOutcome, MarkdownWriter, StartTagOutcome};
 use crate::HandleTag;
 
 pub struct WikipediaChromeRemover;
@@ -30,7 +30,7 @@ impl HandleTag for WikipediaChromeRemover {
                     return StartTagOutcome::Skip;
                 }
 
-                let classes_to_skip = ["mw-editsection", "mw-jump-link"];
+                let classes_to_skip = ["noprint", "mw-editsection", "mw-jump-link"];
                 if tag.has_any_classes(&classes_to_skip) {
                     return StartTagOutcome::Skip;
                 }
@@ -39,6 +39,106 @@ impl HandleTag for WikipediaChromeRemover {
         }
 
         StartTagOutcome::Continue
+    }
+}
+
+pub struct WikipediaInfoboxHandler;
+
+impl HandleTag for WikipediaInfoboxHandler {
+    fn should_handle(&self, tag: &str) -> bool {
+        tag == "table"
+    }
+
+    fn handle_tag_start(
+        &mut self,
+        tag: &HtmlElement,
+        _writer: &mut MarkdownWriter,
+    ) -> StartTagOutcome {
+        match tag.tag.as_str() {
+            "table" => {
+                if tag.has_class("infobox") {
+                    return StartTagOutcome::Skip;
+                }
+            }
+            _ => {}
+        }
+
+        StartTagOutcome::Continue
+    }
+}
+
+pub struct WikipediaCodeHandler {
+    language: Option<String>,
+}
+
+impl WikipediaCodeHandler {
+    pub fn new() -> Self {
+        Self { language: None }
+    }
+}
+
+impl HandleTag for WikipediaCodeHandler {
+    fn should_handle(&self, tag: &str) -> bool {
+        match tag {
+            "div" | "pre" | "code" => true,
+            _ => false,
+        }
+    }
+
+    fn handle_tag_start(
+        &mut self,
+        tag: &HtmlElement,
+        writer: &mut MarkdownWriter,
+    ) -> StartTagOutcome {
+        match tag.tag.as_str() {
+            "code" => {
+                if !writer.is_inside("pre") {
+                    writer.push_str("`");
+                }
+            }
+            "div" => {
+                let classes = tag.classes();
+                self.language = classes.iter().find_map(|class| {
+                    if let Some((_, language)) = class.split_once("mw-highlight-lang-") {
+                        Some(language.trim().to_owned())
+                    } else {
+                        None
+                    }
+                });
+            }
+            "pre" => {
+                writer.push_blank_line();
+                writer.push_str("```");
+                if let Some(language) = self.language.take() {
+                    writer.push_str(&language);
+                }
+                writer.push_newline();
+            }
+            _ => {}
+        }
+
+        StartTagOutcome::Continue
+    }
+
+    fn handle_tag_end(&mut self, tag: &HtmlElement, writer: &mut MarkdownWriter) {
+        match tag.tag.as_str() {
+            "code" => {
+                if !writer.is_inside("pre") {
+                    writer.push_str("`");
+                }
+            }
+            "pre" => writer.push_str("\n```\n"),
+            _ => {}
+        }
+    }
+
+    fn handle_text(&mut self, text: &str, writer: &mut MarkdownWriter) -> HandlerOutcome {
+        if writer.is_inside("pre") {
+            writer.push_str(&text);
+            return HandlerOutcome::Handled;
+        }
+
+        HandlerOutcome::NoOp
     }
 }
 
