@@ -2,7 +2,7 @@ use std::ops::Range;
 
 use collections::HashMap;
 use itertools::Itertools;
-use text::BufferId;
+use text::{AnchorRangeExt, BufferId};
 use ui::ViewContext;
 use util::ResultExt;
 
@@ -80,22 +80,10 @@ pub(super) fn refresh_linked_ranges(this: &mut Editor, cx: &mut ViewContext<Edit
                         })?;
 
                         // Now link every range as each-others sibling.
-                        let mut siblings: Vec<(Range<text::Anchor>, Vec<_>)> = vec![];
+                        let mut siblings: HashMap<Range<text::Anchor>, Vec<_>> = Default::default();
                         let mut insert_sorted_anchor =
                             |key: &Range<text::Anchor>, value: &Range<text::Anchor>| {
-                                let lower_bound = siblings.partition_point(|entry| {
-                                    entry.0.start.cmp(&key.start, &snapshot).is_lt()
-                                });
-
-                                if siblings
-                                    .get(lower_bound)
-                                    .filter(|entry| entry.0.end.cmp(&key.end, &snapshot).is_ge())
-                                    .is_some()
-                                {
-                                    siblings[lower_bound].1.push(value.clone());
-                                } else {
-                                    siblings.push((key.clone(), vec![value.clone()]));
-                                }
+                                siblings.entry(key.clone()).or_default().push(value.clone());
                             };
                         for items in edits.into_iter().combinations(2) {
                             let Ok([first, second]): Result<[_; 2], _> = items.try_into() else {
@@ -105,6 +93,8 @@ pub(super) fn refresh_linked_ranges(this: &mut Editor, cx: &mut ViewContext<Edit
                             insert_sorted_anchor(&first, &second);
                             insert_sorted_anchor(&second, &first);
                         }
+                        let mut siblings: Vec<(_, _)> = siblings.into_iter().collect();
+                        siblings.sort_by(|lhs, rhs| lhs.0.cmp(&rhs.0, &snapshot));
                         Some((buffer_id, siblings))
                     };
                     linked_edits_tasks.push(highlights());
@@ -126,6 +116,17 @@ pub(super) fn refresh_linked_ranges(this: &mut Editor, cx: &mut ViewContext<Edit
                     .entry(buffer_id)
                     .or_default()
                     .extend(ranges);
+            }
+            for (buffer_id, values) in this.linked_edit_ranges.0.iter_mut() {
+                let Some(snapshot) = this
+                    .buffer
+                    .read(cx)
+                    .buffer(*buffer_id)
+                    .map(|buffer| buffer.read(cx).snapshot())
+                else {
+                    continue;
+                };
+                values.sort_by(|lhs, rhs| lhs.0.cmp(&rhs.0, &snapshot));
             }
 
             cx.notify();
