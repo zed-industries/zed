@@ -4,11 +4,11 @@ mod parser;
 use crate::parser::CodeBlockKind;
 use futures::FutureExt;
 use gpui::{
-    actions, point, quad, rgb, AnyElement, AppContext, Bounds, ClipboardItem, CursorStyle,
+    actions, point, quad, AnyElement, AppContext, Bounds, ClipboardItem, CursorStyle,
     DispatchPhase, Edges, FocusHandle, FocusableView, FontStyle, FontWeight, GlobalElementId,
-    Hitbox, Hsla, KeyContext, MouseButton, MouseDownEvent, MouseEvent, MouseMoveEvent,
-    MouseUpEvent, Point, Render, StrikethroughStyle, Style, StyledText, Task, TextLayout, TextRun,
-    TextStyle, TextStyleRefinement, View,
+    Hitbox, Hsla, KeyContext, MouseDownEvent, MouseEvent, MouseMoveEvent, MouseUpEvent, Point,
+    Render, StrikethroughStyle, Style, StyledText, Task, TextLayout, TextRun, TextStyle,
+    TextStyleRefinement, View,
 };
 use language::{Language, LanguageRegistry, Rope};
 use parser::{parse_markdown, MarkdownEvent, MarkdownTag, MarkdownTagEnd};
