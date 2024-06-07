@@ -121,6 +121,7 @@ pub(super) fn refresh_linked_ranges(this: &mut Editor, cx: &mut ViewContext<Edit
             if this.pending_rename.is_some() {
                 return;
             }
+            this.linked_edit_ranges.0.clear();
             for (buffer_id, ranges) in highlights.into_iter().filter_map(|x| x) {
                 this.linked_edit_ranges
                     .0

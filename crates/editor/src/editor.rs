@@ -5065,7 +5065,6 @@ impl Editor {
                 let selections = this.selections.all::<MultiBufferPoint>(cx);
                 let snapshot = this.buffer.read(cx).snapshot(cx);
                 for selection in selections.iter() {
-                    dbg!(&selection);
                     let selection_start = snapshot.anchor_after(selection.start).text_anchor;
                     let selection_end = snapshot.anchor_after(selection.end).text_anchor;
                     if selection_start.buffer_id != selection_end.buffer_id {
@@ -5082,6 +5081,7 @@ impl Editor {
                     else {
                         continue;
                     };
+                    let empty_str: Arc<str> = Arc::from("");
                     if let Some((base_range, associated_ranges)) = this.linked_edit_ranges.get(
                         buffer_id,
                         selection_start..selection_end,
@@ -5102,13 +5102,12 @@ impl Editor {
                             let start_point = start_offset.to_point(&snapshot);
                             let end_point = end_offset.to_point(&snapshot);
 
-                            linked_ranges.push((start_point..end_point, Arc::from("")));
+                            linked_ranges.push((start_point..end_point, empty_str.clone()));
                         }
-                        dbg!(&linked_ranges);
                     }
                 }
-                this.buffer
-                    .update(cx, |this, cx| this.edit(linked_ranges, None, cx));
+                linked_ranges.sort_by_key(|(range, _)| range.start);
+                this.edit(linked_ranges, cx);
             }
 
             let mut selections = this.selections.all::<MultiBufferPoint>(cx);
@@ -5148,7 +5147,6 @@ impl Editor {
                     }
                 }
             }
-            dbg!("Yo");
 
             if let Some((_, linked_ranges)) = this
                 .background_highlights
