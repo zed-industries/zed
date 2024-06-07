@@ -229,6 +229,7 @@ pub struct Project {
     hosted_project_id: Option<ProjectId>,
     dev_server_project_id: Option<client::DevServerProjectId>,
     search_history: SearchHistory,
+    sent_yarn_project_event: bool,
 }
 
 pub enum LanguageServerToQuery {
@@ -787,6 +788,7 @@ impl Project {
                 hosted_project_id: None,
                 dev_server_project_id: None,
                 search_history: Self::new_search_history(),
+                sent_yarn_project_event: false,
             }
         })
     }
@@ -945,6 +947,7 @@ impl Project {
                     .dev_server_project_id
                     .map(|dev_server_project_id| DevServerProjectId(dev_server_project_id)),
                 search_history: Self::new_search_history(),
+                sent_yarn_project_event: false,
             };
             this.set_role(role, cx);
             for worktree in worktrees {
@@ -7897,6 +7900,23 @@ impl Project {
                         worktree.read(cx).id(),
                         changes.clone(),
                     ));
+
+                    if !this.sent_yarn_project_event {
+                        let is_yarn_project = changes.iter().any(|(path, _, _)| {
+                            path.as_ref()
+                                .file_name()
+                                .and_then(|name| name.to_str())
+                                .map(|name_str| name_str == "yarn.lock")
+                                .unwrap_or(false)
+                        });
+
+                        if is_yarn_project {
+                            this.client()
+                                .telemetry()
+                                .report_app_event("yarn project".to_string());
+                            this.sent_yarn_project_event = true;
+                        }
+                    }
                 }
                 worktree::Event::UpdatedGitRepositories(updated_repos) => {
                     if is_local {
