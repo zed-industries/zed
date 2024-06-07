@@ -868,13 +868,11 @@ impl Worktree {
         request: proto::ExpandProjectEntry,
         mut cx: AsyncAppContext,
     ) -> Result<proto::ExpandProjectEntryResponse> {
-        let (scan_id, task) = this.update(&mut cx, |this, cx| {
-            (
-                this.scan_id(),
-                this.expand_entry(ProjectEntryId::from_proto(request.entry_id), cx),
-            )
+        let task = this.update(&mut cx, |this, cx| {
+            this.expand_entry(ProjectEntryId::from_proto(request.entry_id), cx)
         })?;
         task.ok_or_else(|| anyhow!("no such entry"))?.await?;
+        let scan_id = this.read_with(&cx, |this, _| this.scan_id())?;
         Ok(proto::ExpandProjectEntryResponse {
             worktree_scan_id: scan_id as u64,
         })
