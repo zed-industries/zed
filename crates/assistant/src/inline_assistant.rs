@@ -183,8 +183,8 @@ impl InlineAssistant {
                         move |_, cx| {
                             if let Some(editor) = editor.upgrade() {
                                 InlineAssistant::update_global(cx, |this, cx| {
-                                    this.update_highlights_for_editor(&editor, cx);
-                                    this.update_deleted_line_blocks(inline_assist_id, cx);
+                                    this.update_editor_highlights(&editor, cx);
+                                    this.update_editor_blocks(&editor, inline_assist_id, cx);
                                 })
                             }
                         }
@@ -229,8 +229,6 @@ impl InlineAssistant {
 
                                         this.finish_inline_assist(inline_assist_id, false, cx);
                                     }
-                                } else {
-                                    this.finish_inline_assist(inline_assist_id, false, cx);
                                 }
                             }
                         })
@@ -247,7 +245,7 @@ impl InlineAssistant {
             })
             .assist_ids
             .push(inline_assist_id);
-        self.update_highlights_for_editor(editor, cx);
+        self.update_editor_highlights(editor, cx);
     }
 
     fn handle_inline_assistant_event(
@@ -309,7 +307,10 @@ impl InlineAssistant {
             }
 
             if let Some(editor) = pending_assist.editor.upgrade() {
-                self.update_highlights_for_editor(&editor, cx);
+                self.update_editor_highlights(&editor, cx);
+                editor.update(cx, |editor, cx| {
+                    editor.remove_blocks(pending_assist.removed_line_block_ids, None, cx);
+                });
 
                 if undo {
                     pending_assist
@@ -496,7 +497,7 @@ impl InlineAssistant {
         .detach_and_log_err(cx);
     }
 
-    fn update_highlights_for_editor(&self, editor: &View<Editor>, cx: &mut WindowContext) {
+    fn update_editor_highlights(&self, editor: &View<Editor>, cx: &mut WindowContext) {
         let mut background_ranges = Vec::new();
         let mut foreground_ranges = Vec::new();
         let mut changed_row_ranges = Vec::new();
@@ -556,12 +557,13 @@ impl InlineAssistant {
         });
     }
 
-    fn update_deleted_line_blocks(&mut self, assist_id: InlineAssistId, cx: &mut WindowContext) {
+    fn update_editor_blocks(
+        &mut self,
+        editor: &View<Editor>,
+        assist_id: InlineAssistId,
+        cx: &mut WindowContext,
+    ) {
         let Some(pending_assist) = self.pending_assists.get_mut(&assist_id) else {
-            return;
-        };
-
-        let Some(editor) = pending_assist.editor.upgrade() else {
             return;
         };
 
@@ -817,19 +819,11 @@ impl InlineAssistEditor {
     }
 
     fn handle_codegen_changed(&mut self, _: Model<Codegen>, cx: &mut ViewContext<Self>) {
-        let is_read_only = !self.codegen.read(cx).idle();
-        self.prompt_editor.update(cx, |editor, cx| {
-            let was_read_only = editor.read_only(cx);
-            if was_read_only != is_read_only {
-                if is_read_only {
-                    editor.set_read_only(true);
-                } else {
-                    self.confirmed = false;
-                    editor.set_read_only(false);
-                }
-            }
-        });
-        cx.notify();
+        if self.codegen.read(cx).error.is_some() {
+            self.confirmed = false;
+            self.prompt_editor
+                .update(cx, |editor, _| editor.set_read_only(false));
+        }
     }
 
     fn cancel(&mut self, _: &editor::actions::Cancel, cx: &mut ViewContext<Self>) {
@@ -1266,9 +1260,9 @@ impl Codegen {
             self.diff.should_update = true;
         } else {
             self.diff.should_update = false;
+
             let old_snapshot = self.snapshot.clone();
             let old_range = self.range().to_point(&old_snapshot);
-
             let new_snapshot = self.buffer.read(cx).snapshot(cx);
             let new_range = self.range().to_point(&new_snapshot);
 
@@ -1353,6 +1347,7 @@ impl Codegen {
                     if this.diff.should_update {
                         this.update_diff(cx);
                     }
+                    cx.notify();
                 })
                 .ok();
             }));
