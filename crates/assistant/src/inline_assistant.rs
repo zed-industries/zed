@@ -184,7 +184,7 @@ impl InlineAssistant {
                             if let Some(editor) = editor.upgrade() {
                                 InlineAssistant::update_global(cx, |this, cx| {
                                     this.update_highlights_for_editor(&editor, cx);
-                                    this.update_diff(inline_assist_id, cx);
+                                    this.update_deleted_line_blocks(inline_assist_id, cx);
                                 })
                             }
                         }
@@ -499,6 +499,7 @@ impl InlineAssistant {
     fn update_highlights_for_editor(&self, editor: &View<Editor>, cx: &mut WindowContext) {
         let mut background_ranges = Vec::new();
         let mut foreground_ranges = Vec::new();
+        let mut changed_row_ranges = Vec::new();
         let empty_inline_assist_ids = Vec::new();
         let inline_assist_ids = self
             .pending_assist_ids_by_editor
@@ -512,6 +513,7 @@ impl InlineAssistant {
                 let codegen = pending_assist.codegen.read(cx);
                 background_ranges.push(codegen.range());
                 foreground_ranges.extend(codegen.last_equal_ranges().iter().cloned());
+                changed_row_ranges.extend(codegen.diff.inserted_row_ranges.iter().cloned());
             }
         }
 
@@ -524,7 +526,7 @@ impl InlineAssistant {
             } else {
                 editor.highlight_background::<PendingInlineAssist>(
                     &background_ranges,
-                    |theme| theme.editor_active_line_background, // TODO use the appropriate color
+                    |theme| theme.editor_active_line_background,
                     cx,
                 );
             }
@@ -541,10 +543,20 @@ impl InlineAssistant {
                     cx,
                 );
             }
+
+            editor.clear_row_highlights::<PendingInlineAssist>();
+            for row_range in changed_row_ranges {
+                editor.highlight_rows::<PendingInlineAssist>(
+                    row_range,
+                    Some(cx.theme().status().info_background),
+                    false,
+                    cx,
+                );
+            }
         });
     }
 
-    fn update_diff(&mut self, assist_id: InlineAssistId, cx: &mut WindowContext) {
+    fn update_deleted_line_blocks(&mut self, assist_id: InlineAssistId, cx: &mut WindowContext) {
         let Some(pending_assist) = self.pending_assists.get_mut(&assist_id) else {
             return;
         };
@@ -556,72 +568,7 @@ impl InlineAssistant {
         let codegen = pending_assist.codegen.read(cx);
         let old_snapshot = codegen.snapshot.clone();
         let old_buffer = codegen.old_buffer.clone();
-        let old_range = codegen.range().to_point(&old_snapshot);
-        let old_text = codegen
-            .snapshot
-            .text_for_range(
-                Point::new(old_range.start.row, 0)
-                    ..Point::new(
-                        old_range.end.row,
-                        old_snapshot.line_len(MultiBufferRow(old_range.end.row)),
-                    ),
-            )
-            .collect::<String>();
-
-        let buffer = codegen.buffer.read(cx).read(cx);
-        let new_range = codegen.range().to_point(&buffer);
-        let new_text = buffer
-            .text_for_range(
-                Point::new(new_range.start.row, 0)
-                    ..Point::new(
-                        new_range.end.row,
-                        buffer.line_len(MultiBufferRow(new_range.end.row)),
-                    ),
-            )
-            .collect::<String>();
-
-        let mut old_row = old_range.start.row;
-        let mut new_row = new_range.start.row;
-        let diff = TextDiff::from_lines(old_text.as_str(), new_text.as_str());
-
-        let mut deleted_row_ranges: Vec<(Anchor, RangeInclusive<u32>)> = Vec::new();
-        let mut inserted_row_ranges = Vec::new();
-        for change in diff.iter_all_changes() {
-            let line_count = change.value().lines().count() as u32;
-            match change.tag() {
-                similar::ChangeTag::Equal => {
-                    old_row += line_count;
-                    new_row += line_count;
-                }
-                similar::ChangeTag::Delete => {
-                    let old_end_row = old_row + line_count - 1;
-                    let new_row = buffer.anchor_before(Point::new(new_row, 0));
-
-                    if let Some((_, last_deleted_row_range)) = deleted_row_ranges.last_mut() {
-                        if *last_deleted_row_range.end() + 1 == old_row {
-                            *last_deleted_row_range = *last_deleted_row_range.start()..=old_end_row;
-                        } else {
-                            deleted_row_ranges.push((new_row, old_row..=old_end_row));
-                        }
-                    } else {
-                        deleted_row_ranges.push((new_row, old_row..=old_end_row));
-                    }
-
-                    old_row += line_count;
-                }
-                similar::ChangeTag::Insert => {
-                    let new_end_row = new_row + line_count - 1;
-                    let start = buffer.anchor_before(Point::new(new_row, 0));
-                    let end = buffer.anchor_before(Point::new(
-                        new_end_row,
-                        buffer.line_len(MultiBufferRow(new_end_row)),
-                    ));
-                    inserted_row_ranges.push(start..=end);
-                    new_row += line_count;
-                }
-            }
-        }
-        drop(buffer);
+        let deleted_row_ranges = codegen.diff.deleted_row_ranges.clone();
 
         editor.update(cx, |editor, cx| {
             let old_blocks = mem::take(&mut pending_assist.removed_line_block_ids);
@@ -691,17 +638,6 @@ impl InlineAssistant {
                 .insert_blocks(new_blocks, None, cx)
                 .into_iter()
                 .collect();
-
-            enum InsertedLines {}
-            editor.clear_row_highlights::<InsertedLines>();
-            for new_row_range in inserted_row_ranges {
-                editor.highlight_rows::<InsertedLines>(
-                    new_row_range,
-                    Some(cx.theme().status().created_background),
-                    false,
-                    cx,
-                );
-            }
         })
     }
 }
@@ -1021,9 +957,18 @@ pub struct Codegen {
     transaction_id: Option<TransactionId>,
     error: Option<anyhow::Error>,
     generation: Task<()>,
+    diff: Diff,
     idle: bool,
     telemetry: Option<Arc<Telemetry>>,
     _subscription: gpui::Subscription,
+}
+
+#[derive(Default)]
+struct Diff {
+    task: Option<Task<()>>,
+    should_update: bool,
+    deleted_row_ranges: Vec<(Anchor, RangeInclusive<u32>)>,
+    inserted_row_ranges: Vec<RangeInclusive<Anchor>>,
 }
 
 impl EventEmitter<CodegenEvent> for Codegen {}
@@ -1067,6 +1012,7 @@ impl Codegen {
             error: Default::default(),
             idle: true,
             generation: Task::ready(()),
+            diff: Diff::default(),
             telemetry,
             _subscription: cx.subscribe(&buffer, Self::handle_buffer_event),
         }
@@ -1124,6 +1070,7 @@ impl Codegen {
         let model_telemetry_id = prompt.model.telemetry_id();
         let response = CompletionProvider::global(cx).complete(prompt);
         let telemetry = self.telemetry.clone();
+        self.diff = Diff::default();
         self.generation = cx.spawn(|this, mut cx| {
             async move {
                 let generate = async {
@@ -1279,6 +1226,7 @@ impl Codegen {
                                 }
                             }
 
+                            this.update_diff(cx);
                             cx.notify();
                         })?;
                     }
@@ -1310,6 +1258,104 @@ impl Codegen {
         if let Some(transaction_id) = self.transaction_id {
             self.buffer
                 .update(cx, |buffer, cx| buffer.undo_transaction(transaction_id, cx));
+        }
+    }
+
+    fn update_diff(&mut self, cx: &mut ModelContext<Self>) {
+        if self.diff.task.is_some() {
+            self.diff.should_update = true;
+        } else {
+            self.diff.should_update = false;
+            let old_snapshot = self.snapshot.clone();
+            let old_range = self.range().to_point(&old_snapshot);
+
+            let new_snapshot = self.buffer.read(cx).snapshot(cx);
+            let new_range = self.range().to_point(&new_snapshot);
+
+            self.diff.task = Some(cx.spawn(|this, mut cx| async move {
+                let (deleted_row_ranges, inserted_row_ranges) = cx
+                    .background_executor()
+                    .spawn(async move {
+                        let old_text = old_snapshot
+                            .text_for_range(
+                                Point::new(old_range.start.row, 0)
+                                    ..Point::new(
+                                        old_range.end.row,
+                                        old_snapshot.line_len(MultiBufferRow(old_range.end.row)),
+                                    ),
+                            )
+                            .collect::<String>();
+                        let new_text = new_snapshot
+                            .text_for_range(
+                                Point::new(new_range.start.row, 0)
+                                    ..Point::new(
+                                        new_range.end.row,
+                                        new_snapshot.line_len(MultiBufferRow(new_range.end.row)),
+                                    ),
+                            )
+                            .collect::<String>();
+
+                        let mut old_row = old_range.start.row;
+                        let mut new_row = new_range.start.row;
+                        let diff = TextDiff::from_lines(old_text.as_str(), new_text.as_str());
+
+                        let mut deleted_row_ranges: Vec<(Anchor, RangeInclusive<u32>)> = Vec::new();
+                        let mut inserted_row_ranges = Vec::new();
+                        for change in diff.iter_all_changes() {
+                            let line_count = change.value().lines().count() as u32;
+                            match change.tag() {
+                                similar::ChangeTag::Equal => {
+                                    old_row += line_count;
+                                    new_row += line_count;
+                                }
+                                similar::ChangeTag::Delete => {
+                                    let old_end_row = old_row + line_count - 1;
+                                    let new_row =
+                                        new_snapshot.anchor_before(Point::new(new_row, 0));
+
+                                    if let Some((_, last_deleted_row_range)) =
+                                        deleted_row_ranges.last_mut()
+                                    {
+                                        if *last_deleted_row_range.end() + 1 == old_row {
+                                            *last_deleted_row_range =
+                                                *last_deleted_row_range.start()..=old_end_row;
+                                        } else {
+                                            deleted_row_ranges
+                                                .push((new_row, old_row..=old_end_row));
+                                        }
+                                    } else {
+                                        deleted_row_ranges.push((new_row, old_row..=old_end_row));
+                                    }
+
+                                    old_row += line_count;
+                                }
+                                similar::ChangeTag::Insert => {
+                                    let new_end_row = new_row + line_count - 1;
+                                    let start = new_snapshot.anchor_before(Point::new(new_row, 0));
+                                    let end = new_snapshot.anchor_before(Point::new(
+                                        new_end_row,
+                                        new_snapshot.line_len(MultiBufferRow(new_end_row)),
+                                    ));
+                                    inserted_row_ranges.push(start..=end);
+                                    new_row += line_count;
+                                }
+                            }
+                        }
+
+                        (deleted_row_ranges, inserted_row_ranges)
+                    })
+                    .await;
+
+                this.update(&mut cx, |this, cx| {
+                    this.diff.deleted_row_ranges = deleted_row_ranges;
+                    this.diff.inserted_row_ranges = inserted_row_ranges;
+                    this.diff.task = None;
+                    if this.diff.should_update {
+                        this.update_diff(cx);
+                    }
+                })
+                .ok();
+            }));
         }
     }
 }
