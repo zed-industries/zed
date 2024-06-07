@@ -1,9 +1,16 @@
-use std::default::Default;
+use std::{cell::Cell, default::Default, rc::Rc};
 
 use calloop::channel;
 
-use x11rb::protocol::{xproto, Event};
-use xim::{AHashMap, AttributeName, Client, ClientError, ClientHandler, InputStyle};
+use x11rb::{
+    connection::{Connection, RequestConnection},
+    cookie::{CookieWithFds, VoidCookie},
+    protocol::{xproto, Event},
+    xcb_ffi::XCBConnection,
+};
+use xim::{
+    x11rb::HasConnection, AHashMap, AttributeName, Client, ClientError, ClientHandler, InputStyle,
+};
 
 pub enum XimCallbackEvent {
     XimXEvent(x11rb::protocol::Event),
@@ -14,19 +21,21 @@ pub enum XimCallbackEvent {
 pub struct XimHandler {
     pub im_id: u16,
     pub ic_id: u16,
-    pub xim_tx: channel::Sender<XimCallbackEvent>,
+    // pub xim_tx: channel::Sender<XimCallbackEvent>,
     pub connected: bool,
     pub window: xproto::Window,
+    pub last_callback_event: Option<XimCallbackEvent>,
 }
 
 impl XimHandler {
-    pub fn new(xim_tx: channel::Sender<XimCallbackEvent>) -> Self {
+    pub fn new() -> Self {
         Self {
             im_id: Default::default(),
             ic_id: Default::default(),
-            xim_tx,
+            // xim_tx,
             connected: false,
             window: Default::default(),
+            last_callback_event: None,
         }
     }
 }
@@ -80,12 +89,12 @@ impl<C: Client<XEvent = xproto::KeyPressEvent>> ClientHandler<C> for XimHandler 
         _input_context_id: u16,
         text: &str,
     ) -> Result<(), ClientError> {
-        self.xim_tx
-            .send(XimCallbackEvent::XimCommitEvent(
+        self.last_callback_event
+            .replace(XimCallbackEvent::XimCommitEvent(
                 self.window,
                 String::from(text),
-            ))
-            .ok();
+            ));
+        // .ok();
         Ok(())
     }
 
@@ -99,14 +108,20 @@ impl<C: Client<XEvent = xproto::KeyPressEvent>> ClientHandler<C> for XimHandler 
     ) -> Result<(), ClientError> {
         match xev.response_type {
             x11rb::protocol::xproto::KEY_PRESS_EVENT => {
-                self.xim_tx
-                    .send(XimCallbackEvent::XimXEvent(Event::KeyPress(xev)))
-                    .ok();
+                // println!(
+                //     "XimHandler. handle_forward_event(KeyPress). sequence: {}",
+                //     xev.sequence
+                // );
+                self.last_callback_event
+                    .replace(XimCallbackEvent::XimXEvent(Event::KeyPress(xev)));
             }
             x11rb::protocol::xproto::KEY_RELEASE_EVENT => {
-                self.xim_tx
-                    .send(XimCallbackEvent::XimXEvent(Event::KeyRelease(xev)))
-                    .ok();
+                // println!(
+                //     "XimHandler. handle_forward_event(KeyRelease), sequence: {}",
+                //     xev.sequence
+                // );
+                self.last_callback_event
+                    .replace(XimCallbackEvent::XimXEvent(Event::KeyRelease(xev)));
             }
             _ => {}
         }
@@ -145,12 +160,185 @@ impl<C: Client<XEvent = xproto::KeyPressEvent>> ClientHandler<C> for XimHandler 
         // XIMPrimary, XIMHighlight, XIMSecondary, XIMTertiary are not specified,
         // but interchangeable as above
         // Currently there's no way to support these.
-        self.xim_tx
-            .send(XimCallbackEvent::XimPreeditEvent(
+        self.last_callback_event
+            .replace(XimCallbackEvent::XimPreeditEvent(
                 self.window,
                 String::from(preedit_string),
-            ))
-            .ok();
+            ));
+        // self.xim_tx
+        //     .send()
+        //     .ok();
         Ok(())
+    }
+}
+
+#[derive(Clone)]
+pub struct XimXCBConnection(Rc<XCBConnection>, Rc<Cell<bool>>);
+
+impl XimXCBConnection {
+    pub fn new(connection: Rc<XCBConnection>, can_flush: Rc<Cell<bool>>) -> Self {
+        Self(connection, can_flush)
+    }
+
+    pub fn set_can_flush(&self, can_flush: bool) {
+        self.1.set(can_flush);
+    }
+}
+
+impl HasConnection for XimXCBConnection {
+    type Connection = Self;
+
+    fn conn(&self) -> &Self::Connection {
+        self
+    }
+}
+
+impl Connection for XimXCBConnection {
+    fn wait_for_raw_event_with_sequence(
+        &self,
+    ) -> Result<x11rb::connection::RawEventAndSeqNumber<Self::Buf>, x11rb::errors::ConnectionError>
+    {
+        self.0.wait_for_raw_event_with_sequence()
+    }
+
+    fn poll_for_raw_event_with_sequence(
+        &self,
+    ) -> Result<
+        Option<x11rb::connection::RawEventAndSeqNumber<Self::Buf>>,
+        x11rb::errors::ConnectionError,
+    > {
+        self.0.poll_for_raw_event_with_sequence()
+    }
+
+    fn flush(&self) -> Result<(), x11rb::errors::ConnectionError> {
+        if self.1.get() {
+            // println!("*real* flush");
+            self.0.flush()
+        } else {
+            // println!("fake flush");
+            Ok(())
+        }
+    }
+
+    fn setup(&self) -> &xproto::Setup {
+        self.0.setup()
+    }
+
+    fn generate_id(&self) -> Result<u32, x11rb::errors::ReplyOrIdError> {
+        self.0.generate_id()
+    }
+}
+
+impl RequestConnection for XimXCBConnection {
+    type Buf = <XCBConnection as RequestConnection>::Buf;
+
+    fn send_request_with_reply<R>(
+        &self,
+        bufs: &[std::io::IoSlice<'_>],
+        fds: Vec<x11rb::utils::RawFdContainer>,
+    ) -> Result<x11rb::cookie::Cookie<'_, Self, R>, x11rb::errors::ConnectionError>
+    where
+        R: x11rb::x11_utils::TryParse,
+    {
+        self.0
+            .send_request_with_reply::<R>(bufs, fds)
+            .map(|cookie| x11rb::cookie::Cookie::new(self, cookie.sequence_number()))
+    }
+
+    fn send_request_with_reply_with_fds<R>(
+        &self,
+        bufs: &[std::io::IoSlice<'_>],
+        fds: Vec<x11rb::utils::RawFdContainer>,
+    ) -> Result<CookieWithFds<'_, Self, R>, x11rb::errors::ConnectionError>
+    where
+        R: x11rb::x11_utils::TryParseFd,
+    {
+        self.0
+            .send_request_with_reply_with_fds::<R>(bufs, fds)
+            .map(|cookie| CookieWithFds::new(self, cookie.sequence_number()))
+    }
+
+    fn send_request_without_reply(
+        &self,
+        bufs: &[std::io::IoSlice<'_>],
+        fds: Vec<x11rb::utils::RawFdContainer>,
+    ) -> Result<VoidCookie<'_, Self>, x11rb::errors::ConnectionError> {
+        self.0
+            .send_request_without_reply(bufs, fds)
+            .map(|cookie| VoidCookie::new(self, cookie.sequence_number()))
+    }
+
+    fn discard_reply(
+        &self,
+        sequence: x11rb::connection::SequenceNumber,
+        kind: x11rb::connection::RequestKind,
+        mode: x11rb::connection::DiscardMode,
+    ) {
+        self.0.discard_reply(sequence, kind, mode)
+    }
+
+    fn prefetch_extension_information(
+        &self,
+        extension_name: &'static str,
+    ) -> Result<(), x11rb::errors::ConnectionError> {
+        self.0.prefetch_extension_information(extension_name)
+    }
+
+    fn extension_information(
+        &self,
+        extension_name: &'static str,
+    ) -> Result<Option<x11rb::x11_utils::ExtensionInformation>, x11rb::errors::ConnectionError>
+    {
+        self.0.extension_information(extension_name)
+    }
+
+    fn wait_for_reply_or_raw_error(
+        &self,
+        sequence: x11rb::connection::SequenceNumber,
+    ) -> Result<x11rb::connection::ReplyOrError<Self::Buf>, x11rb::errors::ConnectionError> {
+        self.0.wait_for_reply_or_raw_error(sequence)
+    }
+
+    fn wait_for_reply(
+        &self,
+        sequence: x11rb::connection::SequenceNumber,
+    ) -> Result<Option<Self::Buf>, x11rb::errors::ConnectionError> {
+        self.0.wait_for_reply(sequence)
+    }
+
+    fn wait_for_reply_with_fds_raw(
+        &self,
+        sequence: x11rb::connection::SequenceNumber,
+    ) -> Result<
+        x11rb::connection::ReplyOrError<x11rb::connection::BufWithFds<Self::Buf>, Self::Buf>,
+        x11rb::errors::ConnectionError,
+    > {
+        self.0.wait_for_reply_with_fds_raw(sequence)
+    }
+
+    fn check_for_raw_error(
+        &self,
+        sequence: x11rb::connection::SequenceNumber,
+    ) -> Result<Option<Self::Buf>, x11rb::errors::ConnectionError> {
+        self.0.check_for_raw_error(sequence)
+    }
+
+    fn prefetch_maximum_request_bytes(&self) {
+        self.0.prefetch_maximum_request_bytes()
+    }
+
+    fn maximum_request_bytes(&self) -> usize {
+        self.0.maximum_request_bytes()
+    }
+
+    fn parse_error(
+        &self,
+        error: &[u8],
+    ) -> Result<x11rb::x11_utils::X11Error, x11rb::errors::ParseError> {
+        self.0.parse_error(error)
+    }
+
+    fn parse_event(&self, event: &[u8]) -> Result<Event, x11rb::errors::ParseError> {
+        self.0.parse_event(event)
     }
 }

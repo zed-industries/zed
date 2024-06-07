@@ -1,11 +1,11 @@
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::ffi::OsString;
 use std::ops::Deref;
 use std::rc::{Rc, Weak};
 use std::time::{Duration, Instant};
 
 use calloop::generic::{FdWrapper, Generic};
-use calloop::{channel, EventLoop, LoopHandle, RegistrationToken};
+use calloop::{EventLoop, LoopHandle, RegistrationToken};
 
 use collections::HashMap;
 use copypasta::x11_clipboard::{Clipboard, Primary, X11ClipboardContext};
@@ -16,9 +16,9 @@ use x11rb::connection::{Connection, RequestConnection};
 use x11rb::cursor;
 use x11rb::errors::ConnectionError;
 use x11rb::protocol::randr::ConnectionExt as _;
-use x11rb::protocol::xinput::ConnectionExt;
+use x11rb::protocol::xinput::{ConnectionExt, KeyCode};
 use x11rb::protocol::xkb::ConnectionExt as _;
-use x11rb::protocol::xproto::{ChangeWindowAttributesAux, ConnectionExt as _};
+use x11rb::protocol::xproto::{ChangeWindowAttributesAux, ConnectionExt as _, KeyButMask};
 use x11rb::protocol::{randr, render, xinput, xkb, xproto, Event};
 use x11rb::resource_manager::Database;
 use x11rb::xcb_ffi::XCBConnection;
@@ -32,7 +32,7 @@ use crate::platform::{LinuxCommon, PlatformWindow};
 use crate::{
     modifiers_from_xinput_info, point, px, AnyWindowHandle, Bounds, CursorStyle, DisplayId,
     Keystroke, Modifiers, ModifiersChangedEvent, Pixels, PlatformDisplay, PlatformInput, Point,
-    ScrollDelta, Size, TouchPhase, WindowParams, X11Window,
+    ScrollDelta, Size, TouchPhase, WindowParams, X11Window, XimXCBConnection,
 };
 
 use super::{
@@ -96,6 +96,13 @@ impl From<xim::ClientError> for EventHandlerError {
     }
 }
 
+#[derive(Clone)]
+struct KeyEvent {
+    time: Instant,
+    state: KeyButMask,
+    code: KeyCode,
+}
+
 pub struct X11ClientState {
     pub(crate) loop_handle: LoopHandle<'static, X11Client>,
     pub(crate) event_loop: Option<calloop::EventLoop<'static, X11Client>>,
@@ -113,7 +120,7 @@ pub struct X11ClientState {
     pub(crate) windows: HashMap<xproto::Window, WindowRef>,
     pub(crate) focused_window: Option<xproto::Window>,
     pub(crate) xkb: xkbc::State,
-    pub(crate) ximc: Option<X11rbClient<Rc<XCBConnection>>>,
+    pub(crate) ximc: Option<X11rbClient<XimXCBConnection>>,
     pub(crate) xim_handler: Option<XimHandler>,
     pub modifiers: Modifiers,
 
@@ -131,6 +138,8 @@ pub struct X11ClientState {
     pub(crate) common: LinuxCommon,
     pub(crate) clipboard: X11ClipboardContext<Clipboard>,
     pub(crate) primary: X11ClipboardContext<Primary>,
+
+    last_key_event: Option<KeyEvent>,
 }
 
 #[derive(Clone)]
@@ -274,11 +283,11 @@ impl X11Client {
 
         let xcb_connection = Rc::new(xcb_connection);
 
-        let (xim_tx, xim_rx) = channel::channel::<XimCallbackEvent>();
-
-        let ximc = X11rbClient::init(Rc::clone(&xcb_connection), x_root_index, None).ok();
+        let xim_xcb_connection =
+            XimXCBConnection::new(Rc::clone(&xcb_connection), Rc::new(Cell::new(true)));
+        let ximc = X11rbClient::init(xim_xcb_connection.clone(), x_root_index, None).ok();
         let xim_handler = if ximc.is_some() {
-            Some(XimHandler::new(xim_tx))
+            Some(XimHandler::new())
         } else {
             None
         };
@@ -296,33 +305,51 @@ impl X11Client {
                 {
                     let xcb_connection = xcb_connection.clone();
                     move |_readiness, _, client| {
-                        println!("---------------------------------------------------");
-                        let mut events_count = 0;
-                        let start = Instant::now();
+                        // println!("---------------------------------------------------");
+                        // let mut events_count = 0;
+                        // let start = Instant::now();
+
+                        xim_xcb_connection.set_can_flush(false);
                         while let Some(event) = xcb_connection.poll_for_event()? {
-                            events_count += 1;
+                            // events_count += 1;
 
-                            let ev_name = event_name(&event);
-                            let event_start = Instant::now();
-                            println!("--> event {}: {}", events_count, ev_name);
+                            // let event_start = Instant::now();
+                            // println!(
+                            //     "--> event {}: {} (sequnce: {:?})",
+                            //     events_count,
+                            //     ev_name,
+                            //     event.wire_sequence_number()
+                            // );
 
-                            let _drop = util::defer(move || {
-                                println!(
-                                    "<-- event {}: {}, took: {:?}",
-                                    events_count,
-                                    ev_name,
-                                    event_start.elapsed()
-                                );
-                            });
+                            // let _drop = util::defer(move || {
+                            //     println!(
+                            //         "<-- event {}: {}, took: {:?}",
+                            //         events_count,
+                            //         ev_name,
+                            //         event_start.elapsed()
+                            //     );
+                            // });
 
                             let mut state = client.0.borrow_mut();
+
+                            let last_key_event = match event {
+                                Event::KeyPress(ev) | Event::KeyRelease(ev) => {
+                                    state.last_key_event.replace(KeyEvent { time: Instant::now(), state: ev.state, code: ev.detail });
+                                    None
+                                }
+                                _ => state.last_key_event.clone()
+                            };
+                            // let last_key_event_time = state.last_key_event.clone();
+
                             if state.ximc.is_none() || state.xim_handler.is_none() {
                                 drop(state);
                                 client.handle_event(event);
                                 continue;
                             }
+
                             let mut ximc = state.ximc.take().unwrap();
                             let mut xim_handler = state.xim_handler.take().unwrap();
+
                             let xim_connected = xim_handler.connected;
                             drop(state);
                             let xim_filtered = match ximc.filter_event(&event, &mut xim_handler) {
@@ -332,11 +359,61 @@ impl X11Client {
                                     false
                                 }
                             };
+                            if let Some(xim_event) = xim_handler.last_callback_event.take() {
+                                match xim_event {
+                                    XimCallbackEvent::XimXEvent(
+                                        event @ Event::KeyPress(key_event),
+                                    )
+                                    | XimCallbackEvent::XimXEvent(
+                                        event @ Event::KeyRelease(key_event),
+                                    ) => {
+                                        // let ev_name = event_name(&event);
+                                        // println!("---> XimXEvent: {}", ev_name);
+
+                                        if let Some(last_key_event) = last_key_event {
+                                            // println!(
+                                            //     "last_key_event_time: {}",
+                                            //     last_key_event_time
+                                            // );
+                                            // println!(
+                                            //     "event.time: {} (sequence: {})",
+                                            //     key_event.time, key_event.sequence
+                                            // );
+                                            // let lag_ms = last_key_event_time.saturating_sub(key_event.time);
+                                            // if lag_ms > 100
+                                            let lag_ms = last_key_event.time.elapsed();
+                                            if (lag_ms > Duration::from_millis(100) && last_key_event.state == key_event.state && last_key_event.code == key_event.detail) ||
+                                                (lag_ms > Duration::from_millis(50) && last_key_event.state != key_event.state && last_key_event.code != key_event.detail)
+                                            {
+                                                let name = event_name(&event);
+                                                println!(">>>>>>>>>>>>>> dropping old event (name: {}, sequence: {}, lag_ms: {:?}) <<<<<<<<<<<<<<<<<<<<<", name, key_event.sequence, lag_ms);
+                                                // drop(state);
+                                                // continue;
+                                            } else {
+                                                client.handle_event(event);
+                                            }
+                                        } else {
+                                            client.handle_event(event);
+                                        }
+                                    }
+                                    XimCallbackEvent::XimXEvent(event) => {
+                                        client.handle_event(event);
+                                    }
+                                    XimCallbackEvent::XimCommitEvent(window, text) => {
+                                        client.xim_handle_commit(window, text);
+                                    }
+                                    XimCallbackEvent::XimPreeditEvent(window, text) => {
+                                        client.xim_handle_preedit(window, text);
+                                    }
+                                };
+                            }
+
                             let mut state = client.0.borrow_mut();
                             state.ximc = Some(ximc);
                             state.xim_handler = Some(xim_handler);
                             drop(state);
                             if xim_filtered {
+                                // println!("         -> xim filtered");
                                 continue;
                             }
                             if xim_connected {
@@ -346,41 +423,45 @@ impl X11Client {
                             }
                         }
 
-                        println!(
-                            "--------------------- events_count: {:?}, took: {:?} ----------",
-                            events_count,
-                            start.elapsed()
-                        );
+                        // println!(
+                        //     "-------------- events_count: {:?}, took: {:?} ----------\n\n",
+                        //     events_count,
+                        //     start.elapsed()
+                        // );
+
+                        xim_xcb_connection.set_can_flush(true);
+                        xim_xcb_connection.flush()?;
+
                         Ok(calloop::PostAction::Continue)
                     }
                 },
             )
             .expect("Failed to initialize x11 event source");
-        handle
-            .insert_source(xim_rx, {
-                move |chan_event, _, client| match chan_event {
-                    channel::Event::Msg(xim_event) => {
-                        println!(".......... XimCallBackEvent ...............");
-                        match xim_event {
-                            XimCallbackEvent::XimXEvent(event) => {
-                                println!("--> XimXEvent");
-                                client.handle_event(event);
-                            }
-                            XimCallbackEvent::XimCommitEvent(window, text) => {
-                                client.xim_handle_commit(window, text);
-                            }
-                            XimCallbackEvent::XimPreeditEvent(window, text) => {
-                                client.xim_handle_preedit(window, text);
-                            }
-                        };
-                        println!("......... DONE: XimCallBackEvent ...............");
-                    }
-                    channel::Event::Closed => {
-                        log::error!("XIM Event Sender dropped")
-                    }
-                }
-            })
-            .expect("Failed to initialize XIM event source");
+        // handle
+        //     .insert_source(xim_rx, {
+        //         move |chan_event, _, client| match chan_event {
+        //             channel::Event::Msg(xim_event) => {
+        //                 // println!(".......... XimCallBackEvent ...............");
+        //                 match xim_event {
+        //                     XimCallbackEvent::XimXEvent(event) => {
+        //                         println!("--> XimXEvent");
+        //                         client.handle_event(event);
+        //                     }
+        //                     XimCallbackEvent::XimCommitEvent(window, text) => {
+        //                         client.xim_handle_commit(window, text);
+        //                     }
+        //                     XimCallbackEvent::XimPreeditEvent(window, text) => {
+        //                         client.xim_handle_preedit(window, text);
+        //                     }
+        //                 };
+        //                 // println!("......... DONE: XimCallBackEvent ...............");
+        //             }
+        //             channel::Event::Closed => {
+        //                 log::error!("XIM Event Sender dropped")
+        //             }
+        //         }
+        //     })
+        //     .expect("Failed to initialize XIM event source");
         handle
             .insert_source(XDPEventSource::new(&common.background_executor), {
                 move |event, _, client| match event {
@@ -428,6 +509,8 @@ impl X11Client {
 
             clipboard,
             primary,
+
+            last_key_event: None,
         })))
     }
 
@@ -493,7 +576,7 @@ impl X11Client {
     }
 
     fn handle_event(&self, event: Event) -> Option<()> {
-        println!("handle_event: {:?}", event_name(&event));
+        // println!("handle_event: {:?}", event_name(&event));
 
         match event {
             Event::ClientMessage(event) => {
@@ -527,6 +610,7 @@ impl X11Client {
             Event::Expose(event) => {
                 let window = self.get_window(event.window)?;
                 window.refresh();
+                std::thread::sleep(Duration::from_millis(20));
             }
             Event::FocusIn(event) => {
                 let window = self.get_window(event.event)?;
@@ -617,7 +701,7 @@ impl X11Client {
                     keystroke
                 };
                 drop(state);
-                println!("keydown. keystroke.key: {:?}", keystroke.key);
+                // println!("keydown. keystroke.key: {:?}", keystroke.key);
                 window.handle_input(PlatformInput::KeyDown(crate::KeyDownEvent {
                     keystroke,
                     is_held: false,
@@ -824,13 +908,20 @@ impl X11Client {
     }
 
     fn xim_handle_event(&self, event: Event) -> Option<()> {
+        let name = event_name(&event);
         match event {
             Event::KeyPress(event) | Event::KeyRelease(event) => {
                 let mut state = self.0.borrow_mut();
+
                 let mut ximc = state.ximc.take().unwrap();
                 let mut xim_handler = state.xim_handler.take().unwrap();
                 drop(state);
                 xim_handler.window = event.event;
+
+                println!(
+                    "--> ximc.forward_event({}), sequence: {}",
+                    name, event.sequence
+                );
                 ximc.forward_event(
                     xim_handler.im_id,
                     xim_handler.ic_id,
@@ -989,7 +1080,6 @@ impl LinuxClient for X11Client {
             .loop_handle
             .insert_source(calloop::timer::Timer::immediate(), {
                 let refresh_duration = mode_refresh_rate(mode);
-                println!("refresh_duration: {:?}", refresh_duration);
                 move |mut instant, (), client| {
                     let state = client.0.borrow_mut();
                     state
@@ -1013,12 +1103,9 @@ impl LinuxClient for X11Client {
                     let _ = state.xcb_connection.flush().unwrap();
                     // Take into account that some frames have been skipped
                     let now = Instant::now();
-                    let mut loop_count = 0;
                     while instant < now {
                         instant += refresh_duration;
-                        loop_count += 1;
                     }
-                    println!("loop_count: {:?}", loop_count);
                     calloop::timer::TimeoutAction::ToInstant(instant)
                 }
             })
