@@ -11,8 +11,8 @@ use editor::{
         BlockContext, BlockDisposition, BlockId, BlockProperties, BlockStyle, RenderBlock,
     },
     scroll::{Autoscroll, AutoscrollStrategy},
-    Anchor, AnchorRangeExt, Editor, EditorElement, EditorEvent, EditorStyle, GutterDimensions,
-    MultiBuffer, MultiBufferSnapshot, ToOffset, ToPoint,
+    Anchor, AnchorRangeExt, Editor, EditorElement, EditorEvent, EditorStyle, ExcerptRange,
+    GutterDimensions, MultiBuffer, MultiBufferSnapshot, ToOffset, ToPoint,
 };
 use futures::{channel::mpsc, SinkExt, Stream, StreamExt};
 use gpui::{
@@ -20,13 +20,18 @@ use gpui::{
     Global, HighlightStyle, Model, ModelContext, Subscription, Task, TextStyle, UpdateGlobal, View,
     ViewContext, WeakView, WhiteSpace, WindowContext,
 };
-use language::{Point, TransactionId};
+use language::{Buffer, Point, TransactionId};
 use multi_buffer::MultiBufferRow;
 use parking_lot::Mutex;
 use rope::Rope;
 use settings::Settings;
 use similar::TextDiff;
-use std::{cmp, future, mem, ops::Range, sync::Arc, time::Instant};
+use std::{
+    cmp, future, mem,
+    ops::{Range, RangeInclusive},
+    sync::Arc,
+    time::Instant,
+};
 use theme::ThemeSettings;
 use ui::{prelude::*, Tooltip};
 use workspace::{notifications::NotificationId, Toast, Workspace};
@@ -549,14 +554,16 @@ impl InlineAssistant {
         };
 
         let codegen = pending_assist.codegen.read(cx);
-        let old_range = codegen.range().to_point(&codegen.snapshot);
+        let old_snapshot = codegen.snapshot.clone();
+        let old_buffer = codegen.old_buffer.clone();
+        let old_range = codegen.range().to_point(&old_snapshot);
         let old_text = codegen
             .snapshot
             .text_for_range(
                 Point::new(old_range.start.row, 0)
                     ..Point::new(
                         old_range.end.row,
-                        codegen.snapshot.line_len(MultiBufferRow(old_range.end.row)),
+                        old_snapshot.line_len(MultiBufferRow(old_range.end.row)),
                     ),
             )
             .collect::<String>();
@@ -573,61 +580,123 @@ impl InlineAssistant {
             )
             .collect::<String>();
 
-        let mut row = new_range.start.row;
+        let mut old_row = old_range.start.row;
+        let mut new_row = new_range.start.row;
         let diff = TextDiff::from_lines(old_text.as_str(), new_text.as_str());
 
-        let mut deleted_rows = Vec::new();
-        let mut inserted_rows = Vec::new();
+        let mut deleted_row_ranges: Vec<(Anchor, RangeInclusive<u32>)> = Vec::new();
+        let mut inserted_row_ranges = Vec::new();
         for change in diff.iter_all_changes() {
             let line_count = change.value().lines().count() as u32;
             match change.tag() {
                 similar::ChangeTag::Equal => {
-                    row += line_count;
+                    old_row += line_count;
+                    new_row += line_count;
                 }
                 similar::ChangeTag::Delete => {
-                    for line in change.value().lines() {
-                        let deleted_line = SharedString::from(Arc::from(line));
-                        deleted_rows.push(BlockProperties {
-                            position: buffer.anchor_before(Point::new(row, 0)),
-                            height: line_count as u8,
-                            style: BlockStyle::Flex,
-                            render: Box::new(move |cx| {
-                                div()
-                                    .pl(cx.gutter_dimensions.full_width())
-                                    .child(deleted_line.clone())
-                                    .into_any()
-                            }),
-                            disposition: BlockDisposition::Above,
-                        });
+                    let old_end_row = old_row + line_count - 1;
+                    let new_row = buffer.anchor_before(Point::new(new_row, 0));
+
+                    if let Some((_, last_deleted_row_range)) = deleted_row_ranges.last_mut() {
+                        if *last_deleted_row_range.end() + 1 == old_row {
+                            *last_deleted_row_range = *last_deleted_row_range.start()..=old_end_row;
+                        } else {
+                            deleted_row_ranges.push((new_row, old_row..=old_end_row));
+                        }
+                    } else {
+                        deleted_row_ranges.push((new_row, old_row..=old_end_row));
                     }
+
+                    old_row += line_count;
                 }
                 similar::ChangeTag::Insert => {
-                    let end_row = row + line_count - 1;
-                    let start = buffer.anchor_before(Point::new(row, 0));
+                    let new_end_row = new_row + line_count - 1;
+                    let start = buffer.anchor_before(Point::new(new_row, 0));
                     let end = buffer.anchor_before(Point::new(
-                        end_row,
-                        buffer.line_len(MultiBufferRow(end_row)),
+                        new_end_row,
+                        buffer.line_len(MultiBufferRow(new_end_row)),
                     ));
-                    inserted_rows.push(start..=end);
-                    row += line_count;
+                    inserted_row_ranges.push(start..=end);
+                    new_row += line_count;
                 }
             }
         }
         drop(buffer);
 
         editor.update(cx, |editor, cx| {
-            let removed_line_block_ids = mem::take(&mut pending_assist.removed_line_block_ids);
-            editor.remove_blocks(removed_line_block_ids, None, cx);
+            let old_blocks = mem::take(&mut pending_assist.removed_line_block_ids);
+            let mut new_blocks = Vec::new();
+            for (new_row, old_row_range) in deleted_row_ranges {
+                let (_, buffer_start) = old_snapshot
+                    .point_to_buffer_offset(Point::new(*old_row_range.start(), 0))
+                    .unwrap();
+                let (_, buffer_end) = old_snapshot
+                    .point_to_buffer_offset(Point::new(
+                        *old_row_range.end(),
+                        old_snapshot.line_len(MultiBufferRow(*old_row_range.end())),
+                    ))
+                    .unwrap();
+
+                let deleted_lines_editor = cx.new_view(|cx| {
+                    let multi_buffer = cx.new_model(|_| {
+                        MultiBuffer::without_headers(0, language::Capability::ReadOnly)
+                    });
+                    multi_buffer.update(cx, |multi_buffer, cx| {
+                        multi_buffer.push_excerpts(
+                            old_buffer.clone(),
+                            Some(ExcerptRange {
+                                context: buffer_start..buffer_end,
+                                primary: None,
+                            }),
+                            cx,
+                        );
+                    });
+
+                    enum DeletedLines {}
+                    let mut editor = Editor::for_multibuffer(multi_buffer, None, true, cx);
+                    editor.set_soft_wrap_mode(language::language_settings::SoftWrap::None, cx);
+                    editor.set_show_wrap_guides(false, cx);
+                    editor.set_show_gutter(false, cx);
+                    editor.scroll_manager.set_forbid_vertical_scroll(true);
+                    editor.set_read_only(true);
+                    editor.highlight_rows::<DeletedLines>(
+                        Anchor::min()..=Anchor::max(),
+                        Some(cx.theme().status().deleted_background),
+                        false,
+                        cx,
+                    );
+                    editor
+                });
+
+                let height = deleted_lines_editor
+                    .update(cx, |editor, cx| editor.max_point(cx).row().0 as u8 + 1);
+                new_blocks.push(BlockProperties {
+                    position: new_row,
+                    height,
+                    style: BlockStyle::Flex,
+                    render: Box::new(move |cx| {
+                        div()
+                            .bg(cx.theme().status().deleted_background)
+                            .size_full()
+                            .pl(cx.gutter_dimensions.full_width())
+                            .child(deleted_lines_editor.clone())
+                            .into_any_element()
+                    }),
+                    disposition: BlockDisposition::Above,
+                });
+            }
+
+            editor.remove_blocks(old_blocks, None, cx);
             pending_assist.removed_line_block_ids = editor
-                .insert_blocks(deleted_rows, None, cx)
+                .insert_blocks(new_blocks, None, cx)
                 .into_iter()
                 .collect();
 
             enum InsertedLines {}
             editor.clear_row_highlights::<InsertedLines>();
-            for range in inserted_rows {
+            for new_row_range in inserted_row_ranges {
                 editor.highlight_rows::<InsertedLines>(
-                    range,
+                    new_row_range,
                     Some(cx.theme().status().created_background),
                     false,
                     cx,
@@ -934,8 +1003,18 @@ pub enum CodegenKind {
     Generate { position: Anchor },
 }
 
+impl CodegenKind {
+    fn range(&self, snapshot: &MultiBufferSnapshot) -> Range<Anchor> {
+        match self {
+            CodegenKind::Transform { range } => range.clone(),
+            CodegenKind::Generate { position } => position.bias_left(snapshot)..*position,
+        }
+    }
+}
+
 pub struct Codegen {
     buffer: Model<MultiBuffer>,
+    old_buffer: Model<Buffer>,
     snapshot: MultiBufferSnapshot,
     kind: CodegenKind,
     last_equal_ranges: Vec<Range<Anchor>>,
@@ -957,8 +1036,30 @@ impl Codegen {
         cx: &mut ModelContext<Self>,
     ) -> Self {
         let snapshot = buffer.read(cx).snapshot(cx);
+
+        let (old_buffer, _, _) = buffer
+            .read(cx)
+            .range_to_buffer_ranges(kind.range(&snapshot), cx)
+            .pop()
+            .unwrap();
+        let old_buffer = cx.new_model(|cx| {
+            let old_buffer = old_buffer.read(cx);
+            let text = old_buffer.as_rope().clone();
+            let line_ending = old_buffer.line_ending();
+            let language = old_buffer.language().cloned();
+            let language_registry = old_buffer.language_registry();
+
+            let mut buffer = Buffer::local_normalized(text, line_ending, cx);
+            buffer.set_language(language, cx);
+            if let Some(language_registry) = language_registry {
+                buffer.set_language_registry(language_registry)
+            }
+            buffer
+        });
+
         Self {
             buffer: buffer.clone(),
+            old_buffer,
             snapshot,
             kind,
             last_equal_ranges: Default::default(),
@@ -987,10 +1088,7 @@ impl Codegen {
     }
 
     pub fn range(&self) -> Range<Anchor> {
-        match &self.kind {
-            CodegenKind::Transform { range } => range.clone(),
-            CodegenKind::Generate { position } => position.bias_left(&self.snapshot)..*position,
-        }
+        self.kind.range(&self.snapshot)
     }
 
     pub fn kind(&self) -> &CodegenKind {
