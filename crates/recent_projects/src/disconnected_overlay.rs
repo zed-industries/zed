@@ -1,16 +1,9 @@
-use std::time::Duration;
-
 use dev_server_projects::DevServer;
-use gpui::{
-    AnyElement, Bounds, ClickEvent, DismissEvent, EventEmitter, FocusHandle, FocusableView,
-    GlobalElementId, LayoutId, Render, WeakView,
-};
-use rpc::proto;
+use gpui::{ClickEvent, DismissEvent, EventEmitter, FocusHandle, FocusableView, Render, WeakView};
 use ui::{
-    div, h_flex, rems, v_flex, ActiveTheme, Button, ButtonCommon, ButtonStyle, Clickable, Element,
-    ElementId, ElevationIndex, FluentBuilder, Headline, HeadlineSize, IconName, IconPosition,
-    InteractiveElement, IntoElement, Label, Modal, ModalFooter, ModalHeader, ParentElement, Pixels,
-    Section, Styled, StyledExt, ViewContext, VisualContext, WindowContext,
+    div, h_flex, rems, Button, ButtonCommon, ButtonStyle, Clickable, ElevationIndex, FluentBuilder,
+    Headline, HeadlineSize, IconName, IconPosition, InteractiveElement, IntoElement, Label, Modal,
+    ModalFooter, ModalHeader, ParentElement, Section, Styled, StyledExt, ViewContext,
 };
 use workspace::{notifications::DetachAndPromptErr, ModalView, Workspace};
 
@@ -149,7 +142,7 @@ impl Render for DisconnectedOverlay {
                                             cx.remove_window();
                                         })),
                                 )
-                                .when_some(self.dev_server.clone(), |el, dev_server| {
+                                .when_some(self.dev_server.clone(), |el, _| {
                                     el.child(
                                         Button::new("reconnect", "Reconnect")
                                             .style(ButtonStyle::Filled)

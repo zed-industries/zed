@@ -2,8 +2,8 @@ mod dev_servers;
 mod disconnected_overlay;
 
 use client::ProjectId;
+use dev_servers::reconnect_to_dev_server_project;
 pub use dev_servers::DevServerProjects;
-use dev_servers::{reconnect_to_dev_server, reconnect_to_dev_server_project};
 use disconnected_overlay::DisconnectedOverlay;
 use feature_flags::FeatureFlagAppExt;
 use fuzzy::{StringMatch, StringMatchCandidate};
@@ -21,7 +21,6 @@ use serde::Deserialize;
 use std::{
     path::{Path, PathBuf},
     sync::Arc,
-    time::Duration,
 };
 use ui::{
     prelude::*, tooltip_container, ButtonLike, IconWithIndicator, Indicator, KeyBinding, ListItem,
